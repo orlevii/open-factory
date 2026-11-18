@@ -135,3 +135,21 @@ test("send() writes JSON only while open; onOpen fires on every open", async () 
   expect(conn.send({ type: "ping" })).toBe(false);
   conn.close();
 });
+
+test("onOpen fires again on reconnect; send after close() is false", async () => {
+  const onOpen = vi.fn();
+  const conn = connectWs({
+    ...base,
+    onUnauthenticated: vi.fn(),
+    hasSession: async () => true,
+    onOpen,
+  });
+  FakeWs.instances[0]?.onopen?.();
+  FakeWs.instances[0]?.onclose?.();
+  await vi.advanceTimersByTimeAsync(31_000);
+  FakeWs.instances[1]?.onopen?.();
+  expect(onOpen).toHaveBeenCalledTimes(2);
+  expect(conn.send({ type: "ping" })).toBe(true);
+  conn.close();
+  expect(conn.send({ type: "ping" })).toBe(false);
+});

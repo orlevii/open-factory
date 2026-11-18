@@ -66,6 +66,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       const m = a.message;
       if (!("agent" in m) || m.agent !== s.slug) return s;
       if (m.type === "session_event") {
+        // Gaps are the server's job: on a missed range it sends `resync`, so no gap detection here.
         if (s.events.has(m.event.seq)) return s;
         if (s.windowed) return { ...s, newWhileAway: s.newWhileAway + 1 };
         return { ...s, events: withEvents(s.events, [m.event]) };
@@ -73,6 +74,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       if (m.type === "queue") return { ...s, queue: m.items };
       if (m.type === "agent_status" && s.agent) {
         const { type: _t, agent: _a, ...rest } = m;
+        // `lastError` is set explicitly so a frame without it clears the previous one (absent means cleared).
         return { ...s, agent: { ...s.agent, ...rest, lastError: m.lastError } };
       }
       if (m.type === "resync") return { ...s, needsReload: true };

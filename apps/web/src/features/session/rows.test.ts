@@ -112,3 +112,64 @@ test("turn_end renders only when it is an error; delivery_failed ids are collect
   expect(buildRows(evs).map((r) => r.kind)).toEqual(["quiet", "quiet"]);
   expect(deliveryFailedIds(evs)).toEqual(new Set(["m1", "m2"]));
 });
+
+test("compaction, error and denied events get their own rows", () => {
+  seq = 0;
+  const rows = buildRows([
+    e({
+      type: "compacted",
+      trigger: "manual",
+      preTokens: 1,
+      postTokens: 1,
+      durationMs: 1,
+    } as never),
+    e({ type: "error", message: "bad" } as never),
+    e({ type: "permission_denied", toolName: "Bash", reason: "no" } as never),
+  ]);
+  expect(rows.map((r) => r.kind)).toEqual(["compaction", "error", "denied"]);
+});
+
+test("truncated fields on a call and its result merge, result fields prefixed", () => {
+  seq = 0;
+  const call = {
+    ...e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
+    truncated: { "input.command": 5 },
+  };
+  const res = {
+    ...e({ type: "tool_result", toolUseId: "a", content: "x", isError: false }),
+    truncated: { content: 9 },
+  };
+  const [row] = buildRows([call, res]);
+  expect(row).toMatchObject({
+    kind: "tool",
+    truncated: { "input.command": 5, "result.content": 9 },
+  });
+});
+
+test("an orphan result with a known parent nests under that parent", () => {
+  seq = 0;
+  const rows = buildRows([
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({
+      type: "tool_result",
+      toolUseId: "gone",
+      content: "x",
+      isError: false,
+      parentToolUseId: "p",
+    }),
+  ]);
+  const parent = rows[0];
+  if (parent?.kind !== "tool") throw new Error();
+  expect(parent.children.map((c) => c.kind)).toEqual(["orphan_result"]);
+});
+
+test("a later turn_started makes an unpaired call no_result", () => {
+  seq = 0;
+  const rows = buildRows([
+    e({ type: "turn_started" }, "t1"),
+    e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }, "t1"),
+    e({ type: "turn_started" }, "t2"),
+  ]);
+  expect(rows[0]).toMatchObject({ kind: "tool", state: "no_result" });
+});

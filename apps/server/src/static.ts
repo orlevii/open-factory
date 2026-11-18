@@ -4,6 +4,11 @@ import fastifyStatic from "@fastify/static";
 import type { FastifyInstance } from "fastify";
 import { notFoundBody } from "./errors.ts";
 
+const isApiPath = (url: string) => {
+  const p = url.split("?", 1)[0] ?? url;
+  return p === "/api" || p.startsWith("/api/");
+};
+
 /** Serves the built SPA. Returns false (API-only) when the folder is missing. */
 export async function registerStatic(
   app: FastifyInstance,
@@ -16,7 +21,7 @@ export async function registerStatic(
   }
   await app.register(fastifyStatic, { root: webRoot, wildcard: false });
   app.setNotFoundHandler((request, reply) => {
-    if (request.method === "GET" && !request.url.startsWith("/api"))
+    if ((request.method === "GET" || request.method === "HEAD") && !isApiPath(request.url))
       return reply.sendFile("index.html");
     return reply.code(404).send(notFoundBody);
   });

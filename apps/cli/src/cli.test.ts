@@ -106,6 +106,17 @@ test("unreachable server: status exits 1 with a plain message; logout still clea
   expect(await readConfig(h.env)).toEqual({ url: "http://127.0.0.1:1" });
 });
 
+test("logout warns when the server refuses sign-out, but still clears the token and exits 0", async () => {
+  const h = io([], { OPEN_FACTORY_URL: "http://example.test:4000" });
+  await writeConfig(h.env, { url: "http://example.test:4000", token: "stored-token" });
+  const failing: typeof fetch = async () =>
+    Response.json({ message: "nope" }, { status: 500, statusText: "Internal Server Error" });
+  expect(await run(["logout"], { ...h.io, fetch: failing })).toBe(0);
+  expect(h.err.join("\n")).toMatch(/sign-out failed \(HTTP 500\).*session may still be valid/i);
+  expect(h.out).toContain("Logged out");
+  expect((await readConfig(h.env)).token).toBeUndefined();
+});
+
 test("OPEN_FACTORY_TOKEN drives status; a stale token reads as not logged in", async () => {
   const s = await signUp(t.app);
   const ok = io([], { OPEN_FACTORY_URL: url, OPEN_FACTORY_TOKEN: s.token });

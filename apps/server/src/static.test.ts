@@ -24,3 +24,21 @@ test("serves files, falls back to index.html for app routes, keeps /api 404 as J
   expect(api.statusCode).toBe(404);
   expect(api.json()).toEqual({ error: { code: "not_found", message: "Not found" } });
 });
+
+test("paths that merely start with /api (e.g. /apiary) get the SPA; /api itself is a JSON 404", async () => {
+  const apiary = await t.app.inject({ url: "/apiary" });
+  expect(apiary.statusCode).toBe(200);
+  expect(apiary.headers["content-type"]).toMatch(/text\/html/);
+  const bare = await t.app.inject({ url: "/api" });
+  expect(bare.statusCode).toBe(404);
+  expect(bare.json()).toEqual({ error: { code: "not_found", message: "Not found" } });
+});
+
+test("HEAD on an app route is served like GET, without a body", async () => {
+  const res = await t.app.inject({ method: "HEAD", url: "/agents" });
+  expect(res.statusCode).toBe(200);
+  expect(res.headers["content-type"]).toMatch(/text\/html/);
+  expect(res.body).toBe("");
+  const api = await t.app.inject({ method: "HEAD", url: "/api/missing" });
+  expect(api.statusCode).toBe(404);
+});

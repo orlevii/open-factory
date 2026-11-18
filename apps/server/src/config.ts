@@ -38,7 +38,7 @@ const envSchema = z.object({
   FACTORY_HOME: z.string().min(1).default("~/open-factory"),
   PUBLIC_URL: httpUrl.optional(),
   DEV_WEB_ORIGIN: httpUrl.default("http://localhost:5173"),
-  PORT: z.coerce.number({ message: "must be a port number" }).int().min(0).max(65535).default(3000),
+  PORT: z.coerce.number({ message: "must be a port number" }).int().min(1).max(65535).default(3000),
   HOST: z.string().min(1).default("127.0.0.1"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   NODE_ENV: z.string().optional(),
@@ -49,7 +49,9 @@ function expandHome(p: string): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
-  const parsed = envSchema.safeParse(env);
+  // `PORT=` in .env or the shell means "not set", not "port 0".
+  const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ""));
+  const parsed = envSchema.safeParse(set);
   if (!parsed.success) {
     throw new ConfigError(parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`));
   }

@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { buildApp } from "./app.ts";
 import { type Config, ConfigError, loadConfig } from "./config.ts";
+import { createShutdown } from "./shutdown.ts";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 // esbuild defines __BUNDLED__ in build.mjs; it is undefined under tsx (pnpm dev).
@@ -25,11 +26,10 @@ async function main() {
   await migrate(config.databaseUrl, migrationsDir);
   const { db, sql, close } = createDb(config.databaseUrl);
   const app = await buildApp(config, { db, sql, webRoot });
-  const shutdown = async () => {
-    await app.close();
-    await close();
-    process.exit(0);
-  };
+  const shutdown = createShutdown([() => app.close(), () => close()], {
+    exit: (code) => process.exit(code),
+    log: (message) => console.error(message),
+  });
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   await app.listen({ host: config.host, port: config.port });

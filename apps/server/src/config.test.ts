@@ -43,6 +43,33 @@ describe("loadConfig", () => {
       /openssl rand -base64 32/,
     );
   });
+  test("empty strings count as unset", () => {
+    const c = loadConfig({
+      ...ok,
+      PORT: "",
+      PUBLIC_URL: "",
+      HOST: "",
+      LOG_LEVEL: "",
+      FACTORY_HOME: "",
+      DEV_WEB_ORIGIN: "",
+      NODE_ENV: "",
+    });
+    expect(c).toMatchObject({
+      port: 3000,
+      publicUrl: "http://localhost:3000",
+      host: "127.0.0.1",
+      logLevel: "info",
+      devWebOrigin: "http://localhost:5173",
+      factoryHome: path.join(os.homedir(), "open-factory"),
+      isProduction: false,
+    });
+    expect(() => loadConfig({ ...ok, DATABASE_URL: "" })).toThrow(/DATABASE_URL is required/);
+  });
+  test("PORT must be 1-65535", () => {
+    expect(() => loadConfig({ ...ok, PORT: "0" })).toThrow(/PORT/);
+    expect(() => loadConfig({ ...ok, PORT: "65536" })).toThrow(/PORT/);
+    expect(loadConfig({ ...ok, PORT: "1" }).port).toBe(1);
+  });
   test("production flag", () => {
     expect(loadConfig({ ...ok, NODE_ENV: "production" }).isProduction).toBe(true);
   });

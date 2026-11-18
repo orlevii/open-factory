@@ -76,8 +76,8 @@ export function AppSidebar() {
           aria-label="Open Factory"
           className="flex items-center rounded-md group-data-[collapsible=icon]:justify-center"
         >
-          <Wordmark className="group-data-[collapsible=icon]:hidden" />
-          <Mark className="hidden size-[18px] group-data-[collapsible=icon]:block" />
+          <Wordmark className="h-5 group-data-[collapsible=icon]:hidden" />
+          <Mark className="hidden size-5 group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -96,8 +96,6 @@ export function AppSidebar() {
                         className={cn(
                           "relative gap-2.5 transition-colors duration-150",
                           isMobile ? "h-9" : "h-8",
-                          active &&
-                            "before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-signal",
                         )}
                       >
                         <Link
@@ -105,6 +103,13 @@ export function AppSidebar() {
                           onClick={closeMobile}
                           aria-current={active ? "page" : undefined}
                         >
+                          {/* The active marker is one roof tooth at the 30° pitch (DESIGN.md). */}
+                          {active && (
+                            <span
+                              aria-hidden="true"
+                              className="of-tooth absolute top-1/2 left-0 -translate-y-1/2 group-data-[collapsible=icon]:-left-1"
+                            />
+                          )}
                           <item.icon aria-hidden="true" />
                           <span>{item.label}</span>
                         </Link>

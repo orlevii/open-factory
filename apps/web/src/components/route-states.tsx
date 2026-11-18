@@ -2,9 +2,9 @@ import { type ErrorComponentProps, Link, useRouter } from "@tanstack/react-route
 import { type ReactNode, useEffect } from "react";
 import { useShell } from "@/components/shell-context";
 import { Button } from "@/components/ui/button";
-import { Mark, Wordmark } from "@/components/wordmark";
+import { LoadingMark, Wordmark } from "@/components/wordmark";
 
-/** Router pending screen (UI design §5.1): only the mark, its pilot light breathing. Shown only
+/** Router pending screen: only the mark, its roofline lighting up left to right. Shown only
  *  after defaultPendingMs, so fast loads never flash it. */
 export function AppPending() {
   const status = (
@@ -13,7 +13,7 @@ export function AppPending() {
       aria-live="polite"
       className="is-loading fixed inset-0 flex items-center justify-center bg-background text-foreground"
     >
-      <Mark className="size-7" />
+      <LoadingMark className="size-8" />
       <span className="sr-only">Loading…</span>
     </div>
   );
@@ -48,7 +48,9 @@ export function RouteError({ error }: ErrorComponentProps) {
   const message = error instanceof Error ? error.message : String(error);
   return (
     <StateFrame>
-      <h2 className="text-[15px] leading-5 font-semibold">Something went wrong.</h2>
+      <h2 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">
+        Something went wrong.
+      </h2>
       <p className="text-[13px] leading-[18px] text-muted-foreground">
         This page hit an error it couldn't recover from.
       </p>
@@ -74,7 +76,9 @@ export function NotFound() {
   usePageTitle("Page not found");
   return (
     <StateFrame>
-      <h2 className="text-[15px] leading-5 font-semibold">Page not found.</h2>
+      <h2 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">
+        Page not found.
+      </h2>
       <p className="text-[13px] leading-[18px] text-muted-foreground">
         Check the address, or go back to Home.
       </p>

@@ -359,7 +359,11 @@ importers:
         specifier: ^0.31.11
         version: 0.31.11
 
-  packages/harness: {}
+  packages/harness:
+    dependencies:
+      '@open-factory/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/shared:
     dependencies:

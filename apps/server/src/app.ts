@@ -8,10 +8,11 @@ import {
 import type postgres from "postgres";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { Config } from "./config.ts";
-import { notFoundBody, registerErrorHandlers } from "./errors.ts";
+import { registerErrorHandlers } from "./errors.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { meRoutes } from "./routes/me.ts";
 import { statusRoutes } from "./routes/status.ts";
+import { registerStatic } from "./static.ts";
 import { wsRoutes } from "./ws/route.ts";
 
 declare module "fastify" {
@@ -59,8 +60,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(authRoutes);
   await app.register(meRoutes);
   await app.register(wsRoutes);
-  // Task 7 registers static serving here.
-
-  app.setNotFoundHandler((_request, reply) => reply.code(404).send(notFoundBody));
+  await registerStatic(app, deps.webRoot);
   return app;
 }

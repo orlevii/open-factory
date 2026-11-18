@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@fastify/static": "^10.1.11",
     "@fastify/websocket": "^11.3.7",
     "@open-factory/db": "workspace:*",
     "@open-factory/shared": "workspace:*",
@@ -18,5 +19,9 @@
     "@types/ws": "^8.18.2",
     "pino-pretty": "^13.2.0",
     "ws": "^8.23.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts"
   }
 }

@@ -38,13 +38,14 @@ export function ToolCallRow({
 }) {
   const summary = toolSummary(row.call.name, row.call.input);
   const state = STATE_LABEL[row.state];
-  const truncatedNote = (field: string) => {
-    const n = row.truncated?.[field];
-    return n ? (
-      <p className="mt-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        Truncated ({formatBytes(n)})
+  // capPayload records the capped path (input.command, input.new_string, result.content, …).
+  const truncatedNote = (prefix: "input." | "result.") => {
+    const capped = Object.entries(row.truncated ?? {}).filter(([k]) => k.startsWith(prefix));
+    return capped.map(([k, n]) => (
+      <p key={k} className="mt-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+        {capped.length > 1 ? `Truncated ${k.slice(prefix.length)}` : "Truncated"} ({formatBytes(n)})
       </p>
-    ) : null;
+    ));
   };
   return (
     <div>
@@ -77,9 +78,9 @@ export function ToolCallRow({
           <CodePlate>
             {row.call.name === "Bash" ? summary : JSON.stringify(row.call.input, null, 2)}
           </CodePlate>
-          {truncatedNote("input.content")}
+          {truncatedNote("input.")}
           {row.result && <CodePlate>{row.result.content}</CodePlate>}
-          {truncatedNote("result.content")}
+          {truncatedNote("result.")}
           {children && <div className="space-y-3 pl-4">{children}</div>}
         </div>
       )}

@@ -179,3 +179,51 @@ test("an agent_status frame without lastError clears the previous one", () => {
 test("highestSeq of empty state is 0", () => {
   expect(highestSeq(initialSessionState)).toBe(0);
 });
+
+test("window mode counts each live seq once, even when a reconnect replays it", () => {
+  let s = sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: page([4, 5, 6], { before: true, after: true }),
+    detail,
+    mode: "window",
+  });
+  expect(s.maxSeenSeq).toBe(9);
+  const frame = (seq: number) =>
+    sessionReducer(s, {
+      type: "frame",
+      message: { type: "session_event", agent: "dev", event: ev(seq) },
+    });
+  s = frame(9); // at or below lastSeq: not new
+  s = frame(10);
+  s = frame(11);
+  s = frame(10); // replayed after a reconnect
+  s = frame(11);
+  expect(s.newWhileAway).toBe(2);
+  expect(s.maxSeenSeq).toBe(11);
+});
+
+const qItem = (id: string) => ({
+  id,
+  kind: "message" as const,
+  body: id,
+  urgent: false,
+  from: "@or",
+  createdAt: "2026-11-18T00:00:00.000Z",
+});
+
+test("a locally queued item is added once and the next queue frame overrides it", () => {
+  let s = sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: page([1]),
+    detail,
+    mode: "latest",
+  });
+  s = sessionReducer(s, { type: "queued", item: qItem("q1") });
+  s = sessionReducer(s, { type: "queued", item: qItem("q1") });
+  expect(s.queue.map((q) => q.id)).toEqual(["q1"]);
+  s = sessionReducer(s, {
+    type: "frame",
+    message: { type: "queue", agent: "dev", items: [qItem("q2")] },
+  });
+  expect(s.queue.map((q) => q.id)).toEqual(["q2"]);
+});

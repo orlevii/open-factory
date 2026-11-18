@@ -14,6 +14,9 @@ export interface SessionState {
   /** true while showing an older window (deep link): live events are counted, not appended */
   windowed: boolean;
   newWhileAway: number;
+  /** Highest seq already accounted for while windowed (starts at the detail's lastSeq), so a
+   *  reconnect's replay is not counted twice and the resubscribe starts after it. */
+  maxSeenSeq: number;
   queue: QueueItem[];
   agent: AgentSummary | undefined;
   needsReload: boolean;
@@ -25,6 +28,7 @@ export const initialSessionState: SessionState = {
   hasMoreBefore: false,
   windowed: false,
   newWhileAway: 0,
+  maxSeenSeq: 0,
   queue: [],
   agent: undefined,
   needsReload: false,
@@ -34,6 +38,8 @@ export type SessionAction =
   | { type: "loaded"; page: EventsPage; detail: AgentDetail; mode: "latest" | "window" }
   | { type: "earlier"; page: EventsPage }
   | { type: "frame"; message: ServerMessage }
+  /** A 202 queue item inserted locally while the socket is down; the next `queue` frame replaces it. */
+  | { type: "queued"; item: QueueItem }
   | { type: "reset" };
 
 const withEvents = (map: Map<number, SessionEvent>, evs: SessionEvent[]) => {
@@ -53,6 +59,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         events: withEvents(new Map(), a.page.events),
         hasMoreBefore: a.page.hasMore.before,
         windowed: a.mode === "window" && a.page.hasMore.after,
+        maxSeenSeq: a.detail.lastSeq,
         queue: a.detail.queue,
         agent: a.detail.agent,
       };
@@ -62,13 +69,19 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         events: withEvents(s.events, a.page.events),
         hasMoreBefore: a.page.hasMore.before,
       };
+    case "queued":
+      if (s.queue.some((q) => q.id === a.item.id)) return s;
+      return { ...s, queue: [...s.queue, a.item] };
     case "frame": {
       const m = a.message;
       if (!("agent" in m) || m.agent !== s.slug) return s;
       if (m.type === "session_event") {
         // Gaps are the server's job: on a missed range it sends `resync`, so no gap detection here.
         if (s.events.has(m.event.seq)) return s;
-        if (s.windowed) return { ...s, newWhileAway: s.newWhileAway + 1 };
+        if (s.windowed) {
+          if (m.event.seq <= s.maxSeenSeq) return s;
+          return { ...s, newWhileAway: s.newWhileAway + 1, maxSeenSeq: m.event.seq };
+        }
         return { ...s, events: withEvents(s.events, [m.event]) };
       }
       if (m.type === "queue") return { ...s, queue: m.items };

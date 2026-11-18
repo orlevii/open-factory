@@ -34,7 +34,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
     return (
       <>
         <PageHeader title={slug} />
-        <LoadError message={s.error.message} onRetry={() => void s.jumpToLatest()} />
+        <LoadError message={s.error.message} onRetry={() => void s.retry()} />
       </>
     );
   }
@@ -59,7 +59,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
           Event {s.missingEvent} isn't in this session. Showing the latest.
         </p>
       )}
-      {s.error && <LoadError message={s.error.message} onRetry={() => void s.jumpToLatest()} />}
+      {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
       <Timeline
         slug={slug}
         rows={s.rows}
@@ -68,6 +68,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
         highlightSeq={s.missingEvent === undefined ? eventSeq : undefined}
         hasMoreBefore={s.state.hasMoreBefore}
         onLoadEarlier={s.loadEarlier}
+        earlierError={s.earlierError}
         footer={
           <>
             {s.rows.length === 0 && s.state.queue.length === 0 && (
@@ -105,7 +106,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
       <div role="status" aria-live="polite" className="sr-only">
         {announce}
       </div>
-      <Composer slug={slug} agent={agent} />
+      <Composer slug={slug} agent={agent} onQueued={s.onQueued} />
     </div>
   );
 }

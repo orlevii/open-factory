@@ -1,4 +1,4 @@
-import { type AgentSummary, ApiError } from "@open-factory/shared";
+import { type AgentSummary, ApiError, type QueueItem } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,16 @@ const coarse = () => typeof matchMedia === "function" && matchMedia("(pointer: c
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 
-export function Composer({ slug, agent }: { slug: string; agent: AgentSummary }) {
+export function Composer({
+  slug,
+  agent,
+  onQueued,
+}: {
+  slug: string;
+  agent: AgentSummary;
+  /** Called with the 202 queue item (the session inserts it locally while disconnected). */
+  onQueued?: (item: QueueItem) => void;
+}) {
   const [text, setText] = useState(() => readDraft(slug));
   const [urgent, setUrgent] = useState(false);
   const [sending, setSending] = useState(false);
@@ -43,7 +52,8 @@ export function Composer({ slug, agent }: { slug: string; agent: AgentSummary })
     setSending(true);
     setError(undefined);
     try {
-      await postMessage(slug, text.trim(), urgent);
+      const item = await postMessage(slug, text.trim(), urgent);
+      onQueued?.(item);
       setText("");
       setUrgent(false);
     } catch (e) {

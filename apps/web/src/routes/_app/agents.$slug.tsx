@@ -5,7 +5,10 @@ import { agentDetailQueryOptions } from "@/features/session/api";
 import { SessionView } from "@/features/session/session-view";
 
 export const Route = createFileRoute("/_app/agents/$slug")({
-  validateSearch: z.object({ event: z.coerce.number().int().positive().optional() }),
+  // An invalid ?event (abc, 0) is ignored rather than an error page.
+  validateSearch: z.object({
+    event: z.coerce.number().int().positive().optional().catch(undefined),
+  }),
   // Only so the first load shows the route's pending mark and an unknown slug the not-found state;
   // the view itself fetches the detail fresh for its lastSeq.
   loader: async ({ context, params }) => {

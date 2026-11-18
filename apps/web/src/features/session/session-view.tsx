@@ -5,6 +5,9 @@ import { PageHeader } from "@/components/page-header";
 import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { AgentStrip } from "./agent-strip";
+import { CompactPopover } from "./compact-popover";
+import { Composer } from "./composer";
+import { InterruptButton } from "./interrupt-button";
 import { QueueItems } from "./queue-items";
 import type { Row } from "./rows";
 import { StatusBadge } from "./status-badge";
@@ -102,7 +105,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
       <div role="status" aria-live="polite" className="sr-only">
         {announce}
       </div>
-      {/* Task 18: <Composer slug={slug} agent={agent} /> */}
+      <Composer slug={slug} agent={agent} />
     </div>
   );
 }
@@ -144,6 +147,11 @@ function useAnnouncer(name: string, status: string | undefined, rows: Row[], loa
   return msg;
 }
 
-function SessionActions(_props: { slug: string; turnOpen: boolean }) {
-  return null; // Task 18
+function SessionActions({ slug, turnOpen }: { slug: string; turnOpen: boolean }) {
+  return (
+    <>
+      <CompactPopover slug={slug} />
+      <InterruptButton slug={slug} turnOpen={turnOpen} />
+    </>
+  );
 }

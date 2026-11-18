@@ -4,6 +4,15 @@ import { guardedFetch } from "../client.ts";
 import type { Io } from "../commands.ts";
 import { readConfig, resolveTarget, writeConfig } from "../config-store.ts";
 
+function isHttpUrl(s: string): boolean {
+  try {
+    const { protocol } = new URL(s);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function loginError(url: string, status: number, body: { code?: string; message?: string }) {
   if (body.code === "INVALID_EMAIL_OR_PASSWORD") return "Wrong email or password.";
   if (body.code === "INVALID_ORIGIN")
@@ -18,6 +27,10 @@ export async function login(args: string[], io: Io): Promise<number> {
     /\/$/,
     "",
   );
+  if (!isHttpUrl(url)) {
+    io.err(`Invalid server URL "${url}": use a full URL starting with http:// or https://`);
+    return 1;
+  }
   const email = await io.ask("Email");
   const password = await io.askHidden("Password");
   const f = guardedFetch(io.fetch, url);

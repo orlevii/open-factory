@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { makeTestApp, signUp } from "../../server/src/test/helpers.ts";
 import { run } from "./commands.ts";
-import { readConfig } from "./config-store.ts";
+import { readConfig, writeConfig } from "./config-store.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
@@ -98,7 +98,41 @@ test("unreachable server: status exits 1 with a plain message; logout still clea
   const h = io([], { OPEN_FACTORY_URL: "http://127.0.0.1:1" });
   expect(await run(["status"], h.io)).toBe(1);
   expect(h.err.join("\n")).toMatch(/Cannot reach server at http:\/\/127\.0\.0\.1:1/);
+  await writeConfig(h.env, { url: "http://127.0.0.1:1", token: "stored-token" });
+  h.err.length = 0;
   expect(await run(["logout"], h.io)).toBe(0);
+  expect(h.err.join("\n")).toMatch(/removed the local token anyway/);
+  expect(h.out).toContain("Logged out");
+  expect(await readConfig(h.env)).toEqual({ url: "http://127.0.0.1:1" });
+});
+
+test("OPEN_FACTORY_TOKEN drives status; a stale token reads as not logged in", async () => {
+  const s = await signUp(t.app);
+  const ok = io([], { OPEN_FACTORY_URL: url, OPEN_FACTORY_TOKEN: s.token });
+  expect(await run(["status"], ok.io)).toBe(0);
+  expect(ok.out.join("\n")).toMatch(new RegExp(`^Logged in as @${s.user.handle}$`, "m"));
+
+  const stale = io([], { OPEN_FACTORY_URL: url, OPEN_FACTORY_TOKEN: "stale-or-revoked" });
+  expect(await run(["status"], stale.io)).toBe(0);
+  expect(stale.out.join("\n")).toMatch(/^Not logged in$/m);
+});
+
+test("login rejects a URL without an http(s) scheme before prompting", async () => {
+  for (const bad of ["localhost:3000", "ftp://h", "not a url"]) {
+    const h = io([creds.email, creds.password]);
+    const calls: string[] = [];
+    const spy: typeof fetch = async (input) => {
+      calls.push(String(input));
+      throw new Error("must not be called");
+    };
+    expect(await run(["login", "--url", bad], { ...h.io, fetch: spy })).toBe(1);
+    expect(h.err.join("\n")).toMatch(/Invalid server URL.*http:\/\/ or https:\/\//);
+    expect(calls).toEqual([]);
+  }
+  // Also when typed at the prompt.
+  const h = io(["localhost:3000"]);
+  expect(await run(["login"], h.io)).toBe(1);
+  expect(h.err.join("\n")).toMatch(/Invalid server URL "localhost:3000"/);
 });
 
 test("help and --version", async () => {

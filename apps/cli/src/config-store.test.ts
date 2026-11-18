@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -13,6 +13,32 @@ test("XDG path, 0600 file, 0700 dir, round trip", async () => {
   expect(await readConfig(env)).toEqual({ url: "http://h:1", token: "t" });
   expect(statSync(configPath(env)).mode & 0o777).toBe(0o600);
   expect(statSync(path.dirname(configPath(env))).mode & 0o777).toBe(0o700);
+});
+
+test("readConfig: invalid JSON or shape reads as empty; other read errors throw", async () => {
+  const env = { XDG_CONFIG_HOME: mkdtempSync(path.join(os.tmpdir(), "of-xdg-")) };
+  const file = configPath(env);
+  mkdirSync(path.dirname(file), { recursive: true });
+  for (const bad of ["null", "[]", '{"url": 1}', "not json"]) {
+    writeFileSync(file, bad);
+    expect(await readConfig(env)).toEqual({});
+  }
+  writeFileSync(file, '{"url":"http://x","token":"t","extra":true}');
+  expect(await readConfig(env)).toEqual({ url: "http://x", token: "t" });
+  chmodSync(file, 0o000);
+  await expect(readConfig(env)).rejects.toThrow(/EACCES/);
+});
+
+test("writeConfig replaces the file atomically: 0600 even over a looser file, no temp left", async () => {
+  const env = { XDG_CONFIG_HOME: mkdtempSync(path.join(os.tmpdir(), "of-xdg-")) };
+  const file = configPath(env);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
+  writeFileSync(file, "{}", { mode: 0o644 });
+  await writeConfig(env, { url: "http://h" });
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect(statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+  expect(readdirSync(path.dirname(file))).toEqual(["cli.json"]);
+  expect(await readConfig(env)).toEqual({ url: "http://h" });
 });
 
 test("defaults to ~/.config without XDG_CONFIG_HOME", () => {

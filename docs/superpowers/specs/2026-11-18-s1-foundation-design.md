@@ -64,17 +64,17 @@ Vitest uses `test.projects` in the root `vitest.config.ts` (Vitest 5 has no work
 
 Env vars only, parsed once at boot by one Zod schema (`apps/server/src/config.ts`). On failure, print **every** missing/invalid var at once and exit non-zero. Local dev loads `.env` via Node's `--env-file-if-exists` (no dotenv). `.env.example` is committed and matches the compose file.
 
-| Var | Required | Default | Notes |
-|---|---|---|---|
-| `DATABASE_URL` | yes | — | Postgres URL |
-| `FACTORY_SECRET_KEY` | yes | — | min 32 chars; root key, see below. The literal placeholder from `.env.example` (`change-me-to-a-random-string-of-32-chars-or-more`) is rejected with a hint to run `openssl rand -base64 32` |
-| `FACTORY_HOME` | no | `~/open-factory` | non-empty string; leading `~` expanded, then `path.resolve`d to absolute. Existence is not checked and the directory is **not created in S1** (the first spec that writes there creates it) |
-| `PUBLIC_URL` | no | `http://localhost:${PORT}` | must parse as an http(s) URL; its origin is used for better-auth base URL, trusted origins and the WS origin check. Users must open the app at exactly this origin (`127.0.0.1` ≠ `localhost`) |
-| `DEV_WEB_ORIGIN` | no | `http://localhost:5173` | Vite dev server origin, trusted (better-auth + WS) only when `NODE_ENV !== "production"` |
-| `PORT` | no | `3000` | |
-| `HOST` | no | `127.0.0.1` | fail-closed default; servers set `HOST=0.0.0.0` explicitly (README says so) |
-| `LOG_LEVEL` | no | `info` | pino level |
-| `NODE_ENV` | no | — | `production` disables pretty logs and the dev origin allowance |
+| Var                  | Required | Default                    | Notes                                                                                                                                                                                          |
+| -------------------- | -------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`       | yes      | —                          | Postgres URL                                                                                                                                                                                   |
+| `FACTORY_SECRET_KEY` | yes      | —                          | min 32 chars; root key, see below. The literal placeholder from `.env.example` (`change-me-to-a-random-string-of-32-chars-or-more`) is rejected with a hint to run `openssl rand -base64 32`   |
+| `FACTORY_HOME`       | no       | `~/open-factory`           | non-empty string; leading `~` expanded, then `path.resolve`d to absolute. Existence is not checked and the directory is **not created in S1** (the first spec that writes there creates it)    |
+| `PUBLIC_URL`         | no       | `http://localhost:${PORT}` | must parse as an http(s) URL; its origin is used for better-auth base URL, trusted origins and the WS origin check. Users must open the app at exactly this origin (`127.0.0.1` ≠ `localhost`) |
+| `DEV_WEB_ORIGIN`     | no       | `http://localhost:5173`    | Vite dev server origin, trusted (better-auth + WS) only when `NODE_ENV !== "production"`                                                                                                       |
+| `PORT`               | no       | `3000`                     |                                                                                                                                                                                                |
+| `HOST`               | no       | `127.0.0.1`                | fail-closed default; servers set `HOST=0.0.0.0` explicitly (README says so)                                                                                                                    |
+| `LOG_LEVEL`          | no       | `info`                     | pino level                                                                                                                                                                                     |
+| `NODE_ENV`           | no       | —                          | `production` disables pretty logs and the dev origin allowance                                                                                                                                 |
 
 `DOCKER_HOST` is not read in S1.
 
@@ -109,12 +109,15 @@ Env vars only, parsed once at boot by one Zod schema (`apps/server/src/config.ts
 ## 7. Server (apps/server)
 
 ### 7.1 Bootstrap
+
 `index.ts`: load config → `migrate()` → build app (`buildApp(config, db)`, a factory so tests can create instances) → `listen({ host, port })`. Graceful shutdown on SIGINT/SIGTERM (close Fastify, close DB pool).
 
 ### 7.2 Logging
+
 Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only (devDependency). `redact` covers `req.headers.authorization`, `req.headers.cookie`, `res.headers["set-cookie"]`, and any `password` fields. Request bodies are not logged.
 
 ### 7.3 HTTP API
+
 - Everything under `/api`. Validation and serialization through `fastify-type-provider-zod` using the schemas in `packages/shared`.
 - One error handler producing `{ error: { code, message } }` for all factory routes. **Exception:** `/api/auth/*` keeps better-auth's own error format (`{ code, message }`), which its React client expects; the web and CLI map better-auth codes themselves (§7.4). Validation errors → 400 `validation_error`. Unknown or forbidden resources → 404 `not_found` (never 403 leaks). Unknown `/api/*` paths → JSON 404, never `index.html`.
 - Routes in S1:
@@ -123,6 +126,7 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
   - `/api/auth/*`: better-auth handler mounted via a Fastify catch-all route that builds a Web `Request` (URL from `PUBLIC_URL` + path, headers via better-auth's `fromNodeHeaders`, body re-serialized from the parsed JSON when present), calls `auth.handler`, and copies status, headers (including multiple `set-cookie`) and body back. Note: Fastify rejects a `Content-Type: application/json` request with an empty body, so clients (the CLI's sign-out) send `{}`.
 
 ### 7.4 Auth (better-auth)
+
 - `emailAndPassword` enabled, `minPasswordLength: 8`, email verification off, no password reset (no mail transport — tracked as a GH issue).
 - Drizzle adapter on the `packages/db` schema; `user.additionalFields.handle` (required, `input: true`, `validator: { input: handleSchema }` for format).
 - **Handle uniqueness:** better-auth swallows adapter errors during user creation into a generic `422 FAILED_TO_CREATE_USER`, so the DB unique error can't drive the UI. Instead a `hooks.before` middleware on path `/sign-up/email` looks up the handle and throws `APIError` 422 with code `HANDLE_TAKEN`. The DB unique index stays as the race backstop (a concurrent duplicate then surfaces as the generic failure).
@@ -135,6 +139,7 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
 - Sign-up is open (always on in S1). Closing sign-up and invites belong to S10 (GH issue).
 
 ### 7.5 WebSocket skeleton
+
 - `@fastify/websocket`, route `GET /api/ws`.
 - Upgrade checks, in a `preValidation` hook before the socket is accepted:
   1. **Origin:** if an `Origin` header is present it must equal `PUBLIC_URL`'s origin (or `DEV_WEB_ORIGIN` when not in production). Mismatch → 401, no socket.
@@ -145,9 +150,11 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
 - Deferred to S3 (with the first real stream): a per-user socket registry / fan-out and a heartbeat. The S1 seam is the shared Zod message union.
 
 ### 7.6 Static web
+
 In production the server serves `apps/web/dist` via `@fastify/static`. `GET` requests not under `/api` and not matching a file fall back to `index.html` (SPA). The root `build` copies `apps/web/dist` to `apps/server/dist/public` (like migrations), and the server serves from the path relative to its own bundle. If that folder is missing (e.g. web not built, or `pnpm dev` where Vite serves the UI), the server logs one warning and serves the API only.
 
 ### 7.7 Version and bundle mode
+
 Root `package.json` `version` (0.1.0) is the single source. esbuild `define` injects it as `__FACTORY_VERSION__` into the server and CLI bundles; dev (tsx) reads it from the root package.json. The server bundle also gets `__BUNDLED__ = true` via `define`; `index.ts` branches on it (bundled → migrations/web dist next to the bundle; source mode → `MIGRATIONS_DIR` exported by `@open-factory/db`) instead of inferring the mode from file names.
 
 ## 8. Web (apps/web)
@@ -164,10 +171,11 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 - **Dev:** Vite dev server proxies `/api` (including WS upgrade) to the Fastify dev server.
 
 ### 8.1 Markdown components
+
 - `<Markdown source>`: `react-markdown` + `remark-gfm` (tables, task lists, strikethrough, autolinks). No raw HTML (no `rehype-raw`), default URL sanitizing kept. External links get `target="_blank" rel="noopener noreferrer"`.
 - Styled with Tailwind's `@tailwindcss/typography` (`prose`).
 - Code blocks: Shiki, lazy-loaded, theme follows light/dark; plain `<pre>` until loaded. Fenced blocks without a language still render as a block inside `<pre>`; only inline code renders as bare `<code>`.
-- ```` ```mermaid ```` blocks: `mermaid` dynamically imported only when such a block is present, initialized with `securityLevel: "strict"` (rendered content will later include untrusted agent output). Render errors show the source in a code block with a short error note.
+- ` ```mermaid ` blocks: `mermaid` dynamically imported only when such a block is present, initialized with `securityLevel: "strict"` (rendered content will later include untrusted agent output). Render errors show the source in a code block with a short error note.
 - `<MarkdownEditor value onChange>`: a plain `<textarea>` (raw markdown) with Write / Preview tabs; Preview uses `<Markdown>`.
 - Not mounted on any S1 route. Verified by component tests only (§10).
 
@@ -175,11 +183,13 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 
 - `docker-compose.dev.yml`: one `postgres:18` service (current major, pinned; the CI service uses the same tag), port 5432, user/password/db `factory`, named volume. `.env.example`'s `DATABASE_URL` matches.
 - README quickstart:
+
   ```
   docker compose -f docker-compose.dev.yml up -d
   cp .env.example .env   # set FACTORY_SECRET_KEY
   pnpm install && pnpm build && npm start
   ```
+
   plus: prerequisites (Node 24, pnpm via `corepack enable`, Docker for Postgres); for servers set `HOST=0.0.0.0` **and** `PUBLIC_URL` to the public origin (put TLS in front); open the app at exactly `PUBLIC_URL`; the key-rotation limitation; `pnpm dev` for development; CLI usage.
 
 ## 10. CLI (apps/cli)
@@ -222,15 +232,15 @@ One job on `push` to `main` and on `pull_request`: Ubuntu, Node 24, pnpm via `pn
 
 ## 13. Error handling summary
 
-| Situation | Behaviour |
-|---|---|
-| Bad/missing env | All problems listed, exit 1 before touching the DB |
-| DB unreachable at boot | `migrate()` fails → logged, exit 1 |
-| DB down while running | `/api/status` reports `db: "error"`; auth routes return 500 JSON |
-| Validation error | 400 `{ error: { code: "validation_error", message } }` |
-| No session | 401 `unauthorized` (REST) / 401 on WS upgrade |
-| Unknown API route or resource | 404 JSON |
-| CLI: server unreachable | plain message, exit 1 (logout still clears local token) |
+| Situation                     | Behaviour                                                        |
+| ----------------------------- | ---------------------------------------------------------------- |
+| Bad/missing env               | All problems listed, exit 1 before touching the DB               |
+| DB unreachable at boot        | `migrate()` fails → logged, exit 1                               |
+| DB down while running         | `/api/status` reports `db: "error"`; auth routes return 500 JSON |
+| Validation error              | 400 `{ error: { code: "validation_error", message } }`           |
+| No session                    | 401 `unauthorized` (REST) / 401 on WS upgrade                    |
+| Unknown API route or resource | 404 JSON                                                         |
+| CLI: server unreachable       | plain message, exit 1 (logout still clears local token)          |
 
 ## 14. Follow-up issues to open (not S1 work)
 

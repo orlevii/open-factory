@@ -10,11 +10,16 @@ export const Route = createFileRoute("/_app/agents/")({ component: AgentsList })
 
 function AgentsList() {
   useAgentStatusFrames();
-  const { data: agents } = useQuery(agentsQueryOptions);
+  const { data: agents, isError } = useQuery(agentsQueryOptions);
   return (
     <>
       <PageHeader title="Agents" />
       <PageBody>
+        {isError && !agents && (
+          <p role="alert" className="text-sm text-muted-foreground">
+            Couldn't load agents.
+          </p>
+        )}
         {agents && agents.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No agents yet. Run <code className="font-mono">pnpm seed:dev-agent</code> to create the
@@ -28,7 +33,7 @@ function AgentsList() {
                 <Link
                   to="/agents/$slug"
                   params={{ slug: a.slug }}
-                  className="flex h-11 items-center gap-4 px-2 text-sm hover:bg-sidebar-accent focus-visible:outline-2"
+                  className="flex h-11 items-center gap-4 px-2 text-sm hover:bg-sidebar-accent"
                 >
                   <span className="w-28 shrink-0">
                     <StatusBadge status={a.status} />

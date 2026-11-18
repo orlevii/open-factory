@@ -11,13 +11,24 @@ export function useAgentStatusFrames() {
     () =>
       ws.listen((m) => {
         if (m.type !== "agent_status") return;
+        // A frame without lastError clears it: the server omits the field once the error is gone.
         const patch = { status: m.status, turnOpen: m.turnOpen, lastError: m.lastError };
-        qc.setQueryData<AgentSummary[]>(["agents"], (list) =>
-          list?.map((a) => (a.slug === m.agent ? { ...a, ...patch } : a)),
-        );
-        qc.setQueryData<AgentDetail>(["agent", m.agent], (d) =>
-          d ? { ...d, agent: { ...d.agent, ...patch } } : d,
-        );
+        const list = qc.getQueryData<AgentSummary[]>(["agents"]);
+        if (list?.some((a) => a.slug === m.agent)) {
+          qc.setQueryData<AgentSummary[]>(["agents"], (l) =>
+            l?.map((a) => (a.slug === m.agent ? { ...a, ...patch } : a)),
+          );
+        } else {
+          // Not cached yet (frame beat the fetch, or a new agent): refetch rather than lose it.
+          void qc.invalidateQueries({ queryKey: ["agents"] });
+        }
+        if (qc.getQueryData<AgentDetail>(["agent", m.agent])) {
+          qc.setQueryData<AgentDetail>(["agent", m.agent], (d) =>
+            d ? { ...d, agent: { ...d.agent, ...patch } } : d,
+          );
+        } else {
+          void qc.invalidateQueries({ queryKey: ["agent", m.agent] });
+        }
       }),
     [ws, qc],
   );

@@ -184,6 +184,16 @@ export class EventStore {
       .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
       .orderBy(asc(messages.createdAt), asc(messages.id));
   }
+  /** Pending messages in order, with the sender's handle (for envelopes and queue items). */
+  async pendingQueue(agentId: string) {
+    const rows = await this.db
+      .select({ m: messages, fromHandle: schema.users.handle })
+      .from(messages)
+      .innerJoin(schema.users, eq(schema.users.id, messages.fromUserId))
+      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
+      .orderBy(asc(messages.createdAt), asc(messages.id));
+    return rows.map((r) => ({ ...r.m, fromHandle: r.fromHandle }));
+  }
   async markDelivered(ids: string[], tx: Exec = this.db) {
     if (ids.length)
       await tx

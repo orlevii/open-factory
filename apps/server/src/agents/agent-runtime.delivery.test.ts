@@ -1,0 +1,181 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import type { ServerMessage } from "@open-factory/shared";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { loadConfig } from "../config.ts";
+import { createTestDb } from "../test/helpers.ts";
+import { AgentRuntime } from "./agent-runtime.ts";
+import { EventBus } from "./event-bus.ts";
+import { EventStore } from "./event-store.ts";
+import { ev, FakeDriver } from "./testing/fake-driver.ts";
+
+let t: Awaited<ReturnType<typeof createTestDb>>;
+let store: EventStore;
+let n = 0;
+beforeAll(async () => {
+  t = await createTestDb();
+  store = new EventStore(t.db);
+  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+});
+afterAll(() => t.close());
+
+const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
+let driver: FakeDriver;
+let bus: EventBus;
+let frames: ServerMessage[];
+let rt: AgentRuntime;
+let agentId: string;
+
+async function makeRuntime(
+  opts: { token?: string | null; sessionId?: string; status?: string } = {},
+) {
+  n += 1;
+  agentId = `a${n}`;
+  await t.sql`insert into agents (id, slug, display_name, session_id, status)
+              values (${agentId}, ${`dev${n}`}, 'Dev agent', ${opts.sessionId ?? null}, ${opts.status ?? "hibernated"})`;
+  const env: Record<string, string> = {
+    DATABASE_URL: t.url,
+    FACTORY_SECRET_KEY: "k".repeat(40),
+    FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-")),
+  };
+  if (opts.token !== null) env.CLAUDE_CODE_OAUTH_TOKEN = opts.token ?? "tok";
+  driver = new FakeDriver();
+  bus = new EventBus();
+  frames = [];
+  bus.subscribeAll((m) => frames.push(m));
+  const agent = await store.agentById(agentId);
+  if (!agent) throw new Error("no agent");
+  bus.subscribe(agent.slug, (m) => frames.push(m));
+  rt = new AgentRuntime({
+    agent,
+    store,
+    bus,
+    driver,
+    config: loadConfig(env),
+    log: silentLog,
+    holdTimeoutMs: 200,
+  });
+  await rt.init();
+  return rt;
+}
+const send = (body: string, urgent = false) =>
+  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+const events = async () =>
+  (await store.after(agentId, 0, 1000)).map((e) => ({
+    seq: e.seq,
+    turnId: e.turnId,
+    type: e.event.type,
+    event: e.event,
+  }));
+const types = async () => (await events()).map((e) => e.type);
+
+beforeEach(async () => {
+  await makeRuntime();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+async function startedIdle() {
+  await send("boot");
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+}
+
+test("messages queued while one is being written go out as one batch, in order", async () => {
+  await startedIdle();
+  driver.last.failWrites = true;
+  await expect(send("a")).resolves.toBeTruthy(); // write fails → stays queued, delivery_failed appended
+  driver.last.failWrites = false;
+  await send("b");
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["a", "b"]);
+  expect(await types()).toContain("delivery_failed");
+});
+
+test("compact is a barrier: written only with no open turn, and nothing passes it until its turn ends", async () => {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  await rt.compact({ focus: "keep the API", byHandle: "or" });
+  await send("after compact");
+  expect(driver.last.controls).toEqual([]); // turn open: compact waits
+  expect(rt.queueItems().map((q) => q.kind)).toEqual(["compact", "message"]);
+  driver.last.emit(ev.usage(), ev.end());
+  await rt.settled();
+  expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact", arg: "keep the API" }]);
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task"); // "after compact" not written yet
+  expect(rt.summary().status).toBe("working"); // compact in flight
+  // a self-started turn ending meanwhile does not release the barrier
+  driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
+  driver.last.emit(
+    ev.turn(),
+    { type: "compacted", trigger: "manual", preTokens: 100, postTokens: 10 },
+    ev.usage(),
+    ev.end({ command: "compact", terminalReason: undefined, numTurns: 0 }),
+  );
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("after compact");
+  expect((await events()).find((e) => e.type === "control")?.event).toEqual({
+    type: "control",
+    cmd: "compact",
+    arg: "keep the API",
+    by: "@or",
+  });
+});
+
+test("urgent while a turn is open: interrupt first, hold, then the message on the turn's result", async () => {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn(), { type: "tool_call", toolUseId: "t1", name: "Bash", input: {} });
+  await rt.settled();
+  await send("STOP", true);
+  await send("and this");
+  const w = driver.last.writes;
+  expect(w.at(-1)).toEqual({ kind: "control", cmd: "interrupt" }); // nothing written after the interrupt yet
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP", "and this"]);
+  await send("third, urgent again", true);
+  expect(driver.last.controls.filter((c) => c.cmd === "interrupt")).toHaveLength(1); // no second interrupt
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual([
+    "STOP",
+    "and this",
+    "third, urgent again",
+  ]);
+});
+
+test("the hold is released after the timeout if no result arrives", async () => {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  await send("STOP", true);
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
+  await new Promise((r) => setTimeout(r, 300)); // holdTimeoutMs is 200 in tests
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
+});
+
+test("urgent while idle is a normal send", async () => {
+  await startedIdle();
+  await send("now", true);
+  expect(driver.last.controls).toEqual([]);
+  expect(driver.last.sent.at(-1)?.[0]).toMatchObject({ body: "now", urgent: true });
+});
+
+test("after an unexpected exit nothing restarts the process until the next API call", async () => {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  await send("STOP", true);
+  driver.last.exit(1);
+  await new Promise((r) => setTimeout(r, 300)); // hold timeout fires after the exit
+  await rt.settled();
+  expect(driver.starts).toHaveLength(1);
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
+});

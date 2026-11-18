@@ -1,4 +1,4 @@
-import { checkClaudeVersion, type HarnessDriver } from "@open-factory/harness";
+import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import type { AgentSummary } from "@open-factory/shared";
 import type { Config } from "../config.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
@@ -36,8 +36,13 @@ export class AgentRuntimes {
         holdTimeoutMs: this.d.holdTimeoutMs,
         onFirstStart: (spec) => this.checkVersionOnce(spec.claudeBin, spec.env),
       });
-      rt = runtime.init().then(() => runtime);
-      this.byId.set(row.id, rt);
+      const pending = runtime.init().then(() => runtime);
+      rt = pending;
+      this.byId.set(row.id, pending);
+      // Evict a failed init (e.g. a DB blip) so a later lookup retries instead of failing forever.
+      pending.catch(() => {
+        if (this.byId.get(row.id) === pending) this.byId.delete(row.id);
+      });
     }
     return rt;
   }
@@ -52,10 +57,18 @@ export class AgentRuntimes {
     return out;
   }
 
-  /** In parallel, so the shutdown budget doesn't grow with the number of agents. */
+  /**
+   * In parallel, so the shutdown budget doesn't grow with the number of agents. allSettled throughout:
+   * one failed init or stop must not keep the other runtimes' processes running past shutdown.
+   */
   async stopAll(): Promise<void> {
-    const all = await Promise.all(this.byId.values());
-    await Promise.all(all.map((rt) => rt.stop({ graceMs: 3000, termWaitMs: 10_000 })));
+    const inits = await Promise.allSettled(this.byId.values());
+    const all = inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    const stops = await Promise.allSettled(
+      all.map((rt) => rt.stop({ graceMs: 3000, termWaitMs: 10_000 })),
+    );
+    for (const r of stops)
+      if (r.status === "rejected") this.d.log.error({ err: r.reason }, "Stopping an agent failed");
   }
 
   private checkVersionOnce(bin: string, env: Record<string, string>) {
@@ -65,7 +78,7 @@ export class AgentRuntimes {
       if (version) this.d.log.info({ version }, "Claude Code version");
       if (tooOld)
         this.d.log.warn(
-          { version, minimum: "2.1.327" },
+          { version, minimum: MIN_CLAUDE_VERSION },
           "Claude Code is older than the version S3 was verified on",
         );
     });

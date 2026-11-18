@@ -8,6 +8,11 @@ export async function authRoutes(app: FastifyInstance) {
     async handler(request, reply) {
       const url = new URL(request.url, app.config.publicUrl);
       const headers = fromNodeHeaders(request.headers);
+      // The body is re-serialized below, so the client's length no longer applies.
+      headers.delete("content-length");
+      // better-auth keys rate limits and session.ipAddress on X-Forwarded-For. Use the socket IP
+      // so a client can't pick its own (behind a proxy this is the proxy's IP; see README).
+      headers.set("x-forwarded-for", request.ip);
       const hasBody = request.body !== undefined && request.body !== null;
       const req = new Request(url, {
         method: request.method,

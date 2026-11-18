@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -84,5 +84,74 @@ describe("sign-up and /api/me", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(me.statusCode).toBe(401);
+  });
+});
+
+describe("auth bridge", () => {
+  test("client-supplied X-Forwarded-For is replaced with the socket IP", async () => {
+    const spy = vi.spyOn(t.app.auth, "handler");
+    try {
+      const res = await post(
+        "/api/auth/sign-up/email",
+        {
+          name: "Spoof",
+          handle: `spoof-${Date.now() % 100000}`,
+          email: `spoof-${Date.now()}@example.com`,
+          password: "password123",
+        },
+        { "x-forwarded-for": "6.6.6.6" },
+      );
+      expect(res.statusCode).toBe(200);
+      const forwarded = spy.mock.calls[0]?.[0] as Request;
+      expect(forwarded.headers.get("x-forwarded-for")).toBe("127.0.0.1"); // inject's remoteAddress
+      const token = String(res.headers["set-auth-token"]);
+      const session = await t.app.auth.api.getSession({
+        headers: new Headers({ authorization: `Bearer ${token}` }),
+      });
+      expect(session?.session.ipAddress).toBe("127.0.0.1");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("the client's content-length is not forwarded with the re-serialized body", async () => {
+    const spy = vi.spyOn(t.app.auth, "handler");
+    try {
+      const body = '{ "email" : "nobody@example.com" , "password" : "password123" }';
+      await t.app.inject({
+        method: "POST",
+        url: "/api/auth/sign-in/email",
+        headers: { origin: TEST_ORIGIN, "content-type": "application/json" },
+        payload: body,
+      });
+      const forwarded = spy.mock.calls[0]?.[0] as Request;
+      expect(forwarded.headers.get("content-length")).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("error shape", () => {
+  test("Fastify 4xx errors map to bad_request and keep their status", async () => {
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-in/email",
+      headers: { origin: TEST_ORIGIN, "content-type": "application/json" },
+      payload: "",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: { code: "bad_request", message: expect.any(String) } });
+  });
+
+  test("unsupported media type keeps 415 with code bad_request", async () => {
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-in/email",
+      headers: { origin: TEST_ORIGIN, "content-type": "application/x-nope" },
+      payload: "x",
+    });
+    expect(res.statusCode).toBe(415);
+    expect(res.json()).toMatchObject({ error: { code: "bad_request" } });
   });
 });

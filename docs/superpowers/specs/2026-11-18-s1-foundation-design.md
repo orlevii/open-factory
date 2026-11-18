@@ -140,15 +140,15 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
   1. **Origin:** if an `Origin` header is present it must equal `PUBLIC_URL`'s origin (or `DEV_WEB_ORIGIN` when not in production). Mismatch → 401, no socket.
   2. **No Origin header** is allowed only when the request carries `Authorization: Bearer`.
   3. **Session:** `requireUser`. No session → 401, no socket.
-- On connect: server sends `hello { userId }`. On `ping` → `pong`. Invalid message → `error` (socket stays open). Server-side heartbeat: a protocol-level ping every 30s; a socket that hasn't answered the previous ping is terminated.
+- On connect: server sends `hello { userId }`. On `ping` → `pong`. Invalid message → `error` (socket stays open). No server-side heartbeat in S1: an idle socket dropped by a proxy simply reconnects.
 - The session is checked only at upgrade in S1. An open socket survives sign-out/expiry until it disconnects; on reconnect the upgrade fails with 401. Browsers don't expose the handshake status (a rejected upgrade looks like close code 1006, same as server down), so the web client handles it as described in §8. (Revoking live sockets on sign-out is left to the spec that first streams sensitive data, S3.)
-- Seam for S3: the server keeps an in-memory registry `Map<userId, Set<socket>>` (add on connect, remove on close), exposed as a small module. No broadcast API beyond that.
+- Deferred to S3 (with the first real stream): a per-user socket registry / fan-out and a heartbeat. The S1 seam is the shared Zod message union.
 
 ### 7.6 Static web
 In production the server serves `apps/web/dist` via `@fastify/static`. `GET` requests not under `/api` and not matching a file fall back to `index.html` (SPA). The root `build` copies `apps/web/dist` to `apps/server/dist/public` (like migrations), and the server serves from the path relative to its own bundle. If that folder is missing (e.g. web not built, or `pnpm dev` where Vite serves the UI), the server logs one warning and serves the API only.
 
-### 7.7 Version
-Root `package.json` `version` (0.1.0) is the single source. esbuild `define` injects it as `__FACTORY_VERSION__` into the server and CLI bundles; dev (tsx) reads it from the root package.json.
+### 7.7 Version and bundle mode
+Root `package.json` `version` (0.1.0) is the single source. esbuild `define` injects it as `__FACTORY_VERSION__` into the server and CLI bundles; dev (tsx) reads it from the root package.json. The server bundle also gets `__BUNDLED__ = true` via `define`; `index.ts` branches on it (bundled → migrations/web dist next to the bundle; source mode → `MIGRATIONS_DIR` exported by `@open-factory/db`) instead of inferring the mode from file names.
 
 ## 8. Web (apps/web)
 
@@ -159,13 +159,14 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
   - `/` dashboard: two panels, Inbox and Agents, each empty.
   - `/inbox`, `/agents`, `/tasks`, `/templates`, `/schedules`, `/settings`: each shows a one-line plain-language empty state: "Nothing in your inbox.", "No agents yet.", "No tasks yet.", "No templates yet.", "No schedules yet.", "Nothing to configure yet." (dashboard panels reuse the Inbox and Agents lines). No "coming soon" teasers, no internals.
 - Sign-up form fields: name, handle, email, password. Client-side validation via the shared schemas; server errors mapped to fields per §7.4. After sign-up the user lands on `/` (no onboarding wizard).
-- Theme follows the system (light/dark), no toggle.
+- Theme follows the system (light/dark) via CSS `@media (prefers-color-scheme: dark)` only; no toggle, no JS theme switching. No toast library in S1.
 - **WS client:** one reconnecting client module (`lib/ws.ts`) opened by the authenticated layout, exponential backoff with jitter (cap ~30s), parses messages with the shared Zod union, exposes connection status. On any close (including one before the socket opened), it re-fetches the session query: no session → invalidate it and route to `/sign-in` (stop reconnecting); session present → keep backing off. S1 uses it only to establish the authenticated connection; later specs add handlers.
 - **Dev:** Vite dev server proxies `/api` (including WS upgrade) to the Fastify dev server.
 
 ### 8.1 Markdown components
 - `<Markdown source>`: `react-markdown` + `remark-gfm` (tables, task lists, strikethrough, autolinks). No raw HTML (no `rehype-raw`), default URL sanitizing kept. External links get `target="_blank" rel="noopener noreferrer"`.
-- Code blocks: Shiki, lazy-loaded, theme follows light/dark; plain `<pre>` until loaded.
+- Styled with Tailwind's `@tailwindcss/typography` (`prose`).
+- Code blocks: Shiki, lazy-loaded, theme follows light/dark; plain `<pre>` until loaded. Fenced blocks without a language still render as a block inside `<pre>`; only inline code renders as bare `<code>`.
 - ```` ```mermaid ```` blocks: `mermaid` dynamically imported only when such a block is present, initialized with `securityLevel: "strict"` (rendered content will later include untrusted agent output). Render errors show the source in a code block with a short error note.
 - `<MarkdownEditor value onChange>`: a plain `<textarea>` (raw markdown) with Write / Preview tabs; Preview uses `<Markdown>`.
 - Not mounted on any S1 route. Verified by component tests only (§10).

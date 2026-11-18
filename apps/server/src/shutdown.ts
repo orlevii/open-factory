@@ -11,7 +11,9 @@ export interface ShutdownOptions {
  */
 export function createShutdown(
   steps: Array<() => Promise<unknown>>,
-  { exit, log, timeoutMs = 10_000 }: ShutdownOptions,
+  // 20 s: agent processes get stdin close + 3 s + SIGTERM + up to 10 s (spec §8.1). Exiting earlier would
+  // leave Claude running on stdin EOF, and the next boot would --resume the same session concurrently.
+  { exit, log, timeoutMs = 20_000 }: ShutdownOptions,
 ) {
   let started = false;
   return async () => {

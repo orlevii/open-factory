@@ -198,6 +198,7 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 - Commands:
   - `open-factory help` / no args: plain usage list. `open-factory --version`: CLI version.
   - `open-factory login [--url <url>]`: prompts for URL (default from config or `http://localhost:3000`), email, password (hidden input via `node:readline` with muted output). Calls `POST /api/auth/sign-in/email`, reads the bearer token from the `set-auth-token` response header, verifies it with `/api/me`, saves config. Prints `Logged in as @handle`.
+    - Sign-in sends `Origin: <server origin>`. Node's fetch (undici) always adds `Sec-Fetch-Mode`, so better-auth enforces its origin check on sign-in. The login URL must therefore be the server's `PUBLIC_URL` origin (e.g. `http://127.0.0.1:3000` fails when `PUBLIC_URL` is `http://localhost:3000`).
   - `open-factory logout`: calls `POST /api/auth/sign-out` with the bearer token and body `{}` (revokes the server session), then removes the token from the config file. Succeeds (with a note) if the server is unreachable — the local token is still removed.
   - `open-factory status`: prints server URL, server version (`/api/status`), DB state, CLI version, and `Logged in as @handle` (via `/api/me`) or `Not logged in`. Not logged in → exit 0. Server unreachable → plain message, exit 1.
 - Config file: `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json` = `{ url, token }`, written with mode `0600` (dir `0700`).

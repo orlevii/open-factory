@@ -12,6 +12,7 @@ import { notFoundBody, registerErrorHandlers } from "./errors.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { meRoutes } from "./routes/me.ts";
 import { statusRoutes } from "./routes/status.ts";
+import { wsRoutes } from "./ws/route.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -57,7 +58,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(statusRoutes, { sql: deps.sql });
   await app.register(authRoutes);
   await app.register(meRoutes);
-  // Task 6 registers the WebSocket route here; Task 7 registers static serving here.
+  await app.register(wsRoutes);
+  // Task 7 registers static serving here.
 
   app.setNotFoundHandler((_request, reply) => reply.code(404).send(notFoundBody));
   return app;

@@ -2,7 +2,8 @@
 # ghcr.io/orlevii/open-factory/base — see images/base/README.md and
 # docs/superpowers/specs/2026-11-18-s2-base-image-design.md
 
-# (Task 2 adds: ARG UV_VERSION + FROM ghcr.io/astral-sh/uv stage here)
+ARG UV_VERSION=0.13.7
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 FROM ubuntu:24.04
 
@@ -77,7 +78,83 @@ visudo -cf /etc/sudoers.d/agent
 install -d -m 0755 /opt/factory/bin /run/open-factory
 EOF
 
-# (Task 2 adds layers 6–9 here: oh-my-zsh, Rust, Python, Node)
+# 6. oh-my-zsh at a pinned commit (fetch by SHA: a shallow clone can't check out an older commit)
+ARG OHMYZSH_COMMIT=6010fb6260f359e71d99ba25f05f9215809b3ed2
+RUN <<'EOF'
+set -euo pipefail
+git init -q /home/agent/.oh-my-zsh
+cd /home/agent/.oh-my-zsh
+git remote add origin https://github.com/ohmyzsh/ohmyzsh.git
+git fetch -q --depth 1 origin "$OHMYZSH_COMMIT"
+git checkout -q FETCH_HEAD
+cp templates/zshrc.zsh-template /home/agent/.zshrc
+# No self-update from inside agent containers; the image is rebuilt instead.
+sed -i "s/^# zstyle ':omz:update' mode disabled/zstyle ':omz:update' mode disabled/" /home/agent/.zshrc
+grep -q "^zstyle ':omz:update' mode disabled" /home/agent/.zshrc
+cat >> /home/agent/.zshrc <<'ZSHRC'
+
+# nvm command for interactive shells (node itself is on PATH via the image ENV)
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+ZSHRC
+chown -R agent:agent /home/agent
+EOF
+
+# 7. Rust: rustup-init verified by sha256, minimal profile + rustfmt + clippy
+ARG RUSTUP_VERSION=1.29.3
+RUN <<'EOF'
+set -euo pipefail
+case "$(uname -m)" in
+  x86_64) target=x86_64-unknown-linux-gnu ;;
+  aarch64) target=aarch64-unknown-linux-gnu ;;
+  *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+esac
+base="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${target}"
+tmp="$(mktemp -d)"
+cd "$tmp"
+# The .sha256 file reads "<hash> *./rustup-init", so the binary must be ./rustup-init in the cwd.
+curl -fsSL "$base/rustup-init" -o rustup-init
+curl -fsSL "$base/rustup-init.sha256" -o rustup-init.sha256
+sha256sum -c rustup-init.sha256
+chmod +x rustup-init
+./rustup-init -y --no-modify-path --profile minimal --default-toolchain stable
+rustup component add rustfmt clippy
+cd /
+rm -rf "$tmp" "$RUSTUP_HOME/downloads" "$RUSTUP_HOME/tmp"
+chmod -R a+rwX "$RUSTUP_HOME" "$CARGO_HOME"
+EOF
+
+# 8. Python: uv-managed 3.12 as python/python3/python3.12, poetry via uv tool
+COPY --from=uv /uv /uvx /usr/local/bin/
+RUN <<'EOF'
+set -euo pipefail
+uv python install 3.12 --default
+uv tool install poetry
+uv cache clean
+rm -rf /root/.cache/uv
+for b in python python3 python3.12 poetry; do test -x "/opt/uv/bin/$b"; done
+chmod -R a+rwX /opt/uv
+EOF
+
+# 9. Node: nvm + Node 24 (latest 24.x), /opt/nvm/current, pnpm pinned via corepack with sha512
+ARG NVM_VERSION=v0.41.0
+ARG PNPM_VERSION=12.19.0
+ARG PNPM_SHA512=87327b6619853205834e4be59ba3a231e303d9f5e435912ede3312b7539b79af890942f6513b05a4690745666888045c09b33fc420c2cd2d3bd95c01ba21dbeb
+RUN <<'EOF'
+set -euo pipefail
+git clone -q --depth 1 --branch "$NVM_VERSION" https://github.com/nvm-sh/nvm.git "$NVM_DIR"
+# nvm.sh may return non-zero when no default exists yet; check for the function instead.
+. "$NVM_DIR/nvm.sh" || true
+command -v nvm >/dev/null
+nvm install 24
+nvm alias default 24
+ln -s "$(dirname "$(dirname "$(nvm which default)")")" "$NVM_DIR/current"
+corepack enable pnpm
+corepack install -g "pnpm@${PNPM_VERSION}+sha512.${PNPM_SHA512}"
+nvm cache clear
+npm cache clean --force
+rm -rf /root/.npm /root/.cache
+chmod -R a+rwX "$NVM_DIR" "$COREPACK_HOME"
+EOF
 
 # 10. entrypoint
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/open-factory-entrypoint

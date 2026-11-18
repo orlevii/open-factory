@@ -55,3 +55,18 @@ export async function signUp(app: FastifyInstance, input: Partial<SignUpInput> =
   const me = await app.inject({ method: "GET", url: "/api/me", headers: { cookie } });
   return { cookie, token, user: me.json() as Me, input: body };
 }
+
+/** A migrated throwaway database for unit tests that don't need the app. */
+export async function createTestDb() {
+  const tdb = await createTestDatabase();
+  await migrate(tdb.url, MIGRATIONS_DIR);
+  const h = createDb(tdb.url);
+  return {
+    ...h,
+    url: tdb.url,
+    async close() {
+      await h.close();
+      await tdb.drop();
+    },
+  };
+}

@@ -10,10 +10,6 @@ Principles: talk directly, one agent one session, structure is the reporting lin
 
 Stack: a TypeScript pnpm monorepo with Fastify, Postgres (Drizzle, pg-boss), React + Vite, and a bundled CLI, with Zod schemas shared across packages.
 
-## Docs
-
-Product docs live in `docs/product/`. Start at `docs/product/index.md`, then see `vision.md`, `concepts/`, `architecture/`, `behavior/`, `decisions/` (ADRs) and `roadmap/`. Check them before changing behavior, and update them when a decision changes.
-
 ## Pull requests
 
 Follow `.github/pull_request_template.md` when creating a PR:

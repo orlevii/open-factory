@@ -161,7 +161,37 @@ EOF
 # 10. entrypoint
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/open-factory-entrypoint
 
-# (Task 3 adds layers 11–12 here: Claude Code, labels)
+# 11. Claude Code: exact pinned binary, verified against the release manifest's sha256
+ARG CLAUDE_CODE_VERSION
+RUN <<'EOF'
+set -euo pipefail
+if [[ ! "${CLAUDE_CODE_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "build-arg CLAUDE_CODE_VERSION is required (e.g. 2.1.327), got '${CLAUDE_CODE_VERSION:-}'" >&2
+  exit 1
+fi
+case "$(uname -m)" in
+  x86_64) platform=linux-x64 ;;
+  aarch64) platform=linux-arm64 ;;
+  *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+esac
+base="https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}"
+checksum="$(curl -fsSL "$base/manifest.json" | jq -r --arg p "$platform" '.platforms[$p].checksum // empty')"
+if [[ ! "$checksum" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "no valid checksum for $platform in $base/manifest.json" >&2
+  exit 1
+fi
+tmp="$(mktemp -d)"
+curl -fsSL "$base/$platform/claude" -o "$tmp/claude"
+echo "${checksum}  $tmp/claude" | sha256sum -c -
+install -m 0755 "$tmp/claude" /usr/local/bin/claude
+rm -rf "$tmp"
+EOF
+
+# 12. metadata
+LABEL org.opencontainers.image.source="https://github.com/orlevii/open-factory" \
+      org.opencontainers.image.description="Open Factory agent base image: Ubuntu 24.04, developer toolchain and Claude Code" \
+      org.opencontainers.image.licenses="MIT" \
+      io.open-factory.claude-code.version="${CLAUDE_CODE_VERSION}"
 
 USER root
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/open-factory-entrypoint"]

@@ -1,6 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
-import { buildRows, deliveryFailedIds } from "./rows";
+import { buildRows, deliveryFailedIds, interruptedTurnEnds } from "./rows";
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
@@ -172,4 +172,16 @@ test("a later turn_started makes an unpaired call no_result", () => {
     e({ type: "turn_started" }, "t2"),
   ]);
   expect(rows[0]).toMatchObject({ kind: "tool", state: "no_result" });
+});
+
+test("interruptedTurnEnds: an errored turn_end after a control interrupt in the same turn", () => {
+  seq = 0;
+  const events = [
+    e({ type: "turn_started" }),
+    e({ type: "control", cmd: "interrupt", by: "@or" }),
+    e({ type: "turn_end", isError: true, terminalReason: "max_turns", numTurns: 1 }),
+    e({ type: "turn_started" }, "t2"),
+    e({ type: "turn_end", isError: true, terminalReason: "error", numTurns: 1 }, "t2"),
+  ];
+  expect([...interruptedTurnEnds(events)]).toEqual([3]);
 });

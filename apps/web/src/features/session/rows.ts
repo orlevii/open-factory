@@ -36,6 +36,21 @@ export function deliveryFailedIds(events: SessionEvent[]): Set<string> {
   return out;
 }
 
+/** Seqs of errored `turn_end`s whose turn holds a `control{interrupt}` (UI design §4.1: "Turn interrupted"). */
+export function interruptedTurnEnds(events: SessionEvent[]): Set<number> {
+  const out = new Set<number>();
+  let interrupted = false;
+  for (const e of events) {
+    if (e.event.type === "turn_started") interrupted = false;
+    else if (e.event.type === "control" && e.event.cmd === "interrupt") interrupted = true;
+    else if (e.event.type === "turn_end") {
+      if (e.event.isError && interrupted) out.add(e.seq);
+      interrupted = false;
+    }
+  }
+  return out;
+}
+
 /** Turn ids that are over (turn_end seen), plus whether anything after a given seq ended all turns. */
 function endedTurns(events: SessionEvent[]) {
   const ended = new Set<string>();

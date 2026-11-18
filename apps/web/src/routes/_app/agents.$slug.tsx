@@ -1,12 +1,24 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { PageBody, PageHeader } from "@/components/page-header";
+import { ApiError } from "@open-factory/shared";
+import { createFileRoute, notFound } from "@tanstack/react-router";
+import { z } from "zod";
+import { agentDetailQueryOptions } from "@/features/session/api";
+import { SessionView } from "@/features/session/session-view";
 
-// Placeholder so the Agents list can link to it; Task 17 replaces this with the session view.
 export const Route = createFileRoute("/_app/agents/$slug")({
-  component: () => (
-    <>
-      <PageHeader title="Agent" />
-      <PageBody>{null}</PageBody>
-    </>
-  ),
+  validateSearch: z.object({ event: z.coerce.number().int().positive().optional() }),
+  // Only so the first load shows the route's pending mark and an unknown slug the not-found state;
+  // the view itself fetches the detail fresh for its lastSeq.
+  loader: async ({ context, params }) => {
+    try {
+      await context.queryClient.ensureQueryData(agentDetailQueryOptions(params.slug));
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "agent_not_found") throw notFound();
+      // Anything else: the view shows the error with a retry.
+    }
+  },
+  component: function SessionRoute() {
+    const { slug } = Route.useParams();
+    const { event } = Route.useSearch();
+    return <SessionView key={`${slug}:${event ?? ""}`} slug={slug} eventSeq={event} />;
+  },
 });

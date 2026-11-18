@@ -23,6 +23,7 @@ const { db, sql, close } = createDb(tdb.url);
 const config = loadConfig({
   ...process.env,
   DATABASE_URL: tdb.url,
+  FACTORY_SECRET_KEY: "s".repeat(40),
   FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-smoke-")),
   FACTORY_DEV_MODEL: "haiku",
 });

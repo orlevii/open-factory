@@ -1,0 +1,4 @@
+{
+  "onUser": [{ "emit": { "fixture": "rate-limit-event-allowed", "lines": [1, 5] } }],
+  "onCompact": [{ "emit": { "fixture": "manual-compact", "lines": [5, 11] } }]
+}

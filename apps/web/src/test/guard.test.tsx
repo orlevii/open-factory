@@ -27,4 +27,5 @@ test("signed in, the layout opens the websocket and shows the user menu", async 
   expect(await screen.findByText("@alice")).toBeInTheDocument();
   expect(screen.getByText("Alice")).toBeInTheDocument();
   expect(connectWs).toHaveBeenCalledOnce();
+  expect(screen.getAllByRole("main")).toHaveLength(1);
 });

@@ -40,14 +40,34 @@ test("on close with a session it reconnects with backoff", async () => {
   conn.close();
 });
 
-test("backoff grows and is capped at 30s", async () => {
+test("backoff grows exponentially with 0.5-1x jitter and is capped at 30s", async () => {
   const conn = connectWs({ ...base, onUnauthenticated: vi.fn(), hasSession: async () => true });
-  // Fail many times without ever opening; each retry must come within the 30s cap.
-  for (let i = 0; i < 10; i++) {
+  // Fail repeatedly without ever opening. Attempt n waits between 0.5x and 1x of min(30s, 500ms * 2^n).
+  for (let n = 0; n < 10; n++) {
+    const ceiling = Math.min(30_000, 500 * 2 ** n);
+    const before = FakeWs.instances.length;
     FakeWs.instances.at(-1)?.onclose?.();
-    await vi.advanceTimersByTimeAsync(30_001);
-    expect(FakeWs.instances.length).toBe(i + 2);
+    await vi.advanceTimersByTimeAsync(ceiling / 2 - 1);
+    expect(FakeWs.instances.length, `attempt ${n} reconnected too early`).toBe(before);
+    await vi.advanceTimersByTimeAsync(ceiling / 2 + 1);
+    expect(FakeWs.instances.length, `attempt ${n} did not reconnect in time`).toBe(before + 1);
   }
+  conn.close();
+});
+
+test("a failed session check (server error) keeps retrying and never signs out", async () => {
+  const onUnauthenticated = vi.fn();
+  const conn = connectWs({
+    ...base,
+    onUnauthenticated,
+    hasSession: async () => {
+      throw new Error("500");
+    },
+  });
+  FakeWs.instances[0]?.onclose?.();
+  await vi.advanceTimersByTimeAsync(31_000);
+  expect(onUnauthenticated).not.toHaveBeenCalled();
+  expect(FakeWs.instances.length).toBe(2);
   conn.close();
 });
 

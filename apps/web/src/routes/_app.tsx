@@ -20,6 +20,7 @@ function AppLayout() {
   const navigate = useNavigate();
   useEffect(() => {
     const conn = connectWs({
+      // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.
       hasSession: async () => {
         await qc.invalidateQueries({ queryKey: ["session"] });
         return Boolean(await qc.fetchQuery(sessionQueryOptions));
@@ -35,9 +36,10 @@ function AppLayout() {
         <header className="flex h-12 items-center px-4 md:hidden">
           <SidebarTrigger />
         </header>
-        <main className="flex-1 p-6">
+        {/* SidebarInset already renders the <main> landmark. */}
+        <div className="flex-1 p-6">
           <Outlet />
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

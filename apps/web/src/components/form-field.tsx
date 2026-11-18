@@ -31,7 +31,7 @@ export function FormField({ name, label, error, help, prefix, className, ...inpu
   );
   return (
     <div className="grid gap-1.5">
-      <Label htmlFor={id} className="text-[13px]">
+      <Label htmlFor={id} className="text-[0.8125rem]">
         {label}
       </Label>
       {prefix ? (
@@ -50,14 +50,14 @@ export function FormField({ name, label, error, help, prefix, className, ...inpu
       {error ? (
         <p
           id={errorId}
-          className="flex items-start gap-1.5 text-[13px] leading-[18px] text-destructive"
+          className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
         >
           <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
           {error}
         </p>
       ) : (
         help && (
-          <p id={helpId} className="text-[13px] leading-[18px] text-muted-foreground">
+          <p id={helpId} className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
             {help}
           </p>
         )

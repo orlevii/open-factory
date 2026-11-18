@@ -12,7 +12,9 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">
         <SidebarTrigger className="-ml-1.5" />
-        <h1 className="text-[15px] leading-5 font-semibold">{title}</h1>
+        <h1 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">
+          {title}
+        </h1>
         {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
       </header>
       {shell && <ReconnectStrip lost={shell.connectionLost} />}
@@ -25,7 +27,7 @@ function ReconnectStrip({ lost }: { lost: boolean }) {
   return (
     <div role="status" aria-live="polite" className="shrink-0">
       {lost && (
-        <div className="flex h-8 items-center gap-2 bg-muted px-4 text-[13px] text-muted-foreground md:px-6">
+        <div className="flex h-8 items-center gap-2 bg-muted px-4 text-[0.8125rem] text-muted-foreground md:px-6">
           <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />
           Connection lost. Reconnecting…
         </div>

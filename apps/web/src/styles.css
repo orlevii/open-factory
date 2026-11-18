@@ -3,13 +3,15 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/archivo";
 @plugin "@tailwindcss/typography";
 
-/* Theme follows the system only (spec §8): no .dark class, no JS switching. */
-@custom-variant dark (@media (prefers-color-scheme: dark));
+/* Theme: <html data-theme="light|dark">, resolved from the user's choice (System, Light or Dark)
+   by the inline script in index.html before first paint, and kept live by src/lib/theme.ts. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme inline {
-  --font-heading: var(--font-sans);
+  --font-heading: "Archivo Variable", "Geist Variable", sans-serif;
   --font-sans: "Geist Variable", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, monospace;
   --color-sidebar-ring: var(--sidebar-ring);
@@ -61,141 +63,201 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* "Pilot light" tokens (UI design doc §2.1). shadcn names are kept; in shadcn --accent is the
-   hover surface, so the brand color is --signal. */
+/* Sawtooth tokens (DESIGN.md). The factory floor: cool steel neutrals (hue 250-255, chroma under
+   0.01) and one safety-orange signal from the logo. shadcn names are kept; in shadcn --accent is the
+   hover surface, so the brand colour is --signal. */
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
+  --radius: 0.375rem;
 
-  /* surfaces + text (warm graphite, hue 70) */
-  --background: oklch(0.993 0.002 75);
-  --foreground: oklch(0.205 0.006 70);
-  --card: oklch(0.998 0.001 75);
-  --card-foreground: oklch(0.205 0.006 70);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.205 0.006 70);
-  --primary: oklch(0.24 0.008 70); /* ink button */
-  --primary-foreground: oklch(0.985 0.002 75);
-  --secondary: oklch(0.955 0.004 75);
-  --secondary-foreground: oklch(0.24 0.008 70);
-  --muted: oklch(0.96 0.004 75);
-  --muted-foreground: oklch(0.5 0.01 70); /* ≥5.3:1 on bg and on muted */
-  --accent: oklch(0.945 0.005 75); /* shadcn hover surface */
-  --accent-foreground: oklch(0.205 0.006 70);
-  --destructive: oklch(0.55 0.2 25); /* ≥4.9:1 as text on bg */
-  --border: oklch(0.905 0.005 75); /* dividers, card edges */
-  --input: oklch(0.68 0.008 70); /* field boundary, ~3:1 (WCAG 1.4.11) */
-  --ring: oklch(0.62 0.19 42); /* = signal */
+  /* motion (DESIGN.md "Motion"): strong custom curves; the CSS built-ins are too weak */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* anything entering, press feedback */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1); /* movement on screen (sidebar) */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* the mobile sheet sliding in */
 
-  /* brand signal (vermilion) */
-  --signal: oklch(0.62 0.19 42); /* rings, dots, markers: ≥3:1, not for body text */
-  --signal-text: oklch(0.53 0.18 40); /* when signal must be text: ≥5:1 */
-  --signal-foreground: oklch(0.99 0 0);
+  /* logo colours: exact values, for the logo only (never a UI surface or text colour) */
+  --brand-orange: #ff5a1f;
+  --brand-ink: #16140f;
+  --brand-paper: #f4f1ea;
 
-  /* semantic indicators (dots/icons; pair with text) */
-  --success: oklch(0.55 0.13 150);
-  --warning: oklch(0.66 0.14 75);
-  --info: oklch(0.56 0.13 250);
+  /* surfaces + text: cool steel */
+  --background: oklch(0.965 0.003 250); /* #F2F4F5 */
+  --foreground: oklch(0.2 0.008 255); /* #14161A, 16.4:1 */
+  --card: oklch(0.985 0.002 250); /* a plate on the floor */
+  --card-foreground: oklch(0.2 0.008 255);
+  --popover: oklch(0.995 0.001 250);
+  --popover-foreground: oklch(0.2 0.008 255);
+  --primary: oklch(0.2 0.008 255); /* graphite button */
+  --primary-foreground: oklch(0.965 0.003 250);
+  --secondary: oklch(0.93 0.005 250);
+  --secondary-foreground: oklch(0.2 0.008 255);
+  --muted: oklch(0.94 0.004 250);
+  --muted-foreground: oklch(0.5 0.01 255); /* ≥5:1 on ground, muted and card */
+  --accent: oklch(0.93 0.005 250); /* shadcn hover surface */
+  --accent-foreground: oklch(0.2 0.008 255);
+  --destructive: oklch(0.52 0.2 20); /* crimson, kept away from the signal hue; 5.6:1 */
+  --border: oklch(0.89 0.005 250);
+  --input: oklch(0.62 0.01 255); /* field boundary, ≥3.2:1 (WCAG 1.4.11) */
+  --ring: oklch(0.6 0.2 37);
+
+  /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
+  --signal: oklch(
+    0.6 0.2 37
+  ); /* #DD4202: rings, markers, the working tooth. ≥3.2:1 on every surface */
+  --signal-text: oklch(0.52 0.17 38); /* when signal must be text: ≥5:1 */
+  --signal-foreground: oklch(0.995 0.001 250);
+
+  /* semantic indicators (dots/icons; always paired with text) */
+  --success: oklch(0.54 0.13 150);
+  --warning: oklch(
+    0.6 0.125 88
+  ); /* ochre, 50° clear of the signal so rate-limited never reads as working */
+  --info: oklch(0.54 0.13 250);
 
   /* code + diagrams */
-  --code-bg: oklch(0.97 0.003 75);
-  --code-border: oklch(0.9 0.005 75);
-  --diagram-bg: oklch(0.995 0.001 75); /* mermaid always renders on paper */
+  --code-bg: oklch(0.985 0.002 250);
+  --code-border: oklch(0.89 0.005 250);
+  --diagram-bg: oklch(0.995 0.001 250); /* mermaid always renders on a light plate */
 
-  /* agent status: RESERVED for S3/S5, not rendered in S1 */
+  /* the unlit roofline under the loading mark */
+  --mark-track: color-mix(in oklch, var(--foreground) 12%, transparent);
+
+  /* agent status */
   --status-working: var(--signal);
   --status-idle: var(--success);
   --status-queued: var(--info);
-  --status-hibernated: oklch(0.65 0.008 70);
+  --status-hibernated: oklch(0.62 0.01 255);
   --status-rate-limited: var(--warning);
   --status-errored: var(--destructive);
-  --status-terminated: oklch(0.8 0.005 70);
+  --status-terminated: oklch(0.8 0.005 250);
 
-  /* charts: RESERVED for S10 */
-  --chart-1: oklch(0.62 0.19 42);
-  --chart-2: oklch(0.45 0.01 70);
-  --chart-3: oklch(0.56 0.13 250);
-  --chart-4: oklch(0.66 0.14 75);
-  --chart-5: oklch(0.75 0.006 70);
+  /* charts */
+  --chart-1: oklch(0.6 0.2 37);
+  --chart-2: oklch(0.42 0.01 255);
+  --chart-3: oklch(0.54 0.13 250);
+  --chart-4: oklch(0.6 0.125 88);
+  --chart-5: oklch(0.75 0.006 250);
 
-  /* sidebar: the second neutral layer */
-  --sidebar: oklch(0.972 0.004 75);
-  --sidebar-foreground: oklch(0.32 0.008 70);
-  --sidebar-primary: oklch(0.24 0.008 70);
-  --sidebar-primary-foreground: oklch(0.985 0.002 75);
-  --sidebar-accent: oklch(0.932 0.006 75); /* hover + active row */
-  --sidebar-accent-foreground: oklch(0.205 0.006 70);
-  --sidebar-border: oklch(0.91 0.005 75);
-  --sidebar-ring: oklch(0.62 0.19 42);
+  /* sidebar: one step deeper than the ground */
+  --sidebar: oklch(0.94 0.004 250);
+  --sidebar-foreground: oklch(0.3 0.01 255);
+  --sidebar-primary: oklch(0.2 0.008 255);
+  --sidebar-primary-foreground: oklch(0.965 0.003 250);
+  --sidebar-accent: oklch(0.905 0.007 250); /* hover + active row */
+  --sidebar-accent-foreground: oklch(0.2 0.008 255);
+  --sidebar-border: oklch(0.885 0.005 250);
+  --sidebar-ring: oklch(0.6 0.2 37);
 }
 
-@media (prefers-color-scheme: dark) {
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: oklch(0.205 0.006 255); /* graphite #15171A */
+  --foreground: oklch(0.94 0.004 250); /* 15:1 */
+  --card: oklch(0.228 0.007 255);
+  --card-foreground: oklch(0.94 0.004 250);
+  --popover: oklch(0.25 0.008 255);
+  --popover-foreground: oklch(0.94 0.004 250);
+  --primary: oklch(0.94 0.004 250); /* light steel button */
+  --primary-foreground: oklch(0.205 0.006 255);
+  --secondary: oklch(0.285 0.008 255);
+  --secondary-foreground: oklch(0.94 0.004 250);
+  --muted: oklch(0.26 0.008 255);
+  --muted-foreground: oklch(0.72 0.008 250); /* ≥6.2:1 */
+  --accent: oklch(0.285 0.008 255);
+  --accent-foreground: oklch(0.94 0.004 250);
+  --destructive: oklch(0.7 0.16 15);
+  --border: oklch(0.305 0.008 255);
+  --input: oklch(0.53 0.008 255); /* ≥3.2:1 on ground and card */
+  --ring: oklch(0.682 0.211 37.7);
+
+  --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
+  --signal-text: oklch(0.72 0.18 40);
+  --signal-foreground: oklch(0.205 0.006 255);
+
+  --success: oklch(0.7 0.14 150);
+  --warning: oklch(0.82 0.15 92);
+  --info: oklch(0.7 0.12 250);
+
+  --code-bg: oklch(0.228 0.007 255);
+  --code-border: oklch(0.305 0.008 255);
+  --diagram-bg: oklch(0.94 0.004 250); /* a light plate inside the dark UI */
+
+  --mark-track: color-mix(in oklch, var(--foreground) 14%, transparent);
+
+  --status-hibernated: oklch(0.55 0.008 255);
+  --status-terminated: oklch(0.4 0.008 255);
+
+  --chart-1: oklch(0.682 0.211 37.7);
+  --chart-2: oklch(0.75 0.006 250);
+  --chart-3: oklch(0.7 0.12 250);
+  --chart-4: oklch(0.82 0.15 92);
+  --chart-5: oklch(0.45 0.008 255);
+
+  --sidebar: oklch(0.17 0.006 255); /* recessed rail, darker than the ground */
+  --sidebar-foreground: oklch(0.82 0.005 250);
+  --sidebar-primary: oklch(0.94 0.004 250);
+  --sidebar-primary-foreground: oklch(0.205 0.006 255);
+  --sidebar-accent: oklch(0.25 0.008 255);
+  --sidebar-accent-foreground: oklch(0.96 0.003 250);
+  --sidebar-border: oklch(0.27 0.008 255);
+  --sidebar-ring: oklch(0.682 0.211 37.7);
+}
+
+/* Increased contrast (prefers-contrast: more): rules and field edges harden, secondary text moves
+   toward ink, and the focus ring thickens. Surfaces and the signal's meaning stay as they are. */
+@media (prefers-contrast: more) {
   :root {
-    color-scheme: dark;
-
-    --background: oklch(0.175 0.005 70);
-    --foreground: oklch(0.94 0.004 75);
-    --card: oklch(0.198 0.005 70);
-    --card-foreground: oklch(0.94 0.004 75);
-    --popover: oklch(0.22 0.006 70);
-    --popover-foreground: oklch(0.94 0.004 75);
-    --primary: oklch(0.94 0.004 75);
-    --primary-foreground: oklch(0.2 0.006 70);
-    --secondary: oklch(0.26 0.006 70);
-    --secondary-foreground: oklch(0.94 0.004 75);
-    --muted: oklch(0.235 0.006 70);
-    --muted-foreground: oklch(0.7 0.008 70); /* ~7:1 on bg */
-    --accent: oklch(0.265 0.007 70);
-    --accent-foreground: oklch(0.94 0.004 75);
-    --destructive: oklch(0.68 0.19 25);
-    --border: oklch(0.285 0.006 70);
-    --input: oklch(0.5 0.008 70); /* ~3:1 on bg */
-    --ring: oklch(0.7 0.17 45);
-
-    --signal: oklch(0.7 0.17 45);
-    --signal-text: oklch(0.75 0.15 48);
-    --signal-foreground: oklch(0.18 0.01 45);
-
-    --success: oklch(0.7 0.14 150);
-    --warning: oklch(0.78 0.14 80);
-    --info: oklch(0.7 0.12 250);
-
-    --code-bg: oklch(0.205 0.005 70);
-    --code-border: oklch(0.29 0.006 70);
-    --diagram-bg: oklch(0.96 0.003 75); /* a light paper card inside dark UI (design §7.4) */
-
-    --status-hibernated: oklch(0.55 0.008 70);
-    --status-terminated: oklch(0.4 0.006 70);
-
-    --chart-1: oklch(0.7 0.17 45);
-    --chart-2: oklch(0.75 0.008 70);
-    --chart-3: oklch(0.7 0.12 250);
-    --chart-4: oklch(0.78 0.14 80);
-    --chart-5: oklch(0.45 0.006 70);
-
-    --sidebar: oklch(0.155 0.005 70); /* recessed rail, darker than content */
-    --sidebar-foreground: oklch(0.82 0.005 75);
-    --sidebar-primary: oklch(0.94 0.004 75);
-    --sidebar-primary-foreground: oklch(0.2 0.006 70);
-    --sidebar-accent: oklch(0.235 0.006 70);
-    --sidebar-accent-foreground: oklch(0.96 0.003 75);
-    --sidebar-border: oklch(0.255 0.006 70);
-    --sidebar-ring: oklch(0.7 0.17 45);
+    --border: oklch(0.62 0.01 255);
+    --input: oklch(0.42 0.01 255);
+    --muted-foreground: oklch(0.36 0.01 255);
+    --code-border: oklch(0.62 0.01 255);
+    --sidebar-border: oklch(0.62 0.01 255);
+    --sidebar-foreground: oklch(0.2 0.008 255);
+    --signal: oklch(0.55 0.2 37);
+    --ring: oklch(0.55 0.2 37);
+  }
+  :focus-visible {
+    outline-width: 3px;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-theme="dark"] {
+    --border: oklch(0.55 0.008 255);
+    --input: oklch(0.72 0.008 255);
+    --muted-foreground: oklch(0.86 0.005 250);
+    --code-border: oklch(0.55 0.008 255);
+    --sidebar-border: oklch(0.55 0.008 255);
+    --sidebar-foreground: oklch(0.96 0.003 250);
+    --signal: oklch(0.682 0.211 37.7);
+    --ring: oklch(0.682 0.211 37.7);
   }
 }
 
-/* Loading screen: the pilot light breathes (design §5.1). Reduced motion stops it (base layer). */
-@keyframes pilot {
-  0%,
+/* The 30° pitch, used in exactly three places (DESIGN.md "The pitch"): the logo, the active-nav
+   tooth, and the loading mark. One roof bay: a vertical wall on the right, a 30° roof rising to it
+   (rise = run × tan 30° ≈ 0.577). Four points, so it stays crisp at 6px. */
+.of-tooth {
+  width: 6px;
+  height: 12px;
+  background: var(--signal);
+  clip-path: polygon(0 3.46px, 100% 0, 100% 100%, 0 100%);
+}
+
+/* Loading: the roofline lights up left to right, the way the teeth rise, then rests and repeats.
+   The resting state is lit, so reduced motion (base layer) leaves the mark lit and still. */
+@keyframes of-ignite {
+  0% {
+    clip-path: inset(0 100% 0 0);
+  }
+  65%,
   100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
+    clip-path: inset(0 0 0 0);
   }
 }
-.is-loading .pilot {
-  animation: pilot 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+.of-ignite {
+  clip-path: inset(0 0 0 0);
+  animation: of-ignite 1.2s var(--ease-out) infinite;
 }
 
 /* Markdown prose mapped to our tokens. The tokens switch with the media query, so no prose-invert. */
@@ -216,12 +278,13 @@
   --tw-prose-pre-bg: var(--code-bg);
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border);
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 0.875rem; /* rem, never px: type follows the reader's browser font-size setting */
+  line-height: 1.375rem;
 }
 .prose-of :where(h1, h2, h3, h4) {
+  font-family: var(--font-heading);
   letter-spacing: -0.01em;
-  font-weight: 600;
+  font-weight: 650;
 }
 .prose-of :where(h1) {
   font-size: 1.25rem;
@@ -247,7 +310,7 @@
   font-size: 0.8125rem;
   font-weight: 400;
   padding: 0.1em 0.35em;
-  border-radius: calc(var(--radius) * 0.6);
+  border-radius: var(--radius-sm);
   background: var(--code-bg);
   border: 1px solid var(--code-border);
 }
@@ -315,18 +378,16 @@
   height: auto;
 }
 
-/* Shiki dual-theme output: spans switch to the dark token colors with the system theme. The block
+/* Shiki dual-theme output: spans switch to the dark token colors with the dark theme. The block
    background comes from .prose-of pre (--code-bg), not from Shiki. */
-@media (prefers-color-scheme: dark) {
-  .shiki,
-  .shiki span {
-    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
-    color: var(--shiki-dark) !important;
-    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
-    font-style: var(--shiki-dark-font-style) !important;
-    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
-    font-weight: var(--shiki-dark-font-weight) !important;
-  }
+[data-theme="dark"] .shiki,
+[data-theme="dark"] .shiki span {
+  /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+  color: var(--shiki-dark) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+  font-style: var(--shiki-dark-font-style) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+  font-weight: var(--shiki-dark-font-weight) !important;
 }
 
 @layer base {
@@ -366,16 +427,42 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+  /* Keyboard-initiated actions never animate: set for one frame by the shortcut handler. */
+  :root[data-instant] * {
+    /* biome-ignore lint/complexity/noImportantStyles: must beat every component transition. */
+    transition-duration: 0s !important;
+  }
+  /* Reduced motion removes movement and keeps fades (fewer, gentler animations, not none):
+     enter/exit keep their opacity but lose scale, slide and rotate; layout and press movement stop;
+     the loading mark rests lit. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
-      /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component. */
-      animation-duration: 1ms !important;
-      /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component. */
-      animation-iteration-count: 1 !important;
-      /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component. */
-      transition-duration: 1ms !important;
+      /* biome-ignore-start lint/complexity/noImportantStyles: reduced motion must win over every component. */
+      --tw-enter-scale: 1 !important;
+      --tw-exit-scale: 1 !important;
+      --tw-enter-translate-x: 0 !important;
+      --tw-enter-translate-y: 0 !important;
+      --tw-exit-translate-x: 0 !important;
+      --tw-exit-translate-y: 0 !important;
+      --tw-enter-rotate: 0 !important;
+      --tw-exit-rotate: 0 !important;
+      scroll-behavior: auto !important;
+      /* biome-ignore-end lint/complexity/noImportantStyles: reduced motion must win over every component. */
+    }
+    [data-slot="sidebar-gap"],
+    [data-slot="sidebar-container"],
+    [data-slot="sidebar-rail"] {
+      /* biome-ignore lint/complexity/noImportantStyles: layout movement off under reduced motion. */
+      transition: none !important;
+    }
+    [data-slot="button"]:active {
+      /* biome-ignore lint/complexity/noImportantStyles: press movement off under reduced motion. */
+      scale: none !important;
+    }
+    .of-ignite {
+      animation: none;
     }
   }
 }

@@ -8,13 +8,18 @@ import {
   LayoutTemplate,
   ListTodo,
   LogOut,
+  Monitor,
+  Moon,
   Settings,
+  Sun,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -33,7 +38,14 @@ import {
 import { Mark, Wordmark } from "@/components/wordmark";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
+import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+
+const themes = [
+  { value: "system", label: "System", icon: Monitor },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+] as const satisfies readonly { value: ThemePreference; label: string; icon: unknown }[];
 
 const nav = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
@@ -55,6 +67,7 @@ export function AppSidebar() {
   // The _app guard has already loaded this query; it is null only for a moment during sign-out.
   const { data: session } = useQuery(sessionQueryOptions);
   const user = session?.user;
+  const theme = useThemePreference();
 
   async function signOut() {
     await authClient.signOut();
@@ -76,8 +89,8 @@ export function AppSidebar() {
           aria-label="Open Factory"
           className="flex items-center rounded-md group-data-[collapsible=icon]:justify-center"
         >
-          <Wordmark className="group-data-[collapsible=icon]:hidden" />
-          <Mark className="hidden size-[18px] group-data-[collapsible=icon]:block" />
+          <Wordmark className="h-5 group-data-[collapsible=icon]:hidden" />
+          <Mark className="hidden size-5 group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -96,8 +109,6 @@ export function AppSidebar() {
                         className={cn(
                           "relative gap-2.5 transition-colors duration-150",
                           isMobile ? "h-9" : "h-8",
-                          active &&
-                            "before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-signal",
                         )}
                       >
                         <Link
@@ -105,6 +116,13 @@ export function AppSidebar() {
                           onClick={closeMobile}
                           aria-current={active ? "page" : undefined}
                         >
+                          {/* The active marker is one roof tooth at the 30° pitch (DESIGN.md). */}
+                          {active && (
+                            <span
+                              aria-hidden="true"
+                              className="of-tooth absolute top-1/2 left-0 -translate-y-1/2 group-data-[collapsible=icon]:-left-1"
+                            />
+                          )}
                           <item.icon aria-hidden="true" />
                           <span>{item.label}</span>
                         </Link>
@@ -126,7 +144,7 @@ export function AppSidebar() {
                   {/* Icon mode: the handle's first letter is all that fits. */}
                   <span
                     aria-hidden="true"
-                    className="hidden size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[13px] text-muted-foreground uppercase group-data-[collapsible=icon]:flex"
+                    className="hidden size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[0.8125rem] text-muted-foreground uppercase group-data-[collapsible=icon]:flex"
                   >
                     {user?.handle?.[0]}
                   </span>
@@ -149,6 +167,21 @@ export function AppSidebar() {
                     @{user?.handle}
                   </span>
                 </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  Theme
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(value) => setPreference(value as ThemePreference)}
+                >
+                  {themes.map((t) => (
+                    <DropdownMenuRadioItem key={t.value} value={t.value}>
+                      <t.icon aria-hidden="true" />
+                      {t.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void signOut()}>
                   <LogOut aria-hidden="true" />

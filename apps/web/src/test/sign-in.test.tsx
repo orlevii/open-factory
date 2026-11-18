@@ -25,7 +25,7 @@ async function signIn(email: string, password: string) {
 test("the page shows the wordmark, the title and a link to sign up", async () => {
   renderApp("/sign-in", null);
   expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
-  expect(screen.getByText("Open Factory")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Open Factory" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/sign-up");
   expect(screen.getByLabelText("Email")).toHaveFocus();
 });

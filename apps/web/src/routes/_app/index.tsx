@@ -38,7 +38,7 @@ function Panel(props: {
   return (
     <section aria-labelledby={headingId} className="rounded-lg border bg-card">
       <div className="flex h-10 items-center justify-between border-b px-4">
-        <h2 id={headingId} className="text-[13px] font-medium">
+        <h2 id={headingId} className="text-[0.8125rem] font-medium">
           {props.title}
         </h2>
         <Button variant="ghost" size="icon-sm" className="-mr-2" asChild>

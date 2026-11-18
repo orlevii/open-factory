@@ -59,9 +59,10 @@ const DROPPED_SYSTEM = new Set([
   "task_updated",
   "task_progress",
   "informational",
-  "hook_started",
-  "hook_response",
 ]);
+/** Spec §6.2 drops every `hook_*` subtype, not just the ones seen so far. */
+const isDroppedSystem = (subtype: unknown) =>
+  typeof subtype === "string" && (DROPPED_SYSTEM.has(subtype) || subtype.startsWith("hook_"));
 
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -205,7 +206,7 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
         },
       ];
     default:
-      if (DROPPED_SYSTEM.has(e.subtype)) return [];
+      if (isDroppedSystem(e.subtype)) return [];
       return unmapped(`system/${e.subtype}`, s);
   }
 }

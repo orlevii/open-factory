@@ -284,3 +284,330 @@ test("unknown types are reported once and yield nothing", () => {
   expect(mapLine({ type: "system", subtype: "brand_new" }, s)).toEqual([]);
   expect(seen).toEqual(["brand_new", "system/brand_new"]);
 });
+
+// Spec §6.2: every dropped kind yields nothing (and is not reported as unmapped).
+// Minimal lines, shaped after the fixtures.
+const SID = { session_id: "s-1", uuid: "u-1" };
+const dropped: [string, unknown][] = [
+  [
+    "system/thinking_tokens",
+    {
+      type: "system",
+      subtype: "thinking_tokens",
+      estimated_tokens: 50,
+      estimated_tokens_delta: 50,
+      ...SID,
+    },
+  ],
+  [
+    "system/commands_changed",
+    {
+      type: "system",
+      subtype: "commands_changed",
+      commands: [{ name: "x", description: "y", argumentHint: "" }],
+      ...SID,
+    },
+  ],
+  [
+    "system/task_updated",
+    {
+      type: "system",
+      subtype: "task_updated",
+      task_id: "t1",
+      run_id: "r1",
+      patch: { status: "completed", end_time: 1 },
+      ...SID,
+    },
+  ],
+  [
+    "system/task_progress",
+    {
+      type: "system",
+      subtype: "task_progress",
+      task_id: "t1",
+      run_id: "r1",
+      tool_use_id: "toolu_1",
+      description: "Running",
+      usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+      last_tool_name: "Bash",
+      ...SID,
+    },
+  ],
+  [
+    "system/informational",
+    {
+      type: "system",
+      subtype: "informational",
+      content: "safeguards notice",
+      level: "notice",
+      ...SID,
+    },
+  ],
+  [
+    "system/hook_started",
+    { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "SessionStart", ...SID },
+  ],
+  [
+    "system/hook_response",
+    {
+      type: "system",
+      subtype: "hook_response",
+      hook_id: "h1",
+      hook_name: "SessionStart",
+      output: "",
+      exit_code: 0,
+      ...SID,
+    },
+  ],
+  [
+    "system/hook_progress",
+    { type: "system", subtype: "hook_progress", hook_id: "h1", hook_name: "SessionStart", ...SID },
+  ],
+  [
+    "system/status compacting",
+    { type: "system", subtype: "status", status: "compacting", compact_output_chars: 0, ...SID },
+  ],
+  [
+    "system/status success",
+    { type: "system", subtype: "status", status: null, compact_result: "success", ...SID },
+  ],
+  [
+    "control_response",
+    {
+      type: "control_response",
+      response: { subtype: "success", request_id: "r", response: { still_queued: [] } },
+    },
+  ],
+  [
+    "command_lifecycle",
+    {
+      type: "command_lifecycle",
+      command_uuid: "c1",
+      state: "started",
+      wakeup_source: "schedule_wakeup",
+      ...SID,
+    },
+  ],
+  [
+    "command_lifecycle completed",
+    { type: "command_lifecycle", command_uuid: "c1", state: "completed", ...SID },
+  ],
+  [
+    "user isReplay",
+    {
+      type: "user",
+      message: { role: "user", content: "<local-command-stdout>Compacted </local-command-stdout>" },
+      parent_tool_use_id: null,
+      isReplay: true,
+      ...SID,
+    },
+  ],
+  [
+    "user isReplay tool_result",
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "x" }],
+      },
+      isReplay: true,
+      ...SID,
+    },
+  ],
+  [
+    "user text (not a summary)",
+    {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+      },
+      parent_tool_use_id: null,
+      ...SID,
+    },
+  ],
+  [
+    "user string content",
+    { type: "user", message: { role: "user", content: "plain text" }, ...SID },
+  ],
+  [
+    "synthetic assistant with local_command_source",
+    {
+      type: "assistant",
+      message: {
+        model: "<synthetic>",
+        role: "assistant",
+        content: [{ type: "text", text: "Not enough messages to compact." }],
+        stop_reason: "end_turn",
+      },
+      parent_tool_use_id: null,
+      local_command_source:
+        "<local-command-stdout>Not enough messages to compact.</local-command-stdout>",
+      local_command_run: { command: "compact", args: "" },
+      ...SID,
+    },
+  ],
+  [
+    "assistant thinking block",
+    {
+      type: "assistant",
+      message: {
+        model: "claude-haiku-5-5",
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "", signature: "sig" }],
+        stop_reason: null,
+      },
+      parent_tool_use_id: null,
+      ...SID,
+    },
+  ],
+  [
+    "rate_limit_event allowed",
+    {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed", resetsAt: 1, rateLimitType: "five_hour" },
+      ...SID,
+    },
+  ],
+];
+
+describe("spec §6.2 drops", () => {
+  test.each(dropped)("%s yields nothing", (_name, line) => {
+    const seen: string[] = [];
+    // Mid-turn state (init seen), the realistic context for every dropped line.
+    const s = createMapperState({ resumed: false, onUnmapped: (k) => seen.push(k) });
+    mapLine(
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "s-1",
+        model: "m",
+        cwd: "/w",
+        claude_code_version: "2.1.327",
+      },
+      s,
+    );
+    expect(mapLine(line, s)).toEqual([]);
+    expect(seen).toEqual([]);
+  });
+});
+
+test("usage falls back to cumulative modelUsage/total_cost_usd deltas without model_usage_since_last_result", () => {
+  const s = createMapperState({ resumed: false });
+  const init = {
+    type: "system",
+    subtype: "init",
+    session_id: "s-1",
+    model: "m-a",
+    cwd: "/w",
+    claude_code_version: "2.1.327",
+  };
+  const result = (modelUsage: Record<string, object>, total: number) => ({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    terminal_reason: "completed",
+    duration_ms: 100,
+    num_turns: 1,
+    total_cost_usd: total,
+    modelUsage,
+  });
+  mapLine(init, s);
+  const t1 = ofType(
+    mapLine(
+      result(
+        {
+          "m-a": {
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadInputTokens: 100,
+            cacheCreationInputTokens: 50,
+            costUSD: 0.01,
+          },
+        },
+        0.01,
+      ),
+      s,
+    ),
+    "usage",
+  )[0];
+  expect(t1).toMatchObject({
+    model: "m-a",
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheReadTokens: 100,
+    cacheWriteTokens: 50,
+    durationMs: 100,
+    numTurns: 1,
+  });
+  expect(t1?.costUsd).toBeCloseTo(0.01, 10);
+
+  mapLine(init, s);
+  const t2 = ofType(
+    mapLine(
+      result(
+        {
+          "m-a": {
+            inputTokens: 25,
+            outputTokens: 12,
+            cacheReadInputTokens: 300,
+            cacheCreationInputTokens: 50,
+            costUSD: 0.03,
+          },
+          "m-b": {
+            inputTokens: 4,
+            outputTokens: 2,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            costUSD: 0.005,
+          },
+        },
+        0.035,
+      ),
+      s,
+    ),
+    "usage",
+  )[0];
+  // Deltas: m-a +15/+7/+200/+0 at $0.02, m-b (new) +4/+2/0/0 at $0.005; model = largest-cost delta.
+  expect(t2).toMatchObject({
+    model: "m-a",
+    inputTokens: 19,
+    outputTokens: 9,
+    cacheReadTokens: 200,
+    cacheWriteTokens: 0,
+  });
+  expect(t2?.costUsd).toBeCloseTo(0.025, 10);
+});
+
+test("system/model_refusal_fallback maps to a quiet model_fallback, not an error", () => {
+  const s = createMapperState({ resumed: false });
+  mapLine(
+    {
+      type: "system",
+      subtype: "init",
+      session_id: "s-1",
+      model: "m",
+      cwd: "/w",
+      claude_code_version: "2.1.327",
+    },
+    s,
+  );
+  expect(
+    mapLine(
+      {
+        type: "system",
+        subtype: "model_refusal_fallback",
+        message: "Switched to a fallback model",
+        fallback_model: "m-2",
+        ...SID,
+      },
+      s,
+    ),
+  ).toEqual([{ type: "model_fallback", message: "Switched to a fallback model" }]);
+  expect(
+    mapLine(
+      { type: "system", subtype: "model_refusal_fallback", fallback_model: "m-2", ...SID },
+      s,
+    ),
+  ).toEqual([{ type: "model_fallback", message: "m-2" }]);
+});

@@ -1,0 +1,20 @@
+[
+  { "send": "Remember the word HERON. Reply with just OK." },
+  { "waitFor": { "type": "result" }, "timeout": 60000 },
+  { "sleep": 1000 },
+  { "mark": true },
+  { "send": "/compact" },
+  { "waitFor": { "type": "system", "subtype": "compact_boundary" }, "since": "mark", "timeout": 180000 },
+  { "sleep": 8000 },
+  { "mark": true },
+  { "send": "/compact keep only the remembered word" },
+  { "waitFor": { "type": "system", "subtype": "compact_boundary" }, "since": "mark", "timeout": 180000 },
+  { "sleep": 8000 },
+  { "control": { "subtype": "interrupt" } },
+  { "sleep": 3000 },
+  { "mark": true },
+  { "send": "What word did I ask you to remember? Reply with one word." },
+  { "waitFor": { "type": "result" }, "since": "mark", "timeout": 60000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

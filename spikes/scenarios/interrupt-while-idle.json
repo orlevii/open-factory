@@ -1,0 +1,12 @@
+[
+  { "send": "Remember the word HERON. Reply with just OK." },
+  { "waitFor": { "type": "result" }, "timeout": 60000 },
+  { "sleep": 2000 },
+  { "control": { "subtype": "interrupt" } },
+  { "sleep": 3000 },
+  { "mark": true },
+  { "send": "What word did I ask you to remember? Reply with one word." },
+  { "waitFor": { "type": "result" }, "since": "mark", "timeout": 60000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

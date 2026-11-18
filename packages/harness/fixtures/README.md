@@ -49,5 +49,14 @@ during the S0 spikes, for the S3 harness driver tests.
 | `docker-exec-resume-orphans` | `--resume` via a new `docker exec` | Same orphan notifications as the local runtime |
 | `docker-stop-sigterm` | `docker run -i … claude`, then `docker stop` | `tini` forwards SIGTERM; tasks stopped, exit 143 |
 
+### Added in S3 design (Claude Code 2.1.327, haiku, host login)
+
+| File | How it was produced | Shows |
+|---|---|---|
+| `manual-compact` | One turn, then `/compact` as a user message, then `/compact keep only the remembered word` | A manual compact **is a turn**: `status{compacting}`, `status{compact_result:"success"}`, `system/init`, `compact_boundary{trigger:"manual", pre_tokens, post_tokens}`, the synthetic summary user message, a replayed `<local-command-stdout>Compacted </local-command-stdout>` user line (`isReplay:true`), then `result{num_turns:0, is_error:false}` with no `origin`. The second compact fails: `status{compact_result:"failed", compact_error:"Not enough messages to compact."}`, `system/init`, a synthetic assistant message (`model:"<synthetic>"`, `local_command_source`) with that text, `result{num_turns:0, is_error:false}`. (The scenario then waited for a second `compact_boundary` that never came; the timeline shows the step timeout and the stdin close.) |
+| `interrupt-while-idle` | One turn, `control_request{interrupt}` 2 s after its `result`, then a new message | A stray interrupt on an idle process gets `control_response{success, still_queued:[]}` and nothing else; the next message runs normally and the session keeps its memory |
+
+These two were run with the host's Claude login (not an empty config dir), so host hook events were removed and the host's plugins, skills, MCP servers, commands and `mcp__*` tools were emptied from `system/init` before committing (on top of `scrub.mjs`). The steps are in `spikes/scenarios/manual-compact.json` and `interrupt-while-idle.json`.
+
 The compaction scenario's steps embed a large `.d.ts` file and are not committed; the timeline shows
 what was sent.

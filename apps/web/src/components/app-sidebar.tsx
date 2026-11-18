@@ -14,6 +14,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -26,9 +28,12 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { Mark, Wordmark } from "@/components/wordmark";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
+import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
@@ -39,9 +44,13 @@ const nav = [
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
+/** A section stays highlighted on its detail routes (/agents/foo). "/" highlights nothing. */
+const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
+
 export function AppSidebar() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The _app guard has already loaded this query; it is null only for a moment during sign-out.
   const { data: session } = useQuery(sessionQueryOptions);
@@ -53,11 +62,22 @@ export function AppSidebar() {
     await navigate({ to: "/sign-in" });
   }
 
+  // The shadcn sheet does not close itself when a link inside it is followed.
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
+
   return (
-    <Sidebar>
-      <SidebarHeader>
-        <Link to="/" className="px-2 py-1.5 text-sm font-semibold">
-          Open Factory
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="h-12 justify-center px-3 py-0 group-data-[collapsible=icon]:px-2">
+        <Link
+          to="/"
+          onClick={closeMobile}
+          aria-label="Open Factory"
+          className="flex items-center rounded-md group-data-[collapsible=icon]:justify-center"
+        >
+          <Wordmark className="group-data-[collapsible=icon]:hidden" />
+          <Mark className="hidden size-[18px] group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -65,16 +85,33 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <nav aria-label="Main">
               <SidebarMenu>
-                {nav.map((item) => (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton asChild isActive={pathname === item.to}>
-                      <Link to={item.to}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
+                {nav.map((item) => {
+                  const active = isActive(pathname, item.to);
+                  return (
+                    <SidebarMenuItem key={item.to}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={active}
+                        tooltip={item.label}
+                        className={cn(
+                          "relative gap-2.5 transition-colors duration-150",
+                          isMobile ? "h-9" : "h-8",
+                          active &&
+                            "before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-signal",
+                        )}
+                      >
+                        <Link
+                          to={item.to}
+                          onClick={closeMobile}
+                          aria-current={active ? "page" : undefined}
+                        >
+                          <item.icon aria-hidden="true" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
               </SidebarMenu>
             </nav>
           </SidebarGroupContent>
@@ -86,16 +123,35 @@ export function AppSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg">
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{user?.name}</span>
-                    <span className="text-muted-foreground truncate text-xs">@{user?.handle}</span>
+                  {/* Icon mode: the handle's first letter is all that fits. */}
+                  <span
+                    aria-hidden="true"
+                    className="hidden size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[13px] text-muted-foreground uppercase group-data-[collapsible=icon]:flex"
+                  >
+                    {user?.handle?.[0]}
+                  </span>
+                  <div className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:sr-only">
+                    <span className="truncate text-sm font-medium">{user?.name}</span>
+                    <span className="truncate font-mono text-xs text-muted-foreground">
+                      @{user?.handle}
+                    </span>
                   </div>
-                  <ChevronsUpDown className="ml-auto" />
+                  <ChevronsUpDown
+                    aria-hidden="true"
+                    className="ml-auto group-data-[collapsible=icon]:hidden"
+                  />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-56">
+                <DropdownMenuLabel className="grid gap-0.5 font-normal">
+                  <span className="truncate text-sm font-medium text-foreground">{user?.name}</span>
+                  <span className="truncate font-mono text-xs text-muted-foreground">
+                    @{user?.handle}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void signOut()}>
-                  <LogOut />
+                  <LogOut aria-hidden="true" />
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>

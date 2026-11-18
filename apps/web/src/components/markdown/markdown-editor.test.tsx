@@ -18,3 +18,20 @@ test("write -> preview -> write keeps the text", async () => {
   await user.click(screen.getByRole("tab", { name: "Write" }));
   expect(screen.getByRole("textbox")).toHaveValue("# Hello");
 });
+
+test("preview of an empty document says so", async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole("tab", { name: "Preview" }));
+  expect(screen.getByText("Nothing to preview.")).toBeInTheDocument();
+});
+
+test("a form can label the textarea through id", () => {
+  render(
+    <>
+      <label htmlFor="body">Body</label>
+      <MarkdownEditor id="body" value="" onChange={() => {}} />
+    </>,
+  );
+  expect(screen.getByRole("textbox", { name: "Body" })).toBeInTheDocument();
+});

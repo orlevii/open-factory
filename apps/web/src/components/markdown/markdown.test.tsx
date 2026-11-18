@@ -44,6 +44,19 @@ test("external links open safely", () => {
   const a = screen.getByRole("link", { name: "x" });
   expect(a).toHaveAttribute("target", "_blank");
   expect(a).toHaveAttribute("rel", "noopener noreferrer");
+  expect(a).toHaveAccessibleDescription("Opens in a new tab");
+});
+
+test("internal links have no new-tab note", () => {
+  render(<Markdown source={"[y](/inbox)"} />);
+  const a = screen.getByRole("link", { name: "y" });
+  expect(a).not.toHaveAttribute("target");
+  expect(a).not.toHaveAccessibleDescription();
+});
+
+test("tables are wrapped so wide ones scroll on their own", () => {
+  render(<Markdown source={"| a | b |\n|---|---|\n| 1 | 2 |"} />);
+  expect(screen.getByRole("table").parentElement).toHaveClass("md-table");
 });
 
 test("unlabeled fenced blocks render inside <pre>, inline code does not", () => {
@@ -70,6 +83,8 @@ test("highlights code blocks once shiki loads", async () => {
 test("renders mermaid blocks with strict security", async () => {
   render(<Markdown source={"```mermaid\ngraph TD; A-->B\n```"} />);
   await waitFor(() => expect(screen.getByTestId("mermaid-svg")).toBeInTheDocument());
+  // The diagram sits on the light "paper" card in both color schemes.
+  expect(screen.getByTestId("mermaid-svg").parentElement).toHaveClass("md-diagram");
   const mermaid = (await import("mermaid")).default;
   expect(mermaid.initialize).toHaveBeenCalledWith(
     expect.objectContaining({ securityLevel: "strict" }),
@@ -84,9 +99,11 @@ test("javascript: links are not rendered as executable hrefs", () => {
 
 test("an invalid mermaid diagram shows a short error note and the source", async () => {
   const { container } = render(<Markdown source={"```mermaid\nbad graph\n```"} />);
-  const note = await screen.findByText(/^Diagram error:/);
-  expect(note).toHaveTextContent("Diagram error: Parse error on line 1:");
-  expect(note.textContent?.length).toBeLessThanOrEqual(140);
+  expect(await screen.findByText("Couldn't render this diagram.")).toBeInTheDocument();
+  // Only the parser's first line, capped, follows the note.
+  const detail = screen.getByText(/^Parse error on line 1:/);
+  expect(detail).toHaveTextContent(/^Parse error on line 1:$/);
+  expect(detail.textContent?.length).toBeLessThanOrEqual(120);
   expect(container.querySelector("pre")).toHaveTextContent("bad graph");
 });
 
@@ -95,11 +112,11 @@ test("mermaid state follows the source: valid -> invalid -> valid", async () => 
   const { rerender } = render(<Markdown source={doc("graph TD; A-->B")} />);
   await screen.findByTestId("mermaid-svg");
   rerender(<Markdown source={doc("bad graph")} />);
-  await screen.findByText(/^Diagram error:/);
+  await screen.findByText("Couldn't render this diagram.");
   expect(screen.queryByTestId("mermaid-svg")).toBeNull();
   rerender(<Markdown source={doc("graph TD; B-->C")} />);
   await screen.findByTestId("mermaid-svg");
-  expect(screen.queryByText(/^Diagram error:/)).toBeNull();
+  expect(screen.queryByText("Couldn't render this diagram.")).toBeNull();
 });
 
 test("a stale mermaid diagram is dropped while the new source renders", async () => {

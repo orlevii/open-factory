@@ -94,3 +94,26 @@ test("valid server messages are parsed and delivered; invalid ones are ignored",
   expect(onMessage).toHaveBeenCalledTimes(1);
   expect(onMessage).toHaveBeenCalledWith({ type: "hello", userId: "u1" });
 });
+
+test("onStatus reports every transition once, in order", async () => {
+  const onStatus = vi.fn();
+  const conn = connectWs({
+    ...base,
+    onUnauthenticated: vi.fn(),
+    hasSession: async () => true,
+    onStatus,
+  });
+  FakeWs.instances[0]?.onopen?.();
+  FakeWs.instances[0]?.onclose?.();
+  await vi.advanceTimersByTimeAsync(1_000);
+  FakeWs.instances[1]?.onopen?.();
+  conn.close();
+  expect(onStatus.mock.calls.map(([s]) => s)).toEqual([
+    "connecting",
+    "open",
+    "closed",
+    "connecting",
+    "open",
+    "closed",
+  ]);
+});

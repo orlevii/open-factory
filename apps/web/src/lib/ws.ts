@@ -6,6 +6,8 @@ export interface WsOptions {
   onUnauthenticated(): void;
   hasSession(): Promise<boolean>;
   onMessage?(m: ServerMessage): void;
+  /** Called on every status transition (and once with the initial "connecting"). */
+  onStatus?(s: WsStatus): void;
   url?: string;
   WebSocketImpl?: typeof WebSocket;
 }
@@ -25,17 +27,23 @@ export function connectWs(opts: WsOptions): WsConnection {
     opts.url ?? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws`;
   let attempt = 0;
   let stopped = false;
-  let state: WsStatus = "connecting";
+  let state: WsStatus | undefined;
   let ws: WebSocket | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  const setState = (next: WsStatus) => {
+    if (next === state) return;
+    state = next;
+    opts.onStatus?.(next);
+  };
+
   const open = () => {
-    state = "connecting";
+    setState("connecting");
     const socket = new Impl(url);
     ws = socket;
     socket.onopen = () => {
       attempt = 0;
-      state = "open";
+      setState("open");
     };
     socket.onmessage = (e) => {
       let data: unknown;
@@ -48,8 +56,8 @@ export function connectWs(opts: WsOptions): WsConnection {
       if (parsed.success) opts.onMessage?.(parsed.data);
     };
     socket.onclose = async () => {
-      state = "closed";
       if (stopped) return;
+      setState("closed");
       const authed = await opts.hasSession().catch(() => true); // network error: keep retrying
       if (stopped) return;
       if (!authed) {
@@ -66,9 +74,9 @@ export function connectWs(opts: WsOptions): WsConnection {
     close() {
       stopped = true;
       clearTimeout(timer);
-      state = "closed";
+      setState("closed");
       ws?.close();
     },
-    status: () => state,
+    status: () => state ?? "connecting",
   };
 }

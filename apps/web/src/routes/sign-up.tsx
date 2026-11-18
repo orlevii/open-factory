@@ -2,8 +2,9 @@ import { signUpSchema } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { AuthCard } from "@/components/auth-card";
-import { type AuthField, mapAuthError } from "@/components/auth-error";
+import { flushSync } from "react-dom";
+import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
+import { type AuthField, mapAuthError, mapAuthFailure } from "@/components/auth-error";
 import { FormField } from "@/components/form-field";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -26,9 +27,18 @@ function SignUp() {
   const [formError, setFormError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
-  const set = (field: AuthField, value: string) => setValues((v) => ({ ...v, [field]: value }));
+  // Editing a field clears its error; there is no live re-validation while typing.
+  const set = (field: AuthField, value: string) => {
+    setValues((v) => ({ ...v, [field]: value }));
+    setErrors((e) => (e[field] ? { ...e, [field]: undefined } : e));
+  };
 
-  async function submit() {
+  const showFieldErrors = (form: HTMLFormElement, next: Errors) => {
+    flushSync(() => setErrors(next));
+    focusFirstInvalid(form);
+  };
+
+  async function submit(form: HTMLFormElement) {
     setFormError(undefined);
     const parsed = signUpSchema.safeParse(values);
     if (!parsed.success) {
@@ -37,21 +47,26 @@ function SignUp() {
         const field = issue.path[0] as AuthField;
         next[field] ??= issue.message;
       }
-      setErrors(next);
+      showFieldErrors(form, next);
       return;
     }
     setErrors({});
     setSubmitting(true);
     try {
-      const { error } = await authClient.signUp.email(parsed.data);
-      if (error) {
-        const m = mapAuthError(error.code, error.message ?? "");
-        if (m.field) setErrors({ [m.field]: m.message });
+      const failure = await authClient.signUp.email(parsed.data).then(
+        ({ error }) => (error ? { error } : null),
+        (thrown: unknown) => ({ thrown }),
+      );
+      if (failure) {
+        const m = mapAuthFailure(failure);
+        if (m.field) showFieldErrors(form, { [m.field]: m.message });
         else setFormError(m.message);
         return;
       }
       await refreshSession(qc);
       await navigate({ to: "/" });
+    } catch {
+      setFormError(mapAuthError(undefined, "").message);
     } finally {
       setSubmitting(false);
     }
@@ -61,13 +76,14 @@ function SignUp() {
     <AuthCard
       title="Create your account"
       submitLabel="Sign up"
+      pendingLabel="Signing up…"
       submitting={submitting}
       formError={formError}
-      onSubmit={submit}
+      onSubmit={(form) => void submit(form)}
       footer={
         <span>
           Already have an account?{" "}
-          <Link to="/sign-in" className="text-foreground underline underline-offset-4">
+          <Link to="/sign-in" className="font-medium text-foreground underline underline-offset-4">
             Sign in
           </Link>
         </span>
@@ -77,6 +93,7 @@ function SignUp() {
         name="name"
         label="Name"
         autoComplete="name"
+        autoFocus
         value={values.name}
         onChange={(e) => set("name", e.target.value)}
         error={errors.name}
@@ -84,9 +101,14 @@ function SignUp() {
       <FormField
         name="handle"
         label="Handle"
+        prefix="@"
+        help="How agents mention you, like @alice. Lowercase letters, numbers and hyphens."
         autoComplete="username"
         autoCapitalize="none"
+        autoCorrect="off"
         spellCheck={false}
+        maxLength={32}
+        className="font-mono"
         value={values.handle}
         onChange={(e) => set("handle", e.target.value.toLowerCase())}
         error={errors.handle}
@@ -105,6 +127,7 @@ function SignUp() {
         label="Password"
         type="password"
         autoComplete="new-password"
+        help="At least 8 characters."
         value={values.password}
         onChange={(e) => set("password", e.target.value)}
         error={errors.password}

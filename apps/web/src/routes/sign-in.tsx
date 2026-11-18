@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { z } from "zod";
-import { AuthCard } from "@/components/auth-card";
-import { mapAuthError } from "@/components/auth-error";
+import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
+import { mapAuthError, mapAuthFailure } from "@/components/auth-error";
 import { FormField } from "@/components/form-field";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -20,36 +21,54 @@ const signInSchema = z.object({
   password: z.string().min(1, "Enter your password"),
 });
 type Field = "email" | "password";
+type Errors = Partial<Record<Field, string>>;
 
 function SignIn() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [values, setValues] = useState({ email: "", password: "" });
-  const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
+  const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit() {
+  // Editing a field clears its error; there is no live re-validation while typing.
+  const set = (field: Field, value: string) => {
+    setValues((v) => ({ ...v, [field]: value }));
+    setErrors((e) => (e[field] ? { ...e, [field]: undefined } : e));
+  };
+
+  const showFieldErrors = (form: HTMLFormElement, next: Errors) => {
+    flushSync(() => setErrors(next));
+    focusFirstInvalid(form);
+  };
+
+  async function submit(form: HTMLFormElement) {
     setFormError(undefined);
     const parsed = signInSchema.safeParse(values);
     if (!parsed.success) {
-      const next: Partial<Record<Field, string>> = {};
+      const next: Errors = {};
       for (const issue of parsed.error.issues) next[issue.path[0] as Field] ??= issue.message;
-      setErrors(next);
+      showFieldErrors(form, next);
       return;
     }
     setErrors({});
     setSubmitting(true);
     try {
-      const { error } = await authClient.signIn.email(parsed.data);
-      if (error) {
-        const m = mapAuthError(error.code, error.message ?? "");
-        if (m.field === "email" || m.field === "password") setErrors({ [m.field]: m.message });
+      const failure = await authClient.signIn.email(parsed.data).then(
+        ({ error }) => (error ? { error } : null),
+        (thrown: unknown) => ({ thrown }),
+      );
+      if (failure) {
+        const m = mapAuthFailure(failure);
+        if (m.field === "email" || m.field === "password")
+          showFieldErrors(form, { [m.field]: m.message });
         else setFormError(m.message);
         return;
       }
       await refreshSession(qc);
       await navigate({ to: "/" });
+    } catch {
+      setFormError(mapAuthError(undefined, "").message);
     } finally {
       setSubmitting(false);
     }
@@ -59,14 +78,15 @@ function SignIn() {
     <AuthCard
       title="Sign in"
       submitLabel="Sign in"
+      pendingLabel="Signing in…"
       submitting={submitting}
       formError={formError}
-      onSubmit={submit}
+      onSubmit={(form) => void submit(form)}
       footer={
         <span>
-          New here?{" "}
-          <Link to="/sign-up" className="text-foreground underline underline-offset-4">
-            Create an account
+          No account yet?{" "}
+          <Link to="/sign-up" className="font-medium text-foreground underline underline-offset-4">
+            Sign up
           </Link>
         </span>
       }
@@ -76,8 +96,9 @@ function SignIn() {
         label="Email"
         type="email"
         autoComplete="email"
+        autoFocus
         value={values.email}
-        onChange={(e) => setValues((v) => ({ ...v, email: e.target.value }))}
+        onChange={(e) => set("email", e.target.value)}
         error={errors.email}
       />
       <FormField
@@ -86,7 +107,7 @@ function SignIn() {
         type="password"
         autoComplete="current-password"
         value={values.password}
-        onChange={(e) => setValues((v) => ({ ...v, password: e.target.value }))}
+        onChange={(e) => set("password", e.target.value)}
         error={errors.password}
       />
     </AuthCard>

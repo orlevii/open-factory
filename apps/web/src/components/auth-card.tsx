@@ -1,42 +1,54 @@
-import type { FormEvent, ReactNode } from "react";
+import { CircleAlert, Loader2 } from "lucide-react";
+import { type FormEvent, type ReactNode, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Wordmark } from "@/components/wordmark";
 
+/** The auth page frame (UI design §4.1): a bare narrow column on the page background, no card. */
 export function AuthCard(props: {
   title: string;
   submitLabel: string;
+  pendingLabel: string;
   submitting: boolean;
   formError?: string;
-  onSubmit(): void;
+  onSubmit(form: HTMLFormElement): void;
   footer: ReactNode;
   children: ReactNode;
 }) {
-  const submit = (e: FormEvent) => {
+  useEffect(() => {
+    document.title = `${props.title} · Open Factory`;
+  }, [props.title]);
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    props.onSubmit();
+    props.onSubmit(e.currentTarget);
   };
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <p className="text-muted-foreground text-sm">Open Factory</p>
-          <CardTitle className="text-xl">{props.title}</CardTitle>
-        </CardHeader>
-        <form onSubmit={submit} noValidate>
-          <CardContent className="grid gap-4">
-            {props.children}
-            {props.formError && (
-              <p role="alert" className="text-destructive text-sm">
-                {props.formError}
-              </p>
-            )}
-            <Button type="submit" disabled={props.submitting}>
-              {props.submitLabel}
-            </Button>
-          </CardContent>
+    <main className="flex min-h-svh justify-center px-4 py-12 sm:items-center">
+      <div className="w-full max-w-[22rem]">
+        <Wordmark className="mb-8 flex w-fit" />
+        <h1 className="mb-6 text-xl font-semibold tracking-tight">{props.title}</h1>
+        <form onSubmit={submit} noValidate className="grid gap-4">
+          {props.children}
+          {props.formError && (
+            <p
+              role="alert"
+              className="flex items-start gap-1.5 text-[13px] leading-[18px] text-destructive"
+            >
+              <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              {props.formError}
+            </p>
+          )}
+          <Button type="submit" className="h-9 w-full" disabled={props.submitting}>
+            {props.submitting && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
+            {props.submitting ? props.pendingLabel : props.submitLabel}
+          </Button>
         </form>
-        <CardFooter className="text-muted-foreground text-sm">{props.footer}</CardFooter>
-      </Card>
+        <div className="mt-6 text-[13px] text-muted-foreground">{props.footer}</div>
+      </div>
     </main>
   );
+}
+
+/** After a failed submit, move focus to the first invalid field (call after the errors rendered). */
+export function focusFirstInvalid(form: HTMLFormElement) {
+  form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
 }

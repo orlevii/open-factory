@@ -87,3 +87,37 @@ test("a successful sign-up refreshes the session and lands on the dashboard", as
   expect(auth.getSession).toHaveBeenCalled();
   expect(await screen.findByText("No agents yet.")).toBeInTheDocument();
 });
+
+test("the handle field has an @ adornment and help text that an error replaces", async () => {
+  renderApp("/sign-up", null);
+  const handle = await screen.findByLabelText("Handle");
+  expect(handle).toHaveAccessibleDescription(
+    "How agents mention you, like @alice. Lowercase letters, numbers and hyphens.",
+  );
+  expect(screen.getByText("@")).toHaveAttribute("aria-hidden", "true");
+  await fill({ ...valid, handle: "x" });
+  expect(handle).toHaveAttribute("aria-invalid", "true");
+  expect(handle).not.toHaveAccessibleDescription(/How agents mention you/);
+});
+
+test("a failed submit moves focus to the first invalid field; editing clears its error", async () => {
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  await fill({ name: "Alice", handle: "x", email: "nope", password: "password123" });
+  const handle = screen.getByLabelText("Handle");
+  expect(handle).toHaveFocus();
+  await userEvent.type(handle, "y");
+  expect(handle).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByLabelText("Email")).toHaveAttribute("aria-invalid", "true");
+});
+
+test("an unreachable server shows the network message at form level", async () => {
+  auth.signUp.email.mockRejectedValue(new TypeError("Failed to fetch"));
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Can't reach the server. Check that it's running, then try again.",
+  );
+  expect(screen.getByRole("button", { name: "Sign up" })).toBeEnabled();
+});

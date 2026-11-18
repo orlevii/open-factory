@@ -9,6 +9,6 @@ vi.mock("mermaid", () => {
 
 test("a failed mermaid chunk load shows the error note and the source", async () => {
   const { container } = render(<MermaidBlock source="graph TD; A-->B" />);
-  expect(await screen.findByText(/^Diagram error:/)).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't render this diagram.")).toBeInTheDocument();
   expect(container.querySelector("pre")).toHaveTextContent("graph TD; A-->B");
 });

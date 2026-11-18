@@ -10,10 +10,11 @@ export const alice = {
   session: { id: "s1" },
 } as unknown as Session;
 
-/** Renders the real route tree at `path` with the session query pre-seeded. */
-export function renderApp(path: string, session: Session | null) {
+/** Renders the real route tree at `path` with the session query pre-seeded. `undefined` leaves the
+ *  query empty, so the guard really calls the (mocked) auth client. */
+export function renderApp(path: string, session: Session | null | undefined) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  queryClient.setQueryData(sessionQueryOptions.queryKey, session);
+  if (session !== undefined) queryClient.setQueryData(sessionQueryOptions.queryKey, session);
   const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: [path] }));
   const utils = render(
     <QueryClientProvider client={queryClient}>

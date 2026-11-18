@@ -1,3 +1,4 @@
+import { CircleAlert } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
 /** First line of the error, capped, so a parser dump doesn't flood the note. */
@@ -19,7 +20,9 @@ export function MermaidBlock({ source }: { source: string }) {
     (async () => {
       try {
         const { default: mermaid } = await import("mermaid");
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+        // "neutral" on a light paper card in both color schemes: mermaid bakes colors into the
+        // SVG, so following the system theme would need JS theme switching (UI design §7.4).
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
         const out = await mermaid.render(id, source);
         if (live) setSvg(out.svg);
       } catch (e) {
@@ -34,14 +37,20 @@ export function MermaidBlock({ source }: { source: string }) {
   if (error)
     return (
       <div>
-        <p className="text-destructive text-sm">Diagram error: {error}</p>
-        <pre>
+        <p className="not-prose flex items-center gap-1.5 text-[13px] text-destructive">
+          <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+          Couldn't render this diagram.
+        </p>
+        <p className="not-prose mt-1 line-clamp-2 font-mono text-xs text-muted-foreground">
+          {error}
+        </p>
+        <pre className="mt-2">
           <code>{source}</code>
         </pre>
       </div>
     );
   // biome-ignore lint/security/noDangerouslySetInnerHtml: securityLevel "strict" makes mermaid sanitize its SVG output.
-  if (svg) return <div dangerouslySetInnerHTML={{ __html: svg }} />;
+  if (svg) return <div className="md-diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
   return (
     <pre>
       <code>{source}</code>

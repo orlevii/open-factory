@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { mapAuthError } from "./auth-error";
+import { mapAuthError, mapAuthFailure, NETWORK_MESSAGE } from "./auth-error";
 
 describe("mapAuthError", () => {
   test.each([
@@ -32,5 +32,32 @@ describe("mapAuthError", () => {
       message: "Failed to create user",
     });
     expect(mapAuthError(undefined, "")).toEqual({ message: "Something went wrong. Try again." });
+  });
+});
+
+describe("mapAuthFailure", () => {
+  test("a rejected call (fetch TypeError: server unreachable) is the network message", () => {
+    expect(mapAuthFailure({ thrown: new TypeError("Failed to fetch") })).toEqual({
+      message: NETWORK_MESSAGE,
+    });
+  });
+
+  test.each([0, 502, 503, 504, undefined])(
+    "an error with no code and status %s is the network message",
+    (status) => {
+      expect(mapAuthFailure({ error: { status, message: "" } })).toEqual({
+        message: NETWORK_MESSAGE,
+      });
+    },
+  );
+
+  test("a coded error still maps through mapAuthError", () => {
+    expect(mapAuthFailure({ error: { code: "HANDLE_TAKEN", status: 422 } })).toEqual({
+      field: "handle",
+      message: "That handle is already taken.",
+    });
+    expect(mapAuthFailure({ error: { status: 500, message: "Internal" } })).toEqual({
+      message: "Internal",
+    });
   });
 });

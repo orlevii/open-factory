@@ -4,21 +4,18 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { Config } from "../config.ts";
 import { authSecret } from "../crypto/keys.ts";
 import { authOptions } from "./options.ts";
+import { trustedOrigins } from "./origins.ts";
 
 export function createAuth(config: Config, db: Db) {
-  const trustedOrigins = [
-    config.publicOrigin,
-    ...(config.isProduction ? [] : [config.devWebOrigin]),
-  ];
   return betterAuth(
     authOptions({
       secret: authSecret(config.secretKey),
       baseURL: config.publicUrl,
-      trustedOrigins,
+      trustedOrigins: trustedOrigins(config),
       database: drizzleAdapter(db, { provider: "pg", schema, usePlural: true }),
-      // Operators come from the callback (the db package's drizzle instance): pnpm installs a
-      // second drizzle-orm peer variant for this package (kysely via better-auth), whose `eq`
-      // is type-incompatible with the db package's schema.
+      // Operators come from the query callback rather than an `eq` import: this keeps them tied to
+      // the db package's drizzle instance, so a future second drizzle-orm peer variant can't
+      // introduce a type mismatch (defensive; the lockfile currently resolves a single variant).
       handleExists: async (handle) =>
         (await db.query.users.findFirst({
           columns: { id: true },

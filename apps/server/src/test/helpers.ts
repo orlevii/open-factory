@@ -7,7 +7,7 @@ import { loadConfig } from "../config.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
-export async function makeTestApp(opts: { webRoot?: string } = {}) {
+export async function makeTestApp(opts: { webRoot?: string; env?: Record<string, string> } = {}) {
   const tdb = await createTestDatabase();
   await migrate(tdb.url, MIGRATIONS_DIR);
   const config = loadConfig({
@@ -15,6 +15,7 @@ export async function makeTestApp(opts: { webRoot?: string } = {}) {
     FACTORY_SECRET_KEY: "t".repeat(40),
     PORT: "3000",
     LOG_LEVEL: "silent",
+    ...opts.env,
   });
   const { db, sql, close: closeDb } = createDb(tdb.url);
   const app = await buildApp(config, { db, sql, webRoot: opts.webRoot, logger: false });

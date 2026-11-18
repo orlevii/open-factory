@@ -1,5 +1,5 @@
 import { type ErrorComponentProps, Link, useRouter } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { useShell } from "@/components/shell-context";
 import { Button } from "@/components/ui/button";
 import { Mark, Wordmark } from "@/components/wordmark";
@@ -7,7 +7,7 @@ import { Mark, Wordmark } from "@/components/wordmark";
 /** Router pending screen (UI design §5.1): only the mark, its pilot light breathing. Shown only
  *  after defaultPendingMs, so fast loads never flash it. */
 export function AppPending() {
-  return (
+  const status = (
     <div
       role="status"
       aria-live="polite"
@@ -17,6 +17,14 @@ export function AppPending() {
       <span className="sr-only">Loading…</span>
     </div>
   );
+  // At the root (first load) there is no shell, so the page still needs its one <main>.
+  return useShell() ? status : <main>{status}</main>;
+}
+
+function usePageTitle(title: string) {
+  useEffect(() => {
+    document.title = `${title} · Open Factory`;
+  }, [title]);
 }
 
 /** Inside the signed-in shell the state renders in the content area (the shell owns <main>);
@@ -36,6 +44,7 @@ function StateFrame({ children }: { children: ReactNode }) {
 
 export function RouteError({ error }: ErrorComponentProps) {
   const router = useRouter();
+  usePageTitle("Something went wrong");
   const message = error instanceof Error ? error.message : String(error);
   return (
     <StateFrame>
@@ -62,6 +71,7 @@ export function RouteError({ error }: ErrorComponentProps) {
 }
 
 export function NotFound() {
+  usePageTitle("Page not found");
   return (
     <StateFrame>
       <h2 className="text-[15px] leading-5 font-semibold">Page not found.</h2>

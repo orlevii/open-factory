@@ -16,6 +16,7 @@ test("a slow session check shows the pilot-light pending screen", async () => {
   const pending = await screen.findByRole("status", {}, { timeout: 2_000 });
   expect(pending).toHaveTextContent("Loading…");
   expect(pending).toHaveClass("is-loading");
+  expect(screen.getAllByRole("main")).toHaveLength(1);
   resolve({ data: alice });
   expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
 });
@@ -36,6 +37,7 @@ test("a failed session check shows the error state; Retry recovers", async () =>
   expect(await screen.findByRole("heading", { name: "Something went wrong." })).toBeInTheDocument();
   expect(screen.getByText(/Session check failed: 500 boom/)).toBeInTheDocument();
   expect(screen.getAllByRole("main")).toHaveLength(1);
+  expect(document.title).toBe("Something went wrong · Open Factory");
 
   auth.getSession.mockResolvedValue({ data: alice });
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));

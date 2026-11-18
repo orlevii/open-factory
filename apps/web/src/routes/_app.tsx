@@ -47,8 +47,15 @@ function AppLayout() {
         defaultOpen={defaultOpen}
         style={{ "--sidebar-width": "15rem" } as CSSProperties}
       >
+        {/* biome-ignore lint/a11y/useValidAnchor: a skip link is in-page navigation; href keeps it a
+            real link (works without JS, announced as a link), onClick only bypasses router hash handling. */}
         <a
           href="#content"
+          // Move focus directly; leaving the hash to the router would navigate instead.
+          onClick={(e) => {
+            e.preventDefault();
+            document.getElementById("content")?.focus();
+          }}
           className="sr-only rounded-md bg-background px-3 py-2 text-sm font-medium focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50"
         >
           Skip to content

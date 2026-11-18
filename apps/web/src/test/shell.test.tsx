@@ -46,6 +46,15 @@ test("the skip link is the first focusable element and targets main#content", as
   expect(main).toHaveAttribute("tabindex", "-1");
 });
 
+test("activating the skip link focuses main without navigating", async () => {
+  const { router } = renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1, name: "Inbox" });
+  await userEvent.click(screen.getByRole("link", { name: "Skip to content" }));
+  expect(screen.getByRole("main")).toHaveFocus();
+  expect(router.state.location.pathname).toBe("/inbox");
+  expect(router.state.location.hash).toBe("");
+});
+
 test("the active section link is marked aria-current=page", async () => {
   renderApp("/agents", alice);
   const nav = await screen.findByRole("navigation", { name: "Main" });
@@ -57,43 +66,58 @@ test("an unknown path shows the not-found state with a way home", async () => {
   renderApp("/nope", alice);
   expect(await screen.findByRole("heading", { name: "Page not found." })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
+  expect(screen.getAllByRole("main")).toHaveLength(1);
+  expect(document.title).toBe("Page not found · Open Factory");
 });
 
-test("the reconnect strip shows only after the grace period and hides once open", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+/** Fake timers only (no real-time drift). Returns the fake ms spent until the screen rendered, so the
+ *  grace-period assertions are deterministic instead of racing the wall clock. */
+async function renderInboxWithFakeTimers() {
+  vi.useFakeTimers();
+  const t0 = Date.now();
   renderApp("/inbox", alice);
-  await screen.findByRole("heading", { level: 1, name: "Inbox" });
-  const strip = () => screen.queryByText("Connection lost. Reconnecting…");
+  // vi.waitFor advances the fake clock between checks.
+  await vi.waitFor(() => screen.getByRole("heading", { level: 1, name: "Inbox" }));
+  return Date.now() - t0;
+}
+const strip = () => screen.queryByText("Connection lost. Reconnecting…");
 
-  // First connect: 5s of grace.
-  await act(() => vi.advanceTimersByTimeAsync(4_900));
+test("on first connect the strip appears after 5s, not before", async () => {
+  // The grace timer starts when the layout mounts, somewhere inside the first `elapsed` ms.
+  const elapsed = await renderInboxWithFakeTimers();
+  await act(() => vi.advanceTimersByTimeAsync(5_000 - elapsed - 1));
   expect(strip()).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(elapsed + 1));
+  expect(strip()).toBeInTheDocument();
+  expect(strip()?.closest('[role="status"]')).toBeInTheDocument();
+  act(() => ws.onStatus?.("open"));
+  expect(strip()).toBeNull();
+});
+
+test("after a drop the strip appears at 3s; reconnect flips don't restart the clock", async () => {
+  await renderInboxWithFakeTimers();
   act(() => ws.onStatus?.("open"));
   await act(() => vi.advanceTimersByTimeAsync(10_000));
   expect(strip()).toBeNull();
 
-  // Later drops: 3s, and the reconnect loop's closed/connecting flips don't restart the clock.
   act(() => ws.onStatus?.("closed"));
   await act(() => vi.advanceTimersByTimeAsync(1_500));
   act(() => ws.onStatus?.("connecting"));
-  await act(() => vi.advanceTimersByTimeAsync(1_400));
+  await act(() => vi.advanceTimersByTimeAsync(1_499));
   expect(strip()).toBeNull();
-  await act(() => vi.advanceTimersByTimeAsync(200));
+  await act(() => vi.advanceTimersByTimeAsync(1));
   expect(strip()).toBeInTheDocument();
-  expect(strip()?.closest('[role="status"]')).toBeInTheDocument();
 
   act(() => ws.onStatus?.("open"));
   expect(strip()).toBeNull();
 });
 
 test("a short blip never shows the strip", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  renderApp("/inbox", alice);
-  await screen.findByRole("heading", { level: 1, name: "Inbox" });
+  await renderInboxWithFakeTimers();
   act(() => ws.onStatus?.("open"));
   act(() => ws.onStatus?.("closed"));
-  await act(() => vi.advanceTimersByTimeAsync(2_900));
+  await act(() => vi.advanceTimersByTimeAsync(2_999));
   act(() => ws.onStatus?.("open"));
   await act(() => vi.advanceTimersByTimeAsync(10_000));
-  expect(screen.queryByText("Connection lost. Reconnecting…")).toBeNull();
+  expect(strip()).toBeNull();
 });

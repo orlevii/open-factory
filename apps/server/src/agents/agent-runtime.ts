@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { AgentRow, MessageRow } from "@open-factory/db";
-import type {
-  AgentRuntimeSpec,
-  FactoryMessage,
-  HarnessDriver,
-  HarnessProcess,
+import {
+  type AgentRuntimeSpec,
+  type FactoryMessage,
+  type HarnessDriver,
+  type HarnessProcess,
+  ProcessNotRunningError,
 } from "@open-factory/harness";
 import type {
   AgentStatus,
@@ -128,7 +129,13 @@ export class AgentRuntime {
   async interrupt(c: { byHandle: string }): Promise<void> {
     return this.apiJob(async () => {
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
-      await this.proc.control("interrupt");
+      try {
+        await this.proc.control("interrupt");
+      } catch (err) {
+        // The process is going away and its `exited` is not processed yet: there is nothing to interrupt (409).
+        if (err instanceof ProcessNotRunningError) throw new NoOpenTurnError();
+        throw err;
+      }
       await this.append(this.openTurnId, {
         type: "control",
         cmd: "interrupt",
@@ -443,7 +450,14 @@ export class AgentRuntime {
     // idle → normal send; hold active → no second interrupt; a compact in flight is never interrupted (it
     // waits behind the barrier instead)
     if (!this.proc || !this.openTurnId || this.hold || this.compactInFlight) return;
-    await this.proc.control("interrupt");
+    try {
+      await this.proc.control("interrupt");
+    } catch (err) {
+      // The process is going away: skip the interrupt and the hold. The message stays queued and the coming
+      // `exited` cleans up; this is not an internal error.
+      if (err instanceof ProcessNotRunningError) return;
+      throw err;
+    }
     const hold = setTimeout(() => {
       this.d.log.warn(
         { agent: this.agent.slug },

@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vi
 import { loadConfig } from "../config.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
+import { NoOpenTurnError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
@@ -232,4 +233,40 @@ test("after an unexpected exit nothing restarts the process until the next API c
   await rt.settled();
   expect(driver.starts).toHaveLength(1);
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
+});
+
+test("a rejected interrupt write (process going away) is not an internal error: urgent stays queued, Interrupt is 409", async () => {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  driver.last.failWrites = true; // the process is exiting; its `exited` has not been processed yet
+  const item = await send("STOP", true); // resolves: no 500
+  expect(item.body).toBe("STOP");
+  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError);
+  expect(driver.last.controls).toEqual([]);
+  expect(rt.summary().status).not.toBe("errored");
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
+  await rt.stop(); // the expected exit arrives
+  expect(rt.summary().status).toBe("hibernated");
+  const [a] = await t.sql`select status from agents where id = ${agentId}`;
+  expect(a?.status).toBe("hibernated");
+  await send("next");
+  expect(driver.starts).toHaveLength(2);
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["STOP", "next"]);
+});
+
+test("a rejected interrupt write before an unexpected exit keeps the real exit reason", async () => {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  driver.last.failWrites = true;
+  await send("STOP", true);
+  driver.last.exit(1);
+  await rt.settled();
+  expect(rt.summary()).toMatchObject({
+    status: "errored",
+    lastError: "Exited unexpectedly (code 1)",
+  });
 });

@@ -61,7 +61,8 @@ export class EventStore {
       agentSlug: row.slug,
       turnId,
       at: new Date(row.at).toISOString(),
-      event,
+      // Live frames must equal replayed history, so the DTO carries the capped payload (spec §6.4).
+      event: truncated ? ({ type: event.type, ...payload } as AnyEvent) : event,
       ...(truncated ? { truncated } : {}),
     };
   }

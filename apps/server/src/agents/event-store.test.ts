@@ -28,8 +28,13 @@ test("append assigns seq 1..n per agent, independently", async () => {
 test("append caps oversized strings and returns the truncated map", async () => {
   const e = await store.append("a2", null, { type: "assistant_text", text: "x".repeat(70_000) });
   expect(e.truncated).toEqual({ text: 70_000 });
+  // The returned DTO (what goes out live) carries the capped payload, same as replay (spec 6.4).
+  const text = (e.event as { text: string }).text;
+  expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(64 * 1024);
+  expect(text.length).toBeLessThan(70_000);
   const [row] = await store.after("a2", e.seq - 1, 1);
   expect(row?.truncated).toEqual({ text: 70_000 });
+  expect(row?.event).toEqual(e.event);
 });
 
 test("page: newest, before, around, missing around", async () => {

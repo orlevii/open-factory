@@ -34,12 +34,26 @@ export async function wsRoutes(app: FastifyInstance) {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
     };
     const unsubs = new Map<string, () => void>();
+    // Bumped by every subscribe and unsubscribe: a subscribe that resumes after an await and finds a newer
+    // generation was superseded (by a later subscribe or an unsubscribe) and must not register anything.
+    const generations = new Map<string, number>();
+    let closed = false;
     const offAll = app.bus.subscribeAll(send); // agent_status goes to every socket
     socket.on("close", () => {
+      closed = true;
       offAll();
       for (const u of unsubs.values()) u();
       unsubs.clear();
     });
+    const nextGeneration = (agent: string) => {
+      const g = (generations.get(agent) ?? 0) + 1;
+      generations.set(agent, g);
+      return g;
+    };
+    const stop = (agent: string) => {
+      unsubs.get(agent)?.();
+      unsubs.delete(agent);
+    };
 
     /**
      * Gap-free subscribe (spec §10): 1. register on the bus and buffer, 2. read the DB, 3. drain the buffer
@@ -47,10 +61,19 @@ export async function wsRoutes(app: FastifyInstance) {
      * event is either in the DB read or in the buffer.
      */
     async function subscribe(agent: string, afterSeq: number) {
-      const rt = await app.runtimes.bySlug(agent);
+      const gen = nextGeneration(agent);
+      stop(agent); // the newer request supersedes the older one now, replay included
+      const current = () => !closed && generations.get(agent) === gen;
+      const failed = (err: unknown) => {
+        send({ type: "error", code: "internal_error", message: `Could not subscribe to ${agent}` });
+        throw err;
+      };
+      const rt = await app.runtimes
+        .bySlug(agent)
+        .catch((err) => (current() ? failed(err) : undefined));
+      if (!current()) return;
       if (!rt)
         return send({ type: "error", code: "agent_not_found", message: `No agent named ${agent}` });
-      unsubs.get(agent)?.();
       let live = false;
       let cancelled = false;
       let lastSent = afterSeq;
@@ -67,21 +90,28 @@ export async function wsRoutes(app: FastifyInstance) {
       // A later subscribe or unsubscribe for this agent (or a close) stops this one, replay included.
       unsubs.set(agent, () => {
         cancelled = true;
+        buffer.length = 0;
         off();
       });
-      send(rt.statusFrame());
-      send({ type: "queue", agent, items: rt.queueItems() });
-      const last = await app.store.lastSeq(rt.agent.id);
-      if (last - afterSeq > REPLAY_LIMIT) {
-        if (cancelled) return;
-        send({ type: "resync", agent });
-        lastSent = last;
-      } else {
-        const rows = await app.store.after(rt.agent.id, afterSeq, REPLAY_LIMIT);
-        for (const event of rows) forward({ type: "session_event", agent, event });
+      try {
+        send(rt.statusFrame());
+        send({ type: "queue", agent, items: rt.queueItems() });
+        const last = await app.store.lastSeq(rt.agent.id);
+        if (last - afterSeq > REPLAY_LIMIT) {
+          if (cancelled) return;
+          send({ type: "resync", agent });
+          lastSent = last;
+        } else {
+          const rows = await app.store.after(rt.agent.id, afterSeq, REPLAY_LIMIT);
+          for (const event of rows) forward({ type: "session_event", agent, event });
+        }
+        for (const m of buffer.splice(0)) forward(m);
+        live = true;
+      } catch (err) {
+        if (cancelled) return; // superseded or closed meanwhile: nobody is waiting for this one
+        stop(agent);
+        failed(err);
       }
-      for (const m of buffer.splice(0)) forward(m);
-      live = true;
     }
 
     socket.on("message", (raw) => {
@@ -100,8 +130,8 @@ export async function wsRoutes(app: FastifyInstance) {
           request.log.error({ err }, "subscribe failed"),
         );
       else if (m.type === "unsubscribe") {
-        unsubs.get(m.agent)?.();
-        unsubs.delete(m.agent);
+        nextGeneration(m.agent);
+        stop(m.agent);
       }
     });
     send({ type: "hello", userId });

@@ -24,6 +24,10 @@ export class EventBus {
       this.all.delete(fn);
     };
   }
+  /** Live listeners, per agent or (without a slug) on the broadcast channel. Used to check for leaks. */
+  listenerCount(agentSlug?: string): number {
+    return agentSlug === undefined ? this.all.size : (this.byAgent.get(agentSlug)?.size ?? 0);
+  }
   publishAll(m: ServerMessage) {
     for (const fn of this.all) fn(m);
   }

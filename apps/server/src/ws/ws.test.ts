@@ -212,6 +212,192 @@ describe("agent subscriptions", () => {
     c.ws.close();
   });
 
+  async function until(cond: () => boolean) {
+    for (let i = 0; i < 250; i++) {
+      if (cond()) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error("condition never held");
+  }
+  type AsyncFn = (...args: unknown[]) => Promise<unknown>;
+  /** Holds the next call to `obj[key]` until the test calls `release()`; `started` resolves when it is entered. */
+  function hold(obj: object, key: string) {
+    const target = obj as Record<string, AsyncFn>;
+    const original = (target[key] as AsyncFn).bind(obj);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const spy = vi.spyOn(target, key).mockImplementationOnce(async (...args: unknown[]) => {
+      entered();
+      await gate;
+      return original(...args);
+    });
+    return { release, started, spy };
+  }
+  const devListeners = () => a.app.bus.listenerCount("dev");
+  const settle = () => new Promise((r) => setTimeout(r, 100));
+
+  test("unsubscribe stops live events and removes the listener", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const c = await connect();
+    c.ws.send(
+      JSON.stringify({
+        type: "subscribe",
+        agent: "dev",
+        afterSeq: await a.app.store.lastSeq(rt.agent.id),
+      }),
+    );
+    await c.waitFor((f) => f.type === "queue");
+    await settle();
+    expect(devListeners()).toBe(1);
+    c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+    await until(() => devListeners() === 0);
+    driver.last.emit(ev.text("after-unsubscribe"));
+    await rt.settled();
+    await settle();
+    expect(seqs(c.frames)).toEqual([]);
+    c.ws.close();
+  });
+
+  test("closing while the agent lookup is pending leaves no bus listener", async () => {
+    const allBefore = a.app.bus.listenerCount();
+    const h = hold(a.app.runtimes, "bySlug");
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      c.ws.close();
+      await until(() => a.app.bus.listenerCount() === allBefore);
+      h.release();
+      await settle();
+      expect(devListeners()).toBe(0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("an unsubscribe that arrives while the agent lookup is pending wins", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const h = hold(a.app.runtimes, "bySlug");
+    try {
+      const c = await connect();
+      c.ws.send(
+        JSON.stringify({
+          type: "subscribe",
+          agent: "dev",
+          afterSeq: await a.app.store.lastSeq(rt.agent.id),
+        }),
+      );
+      await h.started;
+      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+      await settle();
+      h.release();
+      await settle();
+      expect(devListeners()).toBe(0);
+      driver.last.emit(ev.text("after-early-unsubscribe"));
+      await rt.settled();
+      await settle();
+      expect(seqs(c.frames)).toEqual([]);
+      expect(c.frames.some((f) => f.type === "queue")).toBe(false);
+      c.ws.close();
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("closing during the replay leaves no bus listener", async () => {
+    const h = hold(a.app.store, "after");
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      expect(devListeners()).toBe(1);
+      c.ws.close();
+      await until(() => devListeners() === 0);
+      h.release();
+      await settle();
+      expect(devListeners()).toBe(0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("a resubscribe cancels the in-flight replay of the earlier subscribe", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const last = await a.app.store.lastSeq(rt.agent.id);
+    const h = hold(a.app.store, "after");
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: last }));
+      await c.waitFor((f) => f.type === "queue", 2);
+      await settle();
+      h.release();
+      await settle();
+      driver.last.emit(ev.text("after-resubscribe"));
+      await rt.settled();
+      await c.waitFor((f) => f.type === "session_event");
+      await settle();
+      expect(seqs(c.frames)).toEqual([last + 1]);
+      expect(devListeners()).toBe(1);
+      c.ws.close();
+      await until(() => devListeners() === 0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("the later of two subscribes wins even when its agent lookup finishes first", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const last = await a.app.store.lastSeq(rt.agent.id);
+    const h = hold(a.app.runtimes, "bySlug"); // holds only the first subscribe's lookup
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: last }));
+      await c.waitFor((f) => f.type === "queue");
+      h.release();
+      await settle();
+      expect(seqs(c.frames)).toEqual([]);
+      expect(c.frames.filter((f) => f.type === "queue")).toHaveLength(1);
+      expect(devListeners()).toBe(1);
+      c.ws.close();
+      await until(() => devListeners() === 0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("a failure after registration unregisters and tells the client", async () => {
+    const spy = vi.spyOn(a.app.store, "lastSeq").mockRejectedValueOnce(new Error("db down"));
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await c.waitFor((f) => f.type === "error" && f.code === "internal_error");
+      await settle();
+      expect(devListeners()).toBe(0);
+      c.ws.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("a gap over 1000 events gets resync instead of a replay", async () => {
     const rt = await a.app.runtimes.bySlug("dev");
     const id = rt?.agent.id ?? "";

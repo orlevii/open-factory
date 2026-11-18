@@ -1899,6 +1899,8 @@ Expected: `{"version":"0.1.0","db":"ok"}`. Then check the placeholder rejection:
 
 ### Task 8: Web app shell — auth pages, guarded layout, empty screens, WS client
 
+> **Refined by the UI design** (`docs/superpowers/designs/2026-11-18-s1-ui-design.md`, applied in a follow-up commit): the screens render a shared `PageHeader` (the dashboard is titled "Home") instead of their own `h1`, the auth pages drop the card, `connectWs` gains an optional `onStatus` callback that drives a reconnect strip, and the router gets pending, error (Retry) and not-found components. Where the code below differs, the design doc wins.
+
 **Files:**
 
 - Create: everything under `apps/web/` listed in File Structure, except `components/markdown/*` (Task 9)
@@ -2271,6 +2273,8 @@ Manual smoke check: run `npm start`, open http://localhost:3000. You're redirect
 ---
 
 ### Task 9: Markdown renderer and editor
+
+> **Refined by the UI design** (§7): the wrapper class is `prose prose-sm prose-of max-w-none` (no `dark:prose-invert`), mermaid also gets `theme: "neutral"` on a light `.md-diagram` card, and the render error note reads "Couldn't render this diagram." followed by the parser message. Where the code below differs, the design doc wins.
 
 **Files:**
 

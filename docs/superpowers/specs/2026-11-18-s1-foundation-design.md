@@ -163,11 +163,11 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 - Routes:
   - `/sign-in`, `/sign-up` (public; signed-in users are redirected to `/`).
   - Authenticated layout (guard in `beforeLoad`: `queryClient.ensureQueryData` of the session query, redirect to `/sign-in` if absent; sign-in, sign-up and sign-out invalidate/reset that query before navigating, so the guard never acts on a stale session) with sidebar nav **Inbox, Agents, Tasks, Templates, Schedules, Settings** and a user menu (name, `@handle`, Sign out).
-  - `/` dashboard: two panels, Inbox and Agents, each empty.
+  - `/` dashboard (page title "Home"): two panels, Inbox and Agents, each empty.
   - `/inbox`, `/agents`, `/tasks`, `/templates`, `/schedules`, `/settings`: each shows a one-line plain-language empty state: "Nothing in your inbox.", "No agents yet.", "No tasks yet.", "No templates yet.", "No schedules yet.", "Nothing to configure yet." (dashboard panels reuse the Inbox and Agents lines). No "coming soon" teasers, no internals.
 - Sign-up form fields: name, handle, email, password. Client-side validation via the shared schemas; server errors mapped to fields per §7.4. After sign-up the user lands on `/` (no onboarding wizard).
 - Theme follows the system (light/dark) via CSS `@media (prefers-color-scheme: dark)` only; no toggle, no JS theme switching. No toast library in S1.
-- **WS client:** one reconnecting client module (`lib/ws.ts`) opened by the authenticated layout, exponential backoff with jitter (cap ~30s), parses messages with the shared Zod union, exposes connection status. On any close (including one before the socket opened), it re-fetches the session query: no session → invalidate it and route to `/sign-in` (stop reconnecting); session present → keep backing off. S1 uses it only to establish the authenticated connection; later specs add handlers.
+- **WS client:** one reconnecting client module (`lib/ws.ts`) opened by the authenticated layout, exponential backoff with jitter (cap ~30s), parses messages with the shared Zod union, exposes connection status (`status()` plus an optional `onStatus` callback; the layout shows a non-dismissable "Connection lost. Reconnecting…" strip only after the socket has been down for a few seconds). On any close (including one before the socket opened), it re-fetches the session query: no session → invalidate it and route to `/sign-in` (stop reconnecting); session present → keep backing off. S1 uses it only to establish the authenticated connection; later specs add handlers.
 - **Dev:** Vite dev server proxies `/api` (including WS upgrade) to the Fastify dev server.
 
 ### 8.1 Markdown components

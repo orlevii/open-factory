@@ -5898,7 +5898,7 @@ git commit -m "feat(web): session view timeline with live updates and deep links
 
 - [ ] **Step 1: Add shadcn components**
 
-Run: `cd apps/web && pnpm dlx shadcn@latest add popover checkbox` (it uses the existing `components.json`; accept no overwrites). If the CLI is blocked by the supply-chain policy, write both files by hand from the shadcn `radix-nova` sources using `radix-ui`'s `Popover` and `Checkbox` (already installed via `radix-ui`). Popover animation: fade + 95% scale from `--radix-popover-content-transform-origin`, 100 ms, `ease-(--ease-out)`; under `motion-reduce` drop the scale.
+Run: `cd apps/web && pnpm exec shadcn add popover checkbox` (the locked `shadcn` devDependency of `apps/web`, never `pnpm dlx shadcn@latest`, which would run an unlocked version outside the lockfile and release-age policy; it uses the existing `components.json`; accept no overwrites). Review both generated files in the diff like hand-written code (the registry content comes from the network). If the CLI fails, write both files by hand from the shadcn `radix-nova` sources using `radix-ui`'s `Popover` and `Checkbox` (already installed via `radix-ui`). Popover animation: fade + 95% scale from `--radix-popover-content-transform-origin`, 100 ms, `ease-(--ease-out)`; under `motion-reduce` drop the scale.
 
 - [ ] **Step 2: Write the failing tests** — `apps/web/src/test/composer.test.tsx`
 

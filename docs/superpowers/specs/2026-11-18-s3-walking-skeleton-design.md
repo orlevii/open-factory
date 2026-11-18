@@ -297,7 +297,7 @@ All routes require a signed-in user (existing `requireUser`). Errors use the S1 
 | `POST /api/agents/:slug/compact` | `{focus?: string (≤ 2000 chars)}` | `202 {item: QueueItem}`; `503 agent_start_failed` as above. |
 | `POST /api/agents/:slug/interrupt` | — | `202`; `409 no_open_turn` when no turn is open. |
 
-`QueueItem = {id, kind: "message"|"compact", body?, focus?, urgent?, from, createdAt}` (`urgent` only on messages): the queue in order (pending messages and queued compacts). `SessionEvent = {seq, agentSlug, turnId, at, type, payload}`. Unknown slug → `404 agent_not_found`.
+`QueueItem = {id, kind: "message"|"compact", body?, focus?, urgent?, from, createdAt}` (`urgent` only on messages): the queue in order (pending messages and queued compacts). `SessionEvent = {seq, agentSlug, turnId, at, event, truncated?}` where `event` is the persisted event typed as the `HarnessEvent` union (plus the factory-only types), i.e. `{type, ...payload}` (DB columns `type` and `payload`). Unknown slug → `404 agent_not_found`.
 
 ## 10. WebSocket (`ws/route.ts`, extends S1)
 

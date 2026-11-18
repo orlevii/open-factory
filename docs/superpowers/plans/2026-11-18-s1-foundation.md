@@ -74,7 +74,6 @@ apps/server/
   src/routes/auth.ts             /api/auth/* bridge
   src/routes/status.ts           GET /api/status
   src/routes/me.ts               GET /api/me
-  src/ws/registry.ts             socket registry
   src/ws/route.ts                GET /api/ws
   src/static.ts                  SPA serving
   src/errors.ts                  error + not-found handlers
@@ -139,7 +138,7 @@ apps/cli/
   }
 }
 ```
-Then run `corepack use pnpm@latest`, which sets the `packageManager` field (verify with `npm view pnpm version`). Leave `scripts/build.mjs` for Task 8. Until then `pnpm build` fails, which is expected.
+Then run `corepack use pnpm@latest`, which sets the `packageManager` field (verify with `npm view pnpm version`). Leave `scripts/build.mjs` for Task 7. Until then `pnpm build` fails, which is expected.
 
 `pnpm-workspace.yaml`:
 ```yaml
@@ -1105,7 +1104,7 @@ describe("sign-up and /api/me", () => {
   });
 });
 ```
-(The sign-out test sends an `origin` header through the helper. Also check manually in Task 11 that CLI sign-out without Origin works. The spec says bearer requests pass the origin check.)
+(The sign-out test sends an `origin` header through the helper. Sign-out without an Origin header is covered by Task 10's `cli.test.ts` logout case: Node fetch sends no Origin, and the test asserts `/api/me` → 401 afterwards.)
 
 - [ ] **Step 4: Run, expect FAIL.**
 
@@ -1350,12 +1349,12 @@ Fastify's default logger does not log request bodies. Keep it that way.
 ### Task 6: WebSocket skeleton
 
 **Files:**
-- Create: `apps/server/src/ws/{registry.ts,route.ts,ws.test.ts}`
+- Create: `apps/server/src/ws/{route.ts,ws.test.ts}`
 - Modify: `apps/server/src/app.ts` (register the route)
 
 **Interfaces:**
 - Consumes: `getUser` (Task 5), `clientMessageSchema`, `ServerMessage` (Task 2), `app.config`.
-- Produces: `wsRegistry: { add(userId, socket); remove(userId, socket); sockets(userId): ReadonlySet<WebSocket>; size(): number }`, `wsRoutes(app, opts?: { heartbeatMs?: number })`.
+- Produces: `wsRoutes(app)`. (No socket registry and no heartbeat in S1. Both are deferred to S3.)
 
 - [ ] **Step 1: Install**: `pnpm --filter @open-factory/server add @fastify/websocket@latest && pnpm --filter @open-factory/server add -D ws@latest @types/ws@latest`
 
@@ -1365,7 +1364,6 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { TEST_ORIGIN, makeTestApp, signUp } from "../test/helpers.ts";
-import { wsRegistry } from "./registry.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
@@ -1387,19 +1385,15 @@ function open(headers: Record<string, string>) {
   });
 }
 
-test("cookie + matching origin: hello, then ping/pong, invalid message gets error; registry tracks socket", async () => {
+test("cookie + matching origin: hello, then ping/pong, invalid message gets error", async () => {
   const { ws, first } = await open({ cookie: session.cookie, origin: TEST_ORIGIN });
   expect(first).toEqual({ type: "hello", userId: session.user.id });
-  expect(wsRegistry.sockets(session.user.id).size).toBe(1);
   const next = () => new Promise<unknown>((r) => ws.once("message", (d) => r(JSON.parse(String(d)))));
   ws.send(JSON.stringify({ type: "ping" }));
   expect(await next()).toEqual({ type: "pong" });
   ws.send("not json");
   expect(await next()).toMatchObject({ type: "error", code: "bad_message" });
   ws.close();
-  await new Promise((r) => ws.once("close", r));
-  await new Promise((r) => setTimeout(r, 50));
-  expect(wsRegistry.sockets(session.user.id).size).toBe(0);
 });
 
 test("bearer without origin is accepted", async () => {
@@ -1423,43 +1417,17 @@ test.each([
 
 - [ ] **Step 4: Implement**
 
-`apps/server/src/ws/registry.ts`:
-```ts
-import type { WebSocket } from "ws";
-
-const byUser = new Map<string, Set<WebSocket>>();
-const EMPTY: ReadonlySet<WebSocket> = new Set();
-
-/** In-memory userId -> sockets map. The seam S3 builds broadcasting on; no broadcast API in S1. */
-export const wsRegistry = {
-  add(userId: string, socket: WebSocket) {
-    let set = byUser.get(userId);
-    if (!set) byUser.set(userId, (set = new Set()));
-    set.add(socket);
-  },
-  remove(userId: string, socket: WebSocket) {
-    const set = byUser.get(userId);
-    set?.delete(socket);
-    if (set?.size === 0) byUser.delete(userId);
-  },
-  sockets: (userId: string): ReadonlySet<WebSocket> => byUser.get(userId) ?? EMPTY,
-  size: () => byUser.size,
-};
-```
-
 `apps/server/src/ws/route.ts`:
 ```ts
 import websocket from "@fastify/websocket";
 import { clientMessageSchema, type ServerMessage } from "@open-factory/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { WebSocket } from "ws";
 import { getUser } from "../auth/require-user.ts";
-import { wsRegistry } from "./registry.ts";
 
 const unauthorized = (reply: FastifyReply) =>
   reply.code(401).send({ error: { code: "unauthorized", message: "Not signed in" } });
 
-export async function wsRoutes(app: FastifyInstance, opts: { heartbeatMs?: number } = {}) {
+export async function wsRoutes(app: FastifyInstance) {
   await app.register(websocket);
   const allowed = new Set([app.config.publicOrigin, ...(app.config.isProduction ? [] : [app.config.devWebOrigin])]);
 
@@ -1472,26 +1440,9 @@ export async function wsRoutes(app: FastifyInstance, opts: { heartbeatMs?: numbe
     request.user = user;
   }
 
-  const alive = new WeakMap<WebSocket, boolean>();
-  const heartbeat = setInterval(() => {
-    for (const client of app.websocketServer.clients) {
-      if (alive.get(client) === false) {
-        client.terminate();
-        continue;
-      }
-      alive.set(client, false);
-      client.ping();
-    }
-  }, opts.heartbeatMs ?? 30_000);
-  app.addHook("onClose", async () => clearInterval(heartbeat));
-
   app.get("/api/ws", { websocket: true, preValidation: checkUpgrade }, (socket, request) => {
     const userId = request.user!.id;
     const send = (m: ServerMessage) => socket.send(JSON.stringify(m));
-    alive.set(socket, true);
-    socket.on("pong", () => alive.set(socket, true));
-    wsRegistry.add(userId, socket);
-    socket.on("close", () => wsRegistry.remove(userId, socket));
     socket.on("message", (raw) => {
       let parsed: ReturnType<typeof clientMessageSchema.safeParse>;
       try {
@@ -1510,7 +1461,7 @@ In `app.ts`, register `await app.register(wsRoutes);` after `meRoutes`, and remo
 
 - [ ] **Step 5: Run, expect PASS**: `pnpm vitest run apps/server/src/ws` and the full server suite.
 
-- [ ] **Step 6: Typecheck, lint, commit**: `feat(server): authenticated websocket skeleton with origin check and heartbeat`
+- [ ] **Step 6: Typecheck, lint, commit**: `feat(server): authenticated websocket skeleton with origin check`
 
 ---
 
@@ -1586,14 +1537,16 @@ In `app.ts`, replace the trailing `app.setNotFoundHandler(...)` with `await regi
 `apps/server/src/index.ts`:
 ```ts
 import { fileURLToPath } from "node:url";
-import { createDb, migrate } from "@open-factory/db";
+import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { buildApp } from "./app.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
-// In the bundle, migrations and public/ sit next to index.js. From source (pnpm dev), use the workspace paths.
-const bundled = import.meta.url.endsWith("/dist/index.js");
-const migrationsDir = bundled ? here("./migrations") : here("../../../packages/db/migrations");
+// esbuild defines __BUNDLED__ in build.mjs; it is undefined under tsx (pnpm dev).
+declare const __BUNDLED__: boolean | undefined;
+const bundled = typeof __BUNDLED__ !== "undefined" && __BUNDLED__;
+// In the bundle, migrations and public/ sit next to index.js. From source, use the db package's folder.
+const migrationsDir = bundled ? here("./migrations") : MIGRATIONS_DIR;
 const webRoot = bundled ? here("./public") : undefined;
 
 async function main() {
@@ -1646,7 +1599,7 @@ await build({
   format: "esm",
   target: "node24",
   external,
-  define: { __FACTORY_VERSION__: JSON.stringify(rootPkg.version) },
+  define: { __FACTORY_VERSION__: JSON.stringify(rootPkg.version), __BUNDLED__: "true" },
   sourcemap: true,
   logLevel: "info",
 });
@@ -1739,7 +1692,7 @@ export default defineConfig({
 `apps/web/src/test-setup.ts`: `import "@testing-library/jest-dom/vitest";`
 Re-add `"apps/web"` to `projects` in the root `vitest.config.ts`.
 
-Then initialize shadcn (`pnpm dlx shadcn@latest init` in `apps/web`, choosing the Vite + Tailwind 4 setup with alias `@`), and add the components: `pnpm dlx shadcn@latest add button input label card sidebar dropdown-menu tabs textarea sonner`. The generated files live in `src/components/ui/` (excluded from Biome in Task 1). Set dark mode to follow the system: in `src/styles.css`, make shadcn's dark tokens apply under `@media (prefers-color-scheme: dark)` instead of a `.dark` class (or add `class="dark"` toggling from `matchMedia` in `main.tsx`). No theme toggle.
+Then initialize shadcn (`pnpm dlx shadcn@latest init` in `apps/web`, choosing the Vite + Tailwind 4 setup with alias `@`), and add the components: `pnpm dlx shadcn@latest add button input label card sidebar dropdown-menu tabs textarea`. The generated files live in `src/components/ui/` (excluded from Biome in Task 1). Dark mode follows the system through CSS only: in `src/styles.css`, put shadcn's dark tokens under `@media (prefers-color-scheme: dark) { :root { ... } }` instead of a `.dark` class, and point Tailwind's `dark:` variant at the same media query (`@custom-variant dark (@media (prefers-color-scheme: dark));`). No JS theme switching and no toggle.
 
 - [ ] **Step 2: Auth client, session query, error mapping**
 
@@ -1857,7 +1810,13 @@ export function connectWs(opts: WsOptions) {
     ws = new Impl(url);
     ws.onopen = () => { attempt = 0; state = "open"; };
     ws.onmessage = (e) => {
-      const parsed = serverMessageSchema.safeParse(JSON.parse(String(e.data)));
+      let data: unknown;
+      try {
+        data = JSON.parse(String(e.data));
+      } catch {
+        return; // ignore non-JSON frames
+      }
+      const parsed = serverMessageSchema.safeParse(data);
       if (parsed.success) opts.onMessage?.(parsed.data);
     };
     ws.onclose = async () => {
@@ -1907,7 +1866,7 @@ createRoot(document.getElementById("root")!).render(
 ```
 `index.html`: a standard Vite html with `<div id="root"></div>`, `<script type="module" src="/src/main.tsx">` and `<title>Open Factory</title>`.
 
-`src/routes/__root.tsx`: `createRootRouteWithContext<{ queryClient: QueryClient }>()({ component: () => <><Outlet /><Toaster /></> })`.
+`src/routes/__root.tsx`: `createRootRouteWithContext<{ queryClient: QueryClient }>()({ component: () => <Outlet /> })`.
 
 `src/routes/_app.tsx` (pathless authenticated layout):
 ```tsx
@@ -2008,7 +1967,7 @@ Manual smoke check: run `npm start`, open http://localhost:3000. You're redirect
 **Interfaces:**
 - Produces: `<Markdown source: string />`, `<MarkdownEditor value: string onChange(v: string) />`. Not mounted on any route (Q12).
 
-- [ ] **Step 1: Install**: `pnpm --filter @open-factory/web add react-markdown@latest remark-gfm@latest shiki@latest mermaid@latest`
+- [ ] **Step 1: Install**: `pnpm --filter @open-factory/web add react-markdown@latest remark-gfm@latest shiki@latest mermaid@latest && pnpm --filter @open-factory/web add -D @tailwindcss/typography@latest`, then add `@plugin "@tailwindcss/typography";` to `src/styles.css`.
 
 - [ ] **Step 2: Failing tests**
 
@@ -2041,6 +2000,16 @@ test("external links open safely", () => {
   const a = screen.getByRole("link", { name: "x" });
   expect(a).toHaveAttribute("target", "_blank");
   expect(a).toHaveAttribute("rel", "noopener noreferrer");
+});
+
+test("unlabeled fenced blocks render inside <pre>, inline code does not", () => {
+  const { container } = render(<Markdown source={"Use `x` here.\n\n```\nplain block\n```"} />);
+  const pre = container.querySelector("pre");
+  expect(pre).toBeInTheDocument();
+  expect(pre).toHaveTextContent("plain block");
+  const inline = screen.getByText("x");
+  expect(inline.tagName).toBe("CODE");
+  expect(inline.closest("pre")).toBeNull();
 });
 
 test("highlights code blocks once shiki loads", async () => {
@@ -2097,14 +2066,20 @@ const components: Components = {
     const external = typeof href === "string" && /^https?:\/\//.test(href);
     return external ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <a href={href}>{children}</a>;
   },
-  code: ({ className, children }) => {
-    const lang = /language-(\w+)/.exec(className ?? "")?.[1];
-    const text = String(children).replace(/\n$/, "");
-    if (!lang) return <code className={className}>{children}</code>;
+  // Fenced blocks arrive as <pre><code>: `pre` owns block rendering, `code` stays inline-only.
+  pre: ({ node }) => {
+    const codeEl = node?.children[0];
+    const props = codeEl && codeEl.type === "element" ? codeEl.properties : {};
+    const classes = Array.isArray(props.className) ? props.className.map(String) : [];
+    const lang = classes.find((c) => c.startsWith("language-"))?.slice("language-".length);
+    const text = codeEl && codeEl.type === "element"
+      ? codeEl.children.map((c) => (c.type === "text" ? c.value : "")).join("").replace(/\n$/, "")
+      : "";
     if (lang === "mermaid") return <MermaidBlock source={text} />;
-    return <CodeBlock code={text} lang={lang} />;
+    if (lang) return <CodeBlock code={text} lang={lang} />;
+    return <pre><code>{text}</code></pre>;
   },
-  pre: ({ children }) => <>{children}</>,
+  code: ({ className, children }) => <code className={className}>{children}</code>,
 };
 
 /** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. */
@@ -2116,20 +2091,18 @@ export function Markdown({ source }: { source: string }) {
   );
 }
 ```
-(`prose` comes from `@tailwindcss/typography`. Add it at latest with `@plugin "@tailwindcss/typography";` in `styles.css`, or drop the class if not wanted.)
+(`prose` comes from `@tailwindcss/typography`, installed in Step 1.)
 
 `code-block.tsx`:
 ```tsx
 import { useEffect, useState } from "react";
-
-const prefersDark = () => typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
 
 export function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const [html, setHtml] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     import("shiki")
-      .then(({ codeToHtml }) => codeToHtml(code, { lang, theme: prefersDark() ? "github-dark" : "github-light" }))
+      .then(({ codeToHtml }) => codeToHtml(code, { lang, themes: { light: "github-light", dark: "github-dark" } }))
       .then((h) => live && setHtml(h))
       .catch(() => {}); // unknown language: keep the plain block
     return () => { live = false; };
@@ -2137,6 +2110,12 @@ export function CodeBlock({ code, lang }: { code: string; lang: string }) {
   // Shiki output is generated from escaped code tokens, not user HTML.
   if (html) return <div dangerouslySetInnerHTML={{ __html: html }} />;
   return <pre><code>{code}</code></pre>;
+}
+```
+Shiki's dual-theme output switches through CSS, in line with the CSS-only dark mode. Add this to `src/styles.css`:
+```css
+@media (prefers-color-scheme: dark) {
+  .shiki, .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }
 }
 ```
 
@@ -2730,7 +2709,7 @@ Use the latest major tags of the actions (check each action's README). `pnpm/act
 
 - [ ] **Step 4: Verify everything locally the way CI does**: `pnpm install --frozen-lockfile && pnpm lint:ci && pnpm typecheck && pnpm test && pnpm build && scripts/smoke-cli.sh`
 
-- [ ] **Step 5: Commit, push, open the PR**: `ci: github actions workflow with cli smoke; docs: readme quickstart`. Push the implementation branch and open a PR to `main`. Confirm the CI run is green with `gh pr checks --watch`.
+- [ ] **Step 5: Commit, then push only if authorized**: commit `ci: github actions workflow with cli smoke; docs: readme quickstart`. Push the branch and open a PR to `main` **only if the team lead has authorized it for this workflow**; then confirm CI is green with `gh pr checks --watch`. Otherwise stop at the locally green run from Step 4 and hand off.
 
 ---
 

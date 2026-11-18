@@ -28,7 +28,7 @@ let rt: AgentRuntime;
 let agentId: string;
 
 async function makeRuntime(
-  opts: { token?: string | null; sessionId?: string; status?: string } = {},
+  opts: { token?: string | null; sessionId?: string; status?: string; realHold?: boolean } = {},
 ) {
   n += 1;
   agentId = `a${n}`;
@@ -54,7 +54,7 @@ async function makeRuntime(
     driver,
     config: loadConfig(env),
     log: silentLog,
-    holdTimeoutMs: 200,
+    ...(opts.realHold ? {} : { holdTimeoutMs: 200 }),
   });
   await rt.init();
   return rt;
@@ -69,13 +69,18 @@ const events = async () =>
     event: e.event,
   }));
 const types = async () => (await events()).map((e) => e.type);
+const msgRows = () =>
+  t.sql`select id, state, delivered_turn_id from messages where to_agent_id = ${agentId} order by created_at`;
 
 beforeEach(async () => {
   await makeRuntime();
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
+/** Only the hold timer is faked: Postgres I/O and setImmediate (used by settled()) stay real. */
+const fakeHoldTimer = () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
 async function startedIdle() {
   await send("boot");
@@ -83,14 +88,21 @@ async function startedIdle() {
   await rt.settled();
 }
 
-test("messages queued while one is being written go out as one batch, in order", async () => {
+test("a rejected write keeps the message pending at the head; the next flush sends it with the newer one as one batch", async () => {
   await startedIdle();
   driver.last.failWrites = true;
-  await expect(send("a")).resolves.toBeTruthy(); // write fails → stays queued, delivery_failed appended
+  const a = await send("a"); // write rejected: stays queued, delivery_failed appended once
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["a"]);
+  const failed = (await events()).filter((e) => e.type === "delivery_failed");
+  expect(failed.map((e) => e.event)).toEqual([
+    { type: "delivery_failed", messageIds: [a.id], reason: "The agent process is not running" },
+  ]);
+  const rowA = (await msgRows()).find((r) => r.id === a.id);
+  expect(rowA?.state).toBe("pending");
   driver.last.failWrites = false;
   await send("b");
   expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["a", "b"]);
-  expect(await types()).toContain("delivery_failed");
+  expect(rt.queueItems()).toEqual([]);
 });
 
 test("compact is a barrier: written only with no open turn, and nothing passes it until its turn ends", async () => {
@@ -148,16 +160,54 @@ test("urgent while a turn is open: interrupt first, hold, then the message on th
   ]);
 });
 
-test("the hold is released after the timeout if no result arrives", async () => {
+test("the hold is released after 10 s if no result arrives", async () => {
+  await makeRuntime({ realHold: true });
   await startedIdle();
   await send("long task");
   driver.last.emit(ev.turn());
   await rt.settled();
+  fakeHoldTimer();
   await send("STOP", true);
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await new Promise((r) => setTimeout(r, 300)); // holdTimeoutMs is 200 in tests
+  await vi.advanceTimersByTimeAsync(9_999);
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
+  await vi.advanceTimersByTimeAsync(1);
   await rt.settled();
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
+});
+
+test("a DB failure in the hold-timeout flush stops the process and marks errored", async () => {
+  await makeRuntime({ realHold: true });
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  fakeHoldTimer();
+  await send("STOP", true);
+  vi.spyOn(store, "transaction").mockRejectedValueOnce(new Error("db down"));
+  await vi.advanceTimersByTimeAsync(10_000);
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
+  expect(rt.summary().status).toBe("errored");
+  expect((await types()).at(-1)).toBe("exited");
+});
+
+test("urgent while a compact is in flight does not interrupt it; it waits behind the barrier", async () => {
+  await startedIdle();
+  await rt.compact({ byHandle: "or" });
+  expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]);
+  driver.last.emit(ev.turn()); // the compact turn opens
+  await rt.settled();
+  await send("STOP", true);
+  expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]); // no interrupt
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
+  driver.last.emit(
+    ev.usage(),
+    ev.end({ command: "compact", terminalReason: undefined, numTurns: 0 }),
+  );
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["STOP"]);
 });
 
 test("urgent while idle is a normal send", async () => {
@@ -168,13 +218,17 @@ test("urgent while idle is a normal send", async () => {
 });
 
 test("after an unexpected exit nothing restarts the process until the next API call", async () => {
+  await makeRuntime({ realHold: true });
   await startedIdle();
   await send("long task");
   driver.last.emit(ev.turn());
   await rt.settled();
+  fakeHoldTimer();
   await send("STOP", true);
   driver.last.exit(1);
-  await new Promise((r) => setTimeout(r, 300)); // hold timeout fires after the exit
+  await rt.settled();
+  // the exit clears the hold; even past its 10 s nothing flushes or restarts the dead process
+  await vi.advanceTimersByTimeAsync(10_000);
   await rt.settled();
   expect(driver.starts).toHaveLength(1);
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);

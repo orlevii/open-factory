@@ -27,6 +27,7 @@ let bus: EventBus;
 let frames: ServerMessage[];
 let rt: AgentRuntime;
 let agentId: string;
+let lastEnv: Record<string, string>;
 
 async function makeRuntime(
   opts: { token?: string | null; sessionId?: string; status?: string } = {},
@@ -41,6 +42,7 @@ async function makeRuntime(
     FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-")),
   };
   if (opts.token !== null) env.CLAUDE_CODE_OAUTH_TOKEN = opts.token ?? "tok";
+  lastEnv = env;
   driver = new FakeDriver();
   bus = new EventBus();
   frames = [];
@@ -282,4 +284,116 @@ test("a failing DB write stops the process and marks errored", async () => {
   expect(rt.summary().status).toBe("errored");
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
   expect(a?.status).toBe("errored");
+});
+
+test("several unconfirmed batches roll back to the head in their original order", async () => {
+  await send("a");
+  await send("b"); // still before session_started: a second tentative batch
+  await send("c");
+  expect(driver.last.sent.map((b) => b.map((m) => m.body))).toEqual([["a"], ["b"], ["c"]]);
+  driver.last.exit(1);
+  await rt.settled();
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["a", "b", "c"]);
+  const failed = (await events()).filter((e) => e.type === "delivery_failed");
+  expect(failed).toHaveLength(3);
+  expect((await msgRows()).map((r) => r.state)).toEqual(["pending", "pending", "pending"]);
+});
+
+test("pending after a failed start, then delivered as one turn on the next start", async () => {
+  await makeRuntime({ token: null });
+  await expect(send("hello")).rejects.toBeInstanceOf(AgentStartError);
+  // the token is fixed and the server restarted: a fresh runtime for the same agent
+  const agent = await store.agentById(agentId);
+  if (!agent) throw new Error("no agent");
+  rt = new AgentRuntime({
+    agent,
+    store,
+    bus,
+    driver,
+    config: loadConfig({ ...lastEnv, CLAUDE_CODE_OAUTH_TOKEN: "tok" }),
+    log: silentLog,
+  });
+  await rt.init();
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["hello"]);
+  await send("again");
+  expect(driver.starts).toHaveLength(1);
+  expect(driver.last.sent).toHaveLength(1);
+  expect(driver.last.sent[0]?.map((m) => m.body)).toEqual(["hello", "again"]);
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  const rows = await msgRows();
+  expect(rows.map((r) => r.state)).toEqual(["delivered", "delivered"]);
+  expect(new Set(rows.map((r) => r.delivered_turn_id)).size).toBe(1);
+  expect(rows[0]?.delivered_turn_id).not.toBeNull();
+  expect(rt.summary().status).toBe("idle");
+});
+
+test("status: working while a batch awaits its turn, through an origin-tagged turn, then idle", async () => {
+  await send("boot");
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  expect(rt.summary()).toMatchObject({ status: "idle", turnOpen: false });
+  await send("x"); // written with no open turn: awaiting
+  expect(rt.summary()).toMatchObject({ status: "working", turnOpen: false });
+  driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
+  await rt.settled();
+  expect(rt.summary()).toMatchObject({ status: "working", turnOpen: false });
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  expect(rt.summary()).toMatchObject({ status: "working", turnOpen: true });
+  driver.last.emit(ev.usage(), ev.end());
+  await rt.settled();
+  expect(rt.summary()).toMatchObject({ status: "idle", turnOpen: false });
+  const statuses = frames.filter((f) => f.type === "agent_status").map((f) => f.status);
+  expect(statuses.at(-1)).toBe("idle");
+});
+
+test("a DB failure after a stdin write in a send job stops the process and marks errored", async () => {
+  await send("boot");
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  vi.spyOn(store, "transaction").mockRejectedValueOnce(new Error("db down"));
+  await expect(send("x")).rejects.toThrow("db down");
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("x"); // the write itself happened
+  expect(rt.summary().status).toBe("errored");
+  expect((await events()).at(-1)?.event).toMatchObject({ type: "exited" }); // the process was stopped
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["x"]); // not lost: re-sent on the next start
+  const [a] = await t.sql`select status from agents where id = ${agentId}`;
+  expect(a?.status).toBe("errored");
+  await send("y");
+  expect(driver.starts).toHaveLength(2);
+});
+
+test("a DB failure recording process_started stops the new process instead of orphaning it", async () => {
+  const real = store.append.bind(store);
+  vi.spyOn(store, "append").mockImplementation(async (...args) => {
+    if (args[2].type === "process_started") throw new Error("db down");
+    return real(...args);
+  });
+  await expect(send("x")).rejects.toThrow("db down");
+  await rt.settled();
+  expect(rt.summary().status).toBe("errored");
+  expect((await types()).at(-1)).toBe("exited"); // the pump ran and recorded the stop
+  vi.restoreAllMocks();
+  await send("y");
+  expect(driver.starts).toHaveLength(2);
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["x", "y"]);
+});
+
+test("an exit while the DB is failing still resets the runtime so a later send restarts", async () => {
+  await send("x");
+  driver.last.emit(ev.session("sess-7"), ev.turn());
+  await rt.settled();
+  await send("y"); // mid-turn: attributed to the open turn
+  vi.spyOn(store, "append").mockRejectedValue(new Error("db down"));
+  vi.spyOn(store, "closeTurn").mockRejectedValue(new Error("db down"));
+  driver.last.exit(1, "boom");
+  await rt.settled();
+  expect(rt.summary()).toMatchObject({ status: "errored", turnOpen: false });
+  vi.restoreAllMocks();
+  await send("z");
+  expect(driver.starts).toHaveLength(2);
+  expect(driver.last.opts).toEqual({ resumeSessionId: "sess-7" });
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["z"]);
 });

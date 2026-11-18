@@ -98,7 +98,7 @@ export class AgentRuntime {
       urgent: m.urgent,
     });
     const entry: MessageEntry = { kind: "message", row, fromHandle: m.fromHandle };
-    return this.run(async () => {
+    return this.apiJob(async () => {
       this.queue.push(entry);
       this.publishQueue();
       await this.ensureStarted();
@@ -116,7 +116,7 @@ export class AgentRuntime {
       createdAt: new Date(),
       ...(c.focus ? { focus: c.focus } : {}),
     };
-    return this.run(async () => {
+    return this.apiJob(async () => {
       this.queue.push(entry);
       this.publishQueue();
       await this.ensureStarted();
@@ -126,7 +126,7 @@ export class AgentRuntime {
   }
 
   async interrupt(c: { byHandle: string }): Promise<void> {
-    return this.run(async () => {
+    return this.apiJob(async () => {
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       await this.proc.control("interrupt");
       await this.append(this.openTurnId, {
@@ -186,6 +186,22 @@ export class AgentRuntime {
   private run<T>(job: () => Promise<T>): Promise<T> {
     this.submitted += 1;
     return this.jobs.run(job);
+  }
+
+  /**
+   * An API job. An unexpected failure (a DB write after a stdin write, say) gets the same treatment as one in
+   * an event job (spec §11): stop the process and mark errored, then reject the API call.
+   */
+  private apiJob<T>(job: () => Promise<T>): Promise<T> {
+    return this.run(async () => {
+      try {
+        return await job();
+      } catch (err) {
+        if (!(err instanceof AgentStartError || err instanceof NoOpenTurnError) && this.proc)
+          await this.onJobFailure(this.proc, err);
+        throw err;
+      }
+    });
   }
 
   // ---------- internals ----------
@@ -272,8 +288,9 @@ export class AgentRuntime {
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
     this.proc = proc;
     this.started = false;
-    await this.append(null, { type: "process_started", resumed: Boolean(resumeSessionId) });
+    // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
+    await this.append(null, { type: "process_started", resumed: Boolean(resumeSessionId) });
     this.publishStatus();
   }
 
@@ -295,7 +312,10 @@ export class AgentRuntime {
       { err, agent: this.agent.slug },
       "agent event handling failed; stopping the process",
     );
-    if (this.deadProc === proc) return;
+    if (this.deadProc === proc) {
+      this.publishStatus(); // e.g. recording its exit failed: the in-memory state was still reset
+      return;
+    }
     this.deadProc = proc;
     void proc.stop({ graceMs: 0 });
     await this.setErrored("Internal error while recording the session").catch(() => {
@@ -374,58 +394,76 @@ export class AgentRuntime {
   }
 
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
-    // Roll back batches that were never confirmed by session_started (spec §8.3 rule 7).
-    for (const batch of this.inFlight.splice(0)) {
-      const ids = batch.map((m) => m.row.id);
-      await this.d.store.markPending(ids);
-      await this.append(null, {
-        type: "delivery_failed",
-        messageIds: ids,
-        reason: e.expected
-          ? "stopped before the session started"
-          : "the agent process exited before the session started",
-      });
-      this.queue.unshift(...batch);
-      this.awaiting = this.awaiting.filter((a) => !a.some((id) => ids.includes(id)));
-    }
-    if (this.openTurnId) {
-      await this.d.store.closeTurn(this.openTurnId, {
-        isError: !e.expected,
-        terminalReason: e.expected ? "process_stopped" : "process_exited",
-        usage: this.lastUsage,
-      });
-      this.openTurnId = undefined;
-    }
-    await this.append(null, e);
+    // Reset the in-memory state first, so the runtime can restart even if recording the exit fails (DB down).
+    const rolledBack = this.inFlight.splice(0);
+    const openTurnId = this.openTurnId;
+    const usage = this.lastUsage;
+    // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7).
+    this.queue.unshift(...rolledBack.flat());
+    this.openTurnId = undefined;
     this.releaseHold();
     this.compactInFlight = false;
     this.awaiting = [];
-    if (!e.expected && !this.errored)
-      await this.setErrored(
-        e.code !== null
-          ? `Exited unexpectedly (code ${e.code})`
-          : `Exited unexpectedly (${e.signal ?? "unknown"})`,
-      );
     if (this.proc === proc) this.proc = undefined;
     this.started = false;
-    this.publishQueue();
+    const unexpected = !e.expected && !this.errored;
+    if (unexpected) {
+      this.errored = true;
+      this.lastError =
+        e.code !== null
+          ? `Exited unexpectedly (code ${e.code})`
+          : `Exited unexpectedly (${e.signal ?? "unknown"})`;
+    }
+    try {
+      for (const batch of rolledBack) {
+        const ids = batch.map((m) => m.row.id);
+        await this.d.store.markPending(ids);
+        await this.append(null, {
+          type: "delivery_failed",
+          messageIds: ids,
+          reason: e.expected
+            ? "stopped before the session started"
+            : "the agent process exited before the session started",
+        });
+      }
+      if (openTurnId)
+        await this.d.store.closeTurn(openTurnId, {
+          isError: !e.expected,
+          terminalReason: e.expected ? "process_stopped" : "process_exited",
+          usage,
+        });
+      await this.append(null, e);
+      if (unexpected) await this.d.store.setStatus(this.agent.id, "errored");
+    } finally {
+      this.publishQueue();
+    }
   }
 
   private async urgentInterrupt(by: string) {
-    if (!this.proc || !this.openTurnId || this.hold) return; // idle → normal send; hold active → no second interrupt
+    // idle → normal send; hold active → no second interrupt; a compact in flight is never interrupted (it
+    // waits behind the barrier instead)
+    if (!this.proc || !this.openTurnId || this.hold || this.compactInFlight) return;
     await this.proc.control("interrupt");
-    await this.append(this.openTurnId, { type: "control", cmd: "interrupt", by: `@${by}` });
-    this.hold = setTimeout(() => {
+    const hold = setTimeout(() => {
       this.d.log.warn(
         { agent: this.agent.slug },
         "no result within the urgent hold timeout; sending anyway",
       );
       void this.run(async () => {
+        if (this.hold !== hold) return; // already released (turn_end or exited); never release a newer hold
         this.releaseHold();
-        await this.flush();
+        try {
+          await this.flush();
+        } catch (err) {
+          if (this.proc) await this.onJobFailure(this.proc, err);
+          else
+            this.d.log.error({ err, agent: this.agent.slug }, "flush after the urgent hold failed");
+        }
         this.publishStatus();
       });
     }, this.d.holdTimeoutMs ?? 10_000);
+    this.hold = hold;
+    await this.append(this.openTurnId, { type: "control", cmd: "interrupt", by: `@${by}` });
   }
 
   private releaseHold() {
@@ -484,17 +522,25 @@ export class AgentRuntime {
       return false;
     }
     const turnAtWrite = this.openTurnId;
-    const dto = await this.d.store.transaction(async (tx) => {
-      const out = await this.d.store.append(
-        this.agent.id,
-        turnAtWrite ?? null,
-        { type: "message_in", messages: batch.map(toFactory) },
-        tx,
-      );
-      if (this.started) await this.d.store.markDelivered(ids, tx);
-      if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
-      return out;
-    });
+    let dto: Awaited<ReturnType<EventStore["append"]>>;
+    try {
+      dto = await this.d.store.transaction(async (tx) => {
+        const out = await this.d.store.append(
+          this.agent.id,
+          turnAtWrite ?? null,
+          { type: "message_in", messages: batch.map(toFactory) },
+          tx,
+        );
+        if (this.started) await this.d.store.markDelivered(ids, tx);
+        if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
+        return out;
+      });
+    } catch (err) {
+      // Claude has the batch but nothing recorded it: keep the rows pending at the head (re-sent on the next start,
+      // so it may be seen twice) and let the caller stop the process (spec §11).
+      this.queue.unshift(...batch);
+      throw err;
+    }
     this.d.bus.publish(this.agent.slug, {
       type: "session_event",
       agent: this.agent.slug,

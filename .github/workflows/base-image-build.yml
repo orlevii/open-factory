@@ -1,0 +1,115 @@
+name: Base image build
+
+# Reusable: one native build per arch. Test mode loads the image locally; push mode pushes
+# by digest (untagged), pulls that digest back for the smoke test, and only then uploads the
+# digest for the merge job. Nothing untested is ever tagged (spec §6.3).
+on:
+  workflow_call:
+    inputs:
+      push:
+        type: boolean
+        required: true
+      claude_version:
+        type: string
+        required: true
+      write_cache:
+        type: boolean
+        required: true
+      no_cache:
+        type: boolean
+        required: true
+
+# No permissions block: a reusable workflow can only downgrade the caller's token, and an
+# explicit block would set packages to none and break the GHCR push. The caller's per-job
+# grants (contents: read; packages: write only on build-publish) are the real limit.
+
+env:
+  IMAGE: ghcr.io/orlevii/open-factory/base
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build (test mode, load locally)
+        if: ${{ !inputs.push }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/base
+          platforms: ${{ matrix.platform }}
+          build-args: CLAUDE_CODE_VERSION=${{ inputs.claude_version }}
+          load: true
+          tags: open-factory-base:test
+          provenance: false
+          sbom: false
+          no-cache: ${{ inputs.no_cache }}
+          cache-from: type=gha,scope=base-${{ matrix.arch }}
+          cache-to: ${{ inputs.write_cache && format('type=gha,scope=base-{0},mode=max', matrix.arch) || '' }}
+
+      - name: Build and push by digest
+        id: push
+        if: ${{ inputs.push }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/base
+          platforms: ${{ matrix.platform }}
+          build-args: CLAUDE_CODE_VERSION=${{ inputs.claude_version }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          sbom: false
+          no-cache: ${{ inputs.no_cache }}
+          cache-from: type=gha,scope=base-${{ matrix.arch }}
+          cache-to: ${{ inputs.write_cache && format('type=gha,scope=base-{0},mode=max', matrix.arch) || '' }}
+
+      - name: Smoke test
+        env:
+          PUSH: ${{ inputs.push }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          CLAUDE_VERSION: ${{ inputs.claude_version }}
+        run: |
+          if [ "$PUSH" = true ]; then
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest '$DIGEST'"; exit 1; }
+            ref="${IMAGE}@${DIGEST}"
+          else
+            ref=open-factory-base:test
+          fi
+          images/base/test/smoke.sh "$ref" "$CLAUDE_VERSION"
+
+      - name: Export digest
+        if: ${{ inputs.push }}
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        if: ${{ inputs.push }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1

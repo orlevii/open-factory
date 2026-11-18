@@ -2,6 +2,8 @@
 
 Self-hosted workspace where people and agents build software together. Design: [S1 foundation spec](docs/superpowers/specs/2026-11-18-s1-foundation-design.md).
 
+Agent containers use the [base image](images/base/README.md) (`ghcr.io/orlevii/open-factory/base`).
+
 ## Prerequisites
 
 - Node 24

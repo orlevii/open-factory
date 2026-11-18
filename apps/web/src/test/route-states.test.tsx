@@ -5,7 +5,9 @@ import { alice, renderApp } from "@/test/render-app";
 
 const auth = vi.hoisted(() => ({ getSession: vi.fn() }));
 vi.mock("@/lib/auth-client", () => ({ authClient: auth }));
-vi.mock("@/lib/ws", () => ({ connectWs: () => ({ close() {}, status: () => "open" }) }));
+vi.mock("@/lib/ws", () => ({
+  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+}));
 
 beforeEach(() => auth.getSession.mockReset());
 

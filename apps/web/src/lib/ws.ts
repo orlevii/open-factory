@@ -1,4 +1,4 @@
-import { type ServerMessage, serverMessageSchema } from "@open-factory/shared";
+import { type ClientMessage, type ServerMessage, serverMessageSchema } from "@open-factory/shared";
 
 export type WsStatus = "connecting" | "open" | "closed";
 
@@ -6,6 +6,8 @@ export interface WsOptions {
   onUnauthenticated(): void;
   hasSession(): Promise<boolean>;
   onMessage?(m: ServerMessage): void;
+  /** Called on every (re)open. */
+  onOpen?(): void;
   /** Called on every status transition (and once with the initial "connecting"). */
   onStatus?(s: WsStatus): void;
   url?: string;
@@ -15,6 +17,8 @@ export interface WsOptions {
 export interface WsConnection {
   close(): void;
   status(): WsStatus;
+  /** Writes JSON while open; returns false (and drops the frame) otherwise. */
+  send(m: ClientMessage): boolean;
 }
 
 const MAX_DELAY_MS = 30_000;
@@ -29,6 +33,7 @@ export function connectWs(opts: WsOptions): WsConnection {
   let stopped = false;
   let state: WsStatus | undefined;
   let ws: WebSocket | undefined;
+  let isOpen = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const setState = (next: WsStatus) => {
@@ -43,7 +48,9 @@ export function connectWs(opts: WsOptions): WsConnection {
     ws = socket;
     socket.onopen = () => {
       attempt = 0;
+      isOpen = true;
       setState("open");
+      opts.onOpen?.();
     };
     socket.onmessage = (e) => {
       let data: unknown;
@@ -56,6 +63,7 @@ export function connectWs(opts: WsOptions): WsConnection {
       if (parsed.success) opts.onMessage?.(parsed.data);
     };
     socket.onclose = async () => {
+      isOpen = false;
       if (stopped) return;
       setState("closed");
       const authed = await opts.hasSession().catch(() => true); // network error: keep retrying
@@ -73,10 +81,16 @@ export function connectWs(opts: WsOptions): WsConnection {
   return {
     close() {
       stopped = true;
+      isOpen = false;
       clearTimeout(timer);
       setState("closed");
       ws?.close();
     },
     status: () => state ?? "connecting",
+    send(m: ClientMessage) {
+      if (!ws || !isOpen) return false;
+      ws.send(JSON.stringify(m));
+      return true;
+    },
   };
 }

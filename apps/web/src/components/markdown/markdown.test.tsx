@@ -2,17 +2,27 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { Markdown } from "./markdown";
 
+// "bad" sources fail with a multi-line parser-style error; "slow" sources never resolve.
 vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
-    render: vi.fn(async () => ({ svg: '<svg data-testid="mermaid-svg"></svg>' })),
+    render: vi.fn(async (_id: string, source: string) => {
+      if (source.includes("bad"))
+        throw new Error(`Parse error on line 1:\n${"-".repeat(300)}\nExpecting 'NODE'`);
+      if (source.includes("slow")) return new Promise(() => {});
+      return { svg: '<svg data-testid="mermaid-svg"></svg>' };
+    }),
   },
 }));
 
 // Shiki's Oniguruma WASM engine can't start under jsdom (its Blob has no .stream()),
 // so the highlighter is mocked here. The real lazy load is covered by the build.
+// An unknown language ("nope") rejects, as real Shiki does.
 vi.mock("shiki", () => ({
-  codeToHtml: vi.fn(async (code: string) => `<pre class="shiki"><code>${code}</code></pre>`),
+  codeToHtml: vi.fn(async (code: string, opts: { lang: string }) => {
+    if (opts.lang === "nope") throw new Error("Language `nope` not found");
+    return `<pre class="shiki"><code>${code}</code></pre>`;
+  }),
 }));
 
 test("renders GFM tables and task lists", () => {
@@ -64,4 +74,47 @@ test("renders mermaid blocks with strict security", async () => {
   expect(mermaid.initialize).toHaveBeenCalledWith(
     expect.objectContaining({ securityLevel: "strict" }),
   );
+});
+
+test("javascript: links are not rendered as executable hrefs", () => {
+  render(<Markdown source={"[x](javascript:alert(1))"} />);
+  const a = screen.getByText("x").closest("a");
+  expect(a?.getAttribute("href") ?? "").not.toMatch(/^\s*javascript:/i);
+});
+
+test("an invalid mermaid diagram shows a short error note and the source", async () => {
+  const { container } = render(<Markdown source={"```mermaid\nbad graph\n```"} />);
+  const note = await screen.findByText(/^Diagram error:/);
+  expect(note).toHaveTextContent("Diagram error: Parse error on line 1:");
+  expect(note.textContent?.length).toBeLessThanOrEqual(140);
+  expect(container.querySelector("pre")).toHaveTextContent("bad graph");
+});
+
+test("mermaid state follows the source: valid -> invalid -> valid", async () => {
+  const doc = (s: string) => `\`\`\`mermaid\n${s}\n\`\`\``;
+  const { rerender } = render(<Markdown source={doc("graph TD; A-->B")} />);
+  await screen.findByTestId("mermaid-svg");
+  rerender(<Markdown source={doc("bad graph")} />);
+  await screen.findByText(/^Diagram error:/);
+  expect(screen.queryByTestId("mermaid-svg")).toBeNull();
+  rerender(<Markdown source={doc("graph TD; B-->C")} />);
+  await screen.findByTestId("mermaid-svg");
+  expect(screen.queryByText(/^Diagram error:/)).toBeNull();
+});
+
+test("a stale mermaid diagram is dropped while the new source renders", async () => {
+  const doc = (s: string) => `\`\`\`mermaid\n${s}\n\`\`\``;
+  const { rerender, container } = render(<Markdown source={doc("graph TD; A-->B")} />);
+  await screen.findByTestId("mermaid-svg");
+  rerender(<Markdown source={doc("graph TD; slow")} />);
+  await waitFor(() => expect(screen.queryByTestId("mermaid-svg")).toBeNull());
+  expect(container.querySelector("pre")).toHaveTextContent("graph TD; slow");
+});
+
+test("a code block switching to an unknown language drops the old highlight", async () => {
+  const { rerender, container } = render(<Markdown source={"```ts\nconst a = 1;\n```"} />);
+  await waitFor(() => expect(container.querySelector("pre.shiki")).toBeInTheDocument());
+  rerender(<Markdown source={"```nope\nother code\n```"} />);
+  await waitFor(() => expect(container.querySelector("pre.shiki")).toBeNull());
+  expect(container.querySelector("pre")).toHaveTextContent("other code");
 });

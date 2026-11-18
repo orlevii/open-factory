@@ -11,6 +11,7 @@ export function MarkdownEditor({ value, onChange }: { value: string; onChange(v:
       </TabsList>
       <TabsContent value="write">
         <Textarea
+          aria-label="Markdown"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="min-h-40 font-mono"

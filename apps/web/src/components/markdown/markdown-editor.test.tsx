@@ -12,7 +12,7 @@ function Harness() {
 test("write -> preview -> write keeps the text", async () => {
   const user = userEvent.setup();
   render(<Harness />);
-  await user.type(screen.getByRole("textbox"), "# Hello");
+  await user.type(screen.getByRole("textbox", { name: "Markdown" }), "# Hello");
   await user.click(screen.getByRole("tab", { name: "Preview" }));
   expect(screen.getByRole("heading", { name: "Hello" })).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Write" }));

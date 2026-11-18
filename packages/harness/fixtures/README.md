@@ -60,3 +60,20 @@ These two were run with the host's Claude login (not an empty config dir), so ho
 
 The compaction scenario's steps embed a large `.d.ts` file and are not committed; the timeline shows
 what was sent.
+
+### Added in S4 design (Claude Code 2.1.327, haiku, `CLAUDE_CODE_OAUTH_TOKEN`, fresh `CLAUDE_CONFIG_DIR`)
+
+Produced with a small shell driver (one stream-json user line on stdin, `env -i` with only `PATH`, `HOME`, `USER`, `TERM`, `CLAUDE_CONFIG_DIR` and the token), scrubbed with `spikes/scrub.mjs`. A tiny stdio MCP server answered `initialize`/`tools/list`/`tools/call` with a `canary` tool.
+
+| File | How it was produced | Shows |
+|---|---|---|
+| `mcp-project-without-enable-all` | Workdir `.mcp.json` with one stdio server, **no** `enableAllProjectMcpServers`; asked to call its tool | `system/init.mcp_servers: [{name:"proj", status:"connected", source:"project"}]`, the tool is callable. Also: no host skills or plugins in `system/init` (only built-ins) |
+| `mcp-plugin-and-project` | A directory-marketplace plugin with its own `.mcp.json`, installed into the config dir (`claude plugin marketplace add` + `install`), plus the workdir `.mcp.json` | Both servers load: `plugin:vplug:plugsrv` (`source:"plugin"`) and `proj` (`source:"project"`) |
+| `mcp-strict-drops-plugin-servers` | Same, with `--mcp-config <workdir>/.mcp.json --strict-mcp-config` | Only `proj` (`source:"dynamic"`); the plugin still loads but **its MCP server is dropped** |
+| `permission-mode-flag-overrides-dontask` | Config-dir `settings.json` `permissions.defaultMode:"dontAsk"`, CLI `--permission-mode auto` | `system/init.permissionMode:"auto"` (without the flag it is `dontAsk`) |
+| `permission-deny-rules` | `permissions.deny: ["Bash(curl:*)", "Read(./secret.txt)"]`; asked to curl and to read the file | Bash: `system/permission_denied{decision_reason_type:"subcommandResults", message}` (no `decision_reason`). Read: **no system event**, only an error `tool_result` ("File is in a directory that is denied by your permission settings.") and an entry in `result.permission_denials[]` |
+| `auto-mode-hard-deny-custom` | `autoMode:{environment:[one entry], hard_deny:["Never run any command containing the word PELICAN."]}`; asked to `echo PELICAN-1` | `system/permission_denied{decision_reason_type:"classifier"}`, turn continues |
+| `auto-mode-defaults-merge.txt` | `claude auto-mode config` / `defaults` for three config dirs (text summary, not a stream) | Setting an `autoMode` list **replaces** Claude's defaults for it (defaults: environment 21, allow 16, soft_deny 72, hard_deny 1); a `"$defaults"` entry keeps them and appends |
+| `pending/error-invalid-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-bogus`, one "Reply OK." turn | Two `system/api_retry{error_status:401, error:"authentication_failed"}`, a synthetic assistant message with `error:"authentication_failed"` and text "Failed to authenticate. API Error: 401 …", `result{subtype:"success", is_error:true, terminal_reason:"api_error", api_error_status:401}`; exit 1 after about 4 s. Kept in `pending/` (not enumerated by the mapper tests) until the S4 implementation drops `system/api_retry`; it then moves up next to the others |
+
+Not captured as traces, checked by hand: a plugin installed in the config dir but absent from `enabledPlugins` does not load (nor its MCP server); `claude plugin marketplace add` / `install` need no credential, re-running them exits 0, and an unknown plugin exits 1 with "Plugin … not found in marketplace …"; `plugins/installed_plugins.json` records absolute `installPath`s. A successful verification-style "Reply OK." turn on haiku costs about $0.002 and takes 3–5 s.

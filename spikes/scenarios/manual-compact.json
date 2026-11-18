@@ -4,11 +4,19 @@
   { "sleep": 1000 },
   { "mark": true },
   { "send": "/compact" },
-  { "waitFor": { "type": "system", "subtype": "compact_boundary" }, "since": "mark", "timeout": 180000 },
+  {
+    "waitFor": { "type": "system", "subtype": "compact_boundary" },
+    "since": "mark",
+    "timeout": 180000
+  },
   { "sleep": 8000 },
   { "mark": true },
   { "send": "/compact keep only the remembered word" },
-  { "waitFor": { "type": "system", "subtype": "compact_boundary" }, "since": "mark", "timeout": 180000 },
+  {
+    "waitFor": { "type": "system", "subtype": "compact_boundary" },
+    "since": "mark",
+    "timeout": 180000
+  },
   { "sleep": 8000 },
   { "control": { "subtype": "interrupt" } },
   { "sleep": 3000 },

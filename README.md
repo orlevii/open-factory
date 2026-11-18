@@ -35,6 +35,21 @@ Environment variables (`npm start` loads `.env` if present):
 | `HOST`               | no       | `127.0.0.1`                | fail-closed default; servers set `HOST=0.0.0.0` explicitly                                                                                   |
 | `LOG_LEVEL`          | no       | `info`                     | pino level                                                                                                                                   |
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
+| `CLAUDE_CODE_OAUTH_TOKEN` | no | none | Claude Code OAuth token (`claude setup-token`). Optional for boot, required to start an agent. Never logged                                       |
+| `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
+| `FACTORY_DEV_MODEL`  | no       | none                       | model for the dev agent (e.g. `haiku`); a stopgap until templates exist                                                                      |
+
+## Run the dev agent (S3 walking skeleton)
+
+1. Get a Claude Code OAuth token: `claude setup-token`, and put it in `.env` as `CLAUDE_CODE_OAUTH_TOKEN=...`.
+   Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`.
+2. `pnpm seed:dev-agent` (creates the `dev` agent and `~/open-factory/agents/dev/`).
+3. `pnpm dev`, sign in, open **Agents -> Dev agent** and send a message.
+
+The dev agent runs on the **local runtime, unsandboxed**: Claude Code runs directly on your machine in
+auto permission mode. Optional: `FACTORY_DEV_MODEL=haiku` (a stopgap until templates exist),
+`FACTORY_CLAUDE_BIN` if `claude` isn't on your PATH. If the agent's session is lost
+("No conversation found"), stop the server and run `pnpm seed:dev-agent --reset-session`.
 
 ## Running on a server
 

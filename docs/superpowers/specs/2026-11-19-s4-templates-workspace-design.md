@@ -7,7 +7,7 @@
 - **Product sources of truth:** `docs/product/concepts/agent-template.md`, `agent.md`, `credential.md`, `project.md`; `docs/product/architecture/workspace.md`, `context-assembly.md`, `permissions.md`, `agent-runtime.md`, `harness-driver.md`, `data-model.md`; `docs/product/behavior/administration.md`, `agents-and-sessions.md`; ADRs 0009, 0010, 0011, 0012, 0017; `docs/product/open-questions.md` ("Verified during design").
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md)): the harness driver, `AgentRuntime`, the event store, the session view and the agents API.
 - **Evidence:** the S0 fixtures in `packages/harness/fixtures/`, plus the traces this design adds (§19).
-- **Decision log:** the GitHub issue "S4 Templates, workspace and context: design decisions" (orlevii/open-factory).
+- **Decision log:** #28 ("S4 Templates, workspace and context: design decisions").
 - **Stacked on:** `spec/s3-walking-skeleton` (PR #27).
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -631,24 +631,24 @@ Traces scrubbed with S0's `spikes/scrub.mjs` and added to `packages/harness/fixt
 
 ## 20. Issues consumed from S3
 
-- **#25 (`--mcp-config` / `--strict-mcp-config`):** decided against, with V1 and V2. Closed by this design.
+- **#25 (`--mcp-config` / `--strict-mcp-config`):** decided against, with V1 and V2. Closed.
 - **#18 (allow_local_runtime gate):** stays S5. S4 agents are local and show Unsandboxed.
 - **#19, #20, #24:** S5. #21, #22, #23, #26 are untouched.
 - The S3 known gap "resume works only from the same cwd": S4 never moves a workdir (§8.1).
 
 ## 21. Known gaps and follow-ups (issues to open)
 
-- Live session crons die on an apply-restart; S9 pinning will have to make `requestRestart` wait for them, or S5's version must.
-- Re-sync never deletes stale skills or files, and plugins dropped from a template stay installed (disabled) in the config dir.
+- Live session crons die on an apply-restart; S9 pinning will have to make `requestRestart` wait for them, or S5's version must (#31).
+- Re-sync never deletes stale skills or files, and plugins dropped from a template stay installed (disabled) in the config dir (#33).
 - An unparseable config-dir `settings.json` loses its plugin keys until re-sync.
-- There's no in-app restore from a re-sync backup (manual copy).
-- Credential and secret key rotation (the version byte is the seam).
-- An editable per-agent git identity.
-- Template `skills/` and `files/` aren't editable in the UI.
+- There's no in-app restore from a re-sync backup (manual copy) (#33).
+- Credential and secret key rotation (the version byte is the seam) (#34).
+- An editable per-agent git identity (#35).
+- Template `skills/` and `files/` aren't editable in the UI (#36).
 - The `image` field is stored but unused until S5/S10.
-- S6: a slug may equal a human `@handle`; decide cross-uniqueness with `@` addressing.
-- S7: credential and project deletes are RESTRICTed by every agent row, so a credential ever used by a (retained) terminated ephemeral agent can never be deleted; S7 must exempt terminated agents or re-point them.
-- The `api_key` credential kind is unverified live (no fixture); its 401 classification assumes the same `authentication_failed` shape.
+- S6: a slug may equal a human `@handle`; decide cross-uniqueness with `@` addressing (#29).
+- S7: credential and project deletes are RESTRICTed by every agent row, so a credential ever used by a (retained) terminated ephemeral agent can never be deleted; S7 must exempt terminated agents or re-point them (#30).
+- The `api_key` credential kind is unverified live (no fixture); its 401 classification assumes the same `authentication_failed` shape (#32).
 - `pnpm agent:reset-session` is interim; S5 (#19) replaces it.
 
 ## 22. Decisions needing Or's call (owner-proxy certainty 3/5)

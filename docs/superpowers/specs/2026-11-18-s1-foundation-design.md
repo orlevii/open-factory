@@ -21,7 +21,7 @@ Out of scope (from the roadmap): agents, harness, any domain tables beyond users
 2. A second user can sign up with a different email and handle. Both users see the same app; there are no roles.
 3. A duplicate handle (or email) is rejected with a clear form error.
 4. CI is green: `biome ci`, typecheck, tests, build and the CLI smoke step.
-5. `of status` prints the server version (works without login). `of login` / `of status` / `of logout` work against a running server.
+5. `open-factory status` prints the server version (works without login). `open-factory login` / `open-factory status` / `open-factory logout` work against a running server.
 6. The AC1 flow is checked manually once before S1 is called done, and the result is noted in the PR.
 
 ## 3. Repository layout
@@ -36,7 +36,7 @@ docker-compose.dev.yml    Postgres only
 .github/workflows/ci.yml
 apps/server               Fastify app (bundled with esbuild)
 apps/web                  React + Vite SPA
-apps/cli                  `of` CLI (bundled with esbuild to one file)
+apps/cli                  `open-factory` CLI (bundled with esbuild to one file)
 packages/shared           Zod schemas + types shared by server, web, CLI
 packages/db               Drizzle schema, migrations, migrate(), db client
 packages/harness          empty placeholder (package.json + index.ts exporting nothing)
@@ -194,14 +194,14 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 
 ## 10. CLI (apps/cli)
 
-- esbuild single-file ESM bundle `apps/cli/dist/of.js` with a shebang. No CLI framework: `node:util` `parseArgs` + a small command table (`{ name, summary, run }`) — the table is the seam for future commands.
+- esbuild single-file ESM bundle `apps/cli/dist/open-factory.js` with a shebang. No CLI framework: `node:util` `parseArgs` + a small command table (`{ name, summary, run }`) — the table is the seam for future commands.
 - Commands:
-  - `of help` / no args: plain usage list. `of --version`: CLI version.
-  - `of login [--url <url>]`: prompts for URL (default from config or `http://localhost:3000`), email, password (hidden input via `node:readline` with muted output). Calls `POST /api/auth/sign-in/email`, reads the bearer token from the `set-auth-token` response header, verifies it with `/api/me`, saves config. Prints `Logged in as @handle`.
-  - `of logout`: calls `POST /api/auth/sign-out` with the bearer token and body `{}` (revokes the server session), then removes the token from the config file. Succeeds (with a note) if the server is unreachable — the local token is still removed.
-  - `of status`: prints server URL, server version (`/api/status`), DB state, CLI version, and `Logged in as @handle` (via `/api/me`) or `Not logged in`. Not logged in → exit 0. Server unreachable → plain message, exit 1.
+  - `open-factory help` / no args: plain usage list. `open-factory --version`: CLI version.
+  - `open-factory login [--url <url>]`: prompts for URL (default from config or `http://localhost:3000`), email, password (hidden input via `node:readline` with muted output). Calls `POST /api/auth/sign-in/email`, reads the bearer token from the `set-auth-token` response header, verifies it with `/api/me`, saves config. Prints `Logged in as @handle`.
+  - `open-factory logout`: calls `POST /api/auth/sign-out` with the bearer token and body `{}` (revokes the server session), then removes the token from the config file. Succeeds (with a note) if the server is unreachable — the local token is still removed.
+  - `open-factory status`: prints server URL, server version (`/api/status`), DB state, CLI version, and `Logged in as @handle` (via `/api/me`) or `Not logged in`. Not logged in → exit 0. Server unreachable → plain message, exit 1.
 - Config file: `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json` = `{ url, token }`, written with mode `0600` (dir `0700`).
-- Env overrides `OF_URL` and `OF_TOKEN` take precedence over the file.
+- Env overrides `OPEN_FACTORY_URL` and `OPEN_FACTORY_TOKEN` take precedence over the file.
 
 ## 11. Testing
 
@@ -228,7 +228,7 @@ One job on `push` to `main` and on `pull_request`: Ubuntu, Node 24, pnpm via `pn
 3. `pnpm typecheck`
 4. `pnpm test` (with `DATABASE_URL` pointing at the service)
 5. `pnpm build`
-6. **CLI smoke:** start the built server in the background with a test `FACTORY_SECRET_KEY`, wait for `/api/status`, run `node apps/cli/dist/of.js status`, assert that the **server version line** (e.g. `Server version: 0.1.0`) matches the root `package.json` version (not just any occurrence, since the CLI version line contains it too).
+6. **CLI smoke:** start the built server in the background with a test `FACTORY_SECRET_KEY`, wait for `/api/status`, run `node apps/cli/dist/open-factory.js status`, assert that the **server version line** (e.g. `Server version: 0.1.0`) matches the root `package.json` version (not just any occurrence, since the CLI version line contains it too).
 
 ## 13. Error handling summary
 
@@ -256,7 +256,7 @@ Note: `fastify-type-provider-zod` lists `@fastify/swagger` and `openapi-types` a
 - Q5: `npm start` does not build; AC reworded.
 - Q8: esbuild bundles the server too; internal packages have no build step.
 - Q12: markdown components verified by tests only, not mounted on a route.
-- Q15: `of logout` included.
+- Q15: `open-factory logout` included.
 - Q7 (sub-decision): single `FACTORY_SECRET_KEY` with HKDF subkeys.
 
 Full question/option/rationale log: the GitHub issue "S1 Foundation: design decisions".

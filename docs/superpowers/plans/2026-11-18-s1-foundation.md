@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an empty but real Open Factory: a pnpm TypeScript monorepo with a Fastify server, Postgres/Drizzle, better-auth email/password sign-up with handles, an authenticated WebSocket skeleton, a React shell with empty screens, markdown components, the `of` CLI (`login`/`status`/`logout`), and green CI.
+**Goal:** Build an empty but real Open Factory: a pnpm TypeScript monorepo with a Fastify server, Postgres/Drizzle, better-auth email/password sign-up with handles, an authenticated WebSocket skeleton, a React shell with empty screens, markdown components, the `open-factory` CLI (`login`/`status`/`logout`), and green CI.
 
 **Architecture:** One Node process (Fastify) serves `/api` (REST, better-auth at `/api/auth/*`, WebSocket at `/api/ws`) and the built SPA. Workspace packages (`packages/shared`, `packages/db`) are TS source with no build step. esbuild bundles the server and the CLI, and Vite builds the web app. Migrations run at boot through one `migrate()`.
 
@@ -24,7 +24,7 @@
 - Handles: 2–32 chars, `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`, not in `RESERVED_HANDLES = ["humans", "me", "scheduler"]`, synchronous schema only.
 - better-auth tables are plural (`usePlural: true`): `users`, `sessions`, `accounts`, `verifications`. `users.handle` is `text not null` with a unique index.
 - Empty-state copy (exact): Inbox "Nothing in your inbox.", Agents "No agents yet.", Tasks "No tasks yet.", Templates "No templates yet.", Schedules "No schedules yet.", Settings "Nothing to configure yet."
-- CLI config: `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json`, file mode 0600, dir 0700. `OF_URL` and `OF_TOKEN` override the file.
+- CLI config: `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json`, file mode 0600, dir 0700. `OPEN_FACTORY_URL` and `OPEN_FACTORY_TOKEN` override the file.
 - Out of scope: invites, closing sign-up, password reset, WS topics/subscriptions, agent tokens, Playwright, OpenAPI, a `db:migrate` script, creating `FACTORY_HOME`, a dev route for markdown.
 - Commit after every task with a conventional message ending in `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
@@ -38,7 +38,7 @@ biome.json                       lint+format; ignores dist, routeTree.gen.ts, mi
 vitest.config.ts                 test.projects (node + web jsdom)
 .env.example / .gitignore / docker-compose.dev.yml / README.md
 .github/workflows/ci.yml
-scripts/smoke-cli.sh             CI smoke: built server + `of status`
+scripts/smoke-cli.sh             CI smoke: built server + `open-factory status`
 scripts/build.mjs                root build orchestration (server, cli, web, copy assets)
 
 packages/shared/src/
@@ -2551,7 +2551,7 @@ Biome flags `dangerouslySetInnerHTML`. Add a `// biome-ignore lint/security/noDa
 
 ---
 
-### Task 10: `of` CLI
+### Task 10: `open-factory` CLI
 
 **Files:**
 
@@ -2563,12 +2563,12 @@ Biome flags `dangerouslySetInnerHTML`. Add a `// biome-ignore lint/security/noDa
 - Consumes: `apiFetch`, `ApiError`, `meSchema`, `statusSchema` (Task 2); server routes.
 - Produces:
   - `configPath(env): string`; `readConfig(env): Promise<CliConfig>`; `writeConfig(env, c: CliConfig): Promise<void>` where `CliConfig = { url?: string; token?: string }`
-  - `resolveTarget(env, cfg): { url: string; token?: string }` (`OF_URL`/`OF_TOKEN` win, then the file, then `http://localhost:3000`)
+  - `resolveTarget(env, cfg): { url: string; token?: string }` (`OPEN_FACTORY_URL`/`OPEN_FACTORY_TOKEN` win, then the file, then `http://localhost:3000`)
   - `interface Io { out(s: string): void; err(s: string): void; ask(q: string, def?: string): Promise<string>; askHidden(q: string): Promise<string>; env: NodeJS.ProcessEnv; fetch: typeof fetch }`
   - `run(argv: string[], io: Io): Promise<number>` (exit code)
   - `CLI_VERSION`
 
-- [ ] **Step 1: Package setup**: `pnpm --filter @open-factory/cli add "@open-factory/shared@workspace:*"`. Scripts: `"build": "node build.mjs"`. Add `"bin": { "of": "./dist/of.js" }`.
+- [ ] **Step 1: Package setup**: `pnpm --filter @open-factory/cli add "@open-factory/shared@workspace:*"`. Scripts: `"build": "node build.mjs"`. Add `"bin": { "open-factory": "./dist/open-factory.js" }`.
 
 - [ ] **Step 2: Failing tests**
 
@@ -2598,7 +2598,10 @@ test("defaults to ~/.config without XDG_CONFIG_HOME", () => {
 
 test("env overrides win over the file", () => {
   expect(
-    resolveTarget({ OF_URL: "http://e", OF_TOKEN: "et" }, { url: "http://f", token: "ft" }),
+    resolveTarget(
+      { OPEN_FACTORY_URL: "http://e", OPEN_FACTORY_TOKEN: "et" },
+      { url: "http://f", token: "ft" },
+    ),
   ).toEqual({ url: "http://e", token: "et" });
   expect(resolveTarget({}, { url: "http://f/", token: "ft" })).toEqual({
     url: "http://f",
@@ -2654,7 +2657,7 @@ function io(answers: string[] = [], extraEnv: Record<string, string> = {}) {
 }
 
 test("status before login: server version, not logged in, exit 0", async () => {
-  const h = io([], { OF_URL: url });
+  const h = io([], { OPEN_FACTORY_URL: url });
   expect(await run(["status"], h.io)).toBe(0);
   const text = h.out.join("\n");
   expect(text).toMatch(/^Server version: 0\.1\.0$/m);
@@ -2688,7 +2691,7 @@ test("login with a wrong password fails with exit 1", async () => {
 });
 
 test("unreachable server: status exits 1 with a plain message; logout still clears the token", async () => {
-  const h = io([], { OF_URL: "http://127.0.0.1:1" });
+  const h = io([], { OPEN_FACTORY_URL: "http://127.0.0.1:1" });
   expect(await run(["status"], h.io)).toBe(1);
   expect(h.err.join("\n")).toMatch(/Cannot reach server at http:\/\/127\.0\.0\.1:1/);
   expect(await run(["logout"], h.io)).toBe(0);
@@ -2746,8 +2749,8 @@ export function resolveTarget(
   cfg: CliConfig,
 ): { url: string; token: string | undefined } {
   return {
-    url: (env.OF_URL || cfg.url || "http://localhost:3000").replace(/\/$/, ""),
-    token: env.OF_TOKEN || cfg.token || undefined,
+    url: (env.OPEN_FACTORY_URL || cfg.url || "http://localhost:3000").replace(/\/$/, ""),
+    token: env.OPEN_FACTORY_TOKEN || cfg.token || undefined,
   };
 }
 ```
@@ -2847,7 +2850,11 @@ export interface Command {
 
 /** The command table: the seam for future commands. */
 export const COMMANDS: Command[] = [
-  { name: "login", summary: "Log in to a factory server: of login [--url <url>]", run: login },
+  {
+    name: "login",
+    summary: "Log in to a factory server: open-factory login [--url <url>]",
+    run: login,
+  },
   { name: "logout", summary: "Log out and forget the stored token", run: logout },
   { name: "status", summary: "Show server, version and login state", run: status },
   { name: "help", summary: "Show this help", run: async (_a, io) => help(io) },
@@ -2886,7 +2893,7 @@ import { COMMANDS, type Io } from "../commands.ts";
 export function help(io: Io): number {
   io.out("Usage: of <command> [options]\n\nCommands:");
   for (const c of COMMANDS) io.out(`  ${c.name.padEnd(8)} ${c.summary}`);
-  io.out("\nEnvironment: OF_URL, OF_TOKEN override the stored config.");
+  io.out("\nEnvironment: OPEN_FACTORY_URL, OPEN_FACTORY_TOKEN override the stored config.");
   return 0;
 }
 ```
@@ -3026,7 +3033,7 @@ import { build } from "esbuild";
 const rootPkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 await build({
   entryPoints: ["src/index.ts"],
-  outfile: "dist/of.js",
+  outfile: "dist/open-factory.js",
   bundle: true,
   platform: "node",
   format: "esm",
@@ -3038,9 +3045,9 @@ await build({
 ```
 Remove the CLI guard in `scripts/build.mjs`.
 
-- [ ] **Step 5: Run, expect PASS**: `pnpm vitest run apps/cli`. Then run the bundle by hand: `pnpm build && npm start &`, then `node apps/cli/dist/of.js status` prints `Server version: 0.1.0`. Next, run `node apps/cli/dist/of.js login` interactively, check that the password isn't echoed, then run `logout`.
+- [ ] **Step 5: Run, expect PASS**: `pnpm vitest run apps/cli`. Then run the bundle by hand: `pnpm build && npm start &`, then `node apps/cli/dist/open-factory.js status` prints `Server version: 0.1.0`. Next, run `node apps/cli/dist/open-factory.js login` interactively, check that the password isn't echoed, then run `logout`.
 
-- [ ] **Step 6: Typecheck, lint, commit**: `feat(cli): of login/status/logout with XDG config and env overrides`
+- [ ] **Step 6: Typecheck, lint, commit**: `feat(cli): open-factory login/status/logout with XDG config and env overrides`
 
 ---
 
@@ -3058,7 +3065,7 @@ Remove the CLI guard in `scripts/build.mjs`.
 - [ ] **Step 1: Smoke script** `scripts/smoke-cli.sh`:
 ```bash
 #!/usr/bin/env bash
-# Starts the built server, runs the built `of status`, and checks the server version line.
+# Starts the built server, runs the built `open-factory status`, and checks the server version line.
 set -euo pipefail
 expected="$(node -p "require('./package.json').version")"
 node apps/server/dist/index.js > /tmp/of-server.log 2>&1 &
@@ -3068,7 +3075,7 @@ for _ in $(seq 1 60); do
   curl -sf "http://127.0.0.1:${PORT:-3000}/api/status" > /dev/null && break
   sleep 0.5
 done
-out="$(OF_URL="http://127.0.0.1:${PORT:-3000}" node apps/cli/dist/of.js status)"
+out="$(OPEN_FACTORY_URL="http://127.0.0.1:${PORT:-3000}" node apps/cli/dist/open-factory.js status)"
 echo "$out"
 echo "$out" | grep -qx "Server version: ${expected}" || { echo "server version line mismatch"; cat /tmp/of-server.log; exit 1; }
 ```
@@ -3132,7 +3139,7 @@ Use the latest major tags of the actions (check each action's README). `pnpm/act
   5. Running on a server: set `HOST=0.0.0.0` **and** `PUBLIC_URL=https://your.host`, put TLS in front, and open the app at exactly `PUBLIC_URL` (`localhost` ≠ `127.0.0.1`). Sign-up is open in this version (see #1).
   6. Secret key: `FACTORY_SECRET_KEY` derives the session-signing key and the future secret-encryption key. Rotating it signs everyone out and requires re-encrypting stored secrets.
   7. Development: `pnpm dev` (server on :3000, Vite on :5173 with proxy; open :5173), `pnpm test` (needs the compose Postgres), `pnpm typecheck`, `pnpm lint` / `lint:fix`, `pnpm db:generate` after schema changes.
-  8. CLI: `node apps/cli/dist/of.js login|status|logout|help`, the config path, and `OF_URL`/`OF_TOKEN`.
+  8. CLI: `node apps/cli/dist/open-factory.js login|status|logout|help`, the config path, and `OPEN_FACTORY_URL`/`OPEN_FACTORY_TOKEN`.
   9. Limitations: no password reset (#2).
 
 - [ ] **Step 4: Verify everything locally the way CI does**: `pnpm install --frozen-lockfile && pnpm lint:ci && pnpm typecheck && pnpm test && pnpm build && scripts/smoke-cli.sh`
@@ -3151,6 +3158,6 @@ Use the latest major tags of the actions (check each action's README). `pnpm/act
   2. In a private window, sign up as `bob` with a different email. Same app, no role differences.
   3. Sign up again with handle `alice`: a handle-field error. With alice's email: an email-field error. With handle `humans`: rejected.
   4. CI on the PR is green (link the run).
-  5. `node apps/cli/dist/of.js status` shows the server version and "Not logged in". `login` as alice, then `status` shows "Logged in as @alice". `logout`, then `status` shows "Not logged in".
+  5. `node apps/cli/dist/open-factory.js status` shows the server version and "Not logged in". `login` as alice, then `status` shows "Logged in as @alice". `logout`, then `status` shows "Not logged in".
   6. Every nav item shows its empty-state line. Sign out returns to `/sign-in`. Visiting `/agents` while signed out redirects to `/sign-in`.
 - [ ] **Step 3:** Paste the checklist with ✅/❌ and any notes into the PR description under "Manual acceptance check". Mention that roadmap AC1 wording differs (install + build + `.env` step, decision Q5 in #3) and that the local `docs/product/roadmap/v0.1/s01-foundation.md` should be updated to match (the product docs are not tracked in git).

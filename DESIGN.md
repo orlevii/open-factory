@@ -1,33 +1,34 @@
 ---
 name: Open Factory
-description: Sawtooth. A paper-and-ink workshop with one live signal, built around the open-roof logo.
+description: Sawtooth. The factory floor, cool steel and graphite with one safety-orange signal, built around the open-roof logo.
 colors:
   brand-orange: "#FF5A1F"
   brand-ink: "#16140F"
   brand-paper: "#F4F1EA"
-  paper: "oklch(0.959 0.01 87)"
-  sheet: "oklch(0.982 0.006 87)"
-  sheet-raised: "oklch(0.99 0.004 87)"
-  paper-deep: "oklch(0.935 0.012 87)"
-  paper-hover: "oklch(0.925 0.012 87)"
-  rule: "oklch(0.885 0.012 87)"
-  field-edge: "oklch(0.62 0.012 80)"
-  ink: "oklch(0.192 0.01 89)"
-  ink-muted: "oklch(0.5 0.012 80)"
+  steel: "oklch(0.965 0.003 250)"
+  plate: "oklch(0.985 0.002 250)"
+  plate-raised: "oklch(0.995 0.001 250)"
+  steel-deep: "oklch(0.94 0.004 250)"
+  steel-hover: "oklch(0.93 0.005 250)"
+  rule: "oklch(0.89 0.005 250)"
+  field-edge: "oklch(0.62 0.01 255)"
+  graphite-ink: "oklch(0.2 0.008 255)"
+  ink-muted: "oklch(0.5 0.01 255)"
   signal: "oklch(0.6 0.2 37)"
   signal-text: "oklch(0.52 0.17 38)"
   crimson: "oklch(0.52 0.2 20)"
   success: "oklch(0.54 0.13 150)"
-  warning: "oklch(0.6 0.13 70)"
+  warning: "oklch(0.6 0.125 88)"
   info: "oklch(0.54 0.13 250)"
-  night-ground: "oklch(0.192 0.01 89)"
-  night-rail: "oklch(0.16 0.009 89)"
-  night-sheet: "oklch(0.215 0.01 89)"
-  night-rule: "oklch(0.29 0.011 89)"
-  night-text: "oklch(0.94 0.01 87)"
-  night-muted: "oklch(0.72 0.012 85)"
+  night-ground: "oklch(0.205 0.006 255)"
+  night-rail: "oklch(0.17 0.006 255)"
+  night-plate: "oklch(0.228 0.007 255)"
+  night-rule: "oklch(0.305 0.008 255)"
+  night-text: "oklch(0.94 0.004 250)"
+  night-muted: "oklch(0.72 0.008 250)"
   night-signal: "oklch(0.682 0.211 37.7)"
   night-crimson: "oklch(0.7 0.16 15)"
+  night-warning: "oklch(0.82 0.15 92)"
 typography:
   heading-page:
     fontFamily: "Archivo Variable, Geist Variable, sans-serif"
@@ -40,6 +41,21 @@ typography:
     fontSize: "22px"
     fontWeight: 700
     lineHeight: "28px"
+    letterSpacing: "-0.01em"
+  prose-h1:
+    fontFamily: "Archivo Variable, Geist Variable, sans-serif"
+    fontSize: "1.25rem"
+    fontWeight: 650
+    letterSpacing: "-0.01em"
+  prose-h2:
+    fontFamily: "Archivo Variable, Geist Variable, sans-serif"
+    fontSize: "1.0625rem"
+    fontWeight: 650
+    letterSpacing: "-0.01em"
+  prose-h3:
+    fontFamily: "Archivo Variable, Geist Variable, sans-serif"
+    fontSize: "0.9375rem"
+    fontWeight: 650
     letterSpacing: "-0.01em"
   body:
     fontFamily: "Geist Variable, sans-serif"
@@ -70,28 +86,28 @@ spacing:
   control-touch: "36px"
 components:
   button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
+    backgroundColor: "{colors.graphite-ink}"
+    textColor: "{colors.steel}"
     rounded: "{rounded.lg}"
     height: "36px"
   button-ghost:
-    textColor: "{colors.ink}"
+    textColor: "{colors.graphite-ink}"
     rounded: "{rounded.lg}"
     height: "36px"
   input:
-    backgroundColor: "{colors.sheet}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.plate}"
+    textColor: "{colors.graphite-ink}"
     rounded: "{rounded.lg}"
     height: "36px"
   card:
-    backgroundColor: "{colors.sheet}"
+    backgroundColor: "{colors.plate}"
     rounded: "{rounded.lg}"
   sidebar:
-    backgroundColor: "{colors.paper-deep}"
+    backgroundColor: "{colors.steel-deep}"
     width: "240px"
   nav-item-active:
-    backgroundColor: "{colors.paper-hover}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.steel-hover}"
+    textColor: "{colors.graphite-ink}"
     height: "32px"
   nav-tooth:
     backgroundColor: "{colors.signal}"
@@ -102,36 +118,37 @@ components:
 
 ## Overview
 
-**Sawtooth.** The logo is a factory roofline drawn as one continuous line with an open floor, with teeth rising left to right at an exact 30°. The product looks like the building that logo describes: a workshop of paper and ink, matte and quiet, with one orange light that means something is running.
+**Sawtooth.** The logo is a factory roofline drawn as one continuous line with an open floor, with teeth rising left to right at an exact 30°. The product looks like the floor inside that building: cool steel and graphite, matte and quiet, with one safety-orange light that means something is running. Safety orange is what a real factory paints on whatever is live or moving, which is exactly what the orange means here.
 
 The people using it keep the tab open next to their editor for hours, often at night, watching agent sessions and working through an inbox. So the interface stays out of the way (this is an Operate surface). The brand shows in four precise things, and nowhere else:
 
-1. **Paper and Ink.** The light theme sits on the logo's Paper, and the dark theme on its Ink. The tool feels like a workbench, not a cloud console.
+1. **Steel and graphite.** The light theme sits on cool steel, the dark theme on graphite. The neutrals are deliberately cool and almost colourless, so the warm orange is the only temperature on screen. (Earlier versions used the logo's warm Paper as the ground; together with an orange accent it read too close to Claude's cream-and-terracotta palette, and this product runs on Claude Code.)
 2. **One signal.** Signal Orange marks what is live, focused or selected. It is never decoration.
 3. **The pitch.** The logo's 30° angle appears in exactly three places (see Shapes).
 4. **Archivo headings.** The wordmark's typeface sets page and auth titles. Everything else is Geist.
 
-Theme follows the system only: there is no toggle, and both themes are equal citizens. Tokens live in `apps/web/src/styles.css`. The logo masters the app uses (light and dark horizontal lockups, the small cut) and the usage rules live in `brand/`; `brand/USAGE.md` is binding.
+Both themes are equal citizens. The theme follows the OS by default, and the user menu offers System, Light and Dark; the choice is remembered per browser (see Components → Theme). Tokens live in `apps/web/src/styles.css`. The logo masters the app uses (light and dark horizontal lockups, the small cut) and the usage rules live in `brand/`; `brand/USAGE.md` is binding.
 
 ## Colors
 
-The strategy is **restrained**: warm neutrals do almost all the work, plus one accent. Every neutral uses the logo's own hue, 87 (Paper and Ink are both hue ~88 at chroma 0.01), so the surfaces and the logo share one temperature.
+The strategy is **restrained**: cool neutrals do almost all the work, plus one accent. Every neutral sits at hue 250–255 with chroma under 0.01: steel, not blue. The contrast in temperature between the cool floor and the warm signal is the identity.
 
 ### Primary
 
 - **Signal Orange** (`brand-orange` `#FF5A1F`): the logo's colour. It is used **only inside the logo**, never for UI.
-- **Signal** (`signal`, light `oklch(0.6 0.2 37)` ≈ `#DD4202`; dark = exactly `#FF5A1F`): the UI's version of the orange. It is used for focus rings, the active-nav tooth, the loading mark, text selection, the caret, checkbox accents, link underlines on hover, and the `working` agent status. Light mode deepens it because `#FF5A1F` on Paper is only 2.76:1, below the 3:1 minimum for non-text UI. The deepened signal reaches at least 3.2:1 on every light surface, including the active nav row.
-- **Signal text** (`signal-text`): use it when orange must be read as text. It is ≥4.9:1 in light and ≥5:1 in dark.
+- **Signal** (`signal`, light `oklch(0.6 0.2 37)` ≈ `#DD4202`; dark = exactly `#FF5A1F`): the UI's version of the orange. It is used for focus rings, the active-nav tooth, the loading mark, text selection, the caret, checkbox accents, link underlines on hover, and the `working` agent status. Light mode deepens it because `#FF5A1F` on the steel ground is only 2.8:1, below the 3:1 minimum for non-text UI. The deepened signal reaches at least 3.2:1 on every light surface, including the active nav row. In dark mode it is ≥5.1:1 on every surface.
+- **Signal text** (`signal-text`): use it when orange must be read as text. It is ≥5:1 in both themes.
 
 ### Neutral
 
-- **Light:** the `paper` ground (= Paper `#F4F1EA`). A `sheet` is one step lighter, for cards, inputs and code blocks laid on the paper, and popovers are lighter still. The `paper-deep` sidebar sits one step darker than the ground. `rule` is for dividers and card edges, and `field-edge` is for input boundaries (≥3:1, WCAG 1.4.11). Text is `ink` (= Ink `#16140F`, 16:1 on Paper), and secondary text is `ink-muted` (≥4.9:1 on every light surface).
-- **Dark:** the `night-ground` (= Ink). The rail is darker still (`night-rail`), as a recessed edge, and sheets are slightly lighter. Text is Paper dimmed to `night-text` for long reading at night, and `night-muted` reaches ≥6.5:1.
-- **Primary buttons are ink in light mode and paper in dark mode, never orange.**
+- **Light:** the `steel` ground (`#F2F4F5`). A `plate` is one step lighter, for cards, inputs and code blocks, and popovers are lighter still. The `steel-deep` sidebar sits one step darker than the ground. `rule` is for dividers and card edges, and `field-edge` is for input boundaries (≥3.2:1, WCAG 1.4.11). Text is `graphite-ink` (`#14161A`, 16.4:1), and secondary text is `ink-muted` (≥5:1 on every light surface).
+- **Dark:** the `night-ground` is graphite (`#15171A`). The rail is darker still (`night-rail`), as a recessed edge, and plates step lighter as they rise. Text is `night-text` (15:1), and `night-muted` reaches ≥6.2:1.
+- **Primary buttons are graphite in light mode and light steel in dark mode, never orange.**
+- **The logo keeps its own colours.** The lockups use the logo's warm Ink and Paper for the lettering, which reads correctly on steel and graphite. Never recolour them to match the UI.
 
 ### Semantic
 
-`success`, `warning`, `info` and `crimson` (destructive / errored) are indicator colours for dots and icons, always paired with a label. Crimson is pushed to hue 20 (light) and 15 (dark), so it stays distinguishable from the signal at hue 37. Agent status tokens (`--status-*`) and chart tokens (`--chart-*`) are defined alongside them for status indicators and data charts.
+`success`, `warning`, `info` and `crimson` (destructive / errored) are indicator colours for dots and icons, always paired with a label. They are spaced around the signal so no status can be mistaken for "working": crimson is pushed to hue 20 (light) and 15 (dark), and warning (rate-limited) is ochre at hue 88–92, 50° clear of the orange. All seven agent statuses were checked side by side at 6px dot size in both themes. Agent status tokens (`--status-*`) and chart tokens (`--chart-*`) are defined alongside them for status indicators and data charts.
 
 ### Named Rules
 
@@ -144,7 +161,7 @@ The strategy is **restrained**: warm neutrals do almost all the work, plus one a
 Under `prefers-contrast: more`, the surfaces and the Pilot Light Rule stay the same, and five things change:
 - Rules and field edges harden (≥3.2:1).
 - Secondary text moves toward ink (≥8:1 in light mode, ≥10:1 in dark mode).
-- Sidebar text becomes full ink, or full paper in dark mode.
+- Sidebar text becomes full graphite, or full light steel in dark mode.
 - Light mode deepens the signal one step.
 - The focus ring thickens to 3px.
 
@@ -161,6 +178,7 @@ Under `prefers-contrast: more`, the surfaces and the Pilot Light Rule stay the s
 | Auth title | Archivo | 22 / 28 | 700 |
 | Page title (h1 in the 48px header) | Archivo | 16 / 20 | 600 |
 | State heading (error, not found) | Archivo | 16 / 20 | 600 |
+| Markdown h1 / h2 / h3 | Archivo | 20 / 17 / 15 | 650 |
 | Body / UI | Geist | 14 / 22 | 400 |
 | Label, secondary, panel heading | Geist | 13 / 18 | 400–500 |
 | Code | Geist Mono | 13 / 1.55 | 400 |
@@ -181,7 +199,7 @@ Under `prefers-contrast: more`, the surfaces and the Pilot Light Rule stay the s
 
 ## Elevation & Depth
 
-Flat. Depth comes from the paper stack, not shadows: paper, then a sheet on paper, then a popover. A sheet is lighter than the ground and edged with a 1px `rule`. In dark mode, layers step lighter as they rise, and the rail steps darker. There are no decorative shadows.
+Flat. Depth comes from stacked plates, not shadows: the steel ground, then a plate on it, then a popover. A plate is lighter than the ground and edged with a 1px `rule`. In dark mode, layers step lighter as they rise, and the rail steps darker. There are no decorative shadows.
 
 ## Shapes
 
@@ -202,8 +220,8 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   - `Mark` is the symbol on its own, always the **small cut** (16px grid), because every in-app use is under 32px.
   - `LoadingMark` is the pending screen.
   - Clear space is 2× the roofline stroke on every side.
-- **Buttons:** primary is an ink fill with paper text. Ghost is for secondary actions. Danger uses crimson. Buttons name their action.
-- **Inputs:** a sheet fill with a `field-edge` boundary, a signal focus ring (2px, offset 2px) and a signal caret. Errors appear inline below the field in crimson with an icon.
+- **Buttons:** primary is a graphite fill with steel text (inverted in dark mode). Ghost is for secondary actions. Danger uses crimson. Buttons name their action.
+- **Inputs:** a plate fill with a `field-edge` boundary, a signal focus ring (2px, offset 2px) and a signal caret. Errors appear inline below the field in crimson with an icon.
 - **Validation:** the two short auth forms validate on submit and then move focus to the first invalid field. Editing a field clears its error. Longer forms (templates, schedules) validate each field when you leave it, never while you type, and still check everything on submit.
 - **Destructive actions: forgiveness over confirmation.**
   - Prefer undo. When an action can be reversed, do it immediately and offer an inline undo.
@@ -211,12 +229,13 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   - The confirmation names exactly what will be lost, and its button names the action ("Terminate @reviewer", never "OK").
   - A confirmation shown for routine actions trains people to click through, so it never appears for those.
 - **Scrim:** the mobile sheet dims the page with a plain 20% black scrim. There is no backdrop blur, because there is no translucency anywhere in the system, so `prefers-reduced-transparency` has nothing to undo.
-- **Cards and panels:** a sheet on paper, a 1px rule edge and a 6px radius, with a 40px header strip that has its own rule. Cards are never nested.
-- **Navigation:** sidebar rows are 32px. The active row gets the `paper-hover` fill plus the tooth, and the icon rail keeps the tooth. Nav labels are capitalised product nouns.
+- **Cards and panels:** a plate on the ground, a 1px rule edge and a 6px radius, with a 40px header strip that has its own rule. Cards are never nested.
+- **Navigation:** sidebar rows are 32px. The active row gets the `steel-hover` fill plus the tooth, and the icon rail keeps the tooth. Nav labels are capitalised product nouns.
 - **Empty states:** one plain line in muted text, with no illustration.
-- **Markdown** (`.prose-of`): headings in Archivo, code on a sheet with a rule, link underlines that turn signal on hover, and mermaid diagrams always on a light sheet.
-- **Browser surfaces:** selection is a 26% signal tint, the caret and checkbox accent are signal, scrollbars are thin and ink-tinted, and focus-visible is a 2px signal ring.
-- **Favicon and app icons:** served from `apps/web/public/` (`favicon.ico`, `favicon.svg`, touch and manifest icons). `theme-color` is Paper in light mode and Ink in dark mode.
+- **Markdown** (`.prose-of`): headings in Archivo, code on a plate with a rule, link underlines that turn signal on hover, and mermaid diagrams always on a light plate.
+- **Browser surfaces:** selection is a 26% signal tint, the caret and checkbox accent are signal, scrollbars are thin and graphite-tinted, and focus-visible is a 2px signal ring.
+- **Theme:** System / Light / Dark, as a radio group in the sidebar's user menu, under a small "Theme" label. System is the default and keeps following the OS live; Light and Dark override it and are stored per browser (`localStorage` key `of-theme`), synced across open tabs. Everything keys off `<html data-theme="light|dark">`: the tokens, the `dark:` variant, the Shiki colours and the browser `theme-color`. An inline script in `index.html` sets it before first paint, so there is never a flash of the wrong theme.
+- **Favicon:** `favicon.svg` and `favicon.ico` in `apps/web/public/`, both from the small cut. There are no PNG, touch or manifest icons, because the app is used in a desktop browser tab, not installed. The full icon set is in the logo project if installing ever matters. `theme-color` is steel (`#F2F4F5`) in light mode and graphite (`#15171A`) in dark mode.
 
 ### Motion
 
@@ -255,7 +274,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 - Keep orange for what is live, focused or selected.
 - Use `--signal` / `--signal-text` for UI orange, and `--brand-orange` only in the logo.
 - Use Archivo for titles and Geist for everything else.
-- Let the paper stack and 1px rules carry structure.
+- Let stacked plates and 1px rules carry structure.
 - Pair every status colour with a label.
 - Follow `brand/USAGE.md` for any logo placement outside the app (docs, README, social).
 
@@ -264,8 +283,8 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 - Don't add the 30° pitch as decoration: no sawtooth dividers, angled card corners or pitched headers.
 - Don't animate anything triggered from the keyboard, use `transition-all`, or use `ease-in` / `linear` for UI motion.
 - Don't set type in px, and don't confirm an action that can be undone.
-- Don't use translucent materials or backdrop blur. Depth is the paper stack.
+- Don't use translucent materials or backdrop blur. Depth is the plate stack.
 - Don't retype, recolour, flip or close the logo, or add a floor line to it.
 - Don't add decorative shadows, gradients, glass, eyebrow labels, colored side-borders on cards, toasts or modals for routine tasks.
 - Don't use mono as a costume for non-code labels.
-- Don't use blue-grey neutrals. Every neutral stays on hue 87.
+- Don't warm the neutrals (no cream, beige or paper grounds), and don't let them drift into visible blue. Every neutral stays at hue 250–255, chroma under 0.01.

@@ -41,7 +41,7 @@ Positioned against the "everything is a ticket" model of agent orchestration (Pa
   - **Docs site:** published product and install docs. Planned.
   - **GitHub presence:** README, social preview, release notes.
 - Markdown everywhere: task bodies, comments, messages and agent output render as GitHub-flavored markdown (code highlighting, tables, task lists, mermaid). Editors are raw markdown with a preview toggle.
-- Theme follows the system (light/dark) with no in-app toggle. Dark mode is an equal citizen because the product is used at night.
+- Light and dark themes. The theme follows the OS by default, and each user can pin Light or Dark from the user menu (remembered per browser). Dark mode is an equal citizen because the product is used at night.
 
 ## Capabilities and Constraints
 
@@ -62,7 +62,7 @@ Positioned against the "everything is a ticket" model of agent orchestration (Pa
   - Use the small cut below 32 px.
   - Use the reversed (slightly thinner) files for light-on-dark work.
 - **Logo colours:** Signal Orange `#FF5A1F`, Ink `#16140F`, Paper `#F4F1EA`.
-- **Logo source files:** `../logo-design-skill/out/open-factory/a/` (SVG masters, `export/` PNGs, favicon set, `site.webmanifest`, `USAGE.md`). These live outside this repo for now; bring them into the repo before shipping them.
+- **Logo files:** the masters the product uses, and the usage rules, are in `brand/` (`brand/USAGE.md` is binding). The full logo package (other lockups, one-colour versions, PNG exports, app icons) lives in the separate logo project, not in this repo.
 - **Voice, on every surface (app, CLI, docs, README):** a calm senior engineer. Plain, short and specific. Sentence case, no exclamation marks, no "Oops", no emoji, and the reader is "you". Errors name the problem and the way out, and buttons name their action.
 - **Open items:** trademark clearance has not been done.
 

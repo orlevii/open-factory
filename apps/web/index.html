@@ -6,10 +6,26 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest" />
-    <meta name="theme-color" content="#F4F1EA" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#16140F" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F2F4F5" />
+    <script>
+      // Resolve the theme before first paint so there is no flash. Mirrors src/lib/theme.ts:
+      // the "of-theme" key holds "light" or "dark"; absent means follow the system.
+      (() => {
+        let pref = null;
+        try {
+          pref = localStorage.getItem("of-theme");
+        } catch {}
+        const dark =
+          pref === "dark" ||
+          (pref !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        const theme = dark ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        document
+          .querySelector('meta[name="theme-color"]')
+          .setAttribute("content", dark ? "#15171A" : "#F2F4F5");
+      })();
+    </script>
     <title>Open Factory</title>
   </head>
   <body>

@@ -6,8 +6,9 @@
 @import "@fontsource-variable/archivo";
 @plugin "@tailwindcss/typography";
 
-/* Theme follows the system only (spec §8): no .dark class, no JS switching. */
-@custom-variant dark (@media (prefers-color-scheme: dark));
+/* Theme: <html data-theme="light|dark">, resolved from the user's choice (System, Light or Dark)
+   by the inline script in index.html before first paint, and kept live by src/lib/theme.ts. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme inline {
   --font-heading: "Archivo Variable", "Geist Variable", sans-serif;
@@ -62,8 +63,9 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Sawtooth tokens (DESIGN.md). Built on the logo's three colours: Ink, Paper, Signal Orange.
-   shadcn names are kept; in shadcn --accent is the hover surface, so the brand colour is --signal. */
+/* Sawtooth tokens (DESIGN.md). The factory floor: cool steel neutrals (hue 250-255, chroma under
+   0.01) and one safety-orange signal from the logo. shadcn names are kept; in shadcn --accent is the
+   hover surface, so the brand colour is --signal. */
 :root {
   color-scheme: light;
   --radius: 0.375rem;
@@ -78,140 +80,140 @@
   --brand-ink: #16140f;
   --brand-paper: #f4f1ea;
 
-  /* surfaces + text: Paper ground, Ink text (warm neutral, hue 87) */
-  --background: oklch(0.959 0.01 87); /* = Paper #F4F1EA */
-  --foreground: oklch(0.192 0.01 89); /* = Ink #16140F, 16:1 on Paper */
-  --card: oklch(0.982 0.006 87); /* a sheet laid on the paper */
-  --card-foreground: oklch(0.192 0.01 89);
-  --popover: oklch(0.99 0.004 87);
-  --popover-foreground: oklch(0.192 0.01 89);
-  --primary: oklch(0.192 0.01 89); /* ink button */
-  --primary-foreground: oklch(0.959 0.01 87);
-  --secondary: oklch(0.925 0.012 87);
-  --secondary-foreground: oklch(0.192 0.01 89);
-  --muted: oklch(0.935 0.011 87);
-  --muted-foreground: oklch(0.5 0.012 80); /* ≥4.9:1 on Paper, muted and card */
-  --accent: oklch(0.925 0.012 87); /* shadcn hover surface */
-  --accent-foreground: oklch(0.192 0.01 89);
-  --destructive: oklch(0.52 0.2 20); /* crimson, kept away from the signal hue; 5.4:1 on Paper */
-  --border: oklch(0.885 0.012 87); /* dividers, card edges */
-  --input: oklch(0.62 0.012 80); /* field boundary, ≥3:1 (WCAG 1.4.11) */
-  --ring: oklch(0.6 0.2 37); /* = signal */
+  /* surfaces + text: cool steel */
+  --background: oklch(0.965 0.003 250); /* #F2F4F5 */
+  --foreground: oklch(0.2 0.008 255); /* #14161A, 16.4:1 */
+  --card: oklch(0.985 0.002 250); /* a plate on the floor */
+  --card-foreground: oklch(0.2 0.008 255);
+  --popover: oklch(0.995 0.001 250);
+  --popover-foreground: oklch(0.2 0.008 255);
+  --primary: oklch(0.2 0.008 255); /* graphite button */
+  --primary-foreground: oklch(0.965 0.003 250);
+  --secondary: oklch(0.93 0.005 250);
+  --secondary-foreground: oklch(0.2 0.008 255);
+  --muted: oklch(0.94 0.004 250);
+  --muted-foreground: oklch(0.5 0.01 255); /* ≥5:1 on ground, muted and card */
+  --accent: oklch(0.93 0.005 250); /* shadcn hover surface */
+  --accent-foreground: oklch(0.2 0.008 255);
+  --destructive: oklch(0.52 0.2 20); /* crimson, kept away from the signal hue; 5.6:1 */
+  --border: oklch(0.89 0.005 250);
+  --input: oklch(0.62 0.01 255); /* field boundary, ≥3.2:1 (WCAG 1.4.11) */
+  --ring: oklch(0.6 0.2 37);
 
-  /* Signal Orange, the pilot light. Light mode deepens it: #FF5A1F is only 2.8:1 on Paper. */
+  /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
   --signal: oklch(
     0.6 0.2 37
   ); /* #DD4202: rings, markers, the working tooth. ≥3.2:1 on every surface */
-  --signal-text: oklch(0.52 0.17 38); /* when signal must be text: ≥4.9:1 */
-  --signal-foreground: oklch(0.99 0.004 87);
+  --signal-text: oklch(0.52 0.17 38); /* when signal must be text: ≥5:1 */
+  --signal-foreground: oklch(0.995 0.001 250);
 
   /* semantic indicators (dots/icons; always paired with text) */
   --success: oklch(0.54 0.13 150);
-  --warning: oklch(0.6 0.13 70);
+  --warning: oklch(
+    0.6 0.125 88
+  ); /* ochre, 50° clear of the signal so rate-limited never reads as working */
   --info: oklch(0.54 0.13 250);
 
   /* code + diagrams */
-  --code-bg: oklch(0.982 0.006 87);
-  --code-border: oklch(0.885 0.012 87);
-  --diagram-bg: oklch(0.99 0.004 87); /* mermaid always renders on a light sheet */
+  --code-bg: oklch(0.985 0.002 250);
+  --code-border: oklch(0.89 0.005 250);
+  --diagram-bg: oklch(0.995 0.001 250); /* mermaid always renders on a light plate */
 
   /* the unlit roofline under the loading mark */
   --mark-track: color-mix(in oklch, var(--foreground) 12%, transparent);
 
-  /* agent status: RESERVED for S3/S5, not rendered yet */
+  /* agent status */
   --status-working: var(--signal);
   --status-idle: var(--success);
   --status-queued: var(--info);
-  --status-hibernated: oklch(0.62 0.012 80);
+  --status-hibernated: oklch(0.62 0.01 255);
   --status-rate-limited: var(--warning);
   --status-errored: var(--destructive);
-  --status-terminated: oklch(0.8 0.01 85);
+  --status-terminated: oklch(0.8 0.005 250);
 
-  /* charts: RESERVED for S10 */
+  /* charts */
   --chart-1: oklch(0.6 0.2 37);
-  --chart-2: oklch(0.42 0.012 85);
+  --chart-2: oklch(0.42 0.01 255);
   --chart-3: oklch(0.54 0.13 250);
-  --chart-4: oklch(0.6 0.13 70);
-  --chart-5: oklch(0.75 0.01 85);
+  --chart-4: oklch(0.6 0.125 88);
+  --chart-5: oklch(0.75 0.006 250);
 
-  /* sidebar: one step deeper than the paper */
-  --sidebar: oklch(0.935 0.012 87);
-  --sidebar-foreground: oklch(0.3 0.012 85);
-  --sidebar-primary: oklch(0.192 0.01 89);
-  --sidebar-primary-foreground: oklch(0.959 0.01 87);
-  --sidebar-accent: oklch(0.9 0.014 87); /* hover + active row */
-  --sidebar-accent-foreground: oklch(0.192 0.01 89);
-  --sidebar-border: oklch(0.88 0.012 87);
+  /* sidebar: one step deeper than the ground */
+  --sidebar: oklch(0.94 0.004 250);
+  --sidebar-foreground: oklch(0.3 0.01 255);
+  --sidebar-primary: oklch(0.2 0.008 255);
+  --sidebar-primary-foreground: oklch(0.965 0.003 250);
+  --sidebar-accent: oklch(0.905 0.007 250); /* hover + active row */
+  --sidebar-accent-foreground: oklch(0.2 0.008 255);
+  --sidebar-border: oklch(0.885 0.005 250);
   --sidebar-ring: oklch(0.6 0.2 37);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-    --background: oklch(0.192 0.01 89); /* = Ink #16140F */
-    --foreground: oklch(0.94 0.01 87); /* Paper, a touch dimmer for long night reading */
-    --card: oklch(0.215 0.01 89);
-    --card-foreground: oklch(0.94 0.01 87);
-    --popover: oklch(0.235 0.011 89);
-    --popover-foreground: oklch(0.94 0.01 87);
-    --primary: oklch(0.94 0.01 87); /* paper button */
-    --primary-foreground: oklch(0.192 0.01 89);
-    --secondary: oklch(0.27 0.011 89);
-    --secondary-foreground: oklch(0.94 0.01 87);
-    --muted: oklch(0.245 0.011 89);
-    --muted-foreground: oklch(0.72 0.012 85); /* ≥6.5:1 */
-    --accent: oklch(0.27 0.011 89);
-    --accent-foreground: oklch(0.94 0.01 87);
-    --destructive: oklch(0.7 0.16 15);
-    --border: oklch(0.29 0.011 89);
-    --input: oklch(0.52 0.01 85); /* ≥3:1 on Ink and card */
-    --ring: oklch(0.682 0.211 37.7);
+  --background: oklch(0.205 0.006 255); /* graphite #15171A */
+  --foreground: oklch(0.94 0.004 250); /* 15:1 */
+  --card: oklch(0.228 0.007 255);
+  --card-foreground: oklch(0.94 0.004 250);
+  --popover: oklch(0.25 0.008 255);
+  --popover-foreground: oklch(0.94 0.004 250);
+  --primary: oklch(0.94 0.004 250); /* light steel button */
+  --primary-foreground: oklch(0.205 0.006 255);
+  --secondary: oklch(0.285 0.008 255);
+  --secondary-foreground: oklch(0.94 0.004 250);
+  --muted: oklch(0.26 0.008 255);
+  --muted-foreground: oklch(0.72 0.008 250); /* ≥6.2:1 */
+  --accent: oklch(0.285 0.008 255);
+  --accent-foreground: oklch(0.94 0.004 250);
+  --destructive: oklch(0.7 0.16 15);
+  --border: oklch(0.305 0.008 255);
+  --input: oklch(0.53 0.008 255); /* ≥3.2:1 on ground and card */
+  --ring: oklch(0.682 0.211 37.7);
 
-    --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: 5.9:1 on Ink */
-    --signal-text: oklch(0.72 0.18 40);
-    --signal-foreground: oklch(0.192 0.01 89);
+  --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
+  --signal-text: oklch(0.72 0.18 40);
+  --signal-foreground: oklch(0.205 0.006 255);
 
-    --success: oklch(0.7 0.14 150);
-    --warning: oklch(0.78 0.14 80);
-    --info: oklch(0.7 0.12 250);
+  --success: oklch(0.7 0.14 150);
+  --warning: oklch(0.82 0.15 92);
+  --info: oklch(0.7 0.12 250);
 
-    --code-bg: oklch(0.215 0.01 89);
-    --code-border: oklch(0.29 0.011 89);
-    --diagram-bg: oklch(0.94 0.01 87); /* a paper sheet inside the dark UI */
+  --code-bg: oklch(0.228 0.007 255);
+  --code-border: oklch(0.305 0.008 255);
+  --diagram-bg: oklch(0.94 0.004 250); /* a light plate inside the dark UI */
 
-    --mark-track: color-mix(in oklch, var(--foreground) 14%, transparent);
+  --mark-track: color-mix(in oklch, var(--foreground) 14%, transparent);
 
-    --status-hibernated: oklch(0.55 0.01 85);
-    --status-terminated: oklch(0.4 0.01 85);
+  --status-hibernated: oklch(0.55 0.008 255);
+  --status-terminated: oklch(0.4 0.008 255);
 
-    --chart-1: oklch(0.682 0.211 37.7);
-    --chart-2: oklch(0.75 0.01 85);
-    --chart-3: oklch(0.7 0.12 250);
-    --chart-4: oklch(0.78 0.14 80);
-    --chart-5: oklch(0.45 0.01 85);
+  --chart-1: oklch(0.682 0.211 37.7);
+  --chart-2: oklch(0.75 0.006 250);
+  --chart-3: oklch(0.7 0.12 250);
+  --chart-4: oklch(0.82 0.15 92);
+  --chart-5: oklch(0.45 0.008 255);
 
-    --sidebar: oklch(0.16 0.009 89); /* recessed rail, darker than the ink */
-    --sidebar-foreground: oklch(0.82 0.01 87);
-    --sidebar-primary: oklch(0.94 0.01 87);
-    --sidebar-primary-foreground: oklch(0.192 0.01 89);
-    --sidebar-accent: oklch(0.235 0.011 89);
-    --sidebar-accent-foreground: oklch(0.96 0.01 87);
-    --sidebar-border: oklch(0.255 0.011 89);
-    --sidebar-ring: oklch(0.682 0.211 37.7);
-  }
+  --sidebar: oklch(0.17 0.006 255); /* recessed rail, darker than the ground */
+  --sidebar-foreground: oklch(0.82 0.005 250);
+  --sidebar-primary: oklch(0.94 0.004 250);
+  --sidebar-primary-foreground: oklch(0.205 0.006 255);
+  --sidebar-accent: oklch(0.25 0.008 255);
+  --sidebar-accent-foreground: oklch(0.96 0.003 250);
+  --sidebar-border: oklch(0.27 0.008 255);
+  --sidebar-ring: oklch(0.682 0.211 37.7);
 }
 
 /* Increased contrast (prefers-contrast: more): rules and field edges harden, secondary text moves
-   toward ink, and the focus ring thickens. Surfaces and the signal stay as they are. */
+   toward ink, and the focus ring thickens. Surfaces and the signal's meaning stay as they are. */
 @media (prefers-contrast: more) {
   :root {
-    --border: oklch(0.62 0.012 80);
-    --input: oklch(0.42 0.012 80);
-    --muted-foreground: oklch(0.36 0.012 80);
-    --code-border: oklch(0.62 0.012 80);
-    --sidebar-border: oklch(0.62 0.012 80);
-    --sidebar-foreground: oklch(0.192 0.01 89);
+    --border: oklch(0.62 0.01 255);
+    --input: oklch(0.42 0.01 255);
+    --muted-foreground: oklch(0.36 0.01 255);
+    --code-border: oklch(0.62 0.01 255);
+    --sidebar-border: oklch(0.62 0.01 255);
+    --sidebar-foreground: oklch(0.2 0.008 255);
     --signal: oklch(0.55 0.2 37);
     --ring: oklch(0.55 0.2 37);
   }
@@ -219,14 +221,14 @@
     outline-width: 3px;
   }
 }
-@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
-  :root {
-    --border: oklch(0.55 0.01 85);
-    --input: oklch(0.72 0.01 85);
-    --muted-foreground: oklch(0.86 0.01 87);
-    --code-border: oklch(0.55 0.01 85);
-    --sidebar-border: oklch(0.55 0.01 85);
-    --sidebar-foreground: oklch(0.96 0.01 87);
+@media (prefers-contrast: more) {
+  :root[data-theme="dark"] {
+    --border: oklch(0.55 0.008 255);
+    --input: oklch(0.72 0.008 255);
+    --muted-foreground: oklch(0.86 0.005 250);
+    --code-border: oklch(0.55 0.008 255);
+    --sidebar-border: oklch(0.55 0.008 255);
+    --sidebar-foreground: oklch(0.96 0.003 250);
     --signal: oklch(0.682 0.211 37.7);
     --ring: oklch(0.682 0.211 37.7);
   }
@@ -308,7 +310,7 @@
   font-size: 0.8125rem;
   font-weight: 400;
   padding: 0.1em 0.35em;
-  border-radius: calc(var(--radius) * 0.6);
+  border-radius: var(--radius-sm);
   background: var(--code-bg);
   border: 1px solid var(--code-border);
 }
@@ -376,18 +378,16 @@
   height: auto;
 }
 
-/* Shiki dual-theme output: spans switch to the dark token colors with the system theme. The block
+/* Shiki dual-theme output: spans switch to the dark token colors with the dark theme. The block
    background comes from .prose-of pre (--code-bg), not from Shiki. */
-@media (prefers-color-scheme: dark) {
-  .shiki,
-  .shiki span {
-    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
-    color: var(--shiki-dark) !important;
-    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
-    font-style: var(--shiki-dark-font-style) !important;
-    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
-    font-weight: var(--shiki-dark-font-weight) !important;
-  }
+[data-theme="dark"] .shiki,
+[data-theme="dark"] .shiki span {
+  /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+  color: var(--shiki-dark) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+  font-style: var(--shiki-dark-font-style) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+  font-weight: var(--shiki-dark-font-weight) !important;
 }
 
 @layer base {

@@ -8,13 +8,18 @@ import {
   LayoutTemplate,
   ListTodo,
   LogOut,
+  Monitor,
+  Moon,
   Settings,
+  Sun,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -33,7 +38,14 @@ import {
 import { Mark, Wordmark } from "@/components/wordmark";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
+import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+
+const themes = [
+  { value: "system", label: "System", icon: Monitor },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+] as const satisfies readonly { value: ThemePreference; label: string; icon: unknown }[];
 
 const nav = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
@@ -55,6 +67,7 @@ export function AppSidebar() {
   // The _app guard has already loaded this query; it is null only for a moment during sign-out.
   const { data: session } = useQuery(sessionQueryOptions);
   const user = session?.user;
+  const theme = useThemePreference();
 
   async function signOut() {
     await authClient.signOut();
@@ -154,6 +167,21 @@ export function AppSidebar() {
                     @{user?.handle}
                   </span>
                 </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  Theme
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(value) => setPreference(value as ThemePreference)}
+                >
+                  {themes.map((t) => (
+                    <DropdownMenuRadioItem key={t.value} value={t.value}>
+                      <t.icon aria-hidden="true" />
+                      {t.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void signOut()}>
                   <LogOut aria-hidden="true" />

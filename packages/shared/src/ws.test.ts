@@ -13,3 +13,24 @@ test("parses server messages", () => {
     "error",
   );
 });
+
+test("subscribe frames and new server frames parse", () => {
+  expect(clientMessageSchema.parse({ type: "subscribe", agent: "dev", afterSeq: 0 })).toEqual({
+    type: "subscribe",
+    agent: "dev",
+    afterSeq: 0,
+  });
+  expect(
+    clientMessageSchema.safeParse({ type: "subscribe", agent: "dev", afterSeq: -1 }).success,
+  ).toBe(false);
+  expect(
+    serverMessageSchema.parse({
+      type: "agent_status",
+      agent: "dev",
+      status: "idle",
+      turnOpen: false,
+    }).type,
+  ).toBe("agent_status");
+  expect(serverMessageSchema.parse({ type: "resync", agent: "dev" }).type).toBe("resync");
+  expect(serverMessageSchema.parse({ type: "queue", agent: "dev", items: [] }).type).toBe("queue");
+});

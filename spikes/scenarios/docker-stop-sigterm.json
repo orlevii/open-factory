@@ -1,0 +1,15 @@
+[
+  {
+    "send": "Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to run exactly: sleep 600; echo BGDONE-dstop > bg-dstop.marker  2) Use the Monitor tool to watch the command: while true; do echo tick-dstop-$(date +%s); sleep 20; done   Do not wait for either."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "sleep": 3000 },
+  {
+    "shell": "echo BEFORE; docker exec spike-dstop ps -eo pid,ppid,pgid,args | grep -E 'BGDONE|tick-' | grep -v grep | cut -c1-120 || true"
+  },
+  { "shell": "docker stop -t 10 spike-dstop" },
+  { "waitExit": 30000 },
+  {
+    "shell": "echo AFTER; docker ps -a --filter name=spike-dstop --format '{{.Names}} {{.Status}}'"
+  }
+]

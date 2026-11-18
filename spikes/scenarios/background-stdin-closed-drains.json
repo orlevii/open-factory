@@ -1,0 +1,8 @@
+[
+  {
+    "send": "Use the Bash tool with run_in_background=true to run exactly: sleep 20; echo FINITE-DONE-55 . Then end your turn with a one-line reply; do not wait."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "closeStdin": true },
+  { "waitExit": 90000 }
+]

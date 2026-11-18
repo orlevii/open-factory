@@ -1,0 +1,16 @@
+[
+  {
+    "send": "Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to run exactly: sleep 600; echo BGDONE-ekill > bg-ekill.marker  2) Use the Monitor tool to watch the command: while true; do echo tick-ekill-$(date +%s); sleep 20; done   Do not wait for either."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "sleep": 3000 },
+  {
+    "shell": "docker exec spike-exec ps -eo pid,ppid,args | grep -E 'claude|BGDONE|tick-' | grep -v grep | cut -c1-100 || true"
+  },
+  { "shell": "docker exec spike-exec pkill -KILL -x claude; echo killed" },
+  { "waitExit": 30000 },
+  { "sleep": 2000 },
+  {
+    "shell": "echo AFTER; docker exec spike-exec ps -eo pid,ppid,args | grep -E 'claude|BGDONE|tick-|sleep 600' | grep -v grep | cut -c1-100 || true"
+  }
+]

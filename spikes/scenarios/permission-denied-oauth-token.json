@@ -1,0 +1,8 @@
+[
+  {
+    "send": "Run exactly this Bash command: echo FORBIDDEN-CANARY > canary.txt . If blocked, do not retry; reply with one line."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 180000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

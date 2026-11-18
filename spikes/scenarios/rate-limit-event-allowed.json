@@ -1,0 +1,6 @@
+[
+  { "send": "Reply with just the word pong." },
+  { "waitFor": { "type": "result" } },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

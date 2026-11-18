@@ -1,0 +1,9 @@
+[
+  {
+    "send": "You are resuming after a restart. Briefly: which background tasks or monitors from earlier in this session do you believe are still running, and what is their status? Check if you can, then answer in two lines."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 180000 },
+  { "sleep": 3000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

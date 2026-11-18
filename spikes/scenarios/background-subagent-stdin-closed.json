@@ -1,0 +1,8 @@
+[
+  {
+    "send": "Launch one background subagent (Agent/Task tool with run_in_background=true, subagent_type general-purpose, model haiku) whose prompt is: 'Run the Bash command sleep 25 then reply with the word SUBDONE.' Do not wait for it; end your turn with a one-line reply right after launching."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "closeStdin": true },
+  { "waitExit": 150000 }
+]

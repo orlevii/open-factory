@@ -1,0 +1,8 @@
+[
+  {
+    "send": "Edit projects/demo/src/app.ts with the Edit tool (use exactly that relative path) so main() returns 2. Then also use Write to create projects/demo/NOTES.md containing 'hello'. Reply in one line."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 300000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

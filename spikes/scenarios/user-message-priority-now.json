@@ -1,0 +1,17 @@
+[
+  {
+    "send": "Run the Bash command `ping -c 25 127.0.0.1 | tail -1` in the foreground (not background), then reply with the word FIRSTDONE."
+  },
+  { "waitFor": { "type": "assistant", "tool": "Bash" }, "timeout": 60000 },
+  { "sleep": 2000 },
+  {
+    "raw": {
+      "type": "user",
+      "priority": "now",
+      "message": { "role": "user", "content": "URGENT message: reply with the word URGENTSEEN." }
+    }
+  },
+  { "sleep": 30000 },
+  { "closeStdin": true },
+  { "waitExit": 60000 }
+]

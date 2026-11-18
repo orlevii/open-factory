@@ -1,0 +1,6 @@
+[
+  { "send": "hi" },
+  { "waitFor": { "type": "result" }, "timeout": 60000, "optional": true },
+  { "closeStdin": true },
+  { "waitExit": 20000 }
+]

@@ -1,0 +1,13 @@
+[
+  {
+    "send": "Answer from your loaded context only, in four short lines: (1) your persona codeword, (2) your factory codename, (3) use the heron-greeting skill and give the greeting, (4) use the plover-fact skill and give the fact."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 180000 },
+  { "mark": true },
+  {
+    "send": "Now run exactly this Bash command: echo FORBIDDEN-CANARY > canary.txt . If blocked, do not retry; reply with one line."
+  },
+  { "waitFor": { "type": "result" }, "since": "mark", "timeout": 180000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

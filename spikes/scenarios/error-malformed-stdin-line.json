@@ -1,0 +1,10 @@
+[
+  { "raw": "not-json" },
+  { "sleep": 2000 },
+  { "raw": { "type": "bogus" } },
+  { "sleep": 2000 },
+  { "send": "Reply with OK." },
+  { "waitFor": { "type": "result" }, "timeout": 60000, "optional": true },
+  { "closeStdin": true },
+  { "waitExit": 20000 }
+]

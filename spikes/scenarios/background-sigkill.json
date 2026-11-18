@@ -1,0 +1,14 @@
+[
+  {
+    "send": "Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to run exactly: sleep 600; echo BGDONE-kill > bg-kill.marker  2) Use the Monitor tool to watch the command: while true; do echo tick-kill-$(date +%s); sleep 20; done   Do not wait for either."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "sleep": 3000 },
+  { "shell": "echo BEFORE; pgrep -fl 'BGDONE-kill|tick-kill' || true" },
+  { "kill": "SIGKILL" },
+  { "waitExit": 60000 },
+  { "sleep": 3000 },
+  {
+    "shell": "echo AFTER; pgrep -fl 'BGDONE-kill|tick-kill' || true; ps -o pid,ppid,pgid,command -ax | grep -E 'BGDONE-kill|tick-kill' | grep -v grep || true"
+  }
+]

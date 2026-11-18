@@ -181,9 +181,9 @@ check_contract() {
   root_out="$(timeout 120 docker exec -u 0 "$c" claude --dangerously-skip-permissions -p x 2>&1 || true)"
   echo "agent: $agent_out"
   echo "root:  $root_out"
-  reject "agent is not refused as root" 'cannot be used with root' "$agent_out"
-  want "agent reached the auth check" 'Not logged in' "$agent_out"
-  want "root is refused (probe is real)" 'cannot be used with root' "$root_out"
+  reject "agent is not refused as root (Claude Code output may have changed wording; check the root-refusal text)" 'cannot be used with root' "$agent_out"
+  want "agent reached the auth check (Claude Code output may have changed wording; check the 'Not logged in' text)" 'Not logged in' "$agent_out"
+  want "root is refused, so the probe is real (Claude Code output may have changed wording; check the root-refusal text)" 'cannot be used with root' "$root_out"
 
   step "restart clears and recreates the ready marker"
   before="$(docker exec "$c" date -r /run/open-factory/ready +%s%N)"
@@ -1225,10 +1225,9 @@ Expected:
 
 If a check fails, debug it with superpowers:systematic-debugging, fix it, push, and watch again. Paste the smoke summary lines for both arches into the PR description.
 
-- [ ] **Step 3: Verify a dispatch run on a non-main ref doesn't publish**
+- [ ] **Step 3: (Moved) Dispatch on a non-main ref**
 
-Run: `gh workflow run base-image.yml --ref spec/s2-base-image`, then watch it as in Step 2.
-Expected: `build-test` runs, and `build-publish` and `merge` are skipped.
+`workflow_dispatch` can only be triggered once `base-image.yml` is on the default branch, so this check can't run before the merge. It's in the Step 5 post-merge checklist. Before the merge, the `pull_request` run in Step 2 proves the non-publish path. Don't build any workaround.
 
 - [ ] **Step 4: Spec self-check before asking for review**
 
@@ -1242,3 +1241,4 @@ Go through spec §2 AC1–AC7 and, in the PR description, write down for each on
 - [ ] On an Apple Silicon Mac: `docker run --rm -it -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -v "$PWD:$PWD" -w "$PWD" ghcr.io/orlevii/open-factory/base:latest zsh`, then `touch from-container && exit`, and `ls -l from-container` on the host shows your user (AC2). Delete the file afterwards.
 - [ ] On an x86 Linux host: the same pull and run (AC2; CI already covers it).
 - [ ] `sha-<short>` and `latest` tags exist for the merge commit.
+- [ ] Non-main dispatch doesn't publish: `gh workflow run base-image.yml --ref <any non-main branch>`, then watch the run. `build-test` runs, and `build-publish` and `merge` are skipped. No new tag or digest appears in GHCR.

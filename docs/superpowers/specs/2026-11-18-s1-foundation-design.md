@@ -20,7 +20,8 @@ Out of scope (from the roadmap): agents, harness, any domain tables beyond users
    (This rewords the roadmap AC "running `npm start`" to include install + build; see decision Q5.)
 2. A second user can sign up with a different email and handle. Both users see the same app; there are no roles.
 3. A duplicate handle (or email) is rejected with a clear form error.
-4. CI is green: `biome ci`, typecheck, tests, build and the CLI smoke step.5. `of status` prints the server version (works without login). `of login` / `of status` / `of logout` work against a running server.
+4. CI is green: `biome ci`, typecheck, tests, build and the CLI smoke step.
+5. `of status` prints the server version (works without login). `of login` / `of status` / `of logout` work against a running server.
 6. The AC1 flow is checked manually once before S1 is called done, and the result is noted in the PR.
 
 ## 3. Repository layout
@@ -50,7 +51,7 @@ packages/harness          empty placeholder (package.json + index.ts exporting n
   - If esbuild cannot handle something the server needs, fall back to tsdown — only after showing the concrete failure.
 - **TanStack Router route tree:** `apps/web/src/routeTree.gen.ts` is committed (and excluded in `biome.json`), so typecheck works before a build. The Vite plugin regenerates it in dev/build.
 - **Lint/format:** Biome only. ESLint is added only if a rule we actually need is missing from Biome.
-- **Tests:** Vitest (workspace config), Testing Library for web components.
+- **Tests:** Vitest (root config with `test.projects`), Testing Library for web components.
 - **Versions rule:** every dependency added with `pnpm add <pkg>@latest`, verified with `npm view <pkg> version` (tech-stack.md). Nothing in this spec pins versions except the Postgres major (see §9).
 
 Root scripts: `dev` (server `tsx watch` + `vite` in parallel), `build`, `start`, `test`, `typecheck`, `lint` (`biome check`), `lint:fix` (`biome check --write`, covers formatting — no separate `format` script), `lint:ci` (`biome ci .`, used by CI), `db:generate` (drizzle-kit).
@@ -125,7 +126,7 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
 - `emailAndPassword` enabled, `minPasswordLength: 8`, email verification off, no password reset (no mail transport — tracked as a GH issue).
 - Drizzle adapter on the `packages/db` schema; `user.additionalFields.handle` (required, `input: true`, `validator: { input: handleSchema }` for format).
 - **Handle uniqueness:** better-auth swallows adapter errors during user creation into a generic `422 FAILED_TO_CREATE_USER`, so the DB unique error can't drive the UI. Instead a `hooks.before` middleware on path `/sign-up/email` looks up the handle and throws `APIError` 422 with code `HANDLE_TAKEN`. The DB unique index stays as the race backstop (a concurrent duplicate then surfaces as the generic failure).
-- Error codes the sign-up form maps to fields: `HANDLE_TAKEN` and handle validation errors → handle; `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` → email; `PASSWORD_TOO_SHORT` → password; anything else → form-level message.
+- Error codes the sign-up form maps to fields: `HANDLE_TAKEN` → handle; `VALIDATION_ERROR` (400, which better-auth's `additionalFields` validator throws with the first Zod issue message and no field name; handle is the only validated additional field) → handle; `handleSchema` must stay synchronous (no async refinements), or better-auth throws `ASYNC_VALIDATION_NOT_SUPPORTED`; `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` → email; `PASSWORD_TOO_SHORT` → password; anything else → form-level message.
 - `autoSignIn` on sign-up stays enabled (default). Turning it off or enabling email verification makes duplicate-email sign-ups return a fake success, which would break AC1/AC3.
 - `secret` = HKDF `"better-auth"` subkey; `baseURL` = `PUBLIC_URL`; `trustedOrigins` = `[PUBLIC_URL origin]` plus `DEV_WEB_ORIGIN` when not in production. (Bearer requests without an Origin header, e.g. CLI sign-out, pass better-auth's origin check.)
 - `bearer` plugin enabled: sign-in returns a session token the CLI stores; the server accepts `Authorization: Bearer <token>` as well as the session cookie.
@@ -140,7 +141,7 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
   2. **No Origin header** is allowed only when the request carries `Authorization: Bearer`.
   3. **Session:** `requireUser`. No session → 401, no socket.
 - On connect: server sends `hello { userId }`. On `ping` → `pong`. Invalid message → `error` (socket stays open). Server-side heartbeat: a protocol-level ping every 30s; a socket that hasn't answered the previous ping is terminated.
-- The session is checked only at upgrade in S1. An open socket survives sign-out/expiry until it disconnects; on reconnect the upgrade fails with 401 and the web client stops retrying and routes to `/sign-in`. (Revoking live sockets on sign-out is left to the spec that first streams sensitive data, S3.)
+- The session is checked only at upgrade in S1. An open socket survives sign-out/expiry until it disconnects; on reconnect the upgrade fails with 401. Browsers don't expose the handshake status (a rejected upgrade looks like close code 1006, same as server down), so the web client handles it as described in §8. (Revoking live sockets on sign-out is left to the spec that first streams sensitive data, S3.)
 - Seam for S3: the server keeps an in-memory registry `Map<userId, Set<socket>>` (add on connect, remove on close), exposed as a small module. No broadcast API beyond that.
 
 ### 7.6 Static web
@@ -159,7 +160,7 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
   - `/inbox`, `/agents`, `/tasks`, `/templates`, `/schedules`, `/settings`: each shows a one-line plain-language empty state: "Nothing in your inbox.", "No agents yet.", "No tasks yet.", "No templates yet.", "No schedules yet.", "Nothing to configure yet." (dashboard panels reuse the Inbox and Agents lines). No "coming soon" teasers, no internals.
 - Sign-up form fields: name, handle, email, password. Client-side validation via the shared schemas; server errors mapped to fields per §7.4. After sign-up the user lands on `/` (no onboarding wizard).
 - Theme follows the system (light/dark), no toggle.
-- **WS client:** one reconnecting client module (`lib/ws.ts`) opened by the authenticated layout, exponential backoff with jitter (cap ~30s), parses messages with the shared Zod union, exposes connection status. S1 uses it only to establish the authenticated connection; later specs add handlers.
+- **WS client:** one reconnecting client module (`lib/ws.ts`) opened by the authenticated layout, exponential backoff with jitter (cap ~30s), parses messages with the shared Zod union, exposes connection status. On any close (including one before the socket opened), it re-fetches the session query: no session → invalidate it and route to `/sign-in` (stop reconnecting); session present → keep backing off. S1 uses it only to establish the authenticated connection; later specs add handlers.
 - **Dev:** Vite dev server proxies `/api` (including WS upgrade) to the Fastify dev server.
 
 ### 8.1 Markdown components

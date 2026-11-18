@@ -62,4 +62,6 @@ docker build -t open-factory-base:test --build-arg CLAUDE_CODE_VERSION=$v images
 images/base/test/smoke.sh open-factory-base:test $v   # on macOS add SMOKE_SKIP_OWNERSHIP=1
 ```
 
+The contract checks need GNU coreutils `timeout` on PATH (on macOS: `brew install coreutils`; `gtimeout` alone is not enough unless aliased).
+
 Hand-pinned versions (`YQ_VERSION`, `RUSTUP_VERSION`, `UV_VERSION`, `NVM_VERSION`, `PNPM_VERSION` + `PNPM_SHA512`, `OHMYZSH_COMMIT`) are `ARG`s in the Dockerfile. When bumping, pick a release at least 7 days old; `PNPM_SHA512` is the hex form of `npm view pnpm@<version> dist.integrity`.

@@ -151,6 +151,7 @@ ln -s "$(dirname "$(dirname "$(nvm which default)")")" "$NVM_DIR/current"
 corepack enable pnpm
 corepack install -g "pnpm@${PNPM_VERSION}+sha512.${PNPM_SHA512}"
 # pnpm 12 fetches its native binary into COREPACK_HOME on first run; pre-warm it so agents work offline.
+# The native binary is trusted through the pinned pnpm package's own integrity, not covered by PNPM_SHA512.
 pnpm -v
 nvm cache clear
 npm cache clean --force

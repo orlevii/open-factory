@@ -67,7 +67,7 @@ check_tools() {
     python3 -c "import sys; print(\"prefix=\" + sys.prefix)"
     uv --version; poetry --version
     rustc -V; cargo -V; rustup -V 2>/dev/null
-    claude --version
+    claude --dangerously-skip-permissions --version
     gh --version; git --version; rg --version; fd --version; jq --version; yq --version
     zsh --version; tmux -V; setpriv --version
     echo "uid=$(id -u)"
@@ -80,6 +80,10 @@ check_tools() {
   want "yq is mikefarah's" 'mikefarah' "$out"
   want "runs as host uid" "^uid=${host_uid}\$" "$out"
   reject "not root" '^uid=0$' "$out"
+  out="$(docker run --rm --network none -e HOST_UID="$host_uid" -e HOST_GID="$host_gid" "$image" pnpm -v 2>&1)" ||
+    fail "pnpm native binary pre-warm is broken: pnpm -v failed offline:"$'\n'"$out"
+  want "pnpm native binary pre-warm is broken (no version line offline)" '^[0-9]+\.[0-9]+\.[0-9]+' "$out"
+  reject "pnpm native binary pre-warm is broken (downloads at runtime)" 'Downloading' "$out"
 }
 
 check_contract() {

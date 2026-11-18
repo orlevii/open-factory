@@ -18,7 +18,8 @@ const err = (reply: FastifyReply, status: number, code: string, message: string)
   reply.code(status).send({ error: { code, message } });
 
 export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
-  app.addHook("preHandler", requireUser);
+  // onRequest, not preHandler: Fastify validates before preHandler, so auth must come first (401 before 400).
+  app.addHook("onRequest", requireUser);
 
   const user = (req: { user?: { id: string; handle: string } }) => {
     if (!req.user) throw new Error("requireUser did not set request.user");

@@ -24,6 +24,19 @@ test("requires a signed-in user", async () => {
   expect((await t.app.inject({ method: "GET", url: "/api/agents" })).statusCode).toBe(401);
 });
 
+test("auth runs before validation: signed-out bad input is 401, not 400", async () => {
+  const post = await t.app.inject({
+    method: "POST",
+    url: "/api/agents/dev/messages",
+    payload: { body: 42 },
+  });
+  expect(post.statusCode).toBe(401);
+  expect(post.json().error.code).toBe("unauthorized");
+  const get = await t.app.inject({ method: "GET", url: "/api/agents/dev/events?limit=abc" });
+  expect(get.statusCode).toBe(401);
+  expect(get.json().error.code).toBe("unauthorized");
+});
+
 test("list and detail", async () => {
   const list = await req("GET", "/api/agents");
   expect(list.json()).toEqual({

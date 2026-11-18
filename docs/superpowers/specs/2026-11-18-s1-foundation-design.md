@@ -16,12 +16,11 @@ Out of scope (from the roadmap): agents, harness, any domain tables beyond users
 
 ## 2. Acceptance criteria
 
-1. Fresh clone → `docker compose -f docker-compose.dev.yml up -d` → `pnpm install && pnpm build && npm start` → open `http://localhost:3000` → sign up → land on the empty dashboard (Inbox + Agents panels) per `behavior/general.md`.
+1. Fresh clone → `docker compose -f docker-compose.dev.yml up -d` → `cp .env.example .env` and set `FACTORY_SECRET_KEY` → `pnpm install && pnpm build && npm start` → open `http://localhost:3000` → sign up → land on the empty dashboard (Inbox + Agents panels) per `behavior/general.md`.
    (This rewords the roadmap AC "running `npm start`" to include install + build; see decision Q5.)
 2. A second user can sign up with a different email and handle. Both users see the same app; there are no roles.
 3. A duplicate handle (or email) is rejected with a clear form error.
-4. CI is green: `biome ci`, typecheck, tests, build and the CLI smoke step.
-5. `of status` prints the server version (works without login). `of login` / `of status` / `of logout` work against a running server.
+4. CI is green: `biome ci`, typecheck, tests, build and the CLI smoke step.5. `of status` prints the server version (works without login). `of login` / `of status` / `of logout` work against a running server.
 6. The AC1 flow is checked manually once before S1 is called done, and the result is noted in the PR.
 
 ## 3. Repository layout
@@ -31,7 +30,6 @@ package.json              root: version (single source), scripts, engines node>=
 pnpm-workspace.yaml
 biome.json                lint + format (only tool)
 tsconfig.base.json        shared compiler options (strict, ESM, moduleResolution bundler)
-tsconfig.json             root solution for `tsc --noEmit` across the workspace
 .env.example
 docker-compose.dev.yml    Postgres only
 .github/workflows/ci.yml
@@ -45,13 +43,19 @@ packages/harness          empty placeholder (package.json + index.ts exporting n
 
 - All packages are ESM (`"type": "module"`), Node >= 24.
 - **Internal packages pattern:** `packages/*` have no build step. Their `package.json` `exports` point at `.ts` source. Vite, tsx and esbuild consume TS directly.
-- **Typecheck:** TypeScript (latest, currently 7.x) `tsc --noEmit` over the whole workspace; run in CI.
-- **Bundling:** esbuild bundles `apps/server` (node_modules marked external) and `apps/cli` (everything bundled, single file, `#!/usr/bin/env node` banner). Vite builds `apps/web`. If esbuild cannot handle something the server needs, fall back to tsdown — only after showing the concrete failure.
+- **Typecheck:** TypeScript (latest, currently 7.x). Each package has its own `tsconfig.json` extending `tsconfig.base.json` with the right environment (`lib: DOM` + Vite types for web; `@types/node` for server, CLI, db, shared). Root `typecheck` = `pnpm -r --parallel exec tsc --noEmit` (no root solution file). TS 7 has no stable JS API yet: any tool that loads the `typescript` package programmatically must be checked against it at scaffold time.
+- **Bundling:** esbuild bundles `apps/server` and `apps/cli`. Vite builds `apps/web`.
+  - **Server:** workspace packages (`@open-factory/*`) are **bundled** (they are TS source); third-party packages stay **external**. The external list is built from `apps/server/package.json` `dependencies`, excluding `workspace:*` entries. Every runtime third-party dependency of `packages/db` and `packages/shared` (e.g. `drizzle-orm`, `postgres`, `zod`) is **also** a direct dependency of `apps/server`, so pnpm makes it resolvable from `apps/server/dist`.
+  - **CLI:** everything bundled into one file with a `#!/usr/bin/env node` banner.
+  - If esbuild cannot handle something the server needs, fall back to tsdown — only after showing the concrete failure.
+- **TanStack Router route tree:** `apps/web/src/routeTree.gen.ts` is committed (and excluded in `biome.json`), so typecheck works before a build. The Vite plugin regenerates it in dev/build.
 - **Lint/format:** Biome only. ESLint is added only if a rule we actually need is missing from Biome.
 - **Tests:** Vitest (workspace config), Testing Library for web components.
 - **Versions rule:** every dependency added with `pnpm add <pkg>@latest`, verified with `npm view <pkg> version` (tech-stack.md). Nothing in this spec pins versions except the Postgres major (see §9).
 
-Root scripts: `dev` (server `tsx watch` + `vite` in parallel), `build`, `start`, `test`, `typecheck`, `lint` (`biome check`), `lint:fix` (`biome check --write`, covers formatting — no separate `format` script), `db:generate` (drizzle-kit).
+Root scripts: `dev` (server `tsx watch` + `vite` in parallel), `build`, `start`, `test`, `typecheck`, `lint` (`biome check`), `lint:fix` (`biome check --write`, covers formatting — no separate `format` script), `lint:ci` (`biome ci .`, used by CI), `db:generate` (drizzle-kit).
+
+Vitest uses `test.projects` in the root `vitest.config.ts` (Vitest 5 has no workspace file): `jsdom` environment for `apps/web`, `node` for everything else.
 
 `npm start` runs only the already-built server: `node --env-file-if-exists=.env apps/server/dist/index.js`. It never builds or installs.
 
@@ -62,9 +66,10 @@ Env vars only, parsed once at boot by one Zod schema (`apps/server/src/config.ts
 | Var | Required | Default | Notes |
 |---|---|---|---|
 | `DATABASE_URL` | yes | — | Postgres URL |
-| `FACTORY_SECRET_KEY` | yes | — | min 32 chars; root key, see below |
-| `FACTORY_HOME` | no | `~/open-factory` | resolved to an absolute path (`~` expanded) and validated as a path; **not created in S1** (the first spec that writes there creates it) |
-| `PUBLIC_URL` | no | `http://localhost:${PORT}` | used for better-auth base URL, trusted origins, WS origin check |
+| `FACTORY_SECRET_KEY` | yes | — | min 32 chars; root key, see below. The literal placeholder from `.env.example` (`change-me-to-a-random-string-of-32-chars-or-more`) is rejected with a hint to run `openssl rand -base64 32` |
+| `FACTORY_HOME` | no | `~/open-factory` | non-empty string; leading `~` expanded, then `path.resolve`d to absolute. Existence is not checked and the directory is **not created in S1** (the first spec that writes there creates it) |
+| `PUBLIC_URL` | no | `http://localhost:${PORT}` | must parse as an http(s) URL; its origin is used for better-auth base URL, trusted origins and the WS origin check. Users must open the app at exactly this origin (`127.0.0.1` ≠ `localhost`) |
+| `DEV_WEB_ORIGIN` | no | `http://localhost:5173` | Vite dev server origin, trusted (better-auth + WS) only when `NODE_ENV !== "production"` |
 | `PORT` | no | `3000` | |
 | `HOST` | no | `127.0.0.1` | fail-closed default; servers set `HOST=0.0.0.0` explicitly (README says so) |
 | `LOG_LEVEL` | no | `info` | pino level |
@@ -72,12 +77,12 @@ Env vars only, parsed once at boot by one Zod schema (`apps/server/src/config.ts
 
 `DOCKER_HOST` is not read in S1.
 
-**Key derivation.** One helper (`apps/server/src/crypto/keys.ts`) derives purpose-specific subkeys from `FACTORY_SECRET_KEY` with HKDF-SHA256 (`node:crypto.hkdfSync`, fixed salt, `info` = purpose label): `"better-auth"` (passed as better-auth `secret`) and `"secret-encryption"` (exported for later specs; unused in S1). Limitation, documented in the README: rotating `FACTORY_SECRET_KEY` invalidates all sessions and requires re-encrypting stored secrets.
+**Key derivation.** One helper (`apps/server/src/crypto/keys.ts`) derives purpose-specific subkeys from `FACTORY_SECRET_KEY` with HKDF-SHA256 (`node:crypto.hkdfSync`, fixed salt, `info` = purpose label, 32-byte output): `"better-auth"` (base64url-encoded and passed as better-auth's `secret` string) and `"secret-encryption"` (exported for later specs; unused in S1). Limitation, documented in the README: rotating `FACTORY_SECRET_KEY` invalidates all sessions and requires re-encrypting stored secrets.
 
 ## 5. Database (packages/db)
 
-- Drizzle ORM on Postgres with the `postgres` (postgres.js) driver — or `pg` if better-auth's Drizzle adapter needs it; pick whichever both Drizzle and better-auth support natively, decided at scaffold time.
-- **Schema ownership:** generate better-auth's tables once with better-auth's schema-generation CLI into `packages/db/src/schema/auth.ts`, then own that file. Add `handle` to `user`:
+- Drizzle ORM on Postgres with the `postgres` (postgres.js) driver.
+- **Schema ownership:** generate better-auth's tables once with better-auth's schema-generation CLI into `packages/db/src/schema/auth.ts`, then own that file. The auth options used by the generator live in a module that can be imported **without** env/config (pure options factory taking `secret`, `baseURL`, etc. as parameters), so the generator doesn't trip the config fail-fast. better-auth is configured with `usePlural: true`, so tables are `users`, `sessions`, `accounts`, `verifications` (matching data-model.md and the plural style of future tables). Add `handle` to `users`:
   - `handle text not null`, with a **unique index** in the database (not only an app check).
   - Format and length are validated by the shared Zod schema (§6); the DB enforces uniqueness.
 - **Migrations:** SQL files generated by `drizzle-kit generate` (`pnpm db:generate`), committed in `packages/db/migrations/`. better-auth never runs its own migrations.
@@ -88,7 +93,8 @@ Env vars only, parsed once at boot by one Zod schema (`apps/server/src/config.ts
 
 ## 6. Shared schemas (packages/shared)
 
-- `handleSchema`: lowercase `[a-z0-9-]`, length 2–32. Used by the sign-up form and the server.
+- `RESERVED_HANDLES = ["humans", "me", "scheduler"]`: the addresses the product docs use (`@humans`, `@me`, `@scheduler`). Later specs that introduce a new address add it here.
+- `handleSchema`: length 2–32, regex `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$` (lowercase letters, digits, inner hyphens), not in `RESERVED_HANDLES`. The server rejects anything not already lowercase; the sign-up form lowercases as the user types. Used by the form and the server.
 - `signUpSchema`: `{ name, handle, email, password (min 8) }`.
 - `meSchema`: `{ id, email, name, handle }`.
 - `statusSchema`: `{ version: string, db: "ok" | "error" }`.
@@ -109,16 +115,19 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
 
 ### 7.3 HTTP API
 - Everything under `/api`. Validation and serialization through `fastify-type-provider-zod` using the schemas in `packages/shared`.
-- One error handler producing `{ error: { code, message } }`. Validation errors → 400 `validation_error`. Unknown or forbidden resources → 404 `not_found` (never 403 leaks). Unknown `/api/*` paths → JSON 404, never `index.html`.
+- One error handler producing `{ error: { code, message } }` for all factory routes. **Exception:** `/api/auth/*` keeps better-auth's own error format (`{ code, message }`), which its React client expects; the web and CLI map better-auth codes themselves (§7.4). Validation errors → 400 `validation_error`. Unknown or forbidden resources → 404 `not_found` (never 403 leaks). Unknown `/api/*` paths → JSON 404, never `index.html`.
 - Routes in S1:
   - `GET /api/status` (public): `{ version, db }`. `db` is `"ok"` if `select 1` succeeds, else `"error"`. This is also the health endpoint (always HTTP 200 while the process is up, so the CLI can show the DB state).
   - `GET /api/me` (auth): `meSchema`; 401 `unauthorized` without a valid session.
-  - `/api/auth/*`: better-auth handler mounted via Fastify (catch-all route forwarding to `auth.handler`).
+  - `/api/auth/*`: better-auth handler mounted via a Fastify catch-all route that builds a Web `Request` (URL from `PUBLIC_URL` + path, headers via better-auth's `fromNodeHeaders`, body re-serialized from the parsed JSON when present), calls `auth.handler`, and copies status, headers (including multiple `set-cookie`) and body back. Note: Fastify rejects a `Content-Type: application/json` request with an empty body, so clients (the CLI's sign-out) send `{}`.
 
 ### 7.4 Auth (better-auth)
 - `emailAndPassword` enabled, `minPasswordLength: 8`, email verification off, no password reset (no mail transport — tracked as a GH issue).
-- Drizzle adapter on the `packages/db` schema; `user.additionalFields.handle` (required, input allowed on sign-up). A `before` hook on sign-up validates `handle` with `handleSchema`; a unique-constraint violation on handle maps to HTTP 422 with code `handle_taken` that the form shows on the handle field. Duplicate email uses better-auth's existing error.
-- `secret` = HKDF `"better-auth"` subkey; `baseURL` = `PUBLIC_URL`; `trustedOrigins` = `[PUBLIC_URL]` plus the Vite dev origin when not in production.
+- Drizzle adapter on the `packages/db` schema; `user.additionalFields.handle` (required, `input: true`, `validator: { input: handleSchema }` for format).
+- **Handle uniqueness:** better-auth swallows adapter errors during user creation into a generic `422 FAILED_TO_CREATE_USER`, so the DB unique error can't drive the UI. Instead a `hooks.before` middleware on path `/sign-up/email` looks up the handle and throws `APIError` 422 with code `HANDLE_TAKEN`. The DB unique index stays as the race backstop (a concurrent duplicate then surfaces as the generic failure).
+- Error codes the sign-up form maps to fields: `HANDLE_TAKEN` and handle validation errors → handle; `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` → email; `PASSWORD_TOO_SHORT` → password; anything else → form-level message.
+- `autoSignIn` on sign-up stays enabled (default). Turning it off or enabling email verification makes duplicate-email sign-ups return a fake success, which would break AC1/AC3.
+- `secret` = HKDF `"better-auth"` subkey; `baseURL` = `PUBLIC_URL`; `trustedOrigins` = `[PUBLIC_URL origin]` plus `DEV_WEB_ORIGIN` when not in production. (Bearer requests without an Origin header, e.g. CLI sign-out, pass better-auth's origin check.)
 - `bearer` plugin enabled: sign-in returns a session token the CLI stores; the server accepts `Authorization: Bearer <token>` as well as the session cookie.
 - Session defaults (7 days, rolling).
 - **One auth check:** `requireUser` (Fastify `preHandler` / decorator) calls `auth.api.getSession({ headers })`, which handles both cookie and bearer, and sets `request.user`. Used by `/api/me` and the WS upgrade. No second auth path.
@@ -127,13 +136,15 @@ Fastify's built-in pino. JSON in production; `pino-pretty` transport in dev only
 ### 7.5 WebSocket skeleton
 - `@fastify/websocket`, route `GET /api/ws`.
 - Upgrade checks, in a `preValidation` hook before the socket is accepted:
-  1. **Origin:** if an `Origin` header is present it must equal `PUBLIC_URL`'s origin (or the Vite dev origin when not in production). Mismatch → 401, no socket.
+  1. **Origin:** if an `Origin` header is present it must equal `PUBLIC_URL`'s origin (or `DEV_WEB_ORIGIN` when not in production). Mismatch → 401, no socket.
   2. **No Origin header** is allowed only when the request carries `Authorization: Bearer`.
   3. **Session:** `requireUser`. No session → 401, no socket.
-- On connect: server sends `hello { userId }`. On `ping` → `pong`. Invalid message → `error` (socket stays open). Server-side heartbeat: close sockets that haven't responded to a protocol-level ping within 60s.
+- On connect: server sends `hello { userId }`. On `ping` → `pong`. Invalid message → `error` (socket stays open). Server-side heartbeat: a protocol-level ping every 30s; a socket that hasn't answered the previous ping is terminated.
+- The session is checked only at upgrade in S1. An open socket survives sign-out/expiry until it disconnects; on reconnect the upgrade fails with 401 and the web client stops retrying and routes to `/sign-in`. (Revoking live sockets on sign-out is left to the spec that first streams sensitive data, S3.)
+- Seam for S3: the server keeps an in-memory registry `Map<userId, Set<socket>>` (add on connect, remove on close), exposed as a small module. No broadcast API beyond that.
 
 ### 7.6 Static web
-In production the server serves `apps/web/dist` via `@fastify/static`. `GET` requests not under `/api` and not matching a file fall back to `index.html` (SPA). The server locates the web dist relative to its own bundle (build copies or resolves `apps/web/dist`; the plan picks one).
+In production the server serves `apps/web/dist` via `@fastify/static`. `GET` requests not under `/api` and not matching a file fall back to `index.html` (SPA). The root `build` copies `apps/web/dist` to `apps/server/dist/public` (like migrations), and the server serves from the path relative to its own bundle. If that folder is missing (e.g. web not built, or `pnpm dev` where Vite serves the UI), the server logs one warning and serves the API only.
 
 ### 7.7 Version
 Root `package.json` `version` (0.1.0) is the single source. esbuild `define` injects it as `__FACTORY_VERSION__` into the server and CLI bundles; dev (tsx) reads it from the root package.json.
@@ -143,10 +154,10 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 - React + Vite, TanStack Router (file-based, Vite plugin), TanStack Query, Tailwind + shadcn/ui. better-auth React client for sign-in/up/out and session.
 - Routes:
   - `/sign-in`, `/sign-up` (public; signed-in users are redirected to `/`).
-  - Authenticated layout (guard in `beforeLoad`: fetch session via TanStack Query, redirect to `/sign-in` if absent) with sidebar nav **Inbox, Agents, Tasks, Templates, Schedules, Settings** and a user menu (name, `@handle`, Sign out).
+  - Authenticated layout (guard in `beforeLoad`: `queryClient.ensureQueryData` of the session query, redirect to `/sign-in` if absent; sign-in, sign-up and sign-out invalidate/reset that query before navigating, so the guard never acts on a stale session) with sidebar nav **Inbox, Agents, Tasks, Templates, Schedules, Settings** and a user menu (name, `@handle`, Sign out).
   - `/` dashboard: two panels, Inbox and Agents, each empty.
-  - `/inbox`, `/agents`, `/tasks`, `/templates`, `/schedules`, `/settings`: each shows a one-line plain-language empty state ("No agents yet." etc.). No "coming soon" teasers, no internals.
-- Sign-up form fields: name, handle, email, password. Client-side validation via the shared schemas; server errors (e.g. `handle_taken`) shown on the relevant field. After sign-up the user lands on `/` (no onboarding wizard).
+  - `/inbox`, `/agents`, `/tasks`, `/templates`, `/schedules`, `/settings`: each shows a one-line plain-language empty state: "Nothing in your inbox.", "No agents yet.", "No tasks yet.", "No templates yet.", "No schedules yet.", "Nothing to configure yet." (dashboard panels reuse the Inbox and Agents lines). No "coming soon" teasers, no internals.
+- Sign-up form fields: name, handle, email, password. Client-side validation via the shared schemas; server errors mapped to fields per §7.4. After sign-up the user lands on `/` (no onboarding wizard).
 - Theme follows the system (light/dark), no toggle.
 - **WS client:** one reconnecting client module (`lib/ws.ts`) opened by the authenticated layout, exponential backoff with jitter (cap ~30s), parses messages with the shared Zod union, exposes connection status. S1 uses it only to establish the authenticated connection; later specs add handlers.
 - **Dev:** Vite dev server proxies `/api` (including WS upgrade) to the Fastify dev server.
@@ -167,7 +178,7 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
   cp .env.example .env   # set FACTORY_SECRET_KEY
   pnpm install && pnpm build && npm start
   ```
-  plus: `HOST=0.0.0.0` for servers (put TLS in front), the key-rotation limitation, `pnpm dev` for development, and CLI usage.
+  plus: prerequisites (Node 24, pnpm via `corepack enable`, Docker for Postgres); for servers set `HOST=0.0.0.0` **and** `PUBLIC_URL` to the public origin (put TLS in front); open the app at exactly `PUBLIC_URL`; the key-rotation limitation; `pnpm dev` for development; CLI usage.
 
 ## 10. CLI (apps/cli)
 
@@ -175,7 +186,7 @@ Root `package.json` `version` (0.1.0) is the single source. esbuild `define` inj
 - Commands:
   - `of help` / no args: plain usage list. `of --version`: CLI version.
   - `of login [--url <url>]`: prompts for URL (default from config or `http://localhost:3000`), email, password (hidden input via `node:readline` with muted output). Calls `POST /api/auth/sign-in/email`, reads the bearer token from the `set-auth-token` response header, verifies it with `/api/me`, saves config. Prints `Logged in as @handle`.
-  - `of logout`: calls `POST /api/auth/sign-out` with the bearer token (revokes the server session), then removes the token from the config file. Succeeds (with a note) if the server is unreachable — the local token is still removed.
+  - `of logout`: calls `POST /api/auth/sign-out` with the bearer token and body `{}` (revokes the server session), then removes the token from the config file. Succeeds (with a note) if the server is unreachable — the local token is still removed.
   - `of status`: prints server URL, server version (`/api/status`), DB state, CLI version, and `Logged in as @handle` (via `/api/me`) or `Not logged in`. Not logged in → exit 0. Server unreachable → plain message, exit 1.
 - Config file: `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json` = `{ url, token }`, written with mode `0600` (dir `0700`).
 - Env overrides `OF_URL` and `OF_TOKEN` take precedence over the file.
@@ -186,7 +197,7 @@ Real Postgres everywhere: locally from the compose file, in CI from a `services:
 
 - **Test DB harness:** per test file, create a database with a random name, run `migrate()`, build the app with `buildApp`, drop the database afterwards. Uses `DATABASE_URL`'s server with an admin connection.
 - **Server integration tests** (Fastify `inject()`, plus a real `listen` on port 0 for WS) — one or two thorough tests per behaviour:
-  - sign-up succeeds and `/api/me` returns `{ id, email, name, handle }`; duplicate handle → `handle_taken`; invalid handle rejected;
+  - sign-up succeeds and `/api/me` returns `{ id, email, name, handle }`; duplicate handle → `HANDLE_TAKEN`; invalid and reserved handles rejected;
   - `/api/me` with cookie works, with bearer works, without → 401;
   - `/api/status` returns version and `db: "ok"`;
   - unknown `/api/x` → JSON 404; non-API GET → `index.html` (when a web dist fixture is present);
@@ -201,11 +212,11 @@ Real Postgres everywhere: locally from the compose file, in CI from a `services:
 One job on `push` to `main` and on `pull_request`: Ubuntu, Node 24, pnpm via `pnpm/action-setup`, pnpm store cache, `services: postgres` (`postgres:18`, health-checked). Steps:
 
 1. `pnpm install --frozen-lockfile`
-2. `pnpm biome ci` (via `pnpm lint` in CI mode)
+2. `pnpm lint:ci` (`biome ci .`)
 3. `pnpm typecheck`
 4. `pnpm test` (with `DATABASE_URL` pointing at the service)
 5. `pnpm build`
-6. **CLI smoke:** start the built server in the background with a test `FACTORY_SECRET_KEY`, wait for `/api/status`, run `node apps/cli/dist/of.js status`, assert the output contains the root `package.json` version.
+6. **CLI smoke:** start the built server in the background with a test `FACTORY_SECRET_KEY`, wait for `/api/status`, run `node apps/cli/dist/of.js status`, assert that the **server version line** (e.g. `Server version: 0.1.0`) matches the root `package.json` version (not just any occurrence, since the CLI version line contains it too).
 
 ## 13. Error handling summary
 
@@ -223,7 +234,9 @@ One job on `push` to `main` and on `pull_request`: Ubuntu, Node 24, pnpm via `pn
 
 1. **Close open sign-up before v0.1 ships** (owner: S10). Once agents and credentials exist, open sign-up on a reachable server makes anyone an admin.
 2. **No password reset** in v0.1 (no mail transport) — recorded limitation.
-3. **Roadmap AC wording:** `docs/product/roadmap/v0.1/s01-foundation.md` AC should read "fresh clone → start Postgres → install, build, `npm start`" (the product docs are not tracked in git; update the local copy).
+3. **Roadmap AC wording:** `docs/product/roadmap/v0.1/s01-foundation.md` AC should read "fresh clone → start Postgres → copy `.env.example` and set `FACTORY_SECRET_KEY` → install, build, `npm start`" (the product docs are not tracked in git; update the local copy).
+
+Note: `fastify-type-provider-zod` lists `@fastify/swagger` and `openapi-types` as peers; expect pnpm peer warnings or auto-installs. That is not an OpenAPI feature (Q9 decided no OpenAPI).
 
 ## 15. Decisions needing Or's call (owner-proxy certainty 3/5)
 

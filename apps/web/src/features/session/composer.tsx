@@ -49,19 +49,22 @@ export function Composer({
 
   async function send() {
     if (empty || sending) return;
+    const sent = text;
+    // Clear only what was sent: anything typed while the POST was in flight stays.
+    const accepted = () => {
+      setText((cur) => (cur.startsWith(sent) ? cur.slice(sent.length) : cur));
+      setUrgent(false);
+    };
     setSending(true);
     setError(undefined);
     try {
-      const item = await postMessage(slug, text.trim(), urgent);
+      const item = await postMessage(slug, sent.trim(), urgent);
       onQueued?.(item);
-      setText("");
-      setUrgent(false);
+      accepted();
     } catch (e) {
-      if (e instanceof ApiError && e.code === "agent_start_failed") {
-        // Queued server-side; the queued row shows "Not delivered yet: <reason>".
-        setText("");
-        setUrgent(false);
-      } else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      // 503: queued server-side; the queued row shows "Not delivered yet: <reason>".
+      if (e instanceof ApiError && e.code === "agent_start_failed") accepted();
+      else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
     } finally {
       setSending(false);
       boxRef.current?.focus(); // focus stays in the composer after sending (UI §7)
@@ -69,7 +72,9 @@ export function Composer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || coarse()) return;
+    // keyCode 229: Safari fires the IME-confirming Enter after compositionend.
+    const composing = e.nativeEvent.isComposing || e.keyCode === 229;
+    if (e.key !== "Enter" || e.shiftKey || composing || coarse()) return;
     e.preventDefault();
     void send();
   };
@@ -98,15 +103,8 @@ export function Composer({
           aria-describedby={urgent ? hintId : undefined}
           className="max-h-[9rem] min-h-[3.5rem] resize-none bg-card md:max-h-[18rem] dark:bg-card"
         />
-        <div className="mt-2 flex items-center gap-3">
-          {urgent && (
-            <p id={hintId} className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-              {agent.turnOpen
-                ? "Interrupts the current turn, then runs next."
-                : "No turn is running, so this sends normally."}
-            </p>
-          )}
-          <div className="ml-auto flex items-center gap-2">
+        <div className="mt-2 flex items-center justify-end gap-3">
+          <div className="flex items-center gap-2">
             <Checkbox
               id={urgentId}
               checked={urgent}
@@ -120,6 +118,13 @@ export function Composer({
             {urgent ? "Send urgent" : "Send"}
           </Button>
         </div>
+        {urgent && (
+          <p id={hintId} className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+            {agent.turnOpen
+              ? "Interrupts the current turn, then runs next."
+              : "No turn is running, so this sends normally."}
+          </p>
+        )}
         {error && (
           <p
             role="alert"

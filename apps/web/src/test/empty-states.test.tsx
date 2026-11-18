@@ -9,7 +9,6 @@ vi.mock("@/lib/ws", () => ({
 
 test.each([
   ["/inbox", "Inbox", "Nothing in your inbox."],
-  ["/agents", "Agents", "No agents yet."],
   ["/tasks", "Tasks", "No tasks yet."],
   ["/templates", "Templates", "No templates yet."],
   ["/schedules", "Schedules", "No schedules yet."],

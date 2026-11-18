@@ -16,6 +16,7 @@ export default defineConfig({
           hookTimeout: 30_000,
         },
       },
+      "apps/web",
     ],
   },
 });

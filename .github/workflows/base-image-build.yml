@@ -19,8 +19,9 @@ on:
         type: boolean
         required: true
 
-permissions:
-  contents: read
+# No permissions block: a reusable workflow can only downgrade the caller's token, and an
+# explicit block would set packages to none and break the GHCR push. The caller's per-job
+# grants (contents: read; packages: write only on build-publish) are the real limit.
 
 env:
   IMAGE: ghcr.io/orlevii/open-factory/base

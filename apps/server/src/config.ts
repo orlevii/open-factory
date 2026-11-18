@@ -15,6 +15,10 @@ export interface Config {
   host: string;
   logLevel: string;
   isProduction: boolean;
+  claudeToken?: string;
+  claudeBin: string;
+  /** Stopgap: removed in S4 (the model comes from the template). */
+  devModel?: string;
 }
 
 export class ConfigError extends Error {
@@ -42,6 +46,10 @@ const envSchema = z.object({
   HOST: z.string().min(1).default("127.0.0.1"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   NODE_ENV: z.string().optional(),
+  CLAUDE_CODE_OAUTH_TOKEN: z.string().min(1).optional(),
+  FACTORY_CLAUDE_BIN: z.string().min(1).default("claude"),
+  // Stopgap until S4: the model comes from the template then. Unset = Claude's default (no --model).
+  FACTORY_DEV_MODEL: z.string().min(1).optional(),
 });
 
 function expandHome(p: string): string {
@@ -68,5 +76,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     host: e.HOST,
     logLevel: e.LOG_LEVEL,
     isProduction: e.NODE_ENV === "production",
+    claudeToken: e.CLAUDE_CODE_OAUTH_TOKEN,
+    claudeBin: e.FACTORY_CLAUDE_BIN,
+    devModel: e.FACTORY_DEV_MODEL,
   };
 }

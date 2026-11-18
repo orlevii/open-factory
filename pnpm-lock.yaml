@@ -214,6 +214,9 @@ importers:
       '@open-factory/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@open-factory/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@open-factory/shared':
         specifier: workspace:*
         version: link:../../packages/shared

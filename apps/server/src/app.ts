@@ -39,6 +39,8 @@ export function loggerOptions(config: Config) {
         'res.headers["set-cookie"]',
         "*.password",
         "password",
+        "config.claudeToken",
+        "*.CLAUDE_CODE_OAUTH_TOKEN",
       ],
       censor: "[redacted]",
     },

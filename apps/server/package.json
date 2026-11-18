@@ -7,6 +7,7 @@
     "@fastify/static": "^10.1.11",
     "@fastify/websocket": "^11.3.7",
     "@open-factory/db": "workspace:*",
+    "@open-factory/harness": "workspace:*",
     "@open-factory/shared": "workspace:*",
     "better-auth": "^1.7.25",
     "drizzle-orm": "^0.45.4",

@@ -1,0 +1,19 @@
+[
+  {
+    "send": "Use the CronCreate tool to create a recurring job that runs every minute (cron `* * * * *`) with prompt 'Reply with the word CRONTICK.' Then end your turn with the job id."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "mark": true },
+  {
+    "waitFor": { "type": "result", "text": "\"result\":\"CRONTICK" },
+    "since": "mark",
+    "timeout": 150000,
+    "optional": true
+  },
+  { "mark": true },
+  { "send": "Now use CronDelete to delete that cron job, then reply with one line." },
+  { "waitFor": { "type": "assistant", "tool": "CronDelete" }, "since": "mark", "timeout": 120000 },
+  { "waitFor": { "type": "result" }, "since": "mark", "timeout": 120000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

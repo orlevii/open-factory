@@ -1,0 +1,11 @@
+[
+  {
+    "send": "Use the Bash tool with run_in_background=true to run exactly: sleep 8; echo BG-FINISHED-7731 . Do not wait for it or check on it; just end your turn after starting it with a one-line reply."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "sleep": 25000 },
+  { "waitFor": { "type": "result", "text": "BG-FINISHED" }, "timeout": 60000, "optional": true },
+  { "sleep": 5000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

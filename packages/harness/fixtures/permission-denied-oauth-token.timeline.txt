@@ -1,0 +1,11 @@
+0.0s spawn pid=44988 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Run exactly this Bash command: echo FORBIDDEN-CANARY > canary.txt . If blocked, do not retry; reply with one 
+1.0s <- system/init
+2.0s <- assistant tools=Bash
+3.1s <- system/permission_denied
+3.1s <- user
+3.1s <- rate_limit_event
+3.8s <- assistant
+3.8s <- result/success
+3.8s close stdin
+4.5s exit code=0 sig=null

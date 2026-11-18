@@ -1,0 +1,15 @@
+[
+  {
+    "send": "Run the Bash command `ping -c 25 127.0.0.1 | tail -1` in the foreground (not background), then reply with the word FIRSTDONE."
+  },
+  { "waitFor": { "type": "assistant", "tool": "Bash" }, "timeout": 60000 },
+  { "sleep": 4000 },
+  { "control": { "subtype": "interrupt" } },
+  { "waitFor": { "type": "result" }, "timeout": 60000 },
+  { "sleep": 1000 },
+  { "mark": true },
+  { "send": "New request: reply with just the word AFTERINT." },
+  { "waitFor": { "type": "result", "text": "AFTERINT" }, "since": "mark", "timeout": 60000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

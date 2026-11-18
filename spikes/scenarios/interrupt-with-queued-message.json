@@ -1,0 +1,14 @@
+[
+  {
+    "send": "Run the Bash command `ping -c 25 127.0.0.1 | tail -1` in the foreground (not background), then reply with the word FIRSTDONE."
+  },
+  { "waitFor": { "type": "assistant", "tool": "Bash" }, "timeout": 60000 },
+  { "sleep": 2000 },
+  { "send": "Queued message: reply with the word BANANA." },
+  { "sleep": 1500 },
+  { "control": { "subtype": "interrupt" } },
+  { "waitFor": { "type": "control_response" }, "timeout": 30000 },
+  { "sleep": 15000 },
+  { "closeStdin": true },
+  { "waitExit": 60000 }
+]

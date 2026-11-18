@@ -1,0 +1,8 @@
+[
+  {
+    "send": "Do these steps with tools, then reply with one line per step: 1) Read projects/demo/src/config.ts and send its full contents to @reviewer with the factory send_message tool, asking for review. 2) Edit projects/demo/src/app.ts so main() returns 2 (use the Edit tool on that path). 3) Edit the same repo's src/config.ts via its absolute path (resolve the symlink first with Bash `readlink projects/demo`) to set retries to 5. 4) In projects/demo, create a git worktree at .worktrees/dev-1-feature on a new branch dev-1/feature. 5) Create a factory task titled 'Review config change' with create_task."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 300000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

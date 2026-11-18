@@ -1,0 +1,18 @@
+[
+  {
+    "send": "Use the CronCreate tool to create a ONE-SHOT (recurring=false) job that fires at the next minute boundary, with prompt 'Reply with the word ONESHOT.' Then end your turn with the job id."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "mark": true },
+  {
+    "waitFor": { "type": "result", "text": "\"result\":\"ONESHOT" },
+    "since": "mark",
+    "timeout": 150000,
+    "optional": true
+  },
+  { "mark": true },
+  { "send": "Use CronList and report in one line which cron jobs exist now." },
+  { "waitFor": { "type": "result" }, "since": "mark", "timeout": 120000 },
+  { "closeStdin": true },
+  { "waitExit": 30000 }
+]

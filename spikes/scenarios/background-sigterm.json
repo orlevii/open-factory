@@ -1,0 +1,14 @@
+[
+  {
+    "send": "Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to run exactly: sleep 600; echo BGDONE-term > bg-term.marker  2) Use the Monitor tool to watch the command: while true; do echo tick-term-$(date +%s); sleep 20; done   Do not wait for either."
+  },
+  { "waitFor": { "type": "result" }, "timeout": 120000 },
+  { "sleep": 3000 },
+  { "shell": "echo BEFORE; pgrep -fl 'BGDONE-term|tick-term' || true" },
+  { "kill": "SIGTERM" },
+  { "waitExit": 60000 },
+  { "sleep": 3000 },
+  {
+    "shell": "echo AFTER; pgrep -fl 'BGDONE-term|tick-term' || true; ps -o pid,ppid,pgid,command -ax | grep -E 'BGDONE-term|tick-term' | grep -v grep || true"
+  }
+]

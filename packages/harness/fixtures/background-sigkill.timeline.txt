@@ -1,0 +1,42 @@
+0.0s spawn pid=27775 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to 
+0.3s <- system/init
+1.5s <- system/thinking_tokens
+1.7s <- system/thinking_tokens
+1.7s <- assistant
+2.0s <- assistant tools=Bash
+2.1s <- assistant tools=ToolSearch
+2.4s <- rate_limit_event
+3.3s <- system/background_tasks_changed
+3.3s <- system/task_started
+3.3s <- user
+3.3s <- user
+4.0s <- system/thinking_tokens
+4.6s <- system/thinking_tokens
+4.6s <- assistant
+4.9s <- assistant tools=Monitor
+5.2s <- system/background_tasks_changed
+5.2s <- system/task_started
+5.2s <- user
+6.1s <- assistant
+6.1s <- result/success
+6.1s <- system/init
+6.8s <- system/thinking_tokens
+6.9s <- system/thinking_tokens
+6.9s <- assistant
+7.2s <- assistant
+7.2s <- result/success
+9.1s shell: echo BEFORE; pgrep -fl 'BGDONE-kill|tick-kill' || true
+BEFORE
+28226 /bin/zsh -c source /spike/cfg-a/shell-snapshots/snapshot-zsh-1795020933204-uw40ar.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || 
+28265 /bin/zsh -c source /spike/cfg-a/shell-snapshots/snapshot-zsh-1795020933204-uw40ar.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || 
+
+9.1s kill SIGKILL
+9.1s exit code=null sig=SIGKILL
+12.2s shell: echo AFTER; pgrep -fl 'BGDONE-kill|tick-kill' || true; ps -o pid,ppid,pgid,command -ax | grep -E 'BGDONE-kill|tick-kill' | grep -v grep || true
+AFTER
+28226 /bin/zsh -c source /spike/cfg-a/shell-snapshots/snapshot-zsh-1795020933204-uw40ar.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || 
+28265 /bin/zsh -c source /spike/cfg-a/shell-snapshots/snapshot-zsh-1795020933204-uw40ar.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || 
+28226     1 28226 /bin/zsh -c source /spike/cfg-a/shell-snapshots/snapshot-zsh-1795020933204-uw40ar.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/n
+28265     1 28265 /bin/zsh -c source /spike/cfg-a/shell-snapshots/snapshot-zsh-1795020933204-uw40ar.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/n
+

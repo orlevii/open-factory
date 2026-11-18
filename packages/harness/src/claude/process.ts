@@ -24,13 +24,58 @@ const silent: DriverLog = { debug() {}, warn() {}, error() {} };
 
 const STDERR_LINES = 50;
 const STDERR_BYTES = 8 * 1024;
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Resolves with the exit info, or undefined after `ms`. The timer is cleared as soon as the race settles,
+ *  so it never keeps the process alive after the child is gone. */
+async function exitWithin(exit: Promise<ExitInfo>, ms: number): Promise<ExitInfo | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<undefined>((r) => {
+    timer = setTimeout(() => r(undefined), ms);
+  });
+  try {
+    return await Promise.race([exit, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Keeps the last STDERR_LINES lines / STDERR_BYTES bytes (UTF-8). An over-long line is cut to its tail. */
+export class StderrTail {
+  private lines: string[] = [];
+  private sizes: number[] = [];
+  private bytes = 0;
+
+  push(line: string): void {
+    let size = Buffer.byteLength(line);
+    if (size > STDERR_BYTES) {
+      // Keep the tail; a cut may split a multi-byte char, which decodes to U+FFFD at the start only.
+      line = Buffer.from(line)
+        .subarray(size - STDERR_BYTES)
+        .toString();
+      size = Buffer.byteLength(line);
+    }
+    this.lines.push(line);
+    this.sizes.push(size);
+    this.bytes += size;
+    while (
+      this.lines.length > 1 &&
+      (this.lines.length > STDERR_LINES || this.bytes > STDERR_BYTES)
+    ) {
+      this.lines.shift();
+      this.bytes -= this.sizes.shift() ?? 0;
+    }
+  }
+
+  toString(): string {
+    return this.lines.join("\n");
+  }
+}
 
 export class ClaudeProcess implements HarnessProcess {
   readonly events: AsyncQueue<HarnessEvent> = new AsyncQueue();
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly mapper: MapperState;
-  private readonly stderr: string[] = [];
+  private readonly stderr = new StderrTail();
   private stopRequested = false;
   private exited: ExitInfo | undefined;
   private readonly exitPromise: Promise<ExitInfo>;
@@ -64,7 +109,7 @@ export class ClaudeProcess implements HarnessProcess {
         type: "exited",
         code: info.code,
         signal: info.signal,
-        stderrTail: this.stderr.join("\n"),
+        stderrTail: this.stderr.toString(),
         expected: this.stopRequested,
       });
       this.events.end();
@@ -94,8 +139,6 @@ export class ClaudeProcess implements HarnessProcess {
     createInterface({ input: this.child.stderr }).on("line", (line) => {
       log.warn({ ...ctx, line }, "claude stderr");
       this.stderr.push(line);
-      while (this.stderr.length > STDERR_LINES || this.stderr.join("\n").length > STDERR_BYTES)
-        this.stderr.shift();
     });
     // "close" fires after stdout/stderr are drained, so every line is mapped before `exited`.
     this.child.on("close", (code, signal) => finish({ code, signal }));
@@ -139,10 +182,10 @@ export class ClaudeProcess implements HarnessProcess {
     if (this.exited) return this.exited;
     this.stopRequested = true;
     this.child.stdin.end();
-    const winner = await Promise.race([this.exitPromise, sleep(graceMs).then(() => undefined)]);
+    const winner = await exitWithin(this.exitPromise, graceMs);
     if (winner) return winner;
     this.child.kill("SIGTERM");
-    const after = await Promise.race([this.exitPromise, sleep(termWaitMs).then(() => undefined)]);
+    const after = await exitWithin(this.exitPromise, termWaitMs);
     if (after) return after;
     this.log.error({ pid: this.child.pid }, "claude did not exit after SIGTERM");
     return { code: null, signal: null, timedOut: true };

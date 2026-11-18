@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessEvent } from "@open-factory/shared";
@@ -7,7 +7,7 @@ import { expect, test } from "vitest";
 import { createFakeClaude } from "../../testing/index.ts";
 import { type AgentRuntimeSpec, ProcessNotRunningError } from "../types.ts";
 import { buildClaudeArgs } from "./args.ts";
-import { createClaudeDriver } from "./process.ts";
+import { createClaudeDriver, StderrTail } from "./process.ts";
 
 const spec = (bin: string, over: Partial<AgentRuntimeSpec> = {}): AgentRuntimeSpec => ({
   agentId: "a1",
@@ -161,7 +161,7 @@ test("stop falls back to SIGTERM when the process doesn't exit on stdin close", 
   expect(info.code ?? info.signal).toBeTruthy(); // 143 (handled) or SIGTERM
 });
 
-test("unexpected exit carries the stderr tail; resume of an unknown id maps to a resume error", async () => {
+test("resume of an unknown id maps to a resume error and exits 1", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
   const p = createClaudeDriver().start(spec(fake.bin), {
     resumeSessionId: "00000000-0000-4000-8000-000000000009",
@@ -170,6 +170,8 @@ test("unexpected exit carries the stderr tail; resume of an unknown id maps to a
   const done = collectUntil(p.events, (e) => e.type === "error", events);
   await done;
   expect(events[0]).toMatchObject({ type: "error", source: "resume" });
+  const exited = events.find((e) => e.type === "exited");
+  expect(exited).toBeUndefined(); // collection stopped at the error; exited follows
   const info = await p.stop({ graceMs: 2000 });
   expect(info.code).toBe(1);
 });
@@ -184,4 +186,58 @@ test("a missing binary is a spawn error followed by exited", async () => {
     message: "Claude Code not found: set FACTORY_CLAUDE_BIN or put claude on PATH",
   });
   expect(events[1]).toMatchObject({ expected: false });
+});
+
+const scriptBin = (body: string) => {
+  const p = path.join(mkdtempSync(path.join(tmpdir(), "script-")), "claude");
+  writeFileSync(p, `#!/bin/sh\n${body}\n`);
+  chmodSync(p, 0o755);
+  return p;
+};
+
+test("an unexpected exit carries the stderr tail in exited", async () => {
+  const bin = scriptBin("echo boom-1 >&2\necho boom-2 >&2\nexit 3");
+  const p = createClaudeDriver().start(spec(bin), {});
+  const events: HarnessEvent[] = [];
+  await collectUntil(p.events, () => false, events);
+  expect(events.at(-1)).toMatchObject({
+    type: "exited",
+    code: 3,
+    expected: false,
+    stderrTail: "boom-1\nboom-2",
+  });
+});
+
+test("StderrTail keeps the last 50 lines, caps bytes, and truncates an over-long line to its tail", () => {
+  const lines = new StderrTail();
+  for (let i = 0; i < 80; i++) lines.push(`l${i}`);
+  const kept = lines.toString().split("\n");
+  expect(kept).toHaveLength(50);
+  expect(kept[0]).toBe("l30");
+  expect(kept.at(-1)).toBe("l79");
+
+  const bytes = new StderrTail();
+  for (let i = 0; i < 20; i++) bytes.push("é".repeat(500)); // 1000 bytes each
+  expect(Buffer.byteLength(bytes.toString())).toBeLessThanOrEqual(8 * 1024);
+  expect(bytes.toString().split("\n").length).toBeLessThanOrEqual(8);
+
+  const long = new StderrTail();
+  long.push(`${"x".repeat(20_000)}END`);
+  expect(long.toString().endsWith("xxxEND")).toBe(true);
+  expect(Buffer.byteLength(long.toString())).toBeLessThanOrEqual(8 * 1024);
+});
+
+test("stop reports timedOut when the process ignores SIGTERM", async () => {
+  const ready = path.join(mkdtempSync(path.join(tmpdir(), "ready-")), "up");
+  // Ignores SIGTERM and stdin close; exits by itself after ~3 s so nothing is left behind.
+  const bin = scriptBin(
+    `trap '' TERM\ntouch "$READY"\ni=0\nwhile [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done`,
+  );
+  const base = spec(bin);
+  const p = createClaudeDriver().start({ ...base, env: { ...base.env, READY: ready } }, {});
+  while (!existsSync(ready)) await new Promise((r) => setTimeout(r, 20));
+  const info = await p.stop({ graceMs: 100, termWaitMs: 200 });
+  expect(info).toEqual({ code: null, signal: null, timedOut: true });
+  // let it finish on its own so the test leaves no process behind
+  await new Promise((r) => setTimeout(r, 3200));
 });

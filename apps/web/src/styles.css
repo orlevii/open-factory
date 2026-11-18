@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@plugin "@tailwindcss/typography";
 
 /* Theme follows the system only (spec §8): no .dark class, no JS switching. */
 @custom-variant dark (@media (prefers-color-scheme: dark));
@@ -117,6 +118,17 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+  }
+}
+
+/* Shiki dual-theme output: switch to the dark token colors with the system theme. */
+@media (prefers-color-scheme: dark) {
+  .shiki,
+  .shiki span {
+    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+    color: var(--shiki-dark) !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+    background-color: var(--shiki-dark-bg) !important;
   }
 }
 

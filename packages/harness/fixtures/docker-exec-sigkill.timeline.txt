@@ -1,0 +1,43 @@
+0.0s spawn pid=35871 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to 
+1.2s <- system/init
+1.9s <- system/thinking_tokens
+2.4s <- system/thinking_tokens
+2.4s <- assistant
+2.7s <- assistant tools=Bash
+2.9s <- assistant tools=ToolSearch
+3.3s <- rate_limit_event
+3.7s <- system/background_tasks_changed
+3.7s <- system/task_started
+3.7s <- user
+3.8s <- user
+4.5s <- system/thinking_tokens
+4.9s <- system/thinking_tokens
+4.9s <- assistant
+5.1s <- assistant tools=Monitor
+5.8s <- system/background_tasks_changed
+5.8s <- system/task_started
+5.8s <- user
+6.7s <- assistant
+6.7s <- result/success
+6.7s <- system/init
+7.6s <- system/thinking_tokens
+7.7s <- system/thinking_tokens
+7.7s <- assistant
+8.0s <- assistant
+8.0s <- result/success
+9.8s shell: docker exec spike-exec ps -eo pid,ppid,args | grep -E 'claude|BGDONE|tick-' | grep -v grep | cut -c1-100 || true
+     40       0 claude -p --input-format stream-json --output-format stream-json --verbose --model h
+    197      40 /usr/bin/zsh -c source /spike/cfg-fresh/shell-snaps
+    203      40 /usr/bin/zsh -c source /spike/cfg-fresh/shell-snaps
+
+9.8s shell: docker exec spike-exec pkill -KILL -x claude; echo killed
+killed
+
+9.9s exit code=137 sig=null
+11.9s shell: echo AFTER; docker exec spike-exec ps -eo pid,ppid,args | grep -E 'claude|BGDONE|tick-|sleep 600' | grep -v grep | cut -c1-100 || true
+AFTER
+    197       1 /usr/bin/zsh -c source /spike/cfg-fresh/shell-snaps
+    198     197 sleep 600
+    203       1 /usr/bin/zsh -c source /spike/cfg-fresh/shell-snaps
+

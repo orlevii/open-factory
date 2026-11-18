@@ -1,0 +1,19 @@
+0.0s spawn pid=51747 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Run the Bash command `ping -c 25 127.0.0.1 | tail -1` in the foreground (not background), then reply with the
+0.3s <- system/init
+1.4s <- assistant tools=Bash
+2.0s <- rate_limit_event
+3.4s -> {"type":"user","message":{"role":"user","content":"Queued message: reply with the word BANANA."}}
+4.9s -> {"type":"control_request","request_id":"f4d2b250-064b-46a2-839c-4af1fadee81d","request":{"subtype":"interrupt"}}
+5.0s <- control_response
+5.0s <- user
+5.0s <- user
+5.0s <- result/error_during_execution
+5.0s <- system/init
+5.9s <- system/thinking_tokens
+6.1s <- system/thinking_tokens
+6.1s <- assistant
+6.1s <- assistant
+6.1s <- result/success
+20.0s close stdin
+20.6s exit code=0 sig=null

@@ -1,0 +1,28 @@
+0.0s spawn pid=80713 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Use the CronCreate tool to create a ONE-SHOT (recurring=false) job that fires at the next minute boundary, wi
+0.3s <- system/init
+1.6s <- assistant tools=ToolSearch
+1.6s <- user
+1.6s <- rate_limit_event
+2.5s <- system/thinking_tokens
+2.7s <- system/thinking_tokens
+2.7s <- assistant
+2.9s <- assistant tools=CronCreate
+3.9s <- user
+4.7s <- assistant
+4.7s <- result/success
+4.9s <- command_lifecycle
+4.9s <- system/init
+5.6s <- assistant
+5.6s <- result/success
+5.6s -> {"type":"user","message":{"role":"user","content":"Use CronList and report in one line which cron jobs exist now."}}
+5.6s <- command_lifecycle
+5.6s <- system/init
+6.5s <- assistant tools=ToolSearch
+6.5s <- user
+7.1s <- assistant tools=CronList
+7.1s <- user
+7.8s <- assistant
+7.8s <- result/success
+7.8s close stdin
+8.6s exit code=0 sig=null

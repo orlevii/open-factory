@@ -1,0 +1,16 @@
+{
+  "name": "@open-factory/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "open-factory": "./dist/open-factory.js"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@open-factory/shared": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

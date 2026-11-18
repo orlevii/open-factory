@@ -1,0 +1,381 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@plugin "@tailwindcss/typography";
+
+/* Theme follows the system only (spec §8): no .dark class, no JS switching. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Geist Variable", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-signal: var(--signal);
+  --color-signal-text: var(--signal-text);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-code: var(--code-bg);
+  --color-code-border: var(--code-border);
+  --color-diagram: var(--diagram-bg);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* "Pilot light" tokens (UI design doc §2.1). shadcn names are kept; in shadcn --accent is the
+   hover surface, so the brand color is --signal. */
+:root {
+  color-scheme: light;
+  --radius: 0.5rem;
+
+  /* surfaces + text (warm graphite, hue 70) */
+  --background: oklch(0.993 0.002 75);
+  --foreground: oklch(0.205 0.006 70);
+  --card: oklch(0.998 0.001 75);
+  --card-foreground: oklch(0.205 0.006 70);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.205 0.006 70);
+  --primary: oklch(0.24 0.008 70); /* ink button */
+  --primary-foreground: oklch(0.985 0.002 75);
+  --secondary: oklch(0.955 0.004 75);
+  --secondary-foreground: oklch(0.24 0.008 70);
+  --muted: oklch(0.96 0.004 75);
+  --muted-foreground: oklch(0.5 0.01 70); /* ≥5.3:1 on bg and on muted */
+  --accent: oklch(0.945 0.005 75); /* shadcn hover surface */
+  --accent-foreground: oklch(0.205 0.006 70);
+  --destructive: oklch(0.55 0.2 25); /* ≥4.9:1 as text on bg */
+  --border: oklch(0.905 0.005 75); /* dividers, card edges */
+  --input: oklch(0.68 0.008 70); /* field boundary, ~3:1 (WCAG 1.4.11) */
+  --ring: oklch(0.62 0.19 42); /* = signal */
+
+  /* brand signal (vermilion) */
+  --signal: oklch(0.62 0.19 42); /* rings, dots, markers: ≥3:1, not for body text */
+  --signal-text: oklch(0.53 0.18 40); /* when signal must be text: ≥5:1 */
+  --signal-foreground: oklch(0.99 0 0);
+
+  /* semantic indicators (dots/icons; pair with text) */
+  --success: oklch(0.55 0.13 150);
+  --warning: oklch(0.66 0.14 75);
+  --info: oklch(0.56 0.13 250);
+
+  /* code + diagrams */
+  --code-bg: oklch(0.97 0.003 75);
+  --code-border: oklch(0.9 0.005 75);
+  --diagram-bg: oklch(0.995 0.001 75); /* mermaid always renders on paper */
+
+  /* agent status: RESERVED for S3/S5, not rendered in S1 */
+  --status-working: var(--signal);
+  --status-idle: var(--success);
+  --status-queued: var(--info);
+  --status-hibernated: oklch(0.65 0.008 70);
+  --status-rate-limited: var(--warning);
+  --status-errored: var(--destructive);
+  --status-terminated: oklch(0.8 0.005 70);
+
+  /* charts: RESERVED for S10 */
+  --chart-1: oklch(0.62 0.19 42);
+  --chart-2: oklch(0.45 0.01 70);
+  --chart-3: oklch(0.56 0.13 250);
+  --chart-4: oklch(0.66 0.14 75);
+  --chart-5: oklch(0.75 0.006 70);
+
+  /* sidebar: the second neutral layer */
+  --sidebar: oklch(0.972 0.004 75);
+  --sidebar-foreground: oklch(0.32 0.008 70);
+  --sidebar-primary: oklch(0.24 0.008 70);
+  --sidebar-primary-foreground: oklch(0.985 0.002 75);
+  --sidebar-accent: oklch(0.932 0.006 75); /* hover + active row */
+  --sidebar-accent-foreground: oklch(0.205 0.006 70);
+  --sidebar-border: oklch(0.91 0.005 75);
+  --sidebar-ring: oklch(0.62 0.19 42);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --background: oklch(0.175 0.005 70);
+    --foreground: oklch(0.94 0.004 75);
+    --card: oklch(0.198 0.005 70);
+    --card-foreground: oklch(0.94 0.004 75);
+    --popover: oklch(0.22 0.006 70);
+    --popover-foreground: oklch(0.94 0.004 75);
+    --primary: oklch(0.94 0.004 75);
+    --primary-foreground: oklch(0.2 0.006 70);
+    --secondary: oklch(0.26 0.006 70);
+    --secondary-foreground: oklch(0.94 0.004 75);
+    --muted: oklch(0.235 0.006 70);
+    --muted-foreground: oklch(0.7 0.008 70); /* ~7:1 on bg */
+    --accent: oklch(0.265 0.007 70);
+    --accent-foreground: oklch(0.94 0.004 75);
+    --destructive: oklch(0.68 0.19 25);
+    --border: oklch(0.285 0.006 70);
+    --input: oklch(0.5 0.008 70); /* ~3:1 on bg */
+    --ring: oklch(0.7 0.17 45);
+
+    --signal: oklch(0.7 0.17 45);
+    --signal-text: oklch(0.75 0.15 48);
+    --signal-foreground: oklch(0.18 0.01 45);
+
+    --success: oklch(0.7 0.14 150);
+    --warning: oklch(0.78 0.14 80);
+    --info: oklch(0.7 0.12 250);
+
+    --code-bg: oklch(0.205 0.005 70);
+    --code-border: oklch(0.29 0.006 70);
+    --diagram-bg: oklch(0.96 0.003 75); /* a light paper card inside dark UI (design §7.4) */
+
+    --status-hibernated: oklch(0.55 0.008 70);
+    --status-terminated: oklch(0.4 0.006 70);
+
+    --chart-1: oklch(0.7 0.17 45);
+    --chart-2: oklch(0.75 0.008 70);
+    --chart-3: oklch(0.7 0.12 250);
+    --chart-4: oklch(0.78 0.14 80);
+    --chart-5: oklch(0.45 0.006 70);
+
+    --sidebar: oklch(0.155 0.005 70); /* recessed rail, darker than content */
+    --sidebar-foreground: oklch(0.82 0.005 75);
+    --sidebar-primary: oklch(0.94 0.004 75);
+    --sidebar-primary-foreground: oklch(0.2 0.006 70);
+    --sidebar-accent: oklch(0.235 0.006 70);
+    --sidebar-accent-foreground: oklch(0.96 0.003 75);
+    --sidebar-border: oklch(0.255 0.006 70);
+    --sidebar-ring: oklch(0.7 0.17 45);
+  }
+}
+
+/* Loading screen: the pilot light breathes (design §5.1). Reduced motion stops it (base layer). */
+@keyframes pilot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.is-loading .pilot {
+  animation: pilot 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+/* Markdown prose mapped to our tokens. The tokens switch with the media query, so no prose-invert. */
+.prose-of {
+  --tw-prose-body: var(--foreground);
+  --tw-prose-headings: var(--foreground);
+  --tw-prose-lead: var(--muted-foreground);
+  --tw-prose-links: var(--foreground);
+  --tw-prose-bold: var(--foreground);
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-bullets: color-mix(in oklch, var(--foreground) 35%, transparent);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--muted-foreground);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--muted-foreground);
+  --tw-prose-code: var(--foreground);
+  --tw-prose-pre-code: var(--foreground);
+  --tw-prose-pre-bg: var(--code-bg);
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+  font-size: 14px;
+  line-height: 22px;
+}
+.prose-of :where(h1, h2, h3, h4) {
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+.prose-of :where(h1) {
+  font-size: 1.25rem;
+}
+.prose-of :where(h2) {
+  font-size: 1.0625rem;
+}
+.prose-of :where(h3) {
+  font-size: 0.9375rem;
+}
+.prose-of :where(a) {
+  text-decoration-color: color-mix(in oklch, var(--signal) 60%, transparent);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color 150ms;
+}
+.prose-of :where(a):hover {
+  text-decoration-color: var(--signal);
+}
+
+/* inline code: no backticks, quiet chip */
+.prose-of :where(:not(pre) > code) {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  padding: 0.1em 0.35em;
+  border-radius: calc(var(--radius) * 0.6);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+}
+.prose-of :where(:not(pre) > code)::before,
+.prose-of :where(:not(pre) > code)::after {
+  content: none;
+}
+
+/* blocks: unhighlighted <pre> and Shiki <pre> look identical */
+.prose-of :where(pre) {
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--code-border);
+  /* biome-ignore lint/complexity/noImportantStyles: beats Shiki's inline background in both themes. */
+  background: var(--code-bg) !important;
+  overflow-x: auto;
+}
+
+/* tables */
+.prose-of .md-table {
+  overflow-x: auto;
+  margin-block: 1.25em;
+}
+.prose-of .md-table table {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.prose-of :where(thead th) {
+  background: var(--muted);
+  font-weight: 500;
+  padding: 0.4rem 0.75rem;
+}
+.prose-of :where(tbody td) {
+  padding: 0.4rem 0.75rem;
+}
+
+/* GFM task lists */
+.prose-of :where(li.task-list-item) {
+  list-style: none;
+  padding-left: 0;
+}
+.prose-of :where(ul.contains-task-list) {
+  padding-left: 0.25rem;
+}
+.prose-of :where(input[type="checkbox"]) {
+  accent-color: var(--signal);
+  margin: 0 0.5em 0 0;
+  vertical-align: -0.1em;
+}
+
+/* mermaid: always a light paper card (design §7.4) */
+.prose-of .md-diagram {
+  background: var(--diagram-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  overflow-x: auto;
+  color-scheme: light;
+}
+.prose-of .md-diagram svg {
+  margin-inline: auto;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Shiki dual-theme output: spans switch to the dark token colors with the system theme. The block
+   background comes from .prose-of pre (--code-bg), not from Shiki. */
+@media (prefers-color-scheme: dark) {
+  .shiki,
+  .shiki span {
+    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+    color: var(--shiki-dark) !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+    font-style: var(--shiki-dark-font-style) !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat Shiki's inline light-theme styles. */
+    font-weight: var(--shiki-dark-font-weight) !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground text-sm;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--signal) 26%, transparent);
+  }
+  input,
+  textarea {
+    caret-color: var(--signal);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent) transparent;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component. */
+      animation-duration: 1ms !important;
+      /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component. */
+      animation-iteration-count: 1 !important;
+      /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component. */
+      transition-duration: 1ms !important;
+    }
+  }
+}

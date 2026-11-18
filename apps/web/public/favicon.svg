@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+  <title>Open Factory</title>
+  <rect width="18" height="18" rx="5" fill="#2a2724" />
+  <rect x="4" y="4.5" width="6" height="2" rx="1" fill="#fcfbf9" />
+  <rect x="4" y="8" width="6" height="2" rx="1" fill="#fcfbf9" />
+  <rect x="4" y="11.5" width="6" height="2" rx="1" fill="#fcfbf9" />
+  <circle cx="13" cy="9" r="2" fill="#e8562a" />
+</svg>

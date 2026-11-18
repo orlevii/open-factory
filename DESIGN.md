@@ -120,7 +120,7 @@ The strategy is **restrained**: warm neutrals do almost all the work, plus one a
 ### Primary
 
 - **Signal Orange** (`brand-orange` `#FF5A1F`): the logo's colour. It is used **only inside the logo**, never for UI.
-- **Signal** (`signal`, light `oklch(0.6 0.2 37)` ≈ `#DD4202`; dark = exactly `#FF5A1F`): the UI's version of the orange. It is used for focus rings, the active-nav tooth, the loading mark, text selection, the caret, checkbox accents, link underlines on hover, and (from S3) the `working` status. Light mode deepens it because `#FF5A1F` on Paper is only 2.76:1, below the 3:1 minimum for non-text UI. The deepened signal reaches at least 3.2:1 on every light surface, including the active nav row.
+- **Signal** (`signal`, light `oklch(0.6 0.2 37)` ≈ `#DD4202`; dark = exactly `#FF5A1F`): the UI's version of the orange. It is used for focus rings, the active-nav tooth, the loading mark, text selection, the caret, checkbox accents, link underlines on hover, and the `working` agent status. Light mode deepens it because `#FF5A1F` on Paper is only 2.76:1, below the 3:1 minimum for non-text UI. The deepened signal reaches at least 3.2:1 on every light surface, including the active nav row.
 - **Signal text** (`signal-text`): use it when orange must be read as text. It is ≥4.9:1 in light and ≥5:1 in dark.
 
 ### Neutral
@@ -131,13 +131,22 @@ The strategy is **restrained**: warm neutrals do almost all the work, plus one a
 
 ### Semantic
 
-`success`, `warning`, `info` and `crimson` (destructive / errored) are indicator colours for dots and icons, always paired with a label. Crimson is pushed to hue 20 (light) and 15 (dark), so it stays distinguishable from the signal at hue 37. Agent status tokens (`--status-*`) and chart tokens (`--chart-*`) are reserved in CSS for S3/S5/S10.
+`success`, `warning`, `info` and `crimson` (destructive / errored) are indicator colours for dots and icons, always paired with a label. Crimson is pushed to hue 20 (light) and 15 (dark), so it stays distinguishable from the signal at hue 37. Agent status tokens (`--status-*`) and chart tokens (`--chart-*`) are defined alongside them for status indicators and data charts.
 
 ### Named Rules
 
 - **The Pilot Light Rule.** Orange means "live, on, focused". If an element is not one of those, it is not orange. That rules out orange buttons, headings, backgrounds and illustrations.
 - **The Logo Colour Rule.** `#FF5A1F` is used exactly only in the logo. UI orange is always `--signal`, because the logo is exempt from contrast rules and UI is not.
 - **Status Is Never Colour Alone.** Every status pairs its colour with a label or icon.
+
+### Increased contrast
+
+Under `prefers-contrast: more`, the surfaces and the Pilot Light Rule stay the same, and five things change:
+- Rules and field edges harden (≥3.2:1).
+- Secondary text moves toward ink (≥8:1 in light mode, ≥10:1 in dark mode).
+- Sidebar text becomes full ink, or full paper in dark mode.
+- Light mode deepens the signal one step.
+- The focus ring thickens to 3px.
 
 ## Typography
 
@@ -158,7 +167,9 @@ The strategy is **restrained**: warm neutrals do almost all the work, plus one a
 
 ### Named Rules
 
-- **Never retype the wordmark.** "open factory" in Archivo is a drawing, not text. Render it with the `Wordmark` component, which is built from the outlined master.
+- **Never retype the wordmark.** "OpenFactory" in Archivo is a drawing, not text. Render it with the `Wordmark` component, which is built from the outlined master.
+- **Type is set in rem, never px.** Sizes and line heights follow the reader's browser font-size setting, not just page zoom. The pixel values in the table are at the 16px default: 13px is `0.8125rem`, 14px is `0.875rem`, 18px is `1.125rem`, 22px is `1.375rem`.
+- **Tracking scales with size.** Headings are tightened (−0.01em). Body text and labels stay at 0, because Geist is already spaced for small sizes.
 - **Sentence case everywhere.** The voice is a calm senior engineer (PRODUCT.md).
 
 ## Layout
@@ -166,7 +177,7 @@ The strategy is **restrained**: warm neutrals do almost all the work, plus one a
 - A 4px grid. Controls are 32px tall on desktop and 36px on touch, and the page header is 48px.
 - The shell is a 240px sidebar, collapsible to icons, plus the content area. On mobile the sidebar becomes a sheet.
 - Content gutters are 16px on mobile and 24px from `md` up.
-- Dense by design. Later screens (org tree, session timeline, task tables) put a lot on one screen, so rhythm comes from rules and spacing, not boxes.
+- Dense by design. Trees, timelines and tables put a lot on one screen, so rhythm comes from rules and spacing, not boxes.
 
 ## Elevation & Depth
 
@@ -181,18 +192,25 @@ Corners are tight, following the logo's mitred geometry: `--radius` is 6px (0.37
 The roof angle is the one shape that belongs to Open Factory. It is used in **exactly three places**, and adding a fourth is a design decision that needs recording here:
 
 1. **The logo.** This covers the mark, the wordmark (the cut *t*) and the favicon set.
-2. **The active-nav tooth** (`.of-tooth`). One roof bay, 6×12px in `--signal`, with a vertical wall on the right and a 30° roof rising to it (rise 3.46px = 6 × tan 30°). It replaces the generic active bar. It is reserved for the S3 `working` status indicator too, so "this is live" always has the same silhouette.
+2. **The active-nav tooth** (`.of-tooth`). One roof bay, 6×12px in `--signal`, with a vertical wall on the right and a 30° roof rising to it (rise 3.46px = 6 × tan 30°). It replaces the generic active bar. The `working` agent status uses the same tooth, so "this is live" always has the same silhouette.
 3. **The loading mark** (`LoadingMark`). The roofline lights up in orange from left to right over a faint track, in the direction the teeth rise. Each pass takes 1.2s: it lights over the first ~0.8s on `--ease-out`, then rests lit. Under reduced motion it shows lit and still.
 
 ## Components
 
 - **Logo** (`apps/web/src/components/wordmark.tsx`):
-  - `Wordmark` is the horizontal lockup. It swaps between the light master and the reversed (~2% thinner) dark master by theme, never by recolouring one file. It is 20px tall in the sidebar (≈107px wide, above the 96px minimum) and 24px on auth pages.
+  - `Wordmark` is the horizontal lockup. It swaps between the light master and the reversed (~2% thinner) dark master by theme, never by recolouring one file. It is 20px tall in the sidebar (≈110px wide, above the 96px minimum) and 24px on auth pages.
   - `Mark` is the symbol on its own, always the **small cut** (16px grid), because every in-app use is under 32px.
   - `LoadingMark` is the pending screen.
   - Clear space is 2× the roofline stroke on every side.
 - **Buttons:** primary is an ink fill with paper text. Ghost is for secondary actions. Danger uses crimson. Buttons name their action.
 - **Inputs:** a sheet fill with a `field-edge` boundary, a signal focus ring (2px, offset 2px) and a signal caret. Errors appear inline below the field in crimson with an icon.
+- **Validation:** the two short auth forms validate on submit and then move focus to the first invalid field. Editing a field clears its error. Longer forms (templates, schedules) validate each field when you leave it, never while you type, and still check everything on submit.
+- **Destructive actions: forgiveness over confirmation.**
+  - Prefer undo. When an action can be reversed, do it immediately and offer an inline undo.
+  - Ask for confirmation only when the action is both destructive and irreversible, such as terminating an agent and discarding its session, or deleting a template.
+  - The confirmation names exactly what will be lost, and its button names the action ("Terminate @reviewer", never "OK").
+  - A confirmation shown for routine actions trains people to click through, so it never appears for those.
+- **Scrim:** the mobile sheet dims the page with a plain 20% black scrim. There is no backdrop blur, because there is no translucency anywhere in the system, so `prefers-reduced-transparency` has nothing to undo.
 - **Cards and panels:** a sheet on paper, a 1px rule edge and a 6px radius, with a 40px header strip that has its own rule. Cards are never nested.
 - **Navigation:** sidebar rows are 32px. The active row gets the `paper-hover` fill plus the tooth, and the icon rail keeps the tooth. Nav labels are capitalised product nouns.
 - **Empty states:** one plain line in muted text, with no illustration.
@@ -220,9 +238,16 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   - The loading mark rests lit.
 - **Deliberately not used:**
   - Staggered list entrances, because live lists would ripple on every websocket update.
-  - Springs and the Motion library, because nothing is dragged yet; revisit for the org-tree editor.
+  - Springs and the Motion library, until something can be dragged.
   - Blur crossfades and hold-to-delete, until a specific component needs them.
 - The loading mark is the only authored animation.
+- **Gesture UI** (anything dragged, reordered or swiped) follows these rules from Apple's *Designing Fluid Interfaces*, via `emilkowalski/skills` apple-design:
+  - Tracking is 1:1 with the pointer, using pointer capture, and respects where the item was grabbed.
+  - Feedback starts on pointer-down.
+  - Motion uses critically damped springs (bounce 0) by default. Bounce is added only after a flick that carried momentum.
+  - The release velocity is handed to the spring, and the landing point is projected from the momentum.
+  - Edges rubber-band instead of stopping hard.
+  - Animations start from the value currently on screen, so they can be interrupted and reversed.
 
 ## Do's and Don'ts
 
@@ -238,6 +263,8 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 - Don't make primary buttons, headings, fills or illustrations orange.
 - Don't add the 30° pitch as decoration: no sawtooth dividers, angled card corners or pitched headers.
 - Don't animate anything triggered from the keyboard, use `transition-all`, or use `ease-in` / `linear` for UI motion.
+- Don't set type in px, and don't confirm an action that can be undone.
+- Don't use translucent materials or backdrop blur. Depth is the paper stack.
 - Don't retype, recolour, flip or close the logo, or add a floor line to it.
 - Don't add decorative shadows, gradients, glass, eyebrow labels, colored side-borders on cards, toasts or modals for routine tasks.
 - Don't use mono as a costume for non-code labels.

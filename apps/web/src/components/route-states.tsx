@@ -51,7 +51,7 @@ export function RouteError({ error }: ErrorComponentProps) {
       <h2 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">
         Something went wrong.
       </h2>
-      <p className="text-[13px] leading-[18px] text-muted-foreground">
+      <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
         This page hit an error it couldn't recover from.
       </p>
       {message && (
@@ -79,7 +79,7 @@ export function NotFound() {
       <h2 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">
         Page not found.
       </h2>
-      <p className="text-[13px] leading-[18px] text-muted-foreground">
+      <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
         Check the address, or go back to Home.
       </p>
       <div className="flex items-center gap-2">

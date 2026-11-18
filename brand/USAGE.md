@@ -1,11 +1,11 @@
-# Open Factory — Logo usage (Sawtooth)
+# OpenFactory — Logo usage (Sawtooth)
 
 > Chosen direction (round 2: 30° pitch kept, centred lockup, cut *t*). One page, for anyone putting the logo somewhere.
 
 ## 1. The logo
 - **Idea:** The factory roofline drawn as one continuous line with an open floor: an open factory. The teeth rise at an exact 30° pitch, left to right.
 - **Versions:** horizontal (primary) · stacked · symbol only · wordmark only.
-- **Wordmark:** "open factory", set in Archivo Bold (SIL OFL 1.1), tracking −1 %, converted to outlines. The top of the *t* is cut at the roof's 30° pitch: the one custom detail that ties the type to the symbol. Never retype it.
+- **Wordmark:** "OpenFactory" (one word, camel case), set in Archivo Bold with the font's own kerning (SIL OFL 1.1), tracking −1 %, converted to outlines. The top of the *t* is cut at the roof's 30° pitch: the one custom detail that ties the type to the symbol. Never retype it.
 - **Files:** only what the product uses lives in this repo: `horizontal-color.svg` (light grounds), `horizontal-dark.svg` (dark grounds, reversed cut) and `symbol-small-color.svg` (the small cut). The favicon and web icon set ships from `apps/web/public/`. The full package (stacked lockup, symbol-only and wordmark-only masters, one-colour and tile versions, PNG exports) stays in the logo project, outside this repo.
 
 ## 2. Clear space

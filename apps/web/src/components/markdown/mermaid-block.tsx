@@ -37,7 +37,7 @@ export function MermaidBlock({ source }: { source: string }) {
   if (error)
     return (
       <div>
-        <p className="not-prose flex items-center gap-1.5 text-[13px] text-destructive">
+        <p className="not-prose flex items-center gap-1.5 text-[0.8125rem] text-destructive">
           <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
           Couldn't render this diagram.
         </p>

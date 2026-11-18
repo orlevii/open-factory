@@ -25,7 +25,7 @@ export function AuthCard(props: {
     <main className="flex min-h-svh justify-center px-4 py-12 sm:items-center">
       <div className="w-full max-w-[22rem]">
         <Wordmark className="mb-10 h-6" />
-        <h1 className="mb-6 font-heading text-[22px] leading-7 font-bold tracking-[-0.01em]">
+        <h1 className="mb-6 font-heading text-[1.375rem] leading-7 font-bold tracking-[-0.01em]">
           {props.title}
         </h1>
         <form onSubmit={submit} noValidate className="grid gap-4">
@@ -33,7 +33,7 @@ export function AuthCard(props: {
           {props.formError && (
             <p
               role="alert"
-              className="flex items-start gap-1.5 text-[13px] leading-[18px] text-destructive"
+              className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
             >
               <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
               {props.formError}
@@ -44,7 +44,7 @@ export function AuthCard(props: {
             {props.submitting ? props.pendingLabel : props.submitLabel}
           </Button>
         </form>
-        <div className="mt-6 text-[13px] text-muted-foreground">{props.footer}</div>
+        <div className="mt-6 text-[0.8125rem] text-muted-foreground">{props.footer}</div>
       </div>
     </main>
   );

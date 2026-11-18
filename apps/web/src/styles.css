@@ -202,6 +202,36 @@
   }
 }
 
+/* Increased contrast (prefers-contrast: more): rules and field edges harden, secondary text moves
+   toward ink, and the focus ring thickens. Surfaces and the signal stay as they are. */
+@media (prefers-contrast: more) {
+  :root {
+    --border: oklch(0.62 0.012 80);
+    --input: oklch(0.42 0.012 80);
+    --muted-foreground: oklch(0.36 0.012 80);
+    --code-border: oklch(0.62 0.012 80);
+    --sidebar-border: oklch(0.62 0.012 80);
+    --sidebar-foreground: oklch(0.192 0.01 89);
+    --signal: oklch(0.55 0.2 37);
+    --ring: oklch(0.55 0.2 37);
+  }
+  :focus-visible {
+    outline-width: 3px;
+  }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root {
+    --border: oklch(0.55 0.01 85);
+    --input: oklch(0.72 0.01 85);
+    --muted-foreground: oklch(0.86 0.01 87);
+    --code-border: oklch(0.55 0.01 85);
+    --sidebar-border: oklch(0.55 0.01 85);
+    --sidebar-foreground: oklch(0.96 0.01 87);
+    --signal: oklch(0.682 0.211 37.7);
+    --ring: oklch(0.682 0.211 37.7);
+  }
+}
+
 /* The 30° pitch, used in exactly three places (DESIGN.md "The pitch"): the logo, the active-nav
    tooth, and the loading mark. One roof bay: a vertical wall on the right, a 30° roof rising to it
    (rise = run × tan 30° ≈ 0.577). Four points, so it stays crisp at 6px. */
@@ -246,8 +276,8 @@
   --tw-prose-pre-bg: var(--code-bg);
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border);
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 0.875rem; /* rem, never px: type follows the reader's browser font-size setting */
+  line-height: 1.375rem;
 }
 .prose-of :where(h1, h2, h3, h4) {
   font-family: var(--font-heading);

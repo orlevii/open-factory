@@ -131,7 +131,7 @@ export function AppSidebar() {
                   {/* Icon mode: the handle's first letter is all that fits. */}
                   <span
                     aria-hidden="true"
-                    className="hidden size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[13px] text-muted-foreground uppercase group-data-[collapsible=icon]:flex"
+                    className="hidden size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[0.8125rem] text-muted-foreground uppercase group-data-[collapsible=icon]:flex"
                   >
                     {user?.handle?.[0]}
                   </span>

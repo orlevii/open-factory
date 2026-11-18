@@ -52,8 +52,8 @@ Positioned against the "everything is a ticket" model of agent orchestration (Pa
 
 ## Brand Commitments
 
-- **Name:** Open Factory, written in sentence case as "open factory" in the wordmark.
-- **Logo:** variation **a, "Sawtooth"** (chosen). A factory roofline drawn as one continuous line with an open floor, with teeth that rise left to right at an exact 30° pitch. The wordmark is Archivo Bold, converted to outlines, and the top of the *t* is cut at the same 30° pitch. Its usage rules are binding:
+- **Name:** Open Factory. The wordmark reads "OpenFactory": one word, camel case.
+- **Logo:** variation **a, "Sawtooth"** (chosen). A factory roofline drawn as one continuous line with an open floor, with teeth that rise left to right at an exact 30° pitch. The wordmark, "OpenFactory", is Archivo Bold with the font's own kerning, converted to outlines, and the top of the *t* is cut at the same 30° pitch. Its usage rules are binding:
   - Never retype the wordmark.
   - Never close the shape or add a floor line.
   - Never flip it.

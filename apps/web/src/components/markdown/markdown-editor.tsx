@@ -3,7 +3,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./markdown";
 
 const triggerClass =
-  "h-full flex-none rounded-none px-2 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0";
+  "h-full flex-none rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0";
 
 /** Raw markdown with Write / Preview tabs, one bordered unit (UI design §7.5). The optional
  *  props go to the textarea so forms can label and describe it. */
@@ -44,7 +44,7 @@ export function MarkdownEditor(props: {
           aria-describedby={props["aria-describedby"]}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[13px] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[13px] dark:bg-transparent"
+          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent"
         />
       </TabsContent>
       <TabsContent value="preview" className="mt-0 min-h-40 p-3">

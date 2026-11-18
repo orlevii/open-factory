@@ -27,7 +27,7 @@ function ReconnectStrip({ lost }: { lost: boolean }) {
   return (
     <div role="status" aria-live="polite" className="shrink-0">
       {lost && (
-        <div className="flex h-8 items-center gap-2 bg-muted px-4 text-[13px] text-muted-foreground md:px-6">
+        <div className="flex h-8 items-center gap-2 bg-muted px-4 text-[0.8125rem] text-muted-foreground md:px-6">
           <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />
           Connection lost. Reconnecting…
         </div>

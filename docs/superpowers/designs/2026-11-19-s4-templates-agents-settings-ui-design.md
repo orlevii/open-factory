@@ -20,7 +20,7 @@ These are administration screens: they are visited rarely compared with the sess
 | `/agents/new?template=<name>` | New agent | `agents.new.tsx` |
 | `/agents/$slug/edit` | Edit agent | `agents.$slug.edit.tsx` |
 | `/agents/$slug` | Session view (S3, extended strip) | `agents.$slug.tsx` |
-| `/settings` | Settings: Projects, Credentials, Secrets | `settings.tsx` (replaces the empty state) |
+| `/settings` | Settings: Credentials, Secrets, Projects | `settings.tsx` (replaces the empty state) |
 
 Feature code lives in `apps/web/src/features/{templates,agents,settings}/`. The sidebar items stay as they are; Templates stays active on all `/templates*` routes and Agents on all `/agents*` routes.
 
@@ -111,7 +111,7 @@ Header actions: **New agent** (ghost, `Plus`). The S3 list keeps its row anatomy
 - **Columns:** status slot and label (S3), the display name, the slug (mono, muted), the template name (mono, muted), and at the right "Unsandboxed" (local runtime, S3's badge) or "Docker" (same outline style, no colour).
 - **Restart pending:** when `restartPending`, a muted `RotateCw` icon after the status label, with the visually hidden text "restart pending". Its tooltip lives in the session strip, not here (no interactive elements inside the row link).
 - **Archived filter:** a radio pair in the header's meta slot, "Active" and "Archived", kept in the URL (`/agents?archived=only`). Archived rows render the same way, with the status label "Archived" (no dot).
-- **Archive outcome:** after archiving (from the Edit page, §4.3), the user lands back on `/agents?justArchived=reviewer` (a search param, so a reload keeps the line) with an inline line at the top of the list, focused: "Archived @reviewer. Undo". Undo calls unarchive and replaces the line with "Restored @reviewer." An Undo failure (e.g. `409 manager_archived`) replaces it with the error and a link to the edit page. The line stays until the user navigates away.
+- **Archive outcome:** after archiving (from the Edit page, §4.3), the user lands back on `/agents?justArchived=reviewer` (a search param, so a reload keeps the line) with an inline line at the top of the list, focused: "Archived @reviewer. Undo". Undo calls unarchive and replaces the line with "Restored @reviewer." (plus "Pending messages are sent with the next message." when it has any) An Undo failure (e.g. `409 manager_archived`) replaces it with the error and a link to the edit page. The line stays until the user navigates away.
 - **Empty:** the first missing prerequisite wins, in this order: no credential, then no valid template.
   - No credential: "No agents yet. Add a Claude credential in Settings first."
   - No templates: "No agents yet. Start by creating a template."

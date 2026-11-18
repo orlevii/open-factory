@@ -8,6 +8,8 @@ const unauthorized = (reply: FastifyReply) =>
   reply.code(401).send({ error: { code: "unauthorized", message: "Not signed in" } });
 
 export const MAX_FRAME_BYTES = 64 * 1024;
+/** Above this many missing events a subscriber gets `resync` instead of a replay (spec §10). */
+export const REPLAY_LIMIT = 1000;
 
 export async function wsRoutes(app: FastifyInstance) {
   // ws defaults to 100 MiB frames, each JSON.parsed whole; client messages are tiny.
@@ -27,7 +29,61 @@ export async function wsRoutes(app: FastifyInstance) {
   app.get("/api/ws", { websocket: true, preValidation: checkUpgrade }, (socket, request) => {
     const userId = request.user?.id;
     if (!userId) return socket.close(1008, "unauthorized");
-    const send = (m: ServerMessage) => socket.send(JSON.stringify(m));
+    // Bus listeners can fire after the socket closed.
+    const send = (m: ServerMessage) => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
+    };
+    const unsubs = new Map<string, () => void>();
+    const offAll = app.bus.subscribeAll(send); // agent_status goes to every socket
+    socket.on("close", () => {
+      offAll();
+      for (const u of unsubs.values()) u();
+      unsubs.clear();
+    });
+
+    /**
+     * Gap-free subscribe (spec §10): 1. register on the bus and buffer, 2. read the DB, 3. drain the buffer
+     * skipping seqs already sent, 4. stream live. Events are published after commit in seq order, so every
+     * event is either in the DB read or in the buffer.
+     */
+    async function subscribe(agent: string, afterSeq: number) {
+      const rt = await app.runtimes.bySlug(agent);
+      if (!rt)
+        return send({ type: "error", code: "agent_not_found", message: `No agent named ${agent}` });
+      unsubs.get(agent)?.();
+      let live = false;
+      let cancelled = false;
+      let lastSent = afterSeq;
+      const buffer: ServerMessage[] = [];
+      const forward = (m: ServerMessage) => {
+        if (cancelled) return;
+        if (m.type === "session_event") {
+          if (m.event.seq <= lastSent) return;
+          lastSent = m.event.seq;
+        }
+        send(m);
+      };
+      const off = app.bus.subscribe(agent, (m) => (live ? forward(m) : buffer.push(m)));
+      // A later subscribe or unsubscribe for this agent (or a close) stops this one, replay included.
+      unsubs.set(agent, () => {
+        cancelled = true;
+        off();
+      });
+      send(rt.statusFrame());
+      send({ type: "queue", agent, items: rt.queueItems() });
+      const last = await app.store.lastSeq(rt.agent.id);
+      if (last - afterSeq > REPLAY_LIMIT) {
+        if (cancelled) return;
+        send({ type: "resync", agent });
+        lastSent = last;
+      } else {
+        const rows = await app.store.after(rt.agent.id, afterSeq, REPLAY_LIMIT);
+        for (const event of rows) forward({ type: "session_event", agent, event });
+      }
+      for (const m of buffer.splice(0)) forward(m);
+      live = true;
+    }
+
     socket.on("message", (raw) => {
       let parsed: ReturnType<typeof clientMessageSchema.safeParse>;
       try {
@@ -37,7 +93,16 @@ export async function wsRoutes(app: FastifyInstance) {
       }
       if (!parsed.success)
         return send({ type: "error", code: "bad_message", message: "Unknown message" });
-      if (parsed.data.type === "ping") send({ type: "pong" });
+      const m = parsed.data;
+      if (m.type === "ping") send({ type: "pong" });
+      else if (m.type === "subscribe")
+        void subscribe(m.agent, m.afterSeq).catch((err) =>
+          request.log.error({ err }, "subscribe failed"),
+        );
+      else if (m.type === "unsubscribe") {
+        unsubs.get(m.agent)?.();
+        unsubs.delete(m.agent);
+      }
     });
     send({ type: "hello", userId });
   });

@@ -50,3 +50,7 @@ test.each([
 test("leaves other markup alone", () => {
   expect(renderEnvelopes([msg({ body: "<b>x</b> & 1 < 2" })])).toContain("\n<b>x</b> & 1 < 2\n");
 });
+
+test("envelope carries kind=system", () => {
+  expect(renderEnvelopes([msg({ kind: "system", from: "@factory" })])).toContain('kind="system"');
+});

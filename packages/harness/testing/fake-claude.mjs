@@ -6,12 +6,14 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
+process.title = "claude";
+
 const argv0 = process.argv.slice(2);
 if (argv0[0] === "plugin") {
   const cfg = process.env.CLAUDE_CONFIG_DIR;
   appendFileSync(
     `${process.env.FAKE_CLAUDE_DIR}/plugin.log`,
-    `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort() })}\n`,
+    `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort(), cwd: process.cwd() })}\n`,
   );
   mkdirSync(cfg, { recursive: true });
   const f = `${cfg}/settings.json`;

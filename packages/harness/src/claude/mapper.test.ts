@@ -670,3 +670,18 @@ test("permission_denials fallback on result for an unreported id", () => {
     reason: "Denied by a permission rule",
   });
 });
+
+test("session_state_changed yields nothing", () => {
+  const st = createMapperState({ resumed: false });
+  expect(mapLine({ type: "system", subtype: "session_state_changed", state: "idle" }, st)).toEqual(
+    [],
+  );
+});
+
+test("the rejected rate-limit fixture maps to rate_limited", () => {
+  const evs = mapFixture("rate-limit-event-rejected").events;
+  expect(evs.find((e) => e.type === "rate_limited")).toMatchObject({
+    status: "rejected",
+    rateLimitType: "five_hour",
+  });
+});

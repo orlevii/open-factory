@@ -25,7 +25,7 @@ export interface AgentRuntimeSpec {
 export interface FactoryMessage {
   id: string;
   from: string;
-  kind: "message";
+  kind: "message" | "system";
   urgent: boolean;
   body: string;
   taskKey?: string;

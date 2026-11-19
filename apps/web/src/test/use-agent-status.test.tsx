@@ -27,7 +27,14 @@ function setup() {
   return { qc, push: (m: ServerMessage) => act(() => push(m)) };
 }
 
-const frame = { type: "agent_status", agent: "dev", status: "idle", turnOpen: false } as const;
+const frame = {
+  type: "agent_status",
+  agent: "dev",
+  status: "idle",
+  turnOpen: false,
+  restartPending: false,
+  restartWaitingOn: 0,
+} as const;
 const summary = {
   slug: "dev",
   displayName: "Dev",
@@ -55,4 +62,29 @@ test("a frame with no cached entry invalidates instead of being lost", () => {
   push(frame);
   expect(spy).toHaveBeenCalledWith({ queryKey: ["agents"] });
   expect(spy).toHaveBeenCalledWith({ queryKey: ["agent", "dev"] });
+});
+
+test("folds restartPending and restartWaitingOn into list and detail", () => {
+  const { qc, push } = setup();
+  qc.setQueryData(["agents"], [summary]);
+  qc.setQueryData(["agent", "dev"], { agent: summary });
+  push({ ...frame, restartPending: true, restartWaitingOn: 1 });
+  expect(qc.getQueryData<(typeof summary)[]>(["agents"])?.[0]).toMatchObject({
+    restartPending: true,
+    restartWaitingOn: 1,
+  });
+  expect(qc.getQueryData<{ agent: typeof summary }>(["agent", "dev"])?.agent).toMatchObject({
+    restartPending: true,
+    restartWaitingOn: 1,
+  });
+});
+
+test("updates every cached list variant (archived filter)", () => {
+  const { qc, push } = setup();
+  qc.setQueryData(["agents", "exclude"], [summary]);
+  qc.setQueryData(["agents", "only"], [{ ...summary, slug: "old" }]);
+  push({ ...frame, restartPending: true, restartWaitingOn: 2 });
+  expect(qc.getQueryData<(typeof summary)[]>(["agents", "exclude"])?.[0]).toMatchObject({
+    restartWaitingOn: 2,
+  });
 });

@@ -1,0 +1,31 @@
+import { Eye, EyeOff } from "lucide-react";
+import { type ComponentProps, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+
+export function PasswordInput({ className, ...props }: Omit<ComponentProps<"input">, "type">) {
+  const [shown, setShown] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        type={shown ? "text" : "password"}
+        autoComplete="new-password"
+        data-1p-ignore
+        data-lpignore="true"
+        className={cn("h-9 bg-card pr-10 font-mono dark:bg-card", className)}
+        {...props}
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={shown ? "Hide" : "Show"}
+        onClick={() => setShown((s) => !s)}
+        className="absolute top-1 right-1"
+      >
+        {shown ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+      </Button>
+    </div>
+  );
+}

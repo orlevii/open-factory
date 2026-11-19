@@ -338,10 +338,10 @@ async function listenForAgents(
     allowedSources: bind.allowedSources,
     version: FACTORY_VERSION,
     tokens: d.tokens,
-    // An unknown agent is treated like an archived one: its token can't act.
-    isArchived: async (agentId) => {
+    // An unknown agent is treated like an ended (archived or terminated) one: its token can't act.
+    isEnded: async (agentId) => {
       const a = await d.store.agentById(agentId);
-      return !a || a.archivedAt !== null;
+      return !a || a.archivedAt !== null || a.terminatedAt !== null;
     },
     mcp,
     log: d.log,

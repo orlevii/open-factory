@@ -539,3 +539,26 @@ test("errored_reported clears with the error, so the next episode is reported", 
     errored_reported: false,
   });
 });
+
+test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
+  const ada = await h.app.store.agentBySlug("ada");
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'bob'`;
+  const toGone = await h.app.router.send({ agentId: ada?.id ?? "" }, "bob", "x", false);
+  expect(toGone).toEqual({
+    ok: false,
+    code: "terminated",
+    message: "@bob was terminated and can't receive messages.",
+  });
+  await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where slug = 'bob'`;
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'ada'`;
+  const fromEnded = await h.app.router.send({ agentId: ada?.id ?? "" }, "bob", "x", false);
+  expect(fromEnded).toEqual({
+    ok: false,
+    code: "ended",
+    message: "You can't send messages: you were terminated.",
+  });
+  expect(await pendingOf("bob")).toEqual([]);
+  expect(await h.sql`select id from inbox_items`).toEqual([]);
+  const toHumans = await h.app.router.send({ agentId: ada?.id ?? "" }, "@humans", "x", false);
+  expect(toHumans).toMatchObject({ ok: false, code: "ended" });
+});

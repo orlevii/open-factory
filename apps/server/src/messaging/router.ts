@@ -25,7 +25,7 @@ export type SendResult =
   | {
       ok: false;
       message: string;
-      code: "not_found" | "ambiguous" | "self" | "archived" | "reserved";
+      code: "not_found" | "ambiguous" | "self" | "archived" | "terminated" | "ended" | "reserved";
     };
 
 /** What happened to the subject of a peer event (spec §10.2). */
@@ -49,6 +49,11 @@ const archived = (slug: string): SendResult => ({
   ok: false,
   code: "archived",
   message: `@${slug} is archived and can't receive messages.`,
+});
+const terminated = (slug: string): SendResult => ({
+  ok: false,
+  code: "terminated",
+  message: `@${slug} was terminated and can't receive messages.`,
 });
 
 /**
@@ -98,6 +103,13 @@ export class Router {
    */
   async send(from: Sender, to: string, body: string, urgent: boolean): Promise<SendResult> {
     if ("userId" in from) return this.sendFromHuman(from, to, body, urgent);
+    const me = await this.d.store.agentById(from.agentId);
+    if (!me || me.archivedAt || me.terminatedAt)
+      return {
+        ok: false,
+        code: "ended",
+        message: "You can't send messages: you were terminated.",
+      };
     const r = await resolveName(this.d.db, to);
     switch (r.kind) {
       case "none":
@@ -136,6 +148,7 @@ export class Router {
         if (r.agent.id === from.agentId)
           return { ok: false, code: "self", message: "You can't message yourself." };
         if (r.agent.archivedAt) return archived(r.agent.slug);
+        if (r.agent.terminatedAt) return terminated(r.agent.slug);
         const row = await this.d.store.createMessage({
           from: { agentId: from.agentId },
           toAgentId: r.agent.id,
@@ -189,6 +202,7 @@ export class Router {
     const agent = await this.d.store.agentBySlug(slug);
     if (!agent) return notFound(slug);
     if (agent.archivedAt) return archived(agent.slug);
+    if (agent.terminatedAt) return terminated(agent.slug);
     const row = await this.d.store.createMessage({
       from: { userId: from.userId },
       toAgentId: agent.id,

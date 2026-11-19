@@ -1,7 +1,10 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
-/** Who an agent can see: manager, peers (same manager; top-level agents are peers) and reports. Non-archived only. */
+/** An agent that is neither archived nor terminated. */
+export const liveAgent = and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt));
+
+/** Who an agent can see: manager, peers (same manager; top-level agents are peers) and reports. Live agents only. */
 export class Neighborhood {
   constructor(private readonly db: Db) {}
 
@@ -12,7 +15,7 @@ export class Neighborhood {
   }> {
     const [self] = await this.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
     if (!self) return { manager: null, peers: [], reports: [] };
-    const live = isNull(schema.agents.archivedAt);
+    const live = liveAgent;
     const order = [asc(schema.agents.displayName), asc(schema.agents.slug)] as const;
     const manager = self.reportsTo
       ? ((
@@ -44,7 +47,7 @@ export class Neighborhood {
     return this.db
       .select()
       .from(schema.agents)
-      .where(isNull(schema.agents.archivedAt))
+      .where(liveAgent)
       .orderBy(asc(schema.agents.displayName), asc(schema.agents.slug));
   }
 

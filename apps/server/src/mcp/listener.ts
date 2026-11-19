@@ -14,7 +14,7 @@ export interface AgentListenerInput {
   allowedSources: string[];
   version: string;
   tokens: AgentTokens;
-  isArchived(agentId: string): Promise<boolean>;
+  isEnded(agentId: string): Promise<boolean>;
   mcp: (req: Request, agentId: string) => Promise<Response>;
   log: FastifyBaseLogger;
 }
@@ -75,7 +75,7 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
   app.addHook("onRequest", async (req, reply) => {
     if (req.method !== "POST" || req.routeOptions.url !== "/mcp") return;
     const id = i.tokens.verify(bearer(req.headers.authorization));
-    if (!id || (await i.isArchived(id.agentId))) return reply.code(401).send(unauthorized);
+    if (!id || (await i.isEnded(id.agentId))) return reply.code(401).send(unauthorized);
     req.agentId = id.agentId;
   });
 

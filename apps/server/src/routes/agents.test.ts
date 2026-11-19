@@ -248,3 +248,25 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
     await t2.close();
   }
 });
+
+test("a human message to a terminated agent is 409 agent_terminated and writes nothing", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
+  try {
+    await t2.seedAgent();
+    const boss = await t2.seedAgent({ slug: "boss" });
+    await t2.sql`update agents set reports_to = ${boss.id} where slug = 'dev'`;
+    await t2.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'dev'`;
+    const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
+    const res = await t2.app.inject({
+      method: "POST",
+      url: "/api/agents/dev/messages",
+      headers: { cookie: c2 },
+      payload: { body: "hi", urgent: false },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("agent_terminated");
+    expect((await t2.sql`select count(*)::int as n from messages`)[0]?.n).toBe(0);
+  } finally {
+    await t2.close();
+  }
+});

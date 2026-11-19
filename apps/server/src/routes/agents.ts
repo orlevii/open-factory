@@ -134,6 +134,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
             const e = new AgentArchivedError(req.params.slug);
             return err(reply, 409, "agent_archived", e.message);
           }
+          if (r.code === "terminated") return err(reply, 409, "agent_terminated", r.message);
           return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
         }
         return reply.code(202).send(queueItemResponseSchema.parse({ item: r.item }));

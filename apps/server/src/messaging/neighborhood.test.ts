@@ -7,18 +7,26 @@ let t: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   t = await createTestDb();
   await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
-  const a = (slug: string, reportsTo?: string, archived?: boolean) =>
-    insertAgent(t.sql, { id: slug, slug, displayName: slug, reportsTo, archived });
+  const a = (slug: string, reportsTo?: string, archived?: boolean, terminated?: boolean) =>
+    insertAgent(t.sql, {
+      id: slug,
+      slug,
+      displayName: slug,
+      reportsTo,
+      archived,
+      terminatedAt: terminated ? new Date() : null,
+    });
   await a("ceo");
   await a("ops");
   await a("lead", "ceo");
   await a("dev", "lead");
   await a("pm", "lead");
   await a("old", "lead", true);
+  await a("gone", "lead", false, true);
 });
 afterAll(async () => t.close());
 
-test("manager, peers and reports; archived excluded; top-level agents are peers", async () => {
+test("manager, peers and reports; archived and terminated excluded; top-level agents are peers", async () => {
   const n = new Neighborhood(t.db);
   const dev = await n.of("dev");
   expect(dev.manager?.slug).toBe("lead");

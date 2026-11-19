@@ -79,7 +79,7 @@ run(
       allowedSources,
       version: "ci",
       tokens: new AgentTokens(),
-      isArchived: async () => false,
+      isEnded: async () => false,
       mcp: async () => new Response("{}"),
       log,
     });

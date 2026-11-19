@@ -17,7 +17,14 @@ interface Grants {
 }
 
 export class ProjectService {
-  constructor(private readonly d: { db: Db; runtimes: AgentRuntimes; templates: TemplateIndex }) {}
+  constructor(
+    private readonly d: {
+      db: Db;
+      runtimes: AgentRuntimes;
+      templates: TemplateIndex;
+      log?: { warn: (obj: object, msg: string) => void };
+    },
+  ) {}
 
   private async grants(projectId: string): Promise<Grants> {
     const rows = await this.d.db
@@ -133,6 +140,7 @@ export class ProjectService {
   async update(name: string, hostPath: string): Promise<ProjectSummary> {
     const row = await this.rowByName(name);
     const real = await this.resolveFolder(hostPath);
+    if (real === row.hostPath) return this.summarize(row);
     await this.assertPathFree(real, row.id);
     let updated: ProjectRow | undefined;
     try {
@@ -147,13 +155,24 @@ export class ProjectService {
     }
     if (!updated) throw new ApiError(404, "project_not_found", `No project named ${name}.`);
     // The symlink and additionalDirectories change at the next start.
-    for (const a of (await this.grants(row.id)).active) await this.d.runtimes.requestRestart(a.id);
+    const holders = (await this.grants(row.id)).active;
+    const results = await Promise.allSettled(
+      holders.map((a) => this.d.runtimes.requestRestart(a.id)),
+    );
+    results.forEach((r, i) => {
+      if (r.status === "rejected")
+        this.d.log?.warn({ slug: holders[i]?.slug }, "restart after project change failed");
+    });
     return this.summarize(updated);
   }
 
-  private async inUse(id: string) {
+  private async inUse(id: string, name: string) {
     const g = await this.grants(id);
     if (!g.active.length && !g.archived.length) return undefined;
+    const templates = (await this.templatesListing())
+      .filter((t) => t.projects.includes(name))
+      .map((t) => t.name)
+      .sort();
     const grantedTo = g.active.map((a) => a.slug);
     const archivedGrantedTo = g.archived.map((a) => a.slug);
     const message = [
@@ -164,18 +183,22 @@ export class ProjectService {
     ]
       .filter(Boolean)
       .join(" ");
-    return new ApiError(409, "project_in_use", message, { grantedTo, archivedGrantedTo });
+    return new ApiError(409, "project_in_use", message, {
+      grantedTo,
+      archivedGrantedTo,
+      templates,
+    });
   }
 
   async remove(name: string): Promise<void> {
     const row = await this.rowByName(name);
-    const busy = await this.inUse(row.id);
+    const busy = await this.inUse(row.id, row.name);
     if (busy) throw busy;
     try {
       await this.d.db.delete(schema.projects).where(eq(schema.projects.id, row.id));
     } catch (err) {
       // A grant appeared after the check: the FK restricts the delete.
-      if (fkViolation(err)) throw (await this.inUse(row.id)) ?? err;
+      if (fkViolation(err)) throw (await this.inUse(row.id, row.name)) ?? err;
       throw err;
     }
   }

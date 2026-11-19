@@ -21,7 +21,7 @@ import {
   type TemplateFile,
   type TemplateIssue,
 } from "@open-factory/shared";
-import { and, eq, isNull, notInArray } from "drizzle-orm";
+import { and, count, eq, isNull, notInArray } from "drizzle-orm";
 import { stringify } from "yaml";
 import type { Config } from "../config.ts";
 import { ApiError } from "../errors.ts";
@@ -175,6 +175,16 @@ export class TemplateIndex {
 
   async scanOne(name: string): Promise<TemplateRow | undefined> {
     return (await this.scanOneFull(name))?.row;
+  }
+
+  /** Non-archived agents per template name. */
+  async agentCounts(): Promise<Map<string, number>> {
+    const rows = await this.db
+      .select({ template: schema.agents.template, n: count() })
+      .from(schema.agents)
+      .where(isNull(schema.agents.archivedAt))
+      .groupBy(schema.agents.template);
+    return new Map(rows.map((r) => [r.template, r.n]));
   }
 
   async detail(name: string): Promise<TemplateDetail> {

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -116,14 +115,14 @@ test("remove while granted is 409 project_in_use; archived holders listed separa
     status: 409,
     code: "project_in_use",
     message: "Archived agents @holder still hold a grant.",
-    extra: { grantedTo: [], archivedGrantedTo: ["holder"] },
+    extra: { grantedTo: [], archivedGrantedTo: ["holder"], templates: [] },
   });
   await grant("h1", "held");
   await grant("h2", "held");
   await expect(svc.remove("held")).rejects.toMatchObject({
     message:
       "Granted to @h1, @h2. Remove the grant first. Archived agents @holder still hold a grant.",
-    extra: { grantedTo: ["h1", "h2"], archivedGrantedTo: ["holder"] },
+    extra: { grantedTo: ["h1", "h2"], archivedGrantedTo: ["holder"], templates: [] },
   });
 });
 
@@ -137,7 +136,7 @@ test("an FK violation from a racing grant maps to 409 project_in_use", async () 
     await expect(svc.remove("racy")).rejects.toMatchObject({
       status: 409,
       code: "project_in_use",
-      extra: { grantedTo: ["racer"], archivedGrantedTo: [] },
+      extra: { grantedTo: ["racer"], archivedGrantedTo: [], templates: [] },
     });
   } finally {
     spy.mockRestore();
@@ -163,5 +162,43 @@ test("list includes the templates that list the project", async () => {
   const list = await svc.list();
   expect(list.find((p) => p.name === "app")?.templates).toEqual(["uses-app"]);
   expect(list.find((p) => p.name === "web")?.templates).toEqual([]);
-  void randomUUID;
+});
+
+test("remove lists the templates that name the project", async () => {
+  await svc.create({ name: "tpl-held", hostPath: dir("tpl-held") });
+  await grant("tpl-holder", "tpl-held");
+  const d = path.join(t.factoryHome, "templates", "uses-held");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(
+    path.join(d, "template.yaml"),
+    "name: uses-held\ndisplay_name: U\nruntime: local\nprojects: [tpl-held]\n",
+  );
+  writeFileSync(path.join(d, "AGENTS.md"), "# u\n");
+  await t.app.templates.scan();
+  await expect(svc.remove("tpl-held")).rejects.toMatchObject({
+    code: "project_in_use",
+    extra: { grantedTo: ["tpl-holder"], archivedGrantedTo: [], templates: ["uses-held"] },
+  });
+});
+
+test("update with an unchanged path restarts nobody; one failed restart does not abort the rest", async () => {
+  await svc.create({ name: "same", hostPath: dir("same") });
+  const a = await grant("same-a", "same");
+  const b = await grant("same-b", "same");
+  restarts.length = 0;
+  await svc.update("same", dir("same"));
+  expect(restarts).toEqual([]);
+  const failing = new ProjectService({
+    db: t.db,
+    runtimes: {
+      requestRestart: async (id: string) => {
+        if (id === a) throw new Error("boom");
+        restarts.push(id);
+      },
+    } as never,
+    templates: t.app.templates,
+  });
+  const p = await failing.update("same", dir("same-moved"));
+  expect(p.hostPath).toBe(realpathSync(dir("same-moved")));
+  expect(restarts).toEqual([b]);
 });

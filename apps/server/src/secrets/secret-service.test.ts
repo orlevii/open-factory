@@ -67,3 +67,23 @@ test("remove of a missing secret is a 404", async () => {
     message: "No secret named NOPE.",
   });
 });
+
+test("one failed restart does not abort the others or the write", async () => {
+  const a = await t.seedAgent({ slug: "sec-fail-a", config: { secrets: ["FAILS"] } });
+  const b = await t.seedAgent({ slug: "sec-fail-b", config: { secrets: ["FAILS"] } });
+  const seen: string[] = [];
+  const failing = new SecretService({
+    db: t.db,
+    vault: t.app.vault,
+    runtimes: {
+      requestRestart: async (id: string) => {
+        seen.push(id);
+        if (id === a.id) throw new Error("boom");
+      },
+    } as never,
+  });
+  const out = await failing.put("FAILS", VALUE);
+  expect(out.name).toBe("FAILS");
+  expect(seen.sort()).toEqual([a.id, b.id].sort());
+  await failing.remove("FAILS");
+});

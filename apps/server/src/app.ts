@@ -28,6 +28,7 @@ import { meRoutes } from "./routes/me.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
+import { templatesRoutes } from "./routes/templates.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { registerStatic } from "./static.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
@@ -136,8 +137,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   const credentials = new CredentialService({ db: deps.db, vault, verifier, runtimes });
   app.decorate("credentials", credentials);
-  app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes }));
-  app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates }));
+  app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
+  app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
   app.decorate("templates", templates);
   app.decorate("agents", agents);
@@ -159,6 +160,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(credentialsRoutes);
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
+  await app.register(templatesRoutes);
   await registerStatic(app, deps.webRoot);
   return app;
 }

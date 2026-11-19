@@ -11,7 +11,25 @@ const aad = (id: string) => `secrets:${id}`;
 
 /** Values are write-only: nothing here returns, logs or throws a value. */
 export class SecretService {
-  constructor(private readonly d: { db: Db; vault: Vault; runtimes: AgentRuntimes }) {}
+  constructor(
+    private readonly d: {
+      db: Db;
+      vault: Vault;
+      runtimes: AgentRuntimes;
+      log?: { warn: (obj: object, msg: string) => void };
+    },
+  ) {}
+
+  /** Restart every user; one failure is logged by slug and never aborts the rest or the write. */
+  private async restartAll(users: { id: string; slug: string }[]) {
+    const results = await Promise.allSettled(
+      users.map((u) => this.d.runtimes.requestRestart(u.id)),
+    );
+    results.forEach((r, i) => {
+      if (r.status === "rejected")
+        this.d.log?.warn({ slug: users[i]?.slug }, "restart after secret change failed");
+    });
+  }
 
   /** Non-archived agents whose config snapshot lists the secret. */
   private async usedBy(name: string): Promise<{ id: string; slug: string }[]> {
@@ -72,7 +90,7 @@ export class SecretService {
     }
     if (!row) throw new Error("secret upsert returned no row");
     const users = await this.usedBy(name);
-    for (const u of users) await this.d.runtimes.requestRestart(u.id);
+    await this.restartAll(users);
     return this.summary(row, users);
   }
 
@@ -84,6 +102,6 @@ export class SecretService {
       .returning({ id: schema.secrets.id });
     if (!deleted.length) throw new ApiError(404, "secret_not_found", `No secret named ${name}.`);
     // A revoked (maybe leaked) value must leave live processes.
-    for (const u of users) await this.d.runtimes.requestRestart(u.id);
+    await this.restartAll(users);
   }
 }

@@ -1,21 +1,25 @@
 export type StartFix = "credentials" | "secrets" | "projects" | "edit_agent" | "resync" | "runtime";
 
 export class AgentStartError extends Error {
+  /** The message without its advice (what is wrong, not what to do): a spawned agent's variant ends differently. */
+  readonly diagnosis: string;
   constructor(
     message: string,
     readonly fix?: StartFix,
+    diagnosis?: string,
   ) {
     super(message);
     this.name = "AgentStartError";
+    this.diagnosis = diagnosis ?? message;
   }
 }
 /**
- * S7: a spawned agent can't be edited or re-synced, so a start error whose fix is one of those drops the fix and ends
- * with what does help. Other errors (and every persistent agent's) are returned unchanged.
+ * S7 §8: a spawned agent can't be edited or re-synced, so a start error whose fix is one of those drops the fix and
+ * its advice: the diagnosis ends with "Terminate it and spawn a new one." instead. Other errors are returned unchanged.
  */
 export function forSpawnedAgent(err: AgentStartError): AgentStartError {
   if (err.fix !== "edit_agent" && err.fix !== "resync") return err;
-  return new AgentStartError(`${err.message} Terminate it and spawn a new one.`);
+  return new AgentStartError(`${err.diagnosis} Terminate it and spawn a new one.`);
 }
 
 export class AgentArchivedError extends Error {

@@ -178,3 +178,16 @@ test("quoteDescription: one line, no angle brackets, single quotes, 200 chars wi
   expect(quoteDescription("y".repeat(200))).toBe(`"${"y".repeat(200)}"`);
   expect(quoteDescription("y".repeat(201))).toBe(`"${"y".repeat(199)}…"`);
 });
+
+test("quoteDescription never splits a surrogate pair: 200 code points in total", () => {
+  const emoji = "\u{1F600}"; // two UTF-16 code units
+  const q = quoteDescription(emoji.repeat(250));
+  expect(q).toBe(`"${emoji.repeat(199)}…"`);
+  expect([...q.slice(1, -1)]).toHaveLength(200);
+  expect(quoteDescription(`${"a".repeat(198)}${emoji}${emoji}`)).toBe(
+    `"${"a".repeat(198)}${emoji}${emoji}"`,
+  );
+  expect(quoteDescription(`${"a".repeat(198)}${emoji}${emoji}b`)).toBe(
+    `"${"a".repeat(198)}${emoji}…"`,
+  );
+});

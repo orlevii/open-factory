@@ -1589,7 +1589,7 @@ export class AgentRuntime {
       // A mount refused by the re-check keeps its own message ("Mount <path> isn't allowed: <reason>.").
       const startErr =
         err instanceof WorkspaceError
-          ? new AgentStartError(err.message, err.fix)
+          ? new AgentStartError(err.message, err.fix, err.diagnosis)
           : dockerStartError(err);
       // The start failure first; a container stop that then fails makes it stop_failed (spec §9.6). The stop runs
       // even when recording the failure throws (the DB), so the container never outlives the start.

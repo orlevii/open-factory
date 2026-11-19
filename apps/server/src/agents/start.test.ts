@@ -22,8 +22,8 @@ import { Neighborhood } from "../messaging/neighborhood.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
-import { AgentStartError } from "./errors.ts";
-import { createPrepareStart, type PrepareStart } from "./start.ts";
+import { AgentStartError, forSpawnedAgent } from "./errors.ts";
+import { createPrepareStart, deriveInheritance, type PrepareStart } from "./start.ts";
 
 const KEY = "k".repeat(40);
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -532,4 +532,132 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
 test("a persistent agent without can_spawn has no Spawning section", async () => {
   await prepareStart(agent, { agentToken: "tok" });
   expect(md(agent.slug)).not.toContain("## Spawning");
+});
+
+const childCopy = (slug: string) => path.join(home, "state/agents", slug, "template/settings.json");
+const setConfig = (id: string, config: Record<string, unknown>) =>
+  t.db
+    .update(schema.agents)
+    .set({ config: config as never })
+    .where(eq(schema.agents.id, id));
+
+test.each([
+  [
+    "invalid config",
+    async (c: AgentRow) => setConfig(c.id, { name: 5 }),
+    (c: AgentRow) => `The saved configuration of @${c.slug} is invalid.`,
+  ],
+  [
+    "missing template copy",
+    async (c: AgentRow) => rmSync(childCopy(c.slug)),
+    (c: AgentRow) => `The template copy ${childCopy(c.slug)} is missing.`,
+  ],
+  [
+    "template copy not JSON",
+    async (c: AgentRow) => writeFileSync(childCopy(c.slug), "{"),
+    (c: AgentRow) => `The template copy ${childCopy(c.slug)} isn't valid JSON.`,
+  ],
+  [
+    "template copy not an object",
+    async (c: AgentRow) => writeFileSync(childCopy(c.slug), "[]"),
+    (c: AgentRow) => `The template copy ${childCopy(c.slug)} isn't a JSON object.`,
+  ],
+  [
+    "plugins need a re-sync",
+    async (c: AgentRow) => setConfig(c.id, { ...c.config, plugins: ["p@m"] }),
+    (c: AgentRow) => `The plugins of @${c.slug} aren't installed in the factory-managed location.`,
+  ],
+  [
+    "host skill missing",
+    async (c: AgentRow) => setConfig(c.id, { ...c.config, skills: ["nope"] }),
+    () => `Host skill nope is missing from ${hs}.`,
+  ],
+])(
+  "a spawned agent's start error (%s) reads '<diagnosis> Terminate it and spawn a new one.' with no fix",
+  async (_n, mutate, diagnosis) => {
+    const child = await seedChild();
+    await mutate(child);
+    const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentStartError);
+    const spawned = forSpawnedAgent(err as AgentStartError);
+    expect(spawned.message).toBe(`${diagnosis(child)} Terminate it and spawn a new one.`);
+    expect(spawned.fix).toBeUndefined();
+  },
+);
+
+test("a persistent agent's start errors keep their advice and fix", async () => {
+  await setConfig(agent.id, { name: 5 });
+  const err = await prepareStart(agent, { agentToken: "tok" }).catch((e: unknown) => e);
+  expect(err).toMatchObject({
+    message: `The saved configuration of @${agent.slug} is invalid. Edit the agent to fix it.`,
+    fix: "edit_agent",
+  });
+  expect(forSpawnedAgent(err as AgentStartError).message).toBe(
+    `The saved configuration of @${agent.slug} is invalid. Terminate it and spawn a new one.`,
+  );
+});
+
+// The DB keeps a spawned row's reports_to set and pointing at a row (CHECK + FK), so these two are reached
+// only through a stale row: deriveInheritance is called directly with one.
+test.each([
+  ["no spawner (null reports_to)", null],
+  ["a spawner row that doesn't exist", "ghost"],
+])("deriveInheritance fails closed with no fix: %s", async (_n, reportsTo) => {
+  const child = await seedChild();
+  const prepare = vi.spyOn(workspace, "prepare");
+  try {
+    await expect(
+      deriveInheritance(
+        { db: t.db, config: factoryConfig, workspace },
+        { ...child, reportsTo },
+        templateYamlSchema.parse({ name: "dev", display_name: "Dev" }),
+      ),
+    ).rejects.toMatchObject({
+      name: "AgentStartError",
+      message: `The agent that spawned @${child.slug} no longer exists, so @${child.slug} can't start.`,
+      fix: undefined,
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    prepare.mockRestore();
+  }
+});
+
+test.each([
+  ["terminated (credential kept)", true],
+  ["terminated with a null credential_id", false],
+])("a child fails closed when its spawner is %s", async (_n, keepCredential) => {
+  // Only an ephemeral row can be terminated, and only a terminated row can have a null credential (CHECKs),
+  // so the spawner here is itself spawned by a top agent.
+  const child = await seedChild();
+  await t.db.insert(schema.agents).values({
+    id: `top-${seq}`,
+    slug: `top-${seq}`,
+    displayName: "Top",
+    template: "lead",
+    config: agent.config,
+    runtime: "local",
+    credentialId: "c1",
+  });
+  await t.db
+    .update(schema.agents)
+    .set({
+      kind: "ephemeral",
+      reportsTo: `top-${seq}`,
+      terminatedAt: new Date(),
+      terminatedBy: "@factory",
+      credentialId: keepCredential ? "c1" : null,
+    })
+    .where(eq(schema.agents.id, agent.id));
+  const prepare = vi.spyOn(workspace, "prepare");
+  try {
+    await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+      name: "AgentStartError",
+      message: `@${agent.slug}, which spawned @${child.slug}, isn't active, so @${child.slug} can't start.`,
+      fix: undefined,
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    prepare.mockRestore();
+  }
 });

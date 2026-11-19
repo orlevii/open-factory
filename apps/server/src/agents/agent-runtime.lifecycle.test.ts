@@ -179,13 +179,18 @@ test.each([
   [
     "edit_agent",
     "The template copy /x/settings.json is missing. Re-sync the agent from its template.",
+    "The template copy /x/settings.json is missing.",
   ],
-  ["resync", "Re-sync @dev to reinstall its plugins into the factory-managed location."],
+  [
+    "resync",
+    "Re-sync @dev to reinstall its plugins into the factory-managed location.",
+    "The plugins of @dev aren't installed in the factory-managed location.",
+  ],
 ] as const)(
-  "a spawned agent's %s start error drops the fix and ends with the terminate advice",
-  async (fix, message) => {
+  "a spawned agent's %s start error drops the fix and its advice for the terminate advice",
+  async (fix, message, diagnosis) => {
     await makeRuntime({
-      startError: new AgentStartError(message, fix),
+      startError: new AgentStartError(message, fix, diagnosis),
       seed: async (id) => {
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
         await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
@@ -194,7 +199,7 @@ test.each([
       },
     });
     await rt.reload();
-    const expected = `${message} Terminate it and spawn a new one.`;
+    const expected = `${diagnosis} Terminate it and spawn a new one.`;
     await expect(send("hi")).rejects.toMatchObject({
       name: "AgentStartError",
       message: expected,

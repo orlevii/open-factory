@@ -270,6 +270,7 @@ export class Workspace {
       throw new WorkspaceError(
         `Re-sync @${i.slug} to reinstall its plugins into the factory-managed location.`,
         "resync",
+        `The plugins of @${i.slug} aren't installed in the factory-managed location.`,
       );
     }
     await this.linkPlugins(i.slug, workdir);
@@ -342,11 +343,14 @@ export class Workspace {
   async readTemplateSettings(slug: string): Promise<Record<string, unknown>> {
     const copy = templateCopyDir(this.d.factoryHome, slug);
     const v = await this.readTemplateJson<unknown>(copy, "settings.json");
-    if (!v || typeof v !== "object" || Array.isArray(v))
+    if (!v || typeof v !== "object" || Array.isArray(v)) {
+      const diagnosis = `The template copy ${path.join(copy, "settings.json")} isn't a JSON object.`;
       throw new WorkspaceError(
-        `The template copy ${path.join(copy, "settings.json")} isn't a JSON object. Re-sync the agent from its template.`,
+        `${diagnosis} Re-sync the agent from its template.`,
         "edit_agent",
+        diagnosis,
       );
+    }
     return v as Record<string, unknown>;
   }
 
@@ -357,9 +361,11 @@ export class Workspace {
     } catch (err) {
       const why =
         (err as NodeJS.ErrnoException).code === "ENOENT" ? "is missing" : "isn't valid JSON";
+      const diagnosis = `The template copy ${p} ${why}.`;
       throw new WorkspaceError(
-        `The template copy ${p} ${why}. Re-sync the agent from its template.`,
+        `${diagnosis} Re-sync the agent from its template.`,
         "edit_agent",
+        diagnosis,
       );
     }
   }

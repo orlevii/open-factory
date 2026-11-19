@@ -17,8 +17,9 @@ function inline(text: string): string {
 
 /** S7 §11.1: an agent-written description is one line, in double quotes, with its own `"` made `'`, capped at 200. */
 export function quoteDescription(text: string): string {
-  const one = inline(text).replace(/"/g, "'");
-  return `"${one.length > 200 ? `${one.slice(0, 199)}…` : one}"`;
+  // Counted in code points, so the cut never splits a surrogate pair.
+  const one = [...inline(text).replace(/"/g, "'")];
+  return `"${one.length > 200 ? `${one.slice(0, 199).join("")}…` : one.join("")}"`;
 }
 
 const SPAWNED_INTRO =

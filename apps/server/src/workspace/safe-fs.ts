@@ -15,12 +15,16 @@ import {
 import path from "node:path";
 
 export class WorkspaceError extends Error {
+  /** The message without its advice; see `AgentStartError.diagnosis`. */
+  readonly diagnosis: string;
   constructor(
     message: string,
     readonly fix?: "projects" | "edit_agent" | "resync",
+    diagnosis?: string,
   ) {
     super(message);
     this.name = "WorkspaceError";
+    this.diagnosis = diagnosis ?? message;
   }
 }
 

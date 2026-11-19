@@ -52,7 +52,7 @@ type Granted = Extract<Inherited, { ok: true }>;
  * grants = spawner's current grants ∩ template projects, and the §6.2 refusals re-checked. Anything about the spawner
  * that can't be read fails the start closed: a child never runs with more than its spawner holds.
  */
-async function deriveInheritance(
+export async function deriveInheritance(
   d: { db: Db; config: Config; workspace: Workspace },
   agent: AgentRow,
   config: TemplateConfig,
@@ -87,7 +87,8 @@ async function deriveInheritance(
   try {
     childSettings = await d.workspace.readTemplateSettings(agent.slug);
   } catch (err) {
-    if (err instanceof WorkspaceError) throw new AgentStartError(err.message, err.fix);
+    if (err instanceof WorkspaceError)
+      throw new AgentStartError(err.message, err.fix, err.diagnosis);
     throw err;
   }
   const grants = await d.db
@@ -145,9 +146,11 @@ export function createPrepareStart(d: {
       // The jsonb column is typed, not enforced: parse the snapshot rather than trust the row type.
       const parsedConfig = templateConfigSchema.safeParse(agent.config);
       if (!parsedConfig.success) {
+        const diagnosis = `The saved configuration of @${agent.slug} is invalid.`;
         throw new AgentStartError(
-          `The saved configuration of @${agent.slug} is invalid. Edit the agent to fix it.`,
+          `${diagnosis} Edit the agent to fix it.`,
           "edit_agent",
+          diagnosis,
         );
       }
       const config = parsedConfig.data;
@@ -165,9 +168,11 @@ export function createPrepareStart(d: {
         .from(schema.credentials)
         .where(eq(schema.credentials.id, credentialId));
       if (!cred) {
+        const diagnosis = `Credential ${credentialId} no longer exists.`;
         throw new AgentStartError(
-          `Credential ${credentialId} no longer exists. Edit the agent and choose a credential.`,
+          `${diagnosis} Edit the agent and choose a credential.`,
           "edit_agent",
+          diagnosis,
         );
       }
       let credentialValue: string;
@@ -277,7 +282,8 @@ export function createPrepareStart(d: {
               : `http://127.0.0.1:${d.config.agentPort}/mcp`,
         });
       } catch (err) {
-        if (err instanceof WorkspaceError) throw new AgentStartError(err.message, err.fix);
+        if (err instanceof WorkspaceError)
+          throw new AgentStartError(err.message, err.fix, err.diagnosis);
         throw err;
       }
 

@@ -20,12 +20,16 @@ const serverEnv = {
 };
 
 test("env is the allowlist plus config dir, credential, secrets and git identity, nothing else", () => {
-  const env = buildAgentEnv(serverEnv, {
-    configDir: "/w/.claude-config",
-    slug: "lead",
-    credential: { kind: "oauth_token", value: "agent-token" },
-    secrets: { GH_TOKEN: "gh" },
-  });
+  const env = buildAgentEnv(
+    serverEnv,
+    {
+      configDir: "/w/.claude-config",
+      slug: "lead",
+      credential: { kind: "oauth_token", value: "agent-token" },
+      secrets: { GH_TOKEN: "gh" },
+    },
+    "local",
+  );
   expect(env).toEqual({
     PATH: "/usr/bin",
     HOME: "/home/u",
@@ -45,19 +49,23 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
 });
 
 test("secrets can never override PATH, the credential var, the config dir or the git identity", () => {
-  const env = buildAgentEnv(serverEnv, {
-    configDir: "/c",
-    slug: "a1",
-    credential: { kind: "oauth_token", value: "factory-token" },
-    secrets: {
-      PATH: "/evil",
-      ANTHROPIC_API_KEY: "evil-key",
-      CLAUDE_CODE_OAUTH_TOKEN: "evil-token",
-      CLAUDE_CONFIG_DIR: "/evil",
-      GIT_AUTHOR_NAME: "evil",
-      GH_TOKEN: "gh",
+  const env = buildAgentEnv(
+    serverEnv,
+    {
+      configDir: "/c",
+      slug: "a1",
+      credential: { kind: "oauth_token", value: "factory-token" },
+      secrets: {
+        PATH: "/evil",
+        ANTHROPIC_API_KEY: "evil-key",
+        CLAUDE_CODE_OAUTH_TOKEN: "evil-token",
+        CLAUDE_CONFIG_DIR: "/evil",
+        GIT_AUTHOR_NAME: "evil",
+        GH_TOKEN: "gh",
+      },
     },
-  });
+    "local",
+  );
   expect(env.PATH).toBe("/usr/bin");
   expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("factory-token");
   expect(env.CLAUDE_CONFIG_DIR).toBe("/c");
@@ -68,12 +76,16 @@ test("secrets can never override PATH, the credential var, the config dir or the
 });
 
 test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => {
-  const env = buildAgentEnv(serverEnv, {
-    configDir: "/c",
-    slug: "a1",
-    credential: { kind: "api_key", value: "k" },
-    secrets: {},
-  });
+  const env = buildAgentEnv(
+    serverEnv,
+    {
+      configDir: "/c",
+      slug: "a1",
+      credential: { kind: "api_key", value: "k" },
+      secrets: {},
+    },
+    "local",
+  );
   expect(env.ANTHROPIC_API_KEY).toBe("k");
   expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
   for (const k of ["DATABASE_URL", "FACTORY_SECRET_KEY", "SSH_AUTH_SOCK", "RANDOM_NEW_VAR"])
@@ -82,12 +94,16 @@ test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => 
 
 test("the server's own ANTHROPIC_*/CLAUDE_* never leak; exactly one credential var is set", () => {
   for (const kind of ["oauth_token", "api_key"] as const) {
-    const env = buildAgentEnv(serverEnv, {
-      configDir: "/c",
-      slug: "a1",
-      credential: { kind, value: "agent" },
-      secrets: {},
-    });
+    const env = buildAgentEnv(
+      serverEnv,
+      {
+        configDir: "/c",
+        slug: "a1",
+        credential: { kind, value: "agent" },
+        secrets: {},
+      },
+      "local",
+    );
     const creds = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"].filter((k) => k in env);
     expect(creds).toHaveLength(1);
     expect(env[creds[0] as string]).toBe("agent");
@@ -101,12 +117,73 @@ test("two agents with different credentials get their own values", () => {
   const a = buildAgentEnv(
     {},
     { configDir: "/a", slug: "aa", credential: { kind: "oauth_token", value: "A" }, secrets: {} },
+    "local",
   );
   const b = buildAgentEnv(
     {},
     { configDir: "/b", slug: "bb", credential: { kind: "oauth_token", value: "B" }, secrets: {} },
+    "local",
   );
   expect([a.CLAUDE_CODE_OAUTH_TOKEN, b.CLAUDE_CODE_OAUTH_TOKEN]).toEqual(["A", "B"]);
+});
+
+const extra = {
+  configDir: "/w/.claude-config",
+  slug: "lead",
+  credential: { kind: "oauth_token" as const, value: "agent-token" },
+  secrets: { GH_TOKEN: "gh" },
+};
+
+test.each(["local", "docker"] as const)("%s: server-only vars never leak", (rt) => {
+  const env = buildAgentEnv(
+    {
+      ...serverEnv,
+      DATABASE_URL: "x",
+      FACTORY_SECRET_KEY: "y",
+      ANTHROPIC_API_KEY: "z",
+      CLAUDE_FOO: "w",
+      RANDOM_VAR: "v",
+    },
+    extra,
+    rt,
+  );
+  for (const k of [
+    "DATABASE_URL",
+    "FACTORY_SECRET_KEY",
+    "CLAUDE_FOO",
+    "RANDOM_VAR",
+    "SSH_AUTH_SOCK",
+  ])
+    expect(env).not.toHaveProperty(k);
+});
+
+test("docker: no host PATH/HOME/USER/SHELL; OPEN_FACTORY_URL set", () => {
+  const env = buildAgentEnv(
+    serverEnv,
+    { ...extra, agentUrl: "http://host.docker.internal:3000" },
+    "docker",
+  );
+  for (const k of ["PATH", "HOME", "USER", "SHELL", "TMPDIR", "LANG", "TERM"])
+    expect(env).not.toHaveProperty(k);
+  expect(env.OPEN_FACTORY_URL).toBe("http://host.docker.internal:3000");
+  expect(env.CLAUDE_CONFIG_DIR).toBe(extra.configDir);
+  expect(Object.keys(env).sort()).toEqual(
+    [
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "CLAUDE_CONFIG_DIR",
+      "GH_TOKEN",
+      "GIT_AUTHOR_EMAIL",
+      "GIT_AUTHOR_NAME",
+      "GIT_COMMITTER_EMAIL",
+      "GIT_COMMITTER_NAME",
+      "OPEN_FACTORY_URL",
+    ].sort(),
+  );
+});
+
+test("local: no OPEN_FACTORY_URL", () => {
+  const env = buildAgentEnv(serverEnv, { ...extra, agentUrl: "http://x" }, "local");
+  expect(env).not.toHaveProperty("OPEN_FACTORY_URL");
 });
 
 test("runtime spec from the snapshot", () => {

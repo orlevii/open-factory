@@ -126,12 +126,17 @@ export function createPrepareStart(d: {
         agentId: agent.id,
         slug: agent.slug,
         workdir: prepared.workdir,
-        env: buildAgentEnv(serverEnv, {
-          configDir: prepared.configDir,
-          slug: agent.slug,
-          credential: { kind: cred.kind, value: credentialValue },
-          secrets,
-        }),
+        env: buildAgentEnv(
+          serverEnv,
+          {
+            configDir: prepared.configDir,
+            slug: agent.slug,
+            credential: { kind: cred.kind, value: credentialValue },
+            secrets,
+            agentUrl: d.config.agentUrl,
+          },
+          config.runtime,
+        ),
         claudeBin: d.config.claudeBin,
         config,
         mounts: prepared.mounts,

@@ -1,25 +1,32 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
+import type { Exec } from "../agents/event-store.ts";
 
 /** An agent that is neither archived nor terminated. */
 export const liveAgent = and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt));
 
-/** Who an agent can see: manager, peers (same manager; top-level agents are peers) and reports. Live agents only. */
+/**
+ * Who an agent can see: manager, peers (same manager; top-level agents are peers) and reports. Live agents only. Reads
+ * run in `tx` when given (S7 §5.7: inside a spawn or terminate transaction).
+ */
 export class Neighborhood {
   constructor(private readonly db: Db) {}
 
-  async of(agentId: string): Promise<{
+  async of(
+    agentId: string,
+    tx: Exec = this.db,
+  ): Promise<{
     manager: AgentRow | null;
     peers: AgentRow[];
     reports: AgentRow[];
   }> {
-    const [self] = await this.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    const [self] = await tx.select().from(schema.agents).where(eq(schema.agents.id, agentId));
     if (!self) return { manager: null, peers: [], reports: [] };
     const live = liveAgent;
     const order = [asc(schema.agents.displayName), asc(schema.agents.slug)] as const;
     const manager = self.reportsTo
       ? ((
-          await this.db
+          await tx
             .select()
             .from(schema.agents)
             .where(and(eq(schema.agents.id, self.reportsTo), live))
@@ -29,13 +36,13 @@ export class Neighborhood {
       ? eq(schema.agents.reportsTo, self.reportsTo)
       : isNull(schema.agents.reportsTo);
     const peers = (
-      await this.db
+      await tx
         .select()
         .from(schema.agents)
         .where(and(sameManager, live))
         .orderBy(...order)
     ).filter((a) => a.id !== agentId);
-    const reports = await this.db
+    const reports = await tx
       .select()
       .from(schema.agents)
       .where(and(eq(schema.agents.reportsTo, agentId), live))
@@ -43,8 +50,8 @@ export class Neighborhood {
     return { manager, peers, reports };
   }
 
-  async all(): Promise<AgentRow[]> {
-    return this.db
+  async all(tx: Exec = this.db): Promise<AgentRow[]> {
+    return tx
       .select()
       .from(schema.agents)
       .where(liveAgent)

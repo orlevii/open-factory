@@ -9,7 +9,7 @@ import {
 } from "@open-factory/shared";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
-import type { Neighborhood } from "../messaging/neighborhood.ts";
+import { liveAgent } from "../messaging/neighborhood.ts";
 import { isNameTaken } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -40,6 +40,11 @@ function pluginFailure(err: unknown): unknown {
   return err;
 }
 
+/** S7 §9.3: a spawner's live spawned agents block its archive; terminate them, don't move them. */
+function spawnedMessage(spawner: string, slugs: string[]): string {
+  return `@${spawner} has live spawned agents: ${slugs.map((s) => `@${s}`).join(", ")}. Terminate them first.`;
+}
+
 function reportsMessage(slugs: string[]): string {
   const tags = slugs.map((s) => `@${s}`);
   const who =
@@ -58,9 +63,8 @@ export class AgentService {
       log: RuntimeLog;
       /** The one ContainerManager: a running container counts as a process for the re-sync gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
-      /** Peer events (spec §10.2): the neighborhood to snapshot and the router that writes the rows. */
-      neighborhood: Neighborhood;
-      router: Pick<Router, "peerEvents">;
+      /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
+      router: Pick<Router, "peerEvents" | "snapshot">;
     },
   ) {}
 
@@ -77,9 +81,8 @@ export class AgentService {
     }
   }
 
-  private async snapshot(id: string): Promise<{ managerId: string | null; peerIds: string[] }> {
-    const n = await this.d.neighborhood.of(id);
-    return { managerId: n.manager?.id ?? null, peerIds: n.peers.map((p) => p.id) };
+  private snapshot(id: string, tx: Db | Tx = this.d.db) {
+    return this.d.router.snapshot(tx, id);
   }
 
   async list(ended: "exclude" | "include" | "only"): Promise<AgentSummary[]> {
@@ -447,21 +450,36 @@ export class AgentService {
     const { db, runtimes } = this.d;
     const row = await this.rowBySlug(slug);
     if (row.archivedAt) return this.summary(slug);
-    const reports = (
-      await db
-        .select({ slug: schema.agents.slug })
+    // S7 §5.7: the row lock first (`FOR NO KEY UPDATE`, never `FOR UPDATE`), then the live reports in the same
+    // transaction, so a spawn committing in between can't leave an archived spawner a live child.
+    const before = await db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.agents.id })
         .from(schema.agents)
-        .where(and(eq(schema.agents.reportsTo, row.id), isNull(schema.agents.archivedAt)))
-    )
-      .map((r) => r.slug)
-      .sort();
-    if (reports.length)
-      throw new ApiError(409, "has_reports", reportsMessage(reports), { reports });
-    const before = await this.snapshot(row.id);
-    await db
-      .update(schema.agents)
-      .set({ archivedAt: new Date() })
-      .where(eq(schema.agents.id, row.id));
+        .where(eq(schema.agents.id, row.id))
+        .for("no key update");
+      const live = await tx
+        .select({ slug: schema.agents.slug, kind: schema.agents.kind })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.reportsTo, row.id), liveAgent));
+      const spawned = live
+        .filter((r) => r.kind === "ephemeral")
+        .map((r) => r.slug)
+        .sort();
+      if (spawned.length)
+        throw new ApiError(409, "has_reports", spawnedMessage(row.slug, spawned), {
+          reports: spawned,
+        });
+      const reports = live.map((r) => r.slug).sort();
+      if (reports.length)
+        throw new ApiError(409, "has_reports", reportsMessage(reports), { reports });
+      const snap = await this.snapshot(row.id, tx);
+      await tx
+        .update(schema.agents)
+        .set({ archivedAt: new Date() })
+        .where(eq(schema.agents.id, row.id));
+      return snap;
+    });
     const rt = await runtimes.get(row.id);
     rt?.markArchived();
     try {

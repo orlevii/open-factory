@@ -68,7 +68,8 @@ export interface InboxEntry {
   link: { agentSlug: string; seq?: number };
 }
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-type Exec = Db | Tx;
+/** The pool or a caller's transaction. */
+export type Exec = Db | Tx;
 
 export interface TurnClose {
   isError: boolean;
@@ -99,8 +100,9 @@ export class EventStore {
   async agentBySlug(slug: string) {
     return (await this.db.select().from(agents).where(eq(agents.slug, slug)))[0];
   }
-  async agentById(id: string) {
-    return (await this.db.select().from(agents).where(eq(agents.id, id)))[0];
+  /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
+  async agentById(id: string, tx: Exec = this.db) {
+    return (await tx.select().from(agents).where(eq(agents.id, id)))[0];
   }
   async setSessionId(agentId: string, sessionId: string | null) {
     await this.db.update(agents).set({ sessionId }).where(eq(agents.id, agentId));

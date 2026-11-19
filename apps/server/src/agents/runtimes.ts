@@ -7,6 +7,7 @@ import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
+import type { WakeReason } from "../supervisor/slots.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError } from "./errors.ts";
@@ -211,11 +212,17 @@ export class AgentRuntimes {
    * S6 §7.3: hands a committed `message` row to its recipient. A human's send awaits the job (S3's synchronous
    * `503 agent_start_failed` and `409 agent_archived`); an agent's only enqueues it: a slow start never blocks the
    * sender's tool call, and a failure leaves the row pending (or `rejected` when archived), logged, never thrown.
+   * `reason` overrides an agent sender's `agent_message` wake (S7 §5.6: a spawned agent's brief wakes it `spawned`).
    */
-  async deliver(row: PendingRow, sender: "human" | "agent"): Promise<QueueItem | undefined> {
+  async deliver(
+    row: PendingRow,
+    sender: "human" | "agent",
+    reason?: WakeReason,
+  ): Promise<QueueItem | undefined> {
+    const o = { sender, fromLabel: senderLabel(row), ...(reason ? { reason } : {}) };
     if (sender === "human") {
       const rt = await this.recipientOf(row);
-      return rt.deliver(row, { sender, fromLabel: senderLabel(row) });
+      return rt.deliver(row, o);
     }
     // An agent's send already committed its row: a recipient that can't be loaded (a failed init) leaves it pending
     // for the next hand-off or boot, logged; it never reaches the sender, whose retry would duplicate the message.
@@ -229,7 +236,7 @@ export class AgentRuntimes {
       );
       return undefined;
     }
-    void rt.deliver(row, { sender, fromLabel: senderLabel(row) }).catch((err: unknown) => {
+    void rt.deliver(row, o).catch((err: unknown) => {
       if (err instanceof AgentArchivedError || err instanceof AgentStartError)
         this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
       else

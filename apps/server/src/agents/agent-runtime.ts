@@ -403,11 +403,12 @@ export class AgentRuntime {
    * S6 §7.3: a committed `message` row handed over by the Router. Inserted in (created_at, id) order after the
    * notices unless this runtime already has it (`init()` may have loaded it); the wake, the urgent interrupt and the
    * flush run while it is still queued, and are skipped once it has already been written. Archived meanwhile: the row becomes `rejected`. Only a human's message starts an attempt on
-   * an errored agent; another agent's wakes with `agent_message`, which never wakes an errored one.
+   * an errored agent; another agent's wakes with `reason` (default `agent_message`; S7's brief: `spawned`), neither of
+   * which wakes an errored one nor is ever an attempt.
    */
   deliver(
     row: PendingRow,
-    o: { sender: "human" | "agent"; fromLabel: string },
+    o: { sender: "human" | "agent"; fromLabel: string; reason?: WakeReason },
   ): Promise<QueueItem> {
     return this.apiJob(async () => {
       if (this.archived) {
@@ -446,7 +447,7 @@ export class AgentRuntime {
           if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
           await this.wakeInline("message");
         }
-      } else await this.wakeInline("agent_message");
+      } else await this.wakeInline(o.reason ?? "agent_message");
       if (row.urgent) await this.urgentInterrupt(o.fromLabel);
       await this.flush();
       return this.itemOf(entry ?? entryOf(row));

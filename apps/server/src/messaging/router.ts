@@ -2,7 +2,7 @@ import type { Db } from "@open-factory/db";
 import type { AgentStatus, QueueItem } from "@open-factory/shared";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
-import type { EventStore, PendingRow, Tx } from "../agents/event-store.ts";
+import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import type { Forward } from "./forwarder.ts";
 import type { Neighborhood } from "./neighborhood.ts";
@@ -28,10 +28,12 @@ export type SendResult =
       code: "not_found" | "ambiguous" | "self" | "archived" | "terminated" | "ended" | "reserved";
     };
 
-/** What happened to the subject of a peer event (spec §10.2). */
+/** What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. */
 export type PeerChange =
   | { kind: "joined" }
+  | { kind: "spawned" }
   | { kind: "left"; reason: "archived" }
+  | { kind: "left"; reason: "terminated"; by: string }
   | { kind: "moved"; to: string | null };
 
 /** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
@@ -270,59 +272,116 @@ export class Router {
   }
 
   /**
-   * Spec §10.2: held `peer_joined`/`peer_left` rows for everyone whose neighborhood changed (the subject's peers, with
-   * notice `peer`, and its manager, with notice `report`), written with `peerBody`. `joined` reads the neighborhood
-   * now (call it after the change); `left` and `moved` notify the `before` snapshot, and `moved` also announces the
-   * join to the new neighborhood. Archived recipients are skipped; the subject itself gets nothing. Rows are
-   * persisted before this resolves and handed over once boot is done, never awaited.
+   * The subject's manager and peers now (S6's snapshot), read in `tx` when given: a termination snapshots inside its
+   * transaction (S7 §5.7).
+   */
+  async snapshot(tx: Exec, agentId: string): Promise<NeighborhoodSnapshot> {
+    const n = await this.d.neighborhood.of(agentId, tx);
+    return { managerId: n.manager?.id ?? null, peerIds: n.peers.map((p) => p.id) };
+  }
+
+  /**
+   * S6 spec §10.2: held `peer_joined`/`peer_left` rows for everyone whose neighborhood changed, persisted and then
+   * handed over once boot is done, never awaited. A thin wrapper over `persistPeerEvents` in its own transaction.
    */
   async peerEvents(
     subjectId: string,
     change: PeerChange,
     before: NeighborhoodSnapshot,
   ): Promise<void> {
-    const subject = await this.d.store.agentById(subjectId);
-    if (!subject) return;
-    if (change.kind !== "joined") {
+    const rows = await this.d.db.transaction((tx) =>
+      this.persistPeerEvents(tx, subjectId, change, before),
+    );
+    this.handOffHeldRows(rows);
+  }
+
+  /**
+   * S7 §9.1: the rows of a peer event, written in the caller's transaction (which may hold the uncommitted subject)
+   * and returned for `handOffHeldRows` after the commit. Recipients are the subject's peers (notice `peer`) and its
+   * manager (notice `report`), bodies by `peerBody`. `joined`/`spawned` read the neighborhood now (call it after the
+   * change); `left` and `moved` notify the `before` snapshot, and `moved` also announces the join to the new
+   * neighborhood. Only live recipients get a row; the subject itself gets nothing, and the manager nothing when
+   * `excludeManager` (a spawner's own act: it has the tool result).
+   */
+  async persistPeerEvents(
+    tx: Tx,
+    subjectId: string,
+    change: PeerChange,
+    before: NeighborhoodSnapshot,
+    o: { excludeManager?: boolean } = {},
+  ): Promise<PendingRow[]> {
+    const subject = await this.d.store.agentById(subjectId, tx);
+    if (!subject) return [];
+    const rows: PendingRow[] = [];
+    if (change.kind === "left" || change.kind === "moved") {
       const left: PeerLeft =
-        change.kind === "left" ? { reason: "archived" } : { reason: "moved", to: change.to };
-      await this.notify(subject, "peer_left", before.peerIds, before.managerId, left);
-    }
-    if (change.kind !== "left") {
-      const now = await this.d.neighborhood.of(subjectId);
-      await this.notify(
-        subject,
-        "peer_joined",
-        now.peers.map((p) => p.id),
-        now.manager?.id ?? null,
+        change.kind === "moved"
+          ? { reason: "moved", to: change.to }
+          : change.reason === "terminated"
+            ? { reason: "terminated", by: change.by }
+            : { reason: "archived" };
+      rows.push(
+        ...(await this.notify(
+          tx,
+          subject,
+          "peer_left",
+          before.peerIds,
+          o.excludeManager ? null : before.managerId,
+          left,
+        )),
       );
     }
+    if (change.kind !== "left") {
+      const now = await this.d.neighborhood.of(subjectId, tx);
+      rows.push(
+        ...(await this.notify(
+          tx,
+          subject,
+          "peer_joined",
+          now.peers.map((p) => p.id),
+          o.excludeManager ? null : (now.manager?.id ?? null),
+        )),
+      );
+    }
+    return rows;
+  }
+
+  /** Hands committed held rows over (after the caller's commit), once boot is done; never awaited. */
+  handOffHeldRows(rows: PendingRow[]): void {
+    for (const row of rows) this.handOffHeld(row);
   }
 
   private async notify(
+    tx: Tx,
     subject: { id: string; slug: string; displayName: string },
     kind: "peer_joined" | "peer_left",
     peerIds: string[],
     managerId: string | null,
     left?: PeerLeft,
-  ): Promise<void> {
+  ): Promise<PendingRow[]> {
     const targets: { id: string; relation: "peer" | "report" }[] = peerIds.map((id) => ({
       id,
       relation: "peer",
     }));
     if (managerId) targets.push({ id: managerId, relation: "report" });
+    const rows: PendingRow[] = [];
     for (const t of targets) {
-      const to = await this.d.store.agentById(t.id);
-      if (!to || to.archivedAt || to.id === subject.id) continue;
-      const row = await this.d.store.createHeld({
-        kind,
-        toAgentId: to.id,
-        subjectAgentId: subject.id,
-        notice: t.relation,
-        body: peerBody(subject, t.relation, left ? { kind, left } : { kind: "peer_joined" }),
-      });
-      this.handOffHeld(row);
+      const to = await this.d.store.agentById(t.id, tx);
+      if (!to || to.archivedAt || to.terminatedAt || to.id === subject.id) continue;
+      rows.push(
+        await this.d.store.createHeld(
+          {
+            kind,
+            toAgentId: to.id,
+            subjectAgentId: subject.id,
+            notice: t.relation,
+            body: peerBody(subject, t.relation, left ? { kind, left } : { kind: "peer_joined" }),
+          },
+          tx,
+        ),
+      );
     }
+    return rows;
   }
 
   /** A held row's hand-off, once boot is done and unless shutdown has begun (the row then waits for the next boot). */

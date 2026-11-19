@@ -459,3 +459,81 @@ test("create refuses a slug that is a human handle", async () => {
     }),
   ).rejects.toMatchObject({ code: "slug_taken" });
 });
+
+async function createSpawner(slug: string) {
+  await svc.create({
+    template: "lead",
+    slug,
+    displayName: slug,
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+  return idOf(slug);
+}
+/** A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). */
+const insertChild = (
+  q: typeof t.sql,
+  spawnerId: string,
+  slug: string,
+  terminated = false,
+) => q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+       select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+              ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
+       from agents where id = ${spawnerId}`;
+
+test("archive takes the spawner's row lock first, then counts live reports in that transaction (spec §5.7)", async () => {
+  const id = await createSpawner("spawner");
+  let locked!: () => void;
+  const isLocked = new Promise<void>((r) => {
+    locked = r;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  // A spawn's transaction stand-in: holds the row lock, inserts a live child, commits when released.
+  const spawn = t.sql.begin(async (tx) => {
+    await tx`select id from agents where id = ${id} for no key update`;
+    locked();
+    await released;
+    await insertChild(tx as unknown as typeof t.sql, id, "spawner-ab12");
+  });
+  await isLocked;
+  const archive = svc.archive("spawner").then(
+    () => "archived",
+    (e: unknown) => e,
+  );
+  // The archive is waiting on the row lock (a real lock wait, not a sleep).
+  await vi.waitFor(async () => {
+    const [w] =
+      await t.sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`;
+    expect(w?.n).toBe(1);
+  });
+  release();
+  await spawn;
+  expect(await archive).toMatchObject({
+    code: "has_reports",
+    message: "@spawner has live spawned agents: @spawner-ab12. Terminate them first.",
+    extra: { reports: ["spawner-ab12"] },
+  });
+  expect((await t.sql`select archived_at from agents where id = ${id}`)[0]?.archived_at).toBeNull();
+});
+
+test("archive counts only live reports: a terminated spawned agent doesn't block it", async () => {
+  const id = await createSpawner("spawner-2");
+  await insertChild(t.sql, id, "spawner-2-cd34", true);
+  expect((await svc.archive("spawner-2")).archivedAt).not.toBeNull();
+});
+
+test("archive names every live spawned agent", async () => {
+  const id = await createSpawner("spawner-3");
+  await insertChild(t.sql, id, "spawner-3-bb22");
+  await insertChild(t.sql, id, "spawner-3-aa11");
+  await expect(svc.archive("spawner-3")).rejects.toMatchObject({
+    code: "has_reports",
+    message:
+      "@spawner-3 has live spawned agents: @spawner-3-aa11, @spawner-3-bb22. Terminate them first.",
+    extra: { reports: ["spawner-3-aa11", "spawner-3-bb22"] },
+  });
+});

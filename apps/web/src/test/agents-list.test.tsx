@@ -1,6 +1,8 @@
 import { act, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { mockWorld } from "@/test/agent-screens-fixtures";
 import { alice, renderApp } from "@/test/render-app";
+import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 let pushFrame: (m: unknown) => void = () => {};
@@ -23,16 +25,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
     "fetch",
     vi.fn(async () =>
       json({
-        agents: [
-          {
-            slug: "dev",
-            displayName: "Dev agent",
-            description: "",
-            status: "working",
-            turnOpen: true,
-            runtime: "local",
-          },
-        ],
+        agents: [agentSummary({ status: "working", turnOpen: true, template: "developer" })],
       }),
     ),
   );
@@ -41,17 +34,17 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   expect(row).toHaveAttribute("href", "/agents/dev");
   expect(within(row).getByText("Working")).toBeInTheDocument();
   expect(within(row).getByText("dev")).toBeInTheDocument();
+  expect(within(row).getByText("developer")).toBeInTheDocument();
   expect(within(row).getByText("Unsandboxed")).toBeInTheDocument();
 });
 
-test("empty list names the seed command", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => json({ agents: [] })),
-  );
+test("an empty list points at creating an agent from a template", async () => {
+  mockWorld({ agents: [] });
   renderApp("/agents", alice);
-  expect(await screen.findByText(/No agents yet\. Run/)).toBeInTheDocument();
-  expect(screen.getByText("pnpm seed:dev-agent")).toBeInTheDocument();
+  expect(await screen.findByText(/No agents yet\./)).toHaveTextContent(
+    "No agents yet. Create one from a template.",
+  );
+  expect(screen.queryByText(/seed:dev-agent/)).not.toBeInTheDocument();
 });
 
 test("a pushed agent_status frame turns the row's Working into Idle", async () => {
@@ -59,23 +52,23 @@ test("a pushed agent_status frame turns the row's Working into Idle", async () =
     "fetch",
     vi.fn(async () =>
       json({
-        agents: [
-          {
-            slug: "dev",
-            displayName: "Dev agent",
-            description: "",
-            status: "working",
-            turnOpen: true,
-            runtime: "local",
-          },
-        ],
+        agents: [agentSummary({ status: "working", turnOpen: true })],
       }),
     ),
   );
   renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
   expect(within(row).getByText("Working")).toBeInTheDocument();
-  act(() => pushFrame({ type: "agent_status", agent: "dev", status: "idle", turnOpen: false }));
+  act(() =>
+    pushFrame({
+      type: "agent_status",
+      agent: "dev",
+      status: "idle",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
   expect(await within(row).findByText("Idle")).toBeInTheDocument();
   expect(within(row).queryByText("Working")).not.toBeInTheDocument();
 });

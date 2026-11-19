@@ -41,3 +41,28 @@ test("error text appears in an already-mounted alert region", () => {
   expect(screen.getByRole("alert")).toBe(alert);
   expect(alert).toHaveTextContent("Could not save.");
 });
+
+test("with no tone both regions are mounted and empty; pending goes in the status region", () => {
+  const { rerender } = render(<InlineOutcome />);
+  const status = screen.getByRole("status");
+  expect(status).toBeEmptyDOMElement();
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  rerender(<InlineOutcome tone="pending">Re-syncing…</InlineOutcome>);
+  expect(screen.getByRole("status")).toBe(status);
+  expect(status).toHaveTextContent("Re-syncing…");
+});
+
+test("a new focusKey moves focus to the line; the first render doesn't", () => {
+  const { rerender } = render(
+    <InlineOutcome tone="pending" focusKey={1}>
+      Restoring…
+    </InlineOutcome>,
+  );
+  expect(document.body).toHaveFocus();
+  rerender(
+    <InlineOutcome tone="success" focusKey={2}>
+      Restored.
+    </InlineOutcome>,
+  );
+  expect(screen.getByText("Restored.").closest("[tabindex]")).toHaveFocus();
+});

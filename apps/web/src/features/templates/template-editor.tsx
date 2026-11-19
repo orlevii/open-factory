@@ -269,11 +269,10 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               </Button>
             ) : (
               <Button variant="ghost" asChild>
-                {/* A plain anchor: the new-agent route joins the router with the agent screens. */}
-                <a href={`/agents/new?template=${encodeURIComponent(name)}`} title="Create agent">
+                <Link to="/agents/new" search={{ template: name }} title="Create agent">
                   <UserPlus aria-hidden="true" data-icon="inline-start" />
                   <span className="max-md:sr-only">Create agent</span>
-                </a>
+                </Link>
               </Button>
             )}
             <Button variant="ghost" title="Delete template" onClick={() => setConfirmOpen(true)}>

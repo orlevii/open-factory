@@ -287,7 +287,12 @@ test("a rejected interrupt write before an unexpected exit keeps the real exit r
 });
 
 test("the first batch after a notice begins with it, even ahead of an older pending message", async () => {
-  await store.createMessage({ fromUserId: "u1", toAgentId: agentId, body: "old", urgent: false });
+  await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: agentId,
+    body: "old",
+    urgent: false,
+  });
   await rt.init(); // as after a restart: "old" is pending
   await rt.postNotice("crash", "it crashed"); // no process: nothing is written
   expect(rt.queueItems().map((q) => [q.kind, q.from, q.body])).toEqual([

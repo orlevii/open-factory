@@ -54,6 +54,7 @@ class Boot {
       containers: new ContainerManager({ docker: this.docker, log: silentLog, uid: 501, gid: 20 }),
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
+      memberUpdateDebounceMs: 30_000,
       log: this.log,
     });
   }
@@ -94,7 +95,7 @@ async function agent(o: { status?: string } = {}): Promise<string> {
   return id;
 }
 const pending = (id: string, body: string) =>
-  store.createMessage({ fromUserId: "u1", toAgentId: id, body, urgent: false });
+  store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
 const openTurn = (id: string) => store.openTurn(id);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });

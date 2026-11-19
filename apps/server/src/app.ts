@@ -217,6 +217,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       containers,
       supervisor: runtimes.supervisor,
       runtimes,
+      memberUpdateDebounceMs: config.memberUpdateDebounceMs,
       log: app.log,
     });
   } catch (err) {

@@ -297,7 +297,7 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       const row = await this.d.store.createMessage({
-        fromUserId: m.fromUserId,
+        from: { userId: m.fromUserId },
         toAgentId: this.agent.id,
         body: m.body,
         urgent: m.urgent,

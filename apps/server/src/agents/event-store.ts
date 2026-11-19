@@ -9,6 +9,7 @@ import {
 import {
   and,
   asc,
+  desc,
   eq,
   gt,
   inArray,
@@ -17,13 +18,33 @@ import {
   lt,
   lte,
   notInArray,
+  type SQL,
   sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { capPayload } from "./cap.ts";
 import type { NoticeType } from "./notices.ts";
 
-const { agents, credentials, sessionEvents, turns, messages } = schema;
+const { agents, credentials, sessionEvents, turns, messages, inboxItems, users } = schema;
 type MessageRow = typeof messages.$inferSelect;
+/** The one joined row shape the queue and the runtime use (spec §7.3): the row plus who sent it and what it is about. */
+export type PendingRow = MessageRow & {
+  fromHandle: string | null;
+  fromSlug: string | null;
+  subjectSlug: string | null;
+  subjectDisplayName: string | null;
+};
+export interface InboxEntry {
+  id: string;
+  messageId: string;
+  from: { kind: "agent" | "factory"; name: string };
+  about?: string;
+  to: string;
+  preview: string;
+  urgent: boolean;
+  createdAt: string;
+  link: { agentSlug: string; seq?: number };
+}
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Exec = Db | Tx;
 
@@ -96,10 +117,13 @@ export class EventStore {
     return rows.map((r) => r.id);
   }
   /**
-   * Boot (spec §5.7 step 6): the non-archived, non-errored agents with pending items, by their oldest pending item
-   * (FIFO across the restart). `resume` when a factory-restarted notice is among them.
+   * Boot (spec §5.7 step 6, §8): the non-archived, non-errored agents with deliverable pending items, by their oldest
+   * such item (FIFO across the restart). Deliverable: a message or a notice, or a member update older than the
+   * debounce (a young one waits for its timer; peer rows never wake anyone). `resume` when a factory-restarted notice
+   * is among them.
    */
-  async bootWakes(): Promise<{ id: string; slug: string; resume: boolean }[]> {
+  async bootWakes(debounceMs: number): Promise<{ id: string; slug: string; resume: boolean }[]> {
+    const deliverable = this.deliverableWhere(debounceMs);
     const rows = await this.db
       .select({
         id: agents.id,
@@ -107,11 +131,36 @@ export class EventStore {
         resume: sql<boolean>`bool_or(${messages.notice} = 'factory_restarted')`,
       })
       .from(agents)
-      .innerJoin(messages, and(eq(messages.toAgentId, agents.id), eq(messages.state, "pending")))
+      .innerJoin(
+        messages,
+        and(eq(messages.toAgentId, agents.id), eq(messages.state, "pending"), deliverable),
+      )
       .where(and(isNull(agents.archivedAt), sql`${agents.status} <> 'errored'`))
       .groupBy(agents.id, agents.slug)
       .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
     return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
+  }
+  private deliverableWhere(debounceMs: number) {
+    const cutoff = new Date(Date.now() - debounceMs);
+    return sql`(${messages.kind} in ('message', 'system') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+  }
+  /** Non-archived, non-errored agents whose only pending member updates are still inside the debounce window. */
+  async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
+    const cutoff = new Date(Date.now() - debounceMs);
+    const rows = await this.db
+      .selectDistinct({ id: messages.toAgentId })
+      .from(messages)
+      .innerJoin(agents, eq(agents.id, messages.toAgentId))
+      .where(
+        and(
+          eq(messages.kind, "member_update"),
+          eq(messages.state, "pending"),
+          sql`${messages.createdAt} > ${cutoff.toISOString()}::timestamptz`,
+          isNull(agents.archivedAt),
+          sql`${agents.status} <> 'errored'`,
+        ),
+      );
+    return rows.flatMap((r) => (r.id ? [r.id] : []));
   }
   /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
   async clearRuntimeJournals(keep: string[] = []) {
@@ -345,13 +394,135 @@ export class EventStore {
   }
 
   // messages
-  async createMessage(m: { fromUserId: string; toAgentId: string; body: string; urgent: boolean }) {
-    const [row] = await this.db
-      .insert(messages)
-      .values({ id: randomUUID(), ...m })
-      .returning();
-    if (!row) throw new Error("insert returned no row");
-    return row;
+  /** A message to an agent. The clock is the server's (spec §7.3), never the column default. Returns the joined row. */
+  async createMessage(
+    m: {
+      from: { userId: string } | { agentId: string };
+      toAgentId: string;
+      body: string;
+      urgent: boolean;
+      fromToolUseId?: string | null;
+    },
+    tx: Exec = this.db,
+  ): Promise<PendingRow> {
+    const id = randomUUID();
+    await tx.insert(messages).values({
+      id,
+      kind: "message",
+      ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
+      toAgentId: m.toAgentId,
+      body: m.body,
+      urgent: m.urgent,
+      fromToolUseId: m.fromToolUseId ?? null,
+      createdAt: new Date(),
+    });
+    return this.pendingRow(id, tx);
+  }
+  /** A held peer or member-update row, pending until the runtime renders it (spec §8). Returns the joined row. */
+  async createHeld(
+    m: {
+      kind: "member_update" | "peer_joined" | "peer_left";
+      toAgentId: string;
+      fromAgentId?: string;
+      subjectAgentId?: string;
+      notice?: string;
+      body: string;
+    },
+    tx: Exec = this.db,
+  ): Promise<PendingRow> {
+    const id = randomUUID();
+    await tx.insert(messages).values({
+      id,
+      kind: m.kind,
+      toAgentId: m.toAgentId,
+      fromAgentId: m.fromAgentId ?? null,
+      subjectAgentId: m.subjectAgentId ?? null,
+      notice: m.notice ?? null,
+      body: m.body,
+      createdAt: new Date(),
+    });
+    return this.pendingRow(id, tx);
+  }
+  /**
+   * A message (or factory fact) for humans: delivered at once, with one inbox item per existing user (or the one
+   * addressed), in one transaction (spec §7.5).
+   */
+  async createHumanMessage(m: {
+    fromAgentId: string | null;
+    notice?: string;
+    subjectAgentId?: string;
+    kind: "message" | "system";
+    to: { userId: string } | "all";
+    body: string;
+    urgent: boolean;
+    fromToolUseId?: string | null;
+  }): Promise<{ row: MessageRow; userIds: string[] }> {
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const [row] = await tx
+        .insert(messages)
+        .values({
+          id: randomUUID(),
+          kind: m.kind,
+          fromAgentId: m.fromAgentId,
+          notice: m.notice ?? null,
+          subjectAgentId: m.subjectAgentId ?? null,
+          toUserId: m.to === "all" ? null : m.to.userId,
+          toAllHumans: m.to === "all",
+          fromToolUseId: m.fromToolUseId ?? null,
+          body: m.body,
+          urgent: m.urgent,
+          state: "delivered",
+          createdAt: now,
+          deliveredAt: now,
+        })
+        .returning();
+      if (!row) throw new Error("insert returned no row");
+      const targets =
+        m.to === "all"
+          ? await tx.select({ id: users.id }).from(users).orderBy(asc(users.id))
+          : [{ id: m.to.userId }];
+      const userIds = targets.map((u) => u.id);
+      if (userIds.length)
+        await tx.insert(inboxItems).values(
+          userIds.map((userId) => ({
+            id: randomUUID(),
+            userId,
+            kind: "message" as const,
+            messageId: row.id,
+            createdAt: now,
+          })),
+        );
+      return { row, userIds };
+    });
+  }
+  /** One row with the same joins as the queue (sender handle and slug, subject slug and name), whatever its state. */
+  async pendingRow(id: string, tx: Exec = this.db): Promise<PendingRow> {
+    const [r] = await this.joined(tx).where(eq(messages.id, id));
+    if (!r) throw new Error(`message ${id} not found`);
+    return r;
+  }
+  private joined(tx: Exec) {
+    const fa = alias(agents, "fa");
+    const sa = alias(agents, "sa");
+    const q = tx
+      .select({
+        m: messages,
+        fromHandle: users.handle,
+        fromSlug: fa.slug,
+        subjectSlug: sa.slug,
+        subjectDisplayName: sa.displayName,
+      })
+      .from(messages)
+      .leftJoin(users, eq(users.id, messages.fromUserId))
+      .leftJoin(fa, eq(fa.id, messages.fromAgentId))
+      .leftJoin(sa, eq(sa.id, messages.subjectAgentId));
+    return {
+      where: async (w: SQL | undefined, order: SQL[] = []): Promise<PendingRow[]> => {
+        const rows = await q.where(w).orderBy(...order);
+        return rows.map(({ m, ...rest }) => ({ ...m, ...rest }));
+      },
+    };
   }
   async pendingMessages(agentId: string) {
     return this.db
@@ -408,15 +579,12 @@ export class EventStore {
         ),
       );
   }
-  /** Pending items in delivery order (system notices first, then by age), with the sender's handle (null for `@factory`). */
-  async pendingQueue(agentId: string): Promise<(MessageRow & { fromHandle: string | null })[]> {
-    const rows = await this.db
-      .select({ m: messages, fromHandle: schema.users.handle })
-      .from(messages)
-      .leftJoin(schema.users, eq(schema.users.id, messages.fromUserId))
-      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
-      .orderBy(sql`(${messages.kind} = 'system') desc`, asc(messages.createdAt), asc(messages.id));
-    return rows.map((r) => ({ ...r.m, fromHandle: r.fromHandle }));
+  /** Pending items in delivery order (system notices first, then by age), as the joined row. */
+  async pendingQueue(agentId: string): Promise<PendingRow[]> {
+    return this.joined(this.db).where(
+      and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")),
+      [sql`(${messages.kind} = 'system') desc`, asc(messages.createdAt), asc(messages.id)],
+    );
   }
   async markDelivered(ids: string[], tx: Exec = this.db) {
     if (ids.length)
@@ -429,11 +597,129 @@ export class EventStore {
     if (ids.length)
       await tx
         .update(messages)
-        .set({ state: "pending", deliveredAt: null, deliveredTurnId: null })
+        .set({
+          state: "pending",
+          deliveredAt: null,
+          deliveredTurnId: null,
+          deliveredEventSeq: null,
+        })
         .where(inArray(messages.id, ids));
   }
   async setDeliveredTurn(ids: string[], turnId: string, tx: Exec = this.db) {
     if (ids.length)
       await tx.update(messages).set({ deliveredTurnId: turnId }).where(inArray(messages.id, ids));
+  }
+  /** The recipient's session event that carries the delivered batch (spec §11); written with the batch. */
+  async setDeliveredEventSeq(ids: string[], seq: number, tx: Exec = this.db) {
+    if (ids.length)
+      await tx.update(messages).set({ deliveredEventSeq: seq }).where(inArray(messages.id, ids));
+  }
+  /** The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). */
+  async markRejected(id: string, tx: Exec = this.db) {
+    await tx.update(messages).set({ state: "rejected" }).where(eq(messages.id, id));
+  }
+
+  /** One message with the events that show it on each side (spec §11). */
+  async messageLookup(id: string): Promise<
+    | {
+        id: string;
+        state: string;
+        recipientEvent?: { agentSlug: string; seq: number };
+        senderEvent?: { agentSlug: string; seq: number };
+      }
+    | undefined
+  > {
+    const [m] = await this.db.select().from(messages).where(eq(messages.id, id));
+    if (!m) return undefined;
+    const out: NonNullable<Awaited<ReturnType<EventStore["messageLookup"]>>> = {
+      id: m.id,
+      state: m.state,
+    };
+    if (m.state === "delivered" && m.deliveredEventSeq !== null && m.toAgentId) {
+      const to = await this.agentById(m.toAgentId);
+      if (to) out.recipientEvent = { agentSlug: to.slug, seq: m.deliveredEventSeq };
+    }
+    const sender = await this.senderEvent(m);
+    if (sender) out.senderEvent = sender;
+    return out;
+  }
+  private async senderEvent(
+    m: MessageRow,
+  ): Promise<{ agentSlug: string; seq: number } | undefined> {
+    if (!m.fromAgentId || !m.fromToolUseId) return undefined;
+    const [row] = await this.db
+      .select({ seq: sessionEvents.seq, slug: agents.slug })
+      .from(sessionEvents)
+      .innerJoin(agents, eq(agents.id, sessionEvents.agentId))
+      .where(
+        and(
+          eq(sessionEvents.agentId, m.fromAgentId),
+          eq(sessionEvents.type, "tool_call"),
+          sql`${sessionEvents.payload}->>'toolUseId' = ${m.fromToolUseId}`,
+        ),
+      )
+      .limit(1);
+    return row ? { agentSlug: row.slug, seq: row.seq } : undefined;
+  }
+
+  /** The user's inbox, newest first. Cursor is `created_at|id` in base64url (spec §11). */
+  async inboxPage(
+    userId: string,
+    before?: string,
+    limit = 50,
+  ): Promise<{ items: InboxEntry[]; nextCursor: string | null }> {
+    const fa = alias(agents, "fa");
+    const sa = alias(agents, "sa");
+    const tu = alias(users, "tu");
+    let cursor: SQL | undefined;
+    if (before) {
+      const [at, id] = Buffer.from(before, "base64url").toString().split("|");
+      if (!at || !id || Number.isNaN(Date.parse(at))) throw new Error("invalid cursor");
+      cursor = sql`(${inboxItems.createdAt}, ${inboxItems.id}) < (${at}::timestamptz, ${id})`;
+    }
+    const rows = await this.db
+      .select({
+        item: inboxItems,
+        m: messages,
+        fromSlug: fa.slug,
+        subjectSlug: sa.slug,
+        toHandle: tu.handle,
+        createdAtIso: sql<string>`to_char(${inboxItems.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+      .from(inboxItems)
+      .innerJoin(messages, eq(messages.id, inboxItems.messageId))
+      .leftJoin(fa, eq(fa.id, messages.fromAgentId))
+      .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
+      .leftJoin(tu, eq(tu.id, messages.toUserId))
+      .where(and(eq(inboxItems.userId, userId), cursor))
+      .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
+      .limit(limit + 1);
+    const page = rows.slice(0, limit);
+    const items: InboxEntry[] = [];
+    for (const r of page) {
+      const factory = r.m.kind === "system" || !r.fromSlug;
+      const sender = await this.senderEvent(r.m);
+      const agentSlug =
+        sender?.agentSlug ?? (factory ? r.subjectSlug : r.fromSlug) ?? r.subjectSlug ?? "";
+      items.push({
+        id: r.item.id,
+        messageId: r.m.id,
+        from: factory
+          ? { kind: "factory", name: "factory" }
+          : { kind: "agent", name: r.fromSlug ?? "" },
+        ...(r.subjectSlug ? { about: r.subjectSlug } : {}),
+        to: r.m.toAllHumans ? "@humans" : `@${r.toHandle ?? ""}`,
+        preview: r.m.body.slice(0, 280),
+        urgent: r.m.urgent,
+        createdAt: r.item.createdAt.toISOString(),
+        link: { agentSlug, ...(sender ? { seq: sender.seq } : {}) },
+      });
+    }
+    const last = page.at(-1);
+    const nextCursor =
+      rows.length > limit && last
+        ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
+        : null;
+    return { items, nextCursor };
   }
 }

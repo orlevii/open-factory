@@ -24,6 +24,8 @@ export interface ReconcileDeps {
   containers?: Pick<ContainerManager, "listOurs" | "stopListed">;
   supervisor: Pick<Supervisor, "pause">;
   runtimes: Pick<AgentRuntimes, "bySlug">;
+  /** A member update younger than this is not yet deliverable (spec §8). */
+  memberUpdateDebounceMs: number;
   log: RuntimeLog;
 }
 
@@ -123,7 +125,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   for (const p of await d.store.pausedCredentials()) d.supervisor.pause(p.id, p.until, p.exact);
   // Then the wakes, by each agent's oldest pending item, one at a time so the queue keeps that order. Each runtime is
   // loaded first: the Supervisor only wakes a loaded runtime.
-  for (const w of await d.store.bootWakes()) {
+  for (const w of await d.store.bootWakes(d.memberUpdateDebounceMs)) {
     if (reapFailed.has(w.id)) continue;
     try {
       const rt = await d.runtimes.bySlug(w.slug);

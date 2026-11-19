@@ -51,7 +51,7 @@ class World {
     await insertAgent(t.sql, { id, slug: `sup${n}`, ...(o.status ? { status: o.status } : {}) });
     if (o.errorKind) await t.sql`update agents set error_kind = ${o.errorKind} where id = ${id}`;
     for (const body of o.pending ?? [])
-      await store.createMessage({ fromUserId: "u1", toAgentId: id, body, urgent: false });
+      await store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
     const agent = await store.agentById(id);
     if (!agent) throw new Error("no agent");
     const rt = new AgentRuntime({

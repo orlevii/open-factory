@@ -20,10 +20,11 @@ test("Linux binds the bridge gateway when it is on a host interface", () => {
     }),
   ).toEqual({
     hosts: ["127.0.0.1", "172.17.0.1"],
+    optionalHosts: ["172.17.0.1"],
     allowedSources: ["127.0.0.0/8", "::1/128", "172.17.0.0/16"],
   });
 });
-test("a gateway not on a host interface, or public, warns once and stays on loopback", () => {
+test("a gateway absent from the interfaces (docker0 without carrier) is still bound, as an optional host", () => {
   warn.length = 0;
   expect(
     resolveAgentBindHosts({
@@ -31,28 +32,62 @@ test("a gateway not on a host interface, or public, warns once and stays on loop
       platform: "linux",
       bridge: { gateway: "172.17.0.1", subnet: "172.17.0.0/16" },
       interfaces: ifaces(),
-    }).hosts,
-  ).toEqual(["127.0.0.1"]);
+    }),
+  ).toEqual({
+    hosts: ["127.0.0.1", "172.17.0.1"],
+    optionalHosts: ["172.17.0.1"],
+    allowedSources: ["127.0.0.0/8", "::1/128", "172.17.0.0/16"],
+  });
+  expect(warn).toEqual([]);
+});
+test("the subnet comes from the interface entry when Docker gives none", () => {
+  const nets = {
+    docker0: [{ address: "172.17.0.1", family: "IPv4", internal: false, cidr: "172.17.0.1/16" }],
+  } as never;
   expect(
     resolveAgentBindHosts({
       ...base,
       platform: "linux",
-      bridge: { gateway: "8.8.8.1" },
-      interfaces: ifaces("8.8.8.1"),
-    }).hosts,
-  ).toEqual(["127.0.0.1"]);
-  expect(warn).toHaveLength(2);
-  expect(warn[0]).toContain("set FACTORY_AGENT_HOST");
+      bridge: { gateway: "172.17.0.1" },
+      interfaces: nets,
+    }).allowedSources,
+  ).toEqual(["127.0.0.0/8", "::1/128", "172.17.0.0/16"]);
 });
-test("macOS uses loopback only; never 0.0.0.0 by default", () => {
+test("a public gateway, or no usable private subnet, warns once and stays on loopback", () => {
+  for (const bridge of [
+    { gateway: "8.8.8.1", subnet: "8.8.8.0/24" },
+    { gateway: "172.17.0.1" },
+    { gateway: "172.17.0.1", subnet: "0.0.0.0/0" },
+    { gateway: "172.17.0.1", subnet: "172.18.0.0/16" },
+    {},
+  ]) {
+    warn.length = 0;
+    expect(
+      resolveAgentBindHosts({ ...base, platform: "linux", bridge, interfaces: ifaces() }),
+    ).toEqual({
+      hosts: ["127.0.0.1"],
+      optionalHosts: [],
+      allowedSources: ["127.0.0.0/8", "::1/128"],
+    });
+    expect(warn).toHaveLength(1);
+    expect(warn[0]).toContain("set FACTORY_AGENT_HOST");
+  }
+});
+test("macOS uses loopback only, without a warning; never 0.0.0.0 by default", () => {
+  warn.length = 0;
   expect(
     resolveAgentBindHosts({
       ...base,
       platform: "darwin",
-      bridge: { gateway: "172.17.0.1" },
+      bridge: { gateway: "172.17.0.1", subnet: "172.17.0.0/16" },
       interfaces: ifaces("172.17.0.1"),
-    }).hosts,
-  ).toEqual(["127.0.0.1"]);
+    }),
+  ).toEqual({
+    hosts: ["127.0.0.1"],
+    optionalHosts: [],
+    allowedSources: ["127.0.0.0/8", "::1/128"],
+  });
+  expect(warn).toEqual([]);
 });
 test("the default list never contains 0.0.0.0 or ::", () => {
   for (const platform of ["linux", "darwin", "win32"] as const) {
@@ -86,6 +121,7 @@ test("an override address allows its interface's network, not a /32", () => {
     }),
   ).toEqual({
     hosts: ["127.0.0.1", "172.17.0.1"],
+    optionalHosts: [],
     allowedSources: ["127.0.0.0/8", "::1/128", "172.17.0.0/16"],
   });
 });
@@ -97,7 +133,11 @@ test("an explicit 0.0.0.0 override accepts any source and warns once", () => {
     override: ["0.0.0.0"],
     interfaces: ifaces(),
   });
-  expect(r).toEqual({ hosts: ["0.0.0.0"], allowedSources: ["0.0.0.0/0", "::/0"] });
+  expect(r).toEqual({
+    hosts: ["0.0.0.0"],
+    optionalHosts: [],
+    allowedSources: ["0.0.0.0/0", "::/0"],
+  });
   expect(warn).toEqual([
     "agent listener is reachable on all interfaces; the token is the only protection",
   ]);

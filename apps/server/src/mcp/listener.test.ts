@@ -2,7 +2,7 @@ import { connect } from "node:net";
 import { Writable } from "node:stream";
 import Fastify from "fastify";
 import { afterEach, expect, test } from "vitest";
-import { resolveAgentBindHosts } from "./bind-hosts.ts";
+import { BRIDGE_WARNING, resolveAgentBindHosts } from "./bind-hosts.ts";
 import { startAgentListener } from "./listener.ts";
 import { AgentTokens } from "./tokens.ts";
 
@@ -308,4 +308,45 @@ test("hop-by-hop headers of the MCP response are not copied, on JSON and SSE res
       expect(r.headers.get(k), `${type} ${k}`).toBeNull();
     expect(r.headers.get("keep-alive"), type).not.toBe("timeout=999");
   }
+});
+
+// 192.0.2.1 (TEST-NET-1) is on no host interface: binding it fails with EADDRNOTAVAIL, like a rootless/remote gateway.
+test("an optional host that is not a local address warns once; the listener stays up on loopback", async () => {
+  const warns: unknown[][] = [];
+  const capture = { ...(log as object), warn: (...a: unknown[]) => warns.push(a) } as never;
+  const l = await startAgentListener({
+    hosts: ["127.0.0.1", "192.0.2.1"],
+    optionalHosts: ["192.0.2.1"],
+    port: 0,
+    allowedSources: ["127.0.0.0/8"],
+    version: "9.9.9",
+    tokens: new AgentTokens(),
+    isArchived: async () => false,
+    mcp: async () => new Response("{}"),
+    log: capture,
+  });
+  closers.push(l.close);
+  expect(l.hosts).toEqual(["127.0.0.1"]);
+  expect(warns).toEqual([[{ host: "192.0.2.1" }, BRIDGE_WARNING]]);
+  expect((await fetch(`http://127.0.0.1:${l.port}/api/status`)).status).toBe(200);
+});
+test("a required host that can't be bound fails the start", async () => {
+  await expect(
+    startAgentListener({
+      hosts: ["127.0.0.1", "192.0.2.1"],
+      port: 0,
+      allowedSources: ["127.0.0.0/8"],
+      version: "9.9.9",
+      tokens: new AgentTokens(),
+      isArchived: async () => false,
+      mcp: async () => new Response("{}"),
+      log,
+    }),
+  ).rejects.toThrow(/could not bind 192\.0\.2\.1/);
+});
+test("an optional host failing for another reason (address in use) still fails the start", async () => {
+  const { port } = await startOnPort();
+  await expect(start({ hosts: ["127.0.0.1"], optionalHosts: ["127.0.0.1"], port })).rejects.toThrow(
+    /could not bind 127\.0\.0\.1/,
+  );
 });

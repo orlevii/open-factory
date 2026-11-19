@@ -1,13 +1,15 @@
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
-import { inCidr } from "./bind-hosts.ts";
+import { BRIDGE_WARNING, inCidr } from "./bind-hosts.ts";
 import type { AgentTokens } from "./tokens.ts";
 
 export const AGENT_BODY_LIMIT = 512 * 1024;
 
 export interface AgentListenerInput {
   hosts: string[];
+  /** Hosts (a subset of `hosts`) whose bind may fail with EADDRNOTAVAIL: logged once, then skipped. */
+  optionalHosts?: string[];
   port: number;
   allowedSources: string[];
   version: string;
@@ -124,10 +126,11 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
 /** The agent listener (spec §5.1): one small Fastify instance per bind address, same routes and hooks. */
 export async function startAgentListener(
   i: AgentListenerInput,
-): Promise<{ port: number; close(): Promise<void> }> {
+): Promise<{ port: number; hosts: string[]; close(): Promise<void> }> {
   const allowed = (addr: string | undefined) =>
     addr !== undefined && i.allowedSources.some((c) => inCidr(addr, c));
   const started: FastifyInstance[] = [];
+  const bound: string[] = [];
   const closeAll = async () => {
     await Promise.all(started.map((a) => a.close()));
   };
@@ -143,17 +146,27 @@ export async function startAgentListener(
         await app.listen({ host, port });
       } catch (err) {
         await app.close().catch(() => undefined);
+        // Not a local address (rootless Docker, a remote DOCKER_HOST, Docker Desktop for Linux): spec §5.3's fallback.
+        if (
+          i.optionalHosts?.includes(host) &&
+          (err as { code?: unknown }).code === "EADDRNOTAVAIL"
+        ) {
+          i.log.warn({ host }, BRIDGE_WARNING);
+          continue;
+        }
         throw new Error(
           `agent listener could not bind ${host}:${port}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
       started.push(app);
+      bound.push(host);
       const addr = app.server.address();
       if (port === 0 && addr && typeof addr === "object") port = addr.port;
     }
+    if (started.length === 0) throw new Error("agent listener bound no address");
   } catch (err) {
     await closeAll();
     throw err;
   }
-  return { port, close: closeAll };
+  return { port, hosts: bound, close: closeAll };
 }

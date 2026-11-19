@@ -333,6 +333,7 @@ async function listenForAgents(
   });
   const listener = await startAgentListener({
     hosts: bind.hosts,
+    optionalHosts: bind.optionalHosts,
     port: config.agentPort,
     allowedSources: bind.allowedSources,
     version: FACTORY_VERSION,
@@ -353,6 +354,6 @@ async function listenForAgents(
       config.agentUrl = url.toString().replace(/\/$/, "");
     }
   }
-  d.log.info({ hosts: bind.hosts, port: listener.port }, "agent listener ready");
+  d.log.info({ hosts: listener.hosts, port: listener.port }, "agent listener ready");
   return listener;
 }

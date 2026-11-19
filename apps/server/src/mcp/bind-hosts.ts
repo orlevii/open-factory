@@ -74,6 +74,18 @@ const isWildcard = (h: string) => h === "0.0.0.0" || h === "::";
 const isPrivateV4 = (h: string) =>
   inCidr(h, "10.0.0.0/8") || inCidr(h, "172.16.0.0/12") || inCidr(h, "192.168.0.0/16");
 
+const PRIVATE_V4: [string, number][] = [
+  ["10.0.0.0", 8],
+  ["172.16.0.0", 12],
+  ["192.168.0.0", 16],
+];
+/** A CIDR wholly inside one private IPv4 range (so a bogus `0.0.0.0/0` subnet never opens the listener). */
+const isPrivateV4Cidr = (c: string) => {
+  const [base = "", lenStr] = c.split("/");
+  const len = Number(lenStr);
+  return PRIVATE_V4.some(([net, l]) => len >= l && inCidr(base, `${net}/${l}`));
+};
+
 type Interfaces = ReturnType<typeof os.networkInterfaces>;
 
 function findInterfaceEntry(interfaces: Interfaces, address: string) {
@@ -95,8 +107,18 @@ export interface BindInput {
 /**
  * The agent listener's bind list and the CIDRs its sources must fall in (spec §5.3).
  * The default list never contains `0.0.0.0` or `::`; only an explicit override can.
+ *
+ * `optionalHosts` (a subset of `hosts`) may fail to bind with EADDRNOTAVAIL: the listener then warns and goes on.
+ * The bridge gateway is one: Docker's word is trusted even when `os.networkInterfaces()` doesn't list it, since
+ * Node omits an interface that isn't running and `docker0` has no carrier while no container is attached (at boot).
+ * Where the gateway is not a local address (rootless Docker, a remote DOCKER_HOST, Docker Desktop for Linux) the
+ * bind fails with EADDRNOTAVAIL and the listener stays on loopback with one warning.
  */
-export function resolveAgentBindHosts(i: BindInput): { hosts: string[]; allowedSources: string[] } {
+export function resolveAgentBindHosts(i: BindInput): {
+  hosts: string[];
+  optionalHosts: string[];
+  allowedSources: string[];
+} {
   const allowed = [...LOOPBACK_CIDRS];
   const add = (c: string | undefined) => {
     if (c && !allowed.includes(c)) allowed.push(c);
@@ -122,7 +144,7 @@ export function resolveAgentBindHosts(i: BindInput): { hosts: string[]; allowedS
     }
     if (hosts.some(isWildcard)) {
       i.warn(ALL_INTERFACES_WARNING);
-      return { hosts, allowedSources: [...ANY_CIDRS] };
+      return { hosts, optionalHosts: [], allowedSources: [...ANY_CIDRS] };
     }
     for (const h of hosts) {
       if (isLoopback(h)) continue;
@@ -130,21 +152,25 @@ export function resolveAgentBindHosts(i: BindInput): { hosts: string[]; allowedS
       const entry = findInterfaceEntry(i.interfaces, h);
       if (entry?.cidr) add(networkOf(entry.cidr));
     }
-    return { hosts, allowedSources: allowed };
+    return { hosts, optionalHosts: [], allowedSources: allowed };
   }
 
   const hosts = ["127.0.0.1"];
+  const optionalHosts: string[] = [];
   if (i.platform === "linux") {
     const gw = i.bridge?.gateway;
-    if (gw && isPrivateV4(gw) && findInterfaceEntry(i.interfaces, gw)) {
+    const entry = gw ? findInterfaceEntry(i.interfaces, gw) : undefined;
+    const subnet = i.bridge?.subnet ?? (entry?.cidr ? networkOf(entry.cidr) : undefined);
+    // Without a private subnet holding the gateway, no container source could be allowed in.
+    if (gw && isPrivateV4(gw) && subnet && isPrivateV4Cidr(subnet) && inCidr(gw, subnet)) {
       hosts.push(gw);
-      const entry = findInterfaceEntry(i.interfaces, gw);
-      add(i.bridge?.subnet ?? (entry?.cidr ? networkOf(entry.cidr) : undefined));
+      optionalHosts.push(gw);
+      add(networkOf(subnet));
     } else {
       i.warn(BRIDGE_WARNING);
     }
   }
-  return { hosts, allowedSources: allowed };
+  return { hosts, optionalHosts, allowedSources: allowed };
 }
 
 /** The default bridge's gateway and subnet; `{}` when Docker isn't reachable. */

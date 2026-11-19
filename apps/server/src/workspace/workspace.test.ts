@@ -55,6 +55,8 @@ function setup(fakeEnv: Record<string, string> = {}) {
     config,
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
+    peers: [],
+    reports: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
   };
   return { home, hs, repo, ws, tpl, prep };
@@ -73,7 +75,7 @@ test("materialize then prepare: the full layout", async () => {
   const s = JSON.parse(readFileSync(path.join(wd, ".claude-config/settings.json"), "utf8"));
   expect(s.enabledPlugins).toEqual({ "p@mk": true });
   expect(s.permissions.additionalDirectories).toEqual([repo]);
-  expect(s.permissions.deny).toEqual(["Bash(curl:*)"]);
+  expect(s.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
   expect(JSON.parse(readFileSync(path.join(wd, ".mcp.json"), "utf8"))).toEqual({
     mcpServers: {
       x: { command: "x" },
@@ -106,7 +108,7 @@ test("prepare drops agent-added settings keys and re-asserts template rules", as
   writeFileSync(f, JSON.stringify(s));
   await ws.prepare(prep);
   const again = JSON.parse(readFileSync(f, "utf8"));
-  expect(again.permissions.deny).toEqual(["Bash(curl:*)"]);
+  expect(again.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
   expect(again).not.toHaveProperty("mine");
   expect(again.enabledPlugins).toEqual({ "p@mk": true });
 });
@@ -145,7 +147,7 @@ test("prepare treats a non-object previous settings.json like a parse failure", 
     writeFileSync(sp, bad);
     await ws.prepare(prep);
     const s = JSON.parse(readFileSync(sp, "utf8"));
-    expect(s.permissions.deny).toEqual(["Bash(curl:*)"]);
+    expect(s.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
   }
 });
 

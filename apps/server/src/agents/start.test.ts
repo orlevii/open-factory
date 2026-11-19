@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
+import { Neighborhood } from "../messaging/neighborhood.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
@@ -134,6 +135,7 @@ async function seedStartFixture() {
     vault,
     workspace,
     lock,
+    neighborhood: new Neighborhood(t.db),
     serverEnv: {
       PATH: "/usr/bin",
       HOME: "/home/u",

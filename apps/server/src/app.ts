@@ -152,6 +152,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const containers = new ContainerManager({ docker, log: app.log });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
+  const neighborhood = new Neighborhood(deps.db);
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
@@ -159,6 +160,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     lock,
     containers,
+    neighborhood,
   });
   const runtimes = new AgentRuntimes({
     store,
@@ -183,7 +185,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       }),
   });
   const templates = new TemplateIndex({ db: deps.db, config });
-  const neighborhood = new Neighborhood(deps.db);
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   const agents = new AgentService({
     db: deps.db,

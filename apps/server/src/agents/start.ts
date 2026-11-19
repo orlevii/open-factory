@@ -5,6 +5,7 @@ import { templateConfigSchema } from "@open-factory/shared";
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
+import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -53,6 +54,7 @@ export function createPrepareStart(d: {
   lock: KeyedMutex;
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
   containers?: Pick<ContainerManager, "stopIfRunning">;
+  neighborhood: Neighborhood;
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
@@ -133,6 +135,12 @@ export function createPrepareStart(d: {
           .where(eq(schema.agents.id, agent.reportsTo));
         manager = m ?? null;
       }
+      const hood = await d.neighborhood.of(agent.id);
+      const entry = (a: AgentRow) => ({
+        slug: a.slug,
+        displayName: a.displayName,
+        description: a.description,
+      });
       const grants = await d.db
         .select({ name: schema.projects.name, hostPath: schema.projects.hostPath })
         .from(schema.agentProjectGrants)
@@ -160,6 +168,8 @@ export function createPrepareStart(d: {
           config,
           manager,
           grants,
+          peers: hood.peers.map(entry),
+          reports: hood.reports.map(entry),
           mcpUrl:
             config.runtime === "docker"
               ? `${d.config.agentUrl}/mcp`

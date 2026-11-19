@@ -70,6 +70,8 @@ beforeEach(async () => {
     config,
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
+    peers: [],
+    reports: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
   };
   await ws.materialize("lead", "lead", tpl, prep);

@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
-import { buildClaudeMd } from "./claude-md.ts";
+import { buildClaudeMd, type OrgEntry } from "./claude-md.ts";
 import {
   backupDiffering,
   copyTargets,
@@ -59,6 +59,8 @@ export interface PrepareInput {
   config: TemplateConfig;
   manager: { slug: string; displayName: string } | null;
   grants: { name: string; hostPath: string }[];
+  peers: OrgEntry[];
+  reports: OrgEntry[];
   /** The agent listener's MCP endpoint as this agent reaches it (local loopback, or the Docker agentUrl). */
   mcpUrl: string;
 }
@@ -103,7 +105,7 @@ export class Workspace {
     _agentKey: string,
     slug: string,
     tpl: TemplateSource,
-    check: Omit<PrepareInput, "mcpUrl">,
+    check: Omit<PrepareInput, "mcpUrl" | "peers" | "reports">,
   ): Promise<void> {
     const workdir = this.workdir(slug);
     await mkdir(path.join(this.d.factoryHome, "agents"), { recursive: true });
@@ -267,6 +269,7 @@ export class Workspace {
       permissionMode: i.config.permissionMode,
       plugins: i.config.plugins,
       grantedPaths,
+      mcpUrl: i.mcpUrl,
     });
     await safe.writeFile(path.join(configRel, "settings.json"), JSON.stringify(settings, null, 2));
     await safe.writeFile(
@@ -284,6 +287,8 @@ export class Workspace {
         workdir,
         projects: i.grants,
         secretNames: i.config.secrets,
+        peers: i.peers,
+        reports: i.reports,
       }),
     );
     // Spec §11.4: mounts come only from factory-owned inputs (`tpl` is the copy under state/).

@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
+import { Neighborhood } from "../messaging/neighborhood.ts";
 import {
   ContainerManager,
   containerName,
@@ -179,6 +180,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
     workspace,
     lock,
     containers,
+    neighborhood: new Neighborhood(t.db),
   });
   const runtimes = new AgentRuntimes({
     tokens: noopTokens,

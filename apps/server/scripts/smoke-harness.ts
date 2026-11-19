@@ -1,6 +1,7 @@
 // Live smoke for S3 (spec §13.3). Needs Postgres (pnpm compose up -d) and CLAUDE_CODE_OAUTH_TOKEN in the env;
 // the token is stored as the test agent's credential (the server itself never reads it).
 // Uses the real runtime, driver and Postgres store; bypasses only HTTP and auth. Model: haiku.
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -16,6 +17,7 @@ import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
 import { AgentTokens } from "../src/mcp/tokens.ts";
+import { Neighborhood } from "../src/messaging/neighborhood.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
 import { KeyedMutex } from "../src/workspace/lock.ts";
 import { Workspace } from "../src/workspace/workspace.ts";
@@ -52,7 +54,14 @@ const agent = await seedTestAgent(
       : {}),
   },
 );
-const prepareStart = createPrepareStart({ db, config, vault, workspace, lock });
+const prepareStart = createPrepareStart({
+  db,
+  config,
+  vault,
+  workspace,
+  lock,
+  neighborhood: new Neighborhood(db),
+});
 const store = new EventStore(db);
 const bus = new EventBus();
 const log = { debug() {}, info: console.log, warn: console.warn, error: console.error };

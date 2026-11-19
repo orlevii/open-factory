@@ -1,5 +1,13 @@
 import type { TemplateConfig, TemplateIssue } from "@open-factory/shared";
-import { customType, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  customType,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 import { agents } from "./agents.ts";
 
 const bytea = customType<{ data: Buffer }>({ dataType: () => "bytea" });
@@ -32,6 +40,8 @@ export const credentials = pgTable("credentials", {
   valueEnc: bytea("value_enc").notNull(),
   lastVerifiedAt: ts("last_verified_at"),
   lastError: text("last_error"),
+  rateLimitedUntil: ts("rate_limited_until"),
+  rateLimitExact: boolean("rate_limit_exact").notNull().default(true),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at")
     .notNull()

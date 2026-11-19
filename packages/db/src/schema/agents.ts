@@ -15,6 +15,15 @@ import {
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
 
+/** Snapshot of live runtime state, taken every 10 s, used to reap leftovers and report lost work. */
+export type RuntimeJournal = {
+  claude?: { pid: number; start: string };
+  descendants?: { pid: number; start: string }[];
+  tasks: { taskId: string; description: string }[];
+  crons: { cronId: string; humanSchedule: string }[];
+  takenAt: string;
+};
+
 /** S3 subset of data-model.md's agents table; later specs add their columns. */
 export const agents = pgTable("agents", {
   id: text("id").primaryKey(),
@@ -33,6 +42,11 @@ export const agents = pgTable("agents", {
     .notNull()
     .references(() => credentials.id, { onDelete: "restrict" }),
   grantsOverridden: boolean("grants_overridden").notNull().default(false),
+  lastError: text("last_error"),
+  errorKind: text("error_kind"),
+  attempting: boolean("attempting").notNull().default(false),
+  runtimeJournal: jsonb("runtime_journal").$type<RuntimeJournal>(),
+  rateLimitNoticeOwed: boolean("rate_limit_notice_owed").notNull().default(false),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -84,9 +98,8 @@ export const messages = pgTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind").notNull().default("message"),
-    fromUserId: text("from_user_id")
-      .notNull()
-      .references(() => users.id),
+    fromUserId: text("from_user_id").references(() => users.id),
+    notice: text("notice"),
     toAgentId: text("to_agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),

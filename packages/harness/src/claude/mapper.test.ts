@@ -611,3 +611,62 @@ test("system/model_refusal_fallback maps to a quiet model_fallback, not an error
     ),
   ).toEqual([{ type: "model_fallback", message: "m-2" }]);
 });
+
+test("error-invalid-oauth-token: api_retry dropped; error code and apiErrorStatus", () => {
+  const { events, unmapped } = mapFixture("error-invalid-oauth-token");
+  expect(unmapped).toEqual([]);
+  const errors = ofType(events, "error");
+  expect(errors).toHaveLength(1);
+  expect(errors[0]).toMatchObject({ source: "api", code: "authentication_failed" });
+  expect(ofType(events, "turn_end")[0]).toMatchObject({ isError: true, apiErrorStatus: 401 });
+});
+
+test("permission-deny-rules: one system denial, one derived from tool_result_meta, no duplicates", () => {
+  const { events } = mapFixture("permission-deny-rules");
+  const denials = ofType(events, "permission_denied");
+  expect(denials).toHaveLength(2);
+  expect(denials[0]).toMatchObject({ toolName: "Bash", reasonType: "subcommandResults" });
+  expect(denials[1]).toMatchObject({
+    toolName: "Read",
+    reasonType: "rule",
+    reason: "File is in a directory that is denied by your permission settings.",
+  });
+  // the derived denial precedes its tool_result
+  const types = events.map((e) => e.type);
+  const readDenial = types.indexOf("permission_denied", types.indexOf("permission_denied") + 1);
+  expect(types[readDenial + 1]).toBe("tool_result");
+});
+
+test("permission-denied (classifier): no derived duplicate", () => {
+  const { events } = mapFixture("permission-denied");
+  const ids = ofType(events, "permission_denied").map((d) => d.toolUseId);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test("permission_denials fallback on result for an unreported id", () => {
+  const s = createMapperState({ resumed: false });
+  mapLine({ type: "system", subtype: "init", session_id: "s", model: "m" }, s);
+  mapLine(
+    {
+      type: "assistant",
+      message: { model: "m", content: [{ type: "tool_use", id: "t1", name: "Edit", input: {} }] },
+    },
+    s,
+  );
+  const out = mapLine(
+    {
+      type: "result",
+      is_error: false,
+      num_turns: 1,
+      permission_denials: [{ tool_name: "Edit", tool_use_id: "t1" }],
+    },
+    s,
+  );
+  expect(out[0]).toEqual({
+    type: "permission_denied",
+    toolName: "Edit",
+    toolUseId: "t1",
+    reasonType: "rule",
+    reason: "Denied by a permission rule",
+  });
+});

@@ -6,7 +6,7 @@
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s7-spawning-ui-design.md`](../designs/2026-11-19-s7-spawning-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/spawning.md`, `agent.md`, `reporting-line.md`, `message.md`, `credential.md`, `project.md`; `docs/product/architecture/factory-mcp.md`, `agent-runtime.md`, `workspace.md`, `permissions.md`, `context-assembly.md`, `data-model.md`; `docs/product/behavior/agents-and-sessions.md`; ADRs 0004, 0006, 0008, 0019; `docs/product/open-questions.md` (S0, S4, S5 and S6 findings).
 - **Builds on:** S4 ([spec](2026-11-19-s4-templates-workspace-design.md): agents, templates, `materialize`, `prepareStart`, `requestRestart`, credentials, grants, `buildSettings`, `buildClaudeMd`), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): Supervisor, wake queue, cap, hibernate path, crash and recovery, `ContainerManager`, boot reconciliation, closing latch) and S6 ([spec](2026-11-19-s6-messaging-reporting-design.md): agent listener, per-process tokens, factory MCP, router, held deliveries, forwarding, neighborhood, peer events, `isNameTaken`).
-- **Decision log:** the S7 design-decisions issue (linked from the PR).
+- **Decision log:** #54 ("S7 Spawning and ephemeral agents: design decisions").
 - **Stacked on:** `spec/s6-messaging-reporting` (PR #53) → `spec/s5-supervisor-docker` (PR #46) → `spec/s4-templates-workspace` (PR #37) → `spec/s3-walking-skeleton` (PR #27).
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -455,4 +455,4 @@ Touched: **#47** stays open (messaging ping-pong), with a note that spawning is 
 
 Untouched: #23, #26 (queued compacts; unrelated), #31–#36, #39–#43, #45, #48–#50.
 
-Follow-ups (issues opened with the decision issue): see the PR.
+Follow-ups: cleaning up worktrees and branches left by terminated spawned agents (#55); sharing plugin installs across spawned agents (#56); the TTL counting factory downtime (#57).

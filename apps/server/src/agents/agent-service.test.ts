@@ -179,9 +179,10 @@ test("update: a rename restarts the agent and exactly its direct reports", async
       [await idOf("lead"), await idOf("dev-1")].sort(),
     );
     spy.mockClear();
-    // No text change: the reports are left alone (only the agent's own feed change restarts it).
-    await svc.update("lead", { credential: "work" });
-    expect(spy).not.toHaveBeenCalled();
+    // A feed-only change (grants) restarts the agent itself and leaves its reports alone.
+    await svc.update("lead", { projects: [] });
+    expect(spy.mock.calls.map((c) => c[0])).toEqual([await idOf("lead")]);
+    await svc.update("lead", { projects: null });
   } finally {
     spy.mockRestore();
   }

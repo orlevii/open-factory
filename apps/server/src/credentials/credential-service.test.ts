@@ -64,13 +64,15 @@ test("rejected → 422 credential_rejected and no row; unreachable → credentia
   result = { ok: true };
 });
 
-test("duplicate name → 409 credential_exists", async () => {
+test("duplicate name → 409 credential_exists before any paid verification turn", async () => {
+  seen.length = 0;
   await expect(svc.create({ name: "work", kind: "oauth_token", value: "y" })).rejects.toMatchObject(
     {
       status: 409,
       code: "credential_exists",
     },
   );
+  expect(seen).toEqual([]);
 });
 
 async function rowOf(name: string) {
@@ -120,6 +122,7 @@ test("replace on an unknown credential → 404", async () => {
   await expect(svc.replace("ghost", "v")).rejects.toMatchObject({
     status: 404,
     code: "credential_not_found",
+    message: "No credential named ghost.",
   });
 });
 
@@ -141,7 +144,7 @@ test("remove while used → 409 with usedBy, archivedUsedBy and both sentences",
     status: 409,
     code: "credential_in_use",
     message:
-      "Used by @a and @b. Change their credential first. Archived agents @c still reference it. Edit them first.",
+      "Used by @a, @b. Change their credential first. Archived agents @c still reference it. Edit them first.",
     extra: { usedBy: ["a", "b"], archivedUsedBy: ["c"] },
   });
 });
@@ -159,6 +162,24 @@ test("remove: only-active and only-archived wording", async () => {
   await expect(svc.remove("old")).rejects.toMatchObject({
     message: "Archived agents @e still reference it. Edit them first.",
   });
+});
+
+test("remove: an FK violation from a racing grant maps to 409 credential_in_use", async () => {
+  await svc.create({ name: "racy", kind: "api_key", value: "k" });
+  await agentUsing("f", "racy");
+  const spy = vi
+    .spyOn(svc as unknown as { users: (id: string) => Promise<unknown> }, "users")
+    .mockResolvedValueOnce({ active: [], archived: [] });
+  try {
+    await expect(svc.remove("racy")).rejects.toMatchObject({
+      status: 409,
+      code: "credential_in_use",
+      message: "Used by @f. Change their credential first.",
+      extra: { usedBy: ["f"], archivedUsedBy: [] },
+    });
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test("remove when unused succeeds", async () => {

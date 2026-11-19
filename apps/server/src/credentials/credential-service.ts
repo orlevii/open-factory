@@ -4,21 +4,11 @@ import type { CredentialKind, CredentialSummary } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import type { Vault } from "../crypto/vault.ts";
+import { fkViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError } from "../errors.ts";
 import type { CredentialVerifier, VerifyResult } from "./verify.ts";
 
 const aad = (id: string) => `credentials:${id}`;
-
-function uniqueViolation(e: unknown): boolean {
-  for (let x = e as { code?: string; cause?: unknown } | undefined; x; x = x.cause as typeof x)
-    if (x.code === "23505") return true;
-  return false;
-}
-
-function tags(slugs: string[]): string {
-  const t = slugs.map((s) => `@${s}`);
-  return t.length === 1 ? (t[0] as string) : `${t.slice(0, -1).join(", ")} and ${t[t.length - 1]}`;
-}
 
 export class CredentialService {
   constructor(
@@ -63,8 +53,28 @@ export class CredentialService {
       .select()
       .from(schema.credentials)
       .where(eq(schema.credentials.name, name));
-    if (!row) throw new ApiError(404, "credential_not_found", `No credential named ${name}`);
+    if (!row) throw new ApiError(404, "credential_not_found", `No credential named ${name}.`);
     return row;
+  }
+
+  private exists(name: string) {
+    return new ApiError(409, "credential_exists", `A credential named ${name} already exists.`);
+  }
+
+  private async inUse(id: string) {
+    const u = await this.users(id);
+    if (!u.active.length && !u.archived.length) return undefined;
+    const usedBy = u.active.map((a) => a.slug);
+    const archivedUsedBy = u.archived.map((a) => a.slug);
+    const message = [
+      usedBy.length ? `Used by ${tags(usedBy)}. Change their credential first.` : "",
+      archivedUsedBy.length
+        ? `Archived agents ${tags(archivedUsedBy)} still reference it. Edit them first.`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return new ApiError(409, "credential_in_use", message, { usedBy, archivedUsedBy });
   }
 
   private assertVerified(r: VerifyResult) {
@@ -88,6 +98,13 @@ export class CredentialService {
     kind: CredentialKind;
     value: string;
   }): Promise<CredentialSummary> {
+    // Cheap pre-check so a duplicate name doesn't cost a paid verification turn; the unique
+    // violation below still covers a race.
+    const [taken] = await this.d.db
+      .select({ id: schema.credentials.id })
+      .from(schema.credentials)
+      .where(eq(schema.credentials.name, b.name));
+    if (taken) throw this.exists(b.name);
     this.assertVerified(await this.d.verifier.verify(b.kind, b.value));
     const id = randomUUID();
     try {
@@ -104,12 +121,7 @@ export class CredentialService {
       if (!row) throw new Error("credential insert returned no row");
       return this.summarize(row);
     } catch (err) {
-      if (uniqueViolation(err))
-        throw new ApiError(
-          409,
-          "credential_exists",
-          `A credential named ${b.name} already exists.`,
-        );
+      if (pgCode(err, "23505")) throw this.exists(b.name);
       throw err;
     }
   }
@@ -126,7 +138,7 @@ export class CredentialService {
       })
       .where(eq(schema.credentials.id, row.id))
       .returning();
-    if (!updated) throw new ApiError(404, "credential_not_found", `No credential named ${name}`);
+    if (!updated) throw new ApiError(404, "credential_not_found", `No credential named ${name}.`);
     for (const a of (await this.users(row.id)).active) await this.d.runtimes.requestRestart(a.id);
     return this.summarize(updated);
   }
@@ -144,20 +156,14 @@ export class CredentialService {
 
   async remove(name: string): Promise<void> {
     const row = await this.rowByName(name);
-    const u = await this.users(row.id);
-    if (u.active.length || u.archived.length) {
-      const usedBy = u.active.map((a) => a.slug);
-      const archivedUsedBy = u.archived.map((a) => a.slug);
-      const message = [
-        usedBy.length ? `Used by ${tags(usedBy)}. Change their credential first.` : "",
-        archivedUsedBy.length
-          ? `Archived agents ${tags(archivedUsedBy)} still reference it. Edit them first.`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      throw new ApiError(409, "credential_in_use", message, { usedBy, archivedUsedBy });
+    const busy = await this.inUse(row.id);
+    if (busy) throw busy;
+    try {
+      await this.d.db.delete(schema.credentials).where(eq(schema.credentials.id, row.id));
+    } catch (err) {
+      // An agent took the credential after the check: the FK restricts the delete.
+      if (fkViolation(err)) throw (await this.inUse(row.id)) ?? err;
+      throw err;
     }
-    await this.d.db.delete(schema.credentials).where(eq(schema.credentials.id, row.id));
   }
 }

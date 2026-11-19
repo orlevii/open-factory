@@ -66,6 +66,11 @@ export class FakeProcess implements HarnessProcess {
   releaseStop() {
     this.release?.();
   }
+  forceKilled = false;
+  forceKill = async () => {
+    this.forceKilled = true;
+    this.exit(137);
+  };
   async stop(): Promise<ExitInfo> {
     this.stopped = true;
     if (this.holdStop) await this.released;

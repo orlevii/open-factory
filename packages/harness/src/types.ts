@@ -18,6 +18,8 @@ export interface AgentRuntimeSpec {
   effort?: string;
   permissionMode: "auto" | "bypass";
   mounts: Mount[];
+  /** Set by the server for Docker starts. */
+  docker?: { containerId: string; claudeBin: string };
 }
 
 export interface FactoryMessage {
@@ -41,6 +43,8 @@ export interface HarnessProcess {
   send(messages: FactoryMessage[]): Promise<void>;
   control(cmd: "compact" | "clear" | "interrupt", arg?: string): Promise<void>;
   stop(opts?: { graceMs?: number; termWaitMs?: number }): Promise<ExitInfo>;
+  /** SIGKILL-equivalent, for a process that outlived stop(). */
+  forceKill(): Promise<void>;
   /** Ends after `exited`. */
   events: AsyncIterable<HarnessEvent>;
 }

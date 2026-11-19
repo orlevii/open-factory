@@ -80,3 +80,4 @@ export function createFakeClaude(opts: {
     knownSession: (id) => appendFileSync(path.join(stateDir, id), ""),
   };
 }
+export { FakeTransport } from "./fake-transport.ts";

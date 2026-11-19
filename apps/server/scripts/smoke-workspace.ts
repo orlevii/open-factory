@@ -17,7 +17,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
-import { createClaudeDriver } from "@open-factory/harness";
+import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import type { AnyEvent } from "@open-factory/shared";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
@@ -216,7 +216,7 @@ try {
     db: conn.db,
     sql: conn.sql,
     logger: false,
-    harnessDriver: createClaudeDriver(captureLog),
+    harnessDriver: createClaudeDriver({ log: captureLog, transports: { local: localTransport } }),
   });
   appBuilt = true;
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
-import { createClaudeDriver } from "@open-factory/harness";
+import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import type { AnyEvent } from "@open-factory/shared";
 import { AgentRuntime } from "../src/agents/agent-runtime.ts";
 import { EventBus } from "../src/agents/event-bus.ts";
@@ -70,7 +70,14 @@ function print(e: AnyEvent) {
   console.log(`  · ${e.type} ${brief}`);
 }
 const make = () =>
-  new AgentRuntime({ agent, store, bus, driver: createClaudeDriver(log), prepareStart, log });
+  new AgentRuntime({
+    agent,
+    store,
+    bus,
+    driver: createClaudeDriver({ log, transports: { local: localTransport } }),
+    prepareStart,
+    log,
+  });
 let rt = make();
 await rt.init();
 const send = (body: string, urgent = false) =>

@@ -1,7 +1,7 @@
 import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@open-factory/db";
-import { createClaudeDriver, type HarnessDriver } from "@open-factory/harness";
+import { createClaudeDriver, type HarnessDriver, localTransport } from "@open-factory/harness";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   serializerCompiler,
@@ -122,7 +122,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     bus,
     prepareStart,
     log: app.log,
-    driver: deps.harnessDriver ?? createClaudeDriver(app.log),
+    driver:
+      deps.harnessDriver ??
+      createClaudeDriver({ log: app.log, transports: { local: localTransport } }),
   });
   const templates = new TemplateIndex({ db: deps.db, config });
   const agents = new AgentService({
@@ -135,7 +137,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
-    driver: deps.harnessDriver ?? createClaudeDriver(),
+    driver: deps.harnessDriver ?? createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: config.claudeBin,
   });
   const credentials = new CredentialService({

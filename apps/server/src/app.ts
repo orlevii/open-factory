@@ -183,6 +183,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       }),
   });
   const templates = new TemplateIndex({ db: deps.db, config });
+  const neighborhood = new Neighborhood(deps.db);
+  const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   const agents = new AgentService({
     db: deps.db,
     templates,
@@ -191,6 +193,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     log: app.log,
     containers,
+    neighborhood,
+    router,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
@@ -215,8 +219,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("store", store);
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
-  const neighborhood = new Neighborhood(deps.db);
-  const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   app.decorate("neighborhood", neighborhood);
   app.decorate("router", router);
   app.decorate("agentTokens", tokens);

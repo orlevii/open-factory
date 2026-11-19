@@ -6,6 +6,7 @@ import type { EventStore } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import type { Forward } from "./forwarder.ts";
 import type { Neighborhood } from "./neighborhood.ts";
+import { type PeerLeft, peerBody } from "./peer-body.ts";
 import { resolveName } from "./principals.ts";
 
 export type Sender =
@@ -26,6 +27,15 @@ export type SendResult =
       message: string;
       code: "not_found" | "ambiguous" | "self" | "archived" | "reserved";
     };
+
+/** What happened to the subject of a peer event (spec §10.2). */
+export type PeerChange =
+  | { kind: "joined" }
+  | { kind: "left"; reason: "archived" }
+  | { kind: "moved"; to: string | null };
+
+/** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
+export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[] };
 
 const notFound = (name: string): SendResult => ({
   ok: false,
@@ -220,6 +230,65 @@ export class Router {
       urgent: false,
     });
     this.d.bus.publishAll({ type: "inbox_changed" });
+  }
+
+  /**
+   * Spec §10.2: held `peer_joined`/`peer_left` rows for everyone whose neighborhood changed (the subject's peers, with
+   * notice `peer`, and its manager, with notice `report`), written with `peerBody`. `joined` reads the neighborhood
+   * now (call it after the change); `left` and `moved` notify the `before` snapshot, and `moved` also announces the
+   * join to the new neighborhood. Archived recipients are skipped; the subject itself gets nothing. Rows are
+   * persisted before this resolves and handed over once boot is done, never awaited.
+   */
+  async peerEvents(
+    subjectId: string,
+    change: PeerChange,
+    before: NeighborhoodSnapshot,
+  ): Promise<void> {
+    const subject = await this.d.store.agentById(subjectId);
+    if (!subject) return;
+    if (change.kind !== "joined") {
+      const left: PeerLeft =
+        change.kind === "left" ? { reason: "archived" } : { reason: "moved", to: change.to };
+      await this.notify(subject, "peer_left", before.peerIds, before.managerId, left);
+    }
+    if (change.kind !== "left") {
+      const now = await this.d.neighborhood.of(subjectId);
+      await this.notify(
+        subject,
+        "peer_joined",
+        now.peers.map((p) => p.id),
+        now.manager?.id ?? null,
+      );
+    }
+  }
+
+  private async notify(
+    subject: { id: string; slug: string; displayName: string },
+    kind: "peer_joined" | "peer_left",
+    peerIds: string[],
+    managerId: string | null,
+    left?: PeerLeft,
+  ): Promise<void> {
+    const targets: { id: string; relation: "peer" | "report" }[] = peerIds.map((id) => ({
+      id,
+      relation: "peer",
+    }));
+    if (managerId) targets.push({ id: managerId, relation: "report" });
+    for (const t of targets) {
+      const to = await this.d.store.agentById(t.id);
+      if (!to || to.archivedAt || to.id === subject.id) continue;
+      const row = await this.d.store.createHeld({
+        kind,
+        toAgentId: to.id,
+        subjectAgentId: subject.id,
+        notice: t.relation,
+        body: peerBody(subject, t.relation, left ? { kind, left } : { kind: "peer_joined" }),
+      });
+      void this.booted.then(
+        () => this.d.runtimes.deliverHeld(row),
+        () => {}, // shutting down before boot finished: the row is pending for the next boot
+      );
+    }
   }
 
   private async statusOf(agentId: string): Promise<AgentStatus> {

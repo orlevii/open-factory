@@ -1,3 +1,4 @@
+import type { KeyboardEventHandler, Ref } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./markdown";
@@ -14,11 +15,19 @@ export function MarkdownEditor(props: {
   placeholder?: string;
   "aria-label"?: string;
   "aria-describedby"?: string;
+  onBlur?(): void;
+  onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  textareaRef?: Ref<HTMLTextAreaElement>;
+  /** Controlled Write / Preview, for callers that must jump into the textarea. */
+  view?: "write" | "preview";
+  onViewChange?(v: "write" | "preview"): void;
 }) {
-  const { value, onChange, id, placeholder } = props;
+  const { value, onChange, id, placeholder, view, onViewChange } = props;
   return (
     <Tabs
-      defaultValue="write"
+      {...(view
+        ? { value: view, onValueChange: (v: string) => onViewChange?.(v as "write" | "preview") }
+        : { defaultValue: "write" })}
       className="gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20"
     >
       <TabsList
@@ -38,6 +47,9 @@ export function MarkdownEditor(props: {
       <TabsContent value="write" className="mt-0">
         <Textarea
           id={id}
+          ref={props.textareaRef}
+          onBlur={props.onBlur}
+          onKeyDown={props.onKeyDown}
           placeholder={placeholder}
           // Without an id there is no <Label htmlFor>, so fall back to a built-in name.
           aria-label={props["aria-label"] ?? (id ? undefined : "Markdown")}

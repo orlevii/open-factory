@@ -57,3 +57,11 @@ export const validateTemplateFile = (
 
 export const deleteTemplate = (name: string) =>
   apiFetch(path(name), { method: "DELETE", schema: zod.undefined() });
+
+/** The template page hands the list a one-shot "Deleted x." line through the history entry's
+ *  state (so a reload or a shared link doesn't repeat it). */
+export const deletedState = (name: string) => ({ deletedTemplate: name }) as never;
+export const deletedTemplateFrom = (state: unknown): string | undefined => {
+  const v = (state as { deletedTemplate?: unknown } | undefined)?.deletedTemplate;
+  return typeof v === "string" ? v : undefined;
+};

@@ -17,9 +17,11 @@ import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppSchedulesRouteImport } from './routes/_app/schedules'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppTasksRouteImport } from './routes/_app/tasks'
-import { Route as AppTemplatesRouteImport } from './routes/_app/templates'
 import { Route as AppAgentsIndexRouteImport } from './routes/_app/agents.index'
 import { Route as AppAgentsSlugRouteImport } from './routes/_app/agents.$slug'
+import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates.index'
+import { Route as AppTemplatesNameRouteImport } from './routes/_app/templates.$name'
+import { Route as AppTemplatesNewRouteImport } from './routes/_app/templates.new'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -60,11 +62,6 @@ const AppTasksRoute = AppTasksRouteImport.update({
   path: '/tasks',
   getParentRoute: () => AppRoute,
 } as any)
-const AppTemplatesRoute = AppTemplatesRouteImport.update({
-  id: '/templates',
-  path: '/templates',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppAgentsIndexRoute = AppAgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
@@ -73,6 +70,21 @@ const AppAgentsIndexRoute = AppAgentsIndexRouteImport.update({
 const AppAgentsSlugRoute = AppAgentsSlugRouteImport.update({
   id: '/agents/$slug',
   path: '/agents/$slug',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTemplatesNameRoute = AppTemplatesNameRouteImport.update({
+  id: '/templates/$name',
+  path: '/templates/$name',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTemplatesNewRoute = AppTemplatesNewRouteImport.update({
+  id: '/templates/new',
+  path: '/templates/new',
   getParentRoute: () => AppRoute,
 } as any)
 
@@ -84,9 +96,11 @@ export interface FileRoutesByFullPath {
   '/schedules': typeof AppSchedulesRoute
   '/settings': typeof AppSettingsRoute
   '/tasks': typeof AppTasksRoute
-  '/templates': typeof AppTemplatesRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
+  '/templates/$name': typeof AppTemplatesNameRoute
+  '/templates/new': typeof AppTemplatesNewRoute
   '/agents/': typeof AppAgentsIndexRoute
+  '/templates/': typeof AppTemplatesIndexRoute
 }
 export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
@@ -95,10 +109,12 @@ export interface FileRoutesByTo {
   '/schedules': typeof AppSchedulesRoute
   '/settings': typeof AppSettingsRoute
   '/tasks': typeof AppTasksRoute
-  '/templates': typeof AppTemplatesRoute
   '/': typeof AppIndexRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
+  '/templates/$name': typeof AppTemplatesNameRoute
+  '/templates/new': typeof AppTemplatesNewRoute
   '/agents': typeof AppAgentsIndexRoute
+  '/templates': typeof AppTemplatesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -109,10 +125,12 @@ export interface FileRoutesById {
   '/_app/schedules': typeof AppSchedulesRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/tasks': typeof AppTasksRoute
-  '/_app/templates': typeof AppTemplatesRoute
   '/_app/': typeof AppIndexRoute
   '/_app/agents/$slug': typeof AppAgentsSlugRoute
+  '/_app/templates/$name': typeof AppTemplatesNameRoute
+  '/_app/templates/new': typeof AppTemplatesNewRoute
   '/_app/agents/': typeof AppAgentsIndexRoute
+  '/_app/templates/': typeof AppTemplatesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -124,9 +142,11 @@ export interface FileRouteTypes {
     | '/schedules'
     | '/settings'
     | '/tasks'
-    | '/templates'
     | '/agents/$slug'
+    | '/templates/$name'
+    | '/templates/new'
     | '/agents/'
+    | '/templates/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/sign-in'
@@ -135,10 +155,12 @@ export interface FileRouteTypes {
     | '/schedules'
     | '/settings'
     | '/tasks'
-    | '/templates'
     | '/'
     | '/agents/$slug'
+    | '/templates/$name'
+    | '/templates/new'
     | '/agents'
+    | '/templates'
   id:
     | '__root__'
     | '/_app'
@@ -148,10 +170,12 @@ export interface FileRouteTypes {
     | '/_app/schedules'
     | '/_app/settings'
     | '/_app/tasks'
-    | '/_app/templates'
     | '/_app/'
     | '/_app/agents/$slug'
+    | '/_app/templates/$name'
+    | '/_app/templates/new'
     | '/_app/agents/'
+    | '/_app/templates/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -218,13 +242,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTasksRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/templates': {
-      id: '/_app/templates'
-      path: '/templates'
-      fullPath: '/templates'
-      preLoaderRoute: typeof AppTemplatesRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/agents/': {
       id: '/_app/agents/'
       path: '/agents'
@@ -239,6 +256,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAgentsSlugRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/templates/': {
+      id: '/_app/templates/'
+      path: '/templates'
+      fullPath: '/templates/'
+      preLoaderRoute: typeof AppTemplatesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/templates/$name': {
+      id: '/_app/templates/$name'
+      path: '/templates/$name'
+      fullPath: '/templates/$name'
+      preLoaderRoute: typeof AppTemplatesNameRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/templates/new': {
+      id: '/_app/templates/new'
+      path: '/templates/new'
+      fullPath: '/templates/new'
+      preLoaderRoute: typeof AppTemplatesNewRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -247,10 +285,12 @@ interface AppRouteChildren {
   AppSchedulesRoute: typeof AppSchedulesRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTasksRoute: typeof AppTasksRoute
-  AppTemplatesRoute: typeof AppTemplatesRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAgentsSlugRoute: typeof AppAgentsSlugRoute
+  AppTemplatesNameRoute: typeof AppTemplatesNameRoute
+  AppTemplatesNewRoute: typeof AppTemplatesNewRoute
   AppAgentsIndexRoute: typeof AppAgentsIndexRoute
+  AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -258,10 +298,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppSchedulesRoute: AppSchedulesRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTasksRoute: AppTasksRoute,
-  AppTemplatesRoute: AppTemplatesRoute,
   AppIndexRoute: AppIndexRoute,
   AppAgentsSlugRoute: AppAgentsSlugRoute,
+  AppTemplatesNameRoute: AppTemplatesNameRoute,
+  AppTemplatesNewRoute: AppTemplatesNewRoute,
   AppAgentsIndexRoute: AppAgentsIndexRoute,
+  AppTemplatesIndexRoute: AppTemplatesIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

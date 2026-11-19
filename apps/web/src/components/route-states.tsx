@@ -90,3 +90,29 @@ export function NotFound() {
     </StateFrame>
   );
 }
+
+/** A named thing that doesn't exist (an unknown template, agent): says so and offers the way back. */
+export function ResourceNotFound({
+  title,
+  backTo,
+  backLabel,
+}: {
+  title: string;
+  backTo: "/templates" | "/agents";
+  backLabel: string;
+}) {
+  usePageTitle(title);
+  return (
+    <StateFrame>
+      <h2 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">{title}</h2>
+      <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+        It may have been renamed or deleted.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button className="h-9" asChild>
+          <Link to={backTo}>{backLabel}</Link>
+        </Button>
+      </div>
+    </StateFrame>
+  );
+}

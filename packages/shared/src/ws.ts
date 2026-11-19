@@ -19,6 +19,8 @@ export const agentStatusFrameSchema = z.object({
   status: agentStatusSchema,
   turnOpen: z.boolean(),
   lastError: z.string().optional(),
+  restartPending: z.boolean(),
+  restartWaitingOn: z.number().int().nonnegative(),
 });
 export type AgentStatusFrame = z.infer<typeof agentStatusFrameSchema>;
 

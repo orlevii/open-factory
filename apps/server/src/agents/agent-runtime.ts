@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
+  type BatchRow,
   type ExitInfo,
   type FactoryMessage,
   groupEnvelopes,
@@ -13,15 +14,19 @@ import {
   type AgentStatus,
   type AgentStatusFrame,
   type AnyEvent,
+  type Envelope,
   type ErrorKind,
   errorKindSchema,
   type HarnessEvent,
+  HELD_KINDS,
+  type MessageKind,
   type QueueItem,
   statusOf,
   type WaitingOn,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
+import { peerLeftOf } from "../messaging/peer-body.ts";
 import {
   type ContainerManager,
   type EnsureResult,
@@ -37,7 +42,7 @@ import {
   RecoveryRefusedError,
 } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
-import type { EventStore, Tx } from "./event-store.ts";
+import type { EventStore, PendingRow, Tx } from "./event-store.ts";
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
@@ -80,6 +85,8 @@ export interface RuntimeDeps {
   localRuntimeAllowed?: () => boolean;
   /** The Docker launcher (spec §10 step 4, §11): the one ContainerManager and the in-container Claude path. */
   docker?: DockerDeps;
+  /** S6 §8.1: how long the oldest pending member update waits while no turn is open (default 30 s; 0 = at once). */
+  memberUpdateDebounceMs?: number;
 }
 
 export interface DockerDeps {
@@ -146,12 +153,34 @@ export type AfterExit =
   | { kind: "failed_start" } // S3's stop after a spawn or resume failure
   | { kind: "internal" }; // S3's onJobFailure stop
 
-/** A queued message row; `fromHandle` is null for a `@factory` system notice (row.kind === "system"). */
-type MessageEntry = { kind: "message"; row: MessageRow; fromHandle: string | null };
+/**
+ * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human, the bare slug for an agent,
+ * `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * the UI needs for a peer event.
+ */
+type MessageEntry = {
+  kind: "message";
+  row: MessageRow;
+  from: string;
+  groupKey?: string;
+  about?: string;
+  subject?: Subject;
+};
 type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; createdAt: Date };
 type Entry = MessageEntry | CompactEntry;
 
+type Subject = NonNullable<Envelope["subject"]>;
+
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
+const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
+/** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
+const isHeld = (e: Entry): e is MessageEntry =>
+  e.kind === "message" && HELD_KINDS.includes(kindOf(e.row));
+const isUpdate = (e: MessageEntry) => e.row.kind === "member_update";
+const isPeer = (e: MessageEntry) => e.row.kind === "peer_joined" || e.row.kind === "peer_left";
+const byCreated = (a: MessageEntry, b: MessageEntry) =>
+  a.row.createdAt.getTime() - b.row.createdAt.getTime() || a.row.id.localeCompare(b.row.id);
+const DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS = 30_000;
 
 /** The only reasons that wake an errored agent (spec §5.2, §9.2); `message` is a human's (notices never wake). */
 const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
@@ -161,11 +190,50 @@ const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
   "message",
 ]);
 
-const fromOf = (e: MessageEntry): string => {
-  if (e.row.kind === "system") return "@factory";
-  if (e.fromHandle === null) throw new Error(`message ${e.row.id} has no sender`);
-  return `@${e.fromHandle}`;
-};
+/** The entry for a joined row (spec §7.3, §8.4); one shape for `init()`, `receiveHeld` and the deliveries. */
+function entryOf(r: PendingRow): MessageEntry {
+  const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
+  let from: string;
+  if (row.kind === "system") from = "@factory";
+  else if (fromHandle) from = `@${fromHandle}`;
+  else if (fromSlug) from = fromSlug;
+  else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
+  else from = "@factory";
+  const groupKey = fromSlug ?? subjectSlug ?? undefined;
+  const entry: MessageEntry = {
+    kind: "message",
+    row,
+    from,
+    ...(groupKey ? { groupKey } : {}),
+    ...(subjectSlug ? { about: subjectSlug } : {}),
+  };
+  if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectSlug) {
+    const left = row.kind === "peer_left" ? peerLeftOf(row.body) : undefined;
+    entry.subject = {
+      slug: subjectSlug,
+      displayName: subjectDisplayName ?? subjectSlug,
+      relation: row.notice === "report" ? "report" : "peer",
+      ...(left ? { left } : {}),
+    };
+  }
+  return entry;
+}
+
+const toBatchRow = (e: MessageEntry): BatchRow => ({
+  id: e.row.id,
+  kind: kindOf(e.row),
+  from: e.from,
+  urgent: e.row.urgent,
+  body: e.row.body,
+  createdAt: e.row.createdAt,
+  ...(e.about ? { about: e.about } : {}),
+  ...(e.groupKey ? { groupKey: e.groupKey } : {}),
+  // A factory member update's fact code is its notice (spec §9.1).
+  ...(e.row.kind === "member_update" && e.from === "@factory" && e.row.notice
+    ? { fact: e.row.notice }
+    : {}),
+  ...(e.subject ? { subject: e.subject } : {}),
+});
 
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
 const ESCALATION_EXIT_MS = 5_000;
@@ -196,16 +264,7 @@ type LiveCron = {
 
 /** Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. */
 const toEnvelopes = (batch: MessageEntry[]): FactoryMessage[] =>
-  groupEnvelopes(
-    batch.map((e) => ({
-      id: e.row.id,
-      kind: e.row.kind === "system" ? ("system" as const) : ("message" as const),
-      from: fromOf(e),
-      urgent: e.row.urgent,
-      body: e.row.body,
-      createdAt: e.row.createdAt,
-    })),
-  );
+  groupEnvelopes(batch.map(toBatchRow));
 
 export class AgentRuntime {
   agent: AgentRow;
@@ -217,8 +276,17 @@ export class AgentRuntime {
   private openTurnId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
   private queue: Entry[] = [];
+  // S6 §8.1: pending member updates and peer events, in (created_at, id) order; never written while a turn is open.
+  private held: MessageEntry[] = [];
+  private readonly seen = new Set<string>(); // every row id this runtime loaded or was handed (S6 §7.3)
   private inFlight: MessageEntry[][] = []; // written, waiting for session_started
   private awaiting: string[][] = []; // written with no open turn, waiting for a user-initiated turn_end
+  private awaitingKinds: MessageKind[][] = []; // the kinds of each `awaiting` batch (an update-only turn, S6 §8.1)
+  private turnKinds: MessageKind[] = []; // kinds written into the open turn (absorbed)
+  // S6 §8.1: rows pending when a turn (not update-only) ended are due at once; cleared when held is written.
+  private dueAtTurnEnd = false;
+  private heldTimer: ReturnType<typeof setTimeout> | undefined;
+  private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
@@ -286,8 +354,30 @@ export class AgentRuntime {
   }
 
   async init() {
-    const pending = await this.d.store.pendingQueue(this.agent.id);
-    this.queue = pending.map(({ fromHandle, ...row }) => ({ kind: "message", row, fromHandle }));
+    const pending = (await this.d.store.pendingQueue(this.agent.id)).map(entryOf);
+    for (const e of pending) this.seen.add(e.row.id);
+    this.queue = pending.filter((e) => !isHeld(e));
+    this.held = pending.filter(isHeld).sort(byCreated);
+    // Not a job, so the end-of-job hook doesn't cover it (S6 §8.2): arms the timer for young updates.
+    this.updateHeldTimer();
+  }
+
+  /**
+   * S6 §8: a held row (member update, peer event) handed over after its commit. Inserted in (created_at, id) order
+   * unless this runtime already has it; never written while a turn is open (the flush decides).
+   */
+  receiveHeld(row: PendingRow): Promise<void> {
+    return this.run(async () => {
+      if (!this.seen.has(row.id) && !this.archived) {
+        const entry = entryOf(row);
+        if (!isHeld(entry)) throw new Error(`message ${row.id} isn't a held kind`);
+        this.seen.add(row.id);
+        this.held = [...this.held, entry].sort(byCreated);
+        this.publishQueue();
+      }
+      await this.flushOrStop("flush after a held delivery failed");
+      this.publishStatus();
+    });
   }
 
   // ---------- public API (each runs as a job) ----------
@@ -306,7 +396,8 @@ export class AgentRuntime {
         body: m.body,
         urgent: m.urgent,
       });
-      const entry: MessageEntry = { kind: "message", row, fromHandle: m.fromHandle };
+      const entry: MessageEntry = { kind: "message", row, from: `@${m.fromHandle}` };
+      this.seen.add(row.id);
       this.queue.push(entry);
       this.publishQueue();
       // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
@@ -336,10 +427,11 @@ export class AgentRuntime {
     if (existing) existing.row = row;
     else {
       const at = this.queue.findIndex((e) => !isNotice(e));
+      this.seen.add(row.id);
       this.queue.splice(at === -1 ? this.queue.length : at, 0, {
         kind: "message",
         row,
-        fromHandle: null,
+        from: "@factory",
       });
     }
     this.publishQueue();
@@ -513,12 +605,14 @@ export class AgentRuntime {
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
   markArchived(): void {
     this.archived = true;
+    this.updateHeldTimer();
   }
 
   /** The closing latch (spec §5.6). Synchronous: a start already inside prepareStart re-checks it before the launch. */
   setNoStart(): void {
     this.noStart = true;
     this.updateWarmTimer();
+    this.updateHeldTimer();
     this.clearOwedBound();
   }
 
@@ -606,9 +700,45 @@ export class AgentRuntime {
     return this.attempting && this.attemptReason ? this.attemptReason : requested;
   }
 
-  /** A wake is only granted with something to write: a pending message or notice, or a queued compact (spec §5.2). */
+  /**
+   * A wake is only granted with something to write (spec §5.2): a pending message or notice, a queued compact, or
+   * held member updates that are due (S6 §8.3). Young updates and peer events alone are not.
+   */
   hasDeliverable(): boolean {
-    return this.queue.length > 0;
+    return this.queue.length > 0 || this.heldDue();
+  }
+
+  /**
+   * S6 §8.1: held rows are never written while a turn is open: an open turn, a written batch awaiting its turn
+   * (`openTurnId` stays unset until `turn_started`), an urgent hold, a compact in flight, or a stop under way.
+   */
+  private turnOpen(): boolean {
+    return Boolean(
+      this.openTurnId ||
+        this.awaiting.length ||
+        this.inFlight.length ||
+        this.hold ||
+        this.compactInFlight ||
+        this.stopping,
+    );
+  }
+
+  /** When the window of the oldest pending member update ends; undefined without one (peer events are never due). */
+  private heldDueAt(): number | undefined {
+    const oldest = this.held.find(isUpdate);
+    if (!oldest) return undefined;
+    return (
+      oldest.row.createdAt.getTime() +
+      (this.d.memberUpdateDebounceMs ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS)
+    );
+  }
+
+  /** S6 §8.1: due at the turn boundary (unless that turn was update-only) or once the window has passed. */
+  private heldDue(): boolean {
+    const at = this.heldDueAt();
+    if (at === undefined) return false;
+    // 0 means due at once, even for a row stamped a millisecond ahead (the store's stamps are strictly increasing).
+    return this.dueAtTurnEnd || this.d.memberUpdateDebounceMs === 0 || Date.now() >= at;
   }
 
   /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
@@ -649,7 +779,7 @@ export class AgentRuntime {
   resumeAfterReset(): void {
     void this.run(async () => {
       if (this.proc) await this.flushOrStop("flush after the reset failed");
-      else if (this.queue.length) await this.wakeFromJob("rate_limit_reset");
+      else if (this.hasDeliverable()) await this.wakeFromJob("rate_limit_reset");
       this.publishStatus();
     });
   }
@@ -752,7 +882,7 @@ export class AgentRuntime {
       !this.restartPending &&
       !this.errored &&
       !this.attempting &&
-      (this.queue.length === 0 || this.credentialPaused())
+      (!this.hasDeliverable() || this.credentialPaused())
     );
   }
 
@@ -762,7 +892,47 @@ export class AgentRuntime {
   }
 
   queueItems(): QueueItem[] {
-    return this.queue.map((e) => this.itemOf(e));
+    return [...this.queue.map((e) => this.itemOf(e)), ...this.heldItems()];
+  }
+
+  /** S6 §8: one `held` line per group (a report's updates, or the peer events about one agent), with why it waits. */
+  private heldItems(): QueueItem[] {
+    const groups = new Map<string, MessageEntry[]>();
+    for (const e of this.held) {
+      const key = `${isPeer(e) ? "peer" : "update"}:${e.groupKey ?? e.from}`;
+      const g = groups.get(key);
+      if (g) g.push(e);
+      else groups.set(key, [e]);
+    }
+    const due = this.heldDue();
+    const dueAt = this.heldDueAt();
+    const why = (g: MessageEntry[]): NonNullable<QueueItem["waitReason"]> => {
+      if (this.errored && !this.attempting) return "errored";
+      if (this.credentialPaused()) return "rate_limited";
+      if (this.proc && this.turnOpen()) return "turn";
+      if (due && !this.proc) return "starting";
+      if (g.every(isPeer) || dueAt === undefined) return "ride_along";
+      return "window";
+    };
+    const items: QueueItem[] = [];
+    for (const g of groups.values()) {
+      const [first] = g;
+      if (!first) continue;
+      const waitReason = why(g);
+      items.push({
+        id: first.row.id,
+        kind: "held",
+        from: first.from,
+        count: g.length,
+        createdAt: first.row.createdAt.toISOString(),
+        ...(first.about ? { about: first.about } : {}),
+        waitReason,
+        ...(waitReason === "window" && dueAt !== undefined
+          ? { dueAt: new Date(dueAt).toISOString() }
+          : {}),
+      });
+    }
+    return items;
   }
 
   /**
@@ -819,6 +989,7 @@ export class AgentRuntime {
       } finally {
         this.updateWarmTimer(); // every input change re-evaluates the warm timer (spec §6.3)
         this.updateSnapshotTimer();
+        this.updateHeldTimer(); // and the held deliveries' due time (S6 §8.2)
       }
     });
   }
@@ -860,7 +1031,7 @@ export class AgentRuntime {
         this.awaiting.length > 0 ||
         this.compactInFlight,
       credentialPaused: this.credentialPaused(),
-      hasPendingWork: this.queue.length > 0,
+      hasPendingWork: this.hasDeliverable(),
       queuedWake: this.slots.isQueued(this.agent.id),
       processRunning: Boolean(this.proc),
     });
@@ -877,7 +1048,7 @@ export class AgentRuntime {
           kind: e.row.kind === "system" ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
-          from: fromOf(e),
+          from: e.from,
           createdAt: e.row.createdAt.toISOString(),
         }
       : {
@@ -1465,6 +1636,7 @@ export class AgentRuntime {
         this.clearOwedBound(); // the bound only runs while no turn is open
         this.openTurnId = await this.d.store.openTurn(this.agent.id);
         this.lastUsage = undefined;
+        this.turnKinds = [];
         await this.append(this.openTurnId, e);
         break;
       case "usage":
@@ -1473,6 +1645,12 @@ export class AgentRuntime {
         break;
       case "turn_end": {
         const turnId = this.openTurnId;
+        // S6 §8.1 (R5): what this turn ran, derived from its batch's rows: the batches it consumed and those it
+        // absorbed. Self-started turns (task notifications, crons) are never update-only.
+        const ran = [...(!e.originKind ? this.awaitingKinds.flat() : []), ...this.turnKinds];
+        const updateOnly =
+          !e.originKind && ran.length > 0 && ran.every((k) => HELD_KINDS.includes(k));
+        this.turnKinds = [];
         await this.append(turnId, e);
         if (turnId) {
           await this.d.store.closeTurn(turnId, {
@@ -1484,12 +1662,15 @@ export class AgentRuntime {
           if (!e.originKind && this.awaiting.length) {
             await this.d.store.setDeliveredTurn(this.awaiting.flat(), turnId);
             this.awaiting = [];
+            this.awaitingKinds = [];
           }
         }
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
           await this.attemptSucceeded();
         this.openTurnId = undefined;
+        // Held rows pending at this turn boundary are due at once, unless the turn only read updates (S6 §8.1).
+        this.dueAtTurnEnd = this.held.some(isUpdate) && !updateOnly;
         this.lastActivityAt = Date.now();
         await this.oweNoticeIfCutOff();
         if (e.command === "compact") this.compactInFlight = false;
@@ -1612,8 +1793,8 @@ export class AgentRuntime {
     const rolledBack = this.inFlight.splice(0);
     const openTurnId = this.openTurnId;
     const usage = this.lastUsage;
-    // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7).
-    this.queue.unshift(...rolledBack.flat());
+    // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7); held rows go back to held.
+    this.requeue(rolledBack.flat());
     // Notices go ahead of rolled-back batches (spec §9.5); a stable partition keeps each group in order.
     this.queue = [...this.queue.filter(isNotice), ...this.queue.filter((e) => !isNotice(e))];
     this.openTurnId = undefined;
@@ -1622,6 +1803,8 @@ export class AgentRuntime {
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
     this.awaiting = [];
+    this.awaitingKinds = [];
+    this.turnKinds = [];
     if (this.proc === proc) this.proc = undefined;
     this.started = false;
     const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
@@ -1682,7 +1865,7 @@ export class AgentRuntime {
       if (canAttempt) await this.beginAttempt("crash_recovery", false);
     } else if ((intent?.kind === "failed_start" || intent?.kind === "internal") && attemptOwed) {
       // A human's message arrived while the failing process was still exiting (spec §9.2 step 5).
-      if (canAttempt && this.messageStartsAttempt() && this.queue.length)
+      if (canAttempt && this.messageStartsAttempt() && this.hasDeliverable())
         await this.beginAttempt("message", false);
     } else if (intent?.kind === "hibernate") {
       if (intent.reason !== "shutdown" && intent.reason !== "archived")
@@ -1822,7 +2005,7 @@ export class AgentRuntime {
           !live.batchUnanswered &&
           !live.lost.tasks.length &&
           !live.lost.crons.length &&
-          !this.queue.length
+          !this.hasDeliverable()
         ? "hibernated"
         : "recover";
     if (policy === "hibernated") return policy;
@@ -1893,7 +2076,7 @@ export class AgentRuntime {
    * began: a stop(), archive or the closing latch may have landed while the exit was being recorded.
    */
   private async wakeAfterExit(reason: WakeReason) {
-    if (!this.queue.length || this.proc) return;
+    if (!this.hasDeliverable() || this.proc) return;
     if (this.stopsInProgress > 0 || this.archived || this.noStart || this.slots.closing()) return;
     await this.wakeFromJob(reason);
   }
@@ -2266,22 +2449,90 @@ export class AgentRuntime {
       }
       const batch: MessageEntry[] = [];
       while (this.queue[0]?.kind === "message") batch.push(this.queue.shift() as MessageEntry);
+      // S6 §8.1: a batch written while no turn is open carries every held row, due or not.
+      if (!this.turnOpen()) batch.push(...this.held.splice(0));
       if (!(await this.writeBatch(batch))) break; // a rejected write leaves the batch at the head: stop, don't spin
     }
+    // Due held rows on their own, only while no turn is open (S6 §8.1).
+    if (
+      this.proc &&
+      !this.stopping &&
+      !this.credentialPaused() &&
+      !this.turnOpen() &&
+      this.heldDue()
+    )
+      await this.writeBatch(this.held.splice(0));
+  }
+
+  /**
+   * Every path that returns written entries (a rejected write, a failed transaction, the `exited` rollback)
+   * re-partitions them by kind (S6 §8.1): the FIFO queue's at its head in their order, held rows back into `held`.
+   */
+  private requeue(entries: MessageEntry[]) {
+    this.queue.unshift(...entries.filter((e) => !isHeld(e)));
+    const held = entries.filter(isHeld);
+    if (held.length) this.held = [...held, ...this.held].sort(byCreated);
+  }
+
+  /**
+   * S6 §8.2: one timer per runtime, a derived cache of the held rows, re-evaluated at the end of every job (and by
+   * `init()`, the closing latch and archive). It arms for the next due time; once due, a running process flushes
+   * (the flush writes only while no turn is open; otherwise the turn end does), and with none it requests a
+   * `member_updates` wake when one is accepted. It fires once per due time, so a write that keeps failing or a wake
+   * that is dropped never spins; whatever changes the held rows gives a new due time. Never throws.
+   */
+  private updateHeldTimer() {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = undefined;
+    const at = this.heldDueAt();
+    if (at === undefined || this.noStart || this.archived) return;
+    const dueIn = this.dueAtTurnEnd ? 0 : at - Date.now();
+    if (dueIn <= 0) {
+      if (this.heldFiredFor === at) return;
+      if (this.proc) {
+        if (this.turnOpen() || this.credentialPaused()) return; // the turn end or the reset flushes
+      } else if (
+        this.starting ||
+        this.stopsInProgress > 0 ||
+        this.slots.closing() ||
+        this.slots.isQueued(this.agent.id) ||
+        !this.acceptsWake("member_updates")
+      )
+        return;
+    }
+    const timer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
+        void this.run(async () => {
+          if (this.heldTimer !== timer) return;
+          this.heldTimer = undefined;
+          const due = this.heldDueAt();
+          if (due === undefined || !this.heldDue()) return;
+          this.heldFiredFor = due;
+          if (this.proc) await this.flushOrStop("flush of due member updates failed");
+          else await this.wakeFromJob("member_updates");
+          this.publishStatus();
+        }).catch((err) =>
+          this.d.log.error({ err, agent: this.agent.slug }, "held delivery job failed"),
+        );
+      },
+      Math.max(0, dueIn),
+    );
+    this.heldTimer = timer;
   }
 
   /** False when the write was rejected (the batch is back at the head of the queue). */
   private async writeBatch(batch: MessageEntry[]): Promise<boolean> {
     const proc = this.proc;
     if (!proc) {
-      this.queue.unshift(...batch);
+      this.requeue(batch);
       return false;
     }
     const ids = batch.map((m) => m.row.id);
+    const envelopes = toEnvelopes(batch);
     try {
-      await proc.send(toEnvelopes(batch));
+      await proc.send(envelopes);
     } catch (err) {
-      this.queue.unshift(...batch);
+      this.requeue(batch);
       await this.append(null, {
         type: "delivery_failed",
         messageIds: ids,
@@ -2297,9 +2548,11 @@ export class AgentRuntime {
         const out = await this.d.store.append(
           this.agent.id,
           turnAtWrite ?? null,
-          { type: "message_in", messages: toEnvelopes(batch) },
+          { type: "message_in", messages: envelopes },
           tx,
         );
+        // Every write, before session_started too (S6 §11): the event that shows the rows to their recipient.
+        await this.d.store.setDeliveredEventSeq(ids, out.seq, tx);
         if (this.started) await this.d.store.markDelivered(ids, tx);
         if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
         return out;
@@ -2307,9 +2560,10 @@ export class AgentRuntime {
     } catch (err) {
       // Claude has the batch but nothing recorded it: keep the rows pending at the head (re-sent on the next start,
       // so it may be seen twice) and let the caller stop the process (spec §11).
-      this.queue.unshift(...batch);
+      this.requeue(batch);
       throw err;
     }
+    if (batch.some(isHeld)) this.dueAtTurnEnd = false;
     this.d.bus.publish(this.agent.slug, {
       type: "session_event",
       agent: this.agent.slug,
@@ -2318,7 +2572,11 @@ export class AgentRuntime {
     this.lastActivityAt = Date.now();
     if (this.attempting) this.attemptBatchWritten = true;
     if (!this.started) this.inFlight.push(batch);
-    if (!turnAtWrite) this.awaiting.push(ids);
+    const kinds = batch.map((e) => kindOf(e.row));
+    if (!turnAtWrite) {
+      this.awaiting.push(ids);
+      this.awaitingKinds.push(kinds);
+    } else this.turnKinds.push(...kinds);
     this.publishQueue();
     return true;
   }

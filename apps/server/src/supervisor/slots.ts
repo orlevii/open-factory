@@ -9,7 +9,9 @@ export type WakeReason =
   | "boot_resume"
   | "rate_limit_reset"
   | "queued_items"
-  | "apply_changes";
+  | "apply_changes"
+  | "member_updates" // held member updates became due (S6 spec §8.2); never wakes an errored agent
+  | "agent_message"; // another agent's message (S6 spec §7.3); never wakes an errored agent
 
 /** The seam between an `AgentRuntime` and the Supervisor that owns the cap (spec §5.2, §5.5). */
 export interface SlotPort {

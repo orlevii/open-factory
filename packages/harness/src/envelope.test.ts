@@ -153,3 +153,37 @@ test("quoteReported prefixes every line and caps length; the envelope escapes it
   expect(q).toContain("[truncated]");
   expect(q.length).toBeLessThan(2200);
 });
+
+test("factory facts merge only with the same fact; the merged envelope keeps fact and about", () => {
+  const fact = (id: string, code: string) =>
+    row({ id, kind: "member_update", from: "@factory", about: "dev", groupKey: "dev", fact: code });
+  const out = groupEnvelopes([fact("f1", "denied"), fact("f2", "denied"), fact("f3", "errored")]);
+  expect(out.map((m) => [m.ids ?? [m.id], m.fact, m.about])).toEqual([
+    [["f1", "f2"], "denied", "dev"],
+    [["f3"], "errored", "dev"],
+  ]);
+});
+
+test("a differing subject breaks a run and each envelope keeps its own subject", () => {
+  const subject = (relation: "peer" | "report") => ({ slug: "c", displayName: "C", relation });
+  const out = groupEnvelopes([
+    row({
+      id: "u1",
+      kind: "member_update",
+      from: "@factory",
+      groupKey: "c",
+      subject: subject("peer"),
+    }),
+    row({
+      id: "u2",
+      kind: "member_update",
+      from: "@factory",
+      groupKey: "c",
+      subject: subject("report"),
+    }),
+  ]);
+  expect(out.map((m) => [m.id, m.ids, m.subject?.relation])).toEqual([
+    ["u1", undefined, "peer"],
+    ["u2", undefined, "report"],
+  ]);
+});

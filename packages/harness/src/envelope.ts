@@ -87,9 +87,15 @@ function merge(run: BatchRow[]): FactoryMessage {
     urgent: run.some((r) => r.urgent),
     body: run.map((r) => body(r.body)).join("\n\n"),
     ...(first.about ? { about: first.about } : {}),
+    ...(first.fact ? { fact: first.fact } : {}),
+    ...(first.subject ? { subject: first.subject } : {}),
     parts: run.map(part),
   };
 }
+
+/** Rows merge only when everything the envelope carries besides the body is the same (sender, about, fact, subject). */
+const runKey = (r: BatchRow) =>
+  JSON.stringify([r.from, r.about ?? null, r.fact ?? null, r.subject ?? null]);
 
 /** Builds every batch: notices, messages, member-update groups (merged per consecutive sender), then peer events. */
 export function groupEnvelopes(rows: BatchRow[]): FactoryMessage[] {
@@ -111,7 +117,7 @@ export function groupEnvelopes(rows: BatchRow[]): FactoryMessage[] {
       run = [];
     };
     for (const r of updates.filter((u) => (u.groupKey ?? u.from) === g)) {
-      if (run.length && run[0]?.from !== r.from) flushRun();
+      if (run[0] && runKey(run[0]) !== runKey(r)) flushRun();
       run.push(r);
     }
     flushRun();

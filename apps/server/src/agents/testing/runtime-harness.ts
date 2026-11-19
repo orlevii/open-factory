@@ -4,7 +4,7 @@ import type { SlotPort } from "../../supervisor/slots.ts";
 import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
 import { EventBus } from "../event-bus.ts";
-import { EventStore } from "../event-store.ts";
+import { EventStore, type PendingRow } from "../event-store.ts";
 import { FakeDriver } from "./fake-driver.ts";
 import { insertAgent } from "./rows.ts";
 import { unlimitedSlots } from "./unlimited-slots.ts";
@@ -72,6 +72,9 @@ export class RuntimeHarness {
       warmWindowMinutes?: number;
       cleanup?: RuntimeDeps["cleanup"];
       journal?: RuntimeDeps["journal"];
+      memberUpdateDebounceMs?: number;
+      /** Runs after the agent row exists and before `init()` (rows a boot would find pending). */
+      seed?: (agentId: string) => Promise<void>;
     } = {},
   ) {
     this.n += 1;
@@ -125,11 +128,21 @@ export class RuntimeHarness {
       slots: opts.slots ?? unlimitedSlots,
       ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),
       ...(opts.journal ? { journal: opts.journal } : {}),
+      ...(opts.memberUpdateDebounceMs !== undefined
+        ? { memberUpdateDebounceMs: opts.memberUpdateDebounceMs }
+        : {}),
     });
+    await opts.seed?.(this.agentId);
     await this.rt.init();
     return this.rt;
   }
 
   send = (body: string, urgent = false) =>
     this.rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+
+  /** Hands a held row (member update, peer event) to the runtime and waits for its jobs. */
+  receive = async (row: PendingRow) => {
+    await this.rt.receiveHeld(row);
+    await this.rt.settled();
+  };
 }

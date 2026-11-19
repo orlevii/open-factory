@@ -163,17 +163,43 @@ test("create: plugin failure removes the folder and inserts no row; existing fol
   expect(existsSync(path.join(home, "agents/occupied/keep.txt"))).toBe(true);
 });
 
-test("update: cycle rejected; projects null resets; restart requested for it and (on rename) its reports", async () => {
-  const spy = vi.spyOn(runtimes, "requestRestart");
+test("update: cycle rejected; projects null resets", async () => {
   await expect(svc.update("lead", { reportsTo: "dev-1" })).rejects.toMatchObject({
     message: "That would make @lead report to itself through @dev-1.",
   });
   await svc.update("dev-1", { projects: null });
   expect((await svc.summary("dev-1")).grantsOverridden).toBe(false);
-  await svc.update("lead", { displayName: "Lead 2" });
-  expect(spy.mock.calls.map((c) => c[0])).toEqual(
-    expect.arrayContaining([await idOf("lead"), await idOf("dev-1")]),
-  );
+});
+
+test("update: a rename restarts the agent and exactly its direct reports", async () => {
+  const spy = vi.spyOn(runtimes, "requestRestart");
+  try {
+    await svc.update("lead", { displayName: "Lead 2" });
+    expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(
+      [await idOf("lead"), await idOf("dev-1")].sort(),
+    );
+    spy.mockClear();
+    // No text change: the reports are left alone (only the agent's own feed change restarts it).
+    await svc.update("lead", { credential: "work" });
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("projects: duplicate names are deduped (order kept) on create and PATCH", async () => {
+  const made = await svc.create({
+    template: "lead",
+    slug: "dupe",
+    displayName: "D",
+    description: "",
+    reportsTo: null,
+    credential: "work",
+    projects: ["app", "app"],
+  });
+  expect(made.projects).toEqual(["app"]);
+  await svc.update("dupe", { projects: [] });
+  expect((await svc.update("dupe", { projects: ["app", "app"] })).projects).toEqual(["app"]);
 });
 
 test("resync: backup dir, runtime column, grants follow unless overridden; refused when archived", async () => {

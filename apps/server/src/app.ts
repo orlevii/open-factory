@@ -16,10 +16,13 @@ import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { Config } from "./config.ts";
+import { CredentialService } from "./credentials/credential-service.ts";
+import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { credentialsRoutes } from "./routes/credentials.ts";
 import { meRoutes } from "./routes/me.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { registerStatic } from "./static.ts";
@@ -41,6 +44,7 @@ declare module "fastify" {
     workspaceLock: KeyedMutex;
     templates: TemplateIndex;
     agents: AgentService;
+    credentials: CredentialService;
   }
 }
 
@@ -119,6 +123,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     log: app.log,
   });
+  // The verifier's driver has no logger: process output can echo the credential under test.
+  const verifier = new CredentialVerifier({
+    driver: deps.harnessDriver ?? createClaudeDriver(),
+    claudeBin: config.claudeBin,
+  });
+  const credentials = new CredentialService({ db: deps.db, vault, verifier, runtimes });
+  app.decorate("credentials", credentials);
   app.decorate("vault", vault);
   app.decorate("templates", templates);
   app.decorate("agents", agents);
@@ -137,6 +148,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(meRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
+  await app.register(credentialsRoutes);
   await registerStatic(app, deps.webRoot);
   return app;
 }

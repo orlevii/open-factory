@@ -116,6 +116,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     terminalReason: z.string().optional(),
     originKind: z.string().optional(),
     command: z.string().optional(),
+    apiErrorStatus: z.number().optional(),
     numTurns: z.number(),
   }),
   z.object({

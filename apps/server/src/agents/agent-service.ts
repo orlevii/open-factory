@@ -155,8 +155,10 @@ export class AgentService {
 
   /** Registered projects by name, in the order given; the first unknown name is a field error. */
   private async projectRows(
-    names: string[],
+    given: string[],
   ): Promise<{ id: string; name: string; hostPath: string }[]> {
+    // A repeated name is one grant: the grant table's primary key would reject the duplicate.
+    const names = [...new Set(given)];
     const found = names.length
       ? await this.d.db
           .select({

@@ -63,3 +63,40 @@ test("idempotent: a second run is a no-op, and a missing workdir is fine", async
   await migrateWorkdirState(home, ["a", "ghost"], log);
   expect(await readFile(`${home}/state/agents/a/template/settings.json`, "utf8")).toBe("{}");
 });
+
+test("symlinks planted in template/ and resync/ are never moved into state", async () => {
+  const { home, wd } = await setup();
+  const outside = await mkdtemp(path.join(tmpdir(), "outside-"));
+  await writeFile(path.join(outside, "secret"), "s3cret");
+  await mkdir(path.join(wd, ".factory/template"), { recursive: true });
+  await symlink(path.join(outside, "secret"), path.join(wd, ".factory/template/settings.json"));
+  await mkdir(path.join(wd, ".factory/resync/with-link"), { recursive: true });
+  await symlink(path.join(outside, "secret"), path.join(wd, ".factory/resync/with-link/AGENTS.md"));
+  await symlink(outside, path.join(wd, ".factory/resync/2026-11-19T10-00-00Z"));
+  await mkdir(path.join(wd, ".factory/resync/good"), { recursive: true });
+  await writeFile(path.join(wd, ".factory/resync/good/AGENTS.md"), "ok");
+  await migrateWorkdirState(home, ["a"], log);
+  expect(await readFile(path.join(outside, "secret"), "utf8")).toBe("s3cret");
+  expect(existsSync(`${home}/state/agents/a/template/settings.json`)).toBe(false);
+  expect(existsSync(`${home}/state/agents/a/resync/with-link`)).toBe(false);
+  expect(existsSync(`${home}/state/agents/a/resync/2026-11-19T10-00-00Z`)).toBe(false);
+  expect(await readFile(`${home}/state/agents/a/resync/good/AGENTS.md`, "utf8")).toBe("ok");
+  expect(existsSync(`${wd}/.factory`)).toBe(false);
+});
+
+test("a failing slug is logged and the others still migrate", async () => {
+  const { home, wd } = await setup();
+  await mkdir(path.join(wd, ".factory/template"), { recursive: true });
+  await writeFile(path.join(wd, ".factory/template/settings.json"), "{}");
+  // state/agents/a is a file, so mkdir for slug "a" fails; slug "b" must still migrate.
+  await mkdir(path.join(home, "state/agents"), { recursive: true });
+  await writeFile(path.join(home, "state/agents/a"), "blocker");
+  const wdB = path.join(home, "agents", "b");
+  await mkdir(path.join(wdB, ".factory/template"), { recursive: true });
+  await writeFile(path.join(wdB, ".factory/template/settings.json"), "{}");
+  const warned: string[] = [];
+  await migrateWorkdirState(home, ["a", "b"], { warn: (_o, m) => warned.push(m) });
+  expect(warned.some((m) => m.includes("retries"))).toBe(true);
+  expect(existsSync(`${home}/state/agents/b/template/settings.json`)).toBe(true);
+  expect(existsSync(`${wd}/.factory`)).toBe(true);
+});

@@ -13,6 +13,7 @@ import type {
   AnyEvent,
   HarnessEvent,
   QueueItem,
+  WaitingOn,
 } from "@open-factory/shared";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -199,6 +200,7 @@ export class AgentRuntime {
     lastError?: string;
     restartPending: boolean;
     restartWaitingOn: number;
+    waitingOn: WaitingOn;
   } {
     return {
       status: this.status(),
@@ -206,6 +208,7 @@ export class AgentRuntime {
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
+      waitingOn: { tasks: [], crons: 0 },
     };
   }
 

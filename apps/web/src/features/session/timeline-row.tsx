@@ -91,7 +91,12 @@ function FixLink({
         Edit the agent
       </Link>
     );
-  const label = { credentials: "Credentials", secrets: "Secrets", projects: "Projects" }[fix];
+  const label = {
+    credentials: "Credentials",
+    secrets: "Secrets",
+    projects: "Projects",
+    runtime: "Runtime",
+  }[fix];
   return (
     <Link to="/settings" hash={fix} className={cls}>
       Open Settings → {label}

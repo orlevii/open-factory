@@ -17,7 +17,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
       z.object({
         id: z.string(),
         from: z.string(),
-        kind: z.literal("message"),
+        kind: z.enum(["message", "system"]),
         urgent: z.boolean(),
         body: z.string(),
         taskKey: z.string().optional(),
@@ -125,7 +125,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     message: z.string(),
     detail: z.string().optional(),
     code: z.string().optional(),
-    fix: z.enum(["credentials", "secrets", "projects", "edit_agent"]).optional(),
+    fix: z.enum(["credentials", "secrets", "projects", "edit_agent", "runtime"]).optional(),
   }),
   z.object({
     type: z.literal("exited"),
@@ -139,10 +139,27 @@ export type HarnessEvent = z.infer<typeof harnessEventSchema>;
 
 /** Appended by the server, never produced by a driver. */
 export const factoryEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("process_started"), resumed: z.boolean() }),
+  z.object({
+    type: z.literal("process_started"),
+    resumed: z.boolean(),
+    reason: z
+      .enum([
+        "message",
+        "compact",
+        "crash_recovery",
+        "restart",
+        "reset",
+        "boot",
+        "boot_resume",
+        "rate_limit_reset",
+        "queued_items",
+        "apply_changes",
+      ])
+      .optional(),
+  }),
   z.object({
     type: z.literal("control"),
-    cmd: z.enum(["compact", "interrupt", "clear"]),
+    cmd: z.enum(["compact", "interrupt", "clear", "restart"]),
     arg: z.string().optional(),
     by: z.string(),
   }),
@@ -152,6 +169,49 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
     reason: z.string(),
   }),
   z.object({ type: z.literal("session_reset"), by: z.string() }),
+  z.object({
+    type: z.literal("hibernated"),
+    reason: z.string(),
+    idleMinutes: z.number().optional(),
+  }),
+  z.object({
+    type: z.literal("container"),
+    action: z.enum(["created", "recreated", "started"]),
+    image: z.string(),
+    imageId: z.string(),
+    claudeCodeVersion: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("cleanup"),
+    killedProcesses: z.number().int().nonnegative().optional(),
+    container: z.literal("stopped").optional(),
+  }),
+  z.object({ type: z.literal("stop_escalated"), how: z.enum(["sigkill", "container_stop"]) }),
+  z.object({
+    type: z.literal("background_work_lost"),
+    reason: z.enum([
+      "crash",
+      "apply_changes",
+      "shutdown",
+      "archived",
+      "restart",
+      "factory_restarted",
+    ]),
+    tasks: z.array(z.object({ taskId: z.string(), description: z.string().optional() })),
+    crons: z.array(z.object({ cronId: z.string(), humanSchedule: z.string().optional() })),
+  }),
+  z.object({
+    type: z.literal("reconciled"),
+    killedProcesses: z.number().int().nonnegative(),
+    stoppedContainer: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("rate_limit_paused"),
+    credential: z.string(),
+    until: z.string(),
+    exact: z.boolean(),
+  }),
+  z.object({ type: z.literal("rate_limit_reset"), credential: z.string() }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;
 

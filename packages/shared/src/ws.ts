@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { agentStatusSchema, queueItemSchema } from "./agents.ts";
+import { agentLiveShape, agentStatusSchema, queueItemSchema, waitingOnSchema } from "./agents.ts";
 import { sessionEventSchema } from "./events.ts";
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
@@ -21,6 +21,8 @@ export const agentStatusFrameSchema = z.object({
   lastError: z.string().optional(),
   restartPending: z.boolean(),
   restartWaitingOn: z.number().int().nonnegative(),
+  waitingOn: waitingOnSchema.optional(),
+  ...agentLiveShape,
 });
 export type AgentStatusFrame = z.infer<typeof agentStatusFrameSchema>;
 
@@ -33,5 +35,6 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("queue"), agent: z.string(), items: z.array(queueItemSchema) }),
   agentStatusFrameSchema,
   z.object({ type: z.literal("resync"), agent: z.string() }),
+  z.object({ type: z.literal("supervisor"), running: z.number().int(), max: z.number().int() }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

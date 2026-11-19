@@ -26,6 +26,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
     vi.fn(async () =>
       json({
         agents: [agentSummary({ status: "working", turnOpen: true, template: "developer" })],
+        running: { count: 0, max: 8 },
       }),
     ),
   );
@@ -53,6 +54,7 @@ test("a pushed agent_status frame turns the row's Working into Idle", async () =
     vi.fn(async () =>
       json({
         agents: [agentSummary({ status: "working", turnOpen: true })],
+        running: { count: 0, max: 8 },
       }),
     ),
   );

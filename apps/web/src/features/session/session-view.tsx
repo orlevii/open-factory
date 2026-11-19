@@ -18,6 +18,8 @@ import { useSession } from "./use-session";
 
 const STATUS_LABEL = {
   hibernated: "Hibernated",
+  queued: "Queued",
+  rate_limited: "Rate limited",
   working: "Working",
   idle: "Idle",
   errored: "Errored",

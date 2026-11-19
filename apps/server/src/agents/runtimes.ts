@@ -70,6 +70,7 @@ export class AgentRuntimes {
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      waitingOn: { tasks: [], crons: 0 },
     };
   }
 

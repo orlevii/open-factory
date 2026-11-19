@@ -5,7 +5,7 @@ export const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 export const NAME_PATTERN = /^[a-z][a-z0-9-]{0,38}[a-z0-9]$/;
 export const SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
 export const HOST_SKILL_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
-export const RESERVED_SLUGS = [...RESERVED_HANDLES, "all", "system", "factory"] as const;
+export const RESERVED_SLUGS = [...RESERVED_HANDLES, "all", "system"] as const;
 
 const RESERVED_SECRET_EXACT = new Set([
   "PATH",

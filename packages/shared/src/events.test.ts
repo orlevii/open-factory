@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   anyEventSchema,
+  handleSchema,
   MAX_BODY_BYTES,
   sendMessageBodySchema,
   sessionEventSchema,
@@ -126,4 +127,41 @@ test("S4 additions: error code/fix and turn_end apiErrorStatus", () => {
     anyEventSchema.safeParse({ type: "turn_end", isError: true, numTurns: 1, apiErrorStatus: 401 })
       .success,
   ).toBe(true);
+});
+
+test("message_in accepts system notices and the new factory events parse", () => {
+  expect(() =>
+    anyEventSchema.parse({
+      type: "message_in",
+      messages: [{ id: "n1", from: "@factory", kind: "system", urgent: false, body: "x" }],
+    }),
+  ).not.toThrow();
+  for (const e of [
+    { type: "hibernated", reason: "warm_window", idleMinutes: 70 },
+    { type: "container", action: "created", image: "open-factory-base:dev", imageId: "sha256:x" },
+    { type: "cleanup", killedProcesses: 2 },
+    { type: "stop_escalated", how: "sigkill" },
+    {
+      type: "background_work_lost",
+      reason: "crash",
+      tasks: [{ taskId: "t", description: "pnpm test" }],
+      crons: [],
+    },
+    { type: "reconciled", killedProcesses: 0, stoppedContainer: true },
+    {
+      type: "rate_limit_paused",
+      credential: "work",
+      until: "2026-11-19T14:30:00Z",
+      exact: false,
+    },
+    { type: "rate_limit_reset", credential: "work" },
+    { type: "control", cmd: "restart", by: "@or" },
+    { type: "process_started", resumed: true, reason: "crash_recovery" },
+    { type: "error", source: "spawn", message: "x", fix: "runtime" },
+  ])
+    expect(() => anyEventSchema.parse(e)).not.toThrow();
+});
+
+test("factory is a reserved handle", () => {
+  expect(handleSchema.safeParse("factory").success).toBe(false);
 });

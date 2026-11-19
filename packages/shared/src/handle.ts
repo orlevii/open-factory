@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-/** Addresses the product uses (@humans, @me, @scheduler). Specs that add an address add it here. */
-export const RESERVED_HANDLES = ["humans", "me", "scheduler"] as const;
+/** Addresses the product uses (@humans, @me, @scheduler, @factory). Specs that add an address add it here. */
+export const RESERVED_HANDLES = ["humans", "me", "scheduler", "factory"] as const;
 
 export const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 

@@ -18,6 +18,7 @@ import {
 } from "../../workspace/mounts.ts";
 import type { ContainerCreateOptions, ContainerInfo, DockerClient, ExecStream } from "./client.ts";
 import { ContainerManager, containerName, createOptions, specHash } from "./containers.ts";
+import { LAUNCHER_VERSION } from "./spec-hash.ts";
 
 type Call = { op: string; args: unknown[] };
 
@@ -66,7 +67,8 @@ class FakeDockerClient implements DockerClient {
   }
   async imageLabel(ref: string, label: string) {
     this.rec("imageLabel", ref, label);
-    return this.images.get(ref)?.labels[label];
+    const img = this.images.get(ref) ?? [...this.images.values()].find((x) => x.id === ref);
+    return img?.labels[label];
   }
   async findContainer(name: string) {
     this.rec("findContainer", name);
@@ -202,7 +204,7 @@ test("hardened create options", () => {
 test("create options: labels, image, bind mounts only from the input, nothing else that widens the box", () => {
   const o = createOptions(inputs);
   expect(o.name).toBe(inputs.name);
-  expect(o.Image).toBe(IMAGE);
+  expect(o.Image).toBe("sha256:img1"); // the hashed id, never the (retaggable) ref
   expect(o.Cmd).toBeUndefined(); // the image default (`sleep infinity`)
   expect(o.User).toBeUndefined();
   expect(o.Labels).toEqual({
@@ -210,10 +212,11 @@ test("create options: labels, image, bind mounts only from the input, nothing el
     "io.open-factory.slug": "lead",
     "io.open-factory.spec-hash": "abc123",
     "io.open-factory.image-id": "sha256:img1",
+    "io.open-factory.image": IMAGE,
   });
   expect(o.HostConfig?.Mounts).toEqual([
-    { Type: "bind", Source: "/w", Target: "/w", ReadOnly: false },
     { Type: "bind", Source: "/b", Target: CLI_BUNDLE_TARGET, ReadOnly: true },
+    { Type: "bind", Source: "/w", Target: "/w", ReadOnly: false },
   ]);
   expect(o.HostConfig?.Binds).toBeUndefined();
   expect(o.HostConfig?.Init).toBeUndefined();
@@ -225,6 +228,35 @@ test("create options: labels, image, bind mounts only from the input, nothing el
     ["ExtraHosts", "Mounts", "SecurityOpt", "Tmpfs"].sort(),
   );
   expect(Object.keys(o).sort()).toEqual(["Env", "HostConfig", "Image", "Labels", "name"].sort());
+});
+
+test("pinned create options and spec hash (changed? check the hardening, then update the pins)", () => {
+  expect(createOptions(inputs)).toEqual({
+    name: "open-factory-lead-01234567",
+    Image: "sha256:img1",
+    Env: ["HOST_UID=501", "HOST_GID=20"],
+    Labels: {
+      "io.open-factory.agent-id": AGENT,
+      "io.open-factory.slug": "lead",
+      "io.open-factory.spec-hash": "abc123",
+      "io.open-factory.image-id": "sha256:img1",
+      "io.open-factory.image": IMAGE,
+    },
+    HostConfig: {
+      Mounts: [
+        { Type: "bind", Source: "/b", Target: CLI_BUNDLE_TARGET, ReadOnly: true },
+        { Type: "bind", Source: "/w", Target: "/w", ReadOnly: false },
+      ],
+      Tmpfs: { "/run/open-factory": "" },
+      ExtraHosts: ["host.docker.internal:host-gateway"],
+      SecurityOpt: ["no-new-privileges:true"],
+    },
+  });
+  expect(LAUNCHER_VERSION).toBe(1);
+  // The hash is taken over the options themselves: any change to what a container runs with changes it.
+  expect(specHash({ imageId: "sha256:img1", mounts: inputs.mounts, uid: 501, gid: 20 })).toBe(
+    "013f0f4a5ef8789c127dc461a4827e5ab625d806ec01781503ad8d37a586afab",
+  );
 });
 
 test("spec hash changes on image id, mounts and uid; not on anything else passed", () => {
@@ -278,9 +310,11 @@ test("first ensure creates with the checked mounts, starts and waits for the rea
   });
   const create = docker.calls.find((c) => c.op === "create")?.args[0] as ContainerCreateOptions;
   expect(create.name).toBe("open-factory-lead-01234567");
-  expect(create.HostConfig?.Mounts?.map((m) => [m.Source, m.Target, m.ReadOnly])).toEqual(
-    mounts.map((m) => [m.source, m.target, m.readOnly]),
+  expect(create.Image).toBe("sha256:img1");
+  expect(create.HostConfig?.Mounts?.map((m) => [m.Source, m.Target, m.ReadOnly]).sort()).toEqual(
+    mounts.map((m) => [m.source, m.target, m.readOnly]).sort(),
   );
+  expect(docker.calls.find((c) => c.op === "imageLabel")?.args[0]).toBe("sha256:img1");
   const ops = docker.ops();
   expect(ops.indexOf("create")).toBeLessThan(ops.indexOf("start"));
   expect(ops.indexOf("start")).toBeLessThan(ops.indexOf("execRun"));
@@ -476,5 +510,47 @@ test("a container stop that never answers is bounded", async () => {
   fakeClock();
   const caught = mgr.stop(AGENT, "lead").catch((e: unknown) => e);
   await vi.advanceTimersByTimeAsync(20_000);
-  expect(await caught).toBeInstanceOf(Error);
+  const err = await caught;
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toMatch(/didn't finish within 15 s/);
+});
+
+test("a ready check the daemon never answers can't outlast the 30 s deadline", async () => {
+  fakeClock();
+  docker.execRun = () => new Promise(() => {});
+  docker.logs = "still booting\n";
+  const caught = mgr
+    .ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx })
+    .catch((e: unknown) => e);
+  await until(() => docker.ops().includes("start"));
+  await vi.advanceTimersByTimeAsync(31_000);
+  const err = await caught;
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect((err as Error).message).toContain("wasn't ready within 30 s");
+  expect((err as Error).message).toContain("still booting");
+});
+
+test("a container with the agent's name that the factory didn't create is never reused, stopped or removed", async () => {
+  const name = containerName("lead", AGENT);
+  const foreign: Record<string, string>[] = [{}, { "io.open-factory.agent-id": "someone-else" }];
+  for (const labels of foreign) {
+    docker.containers.set(name, {
+      id: "foreign",
+      name,
+      running: true,
+      labels: { ...labels, "io.open-factory.spec-hash": "copied" },
+      opts: {},
+    });
+    docker.calls = [];
+    const msg = `A container named ${name} exists that the factory didn't create.`;
+    await expect(
+      mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
+    ).rejects.toThrow(msg);
+    await expect(mgr.stopIfRunning(AGENT, "lead")).rejects.toThrow(msg);
+    await expect(mgr.stop(AGENT, "lead")).rejects.toThrow(msg);
+    expect(docker.ops()).not.toContain("stop");
+    expect(docker.ops()).not.toContain("remove");
+    expect(docker.ops()).not.toContain("start");
+    expect(docker.ops()).not.toContain("create");
+  }
 });

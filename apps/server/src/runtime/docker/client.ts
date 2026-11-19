@@ -103,11 +103,13 @@ export function dockerodeClient(): DockerClient {
           (stream as Readable).destroy?.();
           reject(signal.reason);
         };
+        // An abort between the pull request and here would never fire the listener: check first.
+        if (signal.aborted) return onAbort();
         signal.addEventListener("abort", onAbort, { once: true });
         docker.modem.followProgress(stream, (err: Error | null) => {
           signal.removeEventListener("abort", onAbort);
-          if (signal.aborted) return;
-          if (err) reject(err);
+          if (signal.aborted) reject(signal.reason);
+          else if (err) reject(err);
           else resolve();
         });
       });

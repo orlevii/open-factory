@@ -2,8 +2,8 @@ import type { Mount } from "@open-factory/harness";
 import type { RuntimeLog } from "../../agents/agent-runtime.ts";
 import { AgentStartError } from "../../agents/errors.ts";
 import { checkMounts, type MountCheckContext } from "../../workspace/mounts.ts";
-import type { ContainerCreateOptions, DockerClient } from "./client.ts";
-import { EXTRA_HOSTS, SECURITY_OPT, specHash, TMPFS } from "./spec-hash.ts";
+import type { ContainerCreateOptions, ContainerInfo, DockerClient } from "./client.ts";
+import { containerSpec, specHash } from "./spec-hash.ts";
 
 export { specHash };
 
@@ -11,6 +11,8 @@ export const LABEL_AGENT_ID = "io.open-factory.agent-id";
 export const LABEL_SLUG = "io.open-factory.slug";
 export const LABEL_SPEC_HASH = "io.open-factory.spec-hash";
 export const LABEL_IMAGE_ID = "io.open-factory.image-id";
+/** The image reference the agent asked for; the container runs the image by id. */
+export const LABEL_IMAGE = "io.open-factory.image";
 /** Set by the base image (images/base/Dockerfile). */
 export const LABEL_CLAUDE_CODE_VERSION = "io.open-factory.claude-code.version";
 
@@ -22,8 +24,22 @@ export const READY_POLL_MS = 200;
 export const READY_TIMEOUT_MS = 30_000;
 export const READY_MARKER = "/run/open-factory/ready";
 const LOG_TAIL_LINES = 50;
+const LOGS_BOUND_MS = 5_000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Rejects with `message` when `p` hasn't settled within `ms`. */
+async function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([p, bound]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export const ROOT_REFUSED = "The factory runs as root; Docker agents need a non-root host user.";
 
@@ -34,7 +50,9 @@ export function containerName(slug: string, agentId: string): string {
 /**
  * Spec §11.1: the S2 contract plus hardening. `Cmd` is the image default (`sleep infinity`), `Init` is unset (the
  * image's ENTRYPOINT runs tini), the network and pid namespaces are Docker's defaults, and the only mounts are the
- * ones passed in, which `ContainerManager.ensure` takes from `checkMounts` alone.
+ * ones passed in, which `ContainerManager.ensure` takes from `checkMounts` alone. `Image` is the image id that was
+ * hashed (a tag retagged meanwhile can't swap it). Everything but the name and the labels comes from
+ * `containerSpec`, which is what the spec hash covers.
  */
 export function createOptions(i: {
   name: string;
@@ -49,24 +67,13 @@ export function createOptions(i: {
 }): ContainerCreateOptions {
   return {
     name: i.name,
-    Image: i.image,
-    Env: [`HOST_UID=${i.uid}`, `HOST_GID=${i.gid}`],
+    ...containerSpec({ imageId: i.imageId, mounts: i.mounts, uid: i.uid, gid: i.gid }),
     Labels: {
       [LABEL_AGENT_ID]: i.agentId,
       [LABEL_SLUG]: i.slug,
       [LABEL_SPEC_HASH]: i.specHash,
       [LABEL_IMAGE_ID]: i.imageId,
-    },
-    HostConfig: {
-      Mounts: i.mounts.map((m) => ({
-        Type: "bind" as const,
-        Source: m.source,
-        Target: m.target,
-        ReadOnly: m.readOnly,
-      })),
-      Tmpfs: { ...TMPFS },
-      ExtraHosts: [...EXTRA_HOSTS],
-      SecurityOpt: [...SECURITY_OPT],
+      [LABEL_IMAGE]: i.image,
     },
   };
 }
@@ -101,7 +108,7 @@ export class ContainerManager {
 
   /** Stops the agent's container when it runs (bounded). True when it was running. */
   async stopIfRunning(agentId: string, slug: string): Promise<boolean> {
-    const c = await this.docker.findContainer(containerName(slug, agentId));
+    const c = await this.ours(agentId, slug);
     if (!c?.running) return false;
     await this.boundedStop(c.id);
     return true;
@@ -141,7 +148,7 @@ export class ContainerManager {
     };
 
     const name = containerName(i.slug, i.agentId);
-    let existing = await this.docker.findContainer(name);
+    let existing = await this.ours(i.agentId, i.slug);
     let action: EnsureResult["action"] = "started";
     if (existing && existing.labels[LABEL_SPEC_HASH] !== hash) {
       this.log.info(
@@ -185,7 +192,7 @@ export class ContainerManager {
     }
     await this.waitReady(id, name);
 
-    const claudeCodeVersion = await this.docker.imageLabel(i.image, LABEL_CLAUDE_CODE_VERSION);
+    const claudeCodeVersion = await this.docker.imageLabel(imageId, LABEL_CLAUDE_CODE_VERSION);
     return {
       containerId: id,
       action,
@@ -200,7 +207,19 @@ export class ContainerManager {
   }
 
   async isRunning(agentId: string, slug: string): Promise<boolean> {
-    return (await this.docker.findContainer(containerName(slug, agentId)))?.running ?? false;
+    return (await this.ours(agentId, slug))?.running ?? false;
+  }
+
+  /**
+   * The agent's container by name, only when its agent-id label says it is this agent's: the factory never starts,
+   * stops or removes a container it didn't create.
+   */
+  private async ours(agentId: string, slug: string): Promise<ContainerInfo | undefined> {
+    const name = containerName(slug, agentId);
+    const c = await this.docker.findContainer(name);
+    if (c && c.labels[LABEL_AGENT_ID] !== agentId)
+      throw new AgentStartError(`A container named ${name} exists that the factory didn't create.`);
+    return c;
   }
 
   async listOurs(): Promise<{ id: string; agentId: string; running: boolean }[]> {
@@ -212,38 +231,38 @@ export class ContainerManager {
 
   /** `container.stop({t: 5})`, bounded so a Docker daemon that never answers can't hang the caller. */
   private async boundedStop(id: string): Promise<void> {
-    let timer: NodeJS.Timeout | undefined;
-    const bound = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(`Stopping container ${id} didn't finish within ${STOP_BOUND_MS / 1000} s.`),
-          ),
-        STOP_BOUND_MS,
-      );
-    });
-    try {
-      await Promise.race([this.docker.stop(id, STOP_T_SECONDS), bound]);
-    } finally {
-      clearTimeout(timer);
-    }
+    await bounded(
+      this.docker.stop(id, STOP_T_SECONDS),
+      STOP_BOUND_MS,
+      `Stopping container ${id} didn't finish within ${STOP_BOUND_MS / 1000} s.`,
+    );
   }
 
   /** Polls for the ready marker as root (spec §11.1); fails with the last 50 log lines on timeout or exit. */
   private async waitReady(id: string, name: string): Promise<void> {
     const deadline = Date.now() + READY_TIMEOUT_MS;
     for (;;) {
+      const left = () => Math.max(0, deadline - Date.now());
       try {
-        const r = await this.docker.execRun(id, {
-          cmd: ["test", "-f", READY_MARKER],
-          user: "root",
-        });
+        // Each call is bounded by the time left, so one exec the daemon never answers can't outlast the deadline.
+        const r = await bounded(
+          this.docker.execRun(id, { cmd: ["test", "-f", READY_MARKER], user: "root" }),
+          left(),
+          "ready check timed out",
+        );
         if (r.code === 0) return;
       } catch {
-        // An exec fails once the container has exited; checked below.
+        // An exec fails once the container has exited (checked below) or when the deadline passes.
       }
-      const c = await this.docker.findContainer(name);
-      if (!c?.running)
+      const state = await bounded(
+        this.docker.findContainer(name),
+        left(),
+        "inspect timed out",
+      ).then(
+        (c) => (c?.running ? "running" : "exited"),
+        () => "unknown", // no answer in time: the deadline check below decides
+      );
+      if (state === "exited")
         return this.failStart(id, "The agent's container exited before it was ready.");
       if (Date.now() >= deadline)
         return this.failStart(
@@ -257,7 +276,9 @@ export class ContainerManager {
   private async failStart(id: string, why: string): Promise<never> {
     let logs: string;
     try {
-      logs = (await this.docker.logsTail(id, LOG_TAIL_LINES)).trimEnd();
+      logs = (
+        await bounded(this.docker.logsTail(id, LOG_TAIL_LINES), LOGS_BOUND_MS, "timed out")
+      ).trimEnd();
     } catch (err) {
       logs = `(container logs unavailable: ${(err as Error).message})`;
     }

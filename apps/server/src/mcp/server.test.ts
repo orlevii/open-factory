@@ -101,3 +101,22 @@ test("an agent id smuggled in the arguments is ignored: list_peers answers for t
     ["lead", "manager"],
   ]);
 });
+
+test("an unknown caller gets no server: the request fails and no tools are built", async () => {
+  const errors: Error[] = [];
+  let built = 0;
+  const mcp = createFactoryMcp({
+    version: "0.0.0",
+    onerror: (e) => errors.push(e),
+    loadCaller: (id) => new EventStore(t.db).agentById(id),
+    tools: () => {
+      built += 1;
+      return [listPeersTool({ neighborhood: new Neighborhood(t.db), statusOf: () => "idle" })];
+    },
+  });
+  const res = await mcp(rpc("tools/list", {}), "nobody");
+  expect(res.ok).toBe(false);
+  expect(await res.text()).not.toContain("list_peers");
+  expect(built).toBe(0);
+  expect(errors.map((e) => e.message)).toContain("factory MCP request without a known caller");
+});

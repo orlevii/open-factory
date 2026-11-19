@@ -48,6 +48,7 @@ import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
+import { SpawnService } from "./spawning/spawn-service.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
@@ -76,6 +77,7 @@ declare module "fastify" {
     router: Router;
     neighborhood: Neighborhood;
     agentTokens: AgentTokens;
+    spawner: SpawnService;
     agentListener: { port: number; close(): Promise<void> };
   }
 }
@@ -227,6 +229,18 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("neighborhood", neighborhood);
   app.decorate("router", router);
   app.decorate("agentTokens", tokens);
+  const spawner = new SpawnService({
+    db: deps.db,
+    store,
+    templates,
+    workspace,
+    router,
+    runtimes,
+    config,
+    log: app.log,
+    closing: () => runtimes.supervisor.closing(),
+  });
+  app.decorate("spawner", spawner);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
@@ -265,9 +279,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
-      // STUBS until Tasks 7b (spawn) and 9 (terminate) replace them with the real services. They keep the tools
-      // honest in the meantime: a call fails with a clear message instead of half-working.
-      spawner: { spawn: async () => ({ ok: false, message: NOT_AVAILABLE_YET }) },
+      spawner,
+      // STUB until Task 9 replaces it with the real service: a call fails with a clear message instead of
+      // half-working.
       terminator: { terminateChild: async () => ({ ok: false, message: NOT_AVAILABLE_YET }) },
       log: app.log,
     });

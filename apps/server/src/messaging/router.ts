@@ -1,4 +1,4 @@
-import type { Db } from "@open-factory/db";
+import type { AgentRow, Db } from "@open-factory/db";
 import type { AgentStatus, QueueItem } from "@open-factory/shared";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -344,6 +344,29 @@ export class Router {
       );
     }
     return rows;
+  }
+
+  /**
+   * S7 §5.2 step 5: a spawned agent's committed brief. Its status is read before the hand-off (as `send` does for an
+   * agent sender), once boot is done; the hand-off wakes it `spawned` and is enqueued, never awaited. Shutting down
+   * (or before a boot that failed): the row stays pending for the next boot. Never throws: the child exists.
+   */
+  async handOffBrief(row: PendingRow, child: AgentRow): Promise<AgentStatus> {
+    try {
+      await this.booted;
+    } catch {
+      return this.d.runtimes.statusOf(child);
+    }
+    if (this.closed) return this.d.runtimes.statusOf(child);
+    const status = await this.statusOf(child.id).catch((err: unknown) => {
+      this.d.log.error(
+        { err, agent: child.slug, message: row.id },
+        "loading the spawned agent failed; its brief stays pending",
+      );
+      return this.d.runtimes.statusOf(child);
+    });
+    await this.d.runtimes.deliver(row, "agent", "spawned");
+    return status;
   }
 
   /** Hands committed held rows over (after the caller's commit), once boot is done; never awaited. */

@@ -35,6 +35,13 @@ describe("loadConfig", () => {
     expect(path.isAbsolute(c.cliBundle)).toBe(true);
     expect(loadConfig({ ...ok, PORT: "4000" }).agentUrl).toBe("http://host.docker.internal:4001");
   });
+  test("PORT=65535 without FACTORY_AGENT_PORT, and hostnames in FACTORY_AGENT_HOST, are config errors", () => {
+    expect(() => loadConfig({ ...ok, PORT: "65535" })).toThrow(/FACTORY_AGENT_PORT/);
+    expect(loadConfig({ ...ok, PORT: "65535", FACTORY_AGENT_PORT: "65000" }).agentPort).toBe(65000);
+    expect(() => loadConfig({ ...ok, FACTORY_AGENT_HOST: "127.0.0.1,my-host" })).toThrow(
+      /must be an IP address/,
+    );
+  });
   test("agent listener settings", () => {
     const c = loadConfig({ ...ok, PORT: "4000" });
     expect(c.agentPort).toBe(4001);

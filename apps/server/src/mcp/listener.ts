@@ -57,7 +57,7 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
   });
   // 3. Token, on POST /mcp only.
   app.addHook("onRequest", async (req, reply) => {
-    if (req.method !== "POST" || req.url.split("?")[0] !== "/mcp") return;
+    if (req.method !== "POST" || req.routeOptions.url !== "/mcp") return;
     const id = i.tokens.verify(bearer(req.headers.authorization));
     if (!id || (await i.isArchived(id.agentId))) return reply.code(401).send(unauthorized);
     req.agentId = id.agentId;
@@ -80,7 +80,7 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
       headers.set(k, Array.isArray(v) ? v.join(", ") : v);
     }
     const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
-    const request = new Request(`http://${req.headers.host ?? "agent.local"}${req.url}`, {
+    const request = new Request(`http://agent.local${req.url}`, {
       method: "POST",
       headers,
       body,

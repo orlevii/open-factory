@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,9 +113,23 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const e = parsed.data;
   const publicUrl = (e.PUBLIC_URL ?? `http://localhost:${e.PORT}`).replace(/\/$/, "");
   const agentPort = e.FACTORY_AGENT_PORT ?? e.PORT + 1;
+  const issues: string[] = [];
+  if (agentPort > 65535) {
+    issues.push(
+      "FACTORY_AGENT_PORT defaults to PORT + 1, which is above 65535; set FACTORY_AGENT_PORT",
+    );
+  }
   const agentHosts = e.FACTORY_AGENT_HOST?.split(",")
     .map((h) => h.trim())
     .filter(Boolean);
+  for (const h of agentHosts ?? []) {
+    if (!isIP(h)) {
+      issues.push(
+        `FACTORY_AGENT_HOST entry "${h}" must be an IP address (hostnames can't be matched to a source range)`,
+      );
+    }
+  }
+  if (issues.length) throw new ConfigError(issues);
   return {
     databaseUrl: e.DATABASE_URL,
     secretKey: e.FACTORY_SECRET_KEY,

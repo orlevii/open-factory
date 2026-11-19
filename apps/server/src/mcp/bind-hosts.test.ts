@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
-import { bridgeInfo, resolveAgentBindHosts } from "./bind-hosts.ts";
+import { bridgeInfo, inCidr, resolveAgentBindHosts } from "./bind-hosts.ts";
 
 const ifaces = (addr?: string) =>
   ({
@@ -101,16 +101,6 @@ test("an explicit 0.0.0.0 override accepts any source and warns once", () => {
   expect(warn).toEqual([
     "agent listener is reachable on all interfaces; the token is the only protection",
   ]);
-  warn.length = 0;
-  expect(
-    resolveAgentBindHosts({
-      ...base,
-      platform: "linux",
-      override: ["127.0.0.1", "::"],
-      interfaces: ifaces(),
-    }).allowedSources,
-  ).toEqual(["0.0.0.0/0", "::/0"]);
-  expect(warn).toHaveLength(1);
 });
 test("the override replaces the list; local runtime needs a loopback in it", () => {
   expect(
@@ -147,4 +137,39 @@ test("bridgeInfo returns the bridge, or {} when Docker fails", async () => {
     throw new Error("no docker");
   };
   expect(await bridgeInfo(d)).toEqual({});
+});
+test("a wildcard next to another address, or a duplicate, is a config error", () => {
+  for (const override of [
+    ["127.0.0.1", "0.0.0.0"],
+    ["127.0.0.1", "::"],
+    ["0.0.0.0", "::"],
+    ["127.0.0.1", "127.0.0.1"],
+  ]) {
+    expect(() =>
+      resolveAgentBindHosts({ ...base, platform: "linux", override, interfaces: ifaces() }),
+    ).toThrow(/FACTORY_AGENT_HOST/);
+  }
+});
+test("a non-loopback override address contributes its interface network", () => {
+  const nets = {
+    eth0: [{ address: "10.20.30.5", family: "IPv4", internal: false, cidr: "10.20.30.5/24" }],
+  } as never;
+  const { allowedSources } = resolveAgentBindHosts({
+    ...base,
+    platform: "linux",
+    override: ["127.0.0.1", "10.20.30.5"],
+    interfaces: nets,
+  });
+  expect(allowedSources).toContain("10.20.30.0/24");
+  expect(allowedSources.some((c) => inCidr("10.20.30.99", c))).toBe(true);
+  expect(allowedSources.some((c) => inCidr("10.20.31.1", c))).toBe(false);
+});
+test("inCidr handles IPv4-mapped addresses and rejects dotted-tail lookalikes", () => {
+  expect(inCidr("::ffff:172.17.0.9", "172.17.0.0/16")).toBe(true);
+  expect(inCidr("::ffff:172.18.0.9", "172.17.0.0/16")).toBe(false);
+  expect(inCidr("::ffff:127.0.0.1", "127.0.0.0/8")).toBe(true);
+  expect(inCidr("::1", "::1/128")).toBe(true);
+  expect(inCidr("::1.0.0.0", "::1/128")).toBe(false);
+  expect(inCidr("::1.0.0.0", "127.0.0.0/8")).toBe(false);
+  expect(inCidr("10.1.2.3", "::/0")).toBe(false);
 });

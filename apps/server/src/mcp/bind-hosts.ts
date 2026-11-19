@@ -19,6 +19,13 @@ function parseIp(raw: string): { v: 4 | 6; n: bigint } | undefined {
     return { v: 4, n: ip.split(".").reduce((a, o) => (a << 8n) | BigInt(Number(o)), 0n) };
   }
   if (fam === 6) {
+    // A dotted tail (`::1.2.3.4`) is two hex groups; never read it as one group.
+    const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
+    if (dotted) {
+      const [, pre = "", a = "0", b = "0", c = "0", d = "0"] = dotted;
+      const hex = (x: string, y: string) => (Number(x) * 256 + Number(y)).toString(16);
+      ip = `${pre}${hex(a, b)}:${hex(c, d)}`;
+    }
     const [head = "", tail] = ip.split("::") as [string, string?];
     const groups = (x: string) => (x ? x.split(":") : []);
     const hs = groups(head);
@@ -97,6 +104,15 @@ export function resolveAgentBindHosts(i: BindInput): { hosts: string[]; allowedS
 
   if (i.override) {
     const hosts = [...i.override];
+    // Linux can't bind a wildcard next to another address (or the same one twice): EADDRINUSE.
+    if (new Set(hosts).size !== hosts.length) {
+      throw new Error("FACTORY_AGENT_HOST lists the same address twice");
+    }
+    if (hosts.length > 1 && hosts.some(isWildcard)) {
+      throw new Error(
+        "FACTORY_AGENT_HOST: 0.0.0.0 or :: must be the only entry (it already covers every address)",
+      );
+    }
     if (i.localAllowed && !hosts.some((h) => isLoopback(h) || isWildcard(h))) {
       throw new Error(
         "FACTORY_AGENT_HOST must contain a loopback address (127.0.0.1) while the local runtime is allowed",

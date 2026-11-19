@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { Writable } from "node:stream";
 import Fastify from "fastify";
 import { afterEach, expect, test } from "vitest";
@@ -18,10 +19,9 @@ const log = {
     return log;
   },
 } as never;
-let close: (() => Promise<void>) | undefined;
+const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
-  await close?.();
-  close = undefined;
+  await Promise.all(closers.splice(0).map((c) => c()));
 });
 
 async function start(over: Partial<Parameters<typeof startAgentListener>[0]> = {}) {
@@ -41,8 +41,13 @@ async function start(over: Partial<Parameters<typeof startAgentListener>[0]> = {
     log,
     ...over,
   });
-  close = l.close;
+  closers.push(l.close);
   return { url: `http://127.0.0.1:${l.port}`, tokens, seen };
+}
+
+async function startOnPort() {
+  const r = await start();
+  return { ...r, port: Number(new URL(r.url).port) };
 }
 
 test("401 before MCP without or with a bad token; 200 with a valid one", async () => {
@@ -108,24 +113,30 @@ test("a source outside the allowed ranges is closed", async () => {
   const { url } = await start({ allowedSources: ["10.99.0.0/16"] });
   await expect(fetch(`${url}/api/status`)).rejects.toThrow();
 });
-test("a specific bind address accepts callers by the range of the interface that carries it", async () => {
-  const nets = {
-    lo: [{ address: "127.0.0.1", family: "IPv4", internal: true, cidr: "127.0.0.1/8" }],
-  } as never;
-  const { hosts, allowedSources } = resolveAgentBindHosts({
-    platform: "linux",
-    override: ["127.0.0.1"],
-    interfaces: nets,
-    localAllowed: true,
-    warn() {},
+test("the listener accepts a source inside an allowed range and refuses one outside", async () => {
+  const inside = await start({ allowedSources: ["127.0.0.0/24"] });
+  expect((await fetch(`${inside.url}/api/status`)).status).toBe(200);
+  const outside = await start({ allowedSources: ["127.1.0.0/24"] });
+  await expect(fetch(`${outside.url}/api/status`)).rejects.toThrow();
+});
+test("a malformed Host header cannot break the MCP request", async () => {
+  const { port, tokens } = await startOnPort();
+  const { token } = tokens.mint("ag1");
+  const body = "{}";
+  const status = await new Promise<string>((resolve, reject) => {
+    const sock = connect(port, "127.0.0.1", () =>
+      sock.write(
+        `POST /mcp HTTP/1.1\r\nHost: bad host/<>\r\nauthorization: Bearer ${token}\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\nconnection: close\r\n\r\n${body}`,
+      ),
+    );
+    let data = "";
+    sock.on("data", (c) => {
+      data += c;
+    });
+    sock.on("end", () => resolve(data.split("\r\n")[0] ?? ""));
+    sock.on("error", reject);
   });
-  const { url } = await start({ hosts, allowedSources });
-  expect((await fetch(`${url}/api/status`)).status).toBe(200);
-  const other = await start({
-    hosts,
-    allowedSources: allowedSources.filter((c) => !c.startsWith("127.")),
-  });
-  await expect(fetch(`${other.url}/api/status`)).rejects.toThrow();
+  expect(status).toBe("HTTP/1.1 200 OK");
 });
 test("an explicit all-addresses setting accepts any caller and warns exactly once at startup", async () => {
   const warns: string[] = [];

@@ -29,6 +29,13 @@
       "when": 1795066848470,
       "tag": "0003_outgoing_maginty",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795101447721,
+      "tag": "0004_ancient_tigra",
+      "breakpoints": true
     }
   ]
 }

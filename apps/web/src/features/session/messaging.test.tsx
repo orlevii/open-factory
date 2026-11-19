@@ -121,6 +121,10 @@ test("a factory fact renders the body's first line, keyed by fact code, with the
     "Bash was denied for @b. The reason, reported by @b:",
   );
   const group = screen.getByRole("article", { name: "Update from @b" });
+  // A long unbroken token wraps instead of overflowing at narrow widths.
+  expect(
+    within(group).getByText("Bash was denied for @b. The reason, reported by @b:"),
+  ).toHaveClass("[overflow-wrap:anywhere]");
   expect(within(group).queryByText(/rm -rf x/)).toBeNull();
   await userEvent.click(within(group).getByRole("button", { name: "Show details" }));
   expect(within(group).getByText(/rm -rf x/)).toBeInTheDocument();
@@ -199,7 +203,10 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
     "ping b",
   );
   const block = screen.getByRole("article", { name: "Message from @dev to @b" });
-  expect(within(block).getByText(/Sent · @b was hibernated/)).toBeInTheDocument();
+  const sentLine = within(block).getByText(
+    (_, el) => el?.tagName === "SPAN" && el.textContent === "Sent · @b was hibernated",
+  );
+  expect(within(sentLine).getByText("@b")).toHaveClass("font-mono");
   expect(
     within(block).getByRole("link", { name: "View this message in @b's session" }),
   ).toHaveAttribute("href", "/agents/b?message=m9");
@@ -316,9 +323,11 @@ test("?message= for a delivered message loads the window around its recipient ev
 test("?message= for a rejected message names who it wasn't delivered to", async () => {
   lookupWorld(() => json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }));
   renderApp("/agents/dev?message=mid", alice);
-  expect(
-    await screen.findByText("This message wasn't delivered: @b was archived."),
-  ).toBeInTheDocument();
+  const notice = await screen.findByText(
+    (_, el) =>
+      el?.tagName === "P" && el.textContent === "This message wasn't delivered: @b was archived.",
+  );
+  expect(within(notice).getByText("@b")).toHaveClass("font-mono");
 });
 
 test("the announcer says '<name> messaged you' for a send to this human or @humans, not to agents", async () => {
@@ -535,4 +544,43 @@ test("held updates show as quiet lines from the queue", async () => {
         el.tagName === "SPAN",
     ),
   ).toBeInTheDocument();
+});
+
+test("the announcer re-announces a second send to this human (the live text changes)", async () => {
+  await open([{ type: "assistant_text", text: "history" }], "history");
+  const push = (event: AnyEvent) =>
+    act(() => ws.onMessage?.({ type: "session_event", agent: "dev", event: se(event) }));
+  const status = () =>
+    document.querySelector<HTMLElement>("[role=status][aria-live=polite].sr-only") as HTMLElement;
+  push(call({ to: "@alice", body: "one" }, "t_1"));
+  push(result(JSON.stringify({ id: "m1", to: "@alice", status: "inbox" }), false, "t_1"));
+  await vi.waitFor(() => expect(status()).toHaveTextContent("@dev messaged you"));
+  const first = status().textContent;
+  push(call({ to: "@alice", body: "two" }, "t_2"));
+  push(result(JSON.stringify({ id: "m2", to: "@alice", status: "inbox" }), false, "t_2"));
+  await vi.waitFor(() => expect(status().textContent).not.toBe(first));
+  expect(status()).toHaveTextContent("@dev messaged you");
+});
+
+test("the announcer announces a send whose call was on screen at load and whose result arrives later", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      call({ to: "@alice", body: "pending at load" }, "t_p"),
+      call({ to: "@alice", body: "done at load" }, "t_d"),
+      result(JSON.stringify({ id: "m0", to: "@alice", status: "inbox" }), false, "t_d"),
+    ],
+    "pending at load",
+  );
+  const status = () =>
+    document.querySelector<HTMLElement>("[role=status][aria-live=polite].sr-only") as HTMLElement;
+  expect(status()).toHaveTextContent("");
+  act(() =>
+    ws.onMessage?.({
+      type: "session_event",
+      agent: "dev",
+      event: se(result(JSON.stringify({ id: "m1", to: "@alice", status: "inbox" }), false, "t_p")),
+    }),
+  );
+  await vi.waitFor(() => expect(status()).toHaveTextContent("@dev messaged you"));
 });

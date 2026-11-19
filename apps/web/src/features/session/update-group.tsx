@@ -139,7 +139,9 @@ function FactLine({ fact, body }: { fact: string; body: string }) {
   return (
     <div>
       <QuietLine icon={factIcon(fact)}>
-        <span className={prominent ? "text-foreground" : undefined}>{first}</span>
+        <span className={`[overflow-wrap:anywhere]${prominent ? " text-foreground" : ""}`}>
+          {first}
+        </span>
         {quote && (
           <>
             {" "}

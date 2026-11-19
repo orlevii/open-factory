@@ -45,7 +45,7 @@ function Row({ item, now }: { item: InboxItem; now: Date }) {
         data-inbox-id={item.id}
         aria-label={label}
         aria-describedby={previewId}
-        className="flex min-h-14 flex-col justify-center gap-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent"
+        className="flex min-h-14 flex-col justify-center gap-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <span className="flex items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
           <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">

@@ -76,3 +76,18 @@ test("a group whose first row is a factory fact is from the report, never @@fact
   );
   expect(line("3 updates from @dev waiting for this turn to end")).toBeInTheDocument();
 });
+
+test("a peer group held during an open turn is the peer line, never an update line", () => {
+  render(
+    <QueueItems
+      items={[
+        held({ waitReason: "turn" }),
+        held({ id: "p1", from: "@factory", about: "b", count: 2, waitReason: "ride_along" }),
+      ]}
+      agent={agentSummary()}
+    />,
+  );
+  expect(line("3 updates from @dev waiting for this turn to end")).toBeInTheDocument();
+  expect(screen.getByText("2 peer changes waiting")).toBeInTheDocument();
+  expect(screen.queryByText(/updates? from @b/)).toBeNull();
+});

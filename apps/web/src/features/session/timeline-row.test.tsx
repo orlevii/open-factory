@@ -146,3 +146,15 @@ test("timeline: a runtime error has no fix link (the strip explains it)", () => 
   ]);
   expect((els[0] as HTMLElement).querySelector("a")).toBeNull();
 });
+
+test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {
+  const { texts, els } = lines([{ type: "mcp_unavailable", status: "failed" }]);
+  expect(texts).toEqual([
+    "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.",
+  ]);
+  const el = els[0] as HTMLElement;
+  expect(el.querySelector("details")?.open).toBe(false);
+  expect(el.querySelector("pre")?.textContent).toBe("failed");
+  expect(el.querySelector("svg")).not.toBeNull();
+  expect(el.querySelector("svg")).not.toHaveClass("text-destructive");
+});

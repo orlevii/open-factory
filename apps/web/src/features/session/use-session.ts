@@ -12,6 +12,10 @@ const asApiError = (e: unknown) =>
     : new ApiError(0, "network_error", e instanceof Error ? e.message : String(e));
 
 /** HTTP pages + WS subscription + dedup by seq + queue + status + the deep-link window. */
+/** Why `?message=` couldn't jump to the message (UI design §2.5); rendered by the session view so the
+ *  recipient's `@slug` can be mono. */
+export type MessageNotice = { kind: "rejected"; to: string } | { kind: "not_found" };
+
 export function useSession(slug: string, eventSeq?: number, message?: string) {
   const ws = useWs();
   const wsRef = useRef(ws);
@@ -20,7 +24,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const [missingEvent, setMissingEvent] = useState<number | undefined>();
   const [messageSeq, setMessageSeq] = useState<number | undefined>();
-  const [messageNotice, setMessageNotice] = useState<string | undefined>();
+  const [messageNotice, setMessageNotice] = useState<MessageNotice | undefined>();
   const [error, setError] = useState<ApiError | undefined>();
   const [earlierError, setEarlierError] = useState(false);
   const [loadedAt, setLoadedAt] = useState(0);
@@ -43,11 +47,11 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
               around = m.recipientEvent.seq;
               setMessageSeq(around);
             } else if (m.state === "rejected") {
-              setMessageNotice(`This message wasn't delivered: @${m.to} was archived.`);
+              setMessageNotice({ kind: "rejected", to: m.to });
             }
           } catch (e) {
             if (e instanceof ApiError && e.code === "message_not_found")
-              setMessageNotice("Message not found. Showing the latest.");
+              setMessageNotice({ kind: "not_found" });
             // any other failure: the latest page, as for a plain visit
           }
         }

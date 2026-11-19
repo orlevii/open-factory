@@ -2,7 +2,7 @@ import type { AgentSummary } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, Pencil } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
@@ -88,7 +88,14 @@ export function SessionView({
       )}
       {s.messageNotice && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
-          {s.messageNotice}
+          {s.messageNotice.kind === "rejected" ? (
+            <>
+              This message wasn't delivered:{" "}
+              <span className="font-mono">@{s.messageNotice.to}</span> was archived.
+            </>
+          ) : (
+            "Message not found. Showing the latest."
+          )}
         </p>
       )}
       {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
@@ -187,32 +194,44 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
   const exact = agent?.rateLimitExact;
   const prevStatus = useRef(status);
   const prevErrors = useRef<number | undefined>(undefined);
-  const [msg, setMsg] = useState("");
+  const [msg, setLiveText] = useState("");
+  // A live region only speaks when its text changes: the same announcement twice in a row
+  // alternates a zero-width space so the second one is announced too.
+  const setMsg = useCallback(
+    (text: string) => setLiveText((prev) => (prev === text ? `${text}\u200b` : text)),
+    [],
+  );
   const { data: me } = useQuery(sessionQueryOptions);
   const handle = me?.user.handle;
   useEffect(() => {
     if (status && prevStatus.current && status !== prevStatus.current)
       setMsg(statusAnnouncement(name, status, { rateLimitedUntil: until, rateLimitExact: exact }));
     prevStatus.current = status;
-  }, [status, name, until, exact]);
+  }, [status, name, until, exact, setMsg]);
   // An agent's text is not a reply to anyone: announce a successful message to this human or all.
-  // Only sends newer than what was on screen at load count, so Load earlier and reloads stay quiet.
+  // Only sends newer than what was on screen at load count, so Load earlier and reloads stay quiet,
+  // plus calls that were on screen at load still waiting for their result.
   const baseSeq = useRef<number | undefined>(undefined);
+  const pendingAtLoad = useRef(new Set<number>());
   const announced = useRef(new Set<number>());
   const slug = agent?.slug;
   useEffect(() => {
     if (!loaded) return;
-    baseSeq.current ??= highestRowSeq(rows);
+    if (baseSeq.current === undefined) {
+      baseSeq.current = highestRowSeq(rows);
+      for (const r of outgoingRows(rows)) if (!r.result) pendingAtLoad.current.add(r.seq);
+    }
     for (const r of outgoingRows(rows)) {
       const to = parseSendResult(r.result)?.to;
       const toMe =
         to !== undefined && (to === "@humans" || (handle !== undefined && to === `@${handle}`));
-      if (toMe && r.seq > (baseSeq.current ?? 0) && !announced.current.has(r.seq)) {
+      const fresh = r.seq > baseSeq.current || pendingAtLoad.current.has(r.seq);
+      if (toMe && fresh && !announced.current.has(r.seq)) {
         announced.current.add(r.seq);
         setMsg(`@${slug} messaged you`);
       }
     }
-  }, [rows, loaded, handle, slug]);
+  }, [rows, loaded, handle, slug, setMsg]);
   const errorCount = rows.filter((r) => r.kind === "error").length;
   const lastError = rows.findLast((r): r is Extract<Row, { kind: "error" }> => r.kind === "error");
   useEffect(() => {
@@ -220,7 +239,7 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
     if (prevErrors.current !== undefined && errorCount > prevErrors.current)
       setMsg(`Error: ${lastError?.event.message ?? ""}`);
     if (loaded) prevErrors.current = errorCount;
-  }, [errorCount, lastError, loaded]);
+  }, [errorCount, lastError, loaded, setMsg]);
   return msg;
 }
 

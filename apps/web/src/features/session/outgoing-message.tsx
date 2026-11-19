@@ -154,7 +154,15 @@ function Footer({
   const state = STATUS_TEXT[sent.status];
   return (
     <>
-      <span>{state ? `Sent · @${bare} was ${state}` : "Sent"}</span>
+      <span>
+        {state ? (
+          <>
+            Sent · <span className="font-mono">@{bare}</span> was {state}
+          </>
+        ) : (
+          "Sent"
+        )}
+      </span>
       {sent.note && <span>{sent.note}</span>}
     </>
   );

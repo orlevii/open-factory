@@ -133,6 +133,8 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
           Rate limit on credential <Mono>{e.credential}</Mono> reset
         </>
       );
+    case "mcp_unavailable":
+      return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
     default:
       return e.type;
   }
@@ -146,6 +148,7 @@ function quietDetail(e: AnyEvent): string | undefined {
     return e.stderrTail ? `${how}\n${e.stderrTail}` : how;
   }
   if (e.type === "compact_failed" && e.trigger === "auto") return e.error;
+  if (e.type === "mcp_unavailable") return e.status;
   return undefined;
 }
 
@@ -155,6 +158,7 @@ const WARN = new Set([
   "stop_escalated",
   "background_work_lost",
   "rate_limit_paused",
+  "mcp_unavailable",
 ]);
 
 function quietIcon(e: AnyEvent): ReactNode {

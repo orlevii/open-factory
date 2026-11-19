@@ -19,7 +19,7 @@ import {
   templateConfigSchema,
 } from "@open-factory/shared";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "../app.ts";
+import { buildApp, loggerOptions } from "../app.ts";
 import { type Config, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
 import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
@@ -31,6 +31,8 @@ export interface TestAppOptions {
   webRoot?: string;
   env?: Record<string, string>;
   harnessDriver?: HarnessDriver;
+  /** Capture the app's real log output (production redact config, no transport) at info level. */
+  logStream?: { write(s: string): void };
 }
 
 export async function makeTestApp(opts: TestAppOptions = {}) {
@@ -53,7 +55,14 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       db,
       sql,
       webRoot: o.webRoot,
-      logger: false,
+      logger: o.logStream
+        ? (() => {
+            const { transport: _t, ...rest } = loggerOptions(config) as ReturnType<
+              typeof loggerOptions
+            > & { transport?: unknown };
+            return { ...rest, level: "info", stream: o.logStream };
+          })()
+        : false,
       harnessDriver: o.harnessDriver,
     });
     return { app, config, db, sql, closeDb };

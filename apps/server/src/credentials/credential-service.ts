@@ -3,7 +3,7 @@ import { type Db, schema } from "@open-factory/db";
 import type { CredentialKind, CredentialSummary } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
-import type { Vault } from "../crypto/vault.ts";
+import { type Vault, VaultError } from "../crypto/vault.ts";
 import { fkViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError } from "../errors.ts";
 import type { CredentialVerifier, VerifyResult } from "./verify.ts";
@@ -17,6 +17,7 @@ export class CredentialService {
       vault: Vault;
       verifier: CredentialVerifier;
       runtimes: AgentRuntimes;
+      log?: { warn: (obj: object, msg: string) => void };
     },
   ) {}
 
@@ -139,13 +140,33 @@ export class CredentialService {
       .where(eq(schema.credentials.id, row.id))
       .returning();
     if (!updated) throw new ApiError(404, "credential_not_found", `No credential named ${name}.`);
-    for (const a of (await this.users(row.id)).active) await this.d.runtimes.requestRestart(a.id);
+    // One failed restart is logged by slug and never aborts the rest or the write.
+    const active = (await this.users(row.id)).active;
+    const results = await Promise.allSettled(
+      active.map((a) => this.d.runtimes.requestRestart(a.id)),
+    );
+    results.forEach((r, i) => {
+      if (r.status === "rejected")
+        this.d.log?.warn({ slug: active[i]?.slug }, "restart after credential change failed");
+    });
     return this.summarize(updated);
   }
 
   async reverify(name: string): Promise<CredentialSummary> {
     const row = await this.rowByName(name);
-    const r = await this.d.verifier.verify(row.kind, this.d.vault.open(row.valueEnc, aad(row.id)));
+    let value: string;
+    try {
+      value = this.d.vault.open(row.valueEnc, aad(row.id));
+    } catch (err) {
+      if (err instanceof VaultError)
+        throw new ApiError(
+          409,
+          "credential_undecryptable",
+          `Can't decrypt credential ${row.name}. Was FACTORY_SECRET_KEY changed?`,
+        );
+      throw err;
+    }
+    const r = await this.d.verifier.verify(row.kind, value);
     const [updated] = await this.d.db
       .update(schema.credentials)
       .set(r.ok ? { lastVerifiedAt: new Date(), lastError: null } : { lastError: r.message })

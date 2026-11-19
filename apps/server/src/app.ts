@@ -135,7 +135,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     driver: deps.harnessDriver ?? createClaudeDriver(),
     claudeBin: config.claudeBin,
   });
-  const credentials = new CredentialService({ db: deps.db, vault, verifier, runtimes });
+  const credentials = new CredentialService({
+    db: deps.db,
+    vault,
+    verifier,
+    runtimes,
+    log: app.log,
+  });
   app.decorate("credentials", credentials);
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));

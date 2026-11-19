@@ -1,5 +1,5 @@
 import { schema } from "@open-factory/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -17,15 +17,23 @@ const verifier = {
 } as unknown as CredentialVerifier;
 let svc: CredentialService;
 const restarts: string[] = [];
+const failRestart = new Set<string>();
+const warns: { obj: object; msg: string }[] = [];
 
 beforeAll(async () => {
   t = await makeTestApp();
-  const runtimes = { requestRestart: async (id: string) => void restarts.push(id) };
+  const runtimes = {
+    requestRestart: async (id: string) => {
+      if (failRestart.has(id)) throw new Error("boom");
+      restarts.push(id);
+    },
+  };
   svc = new CredentialService({
     db: t.db,
     vault: t.app.vault,
     verifier,
     runtimes: runtimes as never,
+    log: { warn: (obj, msg) => void warns.push({ obj, msg }) },
   });
 });
 afterAll(() => t.close());
@@ -137,6 +145,42 @@ test("reverify records lastVerifiedAt on success and lastError on failure; alway
   expect(good.lastError).toBeNull();
   expect(good.lastVerifiedAt).toEqual(expect.any(String));
   expect((await svc.list()).find((c) => c.name === "work")).toMatchObject({ lastError: null });
+});
+
+test("replace: one rejected restart doesn't abort the others and is logged by slug only", async () => {
+  const a = await agentUsing("fa", "work");
+  const b = await agentUsing("fb", "work");
+  failRestart.add(a);
+  restarts.length = 0;
+  warns.length = 0;
+  try {
+    const r = await svc.replace("work", "newer-token-value");
+    expect(r.lastError).toBeNull();
+  } finally {
+    failRestart.clear();
+  }
+  expect(restarts).toContain(b);
+  expect(restarts).not.toContain(a);
+  expect(warns).toHaveLength(1);
+  expect(warns[0]?.obj).toEqual({ slug: "fa" });
+  expect(JSON.stringify(warns)).not.toContain("boom");
+  await t.db.delete(schema.agents).where(inArray(schema.agents.id, [a, b]));
+});
+
+test("reverify of an undecryptable value → readable 409, not a 500", async () => {
+  result = { ok: true };
+  await svc.create({ name: "broken", kind: "api_key", value: "k" });
+  await t.db
+    .update(schema.credentials)
+    .set({ valueEnc: Buffer.alloc(40, 1) })
+    .where(eq(schema.credentials.name, "broken"));
+  seen.length = 0;
+  await expect(svc.reverify("broken")).rejects.toMatchObject({
+    status: 409,
+    code: "credential_undecryptable",
+    message: "Can't decrypt credential broken. Was FACTORY_SECRET_KEY changed?",
+  });
+  expect(seen).toEqual([]);
 });
 
 test("remove while used → 409 with usedBy, archivedUsedBy and both sentences", async () => {

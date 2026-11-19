@@ -444,3 +444,17 @@ test("unarchive is refused while the manager is archived", async () => {
     message: "Its manager @dev-1 is archived. Change its manager first.",
   });
 });
+
+test("create refuses a slug that is a human handle", async () => {
+  await t.signUpUser({ handle: "sam" });
+  await expect(
+    svc.create({
+      template: "lead",
+      slug: "sam",
+      displayName: "Sam",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+    }),
+  ).rejects.toMatchObject({ code: "slug_taken" });
+});

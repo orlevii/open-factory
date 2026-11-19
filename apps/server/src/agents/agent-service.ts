@@ -9,6 +9,7 @@ import {
 } from "@open-factory/shared";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
+import { isNameTaken } from "../messaging/principals.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -198,11 +199,9 @@ export class AgentService {
 
   private async createLocked(b: CreateAgentBody): Promise<AgentSummary> {
     const { db, workspace } = this.d;
-    const [taken] = await db
-      .select({ id: schema.agents.id })
-      .from(schema.agents)
-      .where(eq(schema.agents.slug, b.slug));
-    if (taken) throw slugTaken();
+    // One rule (spec §7.1). A simultaneous sign-up and agent create with the same name is an accepted race; sends then fail with 'matches both'.
+    const taken = await isNameTaken(db, b.slug);
+    if (taken === "agent" || taken === "user") throw slugTaken();
     const tpl = await this.d.templates.loadValid(b.template);
     const credentialId = await this.credentialId(b.credential);
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;

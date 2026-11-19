@@ -11,16 +11,45 @@ import { NewSessionDialog } from "./new-session-dialog";
 const DISABLED =
   "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:text-inherit aria-disabled:active:scale-100 dark:aria-disabled:hover:bg-transparent";
 
-/** Restart and Start a new session. Rendered only while Errored, in place of Compact and Interrupt. */
+/**
+ * Restart and Start a new session: the buttons show only while Errored, in place of Compact and
+ * Interrupt. Mounted for every status, so an open dialog survives the status frame that a confirmed
+ * reset publishes before its response, and can still move focus to the composer when it closes.
+ */
 export function RecoveryActions({ agent }: { agent: AgentSummary }) {
+  const [dialog, setDialog] = useState<{ open: boolean; lastError?: string }>({ open: false });
+  const trigger = useRef<HTMLButtonElement>(null);
   const kind = agent.errorKind;
+  const errored = agent.status === "errored";
   // A Restart certain to fail isn't offered (the strip's disabled segment explains the gate).
-  const canRestart = kind !== "resume_unrecoverable" && !agent.runtimeDisabled;
-  const canReset = kind === "resume" || kind === "resume_unrecoverable";
+  const canRestart = errored && kind !== "resume_unrecoverable" && !agent.runtimeDisabled;
+  const canReset = errored && (kind === "resume" || kind === "resume_unrecoverable");
   return (
     <>
       {canRestart && <RestartButton slug={agent.slug} />}
-      {canReset && <NewSessionAction agent={agent} />}
+      {canReset && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              ref={trigger}
+              variant="ghost"
+              // The error is kept as it was when opened: the reset clears it before the dialog closes.
+              onClick={() => setDialog({ open: true, lastError: agent.lastError })}
+            >
+              <FilePlus2 aria-hidden="true" />
+              <span className="max-md:sr-only">Start a new session</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="md:hidden">Start a new session</TooltipContent>
+        </Tooltip>
+      )}
+      <NewSessionDialog
+        slug={agent.slug}
+        lastError={dialog.lastError}
+        open={dialog.open}
+        onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}
+        onCancelFocus={() => trigger.current?.focus()}
+      />
     </>
   );
 }
@@ -70,11 +99,10 @@ function RestartButton({ slug }: { slug: string }) {
       {error && (
         <p
           role="alert"
-          title={error}
           className="flex max-w-[16rem] min-w-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
         >
           <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="truncate">Couldn't restart: {error}</span>
+          <span>Couldn't restart: {error}</span>
         </p>
       )}
       <Tooltip>
@@ -94,30 +122,6 @@ function RestartButton({ slug }: { slug: string }) {
         {/* The label is visible from md up, so the tooltip only serves icon-only widths. */}
         <TooltipContent className="md:hidden">{label}</TooltipContent>
       </Tooltip>
-    </>
-  );
-}
-
-function NewSessionAction({ agent }: { agent: AgentSummary }) {
-  const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button ref={trigger} variant="ghost" onClick={() => setOpen(true)}>
-            <FilePlus2 aria-hidden="true" />
-            <span className="max-md:sr-only">Start a new session</span>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent className="md:hidden">Start a new session</TooltipContent>
-      </Tooltip>
-      <NewSessionDialog
-        agent={agent}
-        open={open}
-        onOpenChange={setOpen}
-        onCancelFocus={() => trigger.current?.focus()}
-      />
     </>
   );
 }

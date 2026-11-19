@@ -199,15 +199,13 @@ function SessionActions({ agent, archived }: { agent: AgentSummary; archived: bo
       </Tooltip>
       {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). While
           errored, the recovery actions replace them, so the header never holds more than two. */}
-      {!archived &&
-        (agent.status === "errored" ? (
-          <RecoveryActions agent={agent} />
-        ) : (
-          <>
-            <CompactPopover slug={slug} />
-            <InterruptButton slug={slug} turnOpen={agent.turnOpen} />
-          </>
-        ))}
+      {!archived && agent.status !== "errored" && (
+        <>
+          <CompactPopover slug={slug} />
+          <InterruptButton slug={slug} turnOpen={agent.turnOpen} />
+        </>
+      )}
+      {!archived && <RecoveryActions agent={agent} />}
     </>
   );
 }

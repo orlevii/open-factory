@@ -186,6 +186,30 @@ test("dialog copy names the agent and the loss; Cancel focused; confirm moves fo
   await vi.waitFor(() => expect(composer()).toHaveFocus());
 });
 
+test("a confirmed reset whose status frame beats the response still closes the dialog and focuses the composer", async () => {
+  world({ status: "errored", errorKind: "resume", lastError: "Resume failed" });
+  let stillOpen = false;
+  // The server publishes the new status inside the job, before it replies 202.
+  api.on("POST /api/agents/dev/reset-session", async () => {
+    frame({ status: "queued" });
+    // Let the frame render (the recovery buttons go) before the response lands.
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Start a new session" })).toBeNull(),
+    );
+    // The dialog outlives its button: it is still open (pending), so it can close properly.
+    stillOpen = screen.queryByRole("alertdialog") !== null;
+    return json({}, 202);
+  });
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Start a new session" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start new session for @dev" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(stillOpen).toBe(true);
+  expect(screen.queryByRole("button", { name: "Start a new session" })).not.toBeInTheDocument();
+  await vi.waitFor(() => expect(composer()).toHaveFocus());
+});
+
 test("announcer and document title follow status frames; a no-op until change says nothing new", async () => {
   world();
   await open();

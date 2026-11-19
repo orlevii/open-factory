@@ -136,7 +136,8 @@ function DetailSegment({ agent, slotsMax }: { agent: AgentSummary; slotsMax?: nu
   let text: ReactNode = null;
   if (agent.pulling) text = "Pulling the image…";
   else if (agent.status === "queued")
-    text = slotsMax ? `Queued: all ${slotsMax} slots are in use.` : "Queued: all slots are in use.";
+    // Nothing until the cap is known: no copy beyond the UI doc's.
+    text = slotsMax ? `Queued: all ${slotsMax} slots are in use.` : null;
   else if (agent.status === "rate_limited")
     text = (
       <>

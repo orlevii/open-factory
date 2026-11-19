@@ -88,6 +88,9 @@ test("strip: paused detail uses 'retrying at' when inexact; queued detail; Pulli
     "Paused: credential work is rate-limited, retrying at 14:30. Messages wait until then.",
   );
   document.body.innerHTML = "";
+  el = strip({ status: "queued" });
+  expect(within(el).queryByText(/^Queued:/)).toBeNull(); // no copy until the cap is known
+  document.body.innerHTML = "";
   el = strip({ status: "queued" }, 8);
   expect(within(el).getByText("Queued: all 8 slots are in use.")).toBeInTheDocument();
   document.body.innerHTML = "";

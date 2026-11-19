@@ -256,7 +256,7 @@ export function TimelineRow(props: TimelineRowProps) {
             <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
             {row.event.message}
           </p>
-          {row.event.fix && row.event.fix !== "runtime" && (
+          {row.event.fix && (
             <p>
               <FixLink fix={row.event.fix} slug={props.slug} />
             </p>

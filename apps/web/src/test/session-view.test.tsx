@@ -563,6 +563,14 @@ test("archived: the composer is replaced by a line linking the edit page; no Com
   expect(screen.getByRole("link", { name: "Edit" })).toBeInTheDocument();
 });
 
+test("archived with no events: the empty line doesn't point at a composer", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  routes["/api/agents/dev/events?"] = () => page([]);
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByText("No messages yet.")).toBeInTheDocument();
+  expect(screen.queryByText(/Send the first one below/)).not.toBeInTheDocument();
+});
+
 test("a paired denial shows inside its call: Denied state and the reason line; no standalone row", async () => {
   routes["/api/agents/dev/events?"] = () => {
     resetSeq();

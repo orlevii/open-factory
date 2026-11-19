@@ -77,7 +77,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
           <>
             {s.rows.length === 0 && s.state.queue.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No messages yet. Send the first one below.
+                {archived ? "No messages yet." : "No messages yet. Send the first one below."}
               </p>
             )}
             <QueueItems items={s.state.queue} lastError={agent.lastError} />

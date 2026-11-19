@@ -474,7 +474,7 @@ No data rewrite: existing message rows have a user and `kind = 'message'`. `data
 | Resume failure (ordinary / unrecoverable) | §9.3. |
 | Stop timed out | §9.6 escalation; errored (`stop_failed`, slot kept) only if that fails too. |
 | Rate limit rejected | Credential paused (§7), deliveries held, continue notice at reset. |
-| Server stopped or crashed mid-turn | Boot reconciliation, one notice-led resume (§5.7 step 4). |
+| Server stopped or crashed mid-turn | Boot reconciliation, one notice-led resume (§5.7 step 5). |
 
 ## 18. Testing
 

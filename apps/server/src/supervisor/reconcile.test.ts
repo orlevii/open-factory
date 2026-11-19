@@ -9,6 +9,7 @@ import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
@@ -30,6 +31,7 @@ class Boot {
   readonly docker = new FakeDockerClient();
   readonly runtimes: AgentRuntimes;
   readonly logs: { level: string; msg: string }[] = [];
+  readonly forwarded: Forward[] = [];
   readonly log = {
     debug: () => {},
     info: (_: object, msg: string) => this.logs.push({ level: "info", msg }),
@@ -56,6 +58,9 @@ class Boot {
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
       memberUpdateDebounceMs: 30_000,
+      forward: async (f) => {
+        this.forwarded.push(f);
+      },
       log: this.log,
     });
   }
@@ -240,10 +245,14 @@ test("dangling turns closed with factory_restarted; reconciled + background_work
   ]);
   expect((await row(id)).runtimeJournal).toBeNull();
   expect(await events(untouched)).toEqual([]);
-  expect(boot.logs).toContainEqual({
-    level: "info",
-    msg: "background work lost; would notify the manager",
-  });
+  expect(boot.forwarded).toEqual([
+    {
+      agentId: id,
+      fact: "work_lost",
+      body: expect.stringContaining("Reported by @"),
+    },
+  ]);
+  expect(boot.forwarded[0]?.body).toContain("> pnpm test\n> every 5 minutes");
 });
 
 test("an agent whose attempt was cut short is errored and not woken", async () => {
@@ -270,6 +279,11 @@ test("an agent whose attempt was cut short is errored and not woken", async () =
   });
   await boot.settleAll([fresh, resumeFailed]);
   expect(boot.driver.starts).toHaveLength(0);
+  // S6 §9.1: the cut-short automatic attempt starts an errored episode; the cut-short human retry was inside one.
+  expect(boot.forwarded.filter((f) => f.fact === "errored").map((f) => f.agentId)).toEqual([fresh]);
+  const body = boot.forwarded.find((f) => f.agentId === fresh)?.body;
+  expect(body).toContain("is errored and needs a human. Reported by @");
+  expect(body).toContain(`\n> ${ATTEMPT_CUT_SHORT}`);
 });
 
 test("an agent mid-turn at crash gets factory_restarted and one boot_resume wake (attempting set)", async () => {

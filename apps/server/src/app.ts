@@ -167,6 +167,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     tokens,
     log: app.log,
     memberUpdateDebounceMs: config.memberUpdateDebounceMs,
+    // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
+    forward: (f) => router.forward(f),
     maxRunningAgents: config.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
@@ -273,6 +275,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       supervisor: runtimes.supervisor,
       runtimes,
       memberUpdateDebounceMs: config.memberUpdateDebounceMs,
+      forward: (f) => router.forward(f),
       log: app.log,
     });
     router.bootDone();

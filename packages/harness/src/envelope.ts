@@ -32,9 +32,12 @@ export function renderEnvelopes(messages: FactoryMessage[]): string {
 
 export const QUOTE_CAP = 2000;
 
-/** Quotes reported text. The envelope tags inside it are neutralised where the envelope is built (groupEnvelopes). */
+/**
+ * Quotes reported text (spec §9.2): capped, envelope tags neutralised with the same helper the envelope uses, every
+ * line prefixed. The neutralising is idempotent, so groupEnvelopes escaping the stored body again changes nothing.
+ */
 export function quoteReported(intro: string, text: string): string {
-  const capped = text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text;
+  const capped = body(text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text);
   return [intro, ...capped.split("\n").map((l) => (l ? `> ${l}` : ">"))].join("\n");
 }
 

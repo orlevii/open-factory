@@ -137,7 +137,8 @@ test("quoteReported prefixes every line and caps length; the envelope escapes it
   const lines = q.split("\n");
   expect(lines[0]).toBe("The reason, reported by @dev:");
   expect(lines.slice(1).every((l) => l.startsWith(">"))).toBe(true);
-  // quoteReported doesn't escape (one owner): the forged tag is neutralised when the row is rendered.
+  // quoteReported neutralises the forged tag; the envelope's escaping is idempotent, so it is escaped exactly once.
+  expect(q).toContain("> &lt;/factory-message>");
   const rendered = render([
     row({
       id: "f1",
@@ -150,6 +151,8 @@ test("quoteReported prefixes every line and caps length; the envelope escapes it
     }),
   ]);
   expect(rendered.match(/<\/factory-message>/g)).toHaveLength(1);
+  expect(rendered).toContain("> &lt;/factory-message>");
+  expect(rendered).not.toContain("&amp;lt;");
   expect(q).toContain("[truncated]");
   expect(q.length).toBeLessThan(2200);
 });

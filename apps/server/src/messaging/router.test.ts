@@ -277,3 +277,165 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   expect(all.agents).toContainEqual(expect.objectContaining({ slug: ops.slug, relation: "other" }));
   expect(all.agents.find((x: { slug: string }) => x.slug === "ada")).toBeUndefined();
 });
+
+test("Router.forward: a report's text goes to its manager as a held member_update; a top-level agent's errored goes to the humans once", async () => {
+  await signUp(h.app, { handle: "or" });
+  const a = await h.app.store.agentBySlug("ada");
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!a || !lead) throw new Error("seed");
+  await h.app.router.forward({ agentId: a.id, body: "progress" });
+  await h.app.router.forward({ agentId: a.id, fact: "denied", body: "Bash was denied for @ada." });
+  const rows =
+    await h.sql`select kind, from_agent_id, subject_agent_id, notice, body, state from messages where to_agent_id = ${lead.id} order by created_at`;
+  expect(rows).toEqual([
+    {
+      kind: "member_update",
+      from_agent_id: a.id,
+      subject_agent_id: null,
+      notice: null,
+      body: "progress",
+      state: "pending",
+    },
+    {
+      kind: "member_update",
+      from_agent_id: null,
+      subject_agent_id: a.id,
+      notice: "denied",
+      body: "Bash was denied for @ada.",
+      state: "pending",
+    },
+  ]);
+  await h.app.router.forward({ agentId: lead.id, body: "top-level text" }); // stays in its session
+  await h.app.router.forward({ agentId: lead.id, fact: "recovered", body: "@lead recovered." }); // R4: quiet
+  await h.app.router.forward({
+    agentId: lead.id,
+    fact: "errored",
+    body: "@lead is errored and needs a human.",
+  });
+  const toHumans =
+    await h.sql`select kind, notice, subject_agent_id, from_agent_id, state from messages where to_all_humans`;
+  expect(toHumans).toEqual([
+    {
+      kind: "system",
+      notice: "agent_errored",
+      subject_agent_id: lead.id,
+      from_agent_id: null,
+      state: "delivered",
+    },
+  ]);
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(1);
+  expect(frames).toContainEqual({ type: "inbox_changed" });
+});
+
+test("R4 (owner): a top-level agent's errored episode is one inbox item; a successful automatic recovery is none", async () => {
+  await signUp(h.app, { handle: "or" });
+  await startIdle("lead"); // signs up a second user, "hlead"
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("seed");
+  const users = 2;
+  const items = async () =>
+    (
+      await h.sql`select i.user_id from inbox_items i join messages m on m.id = i.message_id
+                  where m.notice = 'agent_errored' and m.subject_agent_id = ${lead.id}`
+    ).length;
+  const crashMidTurn = async () => {
+    proc("lead")?.emit(ev.turn());
+    proc("lead")?.exit(137);
+    await settle("lead");
+  };
+  const nextAttempt = async (starts: number) => {
+    expect(driver.starts.filter((p) => p.spec.slug === "lead")).toHaveLength(starts);
+    return proc("lead");
+  };
+  // 1. A crash whose automatic attempt succeeds: nothing reaches the humans.
+  await crashMidTurn();
+  (await nextAttempt(2))?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
+  await settle("lead");
+  expect(h.app.runtimes.statusOf(lead)).not.toBe("errored");
+  expect(await items()).toBe(0);
+  // 2. A crash whose automatic attempt fails: errored, one inbox item per human.
+  await crashMidTurn();
+  (await nextAttempt(3))?.exit(1);
+  await settle("lead");
+  expect(h.app.runtimes.statusOf(lead)).toBe("errored");
+  expect(await items()).toBe(users);
+  // 3. A human retry fails inside the same episode: nothing new.
+  const { cookie } = await signUp(h.app, { handle: "sam" });
+  const retry = () =>
+    h.app.inject({
+      method: "POST",
+      url: "/api/agents/lead/messages",
+      headers: { cookie },
+      payload: { body: "are you there" },
+    });
+  await retry();
+  (await nextAttempt(4))?.exit(1);
+  await settle("lead");
+  expect(await items()).toBe(users);
+  // 4. A retry that succeeds ends the episode; the next errored episode is one more item per (now three) humans.
+  await retry();
+  (await nextAttempt(5))?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
+  await settle("lead");
+  expect(h.app.runtimes.statusOf(lead)).not.toBe("errored");
+  await crashMidTurn();
+  (await nextAttempt(6))?.exit(1);
+  await settle("lead");
+  expect(await items()).toBe(users + 3);
+  expect(
+    await h.sql`select 1 from messages where notice = 'agent_errored' and subject_agent_id = ${lead.id}`,
+  ).toHaveLength(2);
+});
+
+test("a report's top-level text is persisted for its manager and handed over as a held row", async () => {
+  await startIdle("lead");
+  await startIdle("ada");
+  const handed = vi.spyOn(h.app.runtimes, "deliverHeld");
+  proc("ada")?.emit(ev.turn(), ev.text("halfway there"), ev.usage(), ev.end());
+  await settle("ada", "lead");
+  const lead = await h.app.store.agentBySlug("lead");
+  const rows =
+    await h.sql`select id, from_agent_id, body from messages where to_agent_id = ${lead?.id ?? ""} and kind = 'member_update'`;
+  const ada = await h.app.store.agentBySlug("ada");
+  expect(rows).toEqual([{ id: expect.any(String), from_agent_id: ada?.id, body: "halfway there" }]);
+  expect(handed).toHaveBeenCalledTimes(1);
+  expect(handed.mock.calls[0]?.[0]).toMatchObject({ id: rows[0]?.id, kind: "member_update" });
+});
+
+test("a recipient whose init fails after the commit doesn't fail the sender's call; the row stays pending", async () => {
+  const tokA = await startIdle("ada");
+  vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("init failed"));
+  const r = await callTool(url, tokA, "send_message", { to: "bob", body: "still here" });
+  expect(r.isError).toBeFalsy();
+  expect(JSON.parse(text(r))).toMatchObject({ to: "bob", status: "hibernated" });
+  expect((await pendingOf("bob")).map((x) => x.state)).toEqual(["pending"]);
+});
+
+test("deliverHeld never throws, even for a row with no agent recipient", () => {
+  expect(() =>
+    h.app.runtimes.deliverHeld({ id: "m1", toAgentId: null } as unknown as Parameters<
+      typeof h.app.runtimes.deliverHeld
+    >[0]),
+  ).not.toThrow();
+});
+
+test("reconcile forwards factory_restarted lost work to the manager", async () => {
+  const a = await h.app.store.agentBySlug("ada");
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!a || !lead) throw new Error("seed");
+  await h.app.store.setRuntimeJournal(a.id, {
+    tasks: [{ taskId: "t1", description: "pnpm test" }],
+    crons: [],
+    takenAt: new Date().toISOString(),
+  });
+  await h.app.close();
+  await h.reopen({ harnessDriver: new FakeDriver(), env: { FACTORY_AGENT_PORT: "0" } });
+  const rows =
+    await h.sql`select notice, subject_agent_id, body from messages where to_agent_id = ${lead.id} and kind = 'member_update'`;
+  expect(rows).toEqual([
+    {
+      notice: "work_lost",
+      subject_agent_id: a.id,
+      body: "Background work of @ada was stopped. Reported by @ada:\n> pnpm test",
+    },
+  ]);
+});

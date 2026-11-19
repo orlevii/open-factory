@@ -1,5 +1,6 @@
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
+import type { Forward } from "../../messaging/forwarder.ts";
 import type { SlotPort } from "../../supervisor/slots.ts";
 import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
@@ -80,6 +81,10 @@ export class RuntimeHarness {
   tokenCalls: ["mint" | "revoke", string, number][] = [];
   /** The `agentToken` the last `prepareStart` received. */
   lastAgentToken: string | undefined;
+  /** Everything the runtimes forwarded (S6 §9.1), in order. Not reset by `makeRuntime`. */
+  forwarded: Forward[] = [];
+  /** When set, `forward` rejects with it (a failed insert). Reset by `makeRuntime`. */
+  forwardError: Error | undefined;
   private minted = 0;
   private n = 0;
 
@@ -112,6 +117,7 @@ export class RuntimeHarness {
     this.n += 1;
     this.agentId = `a${this.n}`;
     this.startError = opts.startError;
+    this.forwardError = undefined;
     this.prepareGate = undefined;
     this.prepareCalls = 0;
     this.tokenCalls = [];
@@ -156,6 +162,10 @@ export class RuntimeHarness {
         return okSpec(a);
       },
       log: silentLog,
+      forward: async (f) => {
+        if (this.forwardError) throw this.forwardError;
+        this.forwarded.push(f);
+      },
       holdTimeoutMs: 200,
       slots: opts.slots ?? unlimitedSlots,
       ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),

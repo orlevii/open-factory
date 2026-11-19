@@ -17,6 +17,7 @@ import {
   type Envelope,
   type ErrorKind,
   errorKindSchema,
+  type FactCode,
   type HarnessEvent,
   HELD_KINDS,
   type MessageKind,
@@ -26,6 +27,7 @@ import {
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
+import { type FactDetail, type Forward, factFor } from "../messaging/forwarder.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
 import {
   type ContainerManager,
@@ -35,6 +37,7 @@ import {
 import { dockerStartError } from "../runtime/docker/errors.ts";
 import type { SlotPort, WakeReason } from "../supervisor/slots.ts";
 import { WorkspaceError } from "../workspace/links.ts";
+import { capText } from "./cap.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -87,6 +90,12 @@ export interface RuntimeDeps {
   docker?: DockerDeps;
   /** S6 §8.1: how long the oldest pending member update waits while no turn is open (default 30 s; 0 = at once). */
   memberUpdateDebounceMs?: number;
+  /**
+   * S6 §9.1: persists one forwarded item (the Router: a held `member_update` to the manager, the `errored` fact to the
+   * humans for a top-level agent, otherwise dropped). Awaited inside the report's job: a failed insert is a failed event
+   * write (§16). Only the hand-off to the manager is deferred. Absent: nothing is forwarded.
+   */
+  forward?: (f: Forward) => Promise<void>;
 }
 
 export interface DockerDeps {
@@ -300,6 +309,9 @@ export class AgentRuntime {
   private attemptBatchWritten = false;
   // A human's message reached an errored agent whose failing process hadn't exited yet: attempt at that exit.
   private attemptOwedAtExit = false;
+  // S6 §9.1 (R4): `errored` is forwarded at most once per errored episode, which runs until the error clears (an
+  // attempt succeeds or Start a new session). An agent loaded errored is inside an episode already reported.
+  private erroredForwarded: boolean;
   private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
   private readonly tokenGens = new WeakMap<HarnessProcess, number>(); // the token generation each process was started with
   private readonly escalated = new WeakSet<HarnessProcess>(); // SIGKILLed or container-stopped: its exit reaps (§9.6)
@@ -345,6 +357,7 @@ export class AgentRuntime {
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
     this.errored = d.agent.status === "errored";
+    this.erroredForwarded = this.errored;
     this.lastError = d.agent.lastError ?? undefined;
     const kind = errorKindSchema.safeParse(d.agent.errorKind);
     this.errorKind = kind.success ? kind.data : undefined;
@@ -613,6 +626,7 @@ export class AgentRuntime {
       this.lastError = undefined;
       this.errorKind = undefined;
       await this.d.store.clearErrored(this.agent.id);
+      await this.forwardRecovered();
       const humans = this.queue.some((e) => e.kind === "message") || this.inFlight.length > 0;
       if (this.proc) {
         // The failed start's process is still exiting: its exit makes the wake.
@@ -1089,7 +1103,44 @@ export class AgentRuntime {
         agent: this.agent.slug,
         event: dto,
       });
+    await this.forwardEvent(event);
     return dto;
+  }
+
+  /**
+   * S6 §9.1, by event type, once the event is stored: the report's top-level text as itself, API errors and refusals
+   * as `turn_failed`, denials as `denied`. Subagent text, tool calls, blank text and everything else stay here.
+   */
+  private async forwardEvent(e: AnyEvent) {
+    if (!this.d.forward) return;
+    if (e.type === "assistant_text") {
+      if (e.parentToolUseId || !e.text.trim()) return;
+      await this.d.forward({ agentId: this.agent.id, body: capText(e.text) });
+    } else if (e.type === "error" && (e.source === "api" || e.source === "refusal"))
+      await this.forwardFact("turn_failed", { text: e.message });
+    else if (e.type === "permission_denied")
+      await this.forwardFact("denied", { tool: e.toolName, text: e.reason });
+  }
+
+  private async forwardFact(fact: FactCode, detail?: FactDetail) {
+    await this.d.forward?.({
+      agentId: this.agent.id,
+      fact,
+      body: factFor(fact, this.agent.slug, detail),
+    });
+  }
+
+  /** Errored with no attempt pending (S6 §9.1): forwarded once per errored episode. */
+  private async forwardErrored() {
+    if (this.erroredForwarded) return;
+    this.erroredForwarded = true; // before the write: a failed insert must not report the episode twice
+    await this.forwardFact("errored", this.lastError ? { text: this.lastError } : {});
+  }
+
+  /** The error cleared (an attempt succeeded, or Start a new session): the episode ends. */
+  private async forwardRecovered() {
+    this.erroredForwarded = false;
+    await this.forwardFact("recovered");
   }
 
   /** Publishes the status frame when it changed. The Supervisor calls it when the agent's queue entry changes. */
@@ -1120,6 +1171,8 @@ export class AgentRuntime {
     this.attempting = false;
     this.attemptReason = undefined;
     await this.d.store.setErrored(this.agent.id, message, kind);
+    // Every caller (start, resume, resume_unrecoverable, stop_failed, internal) leaves no attempt pending (S6 §9.1).
+    await this.forwardErrored();
   }
 
   /** Spec §9.2: a human's message to an errored agent makes one attempt, unless recovery needs another action. */
@@ -1222,12 +1275,14 @@ export class AgentRuntime {
 
   /** Spec §9.2: the attempt's batch turn ended with the process running. Clears the attempt and the error. */
   private async attemptSucceeded() {
+    const wasErrored = this.errored; // a boot_resume attempt may run on an agent that never errored
     this.attempting = false;
     this.attemptReason = undefined;
     this.errored = false;
     this.lastError = undefined;
     this.errorKind = undefined;
     await this.d.store.clearErrored(this.agent.id);
+    if (wasErrored) await this.forwardRecovered();
   }
 
   /** The runtime's own drop rules first (any slot port), then the slot port's. */
@@ -1927,17 +1982,20 @@ export class AgentRuntime {
       );
   }
 
-  /** Spec §9.4: `background_work_lost` and the log line naming the manager, when live tasks or crons died. */
+  /** Spec §9.4: `background_work_lost` when live tasks or crons died, forwarded to the manager (S6 §9.1) unless archived. */
   private async reportLostWork(
     reason: "crash" | "restart" | Exclude<HibernateReason, "warm_window" | "freed_slot">,
     lost: LostWork,
   ) {
     if (!lost.tasks.length && !lost.crons.length) return;
     await this.append(null, { type: "background_work_lost", reason, ...lost });
-    this.d.log.info(
-      { agent: this.agent.slug, manager: this.agent.reportsTo, reason, ...lost },
-      "background work lost; would notify the manager",
-    );
+    if (reason !== "archived")
+      await this.forwardFact("work_lost", {
+        lost: {
+          tasks: lost.tasks.map((t) => t.description || t.taskId),
+          crons: lost.crons.map((c) => c.humanSchedule),
+        },
+      });
   }
 
   /**
@@ -2080,7 +2138,13 @@ export class AgentRuntime {
       );
     const { tasks, crons } = live.lost;
     await this.reportLostWork("crash", live.lost);
-    if (policy === "attempt_failed" || cleanupFailed) return; // only a human acts next
+    // S6 §9.1: a crash during an attempt is `errored` (a failed cleanup already was, as stop_failed); a recoverable
+    // crash is `crashed`, never `errored`.
+    if (policy === "attempt_failed" || cleanupFailed) {
+      await this.forwardErrored();
+      return; // only a human acts next
+    }
+    await this.forwardFact("crashed");
     await this.addNotice(
       "crash",
       notices.crash({

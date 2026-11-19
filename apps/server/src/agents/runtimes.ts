@@ -3,6 +3,7 @@ import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@ope
 import { type AgentStatus, errorKindSchema, type QueueItem } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
+import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
@@ -23,6 +24,8 @@ export interface RuntimesDeps {
   holdTimeoutMs?: number;
   /** `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` in ms (S6 §8.2); the runtime's 30 s default when unset. */
   memberUpdateDebounceMs?: number;
+  /** S6 §9.1: every runtime's forwarding port (the Router's `forward`); absent, nothing is forwarded. */
+  forward?: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
   /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
@@ -171,6 +174,7 @@ export class AgentRuntimes {
         ...(this.d.memberUpdateDebounceMs !== undefined
           ? { memberUpdateDebounceMs: this.d.memberUpdateDebounceMs }
           : {}),
+        ...(this.d.forward ? { forward: this.d.forward } : {}),
         slots: this.supervisor,
         ...(this.d.localRuntimeAllowed ? { localRuntimeAllowed: this.d.localRuntimeAllowed } : {}),
         ...(this.d.journal ? { journal: this.d.journal } : {}),
@@ -209,12 +213,23 @@ export class AgentRuntimes {
    * sender's tool call, and a failure leaves the row pending (or `rejected` when archived), logged, never thrown.
    */
   async deliver(row: PendingRow, sender: "human" | "agent"): Promise<QueueItem | undefined> {
-    if (!row.toAgentId) throw new Error(`message ${row.id} has no agent recipient`);
-    const rt = await this.load(row.toAgentId);
-    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toAgentId} not found`);
-    const o = { sender, fromLabel: senderLabel(row) };
-    if (sender === "human") return rt.deliver(row, o);
-    void rt.deliver(row, o).catch((err: unknown) => {
+    if (sender === "human") {
+      const rt = await this.recipientOf(row);
+      return rt.deliver(row, { sender, fromLabel: senderLabel(row) });
+    }
+    // An agent's send already committed its row: a recipient that can't be loaded (a failed init) leaves it pending
+    // for the next hand-off or boot, logged; it never reaches the sender, whose retry would duplicate the message.
+    let rt: AgentRuntime;
+    try {
+      rt = await this.recipientOf(row);
+    } catch (err) {
+      this.d.log.error(
+        { err, agentId: row.toAgentId, message: row.id },
+        "loading the recipient failed; the message stays pending",
+      );
+      return undefined;
+    }
+    void rt.deliver(row, { sender, fromLabel: senderLabel(row) }).catch((err: unknown) => {
       if (err instanceof AgentArchivedError || err instanceof AgentStartError)
         this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
       else
@@ -226,10 +241,20 @@ export class AgentRuntimes {
     return undefined;
   }
 
+  private async recipientOf(row: PendingRow): Promise<AgentRuntime> {
+    if (!row.toAgentId) throw new Error(`message ${row.id} has no agent recipient`);
+    const rt = await this.load(row.toAgentId);
+    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toAgentId} not found`);
+    return rt;
+  }
+
   /** S6 §8: hands a committed held row (member update, peer event) to its recipient; never awaited, never throws. */
   deliverHeld(row: PendingRow): void {
     const to = row.toAgentId;
-    if (!to) throw new Error(`message ${row.id} has no agent recipient`);
+    if (!to) {
+      this.d.log.error({ message: row.id }, "a held row has no agent recipient");
+      return;
+    }
     void this.load(to)
       .then((rt) => rt?.receiveHeld(row))
       .catch((err: unknown) =>

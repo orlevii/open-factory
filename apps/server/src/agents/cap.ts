@@ -12,6 +12,17 @@ function cut(s: string): string {
   return dec.decode(bytes.subarray(0, end));
 }
 
+const TRUNCATED = "[truncated]";
+
+/** A forwarded text (S6 §9.1): over 64 KiB it is cut, "[truncated]" included in the budget. */
+export function capText(s: string, cap = CAP_BYTES): string {
+  const bytes = enc.encode(s);
+  if (bytes.length <= cap) return s;
+  let end = cap - TRUNCATED.length;
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+  return `${dec.decode(bytes.subarray(0, end))}${TRUNCATED}`;
+}
+
 /** One rule for every event type (spec §6.4): any string over 64 KiB is cut and recorded by path. */
 export function capPayload(event: AnyEvent): {
   payload: Record<string, unknown>;

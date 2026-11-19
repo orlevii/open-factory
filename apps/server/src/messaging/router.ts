@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import type { Forward } from "./forwarder.ts";
 import type { Neighborhood } from "./neighborhood.ts";
 import { resolveName } from "./principals.ts";
 
@@ -129,8 +130,16 @@ export class Router {
           fromToolUseId: from.toolUseId ?? null,
         });
         await this.booted;
-        // The recipient's status at send time (spec §6.1): read before the hand-off enqueues its wake.
-        const status = await this.statusOf(r.agent.id);
+        // The recipient's status at send time (spec §6.1): read before the hand-off enqueues its wake. The row is
+        // committed: a recipient whose init fails never fails the sender's call (a retry would send it twice); its
+        // status is then what its row says, and the row stays pending (runtimes.deliver logs, never throws).
+        const status = await this.statusOf(r.agent.id).catch((err: unknown) => {
+          this.d.log.error(
+            { err, agent: r.agent.slug, message: row.id },
+            "loading the recipient failed; the message stays pending",
+          );
+          return this.d.runtimes.statusOf(r.agent);
+        });
         await this.d.runtimes.deliver(row, "agent");
         return {
           ok: true,
@@ -167,6 +176,41 @@ export class Router {
     const status = await this.statusOf(agent.id);
     const item = await this.d.runtimes.deliver(row, "human");
     return { ok: true, id: row.id, to: agent.slug, status, ...(item ? { item } : {}) };
+  }
+
+  /**
+   * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). With
+   * a manager, a held `member_update` (the report's text as itself; a fact as `@factory` about it), handed over once
+   * boot is done and never awaited. A top-level agent's `errored` goes to every human's inbox; anything else of a
+   * top-level agent stays in its session. The manager is read from the database: a change moves future rows only.
+   */
+  async forward(f: Forward): Promise<void> {
+    const agent = await this.d.store.agentById(f.agentId);
+    if (!agent) return;
+    if (agent.reportsTo) {
+      const row = await this.d.store.createHeld({
+        kind: "member_update",
+        toAgentId: agent.reportsTo,
+        ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
+        body: f.body,
+      });
+      void this.booted.then(
+        () => this.d.runtimes.deliverHeld(row),
+        () => {}, // shutting down before boot finished: the row is pending for the next boot
+      );
+      return;
+    }
+    if (f.fact !== "errored") return;
+    await this.d.store.createHumanMessage({
+      kind: "system",
+      fromAgentId: null,
+      notice: "agent_errored",
+      subjectAgentId: f.agentId,
+      to: "all",
+      body: f.body,
+      urgent: false,
+    });
+    this.d.bus.publishAll({ type: "inbox_changed" });
   }
 
   private async statusOf(agentId: string): Promise<AgentStatus> {

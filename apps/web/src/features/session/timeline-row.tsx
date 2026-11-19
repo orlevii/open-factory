@@ -5,10 +5,12 @@ import type { ReactNode } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { CompactionMarker } from "./compaction-marker";
 import { MessageBlock } from "./message-block";
+import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
+import { PeerLine, UpdateGroup } from "./update-group";
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono">{children}</span>
@@ -225,6 +227,20 @@ export function TimelineRow(props: TimelineRowProps) {
             failed={failedIds.has(row.message.id)}
           />
         </div>
+      );
+    case "update_group":
+      return <UpdateGroup row={row} rowProps={rp} />;
+    case "peer":
+      return <PeerLine envelope={row.envelope} rowProps={rp} />;
+    case "outgoing":
+      return (
+        <OutgoingMessage
+          slug={props.slug}
+          row={row}
+          showCall={expanded.has(row.key)}
+          onToggleCall={() => toggle(row.key)}
+          rowProps={rp}
+        />
       );
     case "text":
       return (

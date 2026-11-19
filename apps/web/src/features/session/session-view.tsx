@@ -7,11 +7,13 @@ import { PageHeader } from "@/components/page-header";
 import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { sessionQueryOptions } from "@/lib/session";
 import { AgentStrip } from "./agent-strip";
 import { runningQueryOptions } from "./api";
 import { CompactPopover } from "./compact-popover";
 import { Composer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
+import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
@@ -20,9 +22,17 @@ import { Timeline } from "./timeline";
 import { useAgentStatusFrames } from "./use-agent-status";
 import { useSession } from "./use-session";
 
-export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: number }) {
+export function SessionView({
+  slug,
+  eventSeq,
+  messageId,
+}: {
+  slug: string;
+  eventSeq?: number;
+  messageId?: string;
+}) {
   useAgentStatusFrames();
-  const s = useSession(slug, eventSeq);
+  const s = useSession(slug, eventSeq, messageId);
   const navigate = useNavigate();
   const agent = s.state.agent;
   const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
@@ -76,13 +86,18 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
           Event {s.missingEvent} isn't in this session. Showing the latest.
         </p>
       )}
+      {s.messageNotice && (
+        <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
+          {s.messageNotice}
+        </p>
+      )}
       {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
       <Timeline
         slug={slug}
         rows={s.rows}
         failedIds={s.failedIds}
         interruptedEnds={s.interruptedEnds}
-        highlightSeq={s.missingEvent === undefined ? eventSeq : undefined}
+        highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
         hasMoreBefore={s.state.hasMoreBefore}
         onLoadEarlier={s.loadEarlier}
         earlierError={s.earlierError}
@@ -154,7 +169,14 @@ function LoadError({ message, onRetry }: { message: string; onRetry(): void }) {
   );
 }
 
-/** Announces replies, errors and status changes only (never every tool call). */
+/** Every outgoing `send_message` row, including those nested under a subagent's call. */
+const outgoingRows = (rows: Row[]): Extract<Row, { kind: "outgoing" }>[] =>
+  rows.flatMap((r) =>
+    r.kind === "outgoing" ? [r] : r.kind === "tool" ? outgoingRows(r.children) : [],
+  );
+
+/** Announces messages to the viewer, errors and status changes only (never every tool call, and
+ *  not updates, peer events or messages between agents). */
 function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[], loaded: boolean) {
   const status = agent?.status;
   const until = agent?.rateLimitedUntil;
@@ -162,15 +184,24 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
   const prevStatus = useRef(status);
   const prevErrors = useRef<number | undefined>(undefined);
   const [msg, setMsg] = useState("");
+  const { data: me } = useQuery(sessionQueryOptions);
+  const handle = me?.user.handle;
   useEffect(() => {
     if (status && prevStatus.current && status !== prevStatus.current)
-      setMsg(
-        prevStatus.current === "working" && status === "idle"
-          ? `${name} replied`
-          : statusAnnouncement(name, status, { rateLimitedUntil: until, rateLimitExact: exact }),
-      );
+      setMsg(statusAnnouncement(name, status, { rateLimitedUntil: until, rateLimitExact: exact }));
     prevStatus.current = status;
   }, [status, name, until, exact]);
+  // An agent's text is not a reply to anyone: announce a successful message to this human or all.
+  const toMe = outgoingRows(rows).filter((r) => {
+    const to = parseSendResult(r.result)?.to;
+    return to !== undefined && (to === "@humans" || (handle !== undefined && to === `@${handle}`));
+  }).length;
+  const prevToMe = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    // The first render with rows (history load) announces nothing.
+    if (prevToMe.current !== undefined && toMe > prevToMe.current) setMsg(`${name} messaged you`);
+    if (loaded) prevToMe.current = toMe;
+  }, [toMe, name, loaded]);
   const errorCount = rows.filter((r) => r.kind === "error").length;
   const lastError = rows.findLast((r): r is Extract<Row, { kind: "error" }> => r.kind === "error");
   useEffect(() => {

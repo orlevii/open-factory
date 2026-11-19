@@ -201,18 +201,16 @@ export function Timeline(props: {
               )}
             </div>
           )}
-          {rows.map((row) => {
+          {rows.map((row, i) => {
             const lit = row.key === litKey;
             return (
               <div
                 key={row.key}
                 data-row-wrap
                 // one id per seq (a message_in with several envelopes renders several rows)
-                {...(row.kind !== "message" || row.key.endsWith(":0")
-                  ? { id: `event-${row.seq}` }
-                  : {})}
+                {...(rows[i - 1]?.seq !== row.seq ? { id: `event-${row.seq}` } : {})}
                 {...(lit ? { "data-highlighted": "true" } : {})}
-                className={`group relative rounded-md pr-8 ${row.kind === "message" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+                className={`group relative rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
               >
                 <TimelineRow
                   slug={props.slug}

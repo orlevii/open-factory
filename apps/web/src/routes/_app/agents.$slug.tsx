@@ -8,6 +8,8 @@ export const Route = createFileRoute("/_app/agents/$slug")({
   // An invalid ?event (abc, 0) is ignored rather than an error page.
   validateSearch: z.object({
     event: z.coerce.number().int().positive().optional().catch(undefined),
+    // A message id: the view resolves it to the recipient's event (GET /api/messages/:id).
+    message: z.string().min(1).optional().catch(undefined),
   }),
   // Only so the first load shows the route's pending mark and an unknown slug the not-found state;
   // the view itself fetches the detail fresh for its lastSeq.
@@ -21,7 +23,14 @@ export const Route = createFileRoute("/_app/agents/$slug")({
   },
   component: function SessionRoute() {
     const { slug } = Route.useParams();
-    const { event } = Route.useSearch();
-    return <SessionView key={`${slug}:${event ?? ""}`} slug={slug} eventSeq={event} />;
+    const { event, message } = Route.useSearch();
+    return (
+      <SessionView
+        key={`${slug}:${event ?? ""}:${message ?? ""}`}
+        slug={slug}
+        eventSeq={event}
+        messageId={message}
+      />
+    );
   },
 });

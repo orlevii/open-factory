@@ -1,4 +1,4 @@
-import type { AnyEvent, SessionEvent } from "@open-factory/shared";
+import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
 
 type Ev<T extends AnyEvent["type"]> = Extract<AnyEvent, { type: T }>;
 export type ToolState = "running" | "done" | "failed" | "no_result";
@@ -8,6 +8,27 @@ export type Row =
       seq: number;
       at: string;
       message: Ev<"message_in">["messages"][number];
+      key: string;
+    }
+  | {
+      kind: "update_group";
+      seq: number;
+      at: string;
+      about: string;
+      envelopes: Envelope[];
+      key: string;
+    }
+  | { kind: "peer"; seq: number; envelope: Envelope; key: string }
+  | {
+      kind: "outgoing";
+      seq: number;
+      at: string;
+      call: Ev<"tool_call">;
+      result?: Ev<"tool_result">;
+      /** The call's turn is still open (no result yet means "Sending…", else "Not sent"). */
+      turnOpen: boolean;
+      /** A `permission_denied` for this call; it shows in the revealed tool row. */
+      denial?: Ev<"permission_denied">;
       key: string;
     }
   | { kind: "text"; seq: number; text: string; key: string }
@@ -83,9 +104,41 @@ function endedTurns(events: SessionEvent[]) {
   return { ended, lastExitSeq, lastTurnStartSeq };
 }
 
+export const SEND_MESSAGE_TOOL = "mcp__factory__send_message";
+
+/** A `send_message` call with a string `to` and `body` renders as an outgoing message; any other
+ *  shape falls back to the generic tool row (UI design §2.5). */
+export function isSendMessageCall(e: Ev<"tool_call">): boolean {
+  if (e.name !== SEND_MESSAGE_TOOL) return false;
+  const i = e.input as Record<string, unknown> | null;
+  return !!i && typeof i.to === "string" && typeof i.body === "string";
+}
+
+type ToolRow = Extract<Row, { kind: "tool" }>;
+type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
+
+/** Consecutive `member_update` envelopes about one agent become one group; peer events and
+ *  everything else stand alone (UI design §2.2). */
+function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
+  const out: Row[] = [];
+  for (const [i, m] of messages.entries()) {
+    const key = `${se.seq}:${i}`;
+    if (m.kind === "member_update") {
+      const about = m.about ?? m.from;
+      const last = out.at(-1);
+      if (last?.kind === "update_group" && last.about === about) last.envelopes.push(m);
+      else out.push({ kind: "update_group", seq: se.seq, at: se.at, about, envelopes: [m], key });
+    } else if (m.kind === "peer_joined" || m.kind === "peer_left") {
+      out.push({ kind: "peer", seq: se.seq, envelope: m, key });
+    } else out.push({ kind: "message", seq: se.seq, at: se.at, message: m, key });
+  }
+  return out;
+}
+
 export function buildRows(events: SessionEvent[]): Row[] {
   const { ended, lastExitSeq, lastTurnStartSeq } = endedTurns(events);
-  const tools = new Map<string, Extract<Row, { kind: "tool" }>>();
+  const tools = new Map<string, ToolRow>();
+  const outgoing = new Map<string, OutgoingRow>();
   const top: Row[] = [];
   const place = (row: Row, parent?: string) => {
     const p = parent ? tools.get(parent) : undefined;
@@ -96,15 +149,7 @@ export function buildRows(events: SessionEvent[]): Row[] {
     if (HIDDEN.has(e.type) || silent(e, top.at(-1))) continue;
     switch (e.type) {
       case "message_in":
-        for (const [i, m] of e.messages.entries()) {
-          top.push({
-            kind: "message",
-            seq: se.seq,
-            at: se.at,
-            message: m,
-            key: `${se.seq}:${i}`,
-          });
-        }
+        top.push(...messageRows(se, e.messages));
         break;
       case "assistant_text":
         place({ kind: "text", seq: se.seq, text: e.text, key: `${se.seq}` }, e.parentToolUseId);
@@ -114,7 +159,20 @@ export function buildRows(events: SessionEvent[]): Row[] {
           (se.turnId !== null && ended.has(se.turnId)) ||
           lastExitSeq > se.seq ||
           lastTurnStartSeq > se.seq;
-        const row: Extract<Row, { kind: "tool" }> = {
+        if (isSendMessageCall(e)) {
+          const out: OutgoingRow = {
+            kind: "outgoing",
+            seq: se.seq,
+            at: se.at,
+            call: e,
+            turnOpen: !turnOver,
+            key: `${se.seq}`,
+          };
+          outgoing.set(e.toolUseId, out);
+          place(out, e.parentToolUseId);
+          break;
+        }
+        const row: ToolRow = {
           kind: "tool",
           seq: se.seq,
           call: e,
@@ -128,6 +186,11 @@ export function buildRows(events: SessionEvent[]): Row[] {
         break;
       }
       case "tool_result": {
+        const sent = outgoing.get(e.toolUseId);
+        if (sent) {
+          sent.result = e;
+          break;
+        }
         const call = tools.get(e.toolUseId);
         if (!call) {
           place(
@@ -152,6 +215,11 @@ export function buildRows(events: SessionEvent[]): Row[] {
         top.push({ kind: "error", seq: se.seq, event: e, key: `${se.seq}` });
         break;
       case "permission_denied": {
+        const sent = outgoing.get(e.toolUseId);
+        if (sent) {
+          sent.denial = e;
+          break;
+        }
         const call = tools.get(e.toolUseId);
         if (call) call.denial = e;
         else top.push({ kind: "denied", seq: se.seq, event: e, key: `${se.seq}` });

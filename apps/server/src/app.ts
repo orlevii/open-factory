@@ -29,6 +29,9 @@ import { projectsRoutes } from "./routes/projects.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { templatesRoutes } from "./routes/templates.ts";
+import { dockerodeClient } from "./runtime/docker/client.ts";
+import { ContainerManager } from "./runtime/docker/containers.ts";
+import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { registerStatic } from "./static.ts";
@@ -125,6 +128,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     lock,
     log: app.log,
   });
+  // dockerode connects lazily: constructing these makes no Docker call.
+  const docker = dockerodeClient();
+  const containers = new ContainerManager({ docker, log: app.log });
   const prepareStart = createPrepareStart({ db: deps.db, config, vault, workspace, lock });
   const runtimes = new AgentRuntimes({
     store,
@@ -137,7 +143,10 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     ...(deps.harnessDriver ? {} : { journal: new ProcessJournal() }),
     driver:
       deps.harnessDriver ??
-      createClaudeDriver({ log: app.log, transports: { local: localTransport } }),
+      createClaudeDriver({
+        log: app.log,
+        transports: { local: localTransport, docker: dockerTransport({ docker, containers }) },
+      }),
   });
   const templates = new TemplateIndex({ db: deps.db, config });
   const agents = new AgentService({

@@ -37,6 +37,29 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
   await t.sql`update agents set display_name = 'Test agent' where id = ${id}`;
 });
 
+test("the first GET /api/agents after boot carries runtimeDisabled for a local agent no runtime has loaded (spec §8.2)", async () => {
+  await t.seedAgent({ slug: "gated" });
+  const { cookie } = await t.signUpUser({ handle: "gate" });
+  const [row] = await t.sql`select id from agents where slug = 'gated'`;
+  const config = t.app.config as { allowLocalRuntime: boolean };
+  const list = async () => {
+    const r = await t.app.inject({ method: "GET", url: "/api/agents", headers: { cookie } });
+    expect(r.statusCode).toBe(200);
+    return (r.json() as { agents: { slug: string; runtimeDisabled?: string }[] }).agents.find(
+      (a) => a.slug === "gated",
+    );
+  };
+  config.allowLocalRuntime = false;
+  try {
+    expect(await t.app.runtimes.get(String(row?.id))).toBeUndefined();
+    expect((await list())?.runtimeDisabled).toBe("The local runtime is disabled on this factory.");
+  } finally {
+    config.allowLocalRuntime = true;
+  }
+  expect((await list())?.runtimeDisabled).toBeUndefined();
+  expect(await t.app.runtimes.get(String(row?.id))).toBeUndefined(); // listing never loads one
+});
+
 test("app.close stops running agents gracefully", async () => {
   const u = await t.signUpUser();
   const rt = await t.app.runtimes.bySlug("dev");

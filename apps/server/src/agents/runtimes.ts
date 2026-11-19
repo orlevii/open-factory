@@ -1,7 +1,7 @@
 import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import { errorKindSchema } from "@open-factory/shared";
-import { DEFAULT_MAX_RUNNING_AGENTS } from "../config.ts";
+import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
@@ -207,10 +207,14 @@ export class AgentRuntimes {
     await (await this.get(agentId))?.requestRestart();
   }
 
-  /** Runtime-only fields; defaults for an agent that has no runtime yet. */
+  /**
+   * Runtime-only fields; defaults for an agent that has no runtime yet. `runtimeDisabled` comes from the row and the
+   * config, not the runtime: spec §8.2 sends it for every local agent while the gate is off, loaded or not (after a
+   * boot nothing is loaded until it is touched).
+   */
   async liveFields(
     agentId: string,
-    row: { status: string; lastError?: string | null; errorKind?: string | null },
+    row: { status: string; lastError?: string | null; errorKind?: string | null; runtime?: string },
   ): Promise<LiveFields> {
     const rt = await this.get(agentId);
     if (rt) return rt.live();
@@ -220,6 +224,9 @@ export class AgentRuntimes {
       status: errored ? "errored" : "hibernated",
       ...(errored && row.lastError ? { lastError: row.lastError } : {}),
       ...(errored && kind.success ? { errorKind: kind.data } : {}),
+      ...(row.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
+        ? { runtimeDisabled: LOCAL_RUNTIME_DISABLED }
+        : {}),
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,

@@ -275,3 +275,37 @@ test("close() resolves while an SSE stream is open, and the stream is cancelled"
   // The client side sees the stream end (closed or errored), never a hang.
   await reader?.read().catch(() => undefined);
 });
+
+test("hop-by-hop headers of the MCP response are not copied, on JSON and SSE responses alike", async () => {
+  const hop = {
+    upgrade: "h2c",
+    "proxy-authenticate": "Basic",
+    "proxy-connection": "keep-alive",
+    te: "trailers",
+    trailer: "x-checksum",
+    "keep-alive": "timeout=999",
+    "mcp-session-id": "s1",
+  };
+  for (const type of ["application/json", "text/event-stream"]) {
+    const { url, tokens } = await start({
+      mcp: async () =>
+        new Response(type === "application/json" ? "{}" : "event: message\ndata: {}\n\n", {
+          status: 200,
+          headers: { ...hop, "content-type": type },
+        }),
+    });
+    const r = await fetch(`${url}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tokens.mint("ag1").token}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    await r.text();
+    expect(r.headers.get("mcp-session-id"), type).toBe("s1");
+    for (const k of ["upgrade", "proxy-authenticate", "proxy-connection", "te", "trailer"])
+      expect(r.headers.get(k), `${type} ${k}`).toBeNull();
+    expect(r.headers.get("keep-alive"), type).not.toBe("timeout=999");
+  }
+});

@@ -77,6 +77,7 @@ test("GET /api/inbox pages with a cursor; a bad cursor or limit is a 400, not a 
     forged("not-a-date|x"),
     forged("2026-02-31T00:00:00.000000Z|x"),
     forged("1|x"),
+    forged("0000-01-01T00:00:00.000000Z|x"), // year 0 is no Postgres timestamp
   ]) {
     const bad = await get(`/api/inbox?before=${before}`);
     expect(bad.statusCode, before).toBe(400);

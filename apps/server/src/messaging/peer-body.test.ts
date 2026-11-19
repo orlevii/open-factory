@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { type PeerChange, peerBody, peerLeftOf } from "./peer-body.ts";
+import { type PeerBodyEvent, peerBody, peerLeftOf } from "./peer-body.ts";
 
 const dev = { slug: "dev", displayName: "Developer" };
 
@@ -21,7 +21,7 @@ test("bodies match the spec's wording", () => {
   );
 });
 
-test.each<PeerChange & { kind: "peer_left" }>([
+test.each<PeerBodyEvent & { kind: "peer_left" }>([
   { kind: "peer_left", left: { reason: "archived" } },
   { kind: "peer_left", left: { reason: "moved", to: "lead-2" } },
   { kind: "peer_left", left: { reason: "moved", to: null } },

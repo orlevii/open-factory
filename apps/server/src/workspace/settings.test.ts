@@ -74,7 +74,7 @@ test("bypass sets bypassPermissions; no grants → 'none' in the environment ent
     tpl: {},
   });
   expect((s.permissions as { defaultMode: string }).defaultMode).toBe("bypassPermissions");
-  expect(factoryEnvironment("lead", "/w", [])[1]).toContain("(none)");
+  expect(factoryEnvironment("lead", "/w", [], "http://127.0.0.1:3001/mcp")[1]).toContain("(none)");
 });
 
 test("claudeMdExcludes: every ancestor's four files plus the workdir's own CLAUDE.md files", () => {

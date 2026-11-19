@@ -38,7 +38,7 @@ export const QUOTE_CAP = 2000;
  */
 export function quoteReported(intro: string, text: string): string {
   const capped = body(text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text);
-  return [intro, ...capped.split("\n").map((l) => (l ? `> ${l}` : ">"))].join("\n");
+  return [intro, ...capped.split("\n").map((l) => `> ${l}`)].join("\n");
 }
 
 export type BatchRow = {

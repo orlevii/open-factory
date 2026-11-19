@@ -118,7 +118,7 @@ test("the override replaces the list; local runtime needs a loopback in it", () 
       override: ["10.0.0.5"],
       interfaces: ifaces(),
     }),
-  ).toThrow(/loopback/);
+  ).toThrow(/127\.0\.0\.1/);
   expect(
     resolveAgentBindHosts({
       ...base,
@@ -128,6 +128,18 @@ test("the override replaces the list; local runtime needs a loopback in it", () 
       interfaces: ifaces(),
     }).hosts,
   ).toEqual(["10.0.0.5"]);
+});
+test("local runtime needs 127.0.0.1 itself: local agents are handed http://127.0.0.1:<port>/mcp", () => {
+  for (const override of [["::1"], ["127.0.0.2"], ["::1", "10.0.0.5"]]) {
+    expect(() =>
+      resolveAgentBindHosts({ ...base, platform: "linux", override, interfaces: ifaces() }),
+    ).toThrow(/127\.0\.0\.1/);
+  }
+  for (const override of [["0.0.0.0"], ["::"], ["::1", "127.0.0.1"]]) {
+    expect(
+      resolveAgentBindHosts({ ...base, platform: "linux", override, interfaces: ifaces() }).hosts,
+    ).toEqual(override);
+  }
 });
 test("bridgeInfo returns the bridge, or {} when Docker fails", async () => {
   const d = new FakeDockerClient();

@@ -28,10 +28,12 @@ import type { NoticeType } from "./notices.ts";
 
 /**
  * Only an instant `inboxPage` minted (UTC ISO, microseconds kept) is accepted, so nothing malformed reaches Postgres;
- * the round trip rejects calendar dates that don't exist (2026-02-31).
+ * the round trip rejects calendar dates that don't exist (2026-02-31), and the year must be at least 1.
  */
 function isCursorInstant(at: string): boolean {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$/.test(at)) return false;
+  // Year 0000 parses in JavaScript but isn't a Postgres timestamp (1 BC is year 1 BC there).
+  if (at.startsWith("0000")) return false;
   const d = new Date(at);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === at.slice(0, 19);
 }
@@ -127,8 +129,8 @@ export class EventStore {
       .where(eq(agents.id, agentId));
   }
   /** S6 §9.1: the current errored episode's `errored` fact was forwarded; cleared by `clearErrored`. */
-  async setErroredReported(agentId: string) {
-    await this.db.update(agents).set({ erroredReported: true }).where(eq(agents.id, agentId));
+  async setErroredReported(agentId: string, tx: Exec = this.db) {
+    await tx.update(agents).set({ erroredReported: true }).where(eq(agents.id, agentId));
   }
   async setAttempting(agentId: string, attempting: boolean) {
     await this.db.update(agents).set({ attempting }).where(eq(agents.id, agentId));
@@ -483,19 +485,22 @@ export class EventStore {
   }
   /**
    * A message (or factory fact) for humans: delivered at once, with one inbox item per existing user (or the one
-   * addressed), in one transaction (spec §7.5).
+   * addressed), in one transaction (spec §7.4); inside `tx` when given (a savepoint of the caller's transaction).
    */
-  async createHumanMessage(m: {
-    fromAgentId: string | null;
-    notice?: string;
-    subjectAgentId?: string;
-    kind: "message" | "system";
-    to: { userId: string } | "all";
-    body: string;
-    urgent: boolean;
-    fromToolUseId?: string | null;
-  }): Promise<{ row: MessageRow; userIds: string[] }> {
-    return this.db.transaction(async (tx) => {
+  async createHumanMessage(
+    m: {
+      fromAgentId: string | null;
+      notice?: string;
+      subjectAgentId?: string;
+      kind: "message" | "system";
+      to: { userId: string } | "all";
+      body: string;
+      urgent: boolean;
+      fromToolUseId?: string | null;
+    },
+    outer: Exec = this.db,
+  ): Promise<{ row: MessageRow; userIds: string[] }> {
+    return outer.transaction(async (tx) => {
       if (m.kind === "system" ? !m.subjectAgentId : !m.fromAgentId)
         throw new Error(
           "a human message needs a sender agent; a factory fact needs its subject agent",

@@ -2,7 +2,7 @@ import type { Envelope } from "@open-factory/shared";
 
 type Subject = NonNullable<Envelope["subject"]>;
 export type PeerLeft = NonNullable<Subject["left"]>;
-export type PeerChange = { kind: "peer_joined" } | { kind: "peer_left"; left: PeerLeft };
+export type PeerBodyEvent = { kind: "peer_joined" } | { kind: "peer_left"; left: PeerLeft };
 
 /**
  * The one owner of peer-event bodies (spec §10.2): the Router writes them with `peerBody`, and the runtime reads the
@@ -11,7 +11,7 @@ export type PeerChange = { kind: "peer_joined" } | { kind: "peer_left"; left: Pe
 export function peerBody(
   subject: { slug: string; displayName: string },
   relation: Subject["relation"],
-  change: PeerChange,
+  change: PeerBodyEvent,
 ): string {
   const who = `@${subject.slug} (${subject.displayName})`;
   if (change.kind === "peer_joined") return `${who} joined as your ${relation}.`;

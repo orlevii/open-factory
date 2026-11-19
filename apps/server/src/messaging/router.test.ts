@@ -204,6 +204,59 @@ test("hand-offs wait for bootDone", async () => {
   expect(proc("bob")?.sent[0]?.[0]?.body).toBe("after boot");
 });
 
+test("after close() no hand-off runs: rows committed during shutdown stay pending for the next boot", async () => {
+  const router = new Router({
+    db: h.db,
+    store: h.app.store,
+    runtimes: h.app.runtimes,
+    bus: h.app.bus,
+    log: h.app.log,
+    neighborhood: h.app.neighborhood,
+  });
+  router.bootDone();
+  router.close();
+  const a = await h.app.store.agentBySlug("ada");
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!a || !lead) throw new Error("seed");
+  const delivered = vi.spyOn(h.app.runtimes, "deliver");
+  const held = vi.spyOn(h.app.runtimes, "deliverHeld");
+  const r = await router.send({ agentId: a.id }, "bob", "during shutdown", false);
+  expect(r).toMatchObject({ ok: true, to: "bob" });
+  await router.forward({ agentId: a.id, body: "halfway" });
+  await router.peerEvents(a.id, { kind: "joined" }, { managerId: null, peerIds: [] });
+  // Let any `booted.then` hand-off run.
+  await new Promise((r) => setImmediate(r));
+  expect(delivered).not.toHaveBeenCalled();
+  expect(held).not.toHaveBeenCalled();
+  expect(proc("bob")).toBeUndefined();
+  expect((await pendingOf("bob")).map((x) => x.state)).toEqual(["pending"]);
+  expect(
+    await h.sql`select state from messages where to_agent_id = ${lead.id} and kind = 'member_update'`,
+  ).toEqual([{ state: "pending" }]);
+});
+
+test("an errored fact and its reported flag commit together: a failed flag write leaves no inbox item to re-report", async () => {
+  await signUp(h.app, { handle: "or" });
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("seed");
+  vi.spyOn(h.app.store, "setErroredReported").mockRejectedValueOnce(new Error("db blip"));
+  const frames0 = frames.length;
+  await expect(
+    h.app.router.forward({ agentId: lead.id, fact: "errored", body: "@lead errored." }),
+  ).rejects.toThrow("db blip");
+  expect(
+    await h.sql`select 1 from messages where notice = 'agent_errored' and subject_agent_id = ${lead.id}`,
+  ).toHaveLength(0);
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(0);
+  expect(frames.slice(frames0).filter((f) => f.type === "inbox_changed")).toHaveLength(0);
+  // The retry (the same episode, still unreported) reports it once.
+  await h.app.router.forward({ agentId: lead.id, fact: "errored", body: "@lead errored." });
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(1);
+  expect((await h.sql`select errored_reported from agents where id = ${lead.id}`)[0]).toEqual({
+    errored_reported: true,
+  });
+});
+
 test("archive between resolve and hand-off marks the row rejected", async () => {
   const a = await h.app.store.agentBySlug("ada");
   const b = await h.app.store.agentBySlug("bob");

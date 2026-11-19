@@ -113,9 +113,11 @@ export function resolveAgentBindHosts(i: BindInput): { hosts: string[]; allowedS
         "FACTORY_AGENT_HOST: 0.0.0.0 or :: must be the only entry (it already covers every address)",
       );
     }
-    if (i.localAllowed && !hosts.some((h) => isLoopback(h) || isWildcard(h))) {
+    // Local agents are handed http://127.0.0.1:<port>/mcp (start.ts): another loopback (::1, 127.0.0.2) isn't it.
+    // A wildcard covers it (Node's `::` is dual-stack).
+    if (i.localAllowed && !hosts.some((h) => h === "127.0.0.1" || isWildcard(h))) {
       throw new Error(
-        "FACTORY_AGENT_HOST must contain a loopback address (127.0.0.1) while the local runtime is allowed",
+        "FACTORY_AGENT_HOST must contain 127.0.0.1 while the local runtime is allowed (local agents reach the factory there)",
       );
     }
     if (hosts.some(isWildcard)) {

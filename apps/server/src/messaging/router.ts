@@ -2,7 +2,7 @@ import type { Db } from "@open-factory/db";
 import type { AgentStatus, QueueItem } from "@open-factory/shared";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
-import type { EventStore } from "../agents/event-store.ts";
+import type { EventStore, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import type { Forward } from "./forwarder.ts";
 import type { Neighborhood } from "./neighborhood.ts";
@@ -37,6 +37,9 @@ export type PeerChange =
 /** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
 export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[] };
 
+const SHUTTING_DOWN =
+  "The factory is shutting down; the message will be delivered after it restarts.";
+
 const notFound = (name: string): SendResult => ({
   ok: false,
   code: "not_found",
@@ -54,6 +57,8 @@ const archived = (slug: string): SendResult => ({
  */
 export class Router {
   private release!: () => void;
+  /** Set by `close()`: no hand-off starts once shutdown has begun (committed rows stay pending for the next boot). */
+  private closed = false;
   private abort!: (err: Error) => void;
   private readonly booted = new Promise<void>((resolve, reject) => {
     this.release = resolve;
@@ -77,14 +82,13 @@ export class Router {
   }
 
   /**
-   * Shutdown: a hand-off still waiting for a boot that never finished fails instead of hanging its request (the row
-   * stays pending for the next boot). A no-op once `bootDone()` ran.
+   * Shutdown: from here on no hand-off runs (each row stays pending for the next boot), and one still waiting for a
+   * boot that never finished fails instead of hanging its request.
    */
   close(): void {
+    this.closed = true;
     this.booted.catch(() => {});
-    this.abort(
-      new Error("The factory is shutting down; the message will be delivered after it restarts."),
-    );
+    this.abort(new Error(SHUTTING_DOWN));
   }
 
   /**
@@ -140,6 +144,15 @@ export class Router {
           fromToolUseId: from.toolUseId ?? null,
         });
         await this.booted;
+        // Shutting down: the committed row is the next boot's to deliver; the sender's call still succeeds (a retry
+        // would send it twice).
+        if (this.closed)
+          return {
+            ok: true,
+            id: row.id,
+            to: r.agent.slug,
+            status: this.d.runtimes.statusOf(r.agent),
+          };
         // The recipient's status at send time (spec §6.1): read before the hand-off enqueues its wake. The row is
         // committed: a recipient whose init fails never fails the sender's call (a retry would send it twice); its
         // status is then what its row says, and the row stays pending (runtimes.deliver logs, never throws).
@@ -183,6 +196,7 @@ export class Router {
       urgent,
     });
     await this.booted;
+    if (this.closed) throw new Error(SHUTTING_DOWN);
     const status = await this.statusOf(agent.id);
     const item = await this.d.runtimes.deliver(row, "human");
     return { ok: true, id: row.id, to: agent.slug, status, ...(item ? { item } : {}) };
@@ -197,39 +211,48 @@ export class Router {
   async forward(f: Forward): Promise<void> {
     const agent = await this.d.store.agentById(f.agentId);
     if (!agent) return;
-    await this.persistForward(agent, f);
-    // Durable episode state (R4): a restart never reports the same errored episode twice.
-    if (f.fact === "errored") await this.d.store.setErroredReported(f.agentId);
+    // One transaction with the durable episode state (R4): a crash between the two would report the same errored
+    // episode again on the next boot. The hand-off and the inbox frame follow the commit.
+    const out = await this.d.store.transaction(async (tx) => {
+      const persisted = await this.persistForward(agent, f, tx);
+      if (f.fact === "errored") await this.d.store.setErroredReported(f.agentId, tx);
+      return persisted;
+    });
+    if (out?.held) this.handOffHeld(out.held);
+    if (out?.inbox) this.d.bus.publishAll({ type: "inbox_changed" });
   }
 
   private async persistForward(
     agent: NonNullable<Awaited<ReturnType<EventStore["agentById"]>>>,
     f: Forward,
-  ): Promise<void> {
+    tx: Tx,
+  ): Promise<{ held?: PendingRow; inbox?: true } | undefined> {
     if (agent.reportsTo) {
-      const row = await this.d.store.createHeld({
-        kind: "member_update",
-        toAgentId: agent.reportsTo,
-        ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
-        body: f.body,
-      });
-      void this.booted.then(
-        () => this.d.runtimes.deliverHeld(row),
-        () => {}, // shutting down before boot finished: the row is pending for the next boot
+      const held = await this.d.store.createHeld(
+        {
+          kind: "member_update",
+          toAgentId: agent.reportsTo,
+          ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
+          body: f.body,
+        },
+        tx,
       );
-      return;
+      return { held };
     }
-    if (f.fact !== "errored") return;
-    await this.d.store.createHumanMessage({
-      kind: "system",
-      fromAgentId: null,
-      notice: "agent_errored",
-      subjectAgentId: f.agentId,
-      to: "all",
-      body: f.body,
-      urgent: false,
-    });
-    this.d.bus.publishAll({ type: "inbox_changed" });
+    if (f.fact !== "errored") return undefined;
+    await this.d.store.createHumanMessage(
+      {
+        kind: "system",
+        fromAgentId: null,
+        notice: "agent_errored",
+        subjectAgentId: f.agentId,
+        to: "all",
+        body: f.body,
+        urgent: false,
+      },
+      tx,
+    );
+    return { inbox: true };
   }
 
   /**
@@ -284,11 +307,18 @@ export class Router {
         notice: t.relation,
         body: peerBody(subject, t.relation, left ? { kind, left } : { kind: "peer_joined" }),
       });
-      void this.booted.then(
-        () => this.d.runtimes.deliverHeld(row),
-        () => {}, // shutting down before boot finished: the row is pending for the next boot
-      );
+      this.handOffHeld(row);
     }
+  }
+
+  /** A held row's hand-off, once boot is done and unless shutdown has begun (the row then waits for the next boot). */
+  private handOffHeld(row: PendingRow): void {
+    void this.booted.then(
+      () => {
+        if (!this.closed) this.d.runtimes.deliverHeld(row);
+      },
+      () => {}, // shutting down before boot finished: the row is pending for the next boot
+    );
   }
 
   private async statusOf(agentId: string): Promise<AgentStatus> {

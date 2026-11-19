@@ -19,7 +19,7 @@ export const messagesRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const found = await app.store.messageLookup(req.params.id);
       if (!found) throw new ApiError(404, "message_not_found", "No such message");
-      return messageLookupSchema.parse(found);
+      return found; // the response schema validates and serializes it
     },
   );
 };

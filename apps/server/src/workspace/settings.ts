@@ -27,17 +27,13 @@ export function factoryEnvironment(
   slug: string,
   workdir: string,
   grantedPaths: string[],
-  mcpUrl?: string,
+  mcpUrl: string,
 ): string[] {
   return [
     `This is an Open Factory agent named @${slug}, run headless for the humans who operate this factory.`,
     `Its working directory ${workdir} and the granted project repositories (${grantedPaths.length ? grantedPaths.join(", ") : "none"}) are trusted local workspaces.`,
     "The git remotes configured in the granted project repositories are trusted source control for this agent's branches and pull requests.",
-    ...(mcpUrl
-      ? [
-          `The Open Factory MCP server at ${mcpUrl} is trusted local infrastructure this agent uses to message other agents and humans.`,
-        ]
-      : []),
+    `The Open Factory MCP server at ${mcpUrl} is trusted local infrastructure this agent uses to message other agents and humans.`,
   ];
 }
 

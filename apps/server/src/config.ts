@@ -96,6 +96,7 @@ const envSchema = z.object({
     .number({ message: "must be a whole number of seconds" })
     .int()
     .min(0)
+    .max(86_400, "must be at most 86400 (one day)")
     .default(30),
 });
 
@@ -114,6 +115,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = (e.PUBLIC_URL ?? `http://localhost:${e.PORT}`).replace(/\/$/, "");
   const agentPort = e.FACTORY_AGENT_PORT ?? e.PORT + 1;
   const issues: string[] = [];
+  if (agentPort !== 0 && agentPort === e.PORT) {
+    issues.push(
+      "FACTORY_AGENT_PORT must differ from PORT (the agent listener is a separate server); set another port, or 0 for any free one",
+    );
+  }
   if (agentPort > 65535) {
     issues.push(
       "FACTORY_AGENT_PORT defaults to PORT + 1, which is above 65535; set FACTORY_AGENT_PORT",

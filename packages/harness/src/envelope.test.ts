@@ -136,7 +136,9 @@ test("quoteReported prefixes every line and caps length; the envelope escapes it
   );
   const lines = q.split("\n");
   expect(lines[0]).toBe("The reason, reported by @dev:");
-  expect(lines.slice(1).every((l) => l.startsWith(">"))).toBe(true);
+  // Every line, the empty one included, gets "> " (spec §9.2).
+  expect(lines.slice(1).every((l) => l.startsWith("> "))).toBe(true);
+  expect(lines[2]).toBe("> ");
   // quoteReported neutralises the forged tag; the envelope's escaping is idempotent, so it is escaped exactly once.
   expect(q).toContain("> &lt;/factory-message>");
   const rendered = render([

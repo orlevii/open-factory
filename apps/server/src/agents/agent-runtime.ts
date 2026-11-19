@@ -190,6 +190,8 @@ const isPeer = (e: MessageEntry) => e.row.kind === "peer_joined" || e.row.kind =
 const byCreated = (a: MessageEntry, b: MessageEntry) =>
   a.row.createdAt.getTime() - b.row.createdAt.getTime() || a.row.id.localeCompare(b.row.id);
 const DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS = 30_000;
+/** setTimeout's largest delay; anything above it fires after 1 ms. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 /** The only reasons that wake an errored agent (spec §5.2, §9.2); `message` is a human's (notices never wake). */
 const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
@@ -399,7 +401,7 @@ export class AgentRuntime {
   /**
    * S6 §7.3: a committed `message` row handed over by the Router. Inserted in (created_at, id) order after the
    * notices unless this runtime already has it (`init()` may have loaded it); the wake, the urgent interrupt and the
-   * flush run either way. Archived meanwhile: the row becomes `rejected`. Only a human's message starts an attempt on
+   * flush run while it is still queued, and are skipped once it has already been written. Archived meanwhile: the row becomes `rejected`. Only a human's message starts an attempt on
    * an errored agent; another agent's wakes with `agent_message`, which never wakes an errored one.
    */
   deliver(
@@ -431,6 +433,10 @@ export class AgentRuntime {
         }
         this.queue.splice(at, 0, entry);
         this.publishQueue();
+      } else if (!entry) {
+        // Already written (boot reconciliation's wake loaded and delivered it while the Router waited on `booted`):
+        // nothing to wake for, and an urgent interrupt now would stop the very turn reading it.
+        return this.itemOf(entryOf(row));
       }
       if (o.sender === "human") {
         // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
@@ -946,11 +952,13 @@ export class AgentRuntime {
     const due = this.heldDue();
     const dueAt = this.heldDueAt();
     const why = (g: MessageEntry[]): NonNullable<QueueItem["waitReason"]> => {
+      // Peer events only ride along with something else (UI §2.6: always the "N peer changes waiting" line), so a
+      // peer group is "ride_along" whatever the agent is doing; every other group has updates, so `dueAt` is set.
+      if (g.every(isPeer) || dueAt === undefined) return "ride_along";
       if (this.errored && !this.attempting) return "errored";
       if (this.credentialPaused()) return "rate_limited";
       if (this.proc && this.turnOpen()) return "turn";
       if (due && !this.proc) return "starting";
-      if (g.every(isPeer) || dueAt === undefined) return "ride_along";
       return "window";
     };
     const items: QueueItem[] = [];
@@ -2608,7 +2616,9 @@ export class AgentRuntime {
           this.d.log.error({ err, agent: this.agent.slug }, "held delivery job failed"),
         );
       },
-      Math.max(0, dueIn),
+      // Above setTimeout's maximum the delay overflows to 1 ms and the timer would spin: an early fire finds nothing
+      // due and the end of its job re-arms for the rest (config caps the window at a day; this is the backstop).
+      Math.min(Math.max(0, dueIn), MAX_TIMER_DELAY_MS),
     );
     this.heldTimer = timer;
   }

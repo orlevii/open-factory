@@ -63,6 +63,20 @@ describe("loadConfig", () => {
       ConfigError,
     );
   });
+  test("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is at most a day (a longer timer overflows setTimeout)", () => {
+    expect(
+      loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "86400" }).memberUpdateDebounceMs,
+    ).toBe(86_400_000);
+    expect(() => loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "86401" })).toThrow(
+      /FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS must be at most 86400 \(one day\)/,
+    );
+  });
+  test("FACTORY_AGENT_PORT can't be PORT (unless 0, any free port)", () => {
+    expect(() => loadConfig({ ...ok, PORT: "4000", FACTORY_AGENT_PORT: "4000" })).toThrow(
+      /FACTORY_AGENT_PORT must differ from PORT/,
+    );
+    expect(loadConfig({ ...ok, PORT: "4000", FACTORY_AGENT_PORT: "0" }).agentPort).toBe(0);
+  });
   test("FACTORY_ALLOW_LOCAL_RUNTIME only accepts true/false", () => {
     expect(loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "true" }).allowLocalRuntime).toBe(true);
     expect(() => loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "yes" })).toThrow(ConfigError);

@@ -30,6 +30,16 @@ function bearer(header: string | undefined): string | undefined {
   return m?.[1];
 }
 
+const HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "transfer-encoding",
+  "upgrade",
+  "te",
+  "trailer",
+]);
+const isHopByHop = (key: string) => HOP_BY_HOP.has(key) || key.startsWith("proxy-");
+
 function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined) => boolean) {
   const app: FastifyInstance = Fastify({
     // The token travels in this header; no log line may carry it.
@@ -44,7 +54,7 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
   );
   app.decorateRequest("agentId", undefined);
 
-  // 1. Remote address (the connection is also closed before parsing, see `listenOne`).
+  // 1. Remote address (the connection is also closed before parsing, see `startAgentListener`).
   app.addHook("onRequest", async (req, reply) => {
     if (!allowed(req.socket.remoteAddress)) {
       req.raw.destroy();
@@ -96,7 +106,8 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
     const res = await i.mcp(request, agentId);
     reply.status(res.status);
     res.headers.forEach((value, key) => {
-      if (key !== "content-length" && key !== "transfer-encoding") reply.header(key, value);
+      // Node frames the response itself: the length and every hop-by-hop header are its own (RFC 9110 §7.6.1).
+      if (key !== "content-length" && !isHopByHop(key)) reply.header(key, value);
     });
     // An SSE response may never end (Claude's `subscriptions/listen` waits for its first event, the acknowledgement):
     // stream it. Destroying the Node stream when the response closes cancels the upstream reader.

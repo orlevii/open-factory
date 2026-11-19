@@ -21,9 +21,8 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       if (!req.user) throw new Error("requireUser did not set request.user");
       try {
-        return inboxPageSchema.parse(
-          await app.store.inboxPage(req.user.id, req.query.before, req.query.limit),
-        );
+        // The response schema validates and serializes it (no second parse here).
+        return await app.store.inboxPage(req.user.id, req.query.before, req.query.limit);
       } catch (err) {
         if (err instanceof InvalidCursorError) throw new FieldError("before", err.message);
         throw err;

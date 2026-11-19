@@ -444,6 +444,8 @@ test("queue items: one held line per group with its wait reason", async () => {
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
   expect(h.rt.queueItems()[0]).toMatchObject({ waitReason: "turn" });
+  // UI §2.6: peer events are always the "N peer changes waiting" line, even during an open turn.
+  expect(h.rt.queueItems()[1]).toMatchObject({ from: "@factory", waitReason: "ride_along" });
 });
 
 test("C3: every write records the message_in seq on its rows, before session_started too", async () => {
@@ -501,4 +503,23 @@ test("fix 1 (§16): a rate-limited manager holds due updates and gets them at th
   await h.rt.settled();
   expect(asleep.events).toContainEqual(["request", "rate_limit_reset"]);
   expect(h.driver.last.sent[0]?.map((m) => m.kind)).toEqual(["member_update"]);
+});
+
+test("a window longer than setTimeout's maximum is clamped, never overflowing to a 1 ms busy loop", async () => {
+  const MAX = 2 ** 31 - 1;
+  await h.makeRuntime({ slots, memberUpdateDebounceMs: 30 * 86_400_000 });
+  await idle();
+  const spy = vi.spyOn(globalThis, "setTimeout");
+  try {
+    await update("far");
+    const delays = spy.mock.calls.map((c) => c[1] ?? 0);
+    expect(delays).toContain(MAX);
+    expect(delays.every((d) => d <= MAX)).toBe(true);
+    spy.mockClear();
+    await tick(1_000); // an overflowed timer would have fired (and re-armed) about a thousand times
+    expect(spy.mock.calls.length).toBeLessThan(5);
+    expect(anyUpdateWritten()).toBe(false);
+  } finally {
+    spy.mockRestore();
+  }
 });

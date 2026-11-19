@@ -37,29 +37,60 @@ Environment variables (`npm start` loads `.env` if present):
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
 | `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
 | `FACTORY_HOST_SKILLS_DIR` | no | `~/.claude/skills` | where host skills named in a template's `skills:` list are read from; a leading `~` is expanded |
+| `FACTORY_MAX_RUNNING_AGENTS` | no | `8` | most agent processes running at once, minimum 1; see "Running agents and the cap" |
+| `FACTORY_ALLOW_LOCAL_RUNTIME` | no | `false` | `true` lets agents with `runtime: local` start; see "Local runtime" |
+| `FACTORY_DEFAULT_IMAGE` | no | `ghcr.io/orlevii/open-factory/base:latest` | container image for Docker agents whose template names none |
+| `FACTORY_DOCKER_CLAUDE_BIN` | no | `claude` | path to Claude Code inside the container image |
+| `FACTORY_CLI_BUNDLE` | no | `apps/cli/dist/open-factory.js` in the repo | the bundled CLI mounted into containers |
+| `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${PORT}` | how containers reach this server (`OPEN_FACTORY_URL` in the container) |
 
 ## Run an agent
 
-1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up.
+1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up. Docker must be running on the machine that runs the server.
 2. In **Settings**, add a credential: run `claude setup-token` and paste the token. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
 3. Optional: register a project (a git repo on this machine) so agents can be granted access to it.
-4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` with `runtime: local` in `template.yaml` (see "Templates").
+4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` (see "Templates"). `runtime` defaults to `docker`.
 5. Create an agent from the template, pick its credential, and send it a message.
 
-The local runtime is **unsandboxed**: Claude Code runs directly on your machine as you, in auto permission mode.
+An agent that is idle is hibernated: its process is stopped (a Docker agent's container is stopped, not removed), and the next message wakes it with the same session. An agent stays warm for its template's warm window (`warm_window_minutes`, 70 by default) after it becomes idle, and it never hibernates while it is mid-turn, has a background task running or has a cron of its own scheduled.
+
+## Docker runtime
+
+Docker is the default runtime for new templates. Each agent gets one container, created on its first wake, stopped when it hibernates and started again on the next wake. Claude Code runs inside it as a non-root `agent` user, with only the agent's working directory, the projects it was granted and its skills and plugins mounted. Files the agent writes in a granted repo are owned by your host user.
+
+- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
+- **Pulls are explicit.** The factory pulls an image only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image...").
+- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, build your own image `FROM` the base image and set it as the template's `image:`.
+- **Re-creation wipes `/home/agent`.** The container is removed and re-created on a wake when its grants (mounts) or its image changed. Shell history, `gh` login state, `known_hosts` and caches in `/home/agent` are lost. Keep credentials in secrets, and the working directory is never affected.
+- **Reaching the server.** Containers call back to the factory at `host.docker.internal` (`FACTORY_AGENT_URL`). On Docker Desktop a server bound to `127.0.0.1` is reachable that way. On plain Linux it is not: bind the server to the Docker bridge address (for example `HOST=172.17.0.1`), or run it on a compose network with the containers and set `FACTORY_AGENT_URL` to its service name. `HOST=0.0.0.0` also works but exposes the factory to your LAN, so treat it as the less safe fallback.
+- **CLI bundle.** The bundled CLI is mounted into containers, so run `pnpm build` first; a Docker agent will not start without it.
+
+`pnpm smoke:docker` is a live check, not part of `pnpm test`: it runs a real Claude in a real container (build the image as `open-factory-base:dev` first) and needs an OAuth token in `~/.open-factory-spike/oauth-token`.
+
+## Local runtime
+
+`runtime: local` runs Claude Code directly on your machine as you, with no sandbox, in auto permission mode. It is an opt-in: set `FACTORY_ALLOW_LOCAL_RUNTIME=true`. While it is off, local agents show why instead of starting, and the template validator warns about `runtime: local`. Only the person who runs the server can change it; no API or UI session can.
 
 - `HOME` is yours, so your host git config and credential helpers apply (only the commit name and email are the agent's).
 - Push over HTTPS with a token: add it as a secret named `GH_TOKEN` in Settings and grant it in the template. `SSH_AUTH_SOCK` is not passed to agents, so SSH remotes won't authenticate.
 - Set `FACTORY_CLAUDE_BIN` if `claude` isn't on your PATH.
 
-If an agent's session can't be resumed ("No conversation found"), use **Start a new session** on the agent (`POST /api/agents/<slug>/reset-session`): its pending messages become the first turn of a fresh Claude session.
+## Running agents and the cap
+
+`FACTORY_MAX_RUNNING_AGENTS` (default 8) limits how many agent processes run at once, warm idle ones included. An agent that wakes while every slot is taken waits in a first-in, first-out queue and shows as queued. To free a slot sooner, the factory hibernates the least recently active idle agent early, before its warm window ends. Agents that are mid-turn, have background tasks or have crons are never chosen.
+
+**Rate limits.** When Claude reports that a credential's limit is rejected, the factory pauses that credential until the reported reset time (30 minutes if none is reported). Agents on it keep their messages queued, and idle ones hibernate. At the reset, an agent that was cut off mid-turn gets a notice from `@factory` that the limit reset, ahead of any pending messages.
+
+**Crashes.** If an agent's process dies with work in flight (an open turn, a background task or a cron), the factory tries one automatic resume, started with a notice from `@factory` that says what was lost. If that fails, or the process was idle, nothing retries on its own: the agent shows as errored and a human acts. If the factory itself restarts while an agent was working, the agent resumes the same way on the next boot.
+
+**Restart and Start a new session.** On an errored agent, **Restart** makes one more attempt with the same session (the agent gets a notice that you restarted it). If the session can't be resumed ("No conversation found"), use **Start a new session** instead (`POST /api/agents/<slug>/reset-session`): pending notices are dropped, and your pending messages become the first turn of a fresh Claude session. The old session file stays on disk. Restart is not offered while the local runtime is disabled for a local agent.
 
 ## Templates
 
 A template is a folder under `${FACTORY_HOME}/templates/<name>/`:
 
 ```
-template.yaml     name, display_name, description, runtime, model, skills, projects
+template.yaml     name, display_name, description, runtime, image, model, skills, projects
 AGENTS.md         the persona
 settings.json     optional, Claude Code settings (permissions, env, ...)
 mcp.json          optional, MCP servers

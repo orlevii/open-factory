@@ -411,7 +411,12 @@ test("an image still missing after the re-pull fails the start (no loop)", async
     lastError: `The image ${IMAGE} isn't available locally.`,
   });
   expect(pull).toHaveBeenCalledTimes(1);
-  expect(w.runtimes.supervisor.running().count).toBe(0);
+  await until(() => expect(w.runtimes.supervisor.running().count).toBe(0));
+  // The second miss forgot the image too: a human's retry pulls it for real and starts.
+  pull.mockRestore();
+  await send(w, "retry");
+  await until(() => expect(w.rt.live().status).toBe("idle"));
+  expect(w.docker.ops()).toContain("pull");
 });
 
 /** Runs `then` right after the real `ensure` started the container, before the launch. */
@@ -499,6 +504,36 @@ test("ensure failing and the stop failing too: the start failure is recorded, th
     source: "spawn",
     message: "Docker failed: label lookup failed",
   });
+  expect(container(w)).toMatchObject({ running: true });
+  expect(w.runtimes.supervisor.running().count).toBe(1);
+});
+
+test("ensure failing while the DB can't record it: the container is stopped anyway", async () => {
+  const w = await setup();
+  const realAppend = store.append.bind(store);
+  vi.spyOn(store, "append").mockImplementation((id, turn, event, tx) =>
+    event.type === "error" ? Promise.reject(new Error("db down")) : realAppend(id, turn, event, tx),
+  );
+  afterEnsure(w, () => {
+    throw new Error("label lookup failed");
+  });
+  await send(w);
+  await until(() => expect(opsAfterStart(w)).toContain("stop"));
+  await w.rt.settled();
+  expect(container(w)).toMatchObject({ running: false });
+  expect(w.runtimes.supervisor.running().count).toBe(0);
+});
+
+test("a failed stop before the launch keeps the slot even when stop_failed can't be written", async () => {
+  const w = await setup();
+  vi.spyOn(store, "setErrored").mockRejectedValue(new Error("db down"));
+  afterEnsure(w, () => {
+    w.docker.stopError = new Error("daemon error");
+    w.runtimes.supervisor.close();
+  });
+  await send(w);
+  await until(() => expect(w.rt.live().errorKind).toBe("stop_failed"));
+  await w.rt.settled();
   expect(container(w)).toMatchObject({ running: true });
   expect(w.runtimes.supervisor.running().count).toBe(1);
 });

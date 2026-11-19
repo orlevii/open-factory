@@ -218,7 +218,8 @@ export class AgentRuntime {
   private stopsInProgress = 0; // stop() calls not yet returned: no process may be spawned meanwhile
   private afterExit: AfterExit | undefined; // the intent of the stop in progress, consumed by the `exited` job
   private noStart = false; // the closing latch (spec §5.6): never launch again
-  // The runtime of the last launched process: its exit and cleanup follow it, even if a re-sync changed the row since.
+  // The runtime of the last launched process (or of a container a start left that couldn't be stopped): its exit and
+  // cleanup follow it, even if a re-sync changed the row since.
   private procRuntime: "local" | "docker" | undefined;
   private lastImage: string | undefined; // Docker: the image reference of the last start (spec §8.2)
   // A start whose container couldn't be stopped (spec §9.6): stop_failed, and startNow must not give the slot back.
@@ -1032,6 +1033,9 @@ export class AgentRuntime {
       requeue = !(await this.launch(reason, () => {
         launched = true;
       }));
+    } catch (err) {
+      this.imageRequeued = false; // this wake ended: the next one may re-pull a vanished image once again
+      throw err;
     } finally {
       this.starting = false;
       // A container that couldn't be stopped keeps the slot (stop_failed, spec §9.6).
@@ -1181,20 +1185,26 @@ export class AgentRuntime {
     } catch (err) {
       // Removed after it was seen (spec §11.2): forget it and send the wake back through the pull, once per launch.
       // `ensure` throws this before any create or start, so there is no container to stop.
-      if (err instanceof ImageMissingError && !this.imageRequeued) {
-        this.imageRequeued = true;
+      if (err instanceof ImageMissingError) {
+        // Always forgotten, so whichever wake comes next checks and pulls it again.
         docker.onImageMissing?.(err.image);
-        return undefined;
+        if (!this.imageRequeued) {
+          this.imageRequeued = true;
+          return undefined;
+        }
       }
       // A mount refused by the re-check keeps its own message ("Mount <path> isn't allowed: <reason>.").
       const startErr =
         err instanceof WorkspaceError
           ? new AgentStartError(err.message, err.fix)
           : dockerStartError(err);
-      // The start failure first; a container stop that then fails makes it stop_failed (spec §9.6).
-      const thrown = await this.recordStartFailure(startErr, "starting the container failed");
-      await this.stopUnlaunchedContainer();
-      throw thrown;
+      // The start failure first; a container stop that then fails makes it stop_failed (spec §9.6). The stop runs
+      // even when recording the failure throws (the DB), so the container never outlives the start.
+      try {
+        throw await this.recordStartFailure(startErr, "starting the container failed");
+      } finally {
+        await this.stopUnlaunchedContainer();
+      }
     }
   }
 
@@ -1211,9 +1221,14 @@ export class AgentRuntime {
         { err, agent: this.agent.slug },
         "stopping the container of a start that didn't launch failed",
       );
-      await this.setErrored(stopFailedMessage(undefined), "stop_failed");
+      // The slot and the cleanup target first: a failing DB write below must not free the slot of a running container.
       this.keepSlotAfterFailedStart = true;
       this.slots.stopFailed(this.agent.id);
+      this.procRuntime = "docker"; // Restart's cleanup stops (or removes) this container, whatever ran last
+      // setErrored sets the in-memory truth first; the DB may be what failed.
+      await this.setErrored(stopFailedMessage(undefined), "stop_failed").catch((e) =>
+        this.d.log.error({ err: e, agent: this.agent.slug }, "recording stop_failed failed"),
+      );
       this.publishStatus();
       return false;
     }

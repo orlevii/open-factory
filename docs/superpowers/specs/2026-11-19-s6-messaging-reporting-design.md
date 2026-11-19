@@ -20,7 +20,7 @@ Agents talk to each other and to humans directly, and managers hear everything t
 
 From the roadmap, made testable. ACs 1–5 are proven in default CI with the fake driver and again by the live check (§17.5); AC 7 by a CI job on `ubuntu-latest`; the rest by default CI.
 
-1. **Agent to agent, with a wake.** Agent A calls `send_message` to agent B, which is hibernated. B wakes, its first batch carries A's message (`from="a"`), and B replies to A with `send_message`. A's session shows its call as an outgoing "a → b" block and B's reply as an incoming message; B's session shows the reverse.
+1. **Agent to agent, with a wake.** Agent A calls `send_message` to agent B, which is hibernated. B wakes, its first batch carries A's message (`from="a"`), and B replies to A with `send_message`. A's session shows its call as an outgoing "@a → @b" block and B's reply as an incoming message; B's session shows the reverse.
 2. **Batched updates.** A manager that is mid-turn while its report narrates and answers receives all of it as **one** batched turn (one `member_update` envelope group) right after its own turn ends: never mid-turn, and never a tool call, tool result or thinking block.
 3. **Urgent.** An urgent `send_message` from a report interrupts a working manager immediately (S3's interrupt-hold-send).
 4. **Neighborhood.** `list_peers` returns the manager, peers and reports with the right `relation` values, `scope: "all"` adds everyone else as `other`, and the humans are listed.
@@ -116,7 +116,7 @@ The human REST API never accepts an agent token: `requireUser` only reads the be
 - With the local runtime allowed, the bind list must contain a loopback address (config error otherwise): local agents use `http://127.0.0.1:<agent port>/mcp`.
 - **Who can reach it:** other containers on the default bridge, not only agents. The token protects it. The README says so next to the setting, and covers compose (`FACTORY_AGENT_URL` = the service name), rootless Docker and host firewalls (`ufw allow in on docker0 to any port <agent port>`).
 - **Listening order:** the agent listener starts inside `buildApp` **before boot reconciliation** (S5 §5.7): step 6 can start agents before the human server listens, and Claude connects to MCP servers only at startup. A bind failure fails the boot with the address and the error; the failed-reconcile path (`app.ts`) and `app.close()` close it after the runtimes.
-- **URLs:** local agents `http://127.0.0.1:<agent port>/mcp`; Docker agents `<FACTORY_AGENT_URL>/mcp`, where S5's `FACTORY_AGENT_URL` now defaults to `http://host.docker.internal:<agent port>` (it pointed at the human port, which a container could never use without a browser session). `OPEN_FACTORY_URL` in containers follows it, so S5's live check `curl $OPEN_FACTORY_URL/api/status` now hits the agent listener.
+- **URLs:** local agents `http://127.0.0.1:<agent port>/mcp`; Docker agents `<FACTORY_AGENT_URL>/mcp`, where S5's `FACTORY_AGENT_URL` now defaults to `http://host.docker.internal:<agent port>` (it pointed at the human port, which a container could never use without a browser session). `OPEN_FACTORY_URL` in containers follows it, so S5's live check `curl $OPEN_FACTORY_URL/api/status` now hits the agent listener. Upgrade note (README and PR): an S5 setup that set `FACTORY_AGENT_URL` explicitly to the human port must move it to the agent port; the factory logs a boot warning when the URL's port equals `PORT`.
 - **Proof on Linux** (§17.4).
 
 ### 5.4 Startup visibility
@@ -134,7 +134,7 @@ Claude reports MCP connection results in `system/init` (`mcp_servers: [{name, st
 ### 6.1 `send_message(to, body, urgent?)`
 
 - `to`: 1–64 chars. `body`: the human route's rules (trimmed, non-empty, ≤ 64 KB UTF-8). `urgent`: boolean, default false.
-- Resolution and rejections: §7.1–7.2. On success: `{"id":"<message id>","to":"b","status":"hibernated"}`: `to` is the resolved address in envelope form (`b`, `@or`, `@humans`), `status` the recipient's status at send time (agents) or `"inbox"` (humans), plus `note` when it matters ("b is errored; your message will be delivered when a human restarts it.").
+- Resolution and rejections: §7.1–7.2. On success: `{"id":"<message id>","to":"b","status":"hibernated"}`: `to` is the resolved address in envelope form (`b`, `@or`, `@humans`), `status` the recipient's status at send time (agents) or `"inbox"` (humans), plus `note` when it matters ("@b is errored; your message will be delivered when a human restarts it.").
 - The handler returns once the row is committed and handed to the recipient (§7.3); it never waits for a wake or a start.
 - `from_tool_use_id` comes from `params._meta["claudecode/toolUseId"]` (V2), so the UI can link a message back to the call that sent it. Missing or malformed → null.
 
@@ -157,7 +157,7 @@ Claude reports MCP connection results in `system/init` (`mcp_servers: [{name, st
 - `all` and `system` join `RESERVED_HANDLES` (today they are reserved for slugs only, so a human could sign up as `@system`).
 - **Remaining race, accepted** (certainty 3): a human signing up with a handle at the same instant a human creates an agent with that exact slug can still both succeed (better-auth runs the hook outside any transaction that covers its insert). With 1–5 humans and agent creation a human act this is moot, and the send-time "matches both" error below keeps the outcome safe.
 - **Resolution ignores `@`**: `to` is trimmed, one leading `@` is dropped, and the name is looked up in both tables; `humans` means every human. `"dev"`, `"@dev"`, `"or"` and `"@or"` all resolve to the one principal with that name. No precedence rule and no boot check: if a lookup ever finds both an agent and a user, `send_message` fails: "'x' matches both an agent and a user; ask a human to rename one." (decision Q4, certainty 3).
-- The envelope keeps the product format: agents as their bare slug (`from="dev"`), humans as `@handle`, the factory as `@factory`. S4's CLAUDE.md line "`from` is … `@handle` for a human" is updated accordingly (§10.3).
+- The envelope keeps the product format: agents as their bare slug (`from="dev"`), humans as `@handle`, the factory as `@factory`. Everywhere else (prose, the UI, CLAUDE.md, tool sentences, factory fact bodies) agents are written `@slug`, as S4/S5 and DESIGN.md already do (decision R6); the unified namespace makes `@x` unambiguous. S4's CLAUDE.md line "`from` is … `@handle` for a human" is updated accordingly (§10.3).
 
 ### 7.2 Rejections (tool errors)
 
@@ -166,7 +166,7 @@ Claude reports MCP connection results in `system/init` (`mcp_servers: [{name, st
 | No such name | "No agent or user named 'x'. Call list_peers to see who you can message." |
 | Both an agent and a user | see §7.1 |
 | The caller itself | "You can't message yourself." |
-| Archived agent | "x is archived and can't receive messages." |
+| Archived agent | "@x is archived and can't receive messages." |
 | `me`, `scheduler`, `factory`, `all`, `system` | "'x' is reserved and can't receive messages." |
 | Body empty / too large | the human route's messages |
 
@@ -176,13 +176,13 @@ S7 adds terminated agents with the same shape.
 
 1. Insert the row (`kind = 'message'`, `from_agent_id` or `from_user_id`, `to_agent_id`, `urgent`, `from_tool_use_id`, and `created_at` set from the **server clock**, as for every message row from S6 on, so due-time arithmetic never compares two clocks).
 2. Hand it to the recipient: `runtimes.deliver(row)` enqueues a job on the recipient's `AgentRuntime` that runs S3/S5's send logic from the existing row. The job:
-   - skips the row if this runtime has already seen its id (a per-runtime seen-id set, filled by `init()` and every push, so a row loaded at init and handed over again is never written twice);
-   - marks the row `rejected` if the agent was archived meanwhile (the human REST route still answers `409`; the agent's tool call already returned, and the row's state tells the truth);
+   - skips only the **insertion** if this runtime has already seen the id (a per-runtime seen-id set, filled by `init()` and every push, so a row loaded at init and handed over again is never written twice). Everything below still runs: the first `deliver` to an unloaded agent is exactly that case, since `bySlug` → `init()` loads the just-committed row;
+   - marks the row `rejected` (a new state, §12) and stops if the agent was archived meanwhile (the human REST route still answers `409`; the agent's tool call already returned, and the row's state tells the truth);
    - inserts it in `(created_at, id)` order, not at the tail, so concurrent sends keep their order;
    - wakes, interrupts if urgent, flushes.
    The MCP handler doesn't await that job (a slow start never blocks the sender's tool call); the human REST route keeps awaiting it, so S3's synchronous `503 agent_start_failed` is unchanged for humans.
 3. **Boot gate:** every `deliver` and `deliverHeld` hand-off waits on a `bootDone` promise that resolves at the end of `reconcile()`. Rows are durable meanwhile. So an agent started by boot step 6 that messages another agent at once can't race that agent's `bootWake` (which carries S5's attempt accounting for factory-restarted resumes).
-4. State rules are S3/S5's, with one distinction: only a **human** sender starts an attempt on an errored agent (S5 §9.2). An agent's message wakes with a new reason, `agent_message`, which is **not** in `ERRORED_WAKES`, and never sets `attemptOwedAtExit` or calls `beginAttempt`. To an errored recipient it stays pending and the tool result says so (decision Q9). Rate-limited, queued and hibernated recipients follow the normal wake rules. An agent's urgent message interrupts like a human's (the `control` event's `by` is the bare slug).
+4. State rules are S3/S5's, with one distinction: only a **human** sender starts an attempt on an errored agent (S5 §9.2). An agent's message wakes with a new reason, `agent_message`, which is **not** in `ERRORED_WAKES`, and never sets `attemptOwedAtExit` or calls `beginAttempt`. To an errored recipient it stays pending and the tool result says so (decision Q9). Rate-limited, queued and hibernated recipients follow the normal wake rules. An agent's urgent message interrupts like a human's (the `control` event's `by` is `@slug`, as for humans).
 5. If the server stops between commit and hand-off, the row is pending and the boot rebuild (S5 §5.7) wakes the recipient.
 6. `pendingQueue` left-joins `agents` as well as `users`, and the runtime renders an agent sender as its bare slug (S5's `fromOf` throws on a non-system row without a user handle today).
 
@@ -192,18 +192,18 @@ S7 adds terminated agents with the same shape.
 - After commit, a content-free `{type: "inbox_changed"}` frame goes to every socket (all users are equal admins); the Inbox refetches.
 - A human's reply goes through the agent's session composer (the existing route).
 
-## 8. Held deliveries and the debounce (decisions Q3, Q5 revised by R1, Q7, Q8)
+## 8. Held deliveries and the debounce (decisions Q3, Q5 revised by R1 and R5, Q7, Q8)
 
 ### 8.1 Two lists per runtime
 
 `AgentRuntime` keeps S3/S5's `queue` (notices, direct messages, compacts: strict FIFO, written mid-turn and absorbed, S3) and adds **`held`**: pending `member_update`, `peer_joined` and `peer_left` rows, ordered by `(created_at, id)`.
 
-**Turn open**, for held rows, means any of: an open turn, a written batch awaiting its turn (`awaiting`, `inFlight`), a start in flight (`proc && !started`), an urgent hold, a compact in flight, or a stop under way. (`openTurnId` alone is not enough: after an idle write it stays unset until `turn_started`, and a held write in that gap would be absorbed into the starting turn.)
+**Turn open**, for held rows, means any of: an open turn, a written batch awaiting its turn (`awaiting`, `inFlight`), an urgent hold, a compact in flight, or a stop under way. (`openTurnId` alone is not enough: after an idle write it stays unset until `turn_started`, and a held write in that gap would be absorbed into the starting turn.) A freshly launched process with nothing written yet is **not** turn-open: `system/init` and `session_started` arrive only after the first write (S3), so the first batch after a launch is written "while no turn is open" and carries the held rows. A `member_updates` wake therefore writes the due held rows as its first batch, and a direct-message wake carries the held rows along with it.
 
 Held rows are:
 - **never written while a turn is open**;
 - **written with any batch** written while no turn is open (all of them, due or not);
-- **due at the manager's turn boundary**: rows that were pending when one of the manager's turns ended are due at once and go out as the next turn (decision R1, revising Q5: product "delivered at its next turn boundary", ADR 0005, AC 2). A busy manager therefore gets at most one update turn per turn of its own;
+- **due at the manager's turn boundary**: rows that were pending when one of the manager's turns ended are due at once and go out as the next turn, **unless that turn was update-only** (decision R1, revising Q5: product "delivered at its next turn boundary", ADR 0005, AC 2; refined by R5). A turn is update-only when the batch it ran held only `member_update`/`peer_*` entries; that is derived from the batch the turn ran (its rows), not stored as a flag. User turns, turns whose batch carried a message or notice, and self-started turns (task notifications, crons) all count. After an update-only turn the window below applies, as for an idle manager. So a manager working on something else hears its reports right when it finishes, and a manager that is only reading updates hears them at most once per window: a chatty report can't drive it turn after turn;
 - **due after the window** while there is no open turn (idle-warm or hibernated): the oldest pending `member_update` was received at least `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` ago (default 30, min 0; 0 = due at once, still never mid-turn). The window is fixed from the oldest pending update, not reset by new ones, so a chatty report can't starve it; ten blocks to an idle manager cost one turn. Stated for Or: a report's final answer reaches an **idle** manager up to 30 s after it was written;
 - **peer events are never due on their own**: they ride along with whatever is written (product).
 
@@ -214,7 +214,7 @@ Every path that returns written entries to the queue (a rejected write, a failed
 - One timer per runtime, a derived cache of durable rows (decision Q3, no pg-boss): `updateHeldTimer()` runs at the end of **every** job, like S5's `updateWarmTimer()`. It (re)arms for the next due time, and when held rows are due with no process running and `acceptsWake("member_updates")` true, it requests the wake. So updates that became due while the agent couldn't be woken (errored, `noStart`, a failed start) go out as soon as it can be, without waiting for unrelated traffic.
 - On expiry, a job: process running → `flush()` (writes when no turn is open; otherwise the turn-end rule does); else `requestWake(…, "member_updates")`. `member_updates` is a new `WakeReason`, not in `ERRORED_WAKES`: updates never wake an errored manager. Rate-limit pauses hold them like any delivery (S5 §7.2).
 - Cleared by `setNoStart` (S5's closing latch) and on archive.
-- **Boot:** `bootWakes` counts only deliverable rows: `message` and `system`, plus `member_update` rows older than the window. Agents whose only pending rows are young updates are **loaded** (runtimes are created lazily) so their timer is armed; agents with only peer events are left alone.
+- **Boot:** `bootWakes` counts only deliverable rows (`message` and `system`, plus `member_update` rows older than the window) and orders agents by their oldest **deliverable** row. Agents whose only pending rows are young updates are loaded (runtimes are created lazily), and `init()` ends with `updateHeldTimer()` (it is not a job, so the end-of-job hook doesn't cover it), which arms their timer; agents with only peer events are left alone.
 
 ### 8.3 What "deliverable" means now
 
@@ -234,7 +234,7 @@ third block
 </factory-message>
 
 <factory-message from="@factory" kind="member_update" urgent="false" id="m4" about="dev">
-Bash was denied for dev. The reason, reported by dev:
+Bash was denied for @dev. The reason, reported by @dev:
 > rm -rf ./build && …
 </factory-message>
 ```
@@ -242,33 +242,35 @@ Bash was denied for dev. The reason, reported by dev:
 - A single row keeps `id="…"`; a merged envelope has `ids="…"` (space-separated, in order). `about` names the subject of factory rows.
 - Every block body is escaped (S3's tag neutralisation) **before** joining; rendering is a pure function of the rows: the same rows give the same bytes.
 - `FactoryMessage` widens: `kind: "message" | "system" | "member_update" | "peer_joined" | "peer_left"`, `ids?: string[]`, `about?: string`.
-- The `message_in` **event** records, per envelope, what the model saw plus what the UI needs, so the UI never parses prose: `parts: [{id, body, createdAt}]` (one per row, unjoined), `fact?` (the row's fact code, §9.1), and for peer events `subject: {slug, displayName, relation, left?: {reason: "archived"} | {reason: "moved", to: string | null}}`. The agent sees only the envelope text.
+- The `message_in` **event** records, per envelope, what the model saw plus what the UI needs, so the UI never parses prose: `parts?: [{id, body, createdAt}]` (one per row, unjoined; optional because stored events are re-parsed on every read and pre-S6 rows have none: the UI then treats the envelope's `body` as one part), `fact?` (the row's fact code, §9.1), and for peer events `subject: {slug, displayName, relation, left?: {reason: "archived"} | {reason: "moved", to: string | null}}`. The agent sees only the envelope text.
 
 ## 9. Forwarding to the manager (decisions Q6, R3, R4)
 
 ### 9.1 What is forwarded
 
-Hooked where each fact is produced, not only in `onEvent`: the runtime's event `append()` path (by event type), `setErrored`, `attemptSucceeded`, `reportLostWork`, and reconcile's own paths (factory-restarted lost work, attempts cut short), the latter called after `bootDone`. Only when the agent has a manager (`this.agent.reportsTo`, kept current by S4's `runtimes.refresh`). Each item is one `member_update` row to the manager, handed over with `runtimes.deliverHeld(row)` (an enqueued job on the manager; never awaited).
+Hooked where each fact is produced, not only in `onEvent`: the runtime's event `append()` path (text, errors, denials, by event type), `reportLostWork`, the crash path (`onCrash`/`recordCrash`), every errored path, `attemptSucceeded`, `resetSession`, and reconcile's own paths (factory-restarted lost work, attempts cut short), the latter called after `bootDone`. The lifecycle facts are defined **by policy, not by flag edges** (the runtime sets `errored` in several places, not only through `setErrored`):
+- `crashed`: `recordCrash` when its policy is "recover" (one automatic attempt follows; S5 §9.2 step 4);
+- `errored`: every path that leaves the agent errored with **no attempt pending**: a start or resume failure (`setErrored` with kind `start`, `resume`, `resume_unrecoverable`), a crash during an attempt (`onCrash`'s attempt-failed branch), reconcile's cut-short attempts, `stop_failed`, and `internal` (`onJobFailure`). A recoverable crash is `crashed`, never `errored`. At most one `errored` per errored episode: a second path while the agent is still errored with no attempt in between adds nothing;
+- `recovered`: `attemptSucceeded`, and `resetSession`'s clear of the errored state. Only when the agent has a manager (`this.agent.reportsTo`, kept current by S4's `runtimes.refresh`). Each item is one `member_update` row to the manager, handed over with `runtimes.deliverHeld(row)` (an enqueued job on the manager; never awaited).
 
-| Fact (`notice` column = fact code) | Sender | Body (bare slugs; report-controlled parts quoted, §9.2) |
+| Fact (`notice` column = fact code) | Sender | Body (agents as `@slug` in prose, decision R6; report-controlled parts quoted, §9.2) |
 |---|---|---|
 | `assistant_text` with no `parentToolUseId` | the report | the text as written (blank skipped; over 64 KB truncated with "[truncated]") |
-| `turn_failed` (`error` with `source: api \| refusal`) | `@factory`, about | "A turn of dev failed." + the error message quoted |
-| `denied` (`permission_denied`) | `@factory`, about | "<Tool> was denied for dev." + the reason quoted |
-| `crashed` (S5 §9.2 step 4) | `@factory`, about | "dev stopped unexpectedly during a turn; one automatic recovery is under way." (exit codes stay in dev's own session detail) |
-| `errored` (transition into errored with no attempt left: start, resume, unrecoverable resume, crash during an attempt, `stop_failed`) | `@factory`, about | "dev is errored and needs a human." + `last_error` quoted |
-| `recovered` (an attempt succeeds) | `@factory`, about | "dev recovered." |
-| `work_lost` (`background_work_lost`, any reason but `archived`) | `@factory`, about | "Background work of dev was stopped." + the task descriptions and cron schedules quoted |
+| `turn_failed` (`error` with `source: api \| refusal`) | `@factory`, about | "A turn of @dev failed." + the error message quoted |
+| `denied` (`permission_denied`) | `@factory`, about | "<Tool> was denied for @dev." + the reason quoted |
+| `crashed` (S5 §9.2 step 4) | `@factory`, about | "@dev stopped unexpectedly during a turn; one automatic recovery is under way." (exit codes stay in @dev's own session detail) |
+| `errored` (errored with no attempt pending; see the policy above) | `@factory`, about | "@dev is errored and needs a human." + `last_error` quoted |
+| `recovered` (an attempt succeeds, or Start a new session clears the error) | `@factory`, about | "@dev recovered." |
+| `work_lost` (`background_work_lost`, any reason but `archived`) | `@factory`, about | "Background work of @dev was stopped." + the task descriptions and cron schedules quoted |
 
-- **Once per transition:** `errored` fires when the errored flag goes false → true or `error_kind` changes while errored; `recovered` when an attempt clears it.
 - Not forwarded: subagent text (`parentToolUseId`: nested work), tool calls and results, thinking, `send_message` bodies (a tool call), lifecycle lines that lose nothing.
 - **Truthful senders** (AC 8): rows from the report hold only its text. Everything the factory or Claude Code wrote is `from @factory` with `subject_agent_id` and a fact code, rendered with `about=`, on the same held path and in the same group as that report's text.
-- **Top-level agents** (no manager): nothing is forwarded; their text stays in their session. Only the `errored` fact goes to the humans: a `system` message (`notice = 'agent_errored'`, `subject_agent_id`, `to_all_humans`) with inbox items, once per transition. A successful automatic recovery stays quiet (decision R4, certainty 3; a product-doc change, §20).
+- **Top-level agents** (no manager): nothing is forwarded; their text stays in their session. Only the `errored` fact goes to the humans: a `system` message (`notice = 'agent_errored'`, `subject_agent_id`, `to_all_humans`) with inbox items, once per errored episode (same policy as above). A successful automatic recovery stays quiet (decision R4, certainty 3; a product-doc change, §20).
 - A manager change moves where **future** rows go; rows already pending stay addressed to the old manager.
 
 ### 9.2 Quoting report-controlled text (decision R3)
 
-`quoteReported(text)`: the text is capped at 2,000 characters ("[truncated]"), envelope tags are neutralised (S3), and **every** line, empty ones included, is prefixed with `> `, introduced by "reported by dev:" (or "The reason, reported by dev:"). A Markdown blockquote with every line prefixed has no closing marker the content could forge, and the envelope escaping stops it closing the envelope. The CLAUDE.md rule (§10.3) says quoted parts of factory facts are the report's content.
+`quoteReported(text)`: the text is capped at 2,000 characters ("[truncated]"), envelope tags are neutralised (S3), and **every** line, empty ones included, is prefixed with `> `, introduced by "reported by @dev:" (or "The reason, reported by @dev:"). A Markdown blockquote with every line prefixed has no closing marker the content could forge, and the envelope escaping stops it closing the envelope. The CLAUDE.md rule (§10.3) says quoted parts of factory facts are the report's content.
 
 ## 10. Neighborhood (decisions Q11–Q14)
 
@@ -280,7 +282,7 @@ Hooked where each fact is produced, not only in `onEvent`: the runtime's event `
 
 - **Triggers** (in `AgentService`, after the commit): create (joined), archive (left), unarchive (joined), manager change (left the old neighborhood, joined the new one). S7 adds spawn and terminate.
 - **Recipients:** everyone whose neighborhood changed: the subject's peers (relation peer) and its manager (relation report). Archived agents get nothing.
-- **Rows:** `kind = peer_joined | peer_left`, from `@factory`, `subject_agent_id`, `notice` = `peer` | `report` (the relation), held, never due on their own (§8.1). Bodies: "dev (Developer) joined as your peer." / "…as your report.", "dev (Developer) left: archived.", "dev (Developer) left: now reports to lead." The description is not in the body (it is human-written in S6 but agent-written for S7's spawns; `list_peers` returns it). No cancellation of a join followed by a leave: rows are the truth (decision Q13).
+- **Rows:** `kind = peer_joined | peer_left`, from `@factory`, `subject_agent_id`, `notice` = `peer` | `report` (the relation), held, never due on their own (§8.1). Bodies: "@dev (Developer) joined as your peer." / "…as your report.", "@dev (Developer) left: archived.", "@dev (Developer) left: now reports to @lead.", "@dev (Developer) left: now reports to the humans." The description is not in the body (it is human-written in S6 but agent-written for S7's spawns; `list_peers` returns it). No cancellation of a join followed by a leave: rows are the truth (decision Q13).
 - **The moved agent itself** gets no peer event: S4 already calls `requestRestart` when its own manager changes (`agent-service.ts` `changed.feeds`), so its next process has a fresh CLAUDE.md.
 
 ### 10.3 The generated CLAUDE.md (S4's `buildClaudeMd`)
@@ -289,7 +291,7 @@ The function stays pure and deterministic (no status, no task, no timestamps).
 
 **"How messages reach you"** (S4/S5's section) is updated: `from` is an agent's slug, a human's `@handle`, or `@factory`; an envelope may carry several `ids`; `about` names the agent a factory note is about; the kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`.
 
-**"Your org"** (stable fields only, decision Q12): the manager line stays in "Who you are"; peers and reports as `- slug (Display name): description`, sorted by display name then slug, each list capped at 25 with "and N more; call mcp__factory__list_peers for everyone." Descriptions of persistent agents are written by humans; S7 must quote agent-written ones. Org changes never restart an agent to refresh it; S4's rename rule stays.
+**"Your org"** (stable fields only, decision Q12): the manager line stays in "Who you are"; peers and reports as `- @slug (Display name): description`, sorted by display name then slug, each list capped at 25 with "and N more; call mcp__factory__list_peers for everyone." Descriptions of persistent agents are written by humans; S7 must quote agent-written ones. Org changes never restart an agent to refresh it; S4's rename rule stays.
 
 **"Messaging"**, each rule once, with its reason, no scripted phrasings (decision Q14):
 - Send with `mcp__factory__send_message` to an agent's slug, a human's `@handle` or `@humans`; `mcp__factory__list_peers` shows your neighborhood, everyone else and the humans. These are the only messaging tools that reach other agents and humans here.
@@ -310,7 +312,7 @@ S4's snapshot tests extend to: org section present or absent, caps, ordering, by
 ## 11. Humans in the UI and API
 
 - `GET /api/inbox?before=<cursor>&limit=50` (human session): the caller's `inbox_items` newest first: `{items: [{id, messageId, from: {kind: "agent" | "factory", name}, about?, to: "@or" | "@humans", preview (first 280 chars), urgent, createdAt, link: {agentSlug, seq?}}], nextCursor}`. `link` always names a session: the sender's `send_message` call when it resolves (`seq`), else the sender's session; for factory items, the subject agent's session. No read state in S6.
-- `GET /api/messages/:id` (human session, never on the agent listener; `404 message_not_found`): `{id, kind, from, to, state, recipientEvent?: {agentSlug, seq}, senderEvent?: {agentSlug, seq}}`. `recipientEvent` from `messages.delivered_event_seq` (set in S3's `writeBatch` transaction to the `message_in` event's seq); `senderEvent` is the sender's `tool_call` event whose `toolUseId` equals `from_tool_use_id` (expression index, §12). The UI's `?message=<id>` route parameter uses it (UI doc).
+- `GET /api/messages/:id` (human session, never on the agent listener; `404 message_not_found`): `{id, kind, from, to, state, recipientEvent?: {agentSlug, seq}, senderEvent?: {agentSlug, seq}}`. `recipientEvent` from `messages.delivered_event_seq`, returned only when `state = 'delivered'` (the seq is overwritten on every write in S3's `writeBatch` transaction, including writes before `session_started`, and cleared by `markPending` when a batch rolls back); `senderEvent` is the sender's `tool_call` event whose `toolUseId` equals `from_tool_use_id` (expression index, §12). The UI's `?message=<id>` route parameter uses it (UI doc).
 - `AgentSummary` gains `reports: number` (non-archived direct reports).
 
 ## 12. Data model (`packages/db`), one migration
@@ -324,6 +326,7 @@ messages  + from_agent_id text null → agents(id)
           + delivered_event_seq integer null
             to_agent_id drops NOT NULL
             kind ∈ message | system | member_update | peer_joined | peer_left
+            state ∈ pending | delivered | rejected   (rejected is new: recipient archived before the hand-off, §7.3)
             notice: for system rows the S5 notice type (+ agent_errored); for factory member_update rows the fact code
                     (turn_failed, denied, crashed, errored, recovered, work_lost); for peer rows the relation (peer, report)
             sender CHECK (replaces S5's):
@@ -350,12 +353,12 @@ Additive for existing rows (user sender, agent recipient, kind `message` or `sys
 
 | Change | Where |
 |---|---|
-| `message_in.messages[]`: `kind` widens, `+ ids?`, `+ about?`, `+ parts`, `+ fact?`, `+ subject?` (§8.4) | `packages/shared/src/events.ts` |
+| `message_in.messages[]`: `kind` widens, `+ ids?`, `+ about?`, `+ parts?`, `+ fact?`, `+ subject?` (§8.4; all optional, old rows must still parse) | `packages/shared/src/events.ts` |
 | `session_started` `+ mcpServers?` | harness mapper + schema |
 | `mcp_unavailable{status}` (factory event) | §5.4 |
 | `WakeReason` and `process_started.reason` `+ member_updates`, `+ agent_message` | S5 enums, `supervisor/slots.ts` |
-| `control.by` may be a bare agent slug | urgent from an agent |
-| `QueueItem.kind` `+ held` (`from`, `about?`, `count`, `dueAt?`, `waitReason: "turn" \| "window" \| "errored" \| "rate_limited" \| "ride_along"`) | one item per held group, for the UI's waiting line; `dueAt` only for `window` |
+| `control.by` may name an agent (`@slug`) | urgent from an agent |
+| `QueueItem.kind` `+ held` (`id` = the group's first row id, `createdAt` = its oldest row, `from`, `about?`, `count`, `dueAt?`, `waitReason: "turn" \| "window" \| "starting" \| "errored" \| "rate_limited" \| "ride_along"`) | one item per held group, for the UI's waiting line; `dueAt` only for `window`; `starting` = due but the agent is queued, pulling its image or starting |
 | `AgentSummary.reports` | §11 |
 | `GET /api/inbox`, `GET /api/messages/:id` | §11 |
 | `{type: "inbox_changed"}` frame | §7.4 |
@@ -464,7 +467,9 @@ Not verifiable on this machine: plain-Linux reachability (§17.4).
 - **Q17 CLI** `open-factory send` deferred.
 - **R4** a top-level agent that ends up errored notifies the humans' inbox.
 
-Revised during review (W6): **Q5** first applied the 30 s window to every manager state (3/5); after the self-review it became R1 (4/5): updates pending at a manager's turn end go out then, and the window applies only while there is no open turn.
+Revised during review (W6), the reasoning chain kept visible: **Q5** (3/5) first applied the 30 s window to every manager state. The round-1 self-review showed that delays a working manager's updates past its turn end, against the product and AC 2, so **R1** (4/5) made updates pending at a turn end due at once. The round-2 re-review showed R1 lets a chatty report drive back-to-back update-only turns, so **R5** (3/5, flagged: timing rules are where Or most often revises) applies the turn-end rule only after a turn that was not update-only; after an update-only turn the window applies.
+
+- **R5** the turn-end flush skips update-only turns (above).
 
 ## 22. Issues consumed and follow-ups
 

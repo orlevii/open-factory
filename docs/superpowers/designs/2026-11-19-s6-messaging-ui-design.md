@@ -10,7 +10,7 @@
 
 S6 makes conversations between agents readable from either side and keeps a manager's timeline calm while its reports work. No new pages: the Inbox page (an empty state since S1) gets a minimal list, the session timeline gets new sender lines and an outgoing block, and the agent strip's manager segment becomes an org segment. All data comes from the spec's §8.4 `message_in` fields (`parts`, `fact`, `subject`, `about`), §11 API and §13 events; **the UI never parses message prose**, and it renders every body exactly as the agent saw it.
 
-**Terms.** "Message" is what someone sends on purpose. "Update" is a report's text forwarded to its manager (never "notification" or "activity"). Agents are written as their bare slug in mono (`dev`, spec §7.1); humans as `@handle` in mono; the factory as "Factory" (S5). "Sender → recipient" is the one direction format, used in the timeline and the Inbox.
+**Terms.** "Message" is what someone sends on purpose. "Update" is a report's text forwarded to its manager (never "notification" or "activity"). Agents are written `@slug` in mono (`@dev`), as S4/S5 and DESIGN.md do (spec §7.1, decision R6; only the envelope's `from=` attribute, which the UI never shows, is bare); humans as `@handle` in mono; the factory as "Factory" (S5). "Sender → recipient" is the one direction format, used in the timeline and the Inbox.
 
 ## 2. Session timeline
 
@@ -31,7 +31,7 @@ A manager's timeline is conversation first; updates are context, and they will f
 
 ### 2.3 Factory facts inside a group (`from="@factory" kind="member_update" about="dev"`)
 
-S3's `QuietLine` inside the group, aligned with its left padding, keyed by `fact` (never by prose). The line's **text is the envelope body's first line exactly as the manager saw it**; the quoted part ("reported by dev") goes into the line's expandable detail as a plain code-styled block. Icons:
+S3's `QuietLine` inside the group, aligned with its left padding, keyed by `fact` (never by prose). The line's **text is the envelope body's first line exactly as the manager saw it**; the quoted part ("reported by @dev") goes into the line's expandable detail as a plain code-styled block. Icons:
 - `turn_failed`, `errored`: `CircleAlert`, crimson icon, ink text (the facts that should stand out);
 - `denied`: S3's denied rendering (`ShieldAlert` uncoloured, as in `timeline-row.tsx` `case "denied"`);
 - `crashed`, `work_lost`: `CircleAlert` muted;
@@ -41,7 +41,7 @@ The slug inside the line is plain text (the heading already links it).
 
 ### 2.4 Peer events (`peer_joined`, `peer_left`)
 
-One `QuietLine` each, `Users` icon, built from `subject` (never from prose): "`dev` · Developer joined as your peer" · "…joined as your report" · "`dev` · Developer left: archived" · "…left: now reports to `lead`". Several in one `message_in` stay as separate lines (they are rare).
+One `QuietLine` each, `Users` icon, built from `subject` (never from prose): "`@dev` · Developer joined as your peer" · "…joined as your report" · "`@dev` · Developer left: archived" · "…left: now reports to `@lead`" · "…left: now reports to the humans" (`to: null`). Several in one `message_in` stay as separate lines (they are rare).
 
 ### 2.5 Outgoing messages (the agent's own `send_message` call)
 
@@ -55,7 +55,7 @@ A `tool_call` named `mcp__factory__send_message` with a string `body` and string
   - success to an agent: "Sent" + the recipient's status at send time: "· dev was hibernated", "· dev was queued", "· dev was rate-limited", "· dev was errored" (idle and working add nothing); then the result's `note` as written, if any;
   - success to humans: "Sent to the inbox";
   - failure (`isError`): S3's failed-tool treatment (small crimson icon, muted text), the tool's sentence as written. No link.
-- **Links in the footer** (agent recipients, success): "View in session" (`aria-label="View this message in dev's session"`), a real link to `/agents/dev?message=<id>`: Cmd-click works, nothing is fetched on render. The session route resolves `message` through `GET /api/messages/:id`: a delivered message opens S3's deep-link window on `recipientEvent.seq` with the highlight; a pending one opens the newest page, where S3's dashed "Not delivered yet" block shows it; a `404` opens the newest page with S3's muted line "Message not found. Showing the latest."
+- **Links in the footer** (agent recipients, success): "View in session" (`aria-label="View this message in dev's session"`), a real link to `/agents/dev?message=<id>`: Cmd-click works, nothing is fetched on render. The session route resolves `message` through `GET /api/messages/:id`: a delivered message opens S3's deep-link window on `recipientEvent.seq` with the highlight; a pending one opens the newest page, where S3's dashed "Not delivered yet" block shows it; a `rejected` one opens the newest page with a muted line "This message wasn't delivered: dev was archived."; a `404` opens the newest page with S3's muted line "Message not found. Showing the latest."
 - **"Show tool call":** a text toggle in the footer (`aria-expanded`) that expands S3's tool row beneath the block. No new hover menu.
 - `mcp__factory__list_peers` stays a normal collapsed tool row (summary: `scope` or "neighborhood").
 
@@ -64,6 +64,7 @@ A `tool_call` named `mcp__factory__send_message` with a string `body` and string
 Pending held rows arrive in the `queue` frame as one item per group (`kind: "held"`, spec §13). They render as **one quiet line per group** at the end of the timeline (S3's queued-items position), never as dashed blocks, never ticking:
 - `waitReason: "turn"`: "3 updates from `dev` waiting for this turn to end";
 - `"window"`: "3 updates from `dev` waiting, delivered by 14:32" (the fixed `dueAt`, S5's time format);
+- `"starting"`: "3 updates from `dev` waiting for this agent to start";
 - `"errored"`: "3 updates from `dev` held until a human restarts this agent";
 - `"rate_limited"`: "3 updates from `dev` held" + S5's reset phrase ("until 14:30" / "retrying at 14:30");
 - `"ride_along"` (peer events only): one line for all of them, "2 peer changes waiting".
@@ -80,9 +81,9 @@ S3's announcer said "Dev agent replied" when a turn with text ended. From S6, an
 
 ## 3. Agent strip
 
-S4's strip renders "reports to @{reportsTo}" / "No manager". The manager segment becomes the agent's place in the org, with the `@` dropped for agents (spec §7.1: agents are bare slugs, everywhere in the UI):
-- "Reports to `lead` · 3 reports"; "Reports to `lead`"; "No manager · 3 reports"; "No manager". ("1 report" singular.)
-- `lead` links to its session. "3 reports" is plain text (the tree on `/agents` is one click away in the sidebar, and a link to the whole tree would surprise).
+S4's strip renders "reports to @{reportsTo}" / "No manager". The manager segment becomes the agent's place in the org (sentence case, `@slug` kept):
+- "Reports to `@lead` · 3 reports"; "Reports to `@lead`"; "No manager · 3 reports"; "No manager". ("1 report" singular.)
+- `@lead` links to its session. "3 reports" is plain text (the tree on `/agents` is one click away in the sidebar, and a link to the whole tree would surprise).
 - Muted 13px like the rest of the strip, outside S5's `role="status"` region.
 
 ## 4. Inbox page (`/inbox`)
@@ -126,4 +127,4 @@ Below `md`: the update bar and padding stay; Inbox previews take two lines; the 
 
 ## 8. Fixed strings
 
-"Update from", "Received", "written 14:05", "Show all (5 updates)", "Sending…", "Not sent", "Sent", "dev was hibernated", "dev was queued", "dev was rate-limited", "dev was errored", "Sent to the inbox", "View in session", "Show tool call", "Message not found. Showing the latest.", "3 updates from dev waiting for this turn to end", "3 updates from dev waiting, delivered by 14:32", "3 updates from dev held until a human restarts this agent", "3 updates from dev held", "2 peer changes waiting", "joined as your peer", "joined as your report", "left: archived", "left: now reports to lead", "Reports to", "No manager", "1 report", "3 reports", "about", "Load earlier", "Couldn't load the inbox.", "Couldn't load earlier messages.", "Retry", "dev messaged you", "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive."
+"Update from", "Received", "written 14:05", "Show all (5 updates)", "Sending…", "Not sent", "Sent", "dev was hibernated", "dev was queued", "dev was rate-limited", "dev was errored", "Sent to the inbox", "View in session", "Show tool call", "Message not found. Showing the latest.", "3 updates from dev waiting for this turn to end", "3 updates from dev waiting, delivered by 14:32", "3 updates from dev waiting for this agent to start", "3 updates from dev held until a human restarts this agent", "This message wasn't delivered: dev was archived.", "left: now reports to the humans", "3 updates from dev held", "2 peer changes waiting", "joined as your peer", "joined as your report", "left: archived", "left: now reports to lead", "Reports to", "No manager", "1 report", "3 reports", "about", "Load earlier", "Couldn't load the inbox.", "Couldn't load earlier messages.", "Retry", "dev messaged you", "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive."

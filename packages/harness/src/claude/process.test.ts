@@ -19,7 +19,9 @@ const spec = (bin: string, over: Partial<AgentRuntimeSpec> = {}): AgentRuntimeSp
     CLAUDE_CODE_OAUTH_TOKEN: "tok",
   },
   claudeBin: bin,
+  runtime: "local",
   permissionMode: "auto",
+  mounts: [],
   ...over,
 });
 

@@ -87,9 +87,15 @@ export class AgentRuntimes {
     return this.byId.get(agentId)?.catch(() => undefined);
   }
 
-  /** Refreshes a loaded runtime's row; a no-op when none is loaded. */
+  /**
+   * Refreshes a loaded runtime's row; a no-op when none is loaded. Then re-pumps the wake queue: a credential change
+   * may have moved a queued agent off a paused credential (spec §5.2).
+   */
   async refresh(agentId: string): Promise<void> {
-    await (await this.get(agentId))?.reload();
+    const rt = await this.get(agentId);
+    if (!rt) return;
+    await rt.reload();
+    this.supervisor.recheckQueue();
   }
 
   /** Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. */

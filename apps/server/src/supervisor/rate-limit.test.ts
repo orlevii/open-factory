@@ -389,3 +389,72 @@ test("an inline start that a pause overtakes during prepare goes back to the que
   w.sup.onCredentialReset(a.agent.credentialId);
   await w.until(() => started(a));
 });
+
+test("a window past setTimeout's cap re-arms and resets at its end", async () => {
+  useFakeTimers();
+  const [a] = (await agentsOnCredentials("work")) as [AgentRuntime];
+  const c = await w.agentOn("work");
+  await busy(a);
+  const until = nowSec() + 30 * 24 * 3600; // 30 days: more than 2^31-1 ms
+  await emitRejected(a, { resetsAt: until });
+  await send(c, "hi");
+  await vi.advanceTimersByTimeAsync(2_147_483_647 + 1000);
+  await w.settleAll();
+  expect(started(c)).toBe(false);
+  expect(status(c)).toBe("rate_limited");
+  await vi.advanceTimersByTimeAsync(until * 1000 - Date.now());
+  await w.until(() => started(c));
+});
+
+test("a window extended during the reset keeps the flag, and its own reset writes the new time", async () => {
+  useFakeTimers();
+  const [a] = (await agentsOnCredentials("work")) as [AgentRuntime];
+  await busy(a);
+  const first = nowSec() + 600;
+  await emitRejected(a, { resetsAt: first });
+  w.proc(a).emit(ev.end({ isError: true }));
+  await w.settleAll();
+  const later = first + 600;
+  const owedAgents = store.owedAgents.bind(store);
+  const spy = vi.spyOn(store, "owedAgents").mockImplementationOnce(async (id) => {
+    w.sup.pause(id, new Date(later * 1000), true); // lands while the reset reads the owed agents
+    return owedAgents(id);
+  });
+  await vi.advanceTimersByTimeAsync(600_000);
+  await w.until(() => spy.mock.calls.length === 1);
+  await w.settleAll();
+  expect(await owed(a)).toBe(true);
+  expect((await events(a)).some((e) => e.type === "rate_limit_reset")).toBe(false);
+  expect(a.queueItems()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(600_000);
+  await w.until(() => w.proc(a).sent.length === 2);
+  const name = (await credRow(a.agent.credentialId)).name;
+  expect(sentBodies(a)[1]).toEqual([
+    notices.rateLimitReset({ credential: name, at: new Date(later * 1000) }),
+  ]);
+  expect(await owed(a)).toBe(false);
+});
+
+test("moving an agent off a paused credential re-pumps its entry, flushes held items and drops the owed notice", async () => {
+  const [a, c] = (await agentsOnCredentials("work", "work")) as [AgentRuntime, AgentRuntime];
+  await busy(a);
+  await emitRejected(a, { resetsAt: nowSec() + 3600 });
+  w.proc(a).emit(ev.end({ isError: true }));
+  await w.settleAll();
+  expect(await owed(a)).toBe(true);
+  await send(a, "held");
+  await send(c, "queued");
+  expect(status(c)).toBe("rate_limited");
+  const personal = await w.credential("personal");
+  for (const rt of [a, c]) {
+    await t.sql`update agents set credential_id = ${personal} where id = ${rt.agent.id}`;
+    await rt.reload(); // what AgentRuntimes.refresh does, then it re-pumps the queue
+    w.sup.recheckQueue();
+  }
+  await w.settleAll();
+  expect(sentBodies(a)).toEqual([["work"], ["held"]]);
+  expect(await owed(a)).toBe(false);
+  expect(started(c)).toBe(true);
+  expect(sentBodies(c)).toEqual([["queued"]]);
+  expect(c.live().rateLimitedUntil).toBeUndefined();
+});

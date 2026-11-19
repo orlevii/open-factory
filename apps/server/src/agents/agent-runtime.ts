@@ -259,13 +259,18 @@ export class AgentRuntime {
     });
   }
 
-  /** Refreshes the row (renames, template-driven edits) and the archived flag. */
+  /**
+   * Refreshes the row (renames, template-driven edits, a credential change) and the archived flag. The caller
+   * (`AgentRuntimes.refresh`) re-pumps the Supervisor's queue afterwards, so a credential change takes effect.
+   */
   async reload(): Promise<void> {
     await this.run(async () => {
       const r = await this.d.store.agentById(this.agent.id);
       if (r) {
+        const moved = r.credentialId !== this.agent.credentialId;
         this.agent = r;
         this.archived = Boolean(r.archivedAt);
+        if (moved) await this.onCredentialChanged();
       }
       this.publishStatus();
     });
@@ -365,8 +370,13 @@ export class AgentRuntime {
    * The reset of an owed agent (spec §7.3), while its credential is still paused: `rate_limit_reset`, then the
    * continue notice at the head of the queue, then the flag clears. Starts nothing (the Supervisor wakes after).
    */
-  rateLimitReset(n: { credential: string; at?: Date }): Promise<void> {
+  rateLimitReset(
+    n: { credential: string; at?: Date },
+    /** Re-checked inside the job: false when a later window replaced the one being reset (the flag stays). */
+    current: () => boolean = () => true,
+  ): Promise<void> {
     return this.run(async () => {
+      if (!current()) return;
       await this.append(null, { type: "rate_limit_reset", credential: n.credential });
       await this.addNotice("rate_limit_reset", notices.rateLimitReset(n));
       await this.d.store.setNoticeOwed(this.agent.id, false);
@@ -378,14 +388,8 @@ export class AgentRuntime {
   /** The credential's pause ended (spec §7.2): a running agent flushes what was held, a hibernated one asks for a wake. */
   resumeAfterReset(): void {
     void this.run(async () => {
-      if (this.proc) {
-        try {
-          await this.flush();
-        } catch (err) {
-          if (this.proc) await this.onJobFailure(this.proc, err);
-          else this.d.log.error({ err, agent: this.agent.slug }, "flush after the reset failed");
-        }
-      } else if (this.queue.length) await this.wakeFromJob("rate_limit_reset");
+      if (this.proc) await this.flushOrStop("flush after the reset failed");
+      else if (this.queue.length) await this.wakeFromJob("rate_limit_reset");
       this.publishStatus();
     });
   }
@@ -1008,6 +1012,35 @@ export class AgentRuntime {
         "restart_crons",
         notices.restartCrons({ crons: lost.crons.map((c) => c.humanSchedule) }),
       );
+  }
+
+  /**
+   * Inside the reload job, after the agent moved to another credential. The owed continue notice belonged to the
+   * old credential's reset, which finds owed agents by their current credential: the flag is cleared rather than
+   * left stranded (its text, "the rate limit on credential X reset", may not be true yet). Deliveries held by the
+   * old pause go out now when the new credential isn't paused.
+   */
+  private async onCredentialChanged() {
+    this.rateLimitedTurn = false;
+    if (this.agent.rateLimitNoticeOwed) {
+      await this.d.store.setNoticeOwed(this.agent.id, false);
+      this.agent = { ...this.agent, rateLimitNoticeOwed: false };
+      this.d.log.info(
+        { agent: this.agent.slug },
+        "credential changed while a continue notice was owed; the notice is dropped",
+      );
+    }
+    if (this.proc) await this.flushOrStop("flush after a credential change failed");
+  }
+
+  /** A flush outside an API job: a failure with a process stops it (spec §11); without one it is only logged. */
+  private async flushOrStop(what: string) {
+    try {
+      await this.flush();
+    } catch (err) {
+      if (this.proc) await this.onJobFailure(this.proc, err);
+      else this.d.log.error({ err, agent: this.agent.slug }, what);
+    }
   }
 
   /**

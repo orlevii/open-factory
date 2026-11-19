@@ -299,15 +299,22 @@ test("re-sync of a hibernated agent applies at once", async () => {
 test("a second staged re-sync replaces the pending dir", async () => {
   await makeStageAgent("stage-c");
   await startAndStop("stage-c", true);
-  const tplMd = path.join(home, "templates/stage-c/AGENTS.md");
-  writeFileSync(tplMd, "# ONE\n");
-  writeFileSync(path.join(home, "templates/stage-c/extra.txt"), "x");
-  mkdirSync(path.join(home, "templates/stage-c/files"), { recursive: true });
-  writeFileSync(path.join(home, "templates/stage-c/files/only-first.txt"), "1");
-  await svc.resync("stage-c");
-  rmSync(path.join(home, "templates/stage-c/files"), { recursive: true });
-  writeFileSync(tplMd, "# TWO\n");
-  expect((await svc.resync("stage-c")).applied).toBe("on_restart");
+  // Keep the process running across both re-syncs: the first one's apply-restart would otherwise stop it, and
+  // whether that exit lands before the second re-sync decides is a race with the fake's exit (not under test).
+  const restart = vi.spyOn(runtimes, "requestRestart").mockResolvedValue(undefined);
+  try {
+    const tplMd = path.join(home, "templates/stage-c/AGENTS.md");
+    writeFileSync(tplMd, "# ONE\n");
+    writeFileSync(path.join(home, "templates/stage-c/extra.txt"), "x");
+    mkdirSync(path.join(home, "templates/stage-c/files"), { recursive: true });
+    writeFileSync(path.join(home, "templates/stage-c/files/only-first.txt"), "1");
+    expect((await svc.resync("stage-c")).applied).toBe("on_restart");
+    rmSync(path.join(home, "templates/stage-c/files"), { recursive: true });
+    writeFileSync(tplMd, "# TWO\n");
+    expect((await svc.resync("stage-c")).applied).toBe("on_restart");
+  } finally {
+    restart.mockRestore();
+  }
   const pending = resyncPendingDir(home, "stage-c");
   expect(readFileSync(path.join(pending, "AGENTS.md"), "utf8")).toBe("# TWO\n");
   expect(existsSync(path.join(pending, "only-first.txt"))).toBe(false);

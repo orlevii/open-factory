@@ -160,9 +160,15 @@ export class Supervisor implements SlotPort {
     for (const rt of this.onCredential(credentialId)) rt.recheck();
   }
 
+  /** Grants what became eligible outside a slot change (an agent moved off a paused credential, spec §5.2). */
+  recheckQueue(): void {
+    this.pump();
+  }
+
   /**
    * A credential's pause ended (its reset ran, spec §7.2): skipped entries become eligible in FIFO order, then each
-   * of its agents flushes (running) or asks for a wake (pending items).
+   * of its agents flushes (running) or asks for a wake (pending items). Lifts only the in-memory pause: call it from
+   * the reset path (after the columns are cleared) or a test, never instead of the reset.
    */
   onCredentialReset(credentialId: string): void {
     const p = this.pauses.get(credentialId);
@@ -202,12 +208,14 @@ export class Supervisor implements SlotPort {
         const name = (await this.d.rateLimits.credentialName(credentialId)) ?? credentialId;
         for (const a of owed) {
           if (this.closed) return; // the owed flags stay: boot creates the notices
+          // A later window replaced this one meanwhile: the flags stay, so its reset writes the true time.
+          if (this.pauses.get(credentialId) !== p) return;
           try {
             const rt = this.d.runtimes.get(a.id) ?? (await this.d.load(a.slug));
-            await rt?.rateLimitReset({
-              credential: name,
-              ...(p.exact ? { at: new Date(p.until) } : {}),
-            });
+            await rt?.rateLimitReset(
+              { credential: name, ...(p.exact ? { at: new Date(p.until) } : {}) },
+              () => !this.closed && this.pauses.get(credentialId) === p,
+            );
           } catch (err) {
             // That agent keeps its owed flag (boot retries); the others still get theirs.
             this.d.log.error({ err, agent: a.slug }, "continue notice failed");

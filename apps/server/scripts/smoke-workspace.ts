@@ -404,7 +404,7 @@ try {
   const b = await step("6. smoke-beta turn completes", () =>
     turn(
       "smoke-beta",
-      "List the names of the skills you have, then quote your slug and your manager line from your instructions.",
+      "List the names of the skills you have, then quote your slug and your manager line from your instructions, verbatim.",
     ),
   );
   const bInit = inits.get("smoke-beta");

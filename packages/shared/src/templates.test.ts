@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { templateConfigSchema, templateYamlSchema } from "./templates.ts";
+import { imageRefSchema, templateConfigSchema, templateYamlSchema } from "./templates.ts";
 
 test("defaults and camelCase output", () => {
   const c = templateYamlSchema.parse({ name: "tech-lead", display_name: "Tech Lead" });
@@ -52,4 +52,44 @@ test("model can't start with a dash, so it can't be read as a CLI flag", () => {
   const cfg = templateYamlSchema.parse({ name: "x1", display_name: "X" });
   expect(templateConfigSchema.safeParse({ ...cfg, model: "--x" }).success).toBe(false);
   expect(templateConfigSchema.safeParse({ ...cfg, model: "haiku" }).success).toBe(true);
+});
+
+test("image: only a Docker image reference", () => {
+  const ok = [
+    "open-factory-base:dev",
+    "ghcr.io/orlevii/open-factory/base:latest",
+    "localhost:5000/team/img",
+    "ubuntu",
+    "my_org/my-img:1.2.3",
+    `ghcr.io/org/img@sha256:${"a".repeat(64)}`,
+    `ghcr.io/org/img:v1@sha256:${"0".repeat(64)}`,
+  ];
+  for (const image of ok) {
+    expect(templateYamlSchema.parse({ name: "tl", display_name: "T", image }).image).toBe(image);
+    expect(imageRefSchema.safeParse(image).success).toBe(true);
+  }
+  const bad = [
+    "../../containers/json",
+    "img/../x",
+    "a..b",
+    "img:tag?all=1",
+    "img#frag",
+    "img tag",
+    " img",
+    "Upper/Case",
+    "img:",
+    "img@sha256:short",
+    "/img",
+    "img/",
+    `img:${"t".repeat(129)}`,
+  ];
+  for (const image of bad) {
+    expect(imageRefSchema.safeParse(image).success, image).toBe(false);
+    expect(templateYamlSchema.safeParse({ name: "tl", display_name: "T", image }).success).toBe(
+      false,
+    );
+  }
+  const base = templateYamlSchema.parse({ name: "tl", display_name: "T" });
+  expect(templateConfigSchema.safeParse({ ...base, image: "x/../y" }).success).toBe(false);
+  expect(templateConfigSchema.safeParse({ ...base, image: "x/y:1" }).success).toBe(true);
 });

@@ -34,7 +34,8 @@ export interface DockerClient {
   create(opts: ContainerCreateOptions): Promise<string>;
   start(id: string): Promise<void>;
   stop(id: string, t: number): Promise<void>;
-  remove(id: string): Promise<void>;
+  /** `force` kills a running container first (the last resort of spec §9.6). */
+  remove(id: string, opts?: { force?: boolean }): Promise<void>;
   execRun(
     id: string,
     o: { cmd: string[]; user: string },
@@ -156,9 +157,9 @@ export function dockerodeClient(): DockerClient {
       }
     },
 
-    async remove(id) {
+    async remove(id, opts) {
       try {
-        await docker.getContainer(id).remove();
+        await docker.getContainer(id).remove({ force: opts?.force ?? false });
       } catch (err) {
         if (statusOf(err) !== 404) throw err;
       }

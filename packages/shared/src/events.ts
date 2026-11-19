@@ -186,7 +186,8 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("cleanup"),
     killedProcesses: z.number().int().nonnegative().optional(),
-    container: z.literal("stopped").optional(),
+    // "removed": a Restart's last resort after the container stop failed again (spec §9.6).
+    container: z.enum(["stopped", "removed"]).optional(),
   }),
   z.object({ type: z.literal("stop_escalated"), how: z.enum(["sigkill", "container_stop"]) }),
   z.object({

@@ -455,9 +455,24 @@ test("a container with the agent's name that the factory didn't create is never 
     ).rejects.toThrow(msg);
     await expect(mgr.stopIfRunning(AGENT, "lead")).rejects.toThrow(msg);
     await expect(mgr.stop(AGENT, "lead")).rejects.toThrow(msg);
+    await expect(mgr.forceRemove(AGENT, "lead")).rejects.toThrow(msg);
     expect(docker.ops()).not.toContain("stop");
     expect(docker.ops()).not.toContain("remove");
     expect(docker.ops()).not.toContain("start");
     expect(docker.ops()).not.toContain("create");
   }
+});
+
+test("forceRemove removes the agent's running container with force; a missing one is fine", async () => {
+  expect(await mgr.forceRemove(AGENT, "lead")).toBe(false);
+  const { containerId } = await mgr.ensure({
+    agentId: AGENT,
+    slug: "lead",
+    image: IMAGE,
+    mounts,
+    mountCheck: ctx,
+  });
+  expect(await mgr.forceRemove(AGENT, "lead")).toBe(true);
+  expect(docker.calls.at(-1)).toEqual({ op: "remove", args: [containerId, { force: true }] });
+  expect(docker.containers.size).toBe(0);
 });

@@ -29,6 +29,8 @@ export class FakeDockerClient implements DockerClient {
   pullGate: Promise<void> | undefined;
   /** When set, every call that reaches the daemon throws it (an unreachable daemon). */
   down: Error | undefined;
+  /** When set, `remove` throws it. */
+  removeError: Error | undefined;
   /** When set, `stop` throws it. */
   stopError: Error | undefined;
   /** What `test -f /run/open-factory/ready` answers. */
@@ -121,9 +123,13 @@ export class FakeDockerClient implements DockerClient {
     this.byId(id).running = false;
     for (const c of this.procs.get(id) ?? []) c.kill("SIGKILL");
   }
-  async remove(id: string) {
-    this.rec("remove", id);
+  async remove(id: string, opts?: { force?: boolean }) {
+    this.rec("remove", id, opts);
+    if (this.removeError) throw this.removeError;
     const c = this.byId(id);
+    if (c.running && !opts?.force)
+      throw Object.assign(new Error("container is running"), { statusCode: 409 });
+    for (const p of this.procs.get(id) ?? []) p.kill("SIGKILL");
     this.containers.delete(c.name);
   }
   async execRun(id: string, o: { cmd: string[]; user: string }) {

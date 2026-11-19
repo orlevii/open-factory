@@ -213,6 +213,22 @@ export class ContainerManager {
     await this.stopIfRunning(agentId, slug);
   }
 
+  /**
+   * The last resort when a stop failed twice (spec §9.6, Restart of a `stop_failed` agent): force-remove the agent's
+   * container (Docker kills it first). Bounded like a stop. A missing container is fine.
+   */
+  async forceRemove(agentId: string, slug: string): Promise<boolean> {
+    const c = await this.ours(agentId, slug);
+    if (!c) return false;
+    await bounded(
+      this.docker.remove(c.id, { force: true }),
+      STOP_BOUND_MS,
+      `Removing container ${c.id} didn't finish within ${STOP_BOUND_MS / 1000} s.`,
+    );
+    this.log.warn({ container: c.id, slug }, "container removed after its stop failed");
+    return true;
+  }
+
   async isRunning(agentId: string, slug: string): Promise<boolean> {
     return (await this.ours(agentId, slug))?.running ?? false;
   }

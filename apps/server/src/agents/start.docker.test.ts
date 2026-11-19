@@ -63,6 +63,7 @@ const LONG: FakeScenario = {
 
 interface World {
   docker: FakeDockerClient;
+  containers: ContainerManager;
   runtimes: AgentRuntimes;
   rt: AgentRuntime;
   agent: AgentRow;
@@ -193,6 +194,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
   if (!rt) throw new Error("no runtime");
   world = {
     docker,
+    containers,
     runtimes,
     rt,
     agent,
@@ -383,24 +385,179 @@ test("the closing latch aborts an in-flight pull; nothing starts", async () => {
   expect(w.docker.ops()).not.toContain("prepare");
 });
 
-test("an image removed after it was seen fails that start, and the next wake pulls it again", async () => {
+test("an image removed after it was seen goes back through the pull instead of failing", async () => {
   const w = await setup();
   await idleAgent(w);
   expect(await w.rt.hibernate("warm_window")).toBe(true);
   await until(() => expect(w.rt.live().status).toBe("hibernated"));
   w.docker.images.clear(); // `docker rmi` while the factory runs
-  // The image was seen, so the start is inline and its failure rejects the send (S3's 503).
-  await expect(send(w, "after rmi")).rejects.toMatchObject({ name: "ImageMissingError" });
+  await send(w, "after rmi"); // no 503: the wake is re-queued behind the pull
+  await until(() => expect(w.rt.live().status).toBe("idle"));
+  expect(w.docker.ops().filter((o) => o === "pull")).toHaveLength(1);
+  expect((await events(w)).map((e) => e.type)).not.toContain("error");
+});
+
+test("an image still missing after the re-pull fails the start (no loop)", async () => {
+  const w = await setup();
+  await idleAgent(w);
+  expect(await w.rt.hibernate("warm_window")).toBe(true);
+  await until(() => expect(w.rt.live().status).toBe("hibernated"));
+  w.docker.images.clear();
+  const pull = vi.spyOn(w.docker, "pull").mockResolvedValue(undefined); // "succeeds", but no image
+  await send(w, "after rmi");
+  await until(() => expect(w.rt.live().status).toBe("errored"));
   expect(w.rt.live()).toMatchObject({
-    status: "errored",
     errorKind: "start",
     lastError: `The image ${IMAGE} isn't available locally.`,
   });
-  expect(w.docker.ops()).not.toContain("pull");
-  // A human's message is one attempt; this time the image is checked and pulled before the grant.
-  await send(w, "retry");
+  expect(pull).toHaveBeenCalledTimes(1);
+  expect(w.runtimes.supervisor.running().count).toBe(0);
+});
+
+/** Runs `then` right after the real `ensure` started the container, before the launch. */
+function afterEnsure(w: World, then: () => void | Promise<void>) {
+  const real = w.containers.ensure.bind(w.containers);
+  vi.spyOn(w.containers, "ensure").mockImplementation(async (i) => {
+    const r = await real(i);
+    await then();
+    return r;
+  });
+}
+const opsAfterStart = (w: World) => {
+  const ops = w.docker.ops();
+  return ops.slice(ops.lastIndexOf("start"));
+};
+
+test("the closing latch between ensure and launch: the container is stopped and the slot released", async () => {
+  const w = await setup();
+  afterEnsure(w, () => w.runtimes.supervisor.close());
+  await send(w);
+  await until(() => expect(opsAfterStart(w)).toContain("stop"));
+  await w.rt.settled();
+  expect(w.docker.ops()).not.toContain("execStream");
+  expect(container(w)).toMatchObject({ running: false });
+  expect(w.runtimes.supervisor.running().count).toBe(0);
+});
+
+test("a credential pause between ensure and launch: the container is stopped and the wake re-queued", async () => {
+  const w = await setup();
+  afterEnsure(w, () =>
+    w.runtimes.supervisor.pause(w.agent.credentialId, new Date(Date.now() + 3_600_000), true),
+  );
+  await send(w);
+  await until(() => expect(opsAfterStart(w)).toContain("stop"));
+  await w.rt.settled();
+  expect(w.docker.ops()).not.toContain("execStream");
+  expect(container(w)).toMatchObject({ running: false });
+  expect(w.runtimes.supervisor.running().count).toBe(0);
+  expect(w.runtimes.supervisor.isQueued(w.agent.id)).toBe(true);
+});
+
+test("a container that can't be stopped before the launch: stop_failed, and the slot is kept", async () => {
+  const w = await setup();
+  afterEnsure(w, () => {
+    w.docker.stopError = new Error("daemon error");
+    w.runtimes.supervisor.close();
+  });
+  await send(w);
+  await until(() => expect(w.rt.live().errorKind).toBe("stop_failed"));
+  await w.rt.settled();
+  expect(w.docker.ops()).not.toContain("execStream");
+  expect(container(w)).toMatchObject({ running: true });
+  expect(w.runtimes.supervisor.running().count).toBe(1);
+});
+
+test("ensure failing after the container started: errored start, container stopped, slot released", async () => {
+  const w = await setup();
+  afterEnsure(w, () => {
+    throw new Error("label lookup failed");
+  });
+  await send(w);
+  await until(() => expect(w.rt.live().status).toBe("errored"));
+  await w.rt.settled();
+  expect(w.rt.live()).toMatchObject({
+    errorKind: "start",
+    lastError: "Docker failed: label lookup failed",
+  });
+  expect(opsAfterStart(w)).toContain("stop");
+  expect(container(w)).toMatchObject({ running: false });
+  expect(w.docker.ops()).not.toContain("execStream");
+  expect(w.runtimes.supervisor.running().count).toBe(0);
+});
+
+test("ensure failing and the stop failing too: the start failure is recorded, then stop_failed keeps the slot", async () => {
+  const w = await setup();
+  afterEnsure(w, () => {
+    w.docker.stopError = new Error("daemon error");
+    throw new Error("label lookup failed");
+  });
+  await send(w);
+  await until(() => expect(w.rt.live().errorKind).toBe("stop_failed"));
+  await w.rt.settled();
+  expect(await events(w)).toContainEqual({
+    type: "error",
+    source: "spawn",
+    message: "Docker failed: label lookup failed",
+  });
+  expect(container(w)).toMatchObject({ running: true });
+  expect(w.runtimes.supervisor.running().count).toBe(1);
+});
+
+/** Hibernate with a failing container stop: stop_failed with no process left. */
+async function stopFailedWithoutProcess(w: World) {
+  await idleAgent(w);
+  w.docker.stopError = new Error("daemon error");
+  expect(await w.rt.hibernate("warm_window")).toBe(true);
+  await until(() => expect(w.rt.live().errorKind).toBe("stop_failed"));
+}
+const removes = (w: World) => w.docker.calls.filter((c) => c.op === "remove");
+
+test("Restart of a stop_failed Docker agent: the stop fails again, so the container is removed and it starts", async () => {
+  const w = await setup();
+  await stopFailedWithoutProcess(w);
+  const old = container(w)?.id;
+  await w.rt.restart({ byHandle: "or", runtimeAllowed: true });
   await until(() => expect(w.rt.live().status).toBe("idle"));
-  expect(w.docker.ops()).toContain("pull");
+  w.docker.stopError = undefined;
+  expect(removes(w).map((c) => c.args)).toEqual([[old, { force: true }]]);
+  const evs = await events(w);
+  expect(evs).toContainEqual({ type: "cleanup", container: "removed" });
+  expect(evs.filter((e) => e.type === "process_started").at(-1)).toMatchObject({
+    reason: "restart",
+  });
+  expect(container(w)?.id).not.toBe(old); // a fresh container
+  expect(w.runtimes.supervisor.running().count).toBe(1);
+});
+
+test("Restart of a stop_failed Docker agent whose remove fails too: still stop_failed, slot kept, no start", async () => {
+  const w = await setup();
+  await stopFailedWithoutProcess(w);
+  w.docker.removeError = new Error("daemon error");
+  await w.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await w.rt.settled();
+  expect(w.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
+  expect(execs(w)).toHaveLength(1);
+  expect(w.runtimes.supervisor.running().count).toBe(1);
+});
+
+test("Restart of a stop_failed Docker agent with its process left: the escalation fails again, so the container is removed", async () => {
+  const w = await setup(LONG);
+  await send(w);
+  await until(() => expect(w.rt.live().turnOpen).toBe(true));
+  w.docker.pidFile = "abc"; // terminate can't signal it
+  w.docker.stopError = new Error("daemon error"); // and the container stop fails
+  await w.rt.stop({ graceMs: 50, termWaitMs: 200 });
+  await until(() => expect(w.rt.live().errorKind).toBe("stop_failed"));
+  expect(w.docker.live(container(w)?.id ?? "")).toHaveLength(1); // Claude still runs
+  await w.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await until(async () =>
+    expect((await events(w)).filter((e) => e.type === "process_started").at(-1)).toMatchObject({
+      reason: "restart",
+    }),
+  );
+  w.docker.stopError = undefined;
+  expect(removes(w).map((c) => c.args[1])).toEqual([{ force: true }]);
+  expect(execs(w)).toHaveLength(2);
 });
 
 test("a pull failure records errored start with the registry error", async () => {

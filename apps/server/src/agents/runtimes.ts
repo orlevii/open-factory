@@ -34,7 +34,7 @@ export interface RuntimesDeps {
    * Claude path and the default image.
    */
   docker?: {
-    containers: Pick<ContainerManager, "ensure" | "ensureImage" | "stopIfRunning">;
+    containers: Pick<ContainerManager, "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove">;
     claudeBin: string;
     defaultImage: string;
   };

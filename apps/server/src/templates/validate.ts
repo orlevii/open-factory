@@ -24,7 +24,7 @@ const RESERVED_FILES = [
   ".mcp.json",
   ".factory",
   "projects",
-];
+].map((n) => n.toLowerCase());
 
 async function read(
   dir: string,
@@ -136,7 +136,7 @@ export async function validateTemplate(
       err("mcp.json", 'mcp.json needs a top-level "mcpServers" object.');
     else {
       tplMcp = { ...m.value, mcpServers: m.value.mcpServers };
-      if ("factory" in m.value.mcpServers)
+      if (Object.hasOwn(m.value.mcpServers, "factory"))
         err("mcp.json", 'The MCP server name "factory" is reserved.');
     }
   }
@@ -178,7 +178,7 @@ export async function validateTemplate(
       : {};
     for (const [i, plugin] of config.plugins.entries()) {
       const m = plugin.slice(plugin.indexOf("@") + 1);
-      if (!(m in markets))
+      if (!Object.hasOwn(markets, m))
         err(
           "template.yaml",
           `Marketplace ${m} (for plugin ${plugin}) isn't declared in settings.json extraKnownMarketplaces.`,
@@ -194,7 +194,9 @@ export async function validateTemplate(
           "settings.json",
           `Marketplace ${m}: source type ${String(t)} isn't supported; use directory, git or github.`,
         );
-      if ("ref" in src || "path" in src)
+      const hasRef = Object.hasOwn(src, "ref");
+      const hasPath = Object.hasOwn(src, "path") && t !== "directory";
+      if (hasRef || hasPath)
         err("settings.json", `Marketplace ${m}: ref and path aren't supported.`);
     }
 
@@ -221,7 +223,7 @@ export async function validateTemplate(
     warn("settings.json", "enabledPlugins is ignored: list plugins in template.yaml.");
 
   for (const entry of await readdir(path.join(dir, "files")).catch(() => [] as string[]))
-    if (RESERVED_FILES.includes(entry))
+    if (RESERVED_FILES.includes(entry.toLowerCase()))
       err("files", `files/${entry} would overwrite a file the factory manages.`, {
         path: `files/${entry}`,
       });

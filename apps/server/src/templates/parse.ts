@@ -13,6 +13,7 @@ export function parseYaml(text: string): {
 } {
   const lc = new LineCounter();
   const doc = parseDocument(text, { lineCounter: lc, prettyErrors: false });
+  // The first error is often a cascade symptom reported earlier in the file; the last points at the real fault.
   const err = doc.errors.at(-1);
   const lineOf = (p: (string | number)[]) => {
     let node: unknown = doc.contents;

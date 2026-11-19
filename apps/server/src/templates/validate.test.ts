@@ -159,3 +159,45 @@ test("override substitutes unsaved content for one file", async () => {
   });
   expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/web/));
 });
+
+const plug = "name: tech-lead\ndisplay_name: X\nplugins: [p@m]\n";
+const mk = (src: string) => ({
+  "template.yaml": plug,
+  "settings.json": `{"extraKnownMarketplaces":{"m":{"source":${src}}}}`,
+});
+
+test("a directory marketplace with path is valid", async () => {
+  const r = await validateTemplate(
+    tpl({ ...base, ...mk('{"source":"directory","path":"/x"}') }),
+    "tech-lead",
+    ctx,
+  );
+  expect(r.issues).toEqual([]);
+});
+
+test.each([
+  '{"source":"git","url":"u","ref":"v1"}',
+  '{"source":"git","url":"u","path":"p"}',
+  '{"source":"github","repo":"o/r","path":"p"}',
+  '{"source":"directory","path":"/x","ref":"v1"}',
+])("marketplace source %s is rejected", async (src) => {
+  const r = await validateTemplate(tpl({ ...base, ...mk(src) }), "tech-lead", ctx);
+  expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/ref and path/));
+});
+
+test.each(["constructor", "toString"])(
+  "plugin from inherited name %s has no marketplace",
+  async (m) => {
+    const r = await validateTemplate(
+      tpl({ ...base, "template.yaml": `name: tech-lead\ndisplay_name: X\nplugins: [x@${m}]\n` }),
+      "tech-lead",
+      ctx,
+    );
+    expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/isn't declared/));
+  },
+);
+
+test("reserved files entries match case-insensitively", async () => {
+  const r = await validateTemplate(tpl({ ...base, "files/claude.md": "x" }), "tech-lead", ctx);
+  expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/files\/claude\.md/));
+});

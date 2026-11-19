@@ -21,6 +21,8 @@ export interface SlotPort {
   ): "granted" | "queued" | "dropped";
   release(agentId: string): void;
   becameHibernatable(agentId: string): void;
+  /** The agent's stop failed even after escalation (spec §9.6): it keeps its slot but is no longer on its way out. */
+  stopFailed(agentId: string): void;
   closing(): boolean;
   /** The agent waits for a start: a wake queue entry or a granted slot (the `queued` status input, spec §5.4). */
   isQueued(agentId: string): boolean;
@@ -38,6 +40,7 @@ export const unlimitedSlots: SlotPort = {
   requestWake: () => "granted",
   release: () => {},
   becameHibernatable: () => {},
+  stopFailed: () => {},
   closing: () => false,
   isQueued: () => false,
   pause: () => {},

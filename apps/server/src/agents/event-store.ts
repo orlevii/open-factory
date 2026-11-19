@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
-import { type AnyEvent, anyEventSchema, type SessionEvent } from "@open-factory/shared";
+import {
+  type AnyEvent,
+  anyEventSchema,
+  type ErrorKind,
+  type SessionEvent,
+} from "@open-factory/shared";
 import {
   and,
   asc,
@@ -51,6 +56,23 @@ export class EventStore {
   }
   async setStatus(agentId: string, status: "hibernated" | "errored") {
     await this.db.update(agents).set({ status }).where(eq(agents.id, agentId));
+  }
+  /** Errored with its reason (spec §8.3). An error ends any attempt in progress, so `attempting` clears too. */
+  async setErrored(agentId: string, message: string, kind: ErrorKind) {
+    await this.db
+      .update(agents)
+      .set({ status: "errored", lastError: message, errorKind: kind, attempting: false })
+      .where(eq(agents.id, agentId));
+  }
+  /** An attempt succeeded (spec §9.2): the error and the attempt clear together. */
+  async clearErrored(agentId: string) {
+    await this.db
+      .update(agents)
+      .set({ status: "hibernated", lastError: null, errorKind: null, attempting: false })
+      .where(eq(agents.id, agentId));
+  }
+  async setAttempting(agentId: string, attempting: boolean) {
+    await this.db.update(agents).set({ attempting }).where(eq(agents.id, agentId));
   }
   /** Replaces the whole journal (spec §12); null clears it. */
   async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {

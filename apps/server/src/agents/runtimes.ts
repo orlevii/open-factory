@@ -1,4 +1,5 @@
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
+import { errorKindSchema } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS } from "../config.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
@@ -104,11 +105,18 @@ export class AgentRuntimes {
   }
 
   /** Runtime-only fields; defaults for an agent that has no runtime yet. */
-  async liveFields(agentId: string, row: { status: string }): Promise<LiveFields> {
+  async liveFields(
+    agentId: string,
+    row: { status: string; lastError?: string | null; errorKind?: string | null },
+  ): Promise<LiveFields> {
     const rt = await this.get(agentId);
     if (rt) return rt.live();
+    const errored = row.status === "errored";
+    const kind = errorKindSchema.safeParse(row.errorKind);
     return {
-      status: row.status === "errored" ? "errored" : "hibernated",
+      status: errored ? "errored" : "hibernated",
+      ...(errored && row.lastError ? { lastError: row.lastError } : {}),
+      ...(errored && kind.success ? { errorKind: kind.data } : {}),
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,

@@ -117,7 +117,7 @@ test("first batch is tentative: an exit before session_started rolls it back", a
   expect(a?.status).toBe("errored");
 });
 
-test("resumes with the stored session id; a successful start clears errored", async () => {
+test("resumes with the stored session id; the attempt's batch turn clears errored", async () => {
   await makeRuntime({ sessionId: "sess-9", status: "errored" });
   expect(rt.live().status).toBe("errored");
   await send("again");
@@ -125,8 +125,12 @@ test("resumes with the stored session id; a successful start clears errored", as
   driver.last.emit(ev.session("sess-9"), ev.turn());
   await rt.settled();
   expect(rt.live().status).toBe("working");
-  const [a] = await t.sql`select status from agents where id = ${agentId}`;
-  expect(a?.status).toBe("hibernated");
+  const [during] = await t.sql`select status, attempting from agents where id = ${agentId}`;
+  expect(during).toEqual({ status: "errored", attempting: true });
+  driver.last.emit(ev.end());
+  await rt.settled();
+  const [a] = await t.sql`select status, attempting from agents where id = ${agentId}`;
+  expect(a).toEqual({ status: "hibernated", attempting: false });
   expect((await events()).find((e) => e.type === "process_started")?.event).toEqual({
     type: "process_started",
     resumed: true,
@@ -279,17 +283,19 @@ test("background events after the last result don't open a turn; exited closes a
   expect(rt.live().status).toBe("hibernated");
 });
 
-test("unexpected exit: errored, open turn closed as process_exited; next send restarts with --resume", async () => {
+test("unexpected exit mid-turn: open turn closed as process_exited; the recovery attempt resumes the session", async () => {
   await send("x");
   driver.last.emit(ev.session("sess-5"), ev.turn());
   await rt.settled();
   driver.last.exit(1, "boom");
   await rt.settled();
-  expect(rt.live().status).toBe("errored");
+  expect(rt.live()).toMatchObject({
+    errorKind: "crash",
+    lastError: "Exited unexpectedly (code 1)",
+  });
   const [last] =
     await t.sql`select is_error, terminal_reason from turns where agent_id = ${agentId}`;
   expect(last).toEqual({ is_error: true, terminal_reason: "process_exited" });
-  await send("y");
   expect(driver.starts).toHaveLength(2);
   expect(driver.last.opts).toEqual({ resumeSessionId: "sess-5" });
 });
@@ -334,10 +340,16 @@ test("several unconfirmed batches roll back to the head in their original order"
   expect(driver.last.sent.map((b) => b.map((m) => m.body))).toEqual([["a"], ["b"], ["c"]]);
   driver.last.exit(1);
   await rt.settled();
-  expect(rt.queueItems().map((q) => q.body)).toEqual(["a", "b", "c"]);
   const failed = (await events()).filter((e) => e.type === "delivery_failed");
   expect(failed).toHaveLength(3);
-  expect((await msgRows()).map((r) => r.state)).toEqual(["pending", "pending", "pending"]);
+  // The recovery attempt writes them again, in order, behind the crash notice.
+  expect(driver.starts).toHaveLength(2);
+  expect(driver.last.sent[0]?.map((m) => [m.kind, m.body])).toEqual([
+    ["system", expect.stringContaining("stopped unexpectedly")],
+    ["message", "a"],
+    ["message", "b"],
+    ["message", "c"],
+  ]);
 });
 
 test("pending after a failed start, then delivered as one turn on the next start", async () => {

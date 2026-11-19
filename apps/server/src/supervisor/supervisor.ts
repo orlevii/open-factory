@@ -95,6 +95,14 @@ export class Supervisor implements SlotPort {
     }
   }
 
+  /**
+   * A stop that failed even after escalation (spec §9.6): the holder keeps its slot (a process may still run), but
+   * it is no longer a slot on its way back, so an eviction it was counted as is picked again.
+   */
+  stopFailed(agentId: string): void {
+    if (this.pendingEvictions.delete(agentId)) this.evict();
+  }
+
   closing(): boolean {
     return this.closed;
   }

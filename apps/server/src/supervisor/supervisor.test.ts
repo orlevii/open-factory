@@ -43,10 +43,13 @@ class World {
     });
   }
 
-  async agent(o: { pending?: string[]; status?: string } = {}): Promise<AgentRuntime> {
+  async agent(
+    o: { pending?: string[]; status?: string; errorKind?: string } = {},
+  ): Promise<AgentRuntime> {
     n += 1;
     const id = `s${n}`;
     await insertAgent(t.sql, { id, slug: `sup${n}`, ...(o.status ? { status: o.status } : {}) });
+    if (o.errorKind) await t.sql`update agents set error_kind = ${o.errorKind} where id = ${id}`;
     for (const body of o.pending ?? [])
       await store.createMessage({ fromUserId: "u1", toAgentId: id, body, urgent: false });
     const agent = await store.agentById(id);
@@ -407,6 +410,38 @@ test("an errored agent wakes only for crash recovery, restart, reset or a human'
   await send(a, "hello"); // a human's message
   await w.settleAll();
   expect(started(a)).toBe(true);
+});
+
+test("stop_failed and resume_unrecoverable agents are dropped except for Restart or Start a new session", async () => {
+  w = new World(2);
+  const a = await w.agent({ pending: ["x"], status: "errored", errorKind: "stop_failed" });
+  const b = await w.agent({ pending: ["x"], status: "errored", errorKind: "resume_unrecoverable" });
+  for (const r of ["message", "crash_recovery", "reset"] as const)
+    expect(w.sup.requestWake(a.agent.id, r, false)).toBe("dropped");
+  for (const r of ["message", "crash_recovery", "restart"] as const)
+    expect(w.sup.requestWake(b.agent.id, r, false)).toBe("dropped");
+  await send(b, "hello"); // a human's message makes no attempt
+  await w.settleAll();
+  expect(started(b)).toBe(false);
+  expect(w.sup.running().count).toBe(0);
+});
+
+test("a freed_slot victim whose stop fails keeps its slot and the next victim is asked", async () => {
+  const [a, b, c] = await three();
+  await idleAt(a, 1000);
+  await idleAt(b, 2000);
+  const p = w.proc(a);
+  p.stopResult = { code: null, signal: null, timedOut: true };
+  p.emitExitOnStop = false;
+  p.forceKill = async () => {
+    throw new Error("EPERM");
+  };
+  await send(c, "hi");
+  await w.settleAll();
+  expect(a.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
+  expect(await lastEvent(b)).toMatchObject({ type: "hibernated", reason: "freed_slot" });
+  expect(started(c)).toBe(true);
+  expect(w.sup.running()).toEqual({ count: 2, max: 2 }); // a still holds its slot
 });
 
 test("a paused credential's entry is skipped without losing its place", async () => {

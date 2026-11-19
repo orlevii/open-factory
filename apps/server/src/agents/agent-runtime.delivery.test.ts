@@ -225,7 +225,7 @@ test("urgent while idle is a normal send", async () => {
   expect(driver.last.sent.at(-1)?.[0]).toMatchObject({ body: "now", urgent: true });
 });
 
-test("after an unexpected exit nothing restarts the process until the next API call", async () => {
+test("after an unexpected exit the dead process is never flushed; only the recovery attempt starts one", async () => {
   await makeRuntime({ realHold: true });
   await startedIdle();
   await send("long task");
@@ -235,11 +235,13 @@ test("after an unexpected exit nothing restarts the process until the next API c
   await send("STOP", true);
   driver.last.exit(1);
   await rt.settled();
-  // the exit clears the hold; even past its 10 s nothing flushes or restarts the dead process
+  // the exit clears the hold; even past its 10 s nothing is written to the dead process
   await vi.advanceTimersByTimeAsync(10_000);
   await rt.settled();
-  expect(driver.starts).toHaveLength(1);
-  expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
+  expect(driver.starts).toHaveLength(2);
+  expect(driver.starts[0]?.sent.flat().map((m) => m.body)).not.toContain("STOP");
+  expect(driver.last.sent[0]?.map((m) => m.kind)).toEqual(["system", "message"]);
+  expect(driver.last.sent[0]?.[1]?.body).toBe("STOP");
 });
 
 test("a rejected interrupt write (process going away) is not an internal error: urgent stays queued, Interrupt is 409", async () => {
@@ -277,7 +279,7 @@ test("a rejected interrupt write before an unexpected exit keeps the real exit r
   driver.last.exit(1);
   await rt.settled();
   expect(rt.live()).toMatchObject({
-    status: "errored",
+    errorKind: "crash",
     lastError: "Exited unexpectedly (code 1)",
   });
 });
@@ -345,11 +347,13 @@ test("a notice written but not yet confirmed (no session_started) is never repla
 test("rolled-back batches go behind notices queued meanwhile", async () => {
   await send("a"); // in flight
   driver.last.failWrites = true;
-  await rt.postNotice("crash", "c"); // write rejected: queued
+  await rt.postNotice("restart", "c"); // write rejected: queued
   driver.last.exit();
   await rt.settled();
-  expect(rt.queueItems().map((q) => [q.kind, q.body])).toEqual([
-    ["notice", "c"],
+  // The recovery attempt's first batch: the notices (the crash one joins them), then the rolled-back batch.
+  expect(driver.last.sent[0]?.map((m) => [m.kind, m.body])).toEqual([
+    ["system", "c"],
+    ["system", expect.stringContaining("stopped unexpectedly")],
     ["message", "a"],
   ]);
 });

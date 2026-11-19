@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
+  type ExitInfo,
   type FactoryMessage,
   type HarnessDriver,
   type HarnessProcess,
@@ -11,6 +12,8 @@ import {
   type AgentStatus,
   type AgentStatusFrame,
   type AnyEvent,
+  type ErrorKind,
+  errorKindSchema,
   type HarnessEvent,
   type QueueItem,
   statusOf,
@@ -21,6 +24,7 @@ import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.t
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Tx } from "./event-store.ts";
 import { type NoticeType, notices } from "./notices.ts";
+import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
 import type { PrepareStart } from "./start.ts";
 
@@ -44,7 +48,15 @@ export interface RuntimeDeps {
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
   /** The Supervisor's slot port (spec §5.2), which also owns the credential pauses (§7); defaults to unlimited slots. */
   slots?: SlotPort;
+  /**
+   * Cleans up what a crashed process left (spec §9.2 step 1): local, the journal reap (Task 21); Docker, the
+   * container stop (Task 25). Resolves what it did (recorded as a `cleanup` event); a throw means a container stop
+   * failed, which makes the agent `stop_failed` (§9.6). Defaults to a no-op.
+   */
+  cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined>;
 }
+
+export type CleanupResult = { killedProcesses?: number; container?: "stopped" };
 
 export type HibernateReason =
   | "warm_window"
@@ -87,6 +99,11 @@ const fromOf = (e: MessageEntry): string => {
   return `@${e.fromHandle}`;
 };
 
+/** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
+const ESCALATION_EXIT_MS = 5_000;
+const STOP_FAILED_MESSAGE =
+  "The agent's process can't be stopped. Check the host or Docker, then restart again.";
+
 /** The owed-notification bound (spec §6.1). */
 const OWED_BOUND_MS = 30_000;
 /** The pause when a `rejected` rate limit reports no usable reset time (spec §7.2). */
@@ -128,6 +145,14 @@ export class AgentRuntime {
   private errored: boolean;
   private archived: boolean;
   private lastError: string | undefined;
+  private errorKind: ErrorKind | undefined;
+  // Spec §9.2: an attempt to bring back interrupted work is in progress (persisted). `attemptReason` is its wake's
+  // reason (the only wake accepted meanwhile); the attempt succeeds at the first origin-less turn_end after a batch.
+  private attempting: boolean;
+  private attemptReason: WakeReason | undefined;
+  private attemptBatchWritten = false;
+  private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
+  private escalationTimer: ReturnType<typeof setTimeout> | undefined;
   private lastStatusJson = "";
   private firstStartDone = false;
   private submitted = 0;
@@ -155,6 +180,10 @@ export class AgentRuntime {
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
     this.errored = d.agent.status === "errored";
+    this.lastError = d.agent.lastError ?? undefined;
+    const kind = errorKindSchema.safeParse(d.agent.errorKind);
+    this.errorKind = kind.success ? kind.data : undefined;
+    this.attempting = d.agent.attempting;
     this.archived = Boolean(d.agent.archivedAt);
     this.slots = d.slots ?? unlimitedSlots;
   }
@@ -183,7 +212,9 @@ export class AgentRuntime {
       const entry: MessageEntry = { kind: "message", row, fromHandle: m.fromHandle };
       this.queue.push(entry);
       this.publishQueue();
-      await this.wakeInline("message");
+      // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
+      if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
+      else await this.wakeInline("message");
       if (m.urgent) await this.urgentInterrupt(m.fromHandle);
       await this.flush();
       return this.itemOf(entry);
@@ -343,12 +374,17 @@ export class AgentRuntime {
   }
 
   /**
-   * The Supervisor's drop rules that only the runtime knows (spec §5.2): never archived or latched, and an errored
-   * agent only for crash recovery, Restart, reset or a human's message.
+   * The Supervisor's drop rules that only the runtime knows (spec §5.2, §9.2, §9.3, §9.6): never archived or
+   * latched; while attempting, only the attempt's own wake; `stop_failed` only for Restart; `resume_unrecoverable`
+   * only for Start a new session; any other errored agent only for crash recovery, Restart, reset or a human's message.
    */
   acceptsWake(reason: WakeReason): boolean {
     if (this.archived || this.noStart) return false;
-    return !this.errored || ERRORED_WAKES.has(reason);
+    if (this.attempting) return reason === this.attemptReason;
+    if (!this.errored) return true;
+    if (this.errorKind === "stop_failed") return reason === "restart";
+    if (this.errorKind === "resume_unrecoverable") return reason === "reset";
+    return ERRORED_WAKES.has(reason);
   }
 
   /** A wake is only granted with something to write: a pending message or notice, or a queued compact (spec §5.2). */
@@ -358,7 +394,12 @@ export class AgentRuntime {
 
   /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
   isStopping(): boolean {
-    return Boolean(this.proc) && this.stopping;
+    return Boolean(this.proc) && this.stopping && !this.stopFailed();
+  }
+
+  /** The stop failed even after escalation (spec §9.6): the process may still run and keeps the slot. */
+  private stopFailed(): boolean {
+    return this.errored && this.errorKind === "stop_failed";
   }
 
   /** A job that changes nothing, so its end re-evaluates the warm timer (a credential pause changed, spec §6.3). */
@@ -399,6 +440,7 @@ export class AgentRuntime {
     status: AgentStatus;
     turnOpen: boolean;
     lastError?: string;
+    errorKind?: ErrorKind;
     restartPending: boolean;
     restartWaitingOn: number;
     waitingOn: WaitingOn;
@@ -413,6 +455,7 @@ export class AgentRuntime {
         ? { rateLimitedUntil: pause.until.toISOString(), rateLimitExact: pause.exact }
         : {}),
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
+      ...(this.errorKind && this.errored ? { errorKind: this.errorKind } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
       waitingOn: this.waitingOn(),
@@ -469,6 +512,7 @@ export class AgentRuntime {
       !this.pinned() &&
       !this.restartPending &&
       !this.errored &&
+      !this.attempting &&
       (this.queue.length === 0 || this.credentialPaused())
     );
   }
@@ -498,7 +542,7 @@ export class AgentRuntime {
     this.stopsInProgress += 1;
     try {
       const p = this.proc;
-      if (p) await p.stop(opts);
+      if (p && (await p.stop(opts)).timedOut) await this.escalate(p); // spec §9.6
       await this.settled();
     } finally {
       this.stopsInProgress -= 1;
@@ -556,7 +600,7 @@ export class AgentRuntime {
   private status(): AgentStatus {
     return statusOf({
       errored: this.errored,
-      attempting: false, // the crash policy (Task 19) sets it
+      attempting: this.attempting,
       working:
         this.starting ||
         (Boolean(this.proc) && !this.started) ||
@@ -621,10 +665,62 @@ export class AgentRuntime {
     });
   }
 
-  private async setErrored(message: string) {
+  /**
+   * Errored with its reason (spec §8.3), in memory first so a failing DB write keeps the truth. Any error ends an
+   * attempt in progress: this is the attempt's failure (spec §9.2).
+   */
+  private async setErrored(message: string, kind: ErrorKind) {
     this.errored = true;
     this.lastError = message;
-    await this.d.store.setStatus(this.agent.id, "errored");
+    this.errorKind = kind;
+    this.attempting = false;
+    this.attemptReason = undefined;
+    await this.d.store.setErrored(this.agent.id, message, kind);
+  }
+
+  /** Spec §9.2: a human's message to an errored agent makes one attempt, unless recovery needs another action. */
+  private messageStartsAttempt(): boolean {
+    return (
+      !this.proc &&
+      this.errored &&
+      !this.attempting &&
+      this.errorKind !== "resume_unrecoverable" &&
+      this.errorKind !== "stop_failed"
+    );
+  }
+
+  /**
+   * Spec §9.2: begin an attempt (persisted, so boot can tell one cut short) and request its wake. `inline` for an API
+   * job (an immediate start failure rejects the call). A dropped wake ends the attempt at once: nothing will start.
+   */
+  private async beginAttempt(reason: WakeReason, inline: boolean) {
+    this.attempting = true;
+    this.attemptReason = reason;
+    this.attemptBatchWritten = false;
+    await this.d.store.setAttempting(this.agent.id, true);
+    this.publishStatus();
+    const requested = inline ? await this.wakeInline(reason) : await this.wakeFromJob(reason);
+    if (!requested && this.attempting && this.attemptReason === reason) {
+      this.attempting = false;
+      this.attemptReason = undefined;
+      await this.d.store.setAttempting(this.agent.id, false);
+    }
+  }
+
+  /** Spec §9.2: the attempt's batch turn ended with the process running. Clears the attempt and the error. */
+  private async attemptSucceeded() {
+    this.attempting = false;
+    this.attemptReason = undefined;
+    this.errored = false;
+    this.lastError = undefined;
+    this.errorKind = undefined;
+    await this.d.store.clearErrored(this.agent.id);
+  }
+
+  /** The runtime's own drop rules first (any slot port), then the slot port's. */
+  private requestWake(reason: WakeReason, inline: boolean): "granted" | "queued" | "dropped" {
+    if (!this.acceptsWake(reason)) return "dropped";
+    return this.slots.requestWake(this.agent.id, reason, inline);
   }
 
   /** True while a process exists or a start is under way (prepare to spawn): host writes to the workdir must be staged. */
@@ -636,16 +732,21 @@ export class AgentRuntime {
    * Only called from API jobs (send, compact): asks for a slot and, when granted, starts inline so an immediate
    * start failure still rejects the call (S3's 503). A flush never restarts a dead process.
    */
-  private async wakeInline(reason: WakeReason) {
-    if (this.proc) return;
-    if (this.slots.requestWake(this.agent.id, reason, true) === "granted")
-      await this.startNow(reason);
+  private async wakeInline(reason: WakeReason): Promise<boolean> {
+    if (this.proc) return true;
+    const r = this.requestWake(reason, true);
+    if (r === "granted") await this.startNow(reason);
+    return r !== "dropped";
   }
 
-  /** From inside a job that isn't an API call: request a wake and start at once when the port grants it. */
-  private async wakeFromJob(reason: WakeReason) {
-    if (this.slots.requestWake(this.agent.id, reason, false) === "granted")
-      await this.startAndFlush(reason, "wake failed");
+  /**
+   * From inside a job that isn't an API call: request a wake and start at once when the port grants it. False when
+   * the wake was dropped.
+   */
+  private async wakeFromJob(reason: WakeReason): Promise<boolean> {
+    const r = this.requestWake(reason, false);
+    if (r === "granted") await this.startAndFlush(reason, "wake failed");
+    return r !== "dropped";
   }
 
   /** `startNow` and a flush, with failures handled here (no API call to reject). */
@@ -680,7 +781,7 @@ export class AgentRuntime {
     }
     // A pause that landed after the grant (spec §5.2): back to the queue (a granted entry keeps its place).
     if (paused) {
-      this.slots.requestWake(this.agent.id, reason, false);
+      this.requestWake(reason, false);
       this.publishStatus();
     }
   }
@@ -708,7 +809,7 @@ export class AgentRuntime {
         message,
         ...(known && err.fix ? { fix: err.fix } : {}),
       });
-      await this.setErrored(message);
+      await this.setErrored(message, "start");
       this.publishStatus();
       throw known ? err : new AgentStartError(message);
     }
@@ -780,9 +881,8 @@ export class AgentRuntime {
     this.deadProc = proc;
     if (proc === this.proc) this.beginForceStop({ kind: "internal" });
     else void proc.stop({ graceMs: 0 }); // already gone from the runtime (its exit is being recorded)
-    await this.setErrored("Internal error while recording the session").catch(() => {
-      this.errored = true; // the DB may be the thing that failed; keep the in-memory truth
-    });
+    // setErrored sets the in-memory truth first; the DB may be the thing that failed.
+    await this.setErrored("Internal error while recording the session", "internal").catch(() => {});
     this.publishStatus();
   }
 
@@ -799,11 +899,7 @@ export class AgentRuntime {
             { agent: this.agent.slug, stored: row.sessionId, got: e.sessionId },
             "session id changed",
           );
-        if (this.errored) {
-          this.errored = false;
-          this.lastError = undefined;
-          await this.d.store.setStatus(this.agent.id, "hibernated");
-        }
+        // An errored agent's error clears only when its attempt succeeds (spec §9.2), not at session_started.
         await this.append(null, e);
         for (const batch of this.inFlight.splice(0))
           await this.d.store.markDelivered(batch.map((m) => m.row.id));
@@ -834,6 +930,9 @@ export class AgentRuntime {
             this.awaiting = [];
           }
         }
+        // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
+        if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
+          await this.attemptSucceeded();
         this.openTurnId = undefined;
         this.lastActivityAt = Date.now();
         await this.oweNoticeIfCutOff();
@@ -893,13 +992,23 @@ export class AgentRuntime {
       case "error":
         await this.append(this.openTurnId, e);
         if (!this.started && (e.source === "resume" || e.source === "spawn")) {
-          await this.setErrored(e.message);
+          // Spec §9.3: the failed result of whichever attempt started it; never an automatic attempt of its own.
+          const code = e.code !== undefined ? Number(e.code) : Number.NaN;
+          const kind: ErrorKind =
+            e.source === "spawn"
+              ? "start"
+              : classifyResumeFailure(e.message, Number.isInteger(code) ? code : undefined) ===
+                  "unrecoverable"
+                ? "resume_unrecoverable"
+                : "resume";
+          await this.setErrored(e.message, kind);
           this.failingProc = proc;
-          // A stop already under way (stop(), a shutdown) keeps its intent: its exit still does what it must.
-          if (!this.afterExit) {
+          // A hibernate under way (stop(), a shutdown) keeps its intent: its exit still does what it must. Any other
+          // intent (a restart's) becomes failed_start, so the exit of the failed start never wakes the errored agent.
+          if (this.afterExit?.kind !== "hibernate") {
             this.stopping = true;
             this.afterExit = { kind: "failed_start" };
-            void proc.stop({ graceMs: 1000 });
+            this.watchStop(proc, proc.stop({ graceMs: 1000 }), "failed start stop failed");
           }
         }
         break;
@@ -917,6 +1026,11 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    if (this.escalationTimer) clearTimeout(this.escalationTimer);
+    this.escalationTimer = undefined;
+    // Spec §9.1: no recorded intent and not expected, whether or not the agent is errored or attempting.
+    const crash = !intent && !e.expected;
+    const lost = this.lostSnapshot(); // before the tasks and crons are reset below
     this.liveTasks = new Map(); // tasks and crons die with the process
     this.crons = new Map();
     this.owedNotifications = 0;
@@ -935,8 +1049,10 @@ export class AgentRuntime {
     this.awaiting = [];
     if (this.proc === proc) this.proc = undefined;
     this.started = false;
-    const crash = !intent && !e.expected ? this.onCrash(e) : false;
+    const policy = crash ? this.onCrash(e, { turnOpen: Boolean(openTurnId), lost }) : "none";
+    let keepSlot = false;
     try {
+      if (crash) keepSlot = !(await this.cleanUpAfterCrash());
       await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
@@ -966,16 +1082,21 @@ export class AgentRuntime {
             : {}),
         });
       }
-      if (crash) await this.d.store.setStatus(this.agent.id, "errored");
+      if (policy !== "none" && policy !== "hibernated" && !keepSlot)
+        await this.recordCrash(e, policy, { turnOpen: Boolean(openTurnId), lost });
       // A crash keeps its journal: the lost work is reported from it.
-      else await this.writeJournal();
+      if (!crash) await this.writeJournal();
     } finally {
       this.publishQueue();
-      // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed.
-      this.slots.release(this.agent.id);
+      // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed; a crash whose
+      // cleanup failed keeps it (stop_failed, §9.6).
+      if (!keepSlot) this.slots.release(this.agent.id);
     }
-    // failed_start and internal never wake; a crash never wakes until the crash policy lands (Task 19).
-    if (intent?.kind === "hibernate") {
+    // failed_start and internal never wake; a crash makes one automatic attempt only when work was lost (§9.2).
+    if (policy === "recover" && !keepSlot) {
+      if (this.stopsInProgress === 0 && !this.slots.closing())
+        await this.beginAttempt("crash_recovery", false);
+    } else if (intent?.kind === "hibernate") {
       if (intent.reason !== "shutdown" && intent.reason !== "archived")
         await this.wakeAfterExit(
           intent.reason === "apply_changes" && intent.lost.crons.length
@@ -1079,15 +1200,73 @@ export class AgentRuntime {
     this.agent = { ...this.agent, rateLimitNoticeOwed: true };
   }
 
-  /** S3's crash handling, kept until the crash policy (spec §9.2) replaces it. True when it marked errored. */
-  private onCrash(e: Extract<HarnessEvent, { type: "exited" }>): boolean {
-    if (this.errored) return false;
-    this.errored = true;
-    this.lastError =
+  /**
+   * The crash policy (spec §9.2), decided synchronously so the in-memory state is right even if recording fails:
+   * a crash during an attempt fails it; a crash that lost nothing is a plain hibernation; anything else is errored
+   * and recovered by one automatic attempt.
+   */
+  private onCrash(
+    e: Extract<HarnessEvent, { type: "exited" }>,
+    live: { turnOpen: boolean; lost: LostWork },
+  ): "attempt_failed" | "hibernated" | "recover" {
+    const message =
       e.code !== null
         ? `Exited unexpectedly (code ${e.code})`
         : `Exited unexpectedly (${e.signal ?? "unknown"})`;
+    const policy = this.attempting
+      ? "attempt_failed"
+      : !live.turnOpen && !live.lost.tasks.length && !live.lost.crons.length && !this.queue.length
+        ? "hibernated"
+        : "recover";
+    if (policy === "hibernated") return policy;
+    this.errored = true;
+    this.lastError = message;
+    this.errorKind = "crash";
+    this.attempting = false;
+    this.attemptReason = undefined;
+    return policy;
+  }
+
+  /** Spec §9.2 step 1: clean up leftovers first. False when it failed (the agent is then `stop_failed`, §9.6). */
+  private async cleanUpAfterCrash(): Promise<boolean> {
+    let done: CleanupResult | undefined;
+    try {
+      done = await this.d.cleanup?.(this.agent);
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "cleanup after a crash failed");
+      await this.setErrored(STOP_FAILED_MESSAGE, "stop_failed");
+      this.slots.stopFailed(this.agent.id);
+      return false;
+    }
+    if (done) await this.append(null, { type: "cleanup", ...done });
     return true;
+  }
+
+  /** The durable side of the crash policy: errored, and for a recovery the lost work and the crash notice. */
+  private async recordCrash(
+    e: Extract<HarnessEvent, { type: "exited" }>,
+    policy: "attempt_failed" | "recover",
+    live: { turnOpen: boolean; lost: LostWork },
+  ) {
+    await this.d.store.setErrored(this.agent.id, this.lastError ?? "Exited unexpectedly", "crash");
+    if (policy === "attempt_failed") return; // only a human acts next
+    const { tasks, crons } = live.lost;
+    if (tasks.length || crons.length) {
+      await this.append(null, { type: "background_work_lost", reason: "crash", tasks, crons });
+      this.d.log.info(
+        { agent: this.agent.slug, manager: this.agent.reportsTo, reason: "crash", tasks, crons },
+        "background work lost; would notify the manager",
+      );
+    }
+    await this.addNotice(
+      "crash",
+      notices.crash({
+        exit: { code: e.code, signal: e.signal },
+        duringTurn: live.turnOpen,
+        tasks: tasks.map((t) => t.description || t.taskId),
+        crons: crons.map((c) => c.humanSchedule),
+      }),
+    );
   }
 
   /**
@@ -1105,7 +1284,8 @@ export class AgentRuntime {
    * the stop, because the `exited` that ends it is a job queued behind the caller.
    */
   private maybeRestart() {
-    if (!this.restartPending || this.errored) return;
+    // An attempt in progress finishes first; its success ends with a turn_end, which calls this again.
+    if (!this.restartPending || this.errored || this.attempting) return;
     this.beginHibernate("apply_changes");
   }
 
@@ -1131,28 +1311,7 @@ export class AgentRuntime {
     const intent: AfterExit = { kind: "hibernate", reason, lost: this.lostSnapshot() };
     this.stopping = true;
     this.afterExit = intent;
-    void proc.stop({ graceMs: 3000, termWaitMs: 10_000 }).then(
-      (r) => {
-        if (!r.timedOut) return;
-        void this.run(async () => {
-          if (this.afterExit !== intent) return; // stop() took over
-          this.afterExit = { kind: "internal" }; // a late exit must not wake (escalation lands in Task 19)
-          this.restartPending = false;
-          this.deadProc = proc;
-          await this.setErrored(
-            intent.reason === "apply_changes"
-              ? "Couldn't restart the agent: the process didn't stop."
-              : "Couldn't stop the agent: the process didn't stop.",
-          );
-          this.d.log.error(
-            { agent: this.agent.slug, reason: intent.reason },
-            "hibernate stop timed out",
-          );
-          this.publishStatus();
-        });
-      },
-      (err) => this.d.log.error({ err, agent: this.agent.slug }, "hibernate stop failed"),
-    );
+    this.watchStop(proc, proc.stop({ graceMs: 3000, termWaitMs: 10_000 }), "hibernate stop failed");
     return true;
   }
 
@@ -1162,9 +1321,74 @@ export class AgentRuntime {
     if (!proc) return;
     this.stopping = true;
     this.afterExit = intent;
-    void proc
-      .stop({ graceMs: 0 })
-      .catch((err) => this.d.log.error({ err, agent: this.agent.slug }, "force stop failed"));
+    this.watchStop(proc, proc.stop({ graceMs: 0 }), "force stop failed");
+  }
+
+  /** Observes a deliberate stop outside the job (never awaited in one): a timed-out stop escalates (spec §9.6). */
+  private watchStop(proc: HarnessProcess, stopping: Promise<ExitInfo>, what: string): void {
+    void stopping.then(
+      (r) => {
+        if (r.timedOut) void this.escalate(proc);
+      },
+      (err) => this.d.log.error({ err, agent: this.agent.slug }, what),
+    );
+  }
+
+  /** One escalation job per process (a hibernate and a stop() taking it over share it). Never rejects. */
+  private escalate(proc: HarnessProcess): Promise<void> {
+    let p = this.escalations.get(proc);
+    if (!p) {
+      p = this.run(() => this.escalateNow(proc)).catch((err) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "stop escalation failed"),
+      );
+      this.escalations.set(proc, p);
+    }
+    return p;
+  }
+
+  /**
+   * Spec §9.6, inside a job: the stop timed out, so SIGKILL (local) or stop the container (Docker), then the exit's
+   * own job runs with the recorded intent. A failed escalation, or no exit within 5 s, is `stop_failed`.
+   */
+  private async escalateNow(proc: HarnessProcess) {
+    if (proc !== this.proc) return; // its exit was recorded meanwhile
+    const how = this.agent.runtime === "docker" ? "container_stop" : "sigkill";
+    this.d.log.warn({ agent: this.agent.slug, pid: proc.pid, how }, "stop timed out; escalating");
+    await this.append(null, { type: "stop_escalated", how }).catch((err) =>
+      this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),
+    );
+    try {
+      await proc.forceKill();
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug, pid: proc.pid }, "escalation failed");
+      await this.markStopFailed(proc);
+      return;
+    }
+    if (proc !== this.proc) return;
+    if (this.escalationTimer) clearTimeout(this.escalationTimer);
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      void this.run(async () => {
+        if (this.escalationTimer !== timer) return;
+        this.escalationTimer = undefined;
+        if (proc === this.proc) await this.markStopFailed(proc);
+      }).catch((err) => this.d.log.error({ err, agent: this.agent.slug }, "stop_failed failed"));
+    }, ESCALATION_EXIT_MS);
+    this.escalationTimer = timer;
+  }
+
+  /**
+   * Spec §9.6: errored `stop_failed`, keeping the slot (a process may still run). A late exit releases the slot,
+   * never wakes (intent `internal`) and leaves the agent errored. The Supervisor stops counting it as on its way out.
+   */
+  private async markStopFailed(proc: HarnessProcess) {
+    this.deadProc = proc;
+    this.afterExit = { kind: "internal" };
+    this.restartPending = false;
+    this.d.log.error({ agent: this.agent.slug, pid: proc.pid }, "the process can't be stopped");
+    // setErrored sets the in-memory truth first; the DB may be what failed.
+    await this.setErrored(STOP_FAILED_MESSAGE, "stop_failed").catch(() => {});
+    this.slots.stopFailed(this.agent.id);
+    this.publishStatus();
   }
 
   /** What a stop now would kill (spec §6.4 step 3). */
@@ -1407,6 +1631,7 @@ export class AgentRuntime {
       event: dto,
     });
     this.lastActivityAt = Date.now();
+    if (this.attempting) this.attemptBatchWritten = true;
     if (!this.started) this.inFlight.push(batch);
     if (!turnAtWrite) this.awaiting.push(ids);
     this.publishQueue();

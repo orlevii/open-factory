@@ -1,6 +1,7 @@
 import type { AgentStatus } from "./agents.ts";
 
 export interface StatusInputs {
+  terminated: boolean;
   errored: boolean;
   attempting: boolean;
   working: boolean;
@@ -12,6 +13,7 @@ export interface StatusInputs {
 
 /** The one owner of status precedence (spec §8.1). */
 export function statusOf(i: StatusInputs): AgentStatus {
+  if (i.terminated) return "terminated";
   if (i.errored && !i.attempting) return "errored";
   if (i.working) return "working";
   if (i.credentialPaused && (i.processRunning || i.hasPendingWork || i.queuedWake))

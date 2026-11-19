@@ -157,10 +157,10 @@ test("Archive is an ink ghost button and lands on the list with the Undo line", 
     extra: {
       "POST /api/agents/lead/archive": () => {
         const archived = { ...lead, archivedAt: "2026-11-19T10:00:00Z" };
-        api.on("GET /api/agents?archived=exclude", () =>
+        api.on("GET /api/agents?ended=exclude", () =>
           json({ agents: [], running: { count: 0, max: 8 } }),
         );
-        api.on("GET /api/agents?archived=only", () =>
+        api.on("GET /api/agents?ended=only", () =>
           json({ agents: [archived], running: { count: 0, max: 8 } }),
         );
         return json({ agent: archived });
@@ -277,10 +277,10 @@ test("Undo on the archived line restores, keeps the line, and drops ?justArchive
     archived: [archived],
     extra: {
       "POST /api/agents/lead/unarchive": () => {
-        api.on("GET /api/agents?archived=exclude", () =>
+        api.on("GET /api/agents?ended=exclude", () =>
           json({ agents: [lead], running: { count: 0, max: 8 } }),
         );
-        api.on("GET /api/agents?archived=only", () =>
+        api.on("GET /api/agents?ended=only", () =>
           json({ agents: [], running: { count: 0, max: 8 } }),
         );
         return json({ agent: lead });

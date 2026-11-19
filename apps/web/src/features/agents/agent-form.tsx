@@ -74,7 +74,7 @@ const fromAgent = (a: AgentSummary): Values => ({
   displayName: a.displayName,
   description: a.description,
   reportsTo: a.reportsTo ?? "",
-  credential: a.credential,
+  credential: a.credential ?? "",
   projects: a.projects,
 });
 

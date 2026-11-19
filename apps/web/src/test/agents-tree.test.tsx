@@ -103,7 +103,7 @@ test("the Active / Archived radio pair writes ?archived=only and lists archived 
   await vi.waitFor(() => expect(router.state.location.search).toEqual({ archived: "only" }));
   const row = await screen.findByRole("link", { name: /Old one/ });
   expect(within(row).getByText("Archived")).toBeInTheDocument();
-  expect(api.calls.some((c) => c.url === "/api/agents?archived=only")).toBe(true);
+  expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true);
 });
 
 test("?justArchived shows the Undo line focused; Undo restores", async () => {

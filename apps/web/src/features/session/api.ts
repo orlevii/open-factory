@@ -10,16 +10,16 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
 type Running = { count: number; max: number };
-const fetchList = (archived: "exclude" | "only") =>
-  apiFetch(`/api/agents?archived=${archived}`, { schema: agentListSchema });
+const fetchList = (ended: "exclude" | "only") =>
+  apiFetch(`/api/agents?ended=${ended}`, { schema: agentListSchema });
 
 /** Key prefix ["agents"] covers every list variant, so one invalidation refreshes them all. Each
  *  fetch also refreshes the factory-wide running count (UI design §4). */
-export const agentsListQueryOptions = (archived: "exclude" | "only" = "exclude") =>
+export const agentsListQueryOptions = (ended: "exclude" | "only" = "exclude") =>
   queryOptions({
-    queryKey: ["agents", archived],
+    queryKey: ["agents", ended],
     queryFn: async ({ client }) => {
-      const r = await fetchList(archived);
+      const r = await fetchList(ended);
       client.setQueryData<Running>(runningQueryKey, r.running);
       return r.agents;
     },

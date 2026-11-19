@@ -82,15 +82,15 @@ export class AgentService {
     return { managerId: n.manager?.id ?? null, peerIds: n.peers.map((p) => p.id) };
   }
 
-  async list(archived: "exclude" | "include" | "only"): Promise<AgentSummary[]> {
+  async list(ended: "exclude" | "include" | "only"): Promise<AgentSummary[]> {
     const { db } = this.d;
     const rows = await db
       .select()
       .from(schema.agents)
       .where(
-        archived === "exclude"
+        ended === "exclude"
           ? isNull(schema.agents.archivedAt)
-          : archived === "only"
+          : ended === "only"
             ? isNotNull(schema.agents.archivedAt)
             : undefined,
       );
@@ -139,7 +139,7 @@ export class AgentService {
           slug: r.slug,
           displayName: r.displayName,
           description: r.description,
-          kind: "persistent" as const,
+          kind: r.kind as "persistent" | "ephemeral",
           template: r.template,
           runtime: r.runtime,
           reportsTo: i.reportsTo,

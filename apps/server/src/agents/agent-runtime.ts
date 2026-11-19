@@ -1069,6 +1069,7 @@ export class AgentRuntime {
 
   private status(): AgentStatus {
     return statusOf({
+      terminated: false, // Task 9 replaces this with the terminated latch
       errored: this.errored,
       attempting: this.attempting,
       working:

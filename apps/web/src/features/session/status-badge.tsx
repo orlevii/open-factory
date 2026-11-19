@@ -8,6 +8,7 @@ const SHORT: Record<AgentStatus, string> = {
   working: "Working",
   idle: "Idle",
   errored: "Errored",
+  terminated: "Terminated",
 };
 
 const TOKEN: Record<Exclude<AgentStatus, "working">, string> = {
@@ -16,6 +17,7 @@ const TOKEN: Record<Exclude<AgentStatus, "working">, string> = {
   idle: "idle",
   rate_limited: "rate-limited",
   errored: "errored",
+  terminated: "terminated",
 };
 
 type ResetInput = { rateLimitedUntil?: string | Date; rateLimitExact?: boolean };

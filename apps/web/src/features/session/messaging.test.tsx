@@ -36,7 +36,7 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
     "GET /api/agents/dev": () => json(detail()),
     "GET /api/agents/dev/events?": () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({
         agents: [
           agentSummary(),
@@ -283,7 +283,7 @@ const lookupWorld = (
     "GET /api/agents/dev": () => json(detail()),
     "GET /api/agents/dev/events?": () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
 
@@ -297,7 +297,7 @@ test("?message= opens the recipient's event window, or says why it can't", async
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "latest" })],
       }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
   renderApp("/agents/dev?message=gone", alice);
@@ -433,7 +433,7 @@ test("Load earlier does not announce an older send to the viewer", async () => {
       json({ hasMore: { before: false, after: false }, events: [o1, o2] }),
     "GET /api/agents/dev/events?": () =>
       json({ hasMore: { before: true, after: false }, events: l }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
   renderApp("/agents/dev", alice);
@@ -488,7 +488,7 @@ test("?message= highlights the row holding that envelope, not the event's first 
           }),
         ],
       }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
   renderApp("/agents/dev?message=second", alice);
@@ -506,7 +506,7 @@ test("the strip's manager is a link to its session; the reports count is plain t
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "x" })],
       }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({
         agents: [agentSummary({ reportsTo: "lead", reports: 3 })],
         running: { count: 1, max: 8 },
@@ -533,7 +533,7 @@ test("held updates show as quiet lines from the queue", async () => {
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "x" })],
       }),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
   renderApp("/agents/dev", alice);

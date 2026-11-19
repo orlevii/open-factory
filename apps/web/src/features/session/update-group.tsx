@@ -184,6 +184,7 @@ export function PeerLine({
         </>
       );
     else if (s.left.reason === "archived") what = <>{who} left: archived</>;
+    else if (s.left.reason === "terminated") what = <>{who} left: terminated</>;
     else if (s.left.to === null) what = <>{who} left: now reports to the humans</>;
     else
       what = (

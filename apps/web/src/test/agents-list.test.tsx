@@ -87,7 +87,7 @@ test("a failed list says so", async () => {
 const listWith = (agents: ReturnType<typeof agentSummary>[], running = { count: 3, max: 8 }) =>
   mockWorld({
     agents,
-    extra: { "GET /api/agents?archived=exclude": () => json({ agents, running }) },
+    extra: { "GET /api/agents?ended=exclude": () => json({ agents, running }) },
   });
 
 test("Agents list: inline note priority, '3 of 8 running' before the radio pair, hidden on Archived", async () => {

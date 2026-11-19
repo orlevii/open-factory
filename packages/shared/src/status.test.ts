@@ -3,6 +3,7 @@ import type { AgentStatus } from "./agents.ts";
 import { type StatusInputs, statusOf } from "./status.ts";
 
 const base: StatusInputs = {
+  terminated: false,
   errored: false,
   attempting: false,
   working: false,
@@ -44,4 +45,12 @@ test.each<[string, Partial<StatusInputs>, AgentStatus]>([
   ],
 ])("%s", (_n, over, want) => {
   expect(statusOf({ ...base, ...over })).toBe(want);
+});
+
+test.each<[Partial<StatusInputs>, AgentStatus]>([
+  [{ terminated: true, errored: true, attempting: false }, "terminated"],
+  [{ terminated: true, working: true }, "terminated"],
+  [{ terminated: false, errored: true, attempting: false }, "errored"],
+])("terminated precedence %#", (partial, want) => {
+  expect(statusOf({ ...base, ...partial })).toBe(want);
 });

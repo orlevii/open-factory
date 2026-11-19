@@ -42,7 +42,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/agents",
     { schema: { querystring: agentListQuerySchema, response: { 200: agentListSchema } } },
     async (req) => ({
-      agents: await app.agents.list(req.query.archived),
+      agents: await app.agents.list(req.query.ended),
       running: app.runtimes.supervisor.running(),
     }),
   );

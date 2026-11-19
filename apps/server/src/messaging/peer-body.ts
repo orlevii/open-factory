@@ -16,6 +16,7 @@ export function peerBody(
   const who = `@${subject.slug} (${subject.displayName})`;
   if (change.kind === "peer_joined") return `${who} joined as your ${relation}.`;
   const { left } = change;
+  if (left.reason === "terminated") return `${who} left: terminated.`;
   if (left.reason === "archived") return `${who} left: archived.`;
   return `${who} left: now reports to ${left.to ? `@${left.to}` : "the humans"}.`;
 }

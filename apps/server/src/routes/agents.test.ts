@@ -222,7 +222,7 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
       "agent_archived",
     );
     expect(
-      (await call("GET", "/api/agents?archived=only"))
+      (await call("GET", "/api/agents?ended=only"))
         .json()
         .agents.map((a: { slug: string }) => a.slug),
     ).toEqual(["boss"]);

@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { AgentRuntime } from "../agents/agent-runtime.ts";
 import { EventBus } from "../agents/event-bus.ts";
 import { EventStore } from "../agents/event-store.ts";
+import { liveCredentialId } from "../agents/live-credential.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import {
@@ -469,7 +470,7 @@ test("a paused credential's entry is skipped without losing its place", async ()
   const b = await w.agent();
   const c = await w.agent();
   await busy(a);
-  w.pause(b.agent.credentialId);
+  w.pause(liveCredentialId(b.agent));
   await send(b, "b1");
   await send(c, "c1");
   expect(w.sup.isQueued(b.agent.id)).toBe(true);
@@ -477,7 +478,7 @@ test("a paused credential's entry is skipped without losing its place", async ()
   await w.settleAll();
   expect(started(c)).toBe(true);
   expect(started(b)).toBe(false);
-  w.sup.onCredentialReset(b.agent.credentialId);
+  w.sup.onCredentialReset(liveCredentialId(b.agent));
   await w.settleAll();
   expect(started(b)).toBe(false); // still no free slot
   const d = await w.agent();
@@ -500,7 +501,7 @@ test("a grant whose credential was paused since goes back to its place", async (
   // The pause lands between the grant (bookkeeping) and b's grant job.
   const original = b.grant.bind(b);
   vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
-    w.pause(b.agent.credentialId);
+    w.pause(liveCredentialId(b.agent));
     return original(reason);
   });
   endTurnAndExit(a);
@@ -532,7 +533,7 @@ test("after close(), sends, warm timers and resets start nothing", async () => {
     expect(w.sup.requestWake(c.agent.id, "message", true)).toBe("dropped");
     w.proc(b).releaseStop(); // the freed slot goes to nobody
     await send(c, "after close");
-    w.sup.onCredentialReset(c.agent.credentialId);
+    w.sup.onCredentialReset(liveCredentialId(c.agent));
     await vi.advanceTimersByTimeAsync(71 * 60_000);
     await w.settleAll();
     expect(started(c)).toBe(false);

@@ -226,6 +226,80 @@ test("remove: an FK violation from a racing grant maps to 409 credential_in_use"
   }
 });
 
+async function spawnedUsing(
+  slug: string,
+  spawnerId: string,
+  credentialName: string,
+  terminated = false,
+) {
+  const c = await rowOf(credentialName);
+  const id = `${slug}-id`;
+  await t.db.insert(schema.agents).values({
+    id,
+    slug,
+    displayName: slug,
+    template: "t",
+    config: {} as never,
+    runtime: "local",
+    kind: "ephemeral",
+    reportsTo: spawnerId,
+    credentialId: c.id,
+    terminatedAt: terminated ? new Date() : null,
+    terminatedBy: terminated ? "lead" : null,
+  });
+  return id;
+}
+
+test("#30: a credential used only by a terminated agent deletes and nulls its reference", async () => {
+  result = { ok: true };
+  await svc.create({ name: "gone", kind: "api_key", value: "k" });
+  const lead = await agentUsing("lead1", "gone");
+  // The spawner moves off; only the terminated kid still references it.
+  await svc.create({ name: "elsewhere", kind: "api_key", value: "k" });
+  await t.db
+    .update(schema.agents)
+    .set({ credentialId: (await rowOf("elsewhere")).id })
+    .where(eq(schema.agents.id, lead));
+  const kid = await spawnedUsing("kid-t1", lead, "gone", true);
+  await svc.remove("gone");
+  const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, kid));
+  expect(row?.credentialId).toBeNull();
+});
+
+test("#30: a live spawned user is named as its spawner, once", async () => {
+  result = { ok: true };
+  await svc.create({ name: "lent", kind: "api_key", value: "k" });
+  const lead = await agentUsing("lead", "lent");
+  await spawnedUsing("kid-a", lead, "lent");
+  await spawnedUsing("kid-b", lead, "lent");
+  await spawnedUsing("kid-dead", lead, "lent", true);
+  await expect(svc.remove("lent")).rejects.toMatchObject({
+    status: 409,
+    code: "credential_in_use",
+    message: "Used by @lead. Change their credential first.",
+    extra: { usedBy: ["lead"], archivedUsedBy: [] },
+  });
+});
+
+test("#30: a live user inserted between the check and the delete is a 409 (the 23514 path)", async () => {
+  result = { ok: true };
+  await svc.create({ name: "race30", kind: "api_key", value: "k" });
+  await agentUsing("racer30", "race30");
+  const spy = vi
+    .spyOn(svc as unknown as { users: (id: string) => Promise<unknown> }, "users")
+    .mockResolvedValueOnce({ active: [], archived: [] });
+  try {
+    await expect(svc.remove("race30")).rejects.toMatchObject({
+      status: 409,
+      code: "credential_in_use",
+      extra: { usedBy: ["racer30"] },
+    });
+  } finally {
+    spy.mockRestore();
+  }
+  expect((await svc.list()).map((c) => c.name)).toContain("race30");
+});
+
 test("remove when unused succeeds", async () => {
   await svc.create({ name: "spare", kind: "api_key", value: "k" });
   await svc.remove("spare");

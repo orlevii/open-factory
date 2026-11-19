@@ -46,6 +46,7 @@ import {
 } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow, Tx } from "./event-store.ts";
+import { liveCredentialId } from "./live-credential.ts";
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
@@ -2066,7 +2067,7 @@ export class AgentRuntime {
         "rate limit reached but no reset time was reported; retrying in 30 minutes",
       );
     const p = await this.d.store.pauseCredential(
-      this.agent.credentialId,
+      liveCredentialId(this.agent),
       new Date(exact ? reported : now + RATE_LIMIT_FALLBACK_MS),
       exact,
     );
@@ -2076,7 +2077,7 @@ export class AgentRuntime {
       until: p.until.toISOString(),
       exact: p.exact,
     });
-    this.slots.pause(this.agent.credentialId, p.until, p.exact);
+    this.slots.pause(liveCredentialId(this.agent), p.until, p.exact);
   }
 
   /** Spec §7.3: a turn that saw a `rate_limited` event ended; owe one continue notice unless one is owed already. */

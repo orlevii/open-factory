@@ -13,6 +13,7 @@ import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 import { AgentArchivedError, AgentStartError } from "./errors.ts";
+import { liveCredentialId } from "./live-credential.ts";
 import { buildAgentEnv, buildRuntimeSpec } from "./runtime-spec.ts";
 
 /**
@@ -85,10 +86,10 @@ export function createPrepareStart(d: {
       const [cred] = await d.db
         .select()
         .from(schema.credentials)
-        .where(eq(schema.credentials.id, agent.credentialId));
+        .where(eq(schema.credentials.id, liveCredentialId(agent)));
       if (!cred) {
         throw new AgentStartError(
-          `Credential ${agent.credentialId} no longer exists. Edit the agent and choose a credential.`,
+          `Credential ${liveCredentialId(agent)} no longer exists. Edit the agent and choose a credential.`,
           "edit_agent",
         );
       }

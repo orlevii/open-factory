@@ -29,6 +29,7 @@ import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
+import { liveCredentialId } from "./live-credential.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
 import { noForward, noopTokens, sendAs, silentLog } from "./testing/runtime-harness.ts";
@@ -454,7 +455,7 @@ test("the closing latch between ensure and launch: the container is stopped and 
 test("a credential pause between ensure and launch: the container is stopped and the wake re-queued", async () => {
   const w = await setup();
   afterEnsure(w, () =>
-    w.runtimes.supervisor.pause(w.agent.credentialId, new Date(Date.now() + 3_600_000), true),
+    w.runtimes.supervisor.pause(liveCredentialId(w.agent), new Date(Date.now() + 3_600_000), true),
   );
   await send(w);
   await until(() => expect(opsAfterStart(w)).toContain("stop"));

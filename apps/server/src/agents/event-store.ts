@@ -218,7 +218,7 @@ export class EventStore {
   async setNoticeOwed(agentId: string, owed: boolean) {
     await this.db.update(agents).set({ rateLimitNoticeOwed: owed }).where(eq(agents.id, agentId));
   }
-  /** The non-archived agents on the credential that are owed a continue notice. */
+  /** The live (not archived, not terminated) agents on the credential that are owed a continue notice. */
   async owedAgents(credentialId: string): Promise<{ id: string; slug: string }[]> {
     return this.db
       .select({ id: agents.id, slug: agents.slug })
@@ -228,6 +228,7 @@ export class EventStore {
           eq(agents.credentialId, credentialId),
           eq(agents.rateLimitNoticeOwed, true),
           isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
         ),
       )
       .orderBy(asc(agents.slug));

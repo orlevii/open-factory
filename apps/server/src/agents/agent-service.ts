@@ -144,7 +144,7 @@ export class AgentService {
           runtime: r.runtime,
           reportsTo: i.reportsTo,
           reports: reportCount.get(r.id) ?? 0,
-          credential: credName.get(r.credentialId) ?? "",
+          credential: credName.get(r.credentialId ?? "") ?? null,
           projects: (projectsOf.get(r.id) ?? []).sort(),
           grantsOverridden: r.grantsOverridden,
           depth,

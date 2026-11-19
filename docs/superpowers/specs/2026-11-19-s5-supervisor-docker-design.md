@@ -1,7 +1,7 @@
 # S5 Supervisor and Docker runtime: Technical Design
 
 - **Date:** 2026-11-19
-- **Status:** approved by owner-proxy (owner-s5); pending Or's review on the low-certainty items (§21)
+- **Status:** approved by owner-proxy (owner-s5), revised after the spec self-review and the impeccable UI review; pending Or's review on the low-certainty items (§21)
 - **Roadmap spec:** `docs/product/roadmap/v0.1/s05-supervisor-docker.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s5-supervisor-ui-design.md`](../designs/2026-11-19-s5-supervisor-ui-design.md)
 - **Product sources of truth:** `docs/product/architecture/agent-runtime.md`, `harness-driver.md`, `base-image.md`, `workspace.md`, `permissions.md`, `system-overview.md`, `data-model.md`; `docs/product/concepts/agent.md`, `session.md`, `message.md`, `schedule.md`, `credential.md`; `docs/product/behavior/agents-and-sessions.md`; ADRs 0008, 0009, 0010, 0011, 0013, 0018; `docs/product/open-questions.md` ("Verified during design", the S0 findings).
@@ -18,18 +18,18 @@ Agents behave as the product describes: a message wakes a hibernated agent, it s
 
 ## 2. Acceptance criteria
 
-From the roadmap, made testable:
+From the roadmap, made testable. ACs 1, 2, 4 (Docker), 5 and 6 (Docker) are proven by the gated Docker tests (§18.4) and the live check (§18.5), not by default CI; the rest by default CI.
 
 1. **Wake from Docker.** A message to a hibernated `runtime: docker` agent creates or starts its container, resumes the session, and the agent answers with its earlier memory intact (it recalls a word from a turn before hibernation).
-2. **Busy never hibernates.** An agent running a background `sleep 600` is still running when its warm window expires; it hibernates only after the task ends and the window then elapses. The agent strip shows "Waiting on: sleep 600 (background, …)".
-3. **Cap.** With `FACTORY_MAX_RUNNING_AGENTS=2` and two agents mid-turn, a third woken agent shows `queued` and starts when a slot frees up. With two idle-warm agents, the third starts at once and the least recently active idle agent hibernates ("Hibernated to free a slot").
-4. **Crash.** Killing Claude mid-turn (SIGKILL) kills its leftover background shells, marks the agent `errored`, and makes exactly one automatic resume whose first turn is a factory notice; the agent recovers. If that resume also fails, the agent stays `errored` and offers Restart.
+2. **Busy never hibernates.** An agent with a live background task is still running when its warm window expires; it hibernates only after the task ends and the window then elapses. The strip shows the task under "Waiting on" (fake driver: exact description; live check: a `sleep 600` whose description contains `sleep`).
+3. **Cap.** With `FACTORY_MAX_RUNNING_AGENTS=2` and two agents mid-turn, a third woken agent shows `queued` and starts when a slot frees up. With two idle-warm agents, a third wake makes the least recently active one hibernate ("Hibernated to free a slot") and starts as soon as that process has exited.
+4. **Crash.** Killing Claude mid-turn (SIGKILL) kills its leftover background shells, marks the agent `errored`, and makes exactly one automatic resume whose first batch begins with a factory notice; the agent recovers. If that resume also fails, the agent stays `errored` and offers Restart.
 5. **Ownership and parity.** Files a Docker agent writes into a granted project are owned by the host user, and `git worktree list` gives the same output on the host and in the container.
-6. **Factory restart.** Restarting the server while agents run (local and Docker) leaves no orphaned Claude process or running container, never runs two processes for one session, and wakes agents that had pending messages.
-7. **Rate limit.** A `rejected` rate-limit event (fake driver, documented shape) pauses wakes and deliveries for agents on that credential only, shows `rate_limited until HH:MM`, and at reset the cut-off agent gets one continue notice.
+6. **Factory restart.** Restarting the server while agents run (local and Docker) leaves no orphaned Claude process or running container and never runs two processes for one session. Agents that had pending messages wake; agents that were mid-turn or had live background tasks get one notice-led resume.
+7. **Rate limit.** A `rejected` rate-limit event (fake driver, documented shape) pauses wakes and deliveries for agents on that credential only, shows `rate_limited` with its time, and at reset the cut-off agent gets one continue notice.
 8. **Local gate.** With `FACTORY_ALLOW_LOCAL_RUNTIME` unset, a local agent doesn't start and says why; with it set, it runs and shows Unsandboxed.
-9. **No host escape through the workspace.** Each planted escape in §11.4 fails closed (regression tests).
-10. CI is green. The live check (§18.5) has been run once with Docker and its output, plus a manual pass through ACs 1–8 in the browser, is recorded in the PR.
+9. **No host escape through the workspace.** Each planted escape in §11.4 and §11.7 fails closed (regression tests).
+10. CI is green. The gated Docker tests and the live check (§18.5) have been run once and their output, plus a manual pass through ACs 1–8 in the browser, is recorded in the PR.
 
 ## 3. Scope
 
@@ -40,7 +40,7 @@ From the roadmap, made testable:
 - crash handling: leftover cleanup, one automatic resume with a factory notice, Restart, "Start a new session";
 - the Docker launcher: container lifecycle with dockerode, exec transport, mount builder with an allow-check, image pull and re-create;
 - the local process-tree journal and the `allow_local_runtime` gate;
-- workspace hardening before Docker isolation (template copy out of the workdir, symlink-safe host writes);
+- workspace hardening before Docker isolation (factory-owned state and plugins outside the workdir, symlink-safe host writes, staged re-sync);
 - `system` messages from `@factory`;
 - UI: the new statuses, waiting-on, Restart, Start a new session, lifecycle lines, runtime badges.
 
@@ -64,15 +64,15 @@ routes (send, compact, interrupt, restart, reset-session)
 AgentRuntimes ──► AgentRuntime (per agent, S3 serial job queue)
   │                 ├─ delivery queue, urgent hold, turns (S3)
   │                 ├─ busy: open turn, live non-ambient tasks, owed notifications, live crons (pin)
-  │                 ├─ warm timer, hibernate(reason), crash policy, escalation
-  │                 └─ reports idle/busy/exit/rate-limit to the Supervisor
+  │                 ├─ warm timer, hibernate path, crash policy, escalation
+  │                 └─ reports hibernatable / exit / rate limit to the Supervisor
   │
-  ├─ Supervisor (one per server): cap, FIFO wake queue, eviction, credential pauses, boot reconciliation
+  ├─ Supervisor (one per server): cap, FIFO wake queue, eviction, credential pauses, closing latch, boot reconciliation
   │
-  └─ start path: Supervisor grants a slot → prepareStart (workspace lock) → Launcher
+  └─ start path: Supervisor grants a slot → (Docker: image present) → prepareStart (workspace lock) → Launcher
                      Launcher(local):  LocalTransport (child_process) + ProcessJournal
                      Launcher(docker): ContainerManager (dockerode) → DockerExecTransport
-                                         ↑ MountBuilder + allow-check
+                                         ↑ buildMounts + checkMounts
                   ClaudeProcess (S3, now over a Transport): mapper, NDJSON writes, stop()
 ```
 
@@ -80,49 +80,63 @@ AgentRuntimes ──► AgentRuntime (per agent, S3 serial job queue)
 |---|---|---|
 | `Transport` interface, `LocalTransport` | `packages/harness/src/transport/` | Byte-level stdio, exit, terminate (SIGTERM-equivalent), forceKill. `ClaudeProcess` keeps the mapper, writes and the stop sequence, and now runs over a transport. |
 | `DockerExecTransport` | `apps/server/src/runtime/docker/exec-transport.ts` | The hijacked exec stream, stdin half-close, demuxed stdout/stderr, exit code from exec inspect, in-container `kill -TERM` (§11.3). |
-| `ContainerManager` | `apps/server/src/runtime/docker/containers.ts` | Create (hardened options), start, ready-marker wait, stop, remove, re-create on spec-hash change, image pull, listing by label (reconciliation). |
+| `ContainerManager` | `apps/server/src/runtime/docker/containers.ts` | Image presence and pull, create (hardened options), start, ready-marker wait, stop, remove, re-create on spec-hash change, listing by label. |
 | `buildMounts` + `checkMounts` | `apps/server/src/workspace/mounts.ts` (S4's file) | Mounts from factory-owned inputs only; the allow-check (§11.4). |
-| `ProcessJournal` | `apps/server/src/runtime/local/journal.ts` | Descendant snapshots, the persisted journal, verified reaping (§12). |
-| `Supervisor` | `apps/server/src/supervisor/supervisor.ts` | Slots, the wake queue, eviction, credential pauses, reset timers, boot reconciliation orchestration. |
+| `SafeFs` | `apps/server/src/workspace/safe-fs.ts` | Symlink-safe writes, copies and deletes under a workdir (§11.4 part 3). |
+| `ProcessJournal` | `apps/server/src/runtime/local/journal.ts` | Descendant snapshots and verified reaping (§12). |
+| `Supervisor` | `apps/server/src/supervisor/supervisor.ts` | Slots, the wake queue, eviction, credential pauses and reset timers, the closing latch, boot reconciliation. |
 | `statusOf` | `packages/shared/src/status.ts` | The one pure precedence function (§8.1). |
 | `classifyResumeFailure` | `apps/server/src/agents/resume-failure.ts` | Unrecoverable vs ordinary resume failures (§9.3). |
-| `systemNotice` builders | `apps/server/src/agents/notices.ts` | The fixed texts of every `@factory` message (§9.5). |
+| notice builders | `apps/server/src/agents/notices.ts` | The fixed texts of every `@factory` message (§9.5). |
 
-Nothing outside `packages/harness/src/claude/` knows a stream-json field name (S3 rule, unchanged). Nothing outside `runtime/docker/` imports dockerode.
+Nothing outside `packages/harness/src/claude/` knows a stream-json field name (S3 rule). Nothing outside `runtime/docker/` imports dockerode.
 
 ## 5. Supervisor
 
 ### 5.1 Why not pg-boss (decision Q1)
 
-The roadmap says wake requests run through pg-boss. S5 doesn't: a slot is held by a **live process**, not by a job, and "who is waiting" is already durable as `pending` message rows. A pg-boss queue would be a second copy of that truth and a job model that doesn't fit long-lived processes. The wake queue is in memory, owned by one `Supervisor`, and rebuilt at boot from the database (§5.6). pg-boss arrives with the first durable timer (S6 debounce or S9 schedules). The product docs' wording is listed for the lead (§20).
+The roadmap says wake requests run through pg-boss. S5 doesn't: a slot is held by a **live process**, not by a job, and "who is waiting" is already durable as `pending` message rows. A pg-boss queue would be a second copy of that truth and a job model that doesn't fit long-lived processes. The wake queue is in memory, owned by one `Supervisor`, and rebuilt at boot from the database (§5.7). pg-boss arrives with the first durable timer (S6 debounce or S9 schedules). The product docs' wording is listed for the lead (§20).
 
 ### 5.2 Slots and the cap
 
 - `FACTORY_MAX_RUNNING_AGENTS` (default 8, min 1) in `config.ts`. The Supervisor is the only owner of the cap.
-- A **slot** is held from the moment a start is granted (before `prepareStart`) until the process has exited and, for Docker, its container is stopped. Warm-idle processes hold slots (product rule).
-- `requestWake(agentId, reason)` is the only way a process starts. Callers: a send or compact API job, a crash recovery attempt, Restart, Start a new session, a rate-limit reset, boot reconciliation, the end of an apply-restart with items queued. It returns `"started"` (granted and started inside the caller's job, so S3's synchronous `503 agent_start_failed` still works when the start fails) or `"queued"`.
-- Granting order: strict FIFO by request time, except that an entry whose credential is paused (§7) is skipped without losing its place; it becomes eligible again at reset.
+- A **slot** is held from the moment a start is granted until the process has exited and, for Docker, its container is stopped. Warm-idle processes hold slots (product rule).
+- **Every exit releases the slot** once the exit is recorded and (Docker) the container is stopped, with one exception: `stop_failed` (§9.6) keeps it, because a process may still run. Releases happen inside the agent's `exited` job; a recovery start that follows requests a new slot like any other wake (the cap and FIFO apply to it).
+- `requestWake(agentId, reason)` is the only way a process starts. Callers: a send or compact API job, crash recovery, Restart, Start a new session, a rate-limit reset, boot reconciliation, the end of a hibernate with items still queued. A wake is **only granted when the agent has a deliverable item** (a pending message or notice, or a queued compact): after `--resume`, `system/init` only arrives after a user line is written (S3 Q23), so a start with nothing to write would never confirm. Restart and the recovery paths always create a notice first, so they always have one.
+- **Dedupe:** at most one queue entry per agent; a second request for a queued agent keeps the original place. A wake for an agent that is running, starting, archived, `stop_failed`, `resume_unrecoverable`, or errored (unless the caller is a recovery path, §9) is dropped.
+- **Granting order:** strict FIFO by first request time. An entry whose agent's credential is currently paused (§7) is skipped without losing its place and becomes eligible at reset. The credential is read at grant time, so a credential change while queued takes effect.
 
 ### 5.3 Early hibernation when the cap is full (decision Q2)
 
-When a wake is queued and some slot holder is **hibernatable** (§6.3: idle, not busy, not pinned, nothing queued for it, no restart in progress), the Supervisor hibernates the least recently active one (`lastActivityAt`: the last turn end, delivery or start) with reason `freed_slot`, through the same hibernate path as warm-window expiry. The freed slot goes to the head of the wake queue. Busy, pinned and mid-turn agents are never evicted. The queue waits only while every slot is busy or pinned.
+When the queue has an eligible entry and every slot is held, the Supervisor picks the **least recently active hibernatable** holder (`lastActivityAt`: the last turn end, delivery or start; §6.3) that isn't already being evicted, records it in `pendingEvictions`, and asks it to hibernate with reason `freed_slot`. In the victim's job, hibernatable is **re-checked**; if it no longer holds (a message arrived meanwhile), the victim refuses, leaves `pendingEvictions`, and the Supervisor picks again. At most one eviction is in flight per eligible queue entry (`pendingEvictions.size ≤ eligible entries`). When the victim's exit releases its slot, the slot goes to the head of the queue. Busy, pinned and mid-turn agents are never evicted. The Supervisor re-runs this whenever an agent becomes hibernatable while the queue has eligible entries.
 
 ### 5.4 Queued status
 
-An agent with a wake in the queue is `queued` (unless a higher-precedence status applies, §8.1). The queued wake is in memory; the messages that caused it are durable, so nothing is lost if the server stops.
+An agent with an entry in the wake queue is `queued` (unless a higher-precedence status applies, §8.1). The entry is in memory; what caused it is durable (message rows, notices), so nothing is lost if the server stops.
 
-### 5.5 Wake as a job
+### 5.5 Jobs and the deadlock rules
 
-A granted wake runs `AgentRuntime.start()` as a job on that agent's serial queue: `prepareStart` (§10), then the launcher, then `process_started`, then flush (S3). A start failure releases the slot at once. A wake for an agent that is already running, archived, errored (except the explicit recovery callers), or whose start is already in flight is dropped.
+S3's per-agent serial job queue stays the only serialization. Two kinds of runtime methods exist:
 
-### 5.6 Boot reconciliation (decision Q5)
+- **Internal primitives**, callable only from inside that agent's own job: `startNow(reason)` (prepare, launch, `process_started`, flush), `beginHibernate(reason)`, `beginForceStop()`. They never await anything that is itself a job of the same agent. Stops are started and **not awaited** (S4's rule): `proc.stop(...)` is called and its promise observed outside the job; the work that must follow the exit (release the slot, stop the container, wake again, escalate) runs in the `exited` job, driven by an `afterExit` intent recorded when the stop began: `{kind: "hibernate", reason}` | `{kind: "crash"}` | `{kind: "restart", by}` | `{kind: "reset", by}`.
+- **Public methods** (`sendMessage`, `compact`, `interrupt`, `restart`, `resetSession`, `hibernate(reason)`, `requestRestart`, `grant(slot)`) each enqueue one job that calls the primitives.
+
+The Supervisor never awaits an agent's job from inside another job. Granting a slot to agent B from agent A's job (A just released) only **enqueues** B's `grant` job. A grant to the requesting agent itself (a send whose wake is granted at once) runs `startNow` inline in that same job, so S3's synchronous `503 agent_start_failed` keeps working for an immediate start failure. A granted start whose job finds the agent no longer startable (archived, stopping, closing) releases the slot at once.
+
+### 5.6 Closing latch (shutdown)
+
+`app.close()` first sets `Supervisor.closing`: no new grants, the wake queue frozen (entries dropped; their causes are durable), every warm, eviction, owed-notification and rate-limit timer cleared, and each runtime's `noStart` latch set, so no send, timer or reset can start a process after shutdown begins. Only then does it hibernate every running runtime (§6.6).
+
+### 5.7 Boot reconciliation (decisions Q5, R2)
 
 Runs in `buildApp` after migrations and **before the server listens**:
 
-1. **Local leftovers.** For every agent row with a `process_journal` (§12): verify and reap Claude and its journaled descendants (SIGTERM, 3 s, SIGKILL, each pid only if its start time matches), then clear the journal.
-2. **Docker leftovers.** List containers labelled `io.open-factory.agent-id`. For each whose agent id exists in this database: if running, stop it (timeout 5 s); keep it otherwise. Containers whose agent id isn't in this database belong to another factory (or a deleted agent) and are left alone, logged once at info.
-3. **Dangling state.** Turns with `ended_at` null are closed with `terminal_reason = "factory_restarted"`, `is_error = true`. For each agent that had a dangling turn or a reaped process, a `reconciled{killedProcesses, stoppedContainer}` event is appended, and a `background_work_lost` event if its journal named live background tasks (§9.4).
-4. **Wakes.** For every non-archived, non-errored agent with pending messages, `requestWake(…, "boot")`, ordered by the agent's oldest pending message so FIFO survives the restart. Agents owed a rate-limit continue notice whose credential has reset get it (§7.3). Errored agents are not woken. Agents that were merely warm stay hibernated.
+1. **Local leftovers.** For every local agent whose `runtime_journal` (§12) names a Claude process: reap Claude and its journaled descendants (verified by start time, §12).
+2. **Docker leftovers.** List containers labelled `io.open-factory.agent-id`. For each whose agent id exists in this database: if running, stop it (a Claude whose exec lost its client sees stdin EOF and keeps draining background tasks inside, so the container stop is required before any resume). Containers whose agent id isn't in this database belong to another factory or a deleted agent and are left alone, logged once at info. If Docker is unreachable, the step logs a warn and is skipped; every Docker start stops a running container before it prepares anyway (§10), so a missed leftover can never run next to a new process.
+3. **Dangling state.** Turns with `ended_at` null are closed with `terminal_reason = "factory_restarted"`, `is_error = true`. Per affected agent a `reconciled{killedProcesses, stoppedContainer}` event is appended, plus `background_work_lost{reason: "factory_restarted"}` for the tasks and crons its journal recorded live (§9.4).
+4. **Interrupted work (R2).** A non-archived, non-errored agent that had a dangling turn (from the turn rows) or recorded live non-ambient tasks gets the "factory-restarted" notice (§9.5) and is woken. This counts as its **single automatic attempt** (§9.2), so a crash-looping server can't make agents spend tokens on every boot: if the agent was already in a recovery attempt (persisted `error_kind = "crash"` and `recovering`), it is set errored instead and not woken.
+5. **Wakes.** For every non-archived, non-errored agent with pending messages or notices, `requestWake(…, "boot")`, ordered by the agent's oldest pending item so FIFO survives the restart. Reset timers are re-armed for every credential with `rate_limited_until` in the future; credentials whose window passed are cleared and their owed continue notices created (§7.3). Agents that were merely warm with nothing pending stay hibernated.
+6. Every `runtime_journal` is cleared.
 
 Invariant: **never two processes for one session.** A test restarts the server with a live local agent and a live Docker agent (fake claude) and asserts there is exactly one process per agent afterwards.
 
@@ -133,68 +147,71 @@ Invariant: **never two processes for one session.** A test restarts the server w
 An agent is **busy** while any of these hold (S4's restart conditions, now shared):
 - the process is starting, a turn is open, a batch is in flight or awaiting its turn, a compact is in flight, or an urgent hold is active;
 - the live **non-ambient** background-task set is non-empty (from `background_tasks`, reset on `process_started`, S3/S4);
-- a notification turn is **owed** (S4's counter), with a new **30 s bound**: each `background_task_finished` arms a 30 s timer; when it fires with the counter still above zero, the counter resets to 0 and a warn log names the agent (fixes "an owed notification turn that never arrives blocks restart forever").
+- a notification turn is **owed** (S4's counter), with a new **30 s bound**: the timer is armed only while no turn is open (on `background_task_finished` with no open turn, and re-armed at each `turn_end` while the counter is above zero); when it fires with the counter still above zero and still no turn open, the counter resets to 0 and a warn log names the agent. It fixes "an owed notification turn that never arrives blocks restart forever" without firing during a running turn.
 
-`system/session_state_changed` is **not** used: it reports `idle` while a background task is still live (§19, closes #24).
+`system/session_state_changed` is **not** used: it reports `idle` while a background task is still live (§19 V1, closes #24).
 
 ### 6.2 Pinning by in-session crons (decision Q4)
 
-- `AgentRuntime` keeps the live cron set in memory from `cron_created` / `cron_deleted`: `{cronId, recurring, humanSchedule, nextFireAt, createdAt}`. It is reset on `process_started` and cleared on `exited` (crons die with the process, so memory is exactly the right lifetime).
+- `AgentRuntime` keeps the live cron set in memory from `cron_created` / `cron_deleted`: `{cronId, recurring, humanSchedule, nextFireAt, createdAt}`. It is reset on `process_started` and cleared on `exited` (crons die with the process). It is also written to `runtime_journal.crons` (§12) so boot can report lost crons.
 - A one-shot cron is dropped once its `nextFireAt` has passed **and** a turn with `originKind: "cron"` has ended after it (one-shots auto-delete with no `CronDelete`, S0). Any cron is dropped 7 days after `createdAt` (Claude's expiry).
 - **Pinned** = the set is non-empty. A pinned agent is never hibernated by the warm window or by eviction. It still holds its slot (accepted: up to 7 days). Explicit actions (apply-restart §6.5, Restart, shutdown, archive) still stop it, and the crons that were live are recorded as lost (§9.4).
 - S9 adds persistence, the badge and the kill action.
 
 ### 6.3 Hibernatable and the warm timer
 
-**Hibernatable** = process running and started, not busy, not pinned, the delivery queue for it is empty, not errored, no restart or stop in progress, its credential not paused with deliveries held (§7.2 holds them; a held delivery counts as "queued for it").
+**Hibernatable** = process running and started, not busy, not pinned, no restart, stop or recovery in progress, not errored, and nothing deliverable is queued for it **unless** its credential is paused (D1: held deliveries are pending rows the reset wakes, so a paused agent doesn't pin a slot for the whole window, which can be days).
 
-The **warm timer** (one per runtime) starts whenever the agent becomes hibernatable and is cancelled whenever it stops being so. Duration: the snapshot's `warm_window_minutes` (default 70). On expiry it enqueues a job that re-checks hibernatable and calls `hibernate("warm_window")`. Every job that can change the inputs re-evaluates it (turn end, background tasks, exits, deliveries, cron changes, pause changes): one function `updateWarmTimer()` at the end of `onEvent` and of every API job.
+The **warm timer** (one per runtime) starts whenever the agent becomes hibernatable and is cancelled whenever it stops being so. Duration: the snapshot's `warm_window_minutes` (default 70). On expiry it enqueues a job that re-checks hibernatable and calls `beginHibernate("warm_window")`. One function `updateWarmTimer()` runs at the end of every job (events, API calls, timers), so every input change re-evaluates it; it also notifies the Supervisor when the agent becomes hibernatable (§5.3).
 
 ### 6.4 The hibernate path (one path)
 
-`hibernate(reason)` with `reason ∈ warm_window | freed_slot | apply_changes | shutdown | archived` runs as a job and:
-1. sets `stopping` (S4 flag: no respawn, flush writes nothing);
-2. records the live non-ambient tasks and live crons; if any (only possible for `apply_changes`, `shutdown`, `archived`), appends `background_work_lost` (§9.4);
-3. calls `proc.stop({graceMs: 3000, termWaitMs: 10_000})` without awaiting it inside the job (S4's deadlock rule); the stop's promise is observed outside;
-4. on `exited` (any): for Docker, `ContainerManager.stop()` (timeout 5 s; the container is stopped, not removed); then appends `hibernated{reason}` and releases the slot;
-5. if the stop **timed out**, escalates (§9.6) instead of leaving the agent errored.
+`beginHibernate(reason)`, `reason ∈ warm_window | freed_slot | apply_changes | shutdown | archived`, inside a job:
+1. re-checks hibernatable for `warm_window` and `freed_slot` (a refusal returns, and for `freed_slot` tells the Supervisor); `apply_changes` checks only "not busy" (crons don't block it, §6.5); `shutdown` and `archived` don't check;
+2. sets `stopping` and records `afterExit = {kind: "hibernate", reason}`; **while `stopping`, `restarting` or `recovering` is set, `flush()` writes nothing** (a message sent during the stop stays queued instead of being written to a closing stdin);
+3. snapshots the live non-ambient tasks and crons (for §9.4);
+4. calls `proc.stop({graceMs: 3000, termWaitMs: 10_000})` without awaiting it.
+
+The `exited` job then: appends `background_work_lost` if the snapshot is non-empty; for Docker, stops the container (§11.3); appends `hibernated{reason, idleMinutes?}` (`idleMinutes` for `warm_window`); releases the slot; and, unless the reason is `shutdown` or `archived` or `closing` is set, calls `requestWake(…, "queued_items")` when the delivery queue is non-empty (fixes a message sent during the stop grace getting stuck). If the stop **timed out**, the escalation (§9.6) runs instead of leaving the agent errored.
 
 Hibernation keeps the session id, the working dir and the container.
 
 ### 6.5 Apply-restart under S5 (S4's `requestRestart`, decision Q17)
 
-`requestRestart` keeps S4's seam and callers. Its body becomes "hibernate when safe, then wake if needed":
+`requestRestart` keeps S4's seam and callers. Its body becomes "hibernate when not busy, then wake if needed":
 - It waits for everything that makes an agent busy (§6.1), **but not for crons**: a pin can last 7 days, and a revoked grant or credential must stop applying.
-- At the safe moment it calls `hibernate("apply_changes")`. If crons were live, they are recorded as lost and the agent is woken right away with a system notice (§9.5 "restart-crons") so it can recreate them. If items are queued, it is woken to deliver them (S4 behaviour). Otherwise it stays hibernated until the next message.
-- Docker: grants, image and mounts are part of the container spec hash (§11.2), so the next start re-creates the container when they changed. Secrets and the credential are exec env, so they never re-create it.
+- At the safe moment it runs `beginHibernate("apply_changes")`. If crons were live, the `exited` job creates the "restart-crons" notice (§9.5), so the agent wakes right away and can recreate them. If items are queued, it wakes to deliver them (S4 behaviour). Otherwise it stays hibernated until the next message.
+- Docker: grants, image and mounts are in the container spec hash (§11.2), so the next start re-creates the container when they changed. Secrets and the credential are exec env and never re-create it.
 
-S4 fixes included (listed in the PR's Changes): the 30 s owed-notification bound (§6.1); `ClaudeProcess.stop()` is idempotent (a second call returns the first call's promise, fixing the double `proc.stop`); a timed-out stop escalates (§9.6) instead of leaving the agent errored until a server restart.
+S4 fixes included (listed in the PR's Changes section, since they change S4 behaviour): the 30 s owed-notification bound (§6.1); `ClaudeProcess.stop()` is idempotent (a second call returns the first call's promise, fixing the double `proc.stop`); a timed-out stop escalates (§9.6) instead of leaving the agent errored until a server restart; flush is held during every stop.
 
 ### 6.6 Shutdown
 
-`app.close()` calls `hibernate("shutdown")` on every running runtime in parallel (S3 timing: close stdin, 3 s, SIGTERM, 10 s), then stops Docker containers (5 s), then waits for each job queue to drain. The force-exit budget in `shutdown.ts` rises from 20 s to **25 s** (3 + 10 + 5 s plus margin), with the comment updated. Lost background work is recorded (§9.4). Containers are stopped, never removed.
+After the closing latch (§5.6), `app.close()` runs `hibernate("shutdown")` on every running runtime in parallel (S3 timing: close stdin, 3 s, SIGTERM, 10 s; Docker containers are then stopped, which takes well under a second because a container stop kills every process in it once `tini` exits, §19 V8), then waits for each job queue to drain. S3's 20 s force-exit budget is unchanged. Lost background work is recorded (§9.4) and the agents that were mid-turn or had live tasks resume with a notice at the next boot (§5.7 step 4). Containers are stopped, never removed.
 
 ## 7. Rate limits (decisions Q3, Q18)
 
 ### 7.1 Detection
 
-Only the mapper's `rate_limited` event (S3: emitted only for `status: "rejected"`) pauses anything. `allowed_warning` stays a dropped line in the mapper (no pause); surfacing it is S10's usage work. The `rejected` shape is documented but unverified (S0); the fake-driver fixture is built from the documented SDK shape and labelled unverified.
+Only the mapper's `rate_limited` event (S3: emitted only for `status: "rejected"`) pauses anything. `allowed_warning` stays a dropped line in the mapper (no pause); surfacing it is S10's usage work. The `rejected` shape is documented but unverified (S0); the fixture is built from the documented SDK shape and labelled unverified.
 
 ### 7.2 Per-credential pause
 
-- `credentials.rate_limited_until timestamptz null` (additive). On a `rate_limited` event: `resetsAt` (epoch seconds) → `until`; if it is missing, unparseable or in the past, `until = now + 30 min` and a warn log says the reset time wasn't reported (`rate_limit_fallback = true` stored alongside, so no copy claims an exact time).
-- If a later event extends the window, the later `until` wins; it never shortens.
+- `credentials.rate_limited_until timestamptz null` and `credentials.rate_limit_exact boolean not null default true` (additive). On a `rate_limited` event: `resetsAt` (epoch seconds) → `until`, `exact = true`; if it is missing, unparseable or in the past, `until = now + 30 min`, `exact = false`, and a warn log says the reset time wasn't reported.
+- A later event that extends the window wins; it never shortens.
 - While `now < until` for a credential:
-  - wakes of agents on it are skipped in the FIFO (§5.2), keeping their place;
-  - running agents on it **hold deliveries**: `flush()` writes nothing (messages and compacts stay queued, visible as "Not delivered yet: rate limited until 14:30"). An urgent interrupt is still written (it costs no model call);
-  - an agent's status is `rate_limited` per §8.1.
-- A Supervisor timer per paused credential fires at `until`: it clears the column, then requests wakes (FIFO) for agents on it with pending items, and flushes running ones.
+  - queued wakes of agents on it are skipped (§5.2), keeping their place;
+  - running agents on it **hold deliveries**: `flush()` writes nothing (messages and compacts stay queued). An urgent interrupt is still written (it costs no model call);
+  - running agents on it are hibernatable when otherwise idle (§6.3, D1);
+  - an agent's status follows §8.1.
+- Events: `rate_limit_paused{credential, until, exact}` on the agent that hit the limit.
+- One Supervisor timer per paused credential fires at `until` (re-armed at boot, §5.7): it clears the columns, appends `rate_limit_reset{credential}` to each owed agent, creates the owed continue notices, requests wakes (FIFO) for agents on it with pending items, and flushes running ones.
 
 ### 7.3 The continue notice
 
-- When a turn ends after a `rate_limited` event in that same turn, the agent row gets `rate_limit_notice_owed = true` (additive boolean). At most one per cut-off turn: a second rejection while the flag is set doesn't add another.
-- At reset, each owed agent gets the system notice "rate-limit-reset" (§9.5) as a `system` message, so it rides the normal wake path (cap, FIFO). If messages are pending, the notice and the messages go out as **one** batch turn (the notice first). The flag clears when the notice is created.
-- The notice names the credential by its name and states the reset time only when it was reported (not on the fallback).
+- When a turn ends after a `rate_limited` event in that same turn, the agent row gets `rate_limit_notice_owed = true`. At most one per cut-off turn: a second rejection while the flag is set adds nothing.
+- At reset, each owed agent gets the "rate-limit-reset" notice (§9.5), which rides the normal wake path (cap, FIFO). If messages are pending, the notice and the messages go out as **one** batch turn with the notice first (§9.5 ordering). The flag clears when the notice is created.
+- The notice names the credential and states the reset time only when it was exact.
 
 ## 8. Status
 
@@ -203,180 +220,199 @@ Only the mapper's `rate_limited` event (S3: emitted only for `status: "rejected"
 `AgentStatus = hibernated | queued | working | idle | rate_limited | errored` (S7 adds `terminated`). Only `errored` is stored (S3 Q12). One pure function in `packages/shared` owns the precedence:
 
 ```
-statusOf({errored, working, credentialPaused, hasPendingWork, queuedWake, processRunning}):
-  errored                                   → errored
+statusOf({errored, recovering, working, credentialPaused, hasPendingWork, queuedWake, processRunning}):
+  recovering                                        → working   (the automatic recovery attempt is running)
+  errored                                           → errored
   working (starting, turn open, batch awaiting, compact in flight) → working
   credentialPaused && (processRunning || hasPendingWork || queuedWake) → rate_limited
-  queuedWake                                → queued
-  processRunning                            → idle
-  otherwise                                 → hibernated
+  queuedWake                                        → queued
+  processRunning                                    → idle
+  otherwise                                         → hibernated
 ```
 
-A hibernated agent with nothing pending on a paused credential stays `hibernated`. Table-driven tests cover every row, including errored on a paused credential (errored) and queued on a paused credential (rate_limited).
+`recovering` is set while the single automatic attempt (§9.2) runs, so the UI shows Working, not Errored, and offers no Restart in the middle of it. A hibernated agent with nothing pending on a paused credential stays `hibernated`. Table-driven tests cover every row, including errored on a paused credential (errored), queued on a paused credential (rate_limited) and recovering while errored (working).
 
 ### 8.2 The status frame
 
 `agent_status` and `AgentSummary` gain:
-- `rateLimitedUntil?: string` (ISO) and `rateLimitExact: boolean` (false on the fallback window);
-- `waitingOn: {tasks: {taskId, description, startedAt}[], crons: number}` (non-ambient tasks only; `startedAt` is the time the factory first saw the task; the client computes "3m"), empty when nothing keeps it awake;
-- `runtimeDisabled?: string` ("The local runtime is disabled on this factory.") for local agents while the gate is off (§13);
-- `errorKind?: "start" | "resume" | "resume_unrecoverable" | "crash" | "stop_failed" | "internal"`, which the UI uses to offer Restart or Start a new session;
+- `rateLimitedUntil?: string` (ISO) and `rateLimitExact?: boolean`;
+- `waitingOn: {tasks: {taskId, description, startedAt}[], crons: number}` (non-ambient tasks only; `startedAt` is when the factory first saw the task; the client computes "3m"), empty when nothing keeps it awake;
+- `runtimeDisabled?: string` for local agents while the gate is off (§13);
+- `errorKind?: "start" | "resume" | "resume_unrecoverable" | "crash" | "stop_failed" | "internal"`;
 - `image?: string` (Docker agents: the image reference of the last start).
 
-`GET /api/agents` also returns `running: {count, max}` (slots held and the cap), and a factory-wide `supervisor` frame `{type: "supervisor", running, max}` goes to every socket when either changes, so the Agents list can say "3 of 8 running" and a queued agent's wait is explainable.
-
-The frame stays deterministic (no relative times), so it's only republished when something changes.
+`GET /api/agents` also returns `running: {count, max}`, and a factory-wide `{type: "supervisor", running, max}` frame goes to every socket when either changes. The frames stay deterministic (no relative times), so they're only republished when something changes.
 
 ### 8.3 Persisted error
 
-`agents.last_error text null` and `agents.error_kind text null` (additive) persist `lastError` and its kind with `status = 'errored'`, so an errored agent still says why after a server restart. Cleared with the errored status.
+`agents.last_error text null`, `agents.error_kind text null` and `agents.recovering boolean not null default false` (additive) persist the error and its kind with `status = 'errored'`, so an errored agent still says why after a server restart. Cleared with the errored status.
 
 ## 9. Crashes and recovery (decisions Q6–Q8)
 
 ### 9.1 What counts as a crash
 
-An `exited` with `expected: false` (S3), including a Docker exec stream that ends without a stop, and a container that dies.
+An `exited` with `expected: false`, **whether or not the agent is already errored or recovering** (S3's `!e.expected && !this.errored` test is replaced, so a crash during a recovery attempt is still cleaned up): includes a Docker exec stream that ends without a stop, a container that dies, and an exec stream that ends while the container still reports running (treated as a crash; the container is stopped).
 
 ### 9.2 Policy
 
-On a crash, in one job:
-1. **Clean up leftovers first:** local, reap the journal (§12); Docker, restart the container (stop with 5 s timeout, which kills everything inside, then it's started again by the resume). A `cleanup{killedProcesses?}` event records it (Docker: `cleanup{container:"restarted"}`).
+In the `exited` job of a crash:
+1. **Clean up leftovers first:** local, reap the journal (§12); Docker, stop the container (it's started again by the next wake). A `cleanup{killedProcesses?, container?: "stopped"}` event records it.
 2. **Was anything lost?** If no turn was open, no non-ambient task and no cron was live, and nothing is queued: append the `exited` row, set **hibernated** (not errored), release the slot. No resume, no tokens.
-3. Otherwise: mark `errored` (`error_kind = "crash"`), append `background_work_lost` for the tasks and crons seen live (§9.4), create the system notice "crash" (§9.5), and `requestWake(…, "crash_recovery")`, **one automatic attempt**. The cap and the rate-limit pause apply to it.
-4. **Success** = the resumed process emits `session_started` **and** the turn carrying the notice ends without the process exiting. Then `errored` clears (S3's `session_started` clear moves to that `turn_end`). A crash during the attempt leaves the agent `errored` and makes no further automatic attempt.
-5. After that, only a **human** action makes another attempt: a message from a human (it starts the process as in S3) or Restart. Nothing the factory does on its own retries an errored agent (no loop).
+3. **A crash during the recovery attempt** (`recovering` was set): clear `recovering`, stay `errored` (`error_kind = "crash"`), release the slot, no further automatic attempt.
+4. Otherwise: set `errored` (`error_kind = "crash"`) and `recovering`, append `background_work_lost` for what was live (§9.4), create the "crash" notice (§9.5), release the slot, and `requestWake(…, "crash_recovery")`: **one automatic attempt**, through the cap, FIFO and the rate-limit pause.
+5. **Success** = the resumed process emits `session_started` **and** the turn that carried the notice ends with the process still running. Then `errored` and `recovering` clear. (S3 cleared errored on `session_started`; for a recovery it now waits for that turn.)
+6. After that, only a **human** action makes another attempt: a message from a human (it requests a wake as in S3; one attempt, same success rule) or Restart. Nothing the factory does on its own retries an errored agent: system notices never trigger a wake for an errored agent, and boot doesn't wake errored agents.
 
 ### 9.3 Resume failures (#19, decision Q7)
 
-`classifyResumeFailure(errorText, apiErrorStatus?)` is one function:
+A resume failure is the mapper's `error{source: "resume"}` before `session_started`; the runtime stops that process itself (S3), so its exit is **expected** and is not a §9.1 crash. It is the failed result of whichever attempt started the process (a human message, a recovery, Restart, a boot wake). `classifyResumeFailure(errorText, apiErrorStatus?)`, one function:
 - `"No conversation found with session ID"` (S0 fixture `error-resume-missing-session`) → **unrecoverable**;
 - a 400 whose text contains `diagnostics.previous_message_id` or `Could not process image` → **unrecoverable** (documented by the Agent SDK, **unverified**; the code and the test say so);
-- anything else → ordinary: the §9.2 policy (one attempt, then errored).
+- anything else → **ordinary**.
 
-An unrecoverable failure sets `errored`, `error_kind = "resume_unrecoverable"`: no automatic attempt, and new messages stay pending without triggering an attempt (the error says why). The UI offers **Start a new session** (§9.7).
+An ordinary failure sets `errored`, `error_kind = "resume"` and makes no automatic attempt of its own (the failed start *was* the attempt); a human message or Restart tries again, and Start a new session is also offered. An unrecoverable failure sets `error_kind = "resume_unrecoverable"`: no attempt from any source; new messages stay pending without triggering one (the error says why); only **Start a new session** recovers (§9.7). When unsure, don't wipe: anything unclassified is ordinary.
 
 ### 9.4 Lost work
 
-`background_work_lost{reason: "crash" | "apply_changes" | "shutdown" | "archived" | "restart", tasks: {taskId, description}[], crons: {cronId, humanSchedule}[]}` is appended when live non-ambient tasks or crons die with a process. It lists only what the factory saw live. A server log line at info carries the same, with the manager's slug ("would notify @lead"): S6 forwards it to the manager or the humans.
+`background_work_lost{reason: "crash" | "apply_changes" | "shutdown" | "archived" | "restart" | "factory_restarted", tasks: {taskId, description}[], crons: {cronId, humanSchedule}[]}` is appended when live non-ambient tasks or crons die with a process. It lists only what the factory saw live. A server log line at info carries the same, naming the manager ("would notify @lead"): S6 forwards it to the manager or the humans.
 
 ### 9.5 System messages from `@factory` (decision Q6 (i))
 
 - `messages.from_user_id` becomes nullable; `messages.kind` (already present) gains `system`; a CHECK constraint ties them: `(kind = 'system') = (from_user_id IS NULL)`. Additive: existing rows stay valid. No sentinel user.
-- System messages go through the same pending → delivered path, appear in the queue (`from: "@factory"`), render with a "Factory" badge, and are delivered as `<factory-message from="@factory" kind="system" …>`. `FactoryMessage.kind` widens to `"message" | "system"`. The S4 CLAUDE.md "How messages reach you" section gains one sentence: "Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits)."
+- System messages go through the same pending → delivered path, appear in the queue (`from: "@factory"`), and are delivered as `<factory-message from="@factory" kind="system" …>`. `FactoryMessage.kind` widens to `"message" | "system"`, and `toFactory` passes the row's kind (S3 hard-codes `"message"`).
+- **Ordering:** a notice goes to the **head** of the delivery queue, ahead of older pending messages and rolled-back batches, so the first batch after a crash, restart or reset begins with it. `pendingQueue` orders `kind = 'system'` first, then `created_at`, and **left**-joins `users` (S3's inner join would drop sender-less rows). One notice of each type per agent at a time: creating one while an undelivered one of the same type exists replaces its body.
+- The S4 CLAUDE.md "How messages reach you" section gains one sentence: "Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits)."
 - Texts (`notices.ts`), every claim literally true:
-  - **crash:** "Your previous process exited unexpectedly (exit code 137) during a turn. These background tasks were stopped: `pnpm test` (shell). These in-session scheduled jobs were stopped: every 5 minutes. Check the state of that work and continue where you left off." (each list omitted when empty; "during a turn" only when a turn was open);
+  - **crash:** "Your previous process stopped unexpectedly (exit code 137) during a turn. These background tasks were stopped: `pnpm test`. These crons were stopped: every 5 minutes. Check the state of that work and continue where you left off." ("exit code N" or "signal SIGKILL" as reported; "during a turn" only when a turn was open; each list omitted when empty);
+  - **factory-restarted:** "The factory restarted while you were working. These background tasks were stopped: …. Check the state of that work and continue where you left off.";
   - **restart:** "Restarted by @or after an error." (+ the lost lists when non-empty);
-  - **restart-crons:** "Your session was restarted to apply configuration changes. These in-session scheduled jobs were stopped: …. Recreate them if you still need them.";
-  - **rate-limit-reset:** "The rate limit on credential work reset at 14:30. Continue where you left off." (without "at 14:30" on the fallback window).
+  - **restart-crons:** "Your session was restarted to apply configuration changes. These crons were stopped: …. Recreate them if you still need them.";
+  - **rate-limit-reset:** "The rate limit on credential `work` reset at 14:30. Continue where you left off." (without "at 14:30" when the window wasn't exact).
 
 ### 9.6 Escalation of a stop that won't finish (decision Q8)
 
-When `stop()` resolves `{timedOut: true}` (no exit after close-stdin, grace and SIGTERM):
+When `stop()` resolves `{timedOut: true}` (no exit after close-stdin, grace and SIGTERM), a job runs:
 - **local:** SIGKILL Claude, then reap the journal (§12);
-- **Docker:** `ContainerManager.stop()` with a 5 s timeout (Docker SIGKILLs everything when it expires).
+- **Docker:** stop the container (immediate: everything in it dies).
 
-A `stop_escalated{how: "sigkill" | "container_stop"}` event records it. If the escalation also fails (the pid survives SIGKILL, the Docker API errors), the agent becomes `errored` with `error_kind = "stop_failed"`, and its slot is **kept** (a process may still be running) until Restart succeeds.
+A `stop_escalated{how: "sigkill" | "container_stop"}` event records it, then the normal `exited` handling runs with the recorded `afterExit`. If the escalation also fails (the pid survives SIGKILL, the Docker API errors), the agent becomes `errored` with `error_kind = "stop_failed"` and **keeps its slot** (a process may still run); every wake is refused for it except Restart, which reuses that slot.
 
 ### 9.7 Actions
 
-- **`POST /api/agents/:slug/restart`** (Restart; `409 not_errored` unless errored): force-stops whatever is left (the §9.6 escalation, immediately: SIGTERM, bounded wait, SIGKILL plus journal reap; or a container restart), appends `control{cmd:"restart", by}`, creates the "restart" notice, and `requestWake(…, "restart")`. Available for every `error_kind` except `resume_unrecoverable` (Restart can't fix that; the 409 says to start a new session). A failed Restart leaves the agent errored with the reason, no automatic retry.
-- **`POST /api/agents/:slug/reset-session`** (Start a new session; allowed only when errored with `error_kind ∈ {resume, resume_unrecoverable}`, else `409`): clears `session_id`, appends `session_reset{by}`, clears errored, and `requestWake(…, "reset")` if messages are pending (they become the first turn of the new session). The old session JSONL stays on disk (a fresh id already stops it being resumed). The UI confirms first (irreversible: the agent loses its conversation memory; the timeline keeps the history).
+- **`POST /api/agents/:slug/restart`** (Restart). `409 not_errored` unless errored; `409 recovering` while the automatic attempt runs; `409 resume_unrecoverable` (with "Start a new session instead."); `409 runtime_disabled` while the local gate is off. In a job: create the "restart" notice, append `control{cmd: "restart", by}`, then if a process or container is left, `beginForceStop()` (SIGTERM, 3 s, then SIGKILL plus journal reap; Docker: container stop) with `afterExit = {kind: "restart", by}`, whose `exited` job requests the wake; otherwise request the wake now (a `stop_failed` agent reuses its slot). One attempt; a failure leaves the agent errored with the reason.
+- **`POST /api/agents/:slug/reset-session`** (Start a new session). Allowed only when errored with `error_kind ∈ {resume, resume_unrecoverable}` (else `409`). In a job: clear `session_id`, append `session_reset{by}`, clear errored, and `requestWake(…, "reset")` if anything is pending (it becomes the first turn of the new session). The old session JSONL stays on disk (a fresh id already stops it being resumed). The UI confirms first.
 - `pnpm agent:reset-session` and `apps/server/scripts/reset-session.ts` are **deleted**, and the S4 session copy that names it is replaced by the action.
 
-## 10. Start path (`prepareStart` under S5)
+## 10. Start path (`startNow` and `prepareStart` under S5)
 
-S4's `createPrepareStart` keeps its contract and lock, with these changes:
-1. **Runtime gate** (§13): a local agent with the gate off fails before anything else: `AgentStartError("The local runtime is disabled on this factory. Set FACTORY_ALLOW_LOCAL_RUNTIME=true to run agents unsandboxed.", "runtime")`.
-2. **Docker:** the container is **stopped** before `Workspace.prepare` runs (a hibernated agent's container is already stopped; a crash recovery stops it first), so nothing inside it can race the host-side checks (§11.4). Then `prepare`, then `ContainerManager.ensure(spec)` (create or re-create, start, ready marker), then the exec transport.
-3. `buildAgentEnv(serverEnv, extra, runtime)` gains the runtime parameter (§11.5).
-4. S4's "The Docker runtime isn't available yet." is removed, with its test.
+`startNow(reason)`, inside the agent's job, with a slot granted:
+1. **Runtime gate** (§13): a local agent with the gate off fails first: `AgentStartError("The local runtime is disabled on this factory. Set FACTORY_ALLOW_LOCAL_RUNTIME=true to run agents unsandboxed.", "runtime")`.
+2. **Docker: the container is stopped** if it is running (whatever left it running: a missed reconciliation, a dropped exec stream), so nothing inside it can race the host-side checks and no leftover Claude runs beside the new one. The image must already be present (§11.2: pulls happen before the grant, outside the job).
+3. S4's `prepareStart` (workspace lock, `Workspace.prepare`, env), with: the factory-owned state and plugin layout (§11.4, §11.7); staged re-sync files applied (§11.4 part 4); `buildAgentEnv(serverEnv, extra, runtime)` (§11.5).
+4. Docker: `ContainerManager.ensure(spec)` (create or re-create by spec hash, start, ready marker; §11.1, §11.2), outside the workspace lock. Then the exec transport.
+5. `process_started{resumed, reason}` and flush.
+
+S4's "The Docker runtime isn't available yet." is removed, with its test. The one-time Claude version check runs only for local agents, with a minimal env (`PATH`, `HOME`) instead of the agent's; Docker agents log the image's `io.open-factory.claude-code.version` label in the `container` event.
 
 ## 11. Docker runtime
 
 ### 11.1 Launcher (decision Q11)
 
-dockerode for everything (new `apps/server` dependency, added through the lockfile under the existing `minimumReleaseAge` policy; its optional native `ssh2`/`cpu-features` build must not be enabled: check `onlyBuiltDependencies` and leave it out). `DOCKER_HOST` is honoured by dockerode's defaults; no docker CLI on the factory host.
+dockerode for everything (a new `apps/server` dependency, added through the lockfile under the existing `minimumReleaseAge` policy; its optional native `ssh2`/`cpu-features` build stays disabled: it must not be added to `onlyBuiltDependencies`). `DOCKER_HOST` is honoured by dockerode's defaults; no docker CLI on the factory host.
 
-- **One container per agent**, named `open-factory-<slug>-<first 8 of agent id>`, labelled `io.open-factory.agent-id`, `io.open-factory.slug`, `io.open-factory.spec-hash`, `io.open-factory.image-id`.
+- **One container per agent**, named `open-factory-<slug>-<first 8 of agent id>`, labelled `io.open-factory.agent-id`, `io.open-factory.slug`, `io.open-factory.spec-hash`, `io.open-factory.image-id`. No DB column: containers are found by label.
 - **Created on first wake**, started on each wake, **stopped (not removed) on hibernate**, removed and re-created on a wake whose spec hash differs. Archive doesn't remove it (unarchive must keep working); S7's Terminate removes.
 - **Create options** (S2 contract plus hardening, asserted by a unit test on the options object):
   - `Image`: the resolved image (§11.2); `Cmd`: the image default (`sleep infinity`); `Env`: `HOST_UID`, `HOST_GID` (the server's `process.getuid()/getgid()`; if either is 0 the start fails: "The factory runs as root; Docker agents need a non-root host user.") and nothing else;
   - `HostConfig.Tmpfs: {"/run/open-factory": ""}` (ready marker, cleared on stop);
-  - `HostConfig.Binds`/`Mounts`: from §11.4 only;
+  - `HostConfig.Mounts`: from §11.4 only (bind mounts, `ReadOnly` as listed there);
   - `HostConfig.ExtraHosts: ["host.docker.internal:host-gateway"]`;
   - `HostConfig.SecurityOpt: ["no-new-privileges:true"]` (see "No sudo" below); never `Privileged`; no `CapAdd`; `NetworkMode` the default bridge (never `host`); `PidMode` never `host`; never the Docker socket or the host home among the mounts (also enforced by §11.4);
   - `Init`: not set (the image's ENTRYPOINT already runs `tini`).
-- **Ready wait:** after start, poll for `/run/open-factory/ready` (an exec of `test -f` as root, every 200 ms, 30 s timeout). On timeout or if the container exits, the start fails with the last 50 lines of the container logs.
-- **Claude** runs as `docker exec -i -u agent -w <workdir>` (S2 contract): `Cmd = ["sh", "-c", "echo $$ > /tmp/open-factory-claude.pid && exec claude \"$@\"", "claude", ...claudeArgs]`. The script is a fixed string; Claude's arguments are argv entries, never interpolated. `Env` = §11.5. `/run/open-factory` is root-owned and not writable by `agent` (verified), so the pid file lives in the container's own `/tmp` (not mounted).
+- **Ready wait:** after start, poll for `/run/open-factory/ready` (exec `test -f` as root, every 200 ms, 30 s timeout). On timeout or if the container exits, the start fails with the last 50 lines of the container logs.
+- **Claude** runs as `docker exec -i -u agent -w <workdir>` (S2 contract): `Cmd = ["sh", "-c", "echo $$ > /tmp/open-factory-claude.pid && exec \"$0\" \"$@\"", <claude path>, ...claudeArgs]`. The script is a fixed string; the Claude path and its arguments are argv entries, never interpolated. The Claude path is `FACTORY_DOCKER_CLAUDE_BIN` (default `claude`, the image's). `Env` = §11.5. `/run/open-factory` is root-owned and not writable by `agent` (V4), so the pid file lives in the container's own `/tmp` (not mounted).
 
-**No sudo in agent containers (decision Q11b).** `no-new-privileges` is on for every agent container, so `agent` can't become root. Verified live: the entrypoint's UID remap still works under it (ready marker, `id` 502:20, a bind-mounted file owned 502:20 on the host), and `sudo -n true` as `agent` then fails. This deliberately reverses what the S2 image offers (passwordless sudo, asserted by its smoke test), because the container is the only real boundary for unattended and `bypass` agents: a manager's instruction can get `sudo …` approved by the classifier (S0), root writes root-owned files into bind-mounted repos (breaking AC5), and root widens the kernel surface. Agents that need system packages get them from a user image `FROM` the base (reproducible, unlike a runtime `apt-get`). The base image is **not** changed in S5; a follow-up issue updates S2's smoke test and `base-image.md`, decides whether to drop passwordless sudo from the image, and records a per-template `allow_sudo` opt-in as the likely shape if a real need appears. PR rollout note: agents can no longer sudo inside containers.
-
-A test writes a non-integer, a zero, a negative and an over-long value into the pid file and asserts no `kill` exec is made from it and the stop falls back to the container stop.
+**No sudo in agent containers (decision Q11b).** `no-new-privileges` is on for every agent container, so `agent` can't become root. Verified live: the entrypoint's UID remap still works under it, and `sudo -n true` as `agent` then fails (V5). This deliberately reverses what the S2 image offers (passwordless sudo, asserted by its smoke test), because the container is the only real boundary for unattended and `bypass` agents: a manager's instruction can get `sudo …` approved by the classifier (S0), root in the container can write root-owned or setuid files into bind-mounted repos (breaking AC5), and root widens the kernel surface. Agents that need system packages get them from a user image `FROM` the base (reproducible, unlike a runtime `apt-get`). The base image is **not** changed in S5; a follow-up issue updates S2's smoke test and `base-image.md`, decides whether to drop passwordless sudo from the image, and records a per-template `allow_sudo` opt-in as the likely shape if a real need appears. PR rollout note: agents can no longer sudo inside containers.
 
 ### 11.2 Image and re-create (decision Q12)
 
 - Image = the snapshot's `image`, else `FACTORY_DEFAULT_IMAGE` (one config constant, default `ghcr.io/orlevii/open-factory/base:latest`; `.env.example` shows `open-factory-base:dev` for development).
-- **Pull only when missing locally**, never to update a present tag (updating an agent's toolchain is a human act, as plugins in S4 Q7). A pull failure or a missing local-only image fails the start with the registry's error verbatim.
-- **Spec hash** = sha256 over: the local image **id** (so a rebuilt or re-pulled tag re-creates), the sorted mounts, `HOST_UID`/`HOST_GID`, the extra hosts, the security options, the tmpfs, and a launcher version constant. Grants and host skills change the mounts, so they re-create; secrets and the credential don't.
-- The image id actually used is on the container label and in a `container{action: "created" | "recreated" | "started", image, imageId}` event at each wake, so "which toolchain and Claude ran this" can be answered.
-- No resource limits in S5 (follow-up issue: memory/CPU limits and `oom_score_adj` on tool shells). Follow-up issue: pin the default image to a released `base-v*` version or digest instead of `:latest` (a floating default fetched at first pull is a supply-chain soft spot).
+- **Pull only when missing locally**, never to update a present tag (updating an agent's toolchain is a human act, as plugins in S4 Q7). The pull runs **before the grant, outside the agent's job and lock**: `requestWake` for a Docker agent whose image is missing starts (or joins) one pull per image reference; the wake enters the queue only when the pull finishes; meanwhile the agent shows `queued` and its strip "Pulling the image…". The pull is aborted by the closing latch. A failed pull fails the start with the registry's error verbatim (errored, `start`).
+- **Spec hash** = sha256 over: the local image **id** (so a rebuilt or re-pulled tag re-creates), the sorted mounts, `HOST_UID`/`HOST_GID`, the extra hosts, the security options, the tmpfs, and a launcher version constant. Grants, host skills and plugin dirs change the mounts, so they re-create; secrets and the credential don't.
+- The image id is on the container label and in a `container{action: "created" | "recreated" | "started", image, imageId, claudeCodeVersion?}` event at each wake.
+- **Re-creating wipes `/home/agent`** (shell history, `gh` login state, `known_hosts`, caches). Credentials belong in secrets and the rest is rebuildable; documented in the README and the PR rollout notes, with a follow-up issue (persist HOME under the workdir?).
+- No resource limits in S5 (follow-up: memory/CPU limits and `oom_score_adj` on tool shells). Follow-up: pin the default image to a released `base-v*` version or digest instead of `:latest` (a floating default fetched at first pull is a supply-chain soft spot).
 
 ### 11.3 Exec transport and stop
 
-- **stdin/stdout/stderr:** the hijacked exec stream (`hijack: true, stdin: true`), demultiplexed. NDJSON writes are unchanged (S3). **Closing stdin** = half-closing the stream (verified: the process sees EOF and its exit code comes back).
-- **Exit:** when the stream ends, exec inspect gives `ExitCode` → `exited{code, signal: null}`. A container that dies ends the stream the same way.
-- **terminate (SIGTERM):** exec `["cat", "/tmp/open-factory-claude.pid"]` as `agent`, parse the output as `/^[1-9][0-9]{0,9}$/` (fail closed on anything else), exec `["cat", "/proc/<pid>/comm"]` and require `claude`, then exec `["kill", "-TERM", "<pid>"]` as `agent`. Argv arrays only, never a shell with file contents. If any step fails, terminate reports failure and the stop proceeds to the timeout and escalation (§9.6).
-- **forceKill:** `ContainerManager.stop()` (5 s, then Docker's SIGKILL of everything in the container).
-- After any Docker exit the container is stopped (hibernate) or restarted (crash cleanup): in Docker the container stop is the leftover cleanup, the strong guarantee (#20).
+- **stdin/stdout/stderr:** the hijacked exec stream (`hijack: true, stdin: true`), demultiplexed. NDJSON writes are unchanged (S3). **Closing stdin** = half-closing the stream (V2).
+- **Exit:** when the stream ends, exec inspect gives `ExitCode` → `exited{code, signal: null}`. A container that dies ends the stream the same way. If the stream ends but the container still runs, it's a crash (§9.1) and the container is stopped.
+- **terminate (SIGTERM):** exec `["cat", "/tmp/open-factory-claude.pid"]` as `agent`, parse the output as `/^[1-9][0-9]{0,9}$/` (fail closed on anything else), exec `["cat", "/proc/<pid>/comm"]` and require it to equal the basename of the Claude path (`claude`), then exec `["kill", "-TERM", "<pid>"]` as `agent`. Argv arrays only, never a shell with file contents. If any step fails, terminate reports failure and the stop proceeds to its timeout and the escalation (§9.6). A test writes a non-integer, `0`, a negative and an over-long value into the pid file and asserts no `kill` exec is made from it and the stop falls back to the container stop.
+- **forceKill / container stop:** `container.stop({t: 5})`. A container stop doesn't signal exec'd processes: Docker SIGTERMs PID 1 (`tini`), whose child `sleep` exits at once, and the kernel then kills every process in the namespace (V8). So it is effectively an immediate kill, which is why the graceful path SIGTERMs Claude itself first.
+- In Docker the container stop is the leftover cleanup, the strong guarantee (#20).
 
 ### 11.4 Workspace hardening and the mount allow-check (decision Q13)
 
-Found while designing S5: S4's `buildMounts` reads directory-marketplace paths from `.factory/template/settings.json` in the agent's **writable** workdir, so a Docker agent could add `{"source": "directory", "path": "/Users/or"}` and get the host home bind-mounted into its next container. Host-side factory writes and copies also follow symlinks the agent can plant (`.claude-config` → a host directory; `AGENTS.md` → `~/.ssh/id_ed25519`, which re-sync's backup would copy into the agent-readable workdir). Three parts, all required:
+Found while designing S5: S4's `buildMounts` reads directory-marketplace paths from `.factory/template/settings.json` in the agent's **writable** workdir, so a Docker agent could add `{"source": "directory", "path": "/Users/or"}` and get the host home bind-mounted into its next container. Host-side factory writes and copies also follow symlinks the agent can plant (`.claude-config` → a host directory; `AGENTS.md` → `~/.ssh/id_ed25519`, which re-sync's backup would copy into the agent-readable workdir). Four parts, all required:
 
-1. **Factory-owned state outside the workdir.** The template copy and the re-sync backups move from `<workdir>/.factory/` to `FACTORY_HOME/state/agents/<slug>/` (`template/settings.json`, `template/mcp.json`, `resync/<ts>/`). `FACTORY_HOME/state` is never mounted. A one-time move at boot migrates existing agents (move the two files and any `resync/` dirs, then remove `<workdir>/.factory` only if it is a real directory owned by the factory layout; a symlink there is removed as a link). `templateCopyDir`/`resyncRoot` in `paths.ts` change; the S4 UI copy "Previous files saved in .factory/resync/…" shows the new path.
-2. **Mounts from factory-owned inputs only.** `buildMounts` takes the workdir, the granted project paths (DB), the host skill dirs (host skills dir), the directory marketplaces declared in the factory-owned template copy (part 1), and the CLI bundle. The `extraKnownMarketplaces` carried forward from the agent's config-dir `settings.json` (agent-writable) never become mounts; an undeclared directory marketplace found there is dropped from the generated settings with a warn log. Every source is `realpath`ed, then **`checkMounts`** (one function, defence in depth) requires each source to be exactly one of: the agent's workdir (rw), a granted project path (rw), a declared host skill dir (ro), a declared marketplace dir (ro), the CLI bundle file (ro, the one non-parity target `/opt/factory/bin/open-factory`). It also refuses any source that is `/`, the host user's home directory, `FACTORY_HOME` or an ancestor of it, `FACTORY_HOME/state` or anything under it, or a Docker socket path (`/var/run/docker.sock`, `~/.docker/run/docker.sock`, the `DOCKER_HOST` unix path), or an ancestor of any of these. A refusal fails the start closed ("Mount <path> isn't allowed: <reason>.").
-3. **Symlink-safe host writes.** Every host-side write, copy or delete under a workdir (`prepare`: config-dir `settings.json` and `CLAUDE.md`, `.mcp.json`, the `.claude/skills/<name>` and `projects/<name>` links; re-sync: copies and backups; create's rollback) goes through one helper that `lstat`s every path component below the workdir and fails ("<path> is a symlink; the factory won't write through it.") when a component the factory expects to be a directory or a file is a symlink. The factory-made links (`projects/<name>`, `.claude/skills/<name>`) are checked as links and recreated, never followed. Reads for backup use `lstat` and copy a symlink as a symlink (never its target's bytes). Docker agents' `prepare` runs only while their container is stopped (§10), so nothing inside it can race these checks. Re-sync of a running Docker agent writes its files and then restarts through `requestRestart` (unchanged).
+1. **Factory-owned state outside the workdir.** The template copy, re-sync backups, staged re-sync files and the plugin install dir (§11.7) live in `FACTORY_HOME/state/agents/<slug>/` (`template/settings.json`, `template/mcp.json`, `resync/<ts>/`, `resync-pending/`, `plugins-config/`). `FACTORY_HOME/state` is never mounted whole. A one-time move at boot migrates S4 agents: the two template files and any `resync/` dirs move, and `<workdir>/.factory` is then removed (a symlink there is removed as a link, never followed). The old copy isn't quarantined (D3): S4 Docker agents never started (they failed closed), an agent's runtime only changes through a re-sync, which rewrites the copy from the host template, and a local agent is unsandboxed anyway, so a tampered local copy grants nothing new. `templateCopyDir`/`resyncRoot` in `paths.ts` change; the S4 UI copy "Previous files saved in .factory/resync/…" shows the new path.
+2. **Mounts from factory-owned inputs only.** `buildMounts` takes the workdir, the granted project paths (DB), the host skill dirs (host skills dir), the directory marketplaces declared in the factory-owned template copy, the agent's factory-owned `plugins-config/plugins` dir (§11.7), and the CLI bundle. Nothing in the agent's workdir or config dir becomes a mount. Each mount's **target** is the path the agent sees (the declared path: workdir, project path, skill path, marketplace path), its **source** is that path's `realpath` (on macOS `/var` → `/private/var`, so target and source can differ while parity holds for the agent). **`checkMounts`** (one function, defence in depth) requires each realpath source to be exactly one of: the agent's workdir (rw), a granted project path (rw), a declared host skill dir (ro), a declared marketplace dir (ro), the agent's plugins dir (ro), the CLI bundle file (ro, the one non-parity target `/opt/factory/bin/open-factory`). It refuses any source that is `/`, the host user's home directory, `FACTORY_HOME`, `FACTORY_HOME/state` (the agent's own `plugins-config/plugins` is the one allowed path under it), a Docker socket path (`/var/run/docker.sock`, `~/.docker/run/docker.sock`, the `DOCKER_HOST` unix path), or an ancestor of any of these. A refusal fails the start closed ("Mount <path> isn't allowed: <reason>.").
+3. **Symlink-safe host writes (`SafeFs`).** Every host-side write, copy or delete under a workdir (`prepare`: config-dir `settings.json` and `CLAUDE.md`, `.mcp.json`, the `.claude/skills/<name>`, `projects/<name>` and `.claude-config/plugins` links; re-sync: copies and backups; create's rollback) goes through one helper that `lstat`s every path component below the workdir and fails ("<path> is a symlink; the factory won't write through it.") when a component the factory expects to be a directory or a file is a symlink. The factory-made links are checked as links and recreated, never followed. Backups `lstat` their source and copy a symlink as a symlink (never its target's bytes).
+4. **No host write races a running container (D2).** Docker agents' `prepare` runs only with their container stopped (§10). Re-sync writes its workdir files (AGENTS.md, skills, files) at once only when the agent has no process running (the workspace lock is held, and a start needs it). For a running agent it writes them to `state/agents/<slug>/resync-pending/` instead (the template copy in `state/` is updated at once), and the next `prepare` applies them through `SafeFs` (with the backup) before the process starts; `requestRestart` makes that happen at the next safe moment. The re-sync response and UI say so: "Re-synced. The changes apply when @lead restarts (when idle)." Nothing looks applied when it isn't. One rule for both runtimes.
 
-Regression tests plant each escape and assert the start or re-sync fails closed: the marketplace path in the old template copy location and in the config-dir settings; `.claude-config` as a symlink to a temp "host" dir; `AGENTS.md` as a symlink to a temp "secret" file during re-sync (the backup holds a symlink, not the secret's bytes); `projects` as a symlink to a directory; a granted project that contains `FACTORY_HOME`.
+Regression tests plant each escape and assert the start or re-sync fails closed: a directory marketplace path in the old `.factory/template` location and in the agent's config-dir settings (neither becomes a mount); `.claude-config` as a symlink to a temp "host" dir; `AGENTS.md` as a symlink to a temp "secret" file during re-sync (the backup holds a symlink, not the secret's bytes); `projects` as a symlink to a directory; a granted project that contains `FACTORY_HOME`.
 
-The local runtime is not a boundary (the agent runs as the host user), but it gets the same code: one path for both runtimes.
+The local runtime is not a boundary (the agent runs as the host user and can write `FACTORY_HOME/state` too, the accepted trust decision behind the Q10 gate), but it gets the same code: one path for both runtimes.
 
 ### 11.5 Environment (decision Q15)
 
 `buildAgentEnv(serverEnv, extra, runtime)`:
 - **local:** S4 unchanged (the allowlist plus the factory vars).
-- **docker:** only the factory vars: `CLAUDE_CONFIG_DIR`, the one credential var, the secrets, the git identity, and `OPEN_FACTORY_URL` (§11.6). The image provides `PATH`, `HOME` (Docker sets it from `-u agent`), `USER`, `SHELL`, `LANG`. Verified: passing `Env` on an exec keeps the image's `PATH`.
+- **docker:** only the factory vars: `CLAUDE_CONFIG_DIR`, the one credential var, the secrets, the git identity, and `OPEN_FACTORY_URL` (§11.6). The image provides `PATH`, `HOME` (Docker sets it from `-u agent`), `USER`, `SHELL`, `LANG` (V2: passing `Env` on an exec keeps the image's `PATH`).
 
 S4's negative test runs for both runtimes: `DATABASE_URL`, `FACTORY_SECRET_KEY`, the server's own `ANTHROPIC_*`/`CLAUDE_*` and an unknown var are absent, and for Docker no host `PATH` or `HOME` appears.
 
 ### 11.6 Reaching the factory (decision Q14)
 
-Containers get `ExtraHosts host.docker.internal:host-gateway` and the CLI bundle (`apps/cli/dist/open-factory.js`, path from `FACTORY_CLI_BUNDLE`, default resolved next to the server build) mounted read-only at `/opt/factory/bin/open-factory`. `OPEN_FACTORY_URL` = `FACTORY_AGENT_URL` (default `http://host.docker.internal:<PORT>`). It carries no credential: agent auth is S6. A missing CLI bundle fails Docker starts with "Build the CLI first (pnpm build)" in development.
+Containers get `ExtraHosts host.docker.internal:host-gateway` and the CLI bundle (`apps/cli/dist/open-factory.js`, path from `FACTORY_CLI_BUNDLE`, default resolved next to the server build) mounted read-only at `/opt/factory/bin/open-factory`. `OPEN_FACTORY_URL` = `FACTORY_AGENT_URL` (default `http://host.docker.internal:<PORT>`). It carries no credential: agent auth is S6. A missing CLI bundle fails Docker starts with "Build the CLI first (pnpm build)."
 
-Verified on Docker Desktop: a server on host `127.0.0.1` is reachable from a container at `host.docker.internal`. On plain Linux it isn't: the README says to bind the factory to the Docker bridge gateway address (e.g. `HOST=172.17.0.1`) or run it on a compose network with the containers, and names `HOST=0.0.0.0` as the less safe fallback (it exposes the factory to the LAN). The live check (§18.5) proves reachability with `curl $OPEN_FACTORY_URL/api/status` from a container.
+On Docker Desktop a server on host `127.0.0.1` is reachable at `host.docker.internal` (V3). On plain Linux it isn't: the README says to bind the factory to the Docker bridge gateway address (e.g. `HOST=172.17.0.1`) or run it on a compose network with the containers, and names `HOST=0.0.0.0` as the less safe fallback (it exposes the factory to the LAN). The live check (§18.5) runs `curl $OPEN_FACTORY_URL/api/status` from a container.
 
-## 12. Local runtime: the process journal (decision Q9)
+### 11.7 Plugins in a factory-owned dir (blocker R1)
 
-- While a local agent runs, `ProcessJournal` snapshots Claude's descendants with `ps -A -o pid=,ppid=,lstart=` (portable to macOS and Linux) and walks the tree from Claude's pid. It snapshots on `process_started`, on every `background_task_started`, and every 10 s **while a turn is open or a background task is live** (descendants can only outlive Claude through those).
-- The journal is one JSON column, `agents.process_journal jsonb null`, replaced on each snapshot: `{claude: {pid, start}, descendants: [{pid, start}], tasks: [{taskId, description}], takenAt}`. Persisting it lets boot reconciliation clean up after a server crash (§5.6). It is cleared after a clean exit or a reap.
-- **Reap** (after a crash, an escalation, or at boot): for each journaled pid, signal it **only if** `ps -o lstart= -p <pid>` returns the same start time (never signal a pid we can't prove is ours). SIGTERM all, wait 3 s, SIGKILL the survivors that still match. Bash tools run in their own session (`setsid`), so signalling a process group would miss them; the journal names each process.
-- Best effort, documented: a process that detaches and is gone within one 10 s interval, or that was started and re-parented between snapshots, can be missed. Docker's container restart is the strong guarantee.
+S4's re-sync ran `claude plugin marketplace add/install` **on the host** with `CLAUDE_CONFIG_DIR` = the agent's writable `.claude-config` and cwd = its workdir. The self-review verified that a planted `{"env": {"GIT_TRACE": "/tmp/PWNED_cfg"}}` in that `settings.json` takes effect during `claude plugin marketplace add`; with `GIT_CONFIG_*` (a `credential.helper=!cmd`) that is host code execution the next time a human re-syncs. The host never again runs `claude` against an agent-writable config or cwd:
+
+- Plugins install into `FACTORY_HOME/state/agents/<slug>/plugins-config/` (its own `settings.json` and `plugins/`), with cwd = a fresh empty factory temp dir and an env of exactly `PATH`, `HOME=<plugins-config>` and `CLAUDE_CONFIG_DIR=<plugins-config>` (S4's env minus the agent's paths; nothing from the agent or the server).
+- At every `prepare`, `<workdir>/.claude-config/plugins` is recreated (through `SafeFs`) as a factory-made symlink to `<plugins-config>/plugins`, and in Docker that dir is mounted read-only at the same path, so the absolute `installPath`s that `installed_plugins.json` records resolve on both sides.
+- `buildSettings` carries `enabledPlugins` and `extraKnownMarketplaces` from `<plugins-config>/settings.json` (factory-owned), never from the agent's config-dir `settings.json`. The Q13 concern about carried keys becoming mounts disappears.
+- Verified: Claude loads a plugin through the `plugins` symlink (V6), also in Docker with that dir mounted read-only; at start it tries to write `plugins/store/`, and with a read-only mount it skips that write and starts normally (V7). Not yet verified for a git-sourced marketplace (its install lands in the same `plugins/` dir, so the mechanism is the same); the plan's first task re-runs V6/V7 with a git marketplace, and if a read-only dir ever breaks startup, the factory-built settings disable marketplace and plugin auto-update rather than making the mount writable. **Fallback** if the symlink approach fails: install inside the agent's container (a throwaway exec as `agent`) for Docker agents; local keeps the host install.
+- Migration: an S4 agent's existing `.claude-config/plugins/` is reinstalled into `plugins-config/` at boot from its snapshot's plugin list (S4 Q7: installs are idempotent), then the old dir is removed through `SafeFs`.
+- Regression test from the reviewer's repro: plant `env.GIT_TRACE` and a `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0=credential.helper`/`GIT_CONFIG_VALUE_0=!touch <marker>` in the agent's `.claude-config/settings.json`, re-sync (fake claude records the env and cwd it was run with), and assert the planted keys never reach the install and the marker is never created.
+- Residual risk, stated: local agents run as the host user and can write `plugins-config/` themselves; that is the accepted local trust decision behind the Q10 gate, not a new hole.
+
+## 12. The runtime journal and local cleanup (decision Q9)
+
+- `agents.runtime_journal jsonb null`, one column replaced on each write: `{claude?: {pid, start}, descendants?: [{pid, start}], tasks: [{taskId, description}], crons: [{cronId, humanSchedule}], takenAt}`. `tasks` and `crons` are written for **both runtimes** on `background_tasks` and cron changes (boot uses them for the lost-work list and the R2 notice). `claude` and `descendants` are local only. Cleared after a clean exit, a reap, or reconciliation.
+- **Local snapshots:** `ProcessJournal` runs `ps -A -o pid=,ppid=,lstart=` (portable to macOS and Linux) and walks the tree from Claude's pid, on `process_started`, on every `background_task_started`, and every 10 s **while a turn is open or a background task is live** (descendants can only outlive Claude through those).
+- **Reap** (after a crash, an escalation, a Restart or at boot): signal a journaled pid **only if** `ps -o lstart= -p <pid>` returns the same start time (never signal a pid we can't prove is ours). SIGTERM all, wait 3 s, SIGKILL the survivors that still match. Bash tools run in their own session (`setsid`), so signalling a process group would miss them; the journal names each process.
+- Best effort, documented: a process that detaches and is gone within one 10 s interval, or that was started and re-parented between snapshots, can be missed. Docker's container stop is the strong guarantee.
 
 ## 13. The local runtime gate (#18, decision Q10)
 
 - `FACTORY_ALLOW_LOCAL_RUNTIME` (default `false`) in `config.ts`: an operator decision that no API or UI session can change.
-- One rule, `localRuntimeAllowed(config)`, used by: `prepareStart` (fail closed, §10), the template validator (a **warning** on `runtime: local`: "The local runtime is disabled on this factory."), New agent (the same warning), and the status frame's `runtimeDisabled`.
+- One rule, `localRuntimeAllowed(config)`, used by: `startNow` (fail closed, §10), the template validator (a **warning** on `runtime: local`: "The local runtime is disabled on this factory."), New agent (the same warning), the status frame's `runtimeDisabled`, and Restart (`409 runtime_disabled`, so a Restart certain to fail isn't offered).
 - Bypass with local stays a validator error (S4).
 - Local agents keep the Unsandboxed badge, and while the gate is off they show the disabled reason instead of failing silently on the first message.
-- Rollout note in the PR: every S4 agent is local, so development setups add `FACTORY_ALLOW_LOCAL_RUNTIME=true` to `.env` (and `.env.example` documents it).
+- Rollout note in the PR: every S4 agent is local, so development setups add `FACTORY_ALLOW_LOCAL_RUNTIME=true` to `.env` (`.env.example` documents it).
 
 ## 14. Harness changes (`packages/harness`)
 
-- `Transport` interface (`write(line)`, `endInput()`, `lines: stdout/stderr`, `exit: Promise<{code, signal}>`, `terminate(): Promise<boolean>`, `forceKill(): Promise<void>`, `pid?`), `LocalTransport` (S3's spawn code, `detached: true`, SIGTERM/SIGKILL). `ClaudeProcess` takes a transport; `createClaudeDriver({log, transports})` picks one by `spec.runtime`. The Docker transport is injected from the server.
+- `Transport` interface (`write(line)`, `endInput()`, stdout and stderr line streams, `exit: Promise<{code, signal}>`, `terminate(): Promise<boolean>`, `forceKill(): Promise<void>`, `pid?`) and `LocalTransport` (S3's spawn code, `detached: true`, SIGTERM/SIGKILL). `ClaudeProcess` takes a transport; `createClaudeDriver({log, transports})` picks one by `spec.runtime`. The Docker transport is injected from the server.
 - `stop()` is idempotent (one promise per process).
 - `system/session_state_changed` is dropped in the mapper and asserted to yield nothing; the fixture moves from `fixtures/pending/` next to the others in the same commit.
-- `FactoryMessage.kind` widens to `"message" | "system"`; the envelope renderer is unchanged otherwise.
-- A synthetic `rate-limit-event-rejected` fixture (documented SDK shape, labelled unverified in the README) for the mapper and the server tests.
+- `FactoryMessage.kind` widens to `"message" | "system"`.
+- A synthetic `rate-limit-event-rejected` fixture (documented SDK shape, labelled unverified in the README).
+- The fake claude sets `process.title = "claude"` so the comm check (§11.3) passes when it runs in a container.
 
 ## 15. Events, API and frames
 
@@ -384,45 +420,47 @@ New factory-only events (`packages/shared/src/events.ts`):
 
 | Event | Payload | When |
 |---|---|---|
-| `hibernated` | `reason` | after the process exited (and the container stopped) on the hibernate path |
-| `container` | `action: created \| recreated \| started, image, imageId` | each Docker wake |
-| `cleanup` | `killedProcesses?: number, container?: "restarted" \| "stopped"` | leftovers reaped after a crash or escalation |
+| `hibernated` | `reason, idleMinutes?` | after the process exited (and the container stopped) on the hibernate path |
+| `container` | `action: created \| recreated \| started, image, imageId, claudeCodeVersion?` | each Docker wake |
+| `cleanup` | `killedProcesses?: number, container?: "stopped"` | leftovers reaped after a crash, an escalation or a Restart |
 | `stop_escalated` | `how: sigkill \| container_stop` | §9.6 |
 | `background_work_lost` | `reason, tasks, crons` | §9.4 |
-| `reconciled` | `killedProcesses, stoppedContainer` | §5.6 |
+| `reconciled` | `killedProcesses, stoppedContainer` | §5.7 |
+| `rate_limit_paused` / `rate_limit_reset` | `credential, until, exact` / `credential` | §7.2 |
 | `control` | `cmd` gains `restart` | Restart |
-| `rate_limit_paused` / `rate_limit_reset` | `credential, until, exact` | on the agent that hit the limit (paused) and on each owed agent at reset |
+| `process_started` | gains `reason?: message \| crash_recovery \| restart \| reset \| boot \| rate_limit_reset \| queued_items` | every start |
 
-API: `POST /api/agents/:slug/restart`, `POST /api/agents/:slug/reset-session` (§9.7). Messages and compacts to an agent whose credential is paused return `202` as usual (they queue). `AgentSummary` and `agent_status` gain the §8.2 fields. `QueueItem.from` may be `@factory`.
+API: `POST /api/agents/:slug/restart`, `POST /api/agents/:slug/reset-session` (§9.7). Messages and compacts to a queued or paused agent return `202` as usual. `AgentSummary` and `agent_status` gain the §8.2 fields; `GET /api/agents` gains `running`; the `supervisor` frame is new. `QueueItem.from` may be `@factory`. The re-sync response gains `applied: "now" | "on_restart"`.
 
 ## 16. Database (`packages/db`), one migration, additive
 
 ```
 credentials  + rate_limited_until timestamptz null, rate_limit_exact boolean not null default true
-agents       + last_error text null, error_kind text null, process_journal jsonb null,
-               container_id text null, rate_limit_notice_owed boolean not null default false
+agents       + last_error text null, error_kind text null, recovering boolean not null default false,
+               runtime_journal jsonb null, rate_limit_notice_owed boolean not null default false
 messages     from_user_id drops NOT NULL; CHECK ((kind = 'system') = (from_user_id IS NULL))
 ```
 
-No data rewrite: existing message rows have a user and `kind = 'message'`.
+No data rewrite: existing message rows have a user and `kind = 'message'`. `data-model.md`'s `agents.container_id` isn't added: containers are found by label (§11.1).
 
 ## 17. Failures
 
 | Failure | What happens |
 |---|---|
-| Local start with the gate off | `error{source:"spawn", fix:"runtime"}`, errored (`start`), messages pending, the strip shows why. |
+| Local start with the gate off | `error{source:"spawn", fix:"runtime"}`, errored (`start`), messages pending, the strip shows why, no Restart offered. |
 | Image missing and pull fails | Start fails with the registry error verbatim; errored (`start`). |
 | Ready marker timeout / container exits at start | Start fails with the last 50 container log lines. |
 | A mount refused by `checkMounts` | Start fails closed with the reason. |
 | A symlink where the factory writes | Start or re-sync fails closed naming the path. |
 | Factory runs as root with a Docker agent | Start fails: "The factory runs as root; Docker agents need a non-root host user." |
-| Docker daemon unreachable | Start fails: "Can't reach Docker at <DOCKER_HOST or the default socket>: <error>." Boot reconciliation logs a warn and skips the Docker step (local agents still work). |
-| Crash mid-turn | §9.2: cleanup, errored, one notice-led resume. |
+| Docker daemon unreachable | Docker starts fail: "Can't reach Docker at <DOCKER_HOST or the default socket>: <error>." Boot reconciliation logs a warn and skips its Docker step; local agents still work. |
+| Crash mid-turn | §9.2: cleanup, errored with `recovering`, one notice-led resume. |
 | Idle crash with nothing live | `exited` row, hibernated. |
-| Resume unrecoverable | errored (`resume_unrecoverable`), Start a new session offered, no attempts. |
-| Stop timed out | §9.6 escalation; errored (`stop_failed`) only if that fails too. |
+| Crash during the recovery attempt | Cleanup, errored, no further automatic attempt. |
+| Resume failure (ordinary / unrecoverable) | §9.3. |
+| Stop timed out | §9.6 escalation; errored (`stop_failed`, slot kept) only if that fails too. |
 | Rate limit rejected | Credential paused (§7), deliveries held, continue notice at reset. |
-| Server crash | Boot reconciliation (§5.6). |
+| Server stopped or crashed mid-turn | Boot reconciliation, one notice-led resume (§5.7 step 4). |
 
 ## 18. Testing
 
@@ -430,7 +468,7 @@ No automated test calls a live model. Few, thorough tests per behaviour.
 
 ### 18.1 Unit
 
-`statusOf` (table); `classifyResumeFailure` (the S0 fixture text, the two documented 400 texts, an unknown error); `checkMounts` (every allowed kind, every refused kind, realpath through a symlink, ancestors); the container create options (hardening: no `Privileged`, no host network or pid, `no-new-privileges`, tmpfs, extra hosts, only allowed binds); the spec hash (changes on image id, grants, uid; not on secrets); `buildAgentEnv` for both runtimes; the notice texts (lists omitted when empty; no exact time on the fallback); the journal's tree walk over canned `ps` output and its start-time match.
+`statusOf` (table); `classifyResumeFailure` (the S0 fixture text, the two documented 400 texts, an unknown error); `checkMounts` (every allowed kind, every refused kind, realpath through a symlink, ancestors, the `/var` → `/private/var` target/source split); the container create options (no `Privileged`, no host network or pid, `no-new-privileges`, tmpfs, extra hosts, only allowed mounts with the right read-only flags); the spec hash (changes on image id, grants, uid; not on secrets); `buildAgentEnv` for both runtimes; the notice texts (lists omitted when empty; signal vs exit code; no exact time when inexact); the pid-file parser; the journal's tree walk over canned `ps` output and its start-time match.
 
 ### 18.2 Harness
 
@@ -438,50 +476,61 @@ No automated test calls a live model. Few, thorough tests per behaviour.
 
 ### 18.3 Server (fake driver, fake timers, real Postgres)
 
-- **Supervisor:** cap and FIFO; queued status; early hibernation picks the least recently active hibernatable agent and never a busy, pinned or mid-turn one; a paused credential's entry is skipped without losing its place; the boot rebuild orders by oldest pending message.
-- **Warm timer:** starts only when hibernatable; a live non-ambient task, an owed notification (with the 30 s bound) and a live cron each prevent it; an ambient task doesn't; a one-shot cron unpins after its firing turn; `background-bash-start-finish` ordering.
-- **Hibernate path:** every reason; Docker container stopped after exit; `background_work_lost` only for what was live; timed-out stop escalates.
-- **Apply-restart:** waits for busy but not crons; the restart-crons notice; S4's existing restart tests still pass.
-- **Crash:** idle crash → hibernated, no turn; mid-turn crash → cleanup, errored, one notice-led attempt, success clears; a second crash leaves errored with no further attempt; a human message makes one attempt; unrecoverable resume → no attempt.
-- **Rate limit:** per-credential pause, held deliveries, the 30 min fallback, the reset timer, one notice per cut-off turn, notice and pending messages in one batch.
-- **Restart / reset-session routes:** 409s, the notice, pending messages delivered first in the new session.
-- **Boot reconciliation:** a journal with a live matching pid (a real `sleep` child spawned by the test) is reaped; a non-matching start time is never signalled; dangling turns closed; wakes queued.
-- **Hardening regressions:** §11.4's planted escapes.
-- **Gate:** start refused with the gate off, warning in the validator.
+- **Supervisor:** cap and FIFO; dedupe; queued status; no grant without a deliverable item; early hibernation picks the least recently active hibernatable agent, never a busy, pinned or mid-turn one, re-picks when the victim refuses, and never evicts two agents for one entry; a paused credential's entry is skipped without losing its place; the boot rebuild orders by oldest pending item; slot counts asserted after every crash and failure test; a `stop_failed` agent keeps its slot and Restart reuses it.
+- **Deadlock-free:** a grant to another agent from inside an `exited` job; a Restart while a stop is in flight; the warm timer and an apply-restart racing.
+- **Warm timer:** starts only when hibernatable; a live non-ambient task, an owed notification (with the 30 s bound armed only while no turn is open) and a live cron each prevent it; an ambient task doesn't; a one-shot cron unpins after its firing turn; the `background-bash-start-finish` ordering; a paused agent with held messages is hibernatable.
+- **Hibernate path:** every reason; a message sent during the stop grace is not written to the closing process and wakes the agent after the exit; Docker container stopped after exit; `background_work_lost` only for what was live; timed-out stop escalates.
+- **Shutdown:** after the closing latch, a send, a warm-timer expiry and a rate-limit reset start nothing; no process survives `app.close()`.
+- **Apply-restart:** waits for busy but not crons; the restart-crons notice; S4's restart tests still pass.
+- **Crash:** idle crash → hibernated, no turn; mid-turn crash → cleanup, errored + recovering (status working), one notice-led attempt whose first batch begins with the notice even with older pending messages, success clears; a crash during recovery → cleanup, errored, no further attempt; a human message makes one attempt; system notices never wake an errored agent.
+- **Resume failures:** ordinary → errored `resume`, no automatic attempt; unrecoverable → no attempt from a later message.
+- **Rate limit:** per-credential pause, held deliveries, the 30 min inexact fallback, the reset timer (and its re-arm at boot), one notice per cut-off turn, notice and pending messages in one batch with the notice first.
+- **Restart / reset-session routes:** every 409, the notice, pending messages delivered in the new session.
+- **Boot reconciliation:** a journal with a live matching pid (a real `sleep` child spawned by the test) is reaped; a non-matching start time is never signalled; dangling turns closed; an agent that was mid-turn gets the factory-restarted notice and one wake; an agent already in recovery is set errored instead; wakes queued.
+- **Hardening regressions:** §11.4's and §11.7's planted escapes, including the `GIT_TRACE`/`GIT_CONFIG_*` repro.
+- **Staged re-sync:** a running agent's files land in `resync-pending/` and apply at the next prepare; a hibernated agent's apply at once; the response says which.
+- **Gate:** start refused with the gate off, validator warning, Restart 409.
+- **System messages:** the CHECK constraint, `pendingQueue` returns sender-less rows first, the envelope says `from="@factory" kind="system"`.
 
 ### 18.4 Docker integration (gated, `FACTORY_DOCKER_TESTS=1`, not in default CI)
 
-Uses the local `open-factory-base:dev` image and the **fake claude** mounted into the container as `claudeBin` (the image has Node), so no model is called: create with the hardened options and the ready wait; exec, NDJSON round trip, stdin half-close, exit code; terminate through the pid file; hibernate stops the container; a spec change re-creates it; a crash restarts the container and the planted background `sleep` is gone; a file written through a project bind mount is owned by the host user; boot reconciliation stops a running labelled container; the server restart test (§5.6 invariant). Not in default CI because the image is 2.8 GB; the PR records a local run.
+Uses the local `open-factory-base:dev` image and the **fake claude** mounted into the container as `FACTORY_DOCKER_CLAUDE_BIN` (the image has Node; the fake sets `process.title`), so no model is called: create with the hardened options and the ready wait; exec, NDJSON round trip, stdin half-close, exit code; terminate through the pid file and the comm check; hibernate stops the container; a spec change re-creates it; a crash stops the container and a planted background `sleep` is gone; a file written through a project bind mount is owned by the host user; boot reconciliation stops a running labelled container; a running container left by a dropped exec is stopped before the next start; the server-restart invariant (§5.7). Not in default CI because the image is 2.8 GB; the PR records a local run.
 
 ### 18.5 Live check (`pnpm smoke:docker`, not part of `pnpm test`)
 
-Real `claude` in `open-factory-base:dev`, the token file read into the environment at run time (never printed), `--model haiku`, a throwaway DB and `FACTORY_HOME`, one granted temp git repo. Steps, each asserted and printed: a Docker agent remembers a word → it hibernates (warm window set to 1 minute in its template) and the container is stopped → a message wakes it and it recalls the word (AC1); it writes a file in the repo and creates a worktree: host-side `stat` owner and `git worktree list` match on both sides (AC5); a background `sleep 600` keeps it awake past the window (AC2); `curl $OPEN_FACTORY_URL/api/status` from the container answers (§11.6); `kill -KILL` of Claude in the container → container restarted, the `sleep` gone, one notice-led resume (AC4). The PR records the output.
+Real `claude` in `open-factory-base:dev`, the token file read into the environment at run time (never printed), `--model haiku`, a throwaway DB and `FACTORY_HOME`, one granted temp git repo and one directory-marketplace plugin. Steps, each asserted and printed: a Docker agent remembers a word and lists its plugin's skill → it hibernates (warm window 1 minute in its template) and the container is stopped → a message wakes it and it recalls the word (AC1); it writes a file in the repo and creates a worktree: host-side `stat` owner and `git worktree list` match on both sides (AC5); a background `sleep 600` keeps it awake past the window (AC2); `curl $OPEN_FACTORY_URL/api/status` from the container answers (§11.6); `sudo -n true` fails in the container (Q11b); `kill -KILL` of Claude in the container → container stopped, the `sleep` gone, one notice-led resume (AC4). The PR records the output.
 
 ### 18.6 Web
 
-The new statuses and labels, the waiting-on strip, Restart and Start a new session (dialog), the Factory badge, lifecycle lines, the runtime-disabled reason. Details in the UI doc.
+The new statuses and labels (tooth only for working), the fallback wording everywhere, the waiting-on strip, Restart and Start a new session (dialog, focus), the Factory badge, lifecycle lines (`rate_limited` renders nothing), the runtime-disabled reason, the running count. Details in the UI doc.
 
-## 19. Verified for this design
+## 19. Verified for this design (Claude Code 2.1.327)
 
 | # | Claim | How | If wrong |
 |---|---|---|---|
-| V1 | `system/session_state_changed` (with `CLAUDE_CODE_SDK_READS_SESSION_STATE=1`) reports `idle` right after each `result` **while a background task is still live** (idle at 3.4 s, the task ended at 11 s), and `running` before each `system/init`, emitted just after the empty `background_tasks_changed`. It is a turn signal, not a busy signal. | Claude Code 2.1.327, haiku; fixture `pending/session-state-changed-background` | #24 would simplify busy tracking. |
-| V2 | A Docker exec started through the raw API (the hijacked stream dockerode uses) as `agent` with `Env` set keeps the image's `PATH`, `HOME=/home/agent`; half-closing the stream delivers stdin EOF; exec inspect returns the exit code. | Docker Desktop 29.9.3, `open-factory-base:dev`, a throwaway Node probe | Fall back to the docker CLI as the transport. |
-| V3 | A server bound to host `127.0.0.1` is reachable from a container at `host.docker.internal` (Docker Desktop with `host-gateway`). | Same | Plain Linux needs the bridge-address bind (§11.6). |
-| V4 | `/run/open-factory` is root-owned 0755: `agent` can't write the pid file there. | Same | — (pid file in `/tmp`) |
+| V1 | `system/session_state_changed` (with `CLAUDE_CODE_SDK_READS_SESSION_STATE=1`) reports `idle` right after each `result` **while a background task is still live** (idle at 3.4 s, the task ended at 11 s), and `running` before each `system/init`, emitted just after the empty `background_tasks_changed`. A turn signal, not a busy signal. | haiku; fixture `pending/session-state-changed-background` | #24 would simplify busy tracking. |
+| V2 | A Docker exec started through the raw API (the hijacked stream dockerode uses) as `agent` with `Env` set keeps the image's `PATH` and `HOME=/home/agent`; half-closing the stream delivers stdin EOF; exec inspect returns the exit code. | Docker Desktop 29.9.3, `open-factory-base:dev`, a throwaway Node probe | Fall back to the docker CLI as the transport. |
+| V3 | A server bound to host `127.0.0.1` is reachable from a container at `host.docker.internal` (Docker Desktop, `host-gateway`). | Same | Plain Linux needs the bridge-address bind (§11.6). |
+| V4 | `/run/open-factory` is root-owned 0755: `agent` can't write a pid file there. | Same | — (pid file in `/tmp`) |
 | V5 | Under `no-new-privileges` the entrypoint remap works (ready marker, `id` 502:20, a bind-mounted file owned 502:20 on the host) but `sudo -n true` as `agent` fails. | Same | — |
+| V6 | A plugin installed with `CLAUDE_CONFIG_DIR` = a separate (factory-owned) dir loads in an agent whose `.claude-config/plugins` is a symlink to that dir's `plugins/`, with `enabledPlugins`/`extraKnownMarketplaces` copied into the agent's settings: `system/init` lists it and its skill answers. | Local, haiku, a directory marketplace | §11.7 fallback (install inside the container). |
+| V7 | Same in Docker with the plugins dir mounted read-only at path parity, including a first start with no `plugins/store/` dir: Claude skips the store write and starts normally. | `open-factory-base:dev` with `no-new-privileges`, haiku | Disable plugin auto-update in settings, never make the mount writable. |
+| V8 | A container stop doesn't SIGTERM exec'd processes: an exec'd TERM trap received nothing, and `docker stop -t 5` returned in about 0.1 s because PID 1's exit kills the namespace. | Self-review probe, `open-factory-base:dev` | — |
+| V9 | Planted `env.GIT_TRACE` in a config-dir `settings.json` takes effect during `claude plugin marketplace add`. | Self-review probe in `open-factory-base:dev` | (the reason for §11.7) |
 
 ## 20. Product doc wording (for the lead; not edited here)
 
-- `architecture/agent-runtime.md` → Rate limits and ADR 0008: the pause is **per credential**, not global; a `rejected` event without a usable `resetsAt` uses a 30-minute fallback; the cut-off agent gets a continue notice at reset.
-- `architecture/agent-runtime.md` → Concurrency: when every slot is held and some holder is idle (not busy or pinned), the least recently active idle agent hibernates early to free a slot.
-- `architecture/agent-runtime.md` → Crash handling: an idle crash with no live work hibernates without a resume; the automatic resume writes a factory notice and succeeds when that turn ends; unrecoverable resumes go to "Start a new session".
-- `architecture/agent-runtime.md` → Docker details and `architecture/system-overview.md`: the wake queue is in memory, rebuilt from pending messages at boot, not a pg-boss queue; `data-model.md` "pg-boss owns … wakes" likewise.
-- `architecture/workspace.md`: the template copy and re-sync backups live in `FACTORY_HOME/state/agents/<slug>/`, outside the workdir; Docker mounts come only from factory-owned inputs.
+Deviations from the roadmap or product wording, each with its reason:
+- `architecture/agent-runtime.md` → Rate limits, and ADR 0008: the pause is **per credential**, not global, because limits belong to the account behind a credential and a global pause would stop agents on unrelated accounts. A `rejected` event without a usable `resetsAt` uses a 30-minute fallback; the cut-off agent gets one continue notice at reset; a paused idle agent may hibernate.
+- `architecture/agent-runtime.md` → Concurrency: when every slot is held and some holder is idle (not busy or pinned), the least recently active idle agent hibernates early to free a slot, because the warm window is an optimisation and a real wake shouldn't wait up to 70 minutes.
+- `architecture/agent-runtime.md` → Crash handling: an idle crash with no live work hibernates without a resume (nothing was lost, so no tokens are spent); the automatic resume writes a factory notice and succeeds when that turn ends; a server stop during a turn is treated like a crash at the next boot; unrecoverable resumes go to "Start a new session".
+- `roadmap/v0.1/s05-supervisor-docker.md`, `architecture/system-overview.md` and `data-model.md`: the wake queue is in memory, rebuilt from pending messages at boot, not a pg-boss queue (a slot is a live process, not a job); `agents.container_id` isn't a column (containers are found by label).
+- `architecture/workspace.md`: the template copy, re-sync backups and installed plugins live in `FACTORY_HOME/state/agents/<slug>/`, outside the workdir; `.claude-config/plugins` is a factory-made symlink; Docker mounts come only from factory-owned inputs; re-sync of a running agent applies at its next restart.
 - `architecture/harness-driver.md`: `system/session_state_changed` is a turn signal, not a busy signal.
-- `concepts/message.md`: a `system` kind from `@factory` (crash, restart, apply-change and rate-limit notices).
-- `concepts/session.md` → Controls: "Start a new session" (errored after an unrecoverable resume).
+- `concepts/message.md`: a `system` kind from `@factory` (crash, restart, apply-change, factory-restart and rate-limit notices).
+- `concepts/session.md` → Controls: "Start a new session" (errored after a failed resume).
 - `architecture/base-image.md` → Contents / User: agent containers run with `no-new-privileges`, so the image's passwordless `sudo` doesn't work for agents; system packages belong in a user image.
+- `DESIGN.md` → Colors → Semantic ("checked side by side"): in light theme `working` and `rate_limited` are indistinguishable by colour for deuteranopes (ΔE 1.0), and `queued`/`idle` for tritanopes; the tooth shape and the label carry the difference. (DESIGN.md is in the repo; listed here because it's design-system wording the lead owns.)
 - S4's Known gap "the product docs expect `settings.json` to keep agent changes" stands (unchanged by S5).
 
 ## 21. Decisions needing Or's call (owner-proxy certainty 3/5)
@@ -489,14 +538,16 @@ The new statuses and labels, the waiting-on strip, Restart and Start a new sessi
 - **Q1 wake queue:** in memory, rebuilt from pending messages at boot, instead of pg-boss as the roadmap says.
 - **Q6 sender:** notices are `system` message rows from `@factory` (nullable `from_user_id` with a CHECK), not raw turns.
 - **Q9 journal mechanism:** `ps` snapshots on events and every 10 s while busy, start-time-verified reaping; best effort locally.
+- **Q11b no sudo in containers:** `no-new-privileges` on every agent container, reversing the S2 image's passwordless sudo for agents; system packages come from user images.
 - **Q17 apply-restart vs crons:** a config change restarts a pinned agent without waiting for its crons, and the agent is told which crons stopped.
 - **Q18 continue notice:** a rate-limit-cut turn gets one "continue" notice at reset.
-- **Q11b no sudo in containers:** `no-new-privileges` on every agent container, reversing the S2 image's passwordless sudo for agents; system packages come from user images.
+
+Roadmap/product deviations taken at certainty 4 that Or should still see (§20): the per-credential pause (Q3), no resume after an idle crash (Q6), early hibernation to free a slot (Q2).
 
 ## 22. Issues consumed and follow-ups
 
-Consumed: **#10** (the S2 runtime contract: HOST_UID/GID, tmpfs, ready wait with logs, `-u agent -w`, CLI mount), **#18** (gate), **#19** (restart policy and unrecoverable resumes), **#20** (leftover cleanup), **#24** (evaluated and rejected with V1; close), **#31** (apply-restart tells the agent which crons stopped; S9 still owns pinning UI). Also S4's PR notes: the timed-out stop, the owed notification, the double `proc.stop`, the workspace symlink and template-copy hardening, and Docker templates failing closed.
+Consumed: **#10** (the S2 runtime contract: HOST_UID/GID, tmpfs, ready wait with logs, `-u agent -w`, CLI mount), **#18** (gate), **#19** (restart policy and unrecoverable resumes), **#20** (leftover cleanup), **#24** (evaluated and rejected with V1; close), **#31** (apply-restart tells the agent which crons stopped; S9 still owns the pinning UI). Also S4's PR notes: the timed-out stop, the owed notification, the double `proc.stop`, the workspace symlink and template-copy hardening, and Docker templates failing closed.
 
 Untouched: **#23**, **#26** (a compact to a hibernated agent wakes it; durability stays a follow-up), #29, #30, #32–#36.
 
-Follow-ups to open: base image sudo under `no-new-privileges` (S2 smoke test and docs, whether to drop sudo, an `allow_sudo` opt-in shape); container resource limits and `oom_score_adj`; pin `FACTORY_DEFAULT_IMAGE` to a released version or digest; verify the documented `rejected` rate-limit shape and the poisoned-resume texts when they occur; Linux factory reachability for containers in S6 (bind address and agent auth); persisting live crons (S9); the Docker integration tests in CI with a cached image.
+Follow-ups to open: base image sudo under `no-new-privileges` (S2 smoke test and docs, whether to drop sudo, an `allow_sudo` opt-in shape); container resource limits and `oom_score_adj`; pin `FACTORY_DEFAULT_IMAGE` to a released version or digest; persist `/home/agent` across container re-creation; verify the documented `rejected` rate-limit shape and the poisoned-resume texts when they occur; Linux factory reachability for containers in S6 (bind address and agent auth); persisting live crons (S9); the Docker integration tests in CI with a cached image.

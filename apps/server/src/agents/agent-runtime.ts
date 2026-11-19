@@ -69,6 +69,19 @@ export interface RuntimeDeps {
 /** The local part of `runtime_journal` (spec §12). */
 export type ProcessPart = Required<Pick<RuntimeJournal, "claude" | "descendants">>;
 
+/**
+ * Within one process lifetime the journaled descendants are a union (spec §12): a process reparented away from Claude
+ * (`nohup x &` from a shell that then exited) drops out of the next `ps` walk but must still be reaped. Keyed by pid:
+ * a new start time for the same pid replaces the old entry. Every signal is still start-time verified.
+ */
+export function mergeSnapshot(prev: ProcessPart | undefined, snap: ProcessPart): ProcessPart {
+  if (!prev || prev.claude.pid !== snap.claude.pid || prev.claude.start !== snap.claude.start)
+    return snap;
+  const byPid = new Map(prev.descendants.map((d) => [d.pid, d]));
+  for (const d of snap.descendants) byPid.set(d.pid, d);
+  return { claude: snap.claude, descendants: [...byPid.values()] };
+}
+
 export type CleanupResult = { killedProcesses?: number; container?: "stopped" };
 
 /** What a crashed process left (spec §9.2 step 3): an open turn, a written batch not yet answered, live tasks/crons. */
@@ -1034,6 +1047,7 @@ export class AgentRuntime {
       resumed: Boolean(resumeSessionId),
       reason,
     });
+    this.journalProc = undefined; // a new process: its own journaled tree starts empty
     await this.snapshotJournal(proc);
     this.publishStatus();
     return true;
@@ -1474,7 +1488,9 @@ export class AgentRuntime {
       done = await this.d.cleanup?.(this.agent);
     } catch (err) {
       const what = crash ? "cleanup after a crash failed" : "cleanup after a stop failed";
-      this.d.log.error({ err, agent: this.agent.slug }, what);
+      // The cause names its source (e.g. the DB read of the journal, the Docker API), not only "the process".
+      const why = err instanceof Error ? `: ${err.message}` : "";
+      this.d.log.error({ err, agent: this.agent.slug }, `${what}${why}`);
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
       this.slots.stopFailed(this.agent.id);
       return false;
@@ -1777,7 +1793,8 @@ export class AgentRuntime {
     if (!journal || this.agent.runtime !== "local" || proc !== this.proc) return;
     if (proc.pid === undefined) return;
     try {
-      this.journalProc = await journal.snapshot(proc.pid);
+      const snap = await journal.snapshot(proc.pid);
+      this.journalProc = mergeSnapshot(this.journalProc, snap);
       await this.persistJournal();
     } catch (err) {
       this.d.log.warn(

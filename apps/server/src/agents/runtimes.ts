@@ -37,7 +37,15 @@ export function localCleanup(
 ): (agent: AgentRow) => Promise<CleanupResult | undefined> {
   return async (agent) => {
     if (agent.runtime !== "local") return undefined;
-    const j = (await store.agentById(agent.id))?.runtimeJournal;
+    let j: AgentRow["runtimeJournal"] | undefined;
+    try {
+      j = (await store.agentById(agent.id))?.runtimeJournal;
+    } catch (err) {
+      // The process did exit: what failed is the DB read, so nothing could be verified or reaped.
+      throw new Error("Reading the runtime journal from the database failed; nothing was reaped", {
+        cause: err,
+      });
+    }
     if (!j?.claude && !j?.descendants?.length) return undefined;
     const killedProcesses = await journal.reap(j);
     return killedProcesses ? { killedProcesses } : undefined;

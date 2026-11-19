@@ -1,7 +1,7 @@
 import type { RuntimeJournal } from "@open-factory/db";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { ProcessJournal } from "../runtime/local/journal.ts";
-import type { ProcessPart } from "./agent-runtime.ts";
+import { mergeSnapshot, type ProcessPart } from "./agent-runtime.ts";
 import { localCleanup } from "./runtimes.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -115,6 +115,83 @@ test("snapshots every 10 s only while a turn is open or a task is live", async (
   await vi.advanceTimersByTimeAsync(30_000);
   await h.rt.settled();
   expect(f.snapshot).toHaveBeenCalledTimes(3);
+});
+
+test("descendants are a union over the process's lifetime: one reparented away is still reaped", async () => {
+  const f = fakeJournal();
+  await makeRuntime(f);
+  await idle(); // snapshot 1: {5000, S}
+  f.snapshot.mockResolvedValueOnce({ claude: SNAP.claude, descendants: [] }); // reparented away
+  h.driver.last.emit(ev.turn());
+  h.driver.last.emit({
+    type: "background_task_started",
+    taskId: "t1",
+    toolUseId: "u1",
+    taskType: "local_bash",
+  });
+  await h.rt.settled();
+  expect(f.snapshot).toHaveBeenCalledTimes(2);
+  expect(without(await journalRow())).toMatchObject({ descendants: SNAP.descendants });
+  h.driver.last.exit(137);
+  await h.rt.settled();
+  expect(f.kills).toEqual([[5000, "SIGTERM"]]);
+});
+
+test("mergeSnapshot: a new start for a pid replaces it; a new Claude or process starts over", () => {
+  const prev = {
+    claude: { pid: 1, start: "C" },
+    descendants: [
+      { pid: 2, start: "A" },
+      { pid: 3, start: "B" },
+    ],
+  };
+  expect(
+    mergeSnapshot(prev, {
+      claude: { pid: 1, start: "C" },
+      descendants: [
+        { pid: 3, start: "B2" },
+        { pid: 4, start: "D" },
+      ],
+    }),
+  ).toEqual({
+    claude: { pid: 1, start: "C" },
+    descendants: [
+      { pid: 2, start: "A" },
+      { pid: 3, start: "B2" },
+      { pid: 4, start: "D" },
+    ],
+  });
+  const other = { claude: { pid: 1, start: "C2" }, descendants: [] };
+  expect(mergeSnapshot(prev, other)).toEqual(other);
+  expect(mergeSnapshot(undefined, other)).toEqual(other);
+});
+
+test("a new process's journal doesn't inherit the previous process's descendants", async () => {
+  const f = await makeRuntime();
+  await idle();
+  await h.rt.stop({ graceMs: 0 });
+  await h.rt.settled();
+  f.snapshot.mockResolvedValueOnce({ claude: { pid: 4242, start: "C" }, descendants: [] });
+  await h.send("again");
+  await h.rt.settled();
+  expect(without(await journalRow())).toMatchObject({ descendants: [] });
+});
+
+test("localCleanup names the DB when the journal read fails", async () => {
+  const cleanup = localCleanup(
+    {
+      agentById: async () => {
+        throw new Error("connection refused");
+      },
+    },
+    { reap: async () => 0 },
+  );
+  await h.makeRuntime();
+  const row = await h.store.agentById(h.agentId);
+  if (!row) throw new Error("no row");
+  await expect(cleanup(row)).rejects.toThrow(
+    "Reading the runtime journal from the database failed",
+  );
 });
 
 test("a failed snapshot is logged and never stops the agent", async () => {

@@ -60,6 +60,8 @@ export function localTransport(spec: AgentRuntimeSpec, args: string[]): Transpor
       return child.kill("SIGTERM");
     },
     async forceKill() {
+      // Reaped already: the pgid may have been reused.
+      if (settled) return;
       // The whole group, so a child that traps TERM does not leave its own children holding the pipes.
       try {
         if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");

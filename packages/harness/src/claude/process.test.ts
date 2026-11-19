@@ -277,3 +277,43 @@ test("forceKill reaches the transport", async () => {
   await p.forceKill();
   expect(t.forceKillCalls).toBe(1);
 });
+
+test("a throwing mapper line is logged and exited is still emitted", async () => {
+  const warns: string[] = [];
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t, {
+    debug() {},
+    error() {},
+    warn: (_o, msg) => void warns.push(msg),
+  });
+  // `message` is a getter that throws, so the mapper blows up on this line.
+  const bad = '{"type":"assistant"}';
+  const orig = JSON.parse;
+  JSON.parse = ((s: string, r?: never) =>
+    s === bad
+      ? Object.defineProperty({ type: "system" }, "subtype", {
+          get() {
+            throw new Error("boom");
+          },
+        })
+      : orig(s, r)) as typeof JSON.parse;
+  try {
+    t.emitStdout(bad);
+    t.exitWith(0);
+    const events: HarnessEvent[] = [];
+    await collectUntil(p.events, () => false, events);
+    expect(events.at(-1)).toMatchObject({ type: "exited" });
+    expect(warns).toContain("could not map stdout line");
+  } finally {
+    JSON.parse = orig;
+  }
+});
+
+test("FakeTransport.write rejects after endInput and after exit", async () => {
+  const a = new FakeTransport();
+  a.endInput();
+  await expect(a.write("x")).rejects.toBeInstanceOf(ProcessNotRunningError);
+  const b = new FakeTransport();
+  b.exitWith(0);
+  await expect(b.write("x")).rejects.toBeInstanceOf(ProcessNotRunningError);
+});

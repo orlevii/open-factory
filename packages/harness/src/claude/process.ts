@@ -99,7 +99,12 @@ export class ClaudeProcess implements HarnessProcess {
           log.warn({ ...ctx, line: line.slice(0, 500) }, "non-JSON stdout line");
           continue;
         }
-        for (const e of mapLine(parsed, this.mapper)) this.events.push(e);
+        try {
+          for (const e of mapLine(parsed, this.mapper)) this.events.push(e);
+        } catch (err) {
+          // A mapper bug must not stop the pump: `exited` has to be sent.
+          log.warn({ ...ctx, err, line: line.slice(0, 500) }, "could not map stdout line");
+        }
       }
     };
     const pumpStderr = async () => {
@@ -119,7 +124,11 @@ export class ClaudeProcess implements HarnessProcess {
       }
       const info: ExitInfo = { code: x.code, signal: x.signal };
       this.exited = info;
-      for (const e of flushMapper(this.mapper)) this.events.push(e);
+      try {
+        for (const e of flushMapper(this.mapper)) this.events.push(e);
+      } catch (err) {
+        log.warn({ ...ctx, err }, "could not flush mapper");
+      }
       this.events.push({
         type: "exited",
         code: info.code,

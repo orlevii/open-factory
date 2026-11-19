@@ -20,7 +20,7 @@ export class FakeTransport implements Transport {
   constructor(private readonly o: { terminateResult?: boolean; exitOnEndInput?: number } = {}) {}
 
   async write(line: string) {
-    if (this.done) throw new ProcessNotRunningError();
+    if (this.done || this.endInputCalls > 0) throw new ProcessNotRunningError();
     this.writes.push(line);
   }
   endInput() {

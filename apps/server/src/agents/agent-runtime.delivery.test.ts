@@ -254,13 +254,17 @@ test("a rejected interrupt write (process going away) is not an internal error: 
   expect(driver.last.controls).toEqual([]);
   expect(rt.live().status).not.toBe("errored");
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
-  await rt.stop(); // the expected exit arrives
+  await rt.stop(); // the expected exit arrives (a shutdown mid-turn: it leaves the factory-restarted notice)
   expect(rt.live().status).toBe("hibernated");
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
   expect(a?.status).toBe("hibernated");
   await send("next");
   expect(driver.starts).toHaveLength(2);
-  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["STOP", "next"]);
+  expect(driver.last.sent.at(-1)?.map((m) => [m.kind, m.body])).toEqual([
+    ["system", expect.stringContaining("The factory restarted")],
+    ["message", "STOP"],
+    ["message", "next"],
+  ]);
 });
 
 test("a rejected interrupt write before an unexpected exit keeps the real exit reason", async () => {

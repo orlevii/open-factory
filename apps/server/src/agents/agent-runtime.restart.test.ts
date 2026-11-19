@@ -25,6 +25,10 @@ beforeEach(makeRuntime);
 const send = (body: string, urgent = false) => h.send(body, urgent);
 const bg = ev.background;
 const types = async () => (await store.after(agentId, 0, 1000)).map((e) => e.event.type);
+const startReasons = async () =>
+  (await store.after(agentId, 0, 1000)).flatMap((e) =>
+    e.event.type === "process_started" ? [e.event.reason] : [],
+  );
 /** A started, idle process on session sess-1. */
 async function idle() {
   await send("hi");
@@ -390,4 +394,38 @@ test("a fresh process after a restart doesn't inherit the old task set or notifi
   await rt.settled();
   expect(rt.live().restartWaitingOn).toBe(0);
   expect(driver.starts[1]?.stopped).toBe(true);
+});
+
+test("apply-restart doesn't wait for crons; the agent is told which stopped", async () => {
+  await idle();
+  driver.last.emit(ev.cron("c1", { humanSchedule: "every 5 minutes" }));
+  await rt.settled();
+  await rt.requestRestart();
+  await rt.settled();
+  expect(driver.starts[0]?.stopped).toBe(true);
+  expect(await types()).toEqual(expect.arrayContaining(["background_work_lost", "hibernated"]));
+  const lost = (await store.after(agentId, 0, 1000)).find(
+    (e) => e.event.type === "background_work_lost",
+  );
+  expect(lost?.event).toEqual({
+    type: "background_work_lost",
+    reason: "apply_changes",
+    tasks: [],
+    crons: [{ cronId: "c1", humanSchedule: "every 5 minutes" }],
+  });
+  expect(driver.starts).toHaveLength(2); // woken at once
+  expect(driver.last.sent[0]?.[0]).toMatchObject({
+    kind: "system",
+    body: expect.stringContaining("every 5 minutes"),
+  });
+  expect((await startReasons()).at(-1)).toBe("apply_changes");
+});
+
+test("apply-restart with nothing lost and nothing queued stays hibernated", async () => {
+  await idle();
+  await rt.requestRestart();
+  await rt.settled();
+  expect(await types()).not.toContain("background_work_lost");
+  expect(driver.starts).toHaveLength(1);
+  expect(rt.queueItems()).toEqual([]);
 });

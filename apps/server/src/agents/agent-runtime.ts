@@ -19,7 +19,7 @@ import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/sl
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Tx } from "./event-store.ts";
-import type { NoticeType } from "./notices.ts";
+import { type NoticeType, notices } from "./notices.ts";
 import { SerialQueue } from "./serial-queue.ts";
 import type { PrepareStart } from "./start.ts";
 
@@ -54,9 +54,15 @@ export type HibernateReason =
   | "shutdown"
   | "archived";
 
+/** The live non-ambient tasks and crons a stop would kill (spec §9.4). */
+export type LostWork = {
+  tasks: { taskId: string; description: string }[];
+  crons: { cronId: string; humanSchedule: string }[];
+};
+
 /** What the `exited` job must do, recorded when a deliberate stop begins (spec §5.5). */
 export type AfterExit =
-  | { kind: "hibernate"; reason: HibernateReason }
+  | { kind: "hibernate"; reason: HibernateReason; lost: LostWork }
   | { kind: "restart"; by: string }
   | { kind: "failed_start" } // S3's stop after a spawn or resume failure
   | { kind: "internal" }; // S3's onJobFailure stop
@@ -403,7 +409,11 @@ export class AgentRuntime {
     this.restartPending = false;
     // Takes over a hibernate or restart already under way (its exit must not wake); a failing start keeps its intent.
     if (this.proc && this.afterExit?.kind !== "failed_start" && this.afterExit?.kind !== "internal")
-      this.afterExit = { kind: "hibernate", reason: this.archived ? "archived" : "shutdown" };
+      this.afterExit = {
+        kind: "hibernate",
+        reason: this.archived ? "archived" : "shutdown",
+        lost: this.lostSnapshot(),
+      };
     this.publishStatus();
     this.stopsInProgress += 1;
     try {
@@ -776,9 +786,12 @@ export class AgentRuntime {
         if (!this.started && (e.source === "resume" || e.source === "spawn")) {
           await this.setErrored(e.message);
           this.failingProc = proc;
-          this.stopping = true;
-          this.afterExit = { kind: "failed_start" };
-          void proc.stop({ graceMs: 1000 });
+          // A stop already under way (stop(), a shutdown) keeps its intent: its exit still does what it must.
+          if (!this.afterExit) {
+            this.stopping = true;
+            this.afterExit = { kind: "failed_start" };
+            void proc.stop({ graceMs: 1000 });
+          }
         }
         break;
       case "exited":
@@ -833,7 +846,8 @@ export class AgentRuntime {
           usage,
         });
       await this.append(null, e);
-      if (intent?.kind === "hibernate")
+      if (intent?.kind === "hibernate") {
+        await this.recordLostWork(intent, Boolean(openTurnId));
         await this.append(null, {
           type: "hibernated",
           reason: intent.reason,
@@ -841,6 +855,7 @@ export class AgentRuntime {
             ? { idleMinutes: Math.round((Date.now() - this.lastActivityAt) / 60_000) }
             : {}),
         });
+      }
       if (crash) await this.d.store.setStatus(this.agent.id, "errored");
       // A crash keeps its journal: the lost work is reported from it.
       else await this.writeJournal();
@@ -852,8 +867,41 @@ export class AgentRuntime {
     // failed_start and internal never wake; a crash never wakes until the crash policy lands (Task 19).
     if (intent?.kind === "hibernate") {
       if (intent.reason !== "shutdown" && intent.reason !== "archived")
-        await this.wakeAfterExit("queued_items");
+        await this.wakeAfterExit(
+          intent.reason === "apply_changes" && intent.lost.crons.length
+            ? "apply_changes"
+            : "queued_items",
+        );
     } else if (intent?.kind === "restart") await this.wakeAfterExit("restart");
+  }
+
+  /**
+   * The lost-work part of a hibernate's `exited` job (spec §6.4): `background_work_lost`, then the notice the next
+   * start delivers (factory-restarted for a shutdown that cut work short, restart-crons for an apply-restart).
+   */
+  private async recordLostWork(
+    intent: Extract<AfterExit, { kind: "hibernate" }>,
+    turnWasOpen: boolean,
+  ) {
+    const { reason, lost } = intent;
+    const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
+    if (anyLost && reason !== "warm_window" && reason !== "freed_slot") {
+      await this.append(null, { type: "background_work_lost", reason, ...lost });
+      this.d.log.info(
+        { agent: this.agent.slug, manager: this.agent.reportsTo, reason, ...lost },
+        "background work lost; would notify the manager",
+      );
+    }
+    if (reason === "shutdown" && (turnWasOpen || anyLost))
+      await this.addNotice(
+        "factory_restarted",
+        notices.factoryRestarted({ tasks: lost.tasks.map((t) => t.description || t.taskId) }),
+      );
+    else if (reason === "apply_changes" && lost.crons.length)
+      await this.addNotice(
+        "restart_crons",
+        notices.restartCrons({ crons: lost.crons.map((c) => c.humanSchedule) }),
+      );
   }
 
   /** S3's crash handling, kept until the crash policy (spec §9.2) replaces it. True when it marked errored. */
@@ -892,27 +940,39 @@ export class AgentRuntime {
    */
   private beginHibernate(reason: HibernateReason): boolean {
     const proc = this.proc;
-    if (!proc || proc === this.deadProc || proc === this.failingProc || this.stopping) return false;
+    if (!proc || proc === this.deadProc || proc === this.failingProc) return false;
+    const final = reason === "shutdown" || reason === "archived";
+    if (this.stopping) {
+      // A shutdown or archive takes over a hibernate already stopping: the same stop goes on, but its exit must
+      // record the shutdown (notice, no wake). The snapshot stays the one taken when the stop began.
+      if (!final || this.afterExit?.kind !== "hibernate") return false;
+      this.afterExit.reason = reason;
+      this.restartPending = false;
+      return true;
+    }
     if (reason === "warm_window" || reason === "freed_slot") {
       if (!this.hibernatable()) return false;
-    } else if (reason === "apply_changes" && this.busy()) return false;
-    const intent: AfterExit = { kind: "hibernate", reason };
+    } else if (reason === "apply_changes" && this.busy()) return false; // crons don't block it (spec §6.5)
+    const intent: AfterExit = { kind: "hibernate", reason, lost: this.lostSnapshot() };
     this.stopping = true;
     this.afterExit = intent;
     void proc.stop({ graceMs: 3000, termWaitMs: 10_000 }).then(
       (r) => {
         if (!r.timedOut) return;
         void this.run(async () => {
-          if (this.afterExit !== intent) return; // stop() or archive took over
+          if (this.afterExit !== intent) return; // stop() took over
           this.afterExit = { kind: "internal" }; // a late exit must not wake (escalation lands in Task 19)
           this.restartPending = false;
           this.deadProc = proc;
           await this.setErrored(
-            reason === "apply_changes"
+            intent.reason === "apply_changes"
               ? "Couldn't restart the agent: the process didn't stop."
               : "Couldn't stop the agent: the process didn't stop.",
           );
-          this.d.log.error({ agent: this.agent.slug, reason }, "hibernate stop timed out");
+          this.d.log.error(
+            { agent: this.agent.slug, reason: intent.reason },
+            "hibernate stop timed out",
+          );
           this.publishStatus();
         });
       },
@@ -930,6 +990,14 @@ export class AgentRuntime {
     void proc
       .stop({ graceMs: 0 })
       .catch((err) => this.d.log.error({ err, agent: this.agent.slug }, "force stop failed"));
+  }
+
+  /** What a stop now would kill (spec §6.4 step 3). */
+  private lostSnapshot(): LostWork {
+    return {
+      tasks: this.waitingOn().tasks.map(({ taskId, description }) => ({ taskId, description })),
+      crons: [...this.crons].map(([cronId, c]) => ({ cronId, humanSchedule: c.humanSchedule })),
+    };
   }
 
   private nonAmbient() {
@@ -1029,14 +1097,7 @@ export class AgentRuntime {
 
   /** Writes runtime_journal's tasks and crons (spec §12) when they changed; cleared once both are empty. */
   private async writeJournal() {
-    const tasks = this.waitingOn().tasks.map(({ taskId, description }) => ({
-      taskId,
-      description,
-    }));
-    const crons = [...this.crons].map(([cronId, c]) => ({
-      cronId,
-      humanSchedule: c.humanSchedule,
-    }));
+    const { tasks, crons } = this.lostSnapshot();
     const j: RuntimeJournal | null =
       tasks.length || crons.length ? { tasks, crons, takenAt: new Date().toISOString() } : null;
     const json = j ? JSON.stringify({ tasks, crons }) : "null";

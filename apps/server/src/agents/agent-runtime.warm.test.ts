@@ -233,3 +233,116 @@ test("the closing latch clears the warm timer", async () => {
   await h.rt.settled();
   expect(h.driver.last.stopped).toBe(false);
 });
+
+test("a message sent during the stop grace wakes the agent after the exit (no delivery_failed)", async () => {
+  await idle();
+  h.driver.last.holdStop = true;
+  await vi.advanceTimersByTimeAsync(60_000);
+  await h.rt.settled();
+  expect(h.driver.last.stopped).toBe(true);
+  const p = h.send("during");
+  await h.rt.settled();
+  expect(h.driver.starts[0]?.sent.flat().map((m) => m.body)).toEqual(["hi"]);
+  h.driver.starts[0]?.releaseStop();
+  await p;
+  await h.rt.settled();
+  expect(h.driver.starts).toHaveLength(2);
+  expect(h.driver.last.sent.flat().map((m) => m.body)).toEqual(["during"]);
+  expect(await types()).not.toContain("delivery_failed");
+  expect(await types()).toContain("hibernated");
+});
+
+test("shutdown mid-turn leaves a factory_restarted notice and no wake", async () => {
+  await idle();
+  h.driver.last.emit(ev.turn());
+  await h.rt.settled();
+  await h.rt.hibernate("shutdown");
+  await h.rt.settled();
+  expect((await h.store.pendingQueue(h.agentId))[0]).toMatchObject({
+    kind: "system",
+    notice: "factory_restarted",
+  });
+  expect(h.driver.starts).toHaveLength(1);
+});
+
+test("shutdown with a live task names it in the notice and records the lost work", async () => {
+  await idle();
+  h.driver.last.emit(ev.background([{ taskId: "t1", description: "pnpm test" }]));
+  await h.rt.settled();
+  await h.rt.hibernate("shutdown");
+  await h.rt.settled();
+  const [notice] = await h.store.pendingQueue(h.agentId);
+  expect(notice?.body).toContain("`pnpm test`");
+  const lost = (await h.store.after(h.agentId, 0, 1000)).find(
+    (e) => e.event.type === "background_work_lost",
+  );
+  expect(lost?.event).toEqual({
+    type: "background_work_lost",
+    reason: "shutdown",
+    tasks: [{ taskId: "t1", description: "pnpm test" }],
+    crons: [],
+  });
+  expect(h.driver.starts).toHaveLength(1);
+});
+
+test("a shutdown of an idle agent leaves no notice", async () => {
+  await idle();
+  await h.rt.hibernate("shutdown");
+  await h.rt.settled();
+  expect(await h.store.pendingQueue(h.agentId)).toEqual([]);
+  expect(await types()).not.toContain("background_work_lost");
+});
+
+test("a freed_slot victim that received a message meanwhile refuses", async () => {
+  await idle();
+  await h.send("meanwhile"); // written with no open turn: awaiting its turn
+  expect(await h.rt.hibernate("freed_slot")).toBe(false);
+  expect(h.driver.last.stopped).toBe(false);
+  h.driver.last.emit(ev.turn(), ev.end());
+  await h.rt.settled();
+  expect(await h.rt.hibernate("freed_slot")).toBe(true);
+  await h.rt.settled();
+  expect(h.driver.last.stopped).toBe(true);
+  expect((await h.store.after(h.agentId, 0, 1000)).at(-1)?.event).toMatchObject({
+    type: "hibernated",
+    reason: "freed_slot",
+  });
+});
+
+test("a shutdown takes over an apply-restart already stopping: notice, no restart_crons, no wake", async () => {
+  await idle();
+  h.driver.last.emit(ev.cron("c1"));
+  await h.rt.settled();
+  h.driver.last.holdStop = true;
+  await h.rt.requestRestart(); // crons don't block: the apply_changes stop begins
+  expect(h.driver.last.stopped).toBe(true);
+  expect(await h.rt.hibernate("shutdown")).toBe(true);
+  expect(h.rt.live().restartPending).toBe(false);
+  h.driver.last.releaseStop();
+  await h.rt.settled();
+  const queue = await h.store.pendingQueue(h.agentId);
+  expect(queue.map((m) => m.notice)).toEqual(["factory_restarted"]);
+  const events = (await h.store.after(h.agentId, 0, 1000)).map((e) => e.event);
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "background_work_lost", reason: "shutdown" }),
+  );
+  expect(events.at(-1)).toMatchObject({ type: "hibernated", reason: "shutdown" });
+  expect(h.driver.starts).toHaveLength(1);
+});
+
+test("a start failure during stop() keeps the stop's intent", async () => {
+  await h.send("hi"); // not started yet
+  h.driver.last.holdStop = true;
+  const stopping = h.rt.stop();
+  h.driver.last.emit({ type: "error", source: "resume", message: "No conversation found" });
+  await h.rt.settled();
+  h.driver.last.releaseStop();
+  await stopping;
+  await h.rt.settled();
+  expect((await h.store.after(h.agentId, 0, 1000)).at(-1)?.event).toMatchObject({
+    type: "hibernated",
+    reason: "shutdown",
+  });
+  expect(h.rt.live().status).toBe("errored");
+  expect(h.driver.starts).toHaveLength(1);
+});

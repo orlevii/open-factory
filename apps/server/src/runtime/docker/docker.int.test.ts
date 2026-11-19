@@ -91,7 +91,11 @@ afterEach(async () => {
         .catch(() => {});
   }
   agentIds.clear();
-  for (const f of hostFakes.splice(0)) for (const e of f.log()) if (e.kind === "start") kill(e.pid);
+  // Only a host fake still running: a live pid that is a `node` or `claude` process (a finished one's pid, such as a
+  // `--version` probe's, may have been reused by an unrelated process on this machine). Never a blind kill.
+  for (const f of hostFakes.splice(0))
+    for (const e of f.log())
+      if (e.kind === "start" && !e.argv.includes("--version") && isFake(e.pid)) kill(e.pid);
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 }, 90_000);
 
@@ -106,6 +110,18 @@ const alive = (pid: number) => {
     return true;
   } catch {
     return false;
+  }
+};
+/** Alive, and its command (`ps -o comm=`, a path on macOS) is `node` or `claude`. */
+const isFake = (pid: number) => {
+  if (!alive(pid)) return false;
+  try {
+    const comm = execFileSync("ps", ["-o", "comm=", "-p", String(pid)])
+      .toString()
+      .trim();
+    return ["node", "claude"].includes(path.basename(comm));
+  } catch {
+    return false; // gone meanwhile
   }
 };
 const tmp = (prefix: string) => {

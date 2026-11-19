@@ -521,6 +521,18 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Boot's wake (spec §5.7 steps 5–6), never inline: `boot`, or `boot_resume` for interrupted work (a factory-restarted
+   * notice is pending), which is its single automatic attempt, persisted as it is woken (§9.2).
+   */
+  bootWake(reason: "boot" | "boot_resume"): Promise<void> {
+    return this.run(async () => {
+      if (reason === "boot_resume") await this.beginAttempt(reason, false);
+      else await this.wakeFromJob(reason);
+      this.publishStatus();
+    });
+  }
+
   /** Begins a hibernate in a job (spec §6.4). Resolves false when refused. Never waits for the exit. */
   hibernate(reason: HibernateReason): Promise<boolean> {
     return this.run(async () => {
@@ -713,23 +725,29 @@ export class AgentRuntime {
     return this.queue.map((e) => this.itemOf(e));
   }
 
-  /** Graceful stop (server shutdown, tests). Waits until the exit is persisted. */
+  /**
+   * Shutdown and archive (spec §5.6, §6.6): the one hibernate path, `beginHibernate("shutdown")` (or `"archived"`
+   * after `markArchived`) in a job, taking over a hibernate already stopping; then waits until the exit is recorded,
+   * escalating a stop that times out (§9.6). Call it from outside this agent's jobs (the shutdown hook, the archive
+   * route). `opts` is the stop's timing when this call begins it (default 3 s grace, 10 s after SIGTERM).
+   */
   async stop(opts?: { graceMs?: number; termWaitMs?: number }) {
-    // Synchronously, before any await: the exit this causes (or a restart's exit already on its way) never respawns.
-    this.stopping = true;
-    this.restartPending = false;
-    // Takes over a hibernate or restart already under way (its exit must not wake); a failing start keeps its intent.
-    if (this.proc && this.afterExit?.kind !== "failed_start" && this.afterExit?.kind !== "internal")
-      this.afterExit = {
-        kind: "hibernate",
-        reason: this.archived ? "archived" : "shutdown",
-        lost: this.lostSnapshot(),
-      };
-    this.publishStatus();
+    // Synchronously, before any await: nothing launches from here on (refuseWhileStopping), even a start already
+    // inside prepareStart, and an apply-restart waiting for its moment is dropped.
     this.stopsInProgress += 1;
+    this.restartPending = false;
+    this.publishStatus();
     try {
-      const p = this.proc;
-      if (p && (await p.stop(opts)).timedOut) await this.escalate(p); // spec §9.6
+      const proc = await this.run(async () => {
+        this.restartPending = false;
+        this.beginHibernate(this.archived ? "archived" : "shutdown", opts);
+        this.publishStatus();
+        // The stop under way is the one to wait for: this one, or a Restart's or a failed start's (each with its own
+        // intent, none of which wakes now). A stop_failed process gets one more escalation try (§9.6).
+        return this.proc;
+      });
+      // stop() is idempotent per process: this joins the stop already under way.
+      if (proc && (await proc.stop()).timedOut) await this.escalate(proc); // spec §9.6
       await this.settled();
     } finally {
       this.stopsInProgress -= 1;
@@ -1756,7 +1774,10 @@ export class AgentRuntime {
    * Internal primitive, call only inside this agent's own job (spec §6.4). Records the intent and starts the stop
    * without awaiting it; the `exited` job does the rest. False when refused.
    */
-  private beginHibernate(reason: HibernateReason): boolean {
+  private beginHibernate(
+    reason: HibernateReason,
+    opts: { graceMs?: number; termWaitMs?: number } = { graceMs: 3000, termWaitMs: 10_000 },
+  ): boolean {
     const proc = this.proc;
     if (!proc || proc === this.deadProc || proc === this.failingProc) return false;
     const final = reason === "shutdown" || reason === "archived";
@@ -1774,7 +1795,7 @@ export class AgentRuntime {
     const intent: AfterExit = { kind: "hibernate", reason, lost: this.lostSnapshot() };
     this.stopping = true;
     this.afterExit = intent;
-    this.watchStop(proc, proc.stop({ graceMs: 3000, termWaitMs: 10_000 }), "hibernate stop failed");
+    this.watchStop(proc, proc.stop(opts), "hibernate stop failed");
     return true;
   }
 

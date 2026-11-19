@@ -228,17 +228,30 @@ export class AgentRuntimes {
   }
 
   /**
-   * In parallel, so the shutdown budget doesn't grow with the number of agents. allSettled throughout:
-   * one failed init or stop must not keep the other runtimes' processes running past shutdown.
+   * Shutdown (spec §5.6, §6.6): the closing latch first (the Supervisor's, then every runtime's, including those whose
+   * init finished after it), so nothing can start once shutdown has begun; then `stopAll`.
+   */
+  async close(): Promise<void> {
+    this.supervisor.close();
+    for (const rt of await this.all()) rt.setNoStart();
+    await this.stopAll();
+  }
+
+  /**
+   * `hibernate("shutdown")` (or `"archived"`) on every runtime in parallel, each waiting for its exit and its job queue
+   * to drain, so the shutdown budget doesn't grow with the number of agents. allSettled throughout: one failed init or
+   * stop must not keep the other runtimes' processes running past shutdown.
    */
   async stopAll(): Promise<void> {
-    const inits = await Promise.allSettled(this.byId.values());
-    const all = inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-    const stops = await Promise.allSettled(
-      all.map((rt) => rt.stop({ graceMs: 3000, termWaitMs: 10_000 })),
-    );
+    const stops = await Promise.allSettled((await this.all()).map((rt) => rt.stop()));
     for (const r of stops)
       if (r.status === "rejected") this.d.log.error({ err: r.reason }, "Stopping an agent failed");
+  }
+
+  /** Every runtime whose init succeeded, once every init in flight has settled. */
+  private async all(): Promise<AgentRuntime[]> {
+    const inits = await Promise.allSettled(this.byId.values());
+    return inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
   }
 
   private checkVersionOnce(bin: string) {

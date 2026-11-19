@@ -25,6 +25,7 @@ export const READY_TIMEOUT_MS = 30_000;
 export const READY_MARKER = "/run/open-factory/ready";
 const LOG_TAIL_LINES = 50;
 const LOGS_BOUND_MS = 5_000;
+const LIST_BOUND_MS = 10_000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -245,11 +246,25 @@ export class ContainerManager {
     return c;
   }
 
+  /** Every container labelled with an agent id (spec §5.7 step 2), bounded so a hung daemon can't hold up boot. */
   async listOurs(): Promise<{ id: string; agentId: string; running: boolean }[]> {
-    return (await this.docker.listByLabel(LABEL_AGENT_ID)).flatMap((c) => {
+    const listed = await bounded(
+      this.docker.listByLabel(LABEL_AGENT_ID),
+      LIST_BOUND_MS,
+      `Listing containers didn't finish within ${LIST_BOUND_MS / 1000} s.`,
+    );
+    return listed.flatMap((c) => {
       const agentId = c.labels[LABEL_AGENT_ID];
       return agentId ? [{ id: c.id, agentId, running: c.running }] : [];
     });
+  }
+
+  /**
+   * Stops a container `listOurs` returned (boot, spec §5.7 step 2), by id: its label already says it is ours, so it
+   * needn't be found again by name. Bounded, never removed.
+   */
+  async stopListed(id: string): Promise<void> {
+    await this.boundedStop(id);
   }
 
   /** `container.stop({t: 5})`, bounded so a Docker daemon that never answers can't hang the caller. */

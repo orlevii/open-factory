@@ -327,13 +327,16 @@ test("hibernate stops the container (not removed)", async () => {
   const w = await setup();
   await idleAgent(w);
   expect(await w.rt.hibernate("warm_window")).toBe(true);
-  await until(() => expect(w.rt.live().status).toBe("hibernated"));
+  // The status flips when the exit job begins; its events are recorded later in that job.
+  await until(async () =>
+    expect((await events(w)).at(-1)).toMatchObject({ type: "hibernated", reason: "warm_window" }),
+  );
+  expect(w.rt.live().status).toBe("hibernated");
   expect(container(w)).toMatchObject({ running: false });
   expect(w.docker.ops()).not.toContain("remove");
   const evs = await events(w);
-  expect(evs.at(-1)).toMatchObject({ type: "hibernated", reason: "warm_window" });
   expect(evs.map((e) => e.type)).not.toContain("cleanup");
-  expect(w.runtimes.supervisor.running().count).toBe(0);
+  await until(() => expect(w.runtimes.supervisor.running().count).toBe(0));
 });
 
 test("a container stop that fails on hibernate makes the agent stop_failed and keeps its slot", async () => {

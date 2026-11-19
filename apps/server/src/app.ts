@@ -35,6 +35,7 @@ import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { registerStatic } from "./static.ts";
+import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
 import { migrateWorkdirState } from "./workspace/state-migration.ts";
@@ -131,6 +132,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   // dockerode connects lazily: constructing these makes no Docker call.
   const docker = dockerodeClient();
   const containers = new ContainerManager({ docker, log: app.log });
+  const journal = new ProcessJournal();
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
@@ -149,7 +151,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     // The same ContainerManager the exec transport stops containers with.
     docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
     // Only the real driver's processes are ours to journal and reap (spec §12).
-    ...(deps.harnessDriver ? {} : { journal: new ProcessJournal() }),
+    ...(deps.harnessDriver ? {} : { journal }),
     driver:
       deps.harnessDriver ??
       createClaudeDriver({
@@ -192,9 +194,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("runtimes", runtimes);
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
-    // The closing latch first (spec §5.6): nothing may start once shutdown has begun.
-    runtimes.supervisor.close();
-    await runtimes.stopAll();
+    // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
+    await runtimes.close();
   });
 
   await app.register(statusRoutes, { sql: deps.sql });
@@ -207,5 +208,20 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
   await registerStatic(app, deps.webRoot);
+  // Boot reconciliation (spec §5.7): after the migrations, before the server listens. Leftovers of the previous run
+  // are reaped (with the real journal whatever the driver: it only ever signals a pid whose start time matches).
+  try {
+    await reconcile({
+      store,
+      journal,
+      containers,
+      supervisor: runtimes.supervisor,
+      runtimes,
+      log: app.log,
+    });
+  } catch (err) {
+    await app.close(); // a wake may already have started a process
+    throw err;
+  }
   return app;
 }

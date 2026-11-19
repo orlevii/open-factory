@@ -1,6 +1,9 @@
+import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { createFakeClaude } from "@open-factory/harness/testing";
+import { createFakeClaude, type FakeClaude } from "@open-factory/harness/testing";
+import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { makeTestApp, TEST_ORIGIN } from "../test/helpers.ts";
@@ -115,3 +118,158 @@ test("server restart: graceful stop, then the next message resumes the same sess
     expect.arrayContaining(["--resume", sessionId]),
   );
 });
+
+// ---------- restarts (spec §5.7, §6.6): never two processes for one session ----------
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const startsOf = (f: FakeClaude) =>
+  f.log().flatMap((e) => (e.kind === "start" && !e.argv.includes("--version") ? [e] : []));
+const statusOf = async (app: FastifyInstance, c: string) =>
+  (await app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c } })).json().agent
+    .status;
+const post = (app: FastifyInstance, c: string, body: string) =>
+  app.inject({
+    method: "POST",
+    url: "/api/agents/dev/messages",
+    headers: { cookie: c },
+    payload: { body, urgent: false },
+  });
+
+test("assembled: app.close() with a live agent, reopen(): exactly one claude process per agent", async () => {
+  const f = createFakeClaude({ scenario: "reply" });
+  const env = { FACTORY_CLAUDE_BIN: f.bin };
+  const w = await makeTestApp({ env });
+  try {
+    await w.seedAgent();
+    const c = (await w.signUpUser({ handle: "or" })).cookie;
+    expect((await post(w.app, c, "hello")).statusCode).toBe(202);
+    await until(async () => (await statusOf(w.app, c)) === "idle");
+    const first = startsOf(f)[0]?.pid ?? 0;
+    expect(alive(first)).toBe(true);
+    await w.app.close();
+    expect(alive(first)).toBe(false);
+
+    const next = await w.reopen({ env });
+    expect(startsOf(f)).toHaveLength(1); // nothing pending: the boot woke nobody
+    expect((await post(next.app, c, "again")).statusCode).toBe(202);
+    await until(async () => (await statusOf(next.app, c)) === "idle");
+    const pids = startsOf(f).map((s) => s.pid);
+    expect(pids).toHaveLength(2);
+    expect(pids.filter(alive)).toEqual([pids[1]]);
+  } finally {
+    await w.close();
+  }
+}, 20_000);
+
+test("assembled: a server that died mid-turn: the next boot reaps the leftover claude and resumes once", async () => {
+  const f = createFakeClaude({ scenario: "reply" });
+  const env = { FACTORY_CLAUDE_BIN: f.bin };
+  const w = await makeTestApp({ env });
+  const leftover = spawn(f.bin, ["-p"], { stdio: ["pipe", "ignore", "ignore"] });
+  try {
+    const agent = await w.seedAgent();
+    const c = (await w.signUpUser({ handle: "or" })).cookie;
+    await w.app.close();
+    // What a server killed mid-turn leaves: its Claude still running, journaled, and an open turn.
+    await until(() => startsOf(f).length === 1);
+    const pid = leftover.pid ?? 0;
+    const start = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LC_ALL: "C" },
+    })
+      .toString()
+      .trim()
+      .replace(/\s+/g, " ");
+    const journal = { claude: { pid, start }, tasks: [], crons: [], takenAt: "" };
+    await w.sql`update agents set runtime_journal = ${JSON.stringify(journal)}::jsonb where id = ${agent.id}`;
+    await w.sql`insert into turns (id, agent_id, started_at) values (${randomUUID()}, ${agent.id}, now())`;
+
+    const next = await w.reopen({ env });
+    // Reaped before the server listens; the resume is a new process, the only one.
+    expect(alive(pid)).toBe(false);
+    await until(async () => (await statusOf(next.app, c)) === "idle");
+    const pids = startsOf(f).map((s) => s.pid);
+    expect(pids).toHaveLength(2);
+    expect(pids.filter(alive)).toEqual([pids[1]]);
+    const page = (
+      await next.app.inject({
+        method: "GET",
+        url: "/api/agents/dev/events",
+        headers: { cookie: c },
+      })
+    ).json();
+    const types = page.events.map((e: { event: { type: string } }) => e.event.type);
+    expect(types.slice(0, 2)).toEqual(["reconciled", "process_started"]);
+    expect(page.events[0].event).toEqual({
+      type: "reconciled",
+      killedProcesses: 1,
+      stoppedContainer: false,
+    });
+    expect(page.events[1].event.reason).toBe("boot_resume");
+  } finally {
+    leftover.kill("SIGKILL");
+    await w.close();
+  }
+}, 20_000);
+
+test("assembled: graceful shutdown mid-turn → next boot delivers the factory_restarted notice once", async () => {
+  const f = createFakeClaude({
+    scenario: {
+      onUser: [
+        { emit: { fixture: "interrupt-then-message", lines: [1, 3] } },
+        { longTool: 30_000 },
+      ],
+    },
+  });
+  const env = { FACTORY_CLAUDE_BIN: f.bin };
+  const w = await makeTestApp({ env });
+  try {
+    await w.seedAgent();
+    const c = (await w.signUpUser({ handle: "or" })).cookie;
+    expect((await post(w.app, c, "long job")).statusCode).toBe(202);
+    await until(
+      async () =>
+        (
+          await w.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c } })
+        ).json().agent.turnOpen === true,
+    );
+    // Close stdin, 3 s of grace, SIGTERM: the turn is cut short by the shutdown.
+    await w.app.close();
+    const notices = () =>
+      w.sql`select state from messages where notice = 'factory_restarted' order by created_at`;
+    expect(await notices()).toEqual([{ state: "pending" }]);
+
+    // The next boot resumes the session with a fake that answers.
+    createFakeClaude({ scenario: "reply", dir: f.dir });
+    const next = await w.reopen({ env });
+    await until(async () => (await statusOf(next.app, c)) === "idle");
+    const resumed = startsOf(f).at(-1);
+    expect(resumed?.argv).toContain("--resume");
+    const written = f
+      .log()
+      .flatMap((e) => (e.kind === "stdin" ? [JSON.parse(e.line).message.content as string] : []));
+    const restartedNotices = written.filter((l) =>
+      l.includes("The factory restarted while you were working."),
+    );
+    expect(restartedNotices).toHaveLength(1);
+    expect(restartedNotices[0]).toMatch(/^<factory-message from="@factory" kind="system"/);
+    expect(await notices()).toEqual([{ state: "delivered" }]);
+    expect((await w.sql`select attempting from agents where slug = 'dev'`)[0]?.attempting).toBe(
+      false,
+    );
+
+    // Delivered once: a further restart has nothing to resume.
+    await next.app.close();
+    const third = await w.reopen({ env: { FACTORY_CLAUDE_BIN: f.bin } });
+    expect(await statusOf(third.app, c)).toBe("hibernated");
+    expect(startsOf(f)).toHaveLength(2);
+  } finally {
+    await w.close();
+  }
+}, 30_000);

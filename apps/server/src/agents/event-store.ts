@@ -78,6 +78,48 @@ export class EventStore {
   async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {
     await this.db.update(agents).set({ runtimeJournal }).where(eq(agents.id, agentId));
   }
+  /**
+   * Boot (spec §5.7 step 4): every agent still `attempting` was in an attempt when the server stopped. It becomes
+   * errored (its error kept when it already had one, else `crash` with `message`) and the attempt clears. Returns ids.
+   */
+  async failCutShortAttempts(message: string): Promise<string[]> {
+    const rows = await this.db
+      .update(agents)
+      .set({
+        status: "errored",
+        lastError: sql`coalesce(${agents.lastError}, ${message})`,
+        errorKind: sql`coalesce(${agents.errorKind}, 'crash')`,
+        attempting: false,
+      })
+      .where(eq(agents.attempting, true))
+      .returning({ id: agents.id });
+    return rows.map((r) => r.id);
+  }
+  /**
+   * Boot (spec §5.7 step 6): the non-archived, non-errored agents with pending items, by their oldest pending item
+   * (FIFO across the restart). `resume` when a factory-restarted notice is among them.
+   */
+  async bootWakes(): Promise<{ id: string; slug: string; resume: boolean }[]> {
+    const rows = await this.db
+      .select({
+        id: agents.id,
+        slug: agents.slug,
+        resume: sql<boolean>`bool_or(${messages.notice} = 'factory_restarted')`,
+      })
+      .from(agents)
+      .innerJoin(messages, and(eq(messages.toAgentId, agents.id), eq(messages.state, "pending")))
+      .where(and(isNull(agents.archivedAt), sql`${agents.status} <> 'errored'`))
+      .groupBy(agents.id, agents.slug)
+      .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
+    return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
+  }
+  /** Boot (spec §5.7 step 7): every journal was read and acted on. */
+  async clearRuntimeJournals() {
+    await this.db
+      .update(agents)
+      .set({ runtimeJournal: null })
+      .where(isNotNull(agents.runtimeJournal));
+  }
   /** The cut-off agent is owed one continue notice at the reset (spec §7.3). */
   async setNoticeOwed(agentId: string, owed: boolean) {
     await this.db.update(agents).set({ rateLimitNoticeOwed: owed }).where(eq(agents.id, agentId));
@@ -282,6 +324,19 @@ export class EventStore {
           : {}),
       })
       .where(eq(turns.id, turnId));
+  }
+
+  /**
+   * Boot (spec §5.7 step 3): turns still open when the server stopped are closed as `factory_restarted`, errors.
+   * Returns the ids of the agents that had one.
+   */
+  async closeDanglingTurns(): Promise<string[]> {
+    const rows = await this.db
+      .update(turns)
+      .set({ endedAt: new Date(), isError: true, terminalReason: "factory_restarted" })
+      .where(isNull(turns.endedAt))
+      .returning({ agentId: turns.agentId });
+    return [...new Set(rows.map((r) => r.agentId))];
   }
 
   // messages

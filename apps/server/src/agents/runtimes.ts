@@ -121,6 +121,8 @@ export class AgentRuntimes {
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,
+      // "" names no credential: an unloaded runtime, or a terminated one whose credential was deleted (the only rows
+      // with a null credential_id), is never paused by, nor counted under, any real credential's rate limit.
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: d.store,
       load: (slug) => this.bySlug(slug),

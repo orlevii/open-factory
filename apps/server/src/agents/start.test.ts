@@ -3,6 +3,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -12,7 +14,7 @@ import path from "node:path";
 import { type AgentRow, schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
@@ -319,4 +321,215 @@ test("gate off: a docker agent is never gated", async () => {
   } finally {
     factoryConfig.allowLocalRuntime = true;
   }
+});
+
+// ---------- S7 §6.3: a spawned agent's start derives its inheritance from its spawner's current state ----------
+
+const readlinkOrNull = (p: string) => {
+  try {
+    return readlinkSync(p);
+  } catch {
+    return null;
+  }
+};
+const leadTemplateSettings = () =>
+  path.join(home, "state/agents", agent.slug, "template/settings.json");
+const md = (slug: string) =>
+  readFileSync(path.join(workspace.workdir(slug), ".claude-config/CLAUDE.md"), "utf8");
+const settingsOf = (slug: string) =>
+  JSON.parse(
+    readFileSync(path.join(workspace.workdir(slug), ".claude-config/settings.json"), "utf8"),
+  );
+
+/** The fixture's lead (secrets [GH_TOKEN], grant `app`, template deny `Bash(rm:*)`) spawned a child. */
+async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> {
+  writeFileSync(
+    leadTemplateSettings(),
+    JSON.stringify({
+      permissions: { deny: ["Bash(rm:*)"] },
+      autoMode: { hard_deny: ["$defaults", "Never push to main"] },
+    }),
+  );
+  await t.db.insert(schema.secrets).values({
+    id: "s2",
+    name: "NPM_TOKEN",
+    valueEnc: vault.seal("npm-1", "secrets:s2"),
+  });
+  const config = templateYamlSchema.parse({
+    name: "dev",
+    display_name: "Dev",
+    runtime: "local",
+    secrets: ["GH_TOKEN", "NPM_TOKEN"],
+    projects: ["app"],
+    skills: [],
+    plugins: [],
+    ...over,
+  });
+  const tdir = path.join(home, "templates/dev");
+  mkdirSync(tdir, { recursive: true });
+  writeFileSync(path.join(tdir, "AGENTS.md"), "# Dev\n");
+  const slug = `dev-ab${seq}`;
+  const [row] = await t.db
+    .insert(schema.agents)
+    .values({
+      id: `child-${seq}`,
+      slug,
+      displayName: "Dev · ab",
+      description: "Builds the thing.",
+      template: "dev",
+      config,
+      runtime: config.runtime,
+      credentialId: "c1",
+      kind: "ephemeral",
+      reportsTo: agent.id,
+    })
+    .returning();
+  if (!row) throw new Error("seed failed");
+  await t.db.insert(schema.agentProjectGrants).values({ agentId: row.id, projectId: "p1" });
+  await workspace.materialize(
+    row.id,
+    slug,
+    {
+      dir: tdir,
+      config,
+      tplSettings: { permissions: { deny: ["Bash(curl:*)"] } },
+      tplMcp: { mcpServers: {} },
+    },
+    {
+      slug,
+      displayName: "Dev · ab",
+      description: "Builds the thing.",
+      template: "dev",
+      config,
+      manager: { slug: agent.slug, displayName: "Lead" },
+      grants: [{ name: "app", hostPath: repo }],
+    },
+  );
+  return row;
+}
+
+test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny ∪ in settings.json, grants ∩ spawner's current", async () => {
+  const child = await seedChild();
+  const spec = await prepareStart(child, { agentToken: "tok" });
+  expect(spec.env.GH_TOKEN).toBe("gh-1");
+  expect(spec.env.NPM_TOKEN).toBeUndefined();
+  expect(Object.values(spec.env)).not.toContain("npm-1");
+  const settings = settingsOf(child.slug);
+  expect(settings.permissions.deny).toContain("Bash(rm:*)");
+  expect(settings.permissions.deny).toContain("Bash(curl:*)");
+  expect(settings.autoMode.hard_deny).toEqual(["$defaults", "Never push to main"]);
+  expect(md(child.slug)).toContain("Environment variables provided to you: GH_TOKEN.");
+  expect(readlinkOrNull(path.join(workspace.workdir(child.slug), "projects/app"))).not.toBeNull();
+  // Revoked directly, without syncChildren: the child's start drops the grant anyway.
+  await t.db
+    .delete(schema.agentProjectGrants)
+    .where(
+      and(
+        eq(schema.agentProjectGrants.agentId, agent.id),
+        eq(schema.agentProjectGrants.projectId, "p1"),
+      ),
+    );
+  await prepareStart(child, { agentToken: "tok" });
+  expect(readlinkOrNull(path.join(workspace.workdir(child.slug), "projects/app"))).toBeNull();
+  expect(md(child.slug)).toContain("No projects are granted to you.");
+});
+
+test("the spawner's current deny rules reach the child at its next start (no snapshot)", async () => {
+  const child = await seedChild();
+  await prepareStart(child, { agentToken: "tok" });
+  writeFileSync(leadTemplateSettings(), JSON.stringify({ permissions: { deny: ["WebFetch"] } }));
+  await prepareStart(child, { agentToken: "tok" });
+  const deny = settingsOf(child.slug).permissions.deny;
+  expect(deny).toContain("WebFetch");
+  expect(deny).not.toContain("Bash(rm:*)");
+  expect(deny).toContain("Bash(curl:*)");
+});
+
+test("a refusal that became true fails the start closed with the refusal sentence and no fix", async () => {
+  const child = await seedChild();
+  await t.db.update(schema.agents).set({ runtime: "docker" }).where(eq(schema.agents.id, agent.id));
+  const prepare = vi.spyOn(workspace, "prepare");
+  try {
+    await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+      name: "AgentStartError",
+      message: "Template dev runs locally, outside the sandbox you run in, so you can't spawn it.",
+      fix: undefined,
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    prepare.mockRestore();
+  }
+});
+
+test("bypass child of an auto spawner is refused at start", async () => {
+  const child = await seedChild({ permission_mode: "bypass" });
+  await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+    message:
+      "Template dev runs without permission checks, which you don't have, so you can't spawn it.",
+    fix: undefined,
+  });
+});
+
+test.each([
+  ["its template copy is missing", async () => rmSync(leadTemplateSettings())],
+  ["its template copy isn't JSON", async () => writeFileSync(leadTemplateSettings(), "{")],
+  [
+    "it is archived",
+    async () =>
+      t.db
+        .update(schema.agents)
+        .set({ archivedAt: new Date() })
+        .where(eq(schema.agents.id, agent.id)),
+  ],
+  [
+    "its config is invalid",
+    async () =>
+      t.db
+        .update(schema.agents)
+        .set({ config: { name: 5 } as never })
+        .where(eq(schema.agents.id, agent.id)),
+  ],
+])("a child fails closed when its spawner can't be read: %s", async (_n, mutate) => {
+  const child = await seedChild();
+  await mutate();
+  const prepare = vi.spyOn(workspace, "prepare");
+  try {
+    await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+      name: "AgentStartError",
+      fix: undefined,
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    prepare.mockRestore();
+  }
+});
+
+test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quoted", async () => {
+  await t.db
+    .update(schema.agents)
+    .set({ config: { ...agent.config, canSpawn: ["dev"], maxLiveSpawns: 3 } })
+    .where(eq(schema.agents.id, agent.id));
+  const child = await seedChild({ description: "ignored" });
+  await t.db
+    .update(schema.agents)
+    .set({ description: 'Ship "it" <now>' })
+    .where(eq(schema.agents.id, child.id));
+  await prepareStart(agent, { agentToken: "tok" });
+  const lead = md(agent.slug);
+  expect(lead).toContain("## Spawning");
+  expect(lead).toContain("at most 3 live");
+  expect(lead).toContain(`${factoryConfig.maxSpawnsPerHour} per hour`);
+  expect(lead).toContain(`- @${child.slug} (Dev · ab), spawned by @${agent.slug}: "Ship 'it' now"`);
+  await prepareStart(child, { agentToken: "tok" });
+  const own = md(child.slug);
+  expect(own).toContain(
+    `You are a spawned agent: @${agent.slug} spawned you for one piece of work.`,
+  );
+  expect(own).toContain("## Your lifecycle");
+  expect(own).not.toContain("## Spawning");
+});
+
+test("a persistent agent without can_spawn has no Spawning section", async () => {
+  await prepareStart(agent, { agentToken: "tok" });
+  expect(md(agent.slug)).not.toContain("## Spawning");
 });

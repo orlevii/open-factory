@@ -31,7 +31,7 @@ let frames: ServerMessage[];
 let rt: AgentRuntime;
 let agentId: string;
 
-async function makeRuntime(opts: { startError?: Error; sessionId?: string; status?: string } = {}) {
+async function makeRuntime(opts: Parameters<RuntimeHarness["makeRuntime"]>[0] = {}) {
   await h.makeRuntime(opts);
   ({ driver, bus, frames, rt, agentId } = h);
   return rt;
@@ -173,6 +173,55 @@ test("a prepareStart failure is an error event with its fix, errored, 503-style 
   });
   expect(rt.live().status).toBe("errored");
   expect(rt.queueItems()).toHaveLength(1);
+});
+
+test.each([
+  [
+    "edit_agent",
+    "The template copy /x/settings.json is missing. Re-sync the agent from its template.",
+  ],
+  ["resync", "Re-sync @dev to reinstall its plugins into the factory-managed location."],
+] as const)(
+  "a spawned agent's %s start error drops the fix and ends with the terminate advice",
+  async (fix, message) => {
+    await makeRuntime({
+      startError: new AgentStartError(message, fix),
+      seed: async (id) => {
+        await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
+        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
+                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
+        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
+      },
+    });
+    await rt.reload();
+    const expected = `${message} Terminate it and spawn a new one.`;
+    await expect(send("hi")).rejects.toMatchObject({
+      name: "AgentStartError",
+      message: expected,
+      fix: undefined,
+    });
+    expect((await store.after(agentId, 0, 100)).at(-1)?.event).toEqual({
+      type: "error",
+      source: "spawn",
+      message: expected,
+    });
+    expect(rt.live()).toMatchObject({ status: "errored" });
+  },
+);
+
+test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
+  const message = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
+  await makeRuntime({
+    startError: new AgentStartError(message, "secrets"),
+    seed: async (id) => {
+      await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
+      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
+                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
+      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
+    },
+  });
+  await rt.reload();
+  await expect(send("hi")).rejects.toMatchObject({ message, fix: "secrets" });
 });
 
 test("an unexpected prepareStart failure is a generic AgentStartError, logged, never leaking its text", async () => {

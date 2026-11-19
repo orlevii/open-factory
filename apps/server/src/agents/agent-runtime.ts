@@ -41,6 +41,7 @@ import { capText } from "./cap.ts";
 import {
   AgentArchivedError,
   AgentStartError,
+  forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
 } from "./errors.ts";
@@ -1528,7 +1529,11 @@ export class AgentRuntime {
   }
 
   /** The `error` event and errored `start` of a failed start; returns the error to throw. */
-  private async recordStartFailure(err: unknown, what: string): Promise<AgentStartError> {
+  private async recordStartFailure(raw: unknown, what: string): Promise<AgentStartError> {
+    const err =
+      raw instanceof AgentStartError && this.agent.kind === "ephemeral"
+        ? forSpawnedAgent(raw)
+        : raw;
     const known = err instanceof AgentStartError;
     const message = known ? err.message : "The agent couldn't be prepared to start.";
     if (!known) this.d.log.error({ err, agent: this.agent.slug }, what);

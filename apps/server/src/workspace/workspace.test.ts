@@ -58,6 +58,10 @@ function setup(fakeEnv: Record<string, string> = {}) {
     peers: [],
     reports: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
+    kind: "persistent" as const,
+    spawner: null,
+    spawning: null,
+    secretNames: config.secrets,
   };
   return { home, hs, repo, ws, tpl, prep };
 }

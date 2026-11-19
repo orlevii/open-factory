@@ -17,7 +17,7 @@ import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import { PluginInstallError } from "../workspace/plugins.ts";
-import type { PrepareInput, Workspace } from "../workspace/workspace.ts";
+import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
 import type { Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -232,7 +232,7 @@ export class AgentService {
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
     const projects = await this.projectRows(b.projects ?? tpl.config.projects);
 
-    const prep: Omit<PrepareInput, "mcpUrl" | "peers" | "reports"> = {
+    const prep: MaterializeCheck = {
       slug: b.slug,
       displayName: b.displayName,
       description: b.description,

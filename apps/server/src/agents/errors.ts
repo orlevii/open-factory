@@ -9,6 +9,15 @@ export class AgentStartError extends Error {
     this.name = "AgentStartError";
   }
 }
+/**
+ * S7: a spawned agent can't be edited or re-synced, so a start error whose fix is one of those drops the fix and ends
+ * with what does help. Other errors (and every persistent agent's) are returned unchanged.
+ */
+export function forSpawnedAgent(err: AgentStartError): AgentStartError {
+  if (err.fix !== "edit_agent" && err.fix !== "resync") return err;
+  return new AgentStartError(`${err.message} Terminate it and spawn a new one.`);
+}
+
 export class AgentArchivedError extends Error {
   constructor(slug: string) {
     super(`@${slug} is archived. Restore it first.`);

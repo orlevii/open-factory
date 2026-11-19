@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
+import type { DenyRules } from "../spawning/inherit.ts";
 import { buildClaudeMd, type OrgEntry } from "./claude-md.ts";
 import {
   backupDiffering,
@@ -63,7 +64,22 @@ export interface PrepareInput {
   reports: OrgEntry[];
   /** The agent listener's MCP endpoint as this agent reaches it (local loopback, or the Docker agentUrl). */
   mcpUrl: string;
+  kind: "persistent" | "ephemeral";
+  /** A spawned agent's spawner; null for a persistent agent. */
+  spawner: { slug: string } | null;
+  /** Set for an agent that holds the spawn tools (S7 §11.3). */
+  spawning: { maxLive: number; perHour: number } | null;
+  /** A spawned agent's deny rules inherited from its spawner at this start (S7 §6.3). */
+  inheritedDeny?: DenyRules;
+  /** The secrets this start actually passes (a spawned agent's are intersected with its spawner's). */
+  secretNames: string[];
 }
+
+/** What `materialize` checks: the prepare input minus what only a start knows. */
+export type MaterializeCheck = Omit<
+  PrepareInput,
+  "mcpUrl" | "peers" | "reports" | "kind" | "spawner" | "spawning" | "inheritedDeny" | "secretNames"
+>;
 
 export interface TemplateSource {
   dir: string;
@@ -105,7 +121,7 @@ export class Workspace {
     _agentKey: string,
     slug: string,
     tpl: TemplateSource,
-    check: Omit<PrepareInput, "mcpUrl" | "peers" | "reports">,
+    check: MaterializeCheck,
   ): Promise<void> {
     const workdir = this.workdir(slug);
     await mkdir(path.join(this.d.factoryHome, "agents"), { recursive: true });
@@ -270,6 +286,7 @@ export class Workspace {
       plugins: i.config.plugins,
       grantedPaths,
       mcpUrl: i.mcpUrl,
+      ...(i.inheritedDeny ? { inherited: i.inheritedDeny } : {}),
     });
     await safe.writeFile(path.join(configRel, "settings.json"), JSON.stringify(settings, null, 2));
     await safe.writeFile(
@@ -286,9 +303,12 @@ export class Workspace {
         manager: i.manager,
         workdir,
         projects: i.grants,
-        secretNames: i.config.secrets,
+        secretNames: i.secretNames,
         peers: i.peers,
         reports: i.reports,
+        kind: i.kind,
+        spawner: i.spawner,
+        spawning: i.spawning,
       }),
     );
     // Spec §11.4: mounts come only from factory-owned inputs (`tpl` is the copy under state/).
@@ -315,6 +335,19 @@ export class Workspace {
       return { workdir, configDir, mounts: await checkMounts(mounts, mountCheck), mountCheck };
     }
     return { workdir, configDir, mounts };
+  }
+
+  /** An agent's factory-owned template `settings.json` (`state/agents/<slug>/template/`), read as `prepare` reads it.
+   *  Throws `WorkspaceError` when it is missing or isn't a JSON object. Callers hold no lock: the copy is written whole. */
+  async readTemplateSettings(slug: string): Promise<Record<string, unknown>> {
+    const copy = templateCopyDir(this.d.factoryHome, slug);
+    const v = await this.readTemplateJson<unknown>(copy, "settings.json");
+    if (!v || typeof v !== "object" || Array.isArray(v))
+      throw new WorkspaceError(
+        `The template copy ${path.join(copy, "settings.json")} isn't a JSON object. Re-sync the agent from its template.`,
+        "edit_agent",
+      );
+    return v as Record<string, unknown>;
   }
 
   private async readTemplateJson<T>(copy: string, file: string): Promise<T> {

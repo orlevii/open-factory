@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { AgentStartError } from "./errors.ts";
 import type { EventStore } from "./event-store.ts";
@@ -111,7 +111,7 @@ test("waits for a batch in flight (no session_started yet)", async () => {
   expect(driver.last.stopped).toBe(true);
 });
 
-test("waits for the urgent hold, then restarts when it times out", async () => {
+test("waits for an urgent interrupt and the message it releases", async () => {
   await idle();
   driver.last.emit(ev.turn());
   await rt.settled();
@@ -122,6 +122,23 @@ test("waits for the urgent hold, then restarts when it times out", async () => {
   // turn_end released the hold and wrote the urgent message with no open turn: it awaits its turn
   expect(driver.last.stopped).toBe(false);
   driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  expect(driver.last.stopped).toBe(true);
+});
+
+test("an urgent hold that times out mid-turn doesn't restart; the turn's end does", async () => {
+  await idle();
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  await send("now", true); // interrupt + hold; the turn never acknowledges it
+  await rt.requestRestart();
+  await new Promise((r) => setTimeout(r, 300)); // past the harness's 200 ms hold timeout
+  await rt.settled();
+  // the hold-timeout job released the hold and wrote the message into the still-open turn
+  expect(driver.last.sent.flat().map((m) => m.body)).toEqual(["hi", "now"]);
+  expect(driver.last.stopped).toBe(false);
+  expect(rt.live().restartPending).toBe(true);
+  driver.last.emit(ev.usage(), ev.end());
   await rt.settled();
   expect(driver.last.stopped).toBe(true);
 });
@@ -226,6 +243,100 @@ test("a stop() that takes over a timing-out restart doesn't mark it errored", as
   await stopping;
   await rt.settled();
   expect(rt.live().status).not.toBe("errored");
+});
+
+test("a shutdown landing while the restart's exit job is in prepareStart never spawns, and stop() resolves", async () => {
+  await idle();
+  driver.last.holdStop = true;
+  await rt.requestRestart();
+  const s = send("x").catch(() => {});
+  await rt.settled();
+  let open: () => void = () => {};
+  h.prepareGate = new Promise<void>((r) => {
+    open = r;
+  });
+  driver.starts[0]?.releaseStop();
+  await vi.waitFor(() => expect(h.prepareCalls).toBe(2)); // the exit job is suspended in the respawn's prepare
+  const stopping = rt.stop({ graceMs: 3000, termWaitMs: 10_000 });
+  open();
+  const outcome = await Promise.race([
+    stopping.then(() => "stopped"),
+    new Promise((r) => setTimeout(() => r("hung"), 2000)),
+  ]);
+  await s;
+  expect(outcome).toBe("stopped");
+  expect(driver.starts).toHaveLength(1);
+  expect(rt.live().status).toBe("hibernated");
+  expect(rt.queueItems().map((i) => (i.kind === "message" ? i.body : i.kind))).toEqual(["x"]); // still pending for the next start
+});
+
+test("a shutdown landing while the restart's exit is being recorded never spawns", async () => {
+  await idle();
+  driver.last.holdStop = true;
+  await rt.requestRestart();
+  const s = send("x").catch(() => {});
+  await rt.settled();
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let reached = false;
+  const real = store.append.bind(store);
+  const spy = vi.spyOn(store, "append").mockImplementation(async (...args) => {
+    if (args[2].type === "exited") {
+      reached = true;
+      await gate;
+    }
+    return real(...args);
+  });
+  try {
+    driver.starts[0]?.releaseStop();
+    await vi.waitFor(() => expect(reached).toBe(true));
+    const stopping = rt.stop();
+    open();
+    await stopping;
+    await s;
+    expect(driver.starts).toHaveLength(1);
+    expect(h.prepareCalls).toBe(1);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("a send after a completed stop starts normally (stopping doesn't stick)", async () => {
+  await idle();
+  await rt.stop();
+  await send("again");
+  expect(driver.starts).toHaveLength(2);
+  driver.last.emit(...ev.fullTurn("sess-1"));
+  await rt.settled();
+  await rt.requestRestart();
+  await rt.settled();
+  expect(driver.last.stopped).toBe(true);
+});
+
+test("requestRestart on a process that failed to start (errored, stopping) sets nothing", async () => {
+  await send("hi");
+  driver.last.holdStop = true;
+  driver.last.emit({ type: "error", source: "resume", message: "No conversation found" });
+  await rt.settled();
+  await rt.requestRestart();
+  expect(rt.live()).toMatchObject({ status: "errored", restartPending: false });
+  driver.last.releaseStop();
+  await rt.settled();
+});
+
+test("requestRestart on a fresh process after a crash (errored until session_started) still applies", async () => {
+  await idle();
+  driver.last.exit(1);
+  await rt.settled();
+  expect(rt.live().status).toBe("errored");
+  await send("again"); // starts with the old config; errored clears at session_started
+  await rt.requestRestart();
+  expect(rt.live().restartPending).toBe(true);
+  driver.last.emit(...ev.fullTurn("sess-1"));
+  await rt.settled();
+  expect(driver.last.stopped).toBe(true);
 });
 
 test("an unexpected exit clears restartPending and never respawns", async () => {

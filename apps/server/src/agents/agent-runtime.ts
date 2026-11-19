@@ -75,6 +75,8 @@ export class AgentRuntime {
   private restartPending = false;
   private restarting = false; // a deliberate stop is in progress; flush() writes nothing
   private stopping = false; // stop()/archive/shutdown: an exit must never respawn
+  private stopsInProgress = 0; // stop() calls not yet returned: no process may be spawned meanwhile
+  private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
   private liveTasks = new Map<string, boolean>(); // taskId → ambient
   private owedNotifications = 0;
 
@@ -171,7 +173,13 @@ export class AgentRuntime {
   async requestRestart(): Promise<void> {
     await this.run(async () => {
       // Not running (or already going away): the next start reads the new values anyway.
-      if (this.proc && this.proc !== this.deadProc && !this.stopping && !this.restarting) {
+      if (
+        this.proc &&
+        this.proc !== this.deadProc &&
+        this.proc !== this.failingProc &&
+        !this.stopping &&
+        !this.restarting
+      ) {
         this.restartPending = true;
         this.maybeRestart();
       }
@@ -217,9 +225,14 @@ export class AgentRuntime {
     this.restartPending = false;
     this.restarting = false;
     this.publishStatus();
-    const p = this.proc;
-    if (p) await p.stop(opts);
-    await this.settled();
+    this.stopsInProgress += 1;
+    try {
+      const p = this.proc;
+      if (p) await p.stop(opts);
+      await this.settled();
+    } finally {
+      this.stopsInProgress -= 1;
+    }
   }
 
   /** All queued jobs, including events already emitted by the process, have run. */
@@ -328,6 +341,7 @@ export class AgentRuntime {
   private async ensureStarted() {
     if (this.proc) return;
     if (this.archived) throw new AgentArchivedError(this.agent.slug);
+    this.refuseWhileStopping();
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
     let spec: AgentRuntimeSpec;
@@ -351,6 +365,8 @@ export class AgentRuntime {
       this.publishStatus();
       throw known ? err : new AgentStartError(message);
     }
+    // A stop() that arrived during prepare (it can't stop a process that doesn't exist yet) must not be outrun.
+    this.refuseWhileStopping();
     if (!this.firstStartDone) {
       this.firstStartDone = true;
       this.d.onFirstStart?.(spec);
@@ -360,13 +376,18 @@ export class AgentRuntime {
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
     this.proc = proc;
     this.started = false;
-    this.stopping = false;
+    this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
     this.liveTasks = new Map();
     this.owedNotifications = 0;
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
     await this.append(null, { type: "process_started", resumed: Boolean(resumeSessionId) });
     this.publishStatus();
+  }
+
+  /** Not recorded as a start failure: the agent isn't broken, it is being stopped (shutdown, archive). */
+  private refuseWhileStopping() {
+    if (this.stopsInProgress > 0) throw new AgentStartError("The agent is being stopped.");
   }
 
   private async pump(proc: HarnessProcess) {
@@ -469,6 +490,7 @@ export class AgentRuntime {
         await this.append(this.openTurnId, e);
         if (!this.started && (e.source === "resume" || e.source === "spawn")) {
           await this.setErrored(e.message);
+          this.failingProc = proc;
           void proc.stop({ graceMs: 1000 });
         }
         break;
@@ -532,7 +554,8 @@ export class AgentRuntime {
       this.publishQueue();
     }
     // S3 rule 5 changes here: a deliberate restart may start the process; crash exits still never do.
-    if (wasRestart && this.queue.length) {
+    // Re-checked here, not only at the top: a stop() or archive may have landed while the exit was being recorded.
+    if (wasRestart && this.queue.length && !this.stopping && !this.archived) {
       try {
         await this.ensureStarted();
         await this.flush();

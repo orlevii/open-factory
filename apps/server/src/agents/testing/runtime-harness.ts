@@ -33,6 +33,9 @@ export class RuntimeHarness {
   rt!: AgentRuntime;
   agentId = "";
   startError: Error | undefined;
+  /** When set, `prepareStart` waits for it (a slow prepare). */
+  prepareGate: Promise<void> | undefined;
+  prepareCalls = 0;
   private n = 0;
 
   async setup() {
@@ -50,6 +53,8 @@ export class RuntimeHarness {
     this.n += 1;
     this.agentId = `a${this.n}`;
     this.startError = opts.startError;
+    this.prepareGate = undefined;
+    this.prepareCalls = 0;
     await insertAgent(this.t.sql, {
       id: this.agentId,
       slug: `dev${this.n}`,
@@ -70,6 +75,8 @@ export class RuntimeHarness {
       bus: this.bus,
       driver: this.driver,
       prepareStart: async (a) => {
+        this.prepareCalls += 1;
+        if (this.prepareGate) await this.prepareGate;
         if (this.startError) throw this.startError;
         return okSpec(a);
       },

@@ -482,42 +482,72 @@ const insertChild = (
               ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
        from agents where id = ${spawnerId}`;
 
-test("archive takes the spawner's row lock first, then counts live reports in that transaction (spec §5.7)", async () => {
-  const id = await createSpawner("spawner");
-  let locked!: () => void;
-  const isLocked = new Promise<void>((r) => {
-    locked = r;
-  });
+/**
+ * Resolves once `n` archives are waiting on the row lock `holder` holds: their own `for no key update` query, in a
+ * `Lock` wait, on another backend. Each check is a DB round trip; only the test's own timeout bounds it.
+ */
+async function archivesWaiting(holder: number, n: number) {
+  for (;;) {
+    const [w] = await t.sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and pid <> ${holder} and wait_event_type = 'Lock'
+        and query ilike '%for no key update%'`;
+    if ((w?.n ?? 0) >= n) return;
+  }
+}
+
+/** A transaction holding `id`'s row lock until `release()`, running `then` before it commits. */
+function holdRowLock(id: string, then: (tx: typeof t.sql) => Promise<unknown> = async () => {}) {
   let release!: () => void;
   const released = new Promise<void>((r) => {
     release = r;
   });
-  // A spawn's transaction stand-in: holds the row lock, inserts a live child, commits when released.
-  const spawn = t.sql.begin(async (tx) => {
-    await tx`select id from agents where id = ${id} for no key update`;
-    locked();
-    await released;
-    await insertChild(tx as unknown as typeof t.sql, id, "spawner-ab12");
+  let pid!: (n: number) => void;
+  const holder = new Promise<number>((r) => {
+    pid = r;
   });
-  await isLocked;
+  const done = t.sql.begin(async (tx) => {
+    const [me] = await tx`select pg_backend_pid() as pid`;
+    await tx`select id from agents where id = ${id} for no key update`;
+    pid(me?.pid as number);
+    await released;
+    await then(tx as unknown as typeof t.sql);
+  });
+  return { holder, release, done };
+}
+
+test("archive takes the spawner's row lock first, then counts live reports in that transaction (spec §5.7)", async () => {
+  const id = await createSpawner("spawner");
+  // A spawn's transaction stand-in: holds the row lock, inserts a live child, commits when released.
+  const lock = holdRowLock(id, (tx) => insertChild(tx, id, "spawner-ab12"));
+  const holder = await lock.holder;
   const archive = svc.archive("spawner").then(
     () => "archived",
     (e: unknown) => e,
   );
-  // The archive is waiting on the row lock (a real lock wait, not a sleep).
-  await vi.waitFor(async () => {
-    const [w] =
-      await t.sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`;
-    expect(w?.n).toBe(1);
-  });
-  release();
-  await spawn;
+  await archivesWaiting(holder, 1);
+  lock.release();
+  await lock.done;
   expect(await archive).toMatchObject({
     code: "has_reports",
     message: "@spawner has live spawned agents: @spawner-ab12. Terminate them first.",
     extra: { reports: ["spawner-ab12"] },
   });
   expect((await t.sql`select archived_at from agents where id = ${id}`)[0]?.archived_at).toBeNull();
+});
+
+test("two concurrent archives: the second sees the first's commit under the lock and writes no peer events", async () => {
+  const id = await createSpawner("twice");
+  const lock = holdRowLock(id);
+  const holder = await lock.holder;
+  const both = Promise.all([svc.archive("twice"), svc.archive("twice")]);
+  await archivesWaiting(holder, 2);
+  lock.release();
+  await lock.done;
+  for (const a of await both) expect(a.archivedAt).not.toBeNull();
+  const rows =
+    await t.sql`select to_agent_id from messages where subject_agent_id = ${id} and kind = 'peer_left'`;
+  expect(rows.length).toBeGreaterThan(0);
+  expect(new Set(rows.map((r) => r.to_agent_id)).size).toBe(rows.length);
 });
 
 test("archive counts only live reports: a terminated spawned agent doesn't block it", async () => {

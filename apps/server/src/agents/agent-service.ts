@@ -19,9 +19,8 @@ import type { KeyedMutex } from "../workspace/lock.ts";
 import { PluginInstallError } from "../workspace/plugins.ts";
 import type { PrepareInput, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
+import type { Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 const slugTaken = () => new FieldError("slug", "That slug is taken.", "slug_taken");
 
@@ -81,7 +80,7 @@ export class AgentService {
     }
   }
 
-  private snapshot(id: string, tx: Db | Tx = this.d.db) {
+  private snapshot(id: string, tx: Exec = this.d.db) {
     return this.d.router.snapshot(tx, id);
   }
 
@@ -453,11 +452,13 @@ export class AgentService {
     // S7 §5.7: the row lock first (`FOR NO KEY UPDATE`, never `FOR UPDATE`), then the live reports in the same
     // transaction, so a spawn committing in between can't leave an archived spawner a live child.
     const before = await db.transaction(async (tx) => {
-      await tx
-        .select({ id: schema.agents.id })
+      const [locked] = await tx
+        .select({ archivedAt: schema.agents.archivedAt })
         .from(schema.agents)
         .where(eq(schema.agents.id, row.id))
         .for("no key update");
+      // A concurrent archive committed while this one waited on the lock: it wrote the peer events.
+      if (locked?.archivedAt) return undefined;
       const live = await tx
         .select({ slug: schema.agents.slug, kind: schema.agents.kind })
         .from(schema.agents)
@@ -480,6 +481,7 @@ export class AgentService {
         .where(eq(schema.agents.id, row.id));
       return snap;
     });
+    if (!before) return this.summary(slug);
     const rt = await runtimes.get(row.id);
     rt?.markArchived();
     try {

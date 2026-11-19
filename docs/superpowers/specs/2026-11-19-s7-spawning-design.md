@@ -232,7 +232,7 @@ S6's `Router.peerEvents` is split into `persistPeerEvents(tx, subjectId, change,
 - "@tech-lead-ab12 (Tech Lead · ab12) joined as your peer."
 - "@tech-lead-ab12 (Tech Lead · ab12) left: terminated by @or." / "…left: terminated by @lead." / "…left: terminated after 3 days without activity."
 
-`message_in.subject.left` widens with `{reason: "terminated", by: string}` (`by` = a human `@handle`, the spawner's bare slug, or `@factory` for the TTL).
+`message_in.subject.left` widens with `{reason: "terminated", by: string}` (`by` = a human `@handle`, the spawner as `@slug`, or `@factory` for the TTL). It is read back from the row's body, which names the spawner as `@slug` like any handle; the web ignores `by`.
 
 ### 9.2 Neighborhood, list_peers, recipients
 

@@ -207,6 +207,11 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
     const patched = await call("PATCH", "/api/agents/boss", { description: "the boss" });
     expect(patched.statusCode).toBe(200);
     expect(patched.json().agent.description).toBe("the boss");
+    for (const extra of [{ template: "lead" }, { slug: "other" }]) {
+      const rejected = await call("PATCH", "/api/agents/boss", { description: "x", ...extra });
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json().error.code).toBe("validation_error");
+    }
     const rs = await call("POST", "/api/agents/boss/resync");
     expect(rs.statusCode).toBe(200);
     expect(rs.json().agent.slug).toBe("boss");

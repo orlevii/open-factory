@@ -40,6 +40,13 @@ test.each([
   ["yaml syntax", { "template.yaml": "name: [" }, /YAML/],
   ["schema", { "template.yaml": "name: tech-lead\ndisplay_name: X\nmodle: opus\n" }, /modle/],
   [
+    "model that looks like a flag",
+    {
+      "template.yaml": "name: tech-lead\ndisplay_name: X\nmodel: --dangerously-skip-permissions\n",
+    },
+    /Use a model alias or id such as haiku or claude-sonnet-4-5\./,
+  ],
+  [
     "name != folder",
     { "template.yaml": "name: other\ndisplay_name: X\n" },
     /doesn't match the folder/,

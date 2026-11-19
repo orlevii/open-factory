@@ -87,7 +87,7 @@ export const createAgentBodySchema = z.object({
 });
 export type CreateAgentBody = z.infer<typeof createAgentBodySchema>;
 export const patchAgentBodySchema = z
-  .object({
+  .strictObject({
     displayName: z.string().trim().min(1, "Enter a display name.").max(80),
     description: z.string().trim().max(500),
     reportsTo: slugSchema.nullable(),

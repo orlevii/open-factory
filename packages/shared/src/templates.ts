@@ -6,6 +6,12 @@ export const TEMPLATE_FILES = ["template.yaml", "AGENTS.md", "settings.json", "m
 export type TemplateFile = (typeof TEMPLATE_FILES)[number];
 export const templateFileSchema = z.enum(TEMPLATE_FILES);
 
+/** Passed to the CLI as `--model <m>`: a leading dash could be read as another flag. */
+const modelSchema = z
+  .string()
+  .min(1)
+  .refine((v) => !v.startsWith("-"), "Use a model alias or id such as haiku or claude-sonnet-4-5.");
+
 const pluginRef = z.string().regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/, "Use name@marketplace.");
 
 export const templateConfigSchema = z.object({
@@ -15,7 +21,7 @@ export const templateConfigSchema = z.object({
   runtime: z.enum(["docker", "local"]),
   image: z.string().min(1).optional(),
   permissionMode: z.enum(["auto", "bypass"]),
-  model: z.string().min(1).optional(),
+  model: modelSchema.optional(),
   effort: z.enum(EFFORTS).optional(),
   projects: z.array(nameSchema),
   skills: z.array(hostSkillSchema),
@@ -37,7 +43,7 @@ export const templateYamlSchema = z
     runtime: z.enum(["docker", "local"]).default("docker"),
     image: z.string().min(1).optional(),
     permission_mode: z.enum(["auto", "bypass"]).default("auto"),
-    model: z.string().min(1).optional(),
+    model: modelSchema.optional(),
     effort: z.enum(EFFORTS).optional(),
     projects: z.array(nameSchema).default([]),
     skills: z.array(hostSkillSchema).default([]),

@@ -129,11 +129,11 @@ test("restart with the local runtime gate off: 409 runtime_disabled", async () =
   }
 });
 
-test("restart of stop_failed reuses its slot; a failed second escalation stays stop_failed with no wake", async () => {
+test("restart of stop_failed releases its slot and the restart's wake follows; a failed second escalation stays stop_failed with no wake", async () => {
   const { slug, rt } = await agent();
   await send(slug, "hi");
   const p = lastProc(rt);
-  p.emit(...ev.fullTurn());
+  p.emit(...ev.fullTurn(), ev.cron("c1", { humanSchedule: "every 5 minutes" }));
   await rt.settled();
   p.stopResult = { code: null, signal: null, timedOut: true };
   p.emitExitOnStop = false;
@@ -169,8 +169,18 @@ test("restart of stop_failed reuses its slot; a failed second escalation stays s
   expect(evs.filter((e) => e.type === "process_started").at(-1)).toMatchObject({
     reason: "restart",
   });
+  // The cron died with the stuck process: recorded at its exit, named in the notice.
+  expect(evs).toContainEqual({
+    type: "background_work_lost",
+    reason: "restart",
+    tasks: [],
+    crons: [{ cronId: "c1", humanSchedule: "every 5 minutes" }],
+  });
   const p2 = lastProc(rt);
-  expect(p2.sent[0]?.[0]).toMatchObject({ from: "@factory" });
+  expect(p2.sent[0]?.[0]).toMatchObject({
+    from: "@factory",
+    body: "Restarted by @or after an error. These crons were stopped: every 5 minutes.",
+  });
   p2.emit(ev.session(), ev.turn(), ev.end());
   await rt.settled();
   expect(rt.live().status).toBe("idle");
@@ -248,4 +258,108 @@ test("reset-session only for resume / resume_unrecoverable", async () => {
   await rt.settled();
   expect(rt.live().errorKind).toBeUndefined();
   expect(lastProc(rt).opts.resumeSessionId).toBeUndefined();
+});
+
+/** Errored by a resume failure whose process is still there (its stop doesn't produce the exit yet). */
+async function resumeErroredProcessLeft(message = "API Error: 500 overloaded") {
+  const a = await agent();
+  await send(a.slug, "hi");
+  const p = lastProc(a.rt);
+  p.emitExitOnStop = false;
+  p.emit({ type: "error", source: "resume", message });
+  await a.rt.settled();
+  expect(a.rt.live().status).toBe("errored");
+  expect(p.stopped).toBe(true);
+  return { ...a, p };
+}
+
+test("restart with the failed start's process left: force stop, and its exit makes the one attempt", async () => {
+  const { slug, rt, p } = await resumeErroredProcessLeft();
+  expect((await post(`/api/agents/${slug}/restart`)).statusCode).toBe(202);
+  await rt.settled();
+  expect(await events(rt)).toContainEqual({ type: "control", cmd: "restart", by: "@or" });
+  expect(procsOf(rt)).toHaveLength(1); // nothing starts before the exit
+  expect(await row(rt)).toMatchObject({ attempting: true });
+  p.exit(0);
+  await rt.settled();
+  expect(procsOf(rt)).toHaveLength(2);
+  const evs = await events(rt);
+  expect(evs.filter((e) => e.type === "process_started").at(-1)).toMatchObject({
+    reason: "restart",
+  });
+  expect(evs.map((e) => e.type)).not.toContain("background_work_lost"); // nothing was live
+  expect(lastProc(rt).sent[0]?.map((m) => [m.from, m.body])).toEqual([
+    ["@factory", "Restarted by @or after an error."],
+    ["@or", "hi"],
+  ]);
+  lastProc(rt).emit(ev.session(), ev.turn(), ev.end());
+  await rt.settled();
+  expect(rt.live().status).toBe("idle");
+});
+
+test("reset-session with the failed start's process left: its exit starts the new session with the human messages", async () => {
+  const { slug, rt, p } = await resumeErroredProcessLeft(
+    "No conversation found with session ID sess-x",
+  );
+  await t.sql`update agents set session_id = 'sess-x' where id = ${rt.agent.id}`;
+  expect((await post(`/api/agents/${slug}/reset-session`)).statusCode).toBe(202);
+  await rt.settled();
+  expect(procsOf(rt)).toHaveLength(1);
+  expect(await row(rt)).toMatchObject({ attempting: true, session_id: null });
+  p.exit(0);
+  await rt.settled();
+  expect(procsOf(rt)).toHaveLength(2);
+  expect(lastProc(rt).opts.resumeSessionId).toBeUndefined();
+  expect(lastProc(rt).sent[0]?.map((m) => m.body)).toEqual(["hi"]);
+  expect((await events(rt)).filter((e) => e.type === "process_started").at(-1)).toMatchObject({
+    reason: "reset",
+    resumed: false,
+  });
+});
+
+test("reset-session with the process left and no human message: its exit starts nothing", async () => {
+  // A compact started it (no human message pending); the resume failed and its process is still there.
+  const { slug, rt } = await agent();
+  expect((await post(`/api/agents/${slug}/compact`, {})).statusCode).toBe(202);
+  const p = lastProc(rt);
+  p.emitExitOnStop = false;
+  p.emit({ type: "error", source: "resume", message: "API Error: 500 overloaded" });
+  await rt.settled();
+  expect(rt.live().errorKind).toBe("resume");
+  expect((await post(`/api/agents/${slug}/reset-session`)).statusCode).toBe(202);
+  await rt.settled();
+  expect(await row(rt)).toMatchObject({ attempting: false });
+  p.exit(0);
+  await rt.settled();
+  expect(procsOf(rt)).toHaveLength(1);
+  expect(rt.live().status).not.toBe("errored");
+  expect(await row(rt)).toMatchObject({ attempting: false, status: "hibernated" });
+});
+
+test("restart during a stop in progress: 503 agent_start_failed", async () => {
+  const a = await agent();
+  await send(a.slug, "hi");
+  const p = lastProc(a.rt);
+  p.holdStop = true;
+  p.emit({ type: "error", source: "resume", message: "API Error: 500 overloaded" });
+  await a.rt.settled();
+  const stopping = a.rt.stop({ graceMs: 0 });
+  const r = await post(`/api/agents/${a.slug}/restart`);
+  expect(r.statusCode).toBe(503);
+  expect(r.json().error).toEqual({
+    code: "agent_start_failed",
+    message: "The agent is being stopped.",
+  });
+  p.releaseStop();
+  await stopping;
+});
+
+test("restart and reset-session of an archived agent: 409 agent_archived", async () => {
+  const { slug } = await resumeErrored();
+  expect((await post(`/api/agents/${slug}/archive`)).statusCode).toBe(200);
+  for (const action of ["restart", "reset-session"]) {
+    const r = await post(`/api/agents/${slug}/${action}`);
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe("agent_archived");
+  }
 });

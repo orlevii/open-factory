@@ -556,3 +556,28 @@ test("a restart wake takes over a queued entry whose reason no longer wakes the 
     (await store.after(b.agent.id, 0, 1000)).filter((e) => e.event.type === "process_started"),
   ).toMatchObject([{ event: { reason: "restart" } }]);
 });
+
+test("a slot granted for an older request before Restart began starts the restart", async () => {
+  w = new World(1);
+  const a = await w.agent();
+  const b = await w.agent({ pending: ["x"], status: "errored", errorKind: "crash" });
+  await busy(a);
+  expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
+  // a's exit grants b its slot for "message"; Restart lands ahead of b's grant job.
+  const original = b.grant.bind(b);
+  let restarting: Promise<void> | undefined;
+  vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
+    restarting = b.restart({ byHandle: "or", runtimeAllowed: true });
+    return original(reason);
+  });
+  endTurnAndExit(a);
+  await w.settleAll();
+  await restarting;
+  await w.settleAll();
+  expect(b.grant).toHaveBeenCalledWith("message");
+  expect(w.starts(b)).toHaveLength(1);
+  expect(
+    (await store.after(b.agent.id, 0, 1000)).filter((e) => e.event.type === "process_started"),
+  ).toMatchObject([{ event: { reason: "restart" } }]);
+  expect(status(b)).toBe("working"); // attempting, started: not stuck
+});

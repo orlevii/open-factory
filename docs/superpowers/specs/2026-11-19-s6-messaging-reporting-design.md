@@ -7,7 +7,7 @@
 - **Product sources of truth:** `docs/product/concepts/message.md`, `reporting-line.md`, `agent.md`, `session.md`, `user.md`; `docs/product/architecture/factory-mcp.md`, `context-assembly.md`, `agent-runtime.md`, `harness-driver.md`, `permissions.md`, `workspace.md`, `data-model.md`, `system-overview.md`; `docs/product/behavior/inbox.md`, `agents-and-sessions.md`; ADRs 0002, 0003, 0004, 0005, 0012, 0013; `docs/product/open-questions.md` (S0, S4 and S5 findings).
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md): harness driver, `AgentRuntime`, delivery queue, urgent hold, event store), S4 ([spec](2026-11-19-s4-templates-workspace-design.md): agents, `prepareStart`, `requestRestart`, `.mcp.json`, generated CLAUDE.md, `buildAgentEnv`) and S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): Supervisor, wake reasons, `@factory` system messages, crash and recovery, Docker runtime, `FACTORY_AGENT_URL`).
 - **Evidence:** the S0/S4/S5 fixtures in `packages/harness/fixtures/`, plus what this design verified (§18).
-- **Decision log:** the S6 decision issue (linked from the PR).
+- **Decision log:** #51 ("S6 Messaging and reporting line: design decisions").
 - **Stacked on:** `spec/s5-supervisor-docker` (PR #46) → `spec/s4-templates-workspace` (PR #37) → `spec/s3-walking-skeleton` (PR #27).
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -477,4 +477,4 @@ Consumed: **#44** (agent listener, bridge-gateway bind, per-process tokens, Linu
 
 Untouched: **#23** (uuid binding; S3's pending-until-confirmed rule stands), #26, #30–#36, #39–#43, #45.
 
-Follow-ups (new issues): a loop guard for agent ping-pong; `open-factory send`; authenticating the in-container CLI as the agent; detecting a custom Docker `host-gateway-ip`.
+Follow-ups: a loop guard for agent ping-pong (#47); `open-factory send` (#48); authenticating the in-container CLI as the agent (#49); detecting a custom Docker `host-gateway-ip` (#50).

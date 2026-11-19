@@ -102,3 +102,17 @@ test("settings deny the built-in SendMessage and ListAgents and trust the exact 
     "The Open Factory MCP server at http://127.0.0.1:3001/mcp is trusted local infrastructure this agent uses to message other agents and humans.",
   );
 });
+
+test("inherited deny rules append after the template's, $defaults first, de-duplicated", () => {
+  const s = buildSettings({
+    ...base,
+    pluginKeys: {},
+    tpl: { permissions: { deny: ["A"] }, autoMode: { hard_deny: ["h1"] } },
+    inherited: { permissionsDeny: ["A", "B"], softDeny: ["s"], hardDeny: ["h2"] },
+  });
+  expect(s.permissions).toMatchObject({ deny: ["A", "B", "SendMessage", "ListAgents"] });
+  expect(s.autoMode).toMatchObject({
+    soft_deny: ["$defaults", "s"],
+    hard_deny: ["$defaults", "h1", "h2"],
+  });
+});

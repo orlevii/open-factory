@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { DenyRules } from "../spawning/inherit.ts";
 
 const LISTS = ["environment", "allow", "soft_deny", "hard_deny"] as const;
 const obj = (v: unknown): Record<string, unknown> =>
@@ -18,6 +19,8 @@ export interface SettingsInput {
   grantedPaths: string[];
   /** The exact agent MCP URL this agent reaches (spec §10.4). */
   mcpUrl: string;
+  /** Deny rules inherited from the spawner (spec §6); appended after the template's own. */
+  inherited?: DenyRules;
 }
 
 /** Claude Code's built-in agent-team tools would bypass the factory's messaging (spec §10.4). */
@@ -65,14 +68,29 @@ export function buildSettings(i: SettingsInput): Record<string, unknown> {
   const perms = obj(tpl.permissions);
   const permissions = {
     ...perms,
-    deny: [...new Set([...strs(perms.deny), ...BUILT_IN_TEAM_TOOLS])],
+    deny: [
+      ...new Set([
+        ...strs(perms.deny),
+        ...(i.inherited?.permissionsDeny ?? []),
+        ...BUILT_IN_TEAM_TOOLS,
+      ]),
+    ],
     defaultMode: i.permissionMode === "bypass" ? "bypassPermissions" : "auto",
     additionalDirectories: [...new Set([...strs(perms.additionalDirectories), ...i.grantedPaths])],
   };
   const tplAuto = obj(tpl.autoMode);
   const autoMode: Record<string, unknown> = { ...tplAuto };
   for (const k of LISTS) {
-    const own = strs(tplAuto[k]).filter((x) => x !== "$defaults");
+    const own = [
+      ...new Set([
+        ...strs(tplAuto[k]).filter((x) => x !== "$defaults"),
+        ...(k === "soft_deny"
+          ? (i.inherited?.softDeny ?? [])
+          : k === "hard_deny"
+            ? (i.inherited?.hardDeny ?? [])
+            : []),
+      ]),
+    ];
     const extra =
       k === "environment" ? factoryEnvironment(i.slug, i.workdir, i.grantedPaths, i.mcpUrl) : [];
     if (own.length || extra.length) autoMode[k] = ["$defaults", ...own, ...extra];

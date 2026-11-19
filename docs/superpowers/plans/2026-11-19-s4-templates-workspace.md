@@ -2021,7 +2021,7 @@ export class Workspace {
 }
 ```
 
-PLAN DECISION: the lock key is the slug, which is unique and immutable, so it can be taken before the row exists.
+PLAN DECISION: the lock key is the slug, which is unique and immutable, so it can be taken before the row exists. Put a one-line code comment on the lock saying exactly that (normally locks key on stable ids).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2131,7 +2131,7 @@ Expected: FAIL (the module is missing).
   - It writes `settings.json` with `buildSettings({ tpl, prev, slug, workdir, permissionMode, plugins: config.plugins, grantedPaths })`, `.mcp.json` with `buildMcpJson`, and `.claude-config/CLAUDE.md` with `buildClaudeMd({ …, secretNames: config.secrets })`, all through `writeAtomic` with 2-space JSON.
   - It returns `{ workdir, configDir, mounts: buildMounts({ workdir, grantedPaths, hostSkillPaths: skills.map((s) => s.realDir), tplSettings: tpl }) }`.
 
-PLAN DECISION: `prepare` doesn't take the lock itself, so `materialize` and `resync` callers holding it can't deadlock. Every caller wraps it in `lock.run(slug, …)`.
+PLAN DECISION: `prepare` doesn't take the lock itself, so `materialize` and `resync` callers holding it can't deadlock. Every caller wraps it in `lock.run(slug, …)`. Give `prepare` a one-line doc comment: "Callers must hold the agent's workspace lock."
 
 - [ ] **Step 4: Run the tests**
 
@@ -3732,12 +3732,22 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 - Replace the S3 "Run the dev agent" section with "Run an agent": start Postgres and the server, sign up, add a credential in Settings (`claude setup-token`), optionally register a project, create a template (UI or `~/open-factory/templates/<name>/` with `runtime: local`), then create an agent and message it.
 - Document the local-runtime caveats: the agent runs as you, host git config applies, push over HTTPS with a token secret (`GH_TOKEN`), and `SSH_AUTH_SOCK` is not passed.
 - Document `pnpm agent:reset-session <slug>` (interim).
+- Add a short "Templates" section: the folder layout, and one sentence on trust: "Template settings apply as written: templates are authored by the factory's operators. The factory owns `permissions.defaultMode`, keeps Claude's default `autoMode` rules (`$defaults`, so autoMode lists extend the defaults and can't replace them), appends granted project paths to `additionalDirectories`, and writes `claudeMdExcludes`."
 - Remove `CLAUDE_CODE_OAUTH_TOKEN` and `FACTORY_DEV_MODEL` from the env table and add `FACTORY_HOST_SKILLS_DIR`.
 
 - [ ] **Step 2: Full verification**
 
 Run: `pnpm lint:ci && pnpm typecheck && pnpm test && pnpm build`
 Expected: all PASS.
+
+Then check that no S3 stopgap survives (the server must never read its own token again):
+
+```bash
+git grep -nE 'resolveClaudeToken|claudeToken|devModel|FACTORY_DEV_MODEL|seedDevAgent|seed-dev|seed:dev-agent' -- apps packages README.md .env.example package.json
+git grep -n 'process.env.CLAUDE_CODE_OAUTH_TOKEN' -- apps/server/src packages
+```
+
+Expected: no output from either (the smoke scripts under `apps/server/scripts/` may read the token from their own env; nothing under `src/` may).
 
 - [ ] **Step 3: Manual acceptance in the browser** (`pnpm dev`)
 

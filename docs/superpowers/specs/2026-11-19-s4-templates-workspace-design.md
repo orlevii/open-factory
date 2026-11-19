@@ -1,7 +1,8 @@
 # S4 Templates, workspace and context: Technical Design
 
 - **Date:** 2026-11-19
-- **Status:** approved by owner-proxy (owner-s4), pending Or's review on the low-certainty items (§22)
+- **Status:** approved by owner-proxy (owner-s4), spec and plan; pending Or's review on the low-certainty items (§22)
+- **Plan:** [`docs/superpowers/plans/2026-11-19-s4-templates-workspace.md`](../plans/2026-11-19-s4-templates-workspace.md)
 - **Roadmap spec:** `docs/product/roadmap/v0.1/s04-templates-workspace-context.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s4-templates-agents-settings-ui-design.md`](../designs/2026-11-19-s4-templates-agents-settings-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/agent-template.md`, `agent.md`, `credential.md`, `project.md`; `docs/product/architecture/workspace.md`, `context-assembly.md`, `permissions.md`, `agent-runtime.md`, `harness-driver.md`, `data-model.md`; `docs/product/behavior/administration.md`, `agents-and-sessions.md`; ADRs 0009, 0010, 0011, 0012, 0017; `docs/product/open-questions.md` ("Verified during design").
@@ -350,7 +351,8 @@ Output:
 
   A list is written only when it has entries beyond `"$defaults"`, except environment, which always has the factory entries. Setting a list without `"$defaults"` would replace Claude's defaults, including the default `hard_deny` Data Exfiltration rule (V6, V7). Templates can only add to Claude's rules, never replace them (decision Q23). The template docs say it once: "autoMode lists extend Claude's defaults; they can't replace them."
 - **`claudeMdExcludes`** (factory-owned, V10): the absolute paths of `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and `AGENTS.md` in **every ancestor directory** of the workdir up to `/`, plus the workdir's own `CLAUDE.md` and `CLAUDE.local.md`, appended to any template entries. Without it, a `~/CLAUDE.md` or `FACTORY_HOME/CLAUDE.md` loads into every agent **and stops the built-in agents-md plugin from loading the agent's `AGENTS.md`** (its persona); an ancestor `AGENTS.md` loads too. Nothing under `./projects/` is excluded: a repo's own `CLAUDE.md` carries its conventions and loads when the agent works there. `AGENTS.md` is where the agent keeps its own notes, and the CLAUDE.md protocol (§10) says so.
-- Everything else the agent may have added to its `settings.json` is dropped at the next start. Template rules and factory keys are re-asserted every time.
+- Everything else the agent may have added to its `settings.json` is dropped at the next start.
+- **Template settings are trusted operator input** and apply as written (hooks, `env`, permission rules, extra `additionalDirectories`), except for what the factory owns: `defaultMode`, the `"$defaults"` rule for `autoMode` lists, the appended project paths and `claudeMdExcludes`. The template docs (README) say this once, so nobody mistakes the template folder for an untrusted boundary. Template rules and factory keys are re-asserted every time.
 
 **Caveat (stated in the CLAUDE.md docs and the PR).** In the local runtime the agent runs as the host user and can edit `.factory/template/settings.json`, so the re-assertion protects against drift, not against a hostile local agent. That trust decision is S5's `allow_local_runtime` gate and the Unsandboxed badge.
 

@@ -12,6 +12,7 @@ import { AgentRuntime } from "../src/agents/agent-runtime.ts";
 import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
 import { createPrepareStart } from "../src/agents/start.ts";
+import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
@@ -78,6 +79,7 @@ const make = () =>
     driver: createClaudeDriver({ log, transports: { local: localTransport } }),
     prepareStart,
     log,
+    slots: unlimitedSlots,
   });
 let rt = make();
 await rt.init();

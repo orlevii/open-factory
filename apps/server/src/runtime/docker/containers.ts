@@ -101,6 +101,10 @@ export class ContainerManager {
   private readonly uid: number | undefined;
   private readonly gid: number | undefined;
 
+  /**
+   * `uid`/`gid` override the host ids written into the container (tests run on hosts with different ids). They can't
+   * bypass the root refusal: `ensure` refuses when either the server's own ids or the given ones are root.
+   */
   constructor(d: { docker: DockerClient; log: RuntimeLog; uid?: number; gid?: number }) {
     this.docker = d.docker;
     this.log = d.log;
@@ -137,8 +141,9 @@ export class ContainerManager {
     mountCheck: MountCheckContext;
   }): Promise<EnsureResult> {
     const { uid, gid } = this;
-    if (uid === undefined || gid === undefined || uid === 0 || gid === 0)
-      throw new AgentStartError(ROOT_REFUSED);
+    // The server's own ids too, so an injected non-root id never hides a factory running as root (spec §11.1).
+    const root = [uid, gid, process.getuid?.(), process.getgid?.()].includes(0);
+    if (uid === undefined || gid === undefined || root) throw new AgentStartError(ROOT_REFUSED);
 
     const imageId = await this.docker.imageId(i.image);
     if (imageId === undefined) throw new ImageMissingError(i.image);

@@ -36,16 +36,3 @@ export interface SlotPort {
 
 /** A credential's rate-limit window (spec §7.2); `exact` is false for the 30-minute fallback. */
 export type CredentialPause = { until: Date; exact: boolean };
-
-/** Always "granted", for tests that predate the Supervisor. */
-export const unlimitedSlots: SlotPort = {
-  requestWake: () => "granted",
-  release: () => {},
-  becameHibernatable: () => {},
-  stopFailed: () => {},
-  closing: () => false,
-  isQueued: () => false,
-  isPulling: () => false,
-  pause: () => {},
-  pauseOf: () => undefined,
-};

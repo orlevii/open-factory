@@ -146,7 +146,15 @@ export class Supervisor implements SlotPort {
     // Reset timers too (spec §5.6): the columns and owed flags are durable, boot re-arms them.
     for (const p of this.pauses.values()) clearTimeout(p.timer);
     for (const rt of this.d.runtimes.all()) rt.setNoStart();
-    for (const e of dropped) this.d.runtimes.get(e.agentId)?.publishStatus();
+    for (const e of dropped) {
+      const rt = this.d.runtimes.get(e.agentId);
+      if (!rt) continue;
+      rt.publishStatus();
+      // An attempt whose wake was only queued never started a process: it isn't one the restart cut short (§5.7 step 4).
+      void rt
+        .wakeDropped()
+        .catch((err) => this.d.log.error({ err, agent: rt.agent.slug }, "dropping a wake failed"));
+    }
   }
 
   running(): { count: number; max: number } {

@@ -1,12 +1,13 @@
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
-import { type SlotPort, unlimitedSlots } from "../../supervisor/slots.ts";
+import type { SlotPort } from "../../supervisor/slots.ts";
 import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
 import { EventBus } from "../event-bus.ts";
 import { EventStore } from "../event-store.ts";
 import { FakeDriver } from "./fake-driver.ts";
 import { insertAgent } from "./rows.ts";
+import { unlimitedSlots } from "./unlimited-slots.ts";
 
 export const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 

@@ -265,6 +265,85 @@ test("a clean stop clears the journal without reaping", async () => {
   expect(await journalRow()).toBeNull();
 });
 
+test("a shutdown that cut a live task short reaps its journaled tree before clearing the journal", async () => {
+  const f = await makeRuntime();
+  await idle();
+  h.driver.last.emit(
+    { type: "background_task_started", taskId: "t1", toolUseId: "u1", taskType: "local_bash" },
+    ev.background([{ taskId: "t1", description: "sleep 600" }]),
+  );
+  await h.rt.settled();
+  await h.rt.stop({ graceMs: 0 });
+  await h.rt.settled();
+  expect(f.kills).toEqual([[5000, "SIGTERM"]]);
+  expect(await journalRow()).toBeNull();
+  // A hibernate's stop records no `cleanup` event (spec §15), only the lost work.
+  const types = (await events()).map((e) => e.type);
+  expect(types).not.toContain("cleanup");
+  expect(types).toContain("background_work_lost");
+  expect(h.rt.live().status).toBe("hibernated");
+});
+
+/** A journal a previous run left (a boot reap that failed): Claude 7000 and a descendant 7001, both still alive. */
+async function leftoverJournal(f: ReturnType<typeof fakeJournal>) {
+  f.alive.set(7000, "O");
+  f.alive.set(7001, "P");
+  await h.store.setRuntimeJournal(h.agentId, {
+    claude: { pid: 7000, start: "O" },
+    descendants: [{ pid: 7001, start: "P" }],
+    tasks: [],
+    crons: [],
+    takenAt: new Date().toISOString(),
+  });
+}
+
+test("a local start first reaps what the journal still names, and keeps those pids in the new journal", async () => {
+  const f = await makeRuntime();
+  await leftoverJournal(f);
+  await idle();
+  expect(f.kills).toEqual([
+    [7000, "SIGTERM"],
+    [7001, "SIGTERM"],
+  ]);
+  expect(f.startsAtKill).toEqual([0, 0]); // before the new process started
+  const evs = await events();
+  expect(evs).toContainEqual({ type: "cleanup", killedProcesses: 2 });
+  const types = evs.map((e) => e.type);
+  expect(types.indexOf("cleanup")).toBeLessThan(types.indexOf("process_started"));
+  // Seeded, not replaced: the old pids stay journaled beside the new tree (every later signal is start-verified).
+  expect(without(await journalRow())).toEqual({
+    claude: SNAP.claude,
+    descendants: [...SNAP.descendants, { pid: 7000, start: "O" }, { pid: 7001, start: "P" }],
+    tasks: [],
+    crons: [],
+  });
+  // A later reap covers them, and then they leave the journal.
+  h.driver.last.exit(1);
+  await h.rt.settled();
+  expect(await journalRow()).toBeNull();
+});
+
+test("a local start whose pre-start reap fails is stop_failed: no process, the journal kept", async () => {
+  const f = fakeJournal();
+  await h.makeRuntime({
+    journal: { snapshot: f.snapshot },
+    cleanup: async () => {
+      throw new Error("ps failed");
+    },
+  });
+  await leftoverJournal(f);
+  await expect(h.send("hi")).rejects.toThrow(
+    "The agent's previous process couldn't be stopped. Check the host (pid 7000), then restart again.",
+  );
+  await h.rt.settled();
+  expect(h.driver.starts).toHaveLength(0);
+  expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
+  expect(await journalRow()).toMatchObject({ claude: { pid: 7000, start: "O" } });
+  // stop_failed: only Restart wakes it, not another message.
+  await h.send("again").catch(() => {});
+  expect(h.driver.starts).toHaveLength(0);
+});
+
 test("an escalated stop reaps at its exit", async () => {
   const f = await makeRuntime();
   await idle();

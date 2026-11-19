@@ -26,7 +26,7 @@ import {
   ImageMissingError,
 } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
-import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/slots.ts";
+import type { SlotPort, WakeReason } from "../supervisor/slots.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import {
   AgentArchivedError,
@@ -59,11 +59,11 @@ export interface RuntimeDeps {
   holdTimeoutMs?: number;
   /** Called with the spec of the first start (AgentRuntimes uses it for the one-time version check). */
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
-  /** The Supervisor's slot port (spec §5.2), which also owns the credential pauses (§7); defaults to unlimited slots. */
-  slots?: SlotPort;
+  /** The Supervisor's slot port (spec §5.2), which also owns the credential pauses (§7). */
+  slots: SlotPort;
   /**
-   * Cleans up what a crashed process left (spec §9.2 step 1): local, the journal reap (Task 21); Docker, the
-   * container stop (Task 25). Resolves what it did (recorded as a `cleanup` event); a throw means a container stop
+   * Cleans up what a crashed process left (spec §9.2 step 1): local, the journal reap (§12); Docker, the
+   * container stop (§11.3). Resolves what it did (recorded as a `cleanup` event); a throw means a container stop
    * failed, which makes the agent `stop_failed` (§9.6). Defaults to a no-op.
    */
   cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined>;
@@ -100,6 +100,20 @@ export function mergeSnapshot(prev: ProcessPart | undefined, snap: ProcessPart):
   const byPid = new Map(prev.descendants.map((d) => [d.pid, d]));
   for (const d of snap.descendants) byPid.set(d.pid, d);
   return { claude: snap.claude, descendants: [...byPid.values()] };
+}
+
+/** The process part with the carried pids added to its descendants (the process's own entry wins on a shared pid). */
+function withCarried(
+  proc: ProcessPart | undefined,
+  carried: ProcessPart["descendants"],
+): Partial<ProcessPart> | undefined {
+  if (!carried.length) return proc;
+  if (!proc) return { descendants: carried };
+  const own = new Set(proc.descendants.map((d) => d.pid));
+  return {
+    claude: proc.claude,
+    descendants: [...proc.descendants, ...carried.filter((d) => !own.has(d.pid))],
+  };
 }
 
 export type CleanupResult = { killedProcesses?: number; container?: "stopped" | "removed" };
@@ -154,6 +168,9 @@ const ESCALATION_EXIT_MS = 5_000;
 /** Spec §9.6's text; the pid, when known, is in the detail (the status line is just "Errored"). */
 const stopFailedMessage = (pid: number | undefined) =>
   `The agent's process can't be stopped. Check the host${pid ? ` (pid ${pid})` : ""} or Docker, then restart again.`;
+/** A local start found the previous process's journal and couldn't reap it (spec §9.6, §12). */
+const previousProcessMessage = (pid: number | undefined) =>
+  `The agent's previous process couldn't be stopped. Check the host${pid ? ` (pid ${pid})` : ""}, then restart again.`;
 
 /** The owed-notification bound (spec §6.1). */
 const OWED_BOUND_MS = 30_000;
@@ -239,6 +256,8 @@ export class AgentRuntime {
   // runtime_journal (spec §12): the tasks/crons part and the local process part, merged into one write.
   private journalWork: LostWork = { tasks: [], crons: [] };
   private journalProc: ProcessPart | undefined;
+  // Pids a pre-start reap signalled (spec §12): kept in the journal until a later reap, in case one survived.
+  private carriedPids: ProcessPart["descendants"] = [];
   private journalJson = "null"; // what was last written, without takenAt
   private snapshotTimer: ReturnType<typeof setTimeout> | undefined;
   private rateLimitedTurn = false; // a `rate_limited` event since the last turn end (spec §7.3)
@@ -253,7 +272,7 @@ export class AgentRuntime {
     this.errorKind = kind.success ? kind.data : undefined;
     this.attempting = d.agent.attempting;
     this.archived = Boolean(d.agent.archivedAt);
-    this.slots = d.slots ?? unlimitedSlots;
+    this.slots = d.slots;
   }
 
   async init() {
@@ -493,6 +512,18 @@ export class AgentRuntime {
     this.clearOwedBound();
   }
 
+  /**
+   * The closing latch dropped this agent's queued wake (spec §5.6). An attempt waiting on it never started a process,
+   * so it ends here (memory and DB) rather than read as cut short at the next boot (§5.7 step 4). Its durable cause
+   * stays: a `boot_resume` keeps its pending factory-restarted notice, a crash recovery its errored state.
+   */
+  wakeDropped(): Promise<void> {
+    return this.run(async () => {
+      if (this.attemptReason) await this.endAttemptIfNothingStarts(this.attemptReason);
+      this.publishStatus();
+    });
+  }
+
   /** The Supervisor's grant job: start with the slot it handed over, or give it back when no longer eligible. */
   grant(granted: WakeReason): Promise<void> {
     return this.run(async () => {
@@ -663,14 +694,13 @@ export class AgentRuntime {
 
   /** What keeps the agent warm: live non-ambient tasks (oldest first) and the live cron count. */
   waitingOn(): WaitingOn {
-    const tasks: WaitingOn["tasks"] = [];
-    for (const [taskId, t] of this.liveTasks)
-      if (!t.ambient)
-        tasks.push({
-          taskId,
-          description: t.description,
-          startedAt: new Date(t.startedAt).toISOString(),
-        });
+    const live = [...this.liveTasks].filter(([, t]) => !t.ambient);
+    live.sort(([, a], [, b]) => a.startedAt - b.startedAt); // stable: same-ms tasks keep the event's order
+    const tasks: WaitingOn["tasks"] = live.map(([taskId, t]) => ({
+      taskId,
+      description: t.description,
+      startedAt: new Date(t.startedAt).toISOString(),
+    }));
     return { tasks, crons: this.crons.size };
   }
 
@@ -966,6 +996,7 @@ export class AgentRuntime {
       }
     }
     this.journalProc = undefined;
+    this.carriedPids = [];
     await this.persistJournal();
     if (done) await this.append(null, { type: "cleanup", ...done });
     this.slots.release(this.agent.id);
@@ -1111,6 +1142,7 @@ export class AgentRuntime {
     try {
       const row = await this.d.store.agentById(this.agent.id);
       resumeSessionId = row?.sessionId ?? undefined;
+      if (spec.runtime === "local") await this.reapBeforeLocalStart(row?.runtimeJournal ?? null);
       // Right before the launch: a stop(), archive or the closing latch that arrived during prepare must not be outrun.
       this.refuseBeforeLaunch();
     } catch (err) {
@@ -1155,6 +1187,37 @@ export class AgentRuntime {
     await this.snapshotJournal(proc);
     this.publishStatus();
     return true;
+  }
+
+  /**
+   * Never two processes for one session (spec §12, §5.7): a local start first reaps whatever `runtime_journal` still
+   * names (a boot reap that failed keeps it). When that reap fails, the start fails `stop_failed` and keeps the slot
+   * (§9.6). Pids it signalled are carried into the new process's journal, so a later reap still covers them.
+   */
+  private async reapBeforeLocalStart(j: RuntimeJournal | null) {
+    const pids = [...(j?.claude ? [j.claude] : []), ...(j?.descendants ?? [])];
+    this.carriedPids = [];
+    if (!pids.length || !this.d.cleanup) return;
+    let done: CleanupResult | undefined;
+    try {
+      done = await this.d.cleanup({ ...this.agent, runtime: "local" });
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "reaping the previous process failed");
+      // The slot and the cleanup target first: a failing DB write below must not free the slot of a running process.
+      this.keepSlotAfterFailedStart = true;
+      this.slots.stopFailed(this.agent.id);
+      this.procRuntime = "local"; // Restart's cleanup reaps the journal again
+      const message = previousProcessMessage(j?.claude?.pid);
+      const logFailure = (e: unknown) =>
+        this.d.log.error({ err: e, agent: this.agent.slug }, "recording stop_failed failed");
+      // setErrored sets the in-memory truth first; the DB may be what failed.
+      await this.setErrored(message, "stop_failed").catch(logFailure);
+      await this.append(null, { type: "error", source: "spawn", message }).catch(logFailure);
+      this.publishStatus();
+      throw new AgentStartError(message);
+    }
+    if (done?.killedProcesses) this.carriedPids = pids;
+    if (done) await this.append(null, { type: "cleanup", ...done });
   }
 
   /** A start failure before the launch: an `error` event and errored `start`, then the start error is thrown. */
@@ -1271,7 +1334,12 @@ export class AgentRuntime {
 
   /** The agent as the cleanup port sees it: with the runtime its last process ran under. */
   private cleanupTarget(): AgentRow {
-    return { ...this.agent, runtime: this.procRuntime ?? this.agent.runtime };
+    return { ...this.agent, runtime: this.runningRuntime() };
+  }
+
+  /** The runtime of the last launched process (a re-sync may have changed the row's since), else the row's. */
+  private runningRuntime(): "local" | "docker" {
+    return this.procRuntime ?? this.agent.runtime;
   }
 
   /** Not recorded as a start failure: the agent isn't broken, it is being stopped (shutdown, archive). */
@@ -1467,11 +1535,16 @@ export class AgentRuntime {
     // Spec §9.1: no recorded intent and not expected, whether or not the agent is errored or attempting.
     const crash = !intent && !e.expected;
     // Leftovers are cleaned up after a crash, an escalation and a Restart's force stop (spec §9.2, §9.6, §9.7, §12).
-    const reap = crash || intent?.kind === "restart" || this.escalated.has(proc);
+    const forced = crash || intent?.kind === "restart" || this.escalated.has(proc);
+    const lost = this.lostSnapshot(); // before the tasks and crons are reset below
+    // A hibernate that cut work short (in practice shutdown or archive: the others wait for idle) also reaps: a
+    // `setsid` task outlives Claude's exit, and its journal is cleared below (spec §12, §18.3: nothing survives close).
+    const cutShort =
+      intent?.kind === "hibernate" && (intent.lost.tasks.length > 0 || lost.tasks.length > 0);
+    const reap = forced || cutShort;
     // Docker: every exit stops the container before the slot goes back (spec §5.2, §6.4, §11.3): Claude's exit
     // leaves `sleep infinity` and any background process running in it.
     const docker = this.cleanupTarget().runtime === "docker";
-    const lost = this.lostSnapshot(); // before the tasks and crons are reset below
     this.liveTasks = new Map(); // tasks and crons die with the process
     this.crons = new Map();
     this.owedNotifications = 0;
@@ -1496,7 +1569,7 @@ export class AgentRuntime {
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
-      if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, reap));
+      if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
       else this.journalProc = undefined; // a clean exit: nothing of it is left to reap
       await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
@@ -1720,6 +1793,7 @@ export class AgentRuntime {
       return false;
     }
     this.journalProc = undefined;
+    this.carriedPids = [];
     // `cleanup` records leftovers after a crash, an escalation or a Restart (spec §15), not a hibernate's stop.
     if (done && record) await this.append(null, { type: "cleanup", ...done });
     return true;
@@ -1884,7 +1958,7 @@ export class AgentRuntime {
     this.d.log.error({ agent: this.agent.slug, pid: proc.pid }, "the process can't be stopped");
     // setErrored sets the in-memory truth first; the DB may be what failed.
     await this.setErrored(stopFailedMessage(proc.pid), "stop_failed").catch(() => {});
-    // Restart of a stop_failed agent makes one more escalation try (spec §9.6, Task 20): don't cache this one.
+    // Restart of a stop_failed agent makes one more escalation try (spec §9.6): don't cache this one.
     this.escalations.delete(proc);
     this.slots.stopFailed(this.agent.id);
     this.publishStatus();
@@ -2005,7 +2079,7 @@ export class AgentRuntime {
    */
   private async persistJournal() {
     const { tasks, crons } = this.journalWork;
-    const proc = this.journalProc;
+    const proc = withCarried(this.journalProc, this.carriedPids);
     const body = proc || tasks.length || crons.length ? { ...proc, tasks, crons } : null;
     const json = JSON.stringify(body);
     if (json === this.journalJson) return;
@@ -2022,7 +2096,7 @@ export class AgentRuntime {
    */
   private async snapshotJournal(proc: HarnessProcess) {
     const journal = this.d.journal;
-    if (!journal || this.agent.runtime !== "local" || proc !== this.proc) return;
+    if (!journal || this.runningRuntime() !== "local" || proc !== this.proc) return;
     if (proc.pid === undefined) return;
     try {
       const snap = await journal.snapshot(proc.pid);
@@ -2039,7 +2113,7 @@ export class AgentRuntime {
   /** Every 10 s while a turn is open or a background task is live: the only ways a descendant outlives Claude. */
   private updateSnapshotTimer() {
     const busy = Boolean(this.openTurnId) || this.liveTasks.size > 0;
-    if (!this.d.journal || this.agent.runtime !== "local" || !this.proc || !busy) {
+    if (!this.d.journal || this.runningRuntime() !== "local" || !this.proc || !busy) {
       if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
       this.snapshotTimer = undefined;
       return;

@@ -368,15 +368,26 @@ test("a container that exits before it is ready fails the start with its logs", 
   expect((err as Error).message).toContain("tini: exec failed");
 });
 
-test("root host user is refused", async () => {
-  for (const ids of [
-    { uid: 0, gid: 20 },
-    { uid: 501, gid: 0 },
-  ]) {
-    const m = new ContainerManager({ docker, log, ...ids });
-    await expect(
-      m.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
-    ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
+test("root host user is refused, even when non-root ids are injected", async () => {
+  for (const id of ["getuid", "getgid"] as const) {
+    const spy = vi.spyOn(process, id).mockReturnValue(0);
+    try {
+      // `mgr` was built with injected non-root ids (501/20): they don't hide the server's own root id.
+      await expect(
+        mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
+      ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
+      await expect(
+        new ContainerManager({ docker, log }).ensure({
+          agentId: AGENT,
+          slug: "lead",
+          image: IMAGE,
+          mounts,
+          mountCheck: ctx,
+        }),
+      ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
+    } finally {
+      spy.mockRestore();
+    }
   }
   expect(docker.ops()).not.toContain("create");
   expect(docker.ops()).not.toContain("start");

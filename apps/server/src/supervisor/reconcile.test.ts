@@ -299,6 +299,42 @@ test("an agent mid-turn at crash gets factory_restarted and one boot_resume wake
   expect(boot.starts(id)).toHaveLength(1);
 });
 
+test("a boot_resume still queued at shutdown never started: the next boot wakes it, not errors it", async () => {
+  const first = await agent();
+  const second = await agent();
+  await pending(first, "a1");
+  await openTurn(first);
+  await pending(second, "b1");
+  await openTurn(second);
+  const one = new Boot(1);
+  boot = one;
+  await one.run();
+  await one.settleAll([first, second]);
+  expect(one.startOrder()).toEqual([first]);
+  expect((await one.rt(second)).live().status).toBe("queued");
+  expect((await row(second)).attempting).toBe(true);
+
+  // A graceful shutdown: the closing latch drops the queued wake before any process started.
+  for (const p of one.driver.starts) p.releaseStop();
+  await one.runtimes.close();
+  expect((await row(second)).attempting).toBe(false);
+  expect((await row(first)).attempting).toBe(true); // its process ran: cut short for real
+
+  const two = new Boot();
+  boot = two;
+  await two.run();
+  await two.settleAll([first, second]);
+  expect(await row(first)).toMatchObject({ status: "errored", lastError: ATTEMPT_CUT_SHORT });
+  expect((await row(second)).status).not.toBe("errored");
+  expect(two.starts(second)).toHaveLength(1);
+  expect(await events(second)).toContainEqual({
+    type: "process_started",
+    resumed: false,
+    reason: "boot_resume",
+  });
+  expect((two.starts(second)[0] as FakeProcess).sent[0]?.[0]?.from).toBe("@factory");
+});
+
 test("agents with pending messages wake FIFO by oldest pending; errored ones don't", async () => {
   const x = await agent();
   const y = await agent();

@@ -7,6 +7,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
+import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -62,6 +63,7 @@ async function makeRuntime(
       };
     },
     log: silentLog,
+    slots: unlimitedSlots,
     ...(opts.realHold ? {} : { holdTimeoutMs: 200 }),
   });
   await rt.init();

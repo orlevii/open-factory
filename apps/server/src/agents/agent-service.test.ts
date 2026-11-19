@@ -17,6 +17,7 @@ import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { ContainerManager } from "../runtime/docker/containers.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { resyncPendingDir } from "../workspace/paths.ts";
 import type { AgentService } from "./agent-service.ts";
@@ -294,6 +295,30 @@ test("re-sync of a hibernated agent applies at once", async () => {
   expect(r.applied).toBe("now");
   expect(readFileSync(path.join(home, "agents/stage-b/AGENTS.md"), "utf8")).toBe("# NEW\n");
   expect(existsSync(resyncPendingDir(home, "stage-b"))).toBe(false);
+});
+
+test("re-sync of a Docker agent stages while its container runs, or when Docker can't tell", async () => {
+  writeTemplate("dock-a", yaml("dock-a").replace("runtime: local", "runtime: docker"));
+  await svc.create({
+    template: "dock-a",
+    slug: "dock-a",
+    displayName: "Dock",
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+  const running = vi.spyOn(ContainerManager.prototype, "isRunning");
+  try {
+    running.mockResolvedValue(true);
+    expect((await svc.resync("dock-a")).applied).toBe("on_restart");
+    expect(running).toHaveBeenCalledWith(await idOf("dock-a"), "dock-a");
+    running.mockRejectedValue(new Error("connect ECONNREFUSED /var/run/docker.sock"));
+    expect((await svc.resync("dock-a")).applied).toBe("on_restart");
+    running.mockResolvedValue(false);
+    expect((await svc.resync("dock-a")).applied).toBe("now");
+  } finally {
+    running.mockRestore();
+  }
 });
 
 test("a second staged re-sync replaces the pending dir", async () => {

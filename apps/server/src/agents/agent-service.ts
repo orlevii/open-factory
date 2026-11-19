@@ -9,6 +9,7 @@ import {
 } from "@open-factory/shared";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
+import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
@@ -52,6 +53,8 @@ export class AgentService {
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
       log: RuntimeLog;
+      /** The one ContainerManager: a running container counts as a process for the re-sync gate (spec §11.4). */
+      containers?: Pick<ContainerManager, "isRunning">;
     },
   ) {}
 
@@ -340,6 +343,21 @@ export class AgentService {
     }
   }
 
+  /** Fails closed: a Docker agent whose container state can't be read (Docker down) is treated as running. */
+  private async containerRunning(row: AgentRow): Promise<boolean> {
+    if (row.runtime !== "docker") return false;
+    if (!this.d.containers) return true;
+    try {
+      return await this.d.containers.isRunning(row.id, row.slug);
+    } catch (err) {
+      this.d.log.warn(
+        { err, agent: row.slug },
+        "couldn't check the container; staging the re-sync",
+      );
+      return true;
+    }
+  }
+
   async resync(
     slug: string,
   ): Promise<{ agent: AgentSummary; backupDir?: string; applied: "now" | "on_restart" }> {
@@ -356,10 +374,11 @@ export class AgentService {
         const projects = row.grantsOverridden
           ? undefined
           : await this.templateProjects(tpl.config.projects, row.template);
-        // Decided under the lock every start also takes, so a start can't slip in between.
-        // Docker: Task 23 adds `!(await containers.isRunning(agentId))`.
+        // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
+        // must not be running either (spec §11.4 part 4).
         const rt = await runtimes.get(row.id);
-        const r = await workspace.resync(slug, tpl, { canWriteNow: !rt?.hasProcess() });
+        const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
+        const r = await workspace.resync(slug, tpl, { canWriteNow });
         backupDir = r.backupDir;
         applied = r.applied;
         await db.transaction(async (tx) => {

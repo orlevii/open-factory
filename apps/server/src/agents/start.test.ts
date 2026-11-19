@@ -205,13 +205,6 @@ test.each([
     "secrets",
   ],
   [
-    "docker",
-    async () =>
-      t.sql`update agents set runtime = 'docker', config = jsonb_set(config, '{runtime}', '"docker"')`,
-    "The Docker runtime isn't available yet.",
-    undefined,
-  ],
-  [
     "bad key",
     async () => t.sql`update credentials set value_enc = ${Buffer.from([1, 2, 3])}`,
     "Can't decrypt credential work. Was FACTORY_SECRET_KEY changed?",

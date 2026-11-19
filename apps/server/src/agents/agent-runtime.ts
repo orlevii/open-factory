@@ -20,7 +20,14 @@ import {
   type WaitingOn,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import {
+  type ContainerManager,
+  type EnsureResult,
+  ImageMissingError,
+} from "../runtime/docker/containers.ts";
+import { dockerStartError } from "../runtime/docker/errors.ts";
 import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/slots.ts";
+import { WorkspaceError } from "../workspace/links.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -32,7 +39,7 @@ import type { EventStore, Tx } from "./event-store.ts";
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
-import type { PrepareStart } from "./start.ts";
+import type { PreparedSpec, PrepareStart } from "./start.ts";
 
 export interface RuntimeLog {
   debug(obj: object, msg: string): void;
@@ -67,6 +74,16 @@ export interface RuntimeDeps {
   journal?: { snapshot(claudePid: number): Promise<ProcessPart> };
   /** The local gate (`localRuntimeAllowed(config)`), read live because it can change; defaults to allowed. */
   localRuntimeAllowed?: () => boolean;
+  /** The Docker launcher (spec §10 step 4, §11): the one ContainerManager and the in-container Claude path. */
+  docker?: DockerDeps;
+}
+
+export interface DockerDeps {
+  containers: Pick<ContainerManager, "ensure" | "stopIfRunning">;
+  /** `FACTORY_DOCKER_CLAUDE_BIN`. */
+  claudeBin: string;
+  /** `ensure` found the image gone after the pull check: the next wake checks and pulls again. */
+  onImageMissing?: (image: string) => void;
 }
 
 /** The local part of `runtime_journal` (spec §12). */
@@ -201,6 +218,9 @@ export class AgentRuntime {
   private stopsInProgress = 0; // stop() calls not yet returned: no process may be spawned meanwhile
   private afterExit: AfterExit | undefined; // the intent of the stop in progress, consumed by the `exited` job
   private noStart = false; // the closing latch (spec §5.6): never launch again
+  // The runtime of the last launched process: its exit and cleanup follow it, even if a re-sync changed the row since.
+  private procRuntime: "local" | "docker" | undefined;
+  private lastImage: string | undefined; // Docker: the image reference of the last start (spec §8.2)
   private readonly slots: SlotPort;
   private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
   private liveTasks = new Map<string, LiveTask>(); // startedAt = first seen in a `background_tasks` set
@@ -576,6 +596,19 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * The Supervisor's pull of this agent's image failed (spec §11.2): its wake was dropped, so the start fails here,
+   * with the registry's error verbatim. An attempt waiting on that wake ends with it.
+   */
+  imagePullFailed(message: string): Promise<void> {
+    return this.run(async () => {
+      if (this.proc || this.starting) return; // started meanwhile through another wake: nothing failed
+      await this.append(null, { type: "error", source: "spawn", message });
+      await this.setErrored(message, "start");
+      this.publishStatus();
+    });
+  }
+
   /** The fields that only the runtime knows. */
   live(): {
     status: AgentStatus;
@@ -588,6 +621,8 @@ export class AgentRuntime {
     rateLimitedUntil?: string;
     rateLimitExact?: boolean;
     runtimeDisabled?: string;
+    image?: string;
+    pulling?: boolean;
   } {
     const pause = this.slots.pauseOf(this.agent.id);
     return {
@@ -601,6 +636,8 @@ export class AgentRuntime {
       ...(this.agent.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
         ? { runtimeDisabled: LOCAL_RUNTIME_DISABLED }
         : {}),
+      ...(this.lastImage ? { image: this.lastImage } : {}),
+      ...(this.slots.isPulling(this.agent.id) ? { pulling: true } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
       waitingOn: this.waitingOn(),
@@ -889,7 +926,7 @@ export class AgentRuntime {
     }
     let done: CleanupResult | undefined;
     try {
-      done = await this.d.cleanup?.(this.agent);
+      done = await this.d.cleanup?.(this.cleanupTarget());
     } catch (err) {
       this.d.log.error({ err, agent: this.agent.slug }, "cleanup on restart failed");
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
@@ -1003,39 +1040,49 @@ export class AgentRuntime {
     this.refuseWhileStopping();
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
-    let spec: AgentRuntimeSpec;
+    let prepared: PreparedSpec;
     try {
-      spec = await this.d.prepareStart(this.agent);
+      prepared = await this.d.prepareStart(this.agent);
     } catch (err) {
       if (err instanceof AgentArchivedError) {
         this.archived = true;
         throw err;
       }
-      const known = err instanceof AgentStartError;
-      const message = known ? err.message : "The agent couldn't be prepared to start.";
-      if (!known) this.d.log.error({ err, agent: this.agent.slug }, "prepareStart failed");
-      await this.append(null, {
-        type: "error",
-        source: "spawn",
-        message,
-        ...(known && err.fix ? { fix: err.fix } : {}),
-      });
-      await this.setErrored(message, "start");
-      this.publishStatus();
-      throw known ? err : new AgentStartError(message);
+      return this.failStart(err, "prepareStart failed");
     }
+    const { launch: dockerLaunch, ...prepSpec } = prepared;
+    let spec: AgentRuntimeSpec = prepSpec;
     if (!this.firstStartDone) {
       this.firstStartDone = true;
       this.d.onFirstStart?.(spec);
     }
-    const row = await this.d.store.agentById(this.agent.id);
-    const resumeSessionId = row?.sessionId ?? undefined;
-    // Right before the launch: a stop(), archive or the closing latch that arrived during prepare must not be outrun.
-    this.refuseBeforeLaunch();
-    if (this.credentialPaused()) return false;
+    // Docker (spec §10 step 4): the container, outside the workspace lock; any throw from here to the launch stops it.
+    let container: (EnsureResult & { image: string }) | undefined;
+    if (spec.runtime === "docker") {
+      container = await this.ensureContainer(spec, dockerLaunch);
+      spec = {
+        ...spec,
+        docker: { containerId: container.containerId, claudeBin: this.dockerDeps().claudeBin },
+      };
+    }
+    let resumeSessionId: string | undefined;
+    try {
+      const row = await this.d.store.agentById(this.agent.id);
+      resumeSessionId = row?.sessionId ?? undefined;
+      // Right before the launch: a stop(), archive or the closing latch that arrived during prepare must not be outrun.
+      this.refuseBeforeLaunch();
+    } catch (err) {
+      if (container) await this.stopUnusedContainer();
+      throw err;
+    }
+    if (this.credentialPaused()) {
+      if (container) await this.stopUnusedContainer();
+      return false;
+    }
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
     onLaunched();
     this.proc = proc;
+    this.procRuntime = spec.runtime;
     this.started = false;
     this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
     this.afterExit = undefined;
@@ -1046,6 +1093,16 @@ export class AgentRuntime {
     this.lastActivityAt = Date.now();
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
+    if (container) {
+      this.lastImage = container.image;
+      await this.append(null, {
+        type: "container",
+        action: container.action,
+        image: container.image,
+        imageId: container.imageId,
+        ...(container.claudeCodeVersion ? { claudeCodeVersion: container.claudeCodeVersion } : {}),
+      });
+    }
     await this.append(null, {
       type: "process_started",
       resumed: Boolean(resumeSessionId),
@@ -1055,6 +1112,77 @@ export class AgentRuntime {
     await this.snapshotJournal(proc);
     this.publishStatus();
     return true;
+  }
+
+  /** A start failure before the launch: an `error` event and errored `start`, then the start error is thrown. */
+  private async failStart(err: unknown, what: string): Promise<never> {
+    const known = err instanceof AgentStartError;
+    const message = known ? err.message : "The agent couldn't be prepared to start.";
+    if (!known) this.d.log.error({ err, agent: this.agent.slug }, what);
+    await this.append(null, {
+      type: "error",
+      source: "spawn",
+      message,
+      ...(known && err.fix ? { fix: err.fix } : {}),
+    });
+    await this.setErrored(message, "start");
+    this.publishStatus();
+    throw known ? err : new AgentStartError(message);
+  }
+
+  private dockerDeps(): DockerDeps {
+    if (!this.d.docker)
+      throw new AgentStartError("The Docker runtime isn't configured on this factory.");
+    return this.d.docker;
+  }
+
+  /**
+   * `ContainerManager.ensure` (create or re-create by spec hash, start, ready marker) with the mounts and the very
+   * mount-check context `prepare` used, so the manager re-checks them right before the create or start. A failure is
+   * a start failure, and a container this start may have started is stopped (spec §5.2).
+   */
+  private async ensureContainer(
+    spec: AgentRuntimeSpec,
+    launch: PreparedSpec["launch"],
+  ): Promise<EnsureResult & { image: string }> {
+    try {
+      const docker = this.dockerDeps();
+      if (!launch) throw new Error("a Docker start was prepared without its launch");
+      const r = await docker.containers.ensure({
+        agentId: this.agent.id,
+        slug: this.agent.slug,
+        image: launch.image,
+        mounts: spec.mounts,
+        mountCheck: launch.mountCheck,
+      });
+      return { ...r, image: launch.image };
+    } catch (err) {
+      if (err instanceof ImageMissingError) this.d.docker?.onImageMissing?.(err.image);
+      await this.stopUnusedContainer();
+      // A mount refused by the re-check keeps its own message ("Mount <path> isn't allowed: <reason>.").
+      const startErr =
+        err instanceof WorkspaceError
+          ? new AgentStartError(err.message, err.fix)
+          : dockerStartError(err);
+      return this.failStart(startErr, "starting the container failed");
+    }
+  }
+
+  /** A container started for a launch that didn't happen: stopped, best effort (nothing runs in it but `sleep`). */
+  private async stopUnusedContainer() {
+    try {
+      await this.d.docker?.containers.stopIfRunning(this.agent.id, this.agent.slug);
+    } catch (err) {
+      this.d.log.warn(
+        { err, agent: this.agent.slug },
+        "stopping the container of a start that didn't launch failed",
+      );
+    }
+  }
+
+  /** The agent as the cleanup port sees it: with the runtime its last process ran under. */
+  private cleanupTarget(): AgentRow {
+    return { ...this.agent, runtime: this.procRuntime ?? this.agent.runtime };
   }
 
   /** Not recorded as a start failure: the agent isn't broken, it is being stopped (shutdown, archive). */
@@ -1251,6 +1379,9 @@ export class AgentRuntime {
     const crash = !intent && !e.expected;
     // Leftovers are cleaned up after a crash, an escalation and a Restart's force stop (spec §9.2, §9.6, §9.7, §12).
     const reap = crash || intent?.kind === "restart" || this.escalated.has(proc);
+    // Docker: every exit stops the container before the slot goes back (spec §5.2, §6.4, §11.3): Claude's exit
+    // leaves `sleep infinity` and any background process running in it.
+    const docker = this.cleanupTarget().runtime === "docker";
     const lost = this.lostSnapshot(); // before the tasks and crons are reset below
     this.liveTasks = new Map(); // tasks and crons die with the process
     this.crons = new Map();
@@ -1276,7 +1407,7 @@ export class AgentRuntime {
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
-      if (reap) keepSlot = !(await this.cleanUpLeftovers(crash));
+      if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, reap));
       else this.journalProc = undefined; // a clean exit: nothing of it is left to reap
       await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
@@ -1486,10 +1617,10 @@ export class AgentRuntime {
    * Spec §9.2 step 1 (and §9.6, §9.7): clean up leftovers first; a local reap clears the journal's pids. False when it
    * failed (the agent is then `stop_failed`, §9.6, and the journal keeps its pids for a later try).
    */
-  private async cleanUpLeftovers(crash: boolean): Promise<boolean> {
+  private async cleanUpLeftovers(crash: boolean, record = true): Promise<boolean> {
     let done: CleanupResult | undefined;
     try {
-      done = await this.d.cleanup?.(this.agent);
+      done = await this.d.cleanup?.(this.cleanupTarget());
     } catch (err) {
       const what = crash ? "cleanup after a crash failed" : "cleanup after a stop failed";
       // The cause names its source (e.g. the DB read of the journal, the Docker API), not only "the process".
@@ -1500,7 +1631,8 @@ export class AgentRuntime {
       return false;
     }
     this.journalProc = undefined;
-    if (done) await this.append(null, { type: "cleanup", ...done });
+    // `cleanup` records leftovers after a crash, an escalation or a Restart (spec §15), not a hibernate's stop.
+    if (done && record) await this.append(null, { type: "cleanup", ...done });
     return true;
   }
 
@@ -1620,7 +1752,7 @@ export class AgentRuntime {
    */
   private async escalateNow(proc: HarnessProcess) {
     if (proc !== this.proc) return; // its exit was recorded meanwhile
-    const how = this.agent.runtime === "docker" ? "container_stop" : "sigkill";
+    const how = this.cleanupTarget().runtime === "docker" ? "container_stop" : "sigkill";
     this.d.log.warn({ agent: this.agent.slug, pid: proc.pid, how }, "stop timed out; escalating");
     await this.append(null, { type: "stop_escalated", how }).catch((err) =>
       this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),

@@ -1,16 +1,40 @@
+import { stat } from "node:fs/promises";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import { templateConfigSchema } from "@open-factory/shared";
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
+import type { ContainerManager } from "../runtime/docker/containers.ts";
+import { dockerStartError } from "../runtime/docker/errors.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
+import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 import { AgentArchivedError, AgentStartError } from "./errors.ts";
 import { buildAgentEnv, buildRuntimeSpec } from "./runtime-spec.ts";
 
-export type PrepareStart = (agent: AgentRow) => Promise<AgentRuntimeSpec>;
+/**
+ * What a Docker start still has to do outside the workspace lock (spec §10 step 4): `ContainerManager.ensure` with the
+ * image and the same mount-check context `prepare` checked the mounts with.
+ */
+export interface DockerLaunch {
+  image: string;
+  mountCheck: MountCheckContext;
+}
+
+/** The spec of one start; a Docker start also carries its `launch` (never passed to the driver). */
+export type PreparedSpec = AgentRuntimeSpec & { launch?: DockerLaunch };
+
+export type PrepareStart = (agent: AgentRow) => Promise<PreparedSpec>;
+
+export const CLI_BUNDLE_MISSING = "Build the CLI first (pnpm build).";
+
+/** Spec §11.6: the CLI bundle is mounted into every Docker agent; a missing one fails the start. */
+async function assertCliBundle(file: string): Promise<void> {
+  const st = await stat(file).catch(() => undefined);
+  if (!st?.isFile()) throw new AgentStartError(CLI_BUNDLE_MISSING);
+}
 
 /**
  * Builds the spec for one process start. Holds the agent's workspace lock (keyed by slug)
@@ -23,6 +47,8 @@ export function createPrepareStart(d: {
   vault: Vault;
   workspace: Workspace;
   lock: KeyedMutex;
+  /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
+  containers?: Pick<ContainerManager, "stopIfRunning">;
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
@@ -43,6 +69,12 @@ export function createPrepareStart(d: {
         );
       }
       const config = parsedConfig.data;
+      const docker = config.runtime === "docker";
+      if (docker) {
+        if (!d.containers)
+          throw new AgentStartError("The Docker runtime isn't configured on this factory.");
+        await assertCliBundle(d.config.cliBundle);
+      }
 
       const [cred] = await d.db
         .select()
@@ -104,6 +136,16 @@ export function createPrepareStart(d: {
         .where(eq(schema.agentProjectGrants.agentId, agent.id))
         .orderBy(asc(schema.projects.name));
 
+      // Spec §10 step 2: a container left running (a missed reconciliation, a dropped exec) is stopped before any
+      // host-side write, so nothing inside it races the checks and no leftover Claude runs beside the new one.
+      if (docker) {
+        try {
+          await d.containers?.stopIfRunning(agent.id, agent.slug);
+        } catch (err) {
+          throw dockerStartError(err);
+        }
+      }
+
       let prepared: Awaited<ReturnType<Workspace["prepare"]>>;
       try {
         prepared = await d.workspace.prepare({
@@ -120,12 +162,12 @@ export function createPrepareStart(d: {
         throw err;
       }
 
-      // The Docker launcher arrives in S5; prepare above still ran so the workspace is exercised.
-      if (config.runtime === "docker") {
-        throw new AgentStartError("The Docker runtime isn't available yet.");
-      }
+      // Docker: the checked mounts and the very context they were checked with go to ContainerManager.ensure,
+      // which re-checks them right before the container create or start.
+      if (docker && !prepared.mountCheck)
+        throw new Error("prepare returned no mount check context for a Docker agent");
 
-      return buildRuntimeSpec({
+      const spec = buildRuntimeSpec({
         agentId: agent.id,
         slug: agent.slug,
         workdir: prepared.workdir,
@@ -144,5 +186,14 @@ export function createPrepareStart(d: {
         config,
         mounts: prepared.mounts,
       });
+      return docker && prepared.mountCheck
+        ? {
+            ...spec,
+            launch: {
+              image: config.image ?? d.config.defaultImage,
+              mountCheck: prepared.mountCheck,
+            },
+          }
+        : spec;
     });
 }

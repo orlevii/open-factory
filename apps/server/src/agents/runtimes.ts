@@ -2,6 +2,8 @@ import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import { errorKindSchema } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS } from "../config.ts";
+import type { ContainerManager } from "../runtime/docker/containers.ts";
+import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
@@ -27,11 +29,20 @@ export interface RuntimesDeps {
   journal?: ProcessJournal;
   /** The local gate, read live (`() => localRuntimeAllowed(config)`). */
   localRuntimeAllowed?: () => boolean;
+  /**
+   * The Docker runtime (spec §11): the one ContainerManager built in buildApp (never a second one), the in-container
+   * Claude path and the default image.
+   */
+  docker?: {
+    containers: Pick<ContainerManager, "ensure" | "ensureImage" | "stopIfRunning">;
+    claudeBin: string;
+    defaultImage: string;
+  };
 }
 
 /**
  * The local cleanup (spec §9.2 step 1, §12): reap the processes `runtime_journal` names now, each only while its start
- * time still matches. Docker agents have nothing here (their container stop is Task 25).
+ * time still matches. Docker agents have nothing here (`dockerCleanup` stops their container).
  */
 export function localCleanup(
   store: Pick<EventStore, "agentById">,
@@ -51,6 +62,22 @@ export function localCleanup(
     if (!j?.claude && !j?.descendants?.length) return undefined;
     const killedProcesses = await journal.reap(j);
     return killedProcesses ? { killedProcesses } : undefined;
+  };
+}
+
+/**
+ * The Docker cleanup (spec §9.2 step 1, §9.6, §11.3): stop the agent's container (bounded `stop({t: 5})`, never
+ * removed), which kills everything in it, background shells included. A Docker error throws: the caller makes the
+ * agent `stop_failed`, keeping its slot.
+ */
+export function dockerCleanup(
+  containers: Pick<ContainerManager, "stopIfRunning">,
+): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+  return async (agent) => {
+    if (agent.runtime !== "docker") return undefined;
+    return (await containers.stopIfRunning(agent.id, agent.slug))
+      ? { container: "stopped" }
+      : undefined;
   };
 }
 
@@ -81,7 +108,27 @@ export class AgentRuntimes {
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: d.store,
       load: (slug) => this.bySlug(slug),
+      ...(d.docker ? { images: this.images(d.docker) } : {}),
     });
+  }
+
+  /** The Supervisor's image port (spec §11.2): the image of a loaded Docker agent, and a check-and-pull. */
+  private images(docker: NonNullable<RuntimesDeps["docker"]>) {
+    return {
+      refOf: (id: string) => {
+        const agent = this.loaded.get(id)?.agent;
+        if (agent?.runtime !== "docker") return undefined;
+        return agent.config.image ?? docker.defaultImage;
+      },
+      ensure: async (ref: string, signal: AbortSignal) => {
+        try {
+          await docker.containers.ensureImage(ref, signal);
+        } catch (err) {
+          // The registry's error stays verbatim (spec §11.2); only an unreachable daemon is named as such.
+          throw dockerUnreachable(err) ? dockerStartError(err) : err;
+        }
+      },
+    };
   }
 
   async bySlug(slug: string): Promise<AgentRuntime | undefined> {
@@ -99,8 +146,16 @@ export class AgentRuntimes {
         holdTimeoutMs: this.d.holdTimeoutMs,
         slots: this.supervisor,
         ...(this.d.localRuntimeAllowed ? { localRuntimeAllowed: this.d.localRuntimeAllowed } : {}),
-        ...(this.d.journal
-          ? { journal: this.d.journal, cleanup: localCleanup(this.d.store, this.d.journal) }
+        ...(this.d.journal ? { journal: this.d.journal } : {}),
+        ...this.cleanupDeps(),
+        ...(this.d.docker
+          ? {
+              docker: {
+                containers: this.d.docker.containers,
+                claudeBin: this.d.docker.claudeBin,
+                onImageMissing: (ref: string) => this.supervisor.forgetImage(ref),
+              },
+            }
           : {}),
         // Local agents only: a Docker agent's claude runs in its image, not on the host.
         onFirstStart: (spec) => {
@@ -119,6 +174,16 @@ export class AgentRuntimes {
       });
     }
     return rt;
+  }
+
+  /** One cleanup port for both runtimes: the local journal reap and the Docker container stop, by the agent's runtime. */
+  private cleanupDeps(): { cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined> } {
+    const local = this.d.journal ? localCleanup(this.d.store, this.d.journal) : undefined;
+    const docker = this.d.docker ? dockerCleanup(this.d.docker.containers) : undefined;
+    if (!local && !docker) return {};
+    return {
+      cleanup: async (agent) => (agent.runtime === "docker" ? docker?.(agent) : local?.(agent)),
+    };
   }
 
   /** The runtime if it already exists. Never creates one. */

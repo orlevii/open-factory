@@ -3,8 +3,11 @@ import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
 
-/** A wake waiting for a slot (spec §5.2). At most one per agent; `requestedAt` is its FIFO place. */
-type Entry = { agentId: string; reason: WakeReason; requestedAt: number; pulling?: boolean };
+/**
+ * A wake waiting for a slot (spec §5.2). At most one per agent; `requestedAt` is its FIFO place. `pulling` names the
+ * image a Docker agent's wake waits for (spec §11.2): the entry keeps its place but isn't eligible until it resolves.
+ */
+type Entry = { agentId: string; reason: WakeReason; requestedAt: number; pulling?: string };
 
 /** A paused credential (spec §7.2): one reset timer each. `until` is epoch ms. */
 type Pause = { until: number; exact: boolean; timer?: ReturnType<typeof setTimeout> };
@@ -23,6 +26,14 @@ export interface SupervisorDeps {
   rateLimits: Pick<EventStore, "owedAgents" | "credentialName" | "clearCredentialPause">;
   /** Loads an agent's runtime (an owed agent may be hibernated and not loaded). */
   load(slug: string): Promise<AgentRuntime | undefined>;
+  /**
+   * Docker images (spec §11.2): `refOf` is the image a Docker agent starts from (undefined for a local agent);
+   * `ensure` pulls it only when it is missing locally, and rejects with the registry's error.
+   */
+  images?: {
+    refOf(agentId: string): string | undefined;
+    ensure(ref: string, signal: AbortSignal): Promise<void>;
+  };
 }
 
 /**
@@ -40,6 +51,12 @@ export class Supervisor implements SlotPort {
   private readonly pauses = new Map<string, Pause>();
   private closed = false;
   private seq = 0;
+  /** Image references found present (or pulled) by this server: their wakes skip the check. */
+  private readonly presentImages = new Set<string>();
+  /** One background check-and-pull per image reference; every waiting entry joins it. */
+  private readonly pulls = new Map<string, Promise<void>>();
+  /** The closing latch aborts in-flight pulls (spec §5.6). */
+  private readonly closingSignal = new AbortController();
 
   constructor(private readonly d: SupervisorDeps) {}
 
@@ -54,6 +71,18 @@ export class Supervisor implements SlotPort {
     if (!rt || this.holders.has(agentId) || !rt.acceptsWake(reason) || !rt.hasDeliverable())
       return "dropped";
     const at = this.queue.findIndex((e) => e.agentId === agentId);
+    // Spec §11.2: a Docker agent's image must be present before the grant. Until this server has seen it, the wake
+    // waits in the queue as `pulling` (FIFO place kept) while one background check-and-pull runs per reference.
+    const image = this.d.images?.refOf(agentId);
+    if (image !== undefined && !this.presentImages.has(image)) {
+      const queued = this.queue[at];
+      if (!queued) this.queue.push({ ...this.entry(agentId, reason), pulling: image });
+      else queued.pulling = image; // its place is kept; it waits for the check like a new entry
+      rt.publishStatus();
+      this.pull(image);
+      return "queued";
+    }
+    if (at !== -1 && this.queue[at]?.pulling) return "queued";
     if (!this.pausedFor(agentId) && this.holders.size < this.d.max) {
       const entry = at === -1 ? this.entry(agentId, reason) : this.queue.splice(at, 1)[0];
       if (!entry) return "dropped";
@@ -111,6 +140,7 @@ export class Supervisor implements SlotPort {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.closingSignal.abort(new Error("The factory is shutting down."));
     const dropped = this.queue.splice(0);
     this.pendingEvictions.clear();
     // Reset timers too (spec §5.6): the columns and owed flags are durable, boot re-arms them.
@@ -135,6 +165,15 @@ export class Supervisor implements SlotPort {
     if (this.eligibility(this.queue[at] as Entry) !== "drop") return true;
     this.queue.splice(at, 1);
     return false;
+  }
+
+  isPulling(agentId: string): boolean {
+    return Boolean(this.queue.find((e) => e.agentId === agentId)?.pulling);
+  }
+
+  /** `ensure` found the image gone (removed after it was seen): the next wake checks and pulls again. */
+  forgetImage(ref: string): void {
+    this.presentImages.delete(ref);
   }
 
   /** Whether the credential is rate-limit paused (spec §7.2). */
@@ -240,6 +279,44 @@ export class Supervisor implements SlotPort {
     this.onCredentialReset(credentialId);
   }
 
+  /**
+   * Starts (or joins) the check-and-pull of `ref` (spec §11.2). Success makes its entries eligible; a failure drops
+   * them, and each agent records the failed start (errored `start`, the registry's error verbatim).
+   */
+  private pull(ref: string) {
+    if (this.pulls.has(ref)) return;
+    const images = this.d.images;
+    if (!images) return;
+    const done = (failure?: string) => {
+      this.pulls.delete(ref);
+      if (this.closed) return; // aborted by the closing latch: the entries are already dropped
+      if (failure === undefined) this.presentImages.add(ref);
+      for (const e of this.queue.filter((q) => q.pulling === ref)) {
+        const rt = this.d.runtimes.get(e.agentId);
+        if (failure === undefined) e.pulling = undefined;
+        else {
+          this.queue.splice(this.queue.indexOf(e), 1);
+          void rt
+            ?.imagePullFailed(failure)
+            .catch((err) =>
+              this.d.log.error({ err, agent: rt.agent.slug }, "recording a failed pull failed"),
+            );
+        }
+        rt?.publishStatus();
+      }
+      this.pump();
+    };
+    this.d.log.info({ image: ref }, "checking the image before the start");
+    const p = images.ensure(ref, this.closingSignal.signal).then(
+      () => done(),
+      (err: unknown) => {
+        if (!this.closed) this.d.log.warn({ err, image: ref }, "image pull failed");
+        done(err instanceof Error ? err.message : String(err));
+      },
+    );
+    this.pulls.set(ref, p);
+  }
+
   private entry(agentId: string, reason: WakeReason): Entry {
     this.seq += 1;
     return { agentId, reason, requestedAt: this.seq };
@@ -276,7 +353,7 @@ export class Supervisor implements SlotPort {
    * of an agent whose attempt began since it was queued (Restart, Start a new session) is that attempt's wake and
    * keeps its place.
    */
-  private eligibility(e: Entry): "yes" | "paused" | "drop" {
+  private eligibility(e: Entry): "yes" | "paused" | "pulling" | "drop" {
     const rt = this.d.runtimes.get(e.agentId);
     if (
       !rt ||
@@ -285,6 +362,7 @@ export class Supervisor implements SlotPort {
       !rt.hasDeliverable()
     )
       return "drop";
+    if (e.pulling) return "pulling";
     return this.pausedFor(e.agentId) ? "paused" : "yes";
   }
 
@@ -305,7 +383,7 @@ export class Supervisor implements SlotPort {
     for (let i = 0; i < this.queue.length; ) {
       const e = this.queue[i] as Entry;
       const ok = this.eligibility(e);
-      if (ok === "paused") i += 1;
+      if (ok === "paused" || ok === "pulling") i += 1;
       else {
         this.queue.splice(i, 1);
         if (ok === "yes") return e;

@@ -43,6 +43,14 @@ async function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T
 
 export const ROOT_REFUSED = "The factory runs as root; Docker agents need a non-root host user.";
 
+/** The image went missing after the pull check (removed meanwhile): the next wake must check and pull again. */
+export class ImageMissingError extends AgentStartError {
+  constructor(readonly image: string) {
+    super(`The image ${image} isn't available locally.`);
+    this.name = "ImageMissingError";
+  }
+}
+
 export function containerName(slug: string, agentId: string): string {
   return `open-factory-${slug}-${agentId.slice(0, 8)}`;
 }
@@ -132,8 +140,7 @@ export class ContainerManager {
       throw new AgentStartError(ROOT_REFUSED);
 
     const imageId = await this.docker.imageId(i.image);
-    if (imageId === undefined)
-      throw new AgentStartError(`The image ${i.image} isn't available locally.`);
+    if (imageId === undefined) throw new ImageMissingError(i.image);
 
     const checked = await checkMounts(i.mounts, i.mountCheck);
     const hash = specHash({ imageId, mounts: checked, uid, gid });

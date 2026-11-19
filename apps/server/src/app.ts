@@ -131,7 +131,14 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   // dockerode connects lazily: constructing these makes no Docker call.
   const docker = dockerodeClient();
   const containers = new ContainerManager({ docker, log: app.log });
-  const prepareStart = createPrepareStart({ db: deps.db, config, vault, workspace, lock });
+  const prepareStart = createPrepareStart({
+    db: deps.db,
+    config,
+    vault,
+    workspace,
+    lock,
+    containers,
+  });
   const runtimes = new AgentRuntimes({
     store,
     bus,
@@ -139,6 +146,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     maxRunningAgents: config.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
+    // The same ContainerManager the exec transport stops containers with.
+    docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
     // Only the real driver's processes are ours to journal and reap (spec §12).
     ...(deps.harnessDriver ? {} : { journal: new ProcessJournal() }),
     driver:
@@ -156,6 +165,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     lock,
     runtimes,
     log: app.log,
+    containers,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({

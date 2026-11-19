@@ -26,6 +26,8 @@ export interface SlotPort {
   closing(): boolean;
   /** The agent waits for a start: a wake queue entry or a granted slot (the `queued` status input, spec §5.4). */
   isQueued(agentId: string): boolean;
+  /** The agent's wake waits for its image to be checked or pulled (spec §11.2; the status frame's `pulling`). */
+  isPulling(agentId: string): boolean;
   /** A `rejected` rate limit on the credential (spec §7.2): pause it until `until`; a later window extends, never shortens. */
   pause(credentialId: string, until: Date, exact: boolean): void;
   /** The pause on the agent's credential right now, if any. */
@@ -43,6 +45,7 @@ export const unlimitedSlots: SlotPort = {
   stopFailed: () => {},
   closing: () => false,
   isQueued: () => false,
+  isPulling: () => false,
   pause: () => {},
   pauseOf: () => undefined,
 };

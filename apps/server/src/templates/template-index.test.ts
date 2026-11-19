@@ -6,8 +6,11 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { schema } from "@open-factory/db";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
@@ -101,4 +104,58 @@ test("content hash covers skills/ and files/", async () => {
   writeFileSync(path.join(home, "templates/h1/files/x.txt"), "x");
   expect((await idx.scanOne("h1"))?.contentHash).not.toBe(before);
   expect(fileHash(Buffer.from("a"))).toHaveLength(64);
+});
+
+test("create round-trips long and special-character descriptions", async () => {
+  const long = "word ".repeat(30).trim();
+  await idx.create({ name: "d-long", displayName: "D", description: long });
+  expect((await idx.detail("d-long")).config?.description).toBe(long);
+  const special = "see #1: a thing, really";
+  await idx.create({ name: "d-spec", displayName: "Hash # and: colon", description: special });
+  const d = await idx.detail("d-spec");
+  expect(d.config?.description).toBe(special);
+  expect(d.config?.displayName).toBe("Hash # and: colon");
+  expect(d.issues.filter((i) => i.severity === "error")).toEqual([]);
+});
+
+test("create removes its folder when a later write fails", async () => {
+  const b = {
+    name: "bad-create",
+    get displayName(): string {
+      throw new Error("boom");
+    },
+  };
+  await expect(idx.create(b)).rejects.toThrow("boom");
+  expect(existsSync(path.join(home, "templates/bad-create"))).toBe(false);
+});
+
+test("names that fail the pattern are 404 everywhere", async () => {
+  for (const n of ["../x", "A"]) {
+    await expect(idx.detail(n)).rejects.toMatchObject({ code: "template_not_found" });
+    await expect(idx.writeFile(n, "AGENTS.md", "x", null)).rejects.toMatchObject({ status: 404 });
+    await expect(idx.validate(n, "AGENTS.md", "x")).rejects.toMatchObject({ status: 404 });
+    await expect(idx.remove(n)).rejects.toMatchObject({ status: 404 });
+  }
+});
+
+test("scan prunes a row whose folder vanished; remove of a gone folder drops the stale row", async () => {
+  await idx.create({ name: "gone1", displayName: "G" });
+  await idx.create({ name: "gone2", displayName: "G" });
+  await rm(path.join(home, "templates/gone1"), { recursive: true });
+  expect((await idx.scan()).map((r) => r.name)).not.toContain("gone1");
+  const hasRow = async (n: string) =>
+    (await t.db.select().from(schema.templates).where(eq(schema.templates.name, n))).length > 0;
+  expect(await hasRow("gone1")).toBe(false);
+  await rm(path.join(home, "templates/gone2"), { recursive: true });
+  expect(await hasRow("gone2")).toBe(true);
+  await expect(idx.remove("gone2")).rejects.toMatchObject({ status: 404 });
+  expect(await hasRow("gone2")).toBe(false);
+});
+
+test("a folder that fails to index is skipped without pruning the others", async () => {
+  await idx.create({ name: "ok1", displayName: "O" });
+  mkdirSync(path.join(home, "templates/Bad_Name"));
+  writeFileSync(path.join(home, "templates/Bad_Name/template.yaml"), "name: x\n");
+  expect((await idx.scan()).map((r) => r.name)).toContain("ok1");
+  expect((await idx.scan()).map((r) => r.name)).not.toContain("Bad_Name");
 });

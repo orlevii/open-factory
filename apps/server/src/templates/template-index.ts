@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { Dirent } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -87,7 +88,7 @@ export class TemplateIndex {
   }
 
   private async names(): Promise<string[]> {
-    let entries: import("node:fs").Dirent[];
+    let entries: Dirent[];
     try {
       entries = await readdir(this.dir, { withFileTypes: true });
     } catch {
@@ -95,7 +96,7 @@ export class TemplateIndex {
     }
     const out: string[] = [];
     for (const e of entries) {
-      if (e.name.startsWith(".")) continue;
+      if (e.name.startsWith(".") || !NAME_PATTERN.test(e.name)) continue;
       if (!(e.isDirectory() || e.isSymbolicLink())) continue;
       const p = path.join(this.dir, e.name);
       if (!(await isDir(p))) continue;
@@ -150,7 +151,13 @@ export class TemplateIndex {
     const names = await this.names();
     const ctx = await this.context();
     const rows: TemplateRow[] = [];
-    for (const n of names) rows.push((await this.index(n, ctx)).row);
+    for (const n of names) {
+      try {
+        rows.push((await this.index(n, ctx)).row);
+      } catch {
+        // An unreadable folder is skipped; its previous row stays until the folder is gone.
+      }
+    }
     await this.db
       .delete(schema.templates)
       .where(names.length ? notInArray(schema.templates.name, names) : undefined);
@@ -238,15 +245,22 @@ export class TemplateIndex {
         throw new ApiError(409, "template_exists", `A template named ${b.name} already exists.`);
       throw e;
     }
-    const yaml = [
-      `name: ${b.name}`,
-      `display_name: ${stringify(b.displayName).trimEnd()}`,
-      `description: ${stringify(b.description ?? "").trimEnd()}`,
-      "runtime: docker",
-      "",
-    ].join("\n");
-    await writeFile(path.join(dir, "template.yaml"), yaml);
-    await writeFile(path.join(dir, "AGENTS.md"), `# ${b.displayName}\n`);
+    try {
+      const yaml = stringify(
+        {
+          name: b.name,
+          display_name: b.displayName,
+          description: b.description ?? "",
+          runtime: "docker",
+        },
+        { lineWidth: 0 },
+      );
+      await writeFile(path.join(dir, "template.yaml"), yaml);
+      await writeFile(path.join(dir, "AGENTS.md"), `# ${b.displayName}\n`);
+    } catch (e) {
+      await rm(dir, { recursive: true, force: true });
+      throw e;
+    }
     await this.scanOne(b.name);
   }
 
@@ -256,6 +270,7 @@ export class TemplateIndex {
     try {
       st = await lstat(dir);
     } catch {
+      await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
       throw notFound(name);
     }
     if (st.isSymbolicLink()) await unlink(dir);

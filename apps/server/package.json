@@ -6,6 +6,7 @@
   "dependencies": {
     "@fastify/static": "^10.1.11",
     "@fastify/websocket": "^11.3.7",
+    "@modelcontextprotocol/server": "2.4.0",
     "@open-factory/db": "workspace:*",
     "@open-factory/harness": "workspace:*",
     "@open-factory/shared": "workspace:*",

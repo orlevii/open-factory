@@ -349,7 +349,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
   expect(scroller.scrollTop).toBe(900);
 });
 
-test("Tab leaves the timeline: only the active row and its Copy link are tabbable; Enter enters a row", async () => {
+test("Tab leaves the timeline: only the active row, its controls and its Copy link are tabbable; Enter enters a row", async () => {
   routes["/api/agents/dev/events?"] = () => {
     const c = conversation();
     resetSeq();
@@ -384,9 +384,12 @@ test("Tab leaves the timeline: only the active row and its Copy link are tabbabl
     [...log.querySelectorAll<HTMLElement>("a[href],button,summary,pre,input,[tabindex]")].filter(
       (el) => el.getAttribute("tabindex") !== "-1",
     );
-  await vi.waitFor(() => expect(tabbable().length).toBeLessThanOrEqual(2));
   const first = log.querySelector<HTMLElement>("[data-row]") as HTMLElement;
-  first.focus();
+  first.focus(); // the click made the Bash row active; the first row is active from here
+  // The active row, its own controls (UI design §5) and its Copy link; every other row's controls
+  // (the expanded code plates, the later link) stay out of the tab order.
+  await vi.waitFor(() => expect(tabbable().length).toBeLessThanOrEqual(3));
+  expect(within(log).getByRole("link", { name: "site" })).toHaveAttribute("tabindex", "-1");
   await userEvent.keyboard("{Enter}");
   expect(document.activeElement).toBe(screen.getByRole("link", { name: "docs" }));
   await userEvent.keyboard("{Escape}");

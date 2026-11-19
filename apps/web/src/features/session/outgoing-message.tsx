@@ -4,7 +4,7 @@ import { z } from "zod";
 import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown, LINK_CLASS, useAgentNames } from "./message-block";
 import type { Row } from "./rows";
-import { ToolCallRow } from "./tool-call-row";
+import { denialText, ToolCallRow } from "./tool-call-row";
 
 type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
 
@@ -73,7 +73,7 @@ export function OutgoingMessage({
     <article
       {...rowProps}
       aria-label={`Message from @${slug} to ${recipient}`}
-      className="rounded-lg border border-border px-3 py-2 focus-visible:outline-2 focus-visible:outline-ring"
+      className="rounded-lg border border-border px-3 py-2"
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
         <span className="font-mono text-foreground">@{slug}</span>
@@ -98,10 +98,12 @@ export function OutgoingMessage({
       </div>
       <ClampedMarkdown source={input.body} />
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        {failed ? (
+        {failed || row.denial ? (
           <span className="flex items-center gap-1.5">
             <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
-            <span className="min-w-0 [overflow-wrap:anywhere]">{row.result?.content}</span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {row.denial ? denialText(row.denial.reason) : row.result?.content}
+            </span>
           </span>
         ) : (
           <Footer row={row} sent={sent} toAgent={toAgent} bare={bare} />
@@ -123,7 +125,7 @@ export function OutgoingMessage({
           onClick={onToggleCall}
           className="underline-offset-4 hover:underline"
         >
-          Show tool call
+          {showCall ? "Hide tool call" : "Show tool call"}
         </button>
       </div>
       {showCall && (

@@ -1,6 +1,6 @@
 import type { Envelope } from "@open-factory/shared";
 import { ArrowUpFromLine, CircleAlert, CircleCheck, ShieldAlert, Users } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown } from "./message-block";
 import { CodePlate, QuietLine } from "./quiet-line";
@@ -9,11 +9,11 @@ import type { Row } from "./rows";
 const PART_CLAMP_LINES = 8;
 const WRITTEN_GAP_MS = 60_000;
 
-/** The stored fact body holds the envelope tag's close escaped (`&lt;/factory-message>`) at most
- *  once; the escape exists only to keep quoted text from closing the envelope, so decode that one
- *  entity and nothing else. */
+/** A quoted line in a fact body could forge the envelope tag, so the store escapes `<` before a
+ *  `factory-message` tag as `&lt;` (any number of times, open or close). Decode exactly that back
+ *  for display; the result is only ever rendered as text, never as HTML. */
 export const decodeFactBody = (body: string) =>
-  body.replace("&lt;/factory-message>", "</factory-message>");
+  body.replace(/&lt;(\s*\/?\s*factory-message)/gi, "<$1");
 
 type Item =
   | { type: "part"; id: string; body: string; createdAt?: string }
@@ -23,8 +23,12 @@ type Item =
  *  update from before parts existed) and the factory's facts about it. */
 function itemsOf(envelopes: Envelope[]): Item[] {
   return envelopes.flatMap((e): Item[] => {
-    if (e.from === "@factory" && e.fact)
-      return [{ type: "fact", id: e.id, fact: e.fact, body: decodeFactBody(e.body) }];
+    const fact = e.fact;
+    // Facts of one code merge into one envelope: one line per part, never only the first.
+    if (e.from === "@factory" && fact) {
+      const bodies = e.parts?.length ? e.parts : [{ id: e.id, body: e.body }];
+      return bodies.map((p) => ({ type: "fact", id: p.id, fact, body: decodeFactBody(p.body) }));
+    }
     const parts = e.parts?.length ? e.parts : [{ id: e.id, body: e.body, createdAt: undefined }];
     return parts.map((p) => ({ type: "part", ...p }));
   });
@@ -40,6 +44,7 @@ export function UpdateGroup({
   rowProps: Record<string, unknown>;
 }) {
   const [all, setAll] = useState(false);
+  const article = useRef<HTMLElement>(null);
   const items = itemsOf(row.envelopes);
   const parts = items.filter((i) => i.type === "part");
   const latest = parts.at(-1);
@@ -52,8 +57,9 @@ export function UpdateGroup({
   return (
     <article
       {...rowProps}
+      ref={article}
       aria-label={`Update from @${row.about}`}
-      className="border-l border-input pl-3 focus-visible:outline-2 focus-visible:outline-ring"
+      className="border-l border-input pl-3"
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
         <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -91,7 +97,10 @@ export function UpdateGroup({
       {collapsed && (
         <button
           type="button"
-          onClick={() => setAll(true)}
+          onClick={() => {
+            article.current?.focus(); // the button is about to unmount
+            setAll(true);
+          }}
           className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
         >
           {`Show all (${parts.length} updates)`}

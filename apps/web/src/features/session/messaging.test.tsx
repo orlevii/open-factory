@@ -332,5 +332,159 @@ test("the announcer says '<name> messaged you' for a send to this human or @huma
   expect(status()).toHaveTextContent("");
   push(call({ to: "@alice", body: "to alice" }, "t_h"));
   push(result(JSON.stringify({ id: "m2", to: "@alice", status: "inbox" }), false, "t_h"));
-  expect(await within(status()).findByText("Dev agent messaged you")).toBeInTheDocument();
+  expect(await within(status()).findByText("@dev messaged you")).toBeInTheDocument();
+});
+
+test("Tab walks the focused row's controls: recipient link, View in session, Show tool call", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      call({ to: "b", body: "ping b" }),
+      result(JSON.stringify({ id: "m9", to: "b", status: "idle" })),
+    ],
+    "ping b",
+  );
+  const user = userEvent.setup();
+  const sender = await screen.findByRole("link", { name: "Open @b's session" });
+  await vi.waitFor(() => expect(sender).toHaveAttribute("tabindex", "0"));
+  sender.focus();
+  await user.tab();
+  expect(screen.getByRole("link", { name: "View this message in @b's session" })).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Show tool call" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Show tool call" }));
+  expect(screen.getByRole("button", { name: "Hide tool call" })).toBeInTheDocument();
+});
+
+test("two facts with one code in one envelope each render their own line", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "f1",
+            ids: ["f1", "f2"],
+            from: "@factory",
+            kind: "member_update",
+            about: "b",
+            fact: "crashed",
+            body: "x",
+            parts: [
+              { id: "f1", body: "First crash of @b.", createdAt: AT },
+              { id: "f2", body: "Second crash of @b.", createdAt: AT },
+            ],
+          }),
+        ],
+      },
+    ],
+    "First crash of @b.",
+  );
+  expect(screen.getByText("Second crash of @b.")).toBeInTheDocument();
+});
+
+test("every escaped envelope tag in a fact's quote is decoded, as text", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "f3",
+            from: "@factory",
+            kind: "member_update",
+            about: "b",
+            fact: "denied",
+            body: "Denied for @b:\n> &lt;factory-message id=1> a &lt;/factory-message> b &lt;/Factory-Message>",
+          }),
+        ],
+      },
+    ],
+    "Denied for @b:",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Show details" }));
+  expect(
+    screen.getByText("<factory-message id=1> a </factory-message> b </Factory-Message>"),
+  ).toBeInTheDocument();
+});
+
+test("Load earlier does not announce an older send to the viewer", async () => {
+  const older = [
+    se(call({ to: "@alice", body: "old" }, "t_old")),
+    se(result(JSON.stringify({ id: "m0", to: "@alice", status: "inbox" }), false, "t_old")),
+  ];
+  resetSeq();
+  const latest = [se({ type: "assistant_text", text: "newest" })];
+  // `older` was built first so its seqs are lower than `latest`'s.
+  const [o1, o2] = older;
+  const l = latest.map((e) => ({ ...e, seq: e.seq + 10 }));
+  mockApi({
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/agents/dev/events?before=11": () =>
+      json({ hasMore: { before: false, after: false }, events: [o1, o2] }),
+    "GET /api/agents/dev/events?": () =>
+      json({ hasMore: { before: true, after: false }, events: l }),
+    "GET /api/agents?archived=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev", alice);
+  await screen.findByText("newest");
+  await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
+  expect(await screen.findByText("old")).toBeInTheDocument();
+  const live = document.querySelector("[role=status][aria-live=polite].sr-only");
+  expect(live).toHaveTextContent("");
+});
+
+test("a denied send shows the denial sentence, not the raw tool result", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      call({ to: "b", body: "denied one" }),
+      {
+        type: "permission_denied",
+        toolUseId: "toolu_1",
+        toolName: "x",
+        reasonType: "rule",
+        reason: "Denied by a permission rule",
+      },
+      { type: "turn_end", isError: false, numTurns: 1 },
+    ],
+    "denied one",
+  );
+  expect(screen.getByText("Denied by a permission rule")).toBeInTheDocument();
+});
+
+test("?message= highlights the row holding that envelope, not the event's first row", async () => {
+  mockApi({
+    "GET /api/messages/second": () =>
+      json({
+        id: "second",
+        kind: "message",
+        from: "b",
+        to: "dev",
+        state: "delivered",
+        recipientEvent: { agentSlug: "dev", seq: 1 },
+      }),
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/agents/dev/events?": () =>
+      json({
+        hasMore: { before: false, after: false },
+        events: [
+          se({
+            type: "message_in",
+            messages: [
+              env({ id: "first", from: "b", kind: "message", body: "first body" }),
+              env({ id: "second", from: "b", kind: "message", body: "second body" }),
+            ],
+          }),
+        ],
+      }),
+    "GET /api/agents?archived=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev?message=second", alice);
+  await screen.findByText("second body");
+  const lit = document.querySelector("[data-highlighted]") as HTMLElement;
+  expect(lit).toHaveTextContent("second body");
+  expect(lit).not.toHaveTextContent("first body");
 });

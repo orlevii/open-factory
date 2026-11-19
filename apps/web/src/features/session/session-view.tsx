@@ -98,6 +98,7 @@ export function SessionView({
         failedIds={s.failedIds}
         interruptedEnds={s.interruptedEnds}
         highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
+        highlightMessageId={eventSeq === undefined ? messageId : undefined}
         hasMoreBefore={s.state.hasMoreBefore}
         onLoadEarlier={s.loadEarlier}
         earlierError={s.earlierError}
@@ -175,6 +176,9 @@ const outgoingRows = (rows: Row[]): Extract<Row, { kind: "outgoing" }>[] =>
     r.kind === "outgoing" ? [r] : r.kind === "tool" ? outgoingRows(r.children) : [],
   );
 
+const highestRowSeq = (rows: Row[]): number =>
+  rows.reduce((m, r) => Math.max(m, r.seq, r.kind === "tool" ? highestRowSeq(r.children) : 0), 0);
+
 /** Announces messages to the viewer, errors and status changes only (never every tool call, and
  *  not updates, peer events or messages between agents). */
 function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[], loaded: boolean) {
@@ -192,16 +196,23 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
     prevStatus.current = status;
   }, [status, name, until, exact]);
   // An agent's text is not a reply to anyone: announce a successful message to this human or all.
-  const toMe = outgoingRows(rows).filter((r) => {
-    const to = parseSendResult(r.result)?.to;
-    return to !== undefined && (to === "@humans" || (handle !== undefined && to === `@${handle}`));
-  }).length;
-  const prevToMe = useRef<number | undefined>(undefined);
+  // Only sends newer than what was on screen at load count, so Load earlier and reloads stay quiet.
+  const baseSeq = useRef<number | undefined>(undefined);
+  const announced = useRef(new Set<number>());
+  const slug = agent?.slug;
   useEffect(() => {
-    // The first render with rows (history load) announces nothing.
-    if (prevToMe.current !== undefined && toMe > prevToMe.current) setMsg(`${name} messaged you`);
-    if (loaded) prevToMe.current = toMe;
-  }, [toMe, name, loaded]);
+    if (!loaded) return;
+    baseSeq.current ??= highestRowSeq(rows);
+    for (const r of outgoingRows(rows)) {
+      const to = parseSendResult(r.result)?.to;
+      const toMe =
+        to !== undefined && (to === "@humans" || (handle !== undefined && to === `@${handle}`));
+      if (toMe && r.seq > (baseSeq.current ?? 0) && !announced.current.has(r.seq)) {
+        announced.current.add(r.seq);
+        setMsg(`@${slug} messaged you`);
+      }
+    }
+  }, [rows, loaded, handle, slug]);
   const errorCount = rows.filter((r) => r.kind === "error").length;
   const lastError = rows.findLast((r): r is Extract<Row, { kind: "error" }> => r.kind === "error");
   useEffect(() => {

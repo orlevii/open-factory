@@ -11,9 +11,11 @@ export const LINK_CLASS =
   "underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
 
 /** Slug -> display name for the active agents (cached list). `undefined` until it has loaded. */
+const toNames = (agents: { slug: string; displayName: string }[]) =>
+  new Map(agents.map((a) => [a.slug, a.displayName]));
 export function useAgentNames(): Map<string, string> | undefined {
-  const { data } = useQuery(agentsQueryOptions);
-  return data && new Map(data.map((a) => [a.slug, a.displayName]));
+  // A module-level select: the map is rebuilt only when the list itself changes.
+  return useQuery({ ...agentsQueryOptions, select: toNames }).data;
 }
 
 /** An agent slug in mono, as a link to its session. An archived or unknown agent (once the list has
@@ -118,7 +120,10 @@ export function ClampedMarkdown({
       <Markdown source={lines.slice(0, limit).join("\n")} />
       <button
         type="button"
-        onClick={() => setAll(true)}
+        onClick={(e) => {
+          e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
+          setAll(true);
+        }}
         className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
       >
         Show all

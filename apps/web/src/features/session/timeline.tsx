@@ -24,6 +24,8 @@ export function Timeline(props: {
   failedIds: Set<string>;
   interruptedEnds: Set<number>;
   highlightSeq?: number;
+  /** A `?message=` target: lights the row that holds this envelope rather than the event's first. */
+  highlightMessageId?: string;
   hasMoreBefore: boolean;
   /** Resolves true when rows were prepended. */
   onLoadEarlier(): Promise<boolean>;
@@ -43,8 +45,13 @@ export function Timeline(props: {
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [highlight, setHighlight] = useState(props.highlightSeq);
   const litKey = useMemo(
-    () => (highlight === undefined ? undefined : targetRowKey(rows, highlight)),
-    [rows, highlight],
+    () =>
+      highlight === undefined
+        ? undefined
+        : (props.highlightMessageId !== undefined &&
+            rows.find((r) => rowHasMessage(r, props.highlightMessageId as string))?.key) ||
+          targetRowKey(rows, highlight),
+    [rows, highlight, props.highlightMessageId],
   );
 
   useLayoutEffect(() => {
@@ -82,22 +89,6 @@ export function Timeline(props: {
     });
     ro.observe(content);
     return () => ro.disconnect();
-  }, []);
-
-  // One tab stop (UI design §7): links, buttons and scrollable plates inside rows leave the tab
-  // order; Enter on a row moves into it. Rows themselves and Copy link manage their own tabindex.
-  useEffect(() => {
-    const content = log.current;
-    if (!content) return;
-    const apply = () => {
-      for (const el of content.querySelectorAll<HTMLElement>(`[data-row-wrap] :is(${INTERACTIVE})`))
-        if (!el.hasAttribute("data-row") && !el.hasAttribute("data-copy-link"))
-          el.setAttribute("tabindex", "-1");
-    };
-    apply();
-    const mo = new MutationObserver(apply);
-    mo.observe(content, { childList: true, subtree: true });
-    return () => mo.disconnect();
   }, []);
 
   // The tint stays until the user clicks somewhere other than the highlighted row.
@@ -164,6 +155,27 @@ export function Timeline(props: {
   // Roving tabindex: exactly one row is in the tab order; the first row until one is focused.
   const tabKey =
     activeKey !== undefined && hasKey(rows, activeKey, expanded) ? activeKey : rows[0]?.key;
+  // One tab stop (UI design §5, §7): links, buttons and scrollable plates inside a row are in the tab
+  // order only while that row is the focused one (tabindex 0), so Tab walks its controls and then
+  // leaves; every other row's controls are -1. Rows and Copy link manage their own tabindex.
+  useEffect(() => {
+    const content = log.current;
+    if (!content) return;
+    const apply = () => {
+      for (const el of content.querySelectorAll<HTMLElement>(
+        `[data-row-wrap] :is(${INTERACTIVE})`,
+      )) {
+        if (el.hasAttribute("data-row") || el.hasAttribute("data-copy-link")) continue;
+        // Only a row's own content counts; the Copy link actions and tool plates stay at -1.
+        const owner = el.closest<HTMLElement>("[data-row]");
+        el.setAttribute("tabindex", owner?.dataset.row === tabKey ? "0" : "-1");
+      }
+    };
+    apply();
+    const mo = new MutationObserver(apply);
+    mo.observe(content, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [tabKey]);
   const rowProps = (row: Row) => ({
     "data-row": row.key,
     tabIndex: row.key === tabKey ? 0 : -1,
@@ -254,6 +266,16 @@ const hasKey = (rows: Row[], key: string, expanded: Set<string>): boolean =>
       r.key === key ||
       (r.kind === "tool" && expanded.has(r.key) && hasKey(r.children, key, expanded)),
   );
+
+/** True when the row shows the envelope (or one of its merged ids / parts). */
+function rowHasMessage(row: Row, id: string): boolean {
+  const has = (e: { id: string; ids?: string[]; parts?: { id: string }[] }) =>
+    e.id === id || !!e.ids?.includes(id) || !!e.parts?.some((p) => p.id === id);
+  if (row.kind === "message") return has(row.message);
+  if (row.kind === "update_group") return row.envelopes.some(has);
+  if (row.kind === "peer") return has(row.envelope);
+  return false;
+}
 
 const containsSeq = (rows: Row[], seq: number): boolean =>
   rows.some((r) => r.seq === seq || (r.kind === "tool" && containsSeq(r.children, seq)));

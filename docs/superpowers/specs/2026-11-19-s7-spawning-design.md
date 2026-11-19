@@ -58,10 +58,10 @@ human REST (terminate, pin) ──────────► SpawnService      
                        inheritFrom (pure)◄──┤                     │                └─► workspace deletion
                        Workspace.materialize│                     ├─► runtime.markTerminated + stop, container removal
                        one tx: child row,   │                     ├─► one tx: terminated_at, grants, pending rows rejected
-                       grants, brief row    │                     └─► Router.peerEvents (left)
+                       grants, brief row,   │                     └─► persistPeerEvents(tx) (left)
                                             ├─► runtimes.deliver(brief, "spawned")
-                                            └─► Router.peerEvents (joined)
-AgentService.update (spawner credential/grants) ──► recompute live children ──► requestRestart
+                       peer rows (joined)   └─► hand-offs after commit
+AgentService.update / resync (spawner credential/grants) ──► syncChildren(tx) ──► refresh + requestRestart
 prepareStart (child) ──► inheritFrom(spawner, child) ──► secrets ∩, deny ∪, refusals re-checked
 ```
 

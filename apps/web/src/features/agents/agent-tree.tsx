@@ -51,7 +51,7 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
                     Archived
                   </span>
                 ) : (
-                  <StatusBadge status={a.status} />
+                  <StatusBadge status={a.status} size="short" />
                 )}
                 {a.restartPending && !a.archivedAt && (
                   <>

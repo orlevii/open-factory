@@ -1,3 +1,4 @@
+import type { AgentSummary } from "@open-factory/shared";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -11,26 +12,17 @@ import { Composer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
 import { QueueItems } from "./queue-items";
 import type { Row } from "./rows";
-import { StatusBadge } from "./status-badge";
+import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { Timeline } from "./timeline";
 import { useAgentStatusFrames } from "./use-agent-status";
 import { useSession } from "./use-session";
-
-const STATUS_LABEL = {
-  hibernated: "Hibernated",
-  queued: "Queued",
-  rate_limited: "Rate limited",
-  working: "Working",
-  idle: "Idle",
-  errored: "Errored",
-} as const;
 
 export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: number }) {
   useAgentStatusFrames();
   const s = useSession(slug, eventSeq);
   const navigate = useNavigate();
   const agent = s.state.agent;
-  const announce = useAnnouncer(agent?.displayName ?? slug, agent?.status, s.rows, !!agent);
+  const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
   if (s.error?.code === "agent_not_found") return <NotFound />;
   if (!agent) {
     if (!s.error) return null; // the route's pending component covers the first load
@@ -55,8 +47,22 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
       )}
       <PageHeader
         title={agent.displayName}
-        documentTitle={`${STATUS_LABEL[agent.status]} · ${agent.displayName}`}
-        meta={<StatusBadge status={agent.status} />}
+        documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
+        meta={
+          <>
+            <span className="max-md:hidden">
+              <StatusBadge
+                status={agent.status}
+                rateLimitedUntil={agent.rateLimitedUntil}
+                rateLimitExact={agent.rateLimitExact}
+                size="long"
+              />
+            </span>
+            <span className="md:hidden">
+              <StatusBadge status={agent.status} size="short" />
+            </span>
+          </>
+        }
         actions={<SessionActions slug={slug} turnOpen={agent.turnOpen} archived={archived} />}
       />
       <AgentStrip agent={agent} />
@@ -144,7 +150,10 @@ function LoadError({ message, onRetry }: { message: string; onRetry(): void }) {
 }
 
 /** Announces replies, errors and status changes only (never every tool call). */
-function useAnnouncer(name: string, status: string | undefined, rows: Row[], loaded: boolean) {
+function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[], loaded: boolean) {
+  const status = agent?.status;
+  const until = agent?.rateLimitedUntil;
+  const exact = agent?.rateLimitExact;
   const prevStatus = useRef(status);
   const prevErrors = useRef<number | undefined>(undefined);
   const [msg, setMsg] = useState("");
@@ -153,10 +162,10 @@ function useAnnouncer(name: string, status: string | undefined, rows: Row[], loa
       setMsg(
         prevStatus.current === "working" && status === "idle"
           ? `${name} replied`
-          : `${name} is ${status}`,
+          : statusAnnouncement(name, status, { rateLimitedUntil: until, rateLimitExact: exact }),
       );
     prevStatus.current = status;
-  }, [status, name]);
+  }, [status, name, until, exact]);
   const errorCount = rows.filter((r) => r.kind === "error").length;
   const lastError = rows.findLast((r): r is Extract<Row, { kind: "error" }> => r.kind === "error");
   useEffect(() => {

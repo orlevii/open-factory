@@ -18,6 +18,13 @@ export function useAgentStatusFrames() {
           lastError: m.lastError,
           restartPending: m.restartPending,
           restartWaitingOn: m.restartWaitingOn,
+          waitingOn: m.waitingOn ?? { tasks: [], crons: 0 },
+          rateLimitedUntil: m.rateLimitedUntil,
+          rateLimitExact: m.rateLimitExact,
+          runtimeDisabled: m.runtimeDisabled,
+          errorKind: m.errorKind,
+          image: m.image,
+          pulling: m.pulling,
         };
         // Lists are keyed by the archived filter (["agents", "exclude"] ...): patch every variant.
         const cached = qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] });

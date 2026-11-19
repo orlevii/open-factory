@@ -26,7 +26,6 @@ class World {
   readonly bus = new EventBus();
   readonly frames: ServerMessage[] = [];
   readonly loaded = new Map<string, AgentRuntime>();
-  readonly pausedCredentials = new Set<string>();
   /** Agents moved to another credential (several agents sharing one). */
   readonly credentials = new Map<string, string>();
   readonly sup: Supervisor;
@@ -39,7 +38,8 @@ class World {
       log: silentLog,
       credentialOf: (id) =>
         this.credentials.get(id) ?? this.loaded.get(id)?.agent.credentialId ?? "",
-      paused: (c) => this.pausedCredentials.has(c),
+      rateLimits: store,
+      load: async (slug) => [...this.loaded.values()].find((rt) => rt.agent.slug === slug),
     });
   }
 
@@ -59,7 +59,6 @@ class World {
       prepareStart: async (a) => okSpec(a),
       log: silentLog,
       slots: this.sup,
-      credentialPaused: () => this.sup.pausedFor(id),
     });
     await rt.init();
     this.loaded.set(id, rt);
@@ -78,6 +77,11 @@ class World {
   /** Every runtime's jobs have run, including grant and hibernate jobs one agent enqueued on another. */
   async settleAll() {
     for (let i = 0; i < 4; i++) for (const rt of this.loaded.values()) await rt.settled();
+  }
+
+  /** Pauses the credential for an hour (no reset fires during a test). */
+  pause(credentialId: string) {
+    this.sup.pause(credentialId, new Date(Date.now() + 3_600_000), true);
   }
 
   async close() {
@@ -244,7 +248,7 @@ test("entries that become eligible together evict as many holders at once", asyn
   await idleAt(a, 1000);
   await idleAt(b, 2000);
   for (const rt of [c, d]) w.credentials.set(rt.agent.id, "shared");
-  w.pausedCredentials.add("shared");
+  w.pause("shared");
   await send(c, "c1");
   await send(d, "d1");
   await w.settleAll();
@@ -252,7 +256,6 @@ test("entries that become eligible together evict as many holders at once", asyn
   expect([stopped(a), stopped(b)]).toEqual([false, false]); // paused entries never evict
   w.proc(a).holdStop = true;
   w.proc(b).holdStop = true;
-  w.pausedCredentials.delete("shared");
   w.sup.onCredentialReset("shared"); // one evict() call for both entries
   await w.settleAll();
   expect([stopped(a), stopped(b)]).toEqual([true, true]);
@@ -412,7 +415,7 @@ test("a paused credential's entry is skipped without losing its place", async ()
   const b = await w.agent();
   const c = await w.agent();
   await busy(a);
-  w.pausedCredentials.add(b.agent.credentialId);
+  w.pause(b.agent.credentialId);
   await send(b, "b1");
   await send(c, "c1");
   expect(w.sup.isQueued(b.agent.id)).toBe(true);
@@ -420,7 +423,6 @@ test("a paused credential's entry is skipped without losing its place", async ()
   await w.settleAll();
   expect(started(c)).toBe(true);
   expect(started(b)).toBe(false);
-  w.pausedCredentials.delete(b.agent.credentialId);
   w.sup.onCredentialReset(b.agent.credentialId);
   await w.settleAll();
   expect(started(b)).toBe(false); // still no free slot
@@ -444,7 +446,7 @@ test("a grant whose credential was paused since goes back to its place", async (
   // The pause lands between the grant (bookkeeping) and b's grant job.
   const original = b.grant.bind(b);
   vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
-    w.pausedCredentials.add(b.agent.credentialId);
+    w.pause(b.agent.credentialId);
     return original(reason);
   });
   endTurnAndExit(a);

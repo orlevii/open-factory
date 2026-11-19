@@ -21,4 +21,8 @@ export class RecordingSlots implements SlotPort {
   isQueued() {
     return false;
   }
+  pause() {}
+  pauseOf() {
+    return undefined;
+  }
 }

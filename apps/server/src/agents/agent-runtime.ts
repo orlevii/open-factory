@@ -42,10 +42,8 @@ export interface RuntimeDeps {
   holdTimeoutMs?: number;
   /** Called with the spec of the first start (AgentRuntimes uses it for the one-time version check). */
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
-  /** The Supervisor's slot port (spec §5.2); defaults to unlimited slots. */
+  /** The Supervisor's slot port (spec §5.2), which also owns the credential pauses (§7); defaults to unlimited slots. */
   slots?: SlotPort;
-  /** Whether the agent's credential is rate-limit paused (spec §6.3, D1); defaults to never. */
-  credentialPaused?: () => boolean;
 }
 
 export type HibernateReason =
@@ -91,6 +89,8 @@ const fromOf = (e: MessageEntry): string => {
 
 /** The owed-notification bound (spec §6.1). */
 const OWED_BOUND_MS = 30_000;
+/** The pause when a `rejected` rate limit reports no usable reset time (spec §7.2). */
+const RATE_LIMIT_FALLBACK_MS = 30 * 60_000;
 /** Claude expires an in-session cron 7 days after it was created (spec §6.2). */
 const CRON_EXPIRY_MS = 7 * 24 * 3_600_000;
 const DEFAULT_WARM_WINDOW_MINUTES = 70;
@@ -148,6 +148,7 @@ export class AgentRuntime {
   private cronExpiryAt: number | undefined;
   private wasHibernatable = false;
   private journalJson = "null"; // the tasks/crons part last written to runtime_journal
+  private rateLimitedTurn = false; // a `rate_limited` event since the last turn end (spec §7.3)
   /** The last turn end, delivery or start (spec §5.3: the least recently active is evicted first). */
   lastActivityAt = Date.now();
 
@@ -360,6 +361,35 @@ export class AgentRuntime {
     void this.run(async () => this.publishStatus());
   }
 
+  /**
+   * The reset of an owed agent (spec §7.3), while its credential is still paused: `rate_limit_reset`, then the
+   * continue notice at the head of the queue, then the flag clears. Starts nothing (the Supervisor wakes after).
+   */
+  rateLimitReset(n: { credential: string; at?: Date }): Promise<void> {
+    return this.run(async () => {
+      await this.append(null, { type: "rate_limit_reset", credential: n.credential });
+      await this.addNotice("rate_limit_reset", notices.rateLimitReset(n));
+      await this.d.store.setNoticeOwed(this.agent.id, false);
+      this.agent = { ...this.agent, rateLimitNoticeOwed: false };
+      this.publishStatus();
+    });
+  }
+
+  /** The credential's pause ended (spec §7.2): a running agent flushes what was held, a hibernated one asks for a wake. */
+  resumeAfterReset(): void {
+    void this.run(async () => {
+      if (this.proc) {
+        try {
+          await this.flush();
+        } catch (err) {
+          if (this.proc) await this.onJobFailure(this.proc, err);
+          else this.d.log.error({ err, agent: this.agent.slug }, "flush after the reset failed");
+        }
+      } else if (this.queue.length) await this.wakeFromJob("rate_limit_reset");
+      this.publishStatus();
+    });
+  }
+
   /** The fields that only the runtime knows. */
   live(): {
     status: AgentStatus;
@@ -368,10 +398,16 @@ export class AgentRuntime {
     restartPending: boolean;
     restartWaitingOn: number;
     waitingOn: WaitingOn;
+    rateLimitedUntil?: string;
+    rateLimitExact?: boolean;
   } {
+    const pause = this.slots.pauseOf(this.agent.id);
     return {
       status: this.status(),
       turnOpen: Boolean(this.openTurnId),
+      ...(pause
+        ? { rateLimitedUntil: pause.until.toISOString(), rateLimitExact: pause.exact }
+        : {}),
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
@@ -531,7 +567,7 @@ export class AgentRuntime {
   }
 
   private credentialPaused(): boolean {
-    return this.d.credentialPaused?.() ?? false;
+    return this.slots.pauseOf(this.agent.id) !== undefined;
   }
 
   private itemOf(e: Entry): QueueItem {
@@ -628,18 +664,25 @@ export class AgentRuntime {
    */
   private async startNow(reason: WakeReason) {
     let launched = false;
+    let paused = false;
     this.starting = true;
     try {
-      await this.launch(reason, () => {
+      paused = !(await this.launch(reason, () => {
         launched = true;
-      });
+      }));
     } finally {
       this.starting = false;
       if (!launched) this.slots.release(this.agent.id);
     }
+    // A pause that landed after the grant (spec §5.2): back to the queue (a granted entry keeps its place).
+    if (paused) {
+      this.slots.requestWake(this.agent.id, reason, false);
+      this.publishStatus();
+    }
   }
 
-  private async launch(reason: WakeReason, onLaunched: () => void) {
+  /** False when the credential was paused meanwhile: nothing launched (no first line could be written). */
+  private async launch(reason: WakeReason, onLaunched: () => void): Promise<boolean> {
     if (this.archived) throw new AgentArchivedError(this.agent.slug);
     this.refuseWhileStopping();
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
@@ -673,6 +716,7 @@ export class AgentRuntime {
     const resumeSessionId = row?.sessionId ?? undefined;
     // Right before the launch: a stop(), archive or the closing latch that arrived during prepare must not be outrun.
     this.refuseBeforeLaunch();
+    if (this.credentialPaused()) return false;
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
     onLaunched();
     this.proc = proc;
@@ -692,6 +736,7 @@ export class AgentRuntime {
       reason,
     });
     this.publishStatus();
+    return true;
   }
 
   /** Not recorded as a start failure: the agent isn't broken, it is being stopped (shutdown, archive). */
@@ -787,6 +832,7 @@ export class AgentRuntime {
         }
         this.openTurnId = undefined;
         this.lastActivityAt = Date.now();
+        await this.oweNoticeIfCutOff();
         if (e.command === "compact") this.compactInFlight = false;
         if (e.originKind === "task-notification")
           this.owedNotifications = Math.max(0, this.owedNotifications - 1);
@@ -815,6 +861,11 @@ export class AgentRuntime {
         this.maybeRestart();
         break;
       }
+      case "rate_limited":
+        await this.append(this.openTurnId, e);
+        this.rateLimitedTurn = true;
+        await this.pauseCredential(e);
+        break;
       case "background_task_finished":
         this.owedNotifications += 1;
         this.armOwedBound();
@@ -882,6 +933,7 @@ export class AgentRuntime {
     this.started = false;
     const crash = !intent && !e.expected ? this.onCrash(e) : false;
     try {
+      await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
         await this.d.store.markPending(ids);
@@ -956,6 +1008,42 @@ export class AgentRuntime {
         "restart_crons",
         notices.restartCrons({ crons: lost.crons.map((c) => c.humanSchedule) }),
       );
+  }
+
+  /**
+   * Spec §7.2: `resetsAt` (epoch seconds) is the window's end; missing, unparseable or past → 30 minutes, inexact.
+   * The stored window may be longer (a later event extends, never shortens): the event reports the one in force.
+   */
+  private async pauseCredential(e: Extract<HarnessEvent, { type: "rate_limited" }>) {
+    const now = Date.now();
+    const reported = Number.isFinite(e.resetsAt) ? e.resetsAt * 1000 : Number.NaN;
+    const exact = reported > now;
+    if (!exact)
+      this.d.log.warn(
+        { agent: this.agent.slug, resetsAt: e.resetsAt },
+        "rate limit reached but no reset time was reported; retrying in 30 minutes",
+      );
+    const p = await this.d.store.pauseCredential(
+      this.agent.credentialId,
+      new Date(exact ? reported : now + RATE_LIMIT_FALLBACK_MS),
+      exact,
+    );
+    await this.append(this.openTurnId, {
+      type: "rate_limit_paused",
+      credential: p.name,
+      until: p.until.toISOString(),
+      exact: p.exact,
+    });
+    this.slots.pause(this.agent.credentialId, p.until, p.exact);
+  }
+
+  /** Spec §7.3: a turn that saw a `rate_limited` event ended; owe one continue notice unless one is owed already. */
+  private async oweNoticeIfCutOff() {
+    if (!this.rateLimitedTurn) return;
+    this.rateLimitedTurn = false;
+    if (this.agent.rateLimitNoticeOwed) return;
+    await this.d.store.setNoticeOwed(this.agent.id, true);
+    this.agent = { ...this.agent, rateLimitNoticeOwed: true };
   }
 
   /** S3's crash handling, kept until the crash policy (spec §9.2) replaces it. True when it marked errored. */
@@ -1200,11 +1288,15 @@ export class AgentRuntime {
     this.hold = undefined;
   }
 
-  /** Strict FIFO from the head while allowed (spec §8.3). Never starts a process. Holds everything during a stop. */
+  /**
+   * Strict FIFO from the head while allowed (spec §8.3). Never starts a process. Holds everything during a stop and
+   * while the credential is paused (spec §7.2; an urgent interrupt is written outside the flush).
+   */
   private async flush() {
     while (
       this.proc &&
       !this.stopping &&
+      !this.credentialPaused() &&
       !this.hold &&
       !this.compactInFlight &&
       this.queue.length

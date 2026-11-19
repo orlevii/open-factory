@@ -44,8 +44,8 @@ export class AgentRuntimes {
       bus: d.bus,
       log: d.log,
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
-      // Rate-limit pauses land in Task 18.
-      paused: () => false,
+      rateLimits: d.store,
+      load: (slug) => this.bySlug(slug),
     });
   }
 
@@ -63,7 +63,6 @@ export class AgentRuntimes {
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
         slots: this.supervisor,
-        credentialPaused: () => this.supervisor.pausedFor(row.id),
         // Local agents only: a Docker agent's claude runs in its image, not on the host.
         onFirstStart: (spec) => {
           if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);

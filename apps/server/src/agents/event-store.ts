@@ -1,11 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
 import { type AnyEvent, anyEventSchema, type SessionEvent } from "@open-factory/shared";
-import { and, asc, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { capPayload } from "./cap.ts";
 import type { NoticeType } from "./notices.ts";
 
-const { agents, sessionEvents, turns, messages } = schema;
+const { agents, credentials, sessionEvents, turns, messages } = schema;
 type MessageRow = typeof messages.$inferSelect;
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Exec = Db | Tx;
@@ -43,6 +55,81 @@ export class EventStore {
   /** Replaces the whole journal (spec §12); null clears it. */
   async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {
     await this.db.update(agents).set({ runtimeJournal }).where(eq(agents.id, agentId));
+  }
+  /** The cut-off agent is owed one continue notice at the reset (spec §7.3). */
+  async setNoticeOwed(agentId: string, owed: boolean) {
+    await this.db.update(agents).set({ rateLimitNoticeOwed: owed }).where(eq(agents.id, agentId));
+  }
+  /** The non-archived agents on the credential that are owed a continue notice. */
+  async owedAgents(credentialId: string): Promise<{ id: string; slug: string }[]> {
+    return this.db
+      .select({ id: agents.id, slug: agents.slug })
+      .from(agents)
+      .where(
+        and(
+          eq(agents.credentialId, credentialId),
+          eq(agents.rateLimitNoticeOwed, true),
+          isNull(agents.archivedAt),
+        ),
+      )
+      .orderBy(asc(agents.slug));
+  }
+
+  // credentials (rate-limit pauses, spec §7.2)
+  /**
+   * Pauses the credential until `until`. A later window wins; it never shortens. Returns the window in force
+   * afterwards (the stored one when this one was shorter) and the credential's name.
+   */
+  async pauseCredential(
+    id: string,
+    until: Date,
+    exact: boolean,
+  ): Promise<{ name: string; until: Date; exact: boolean }> {
+    const at = sql`${until.toISOString()}::timestamptz`;
+    const longer = sql`(${credentials.rateLimitedUntil} is null or ${credentials.rateLimitedUntil} < ${at})`;
+    const [row] = await this.db
+      .update(credentials)
+      .set({
+        rateLimitedUntil: sql`case when ${longer} then ${at} else ${credentials.rateLimitedUntil} end`,
+        rateLimitExact: sql`case when ${longer} then ${exact} else ${credentials.rateLimitExact} end`,
+      })
+      .where(eq(credentials.id, id))
+      .returning({
+        name: credentials.name,
+        until: credentials.rateLimitedUntil,
+        exact: credentials.rateLimitExact,
+      });
+    if (!row?.until) throw new Error(`credential ${id} not found`);
+    return { name: row.name, until: row.until, exact: row.exact };
+  }
+  /** Clears the pause; with `until`, only a window that ends by then (a later one landed meanwhile: keep it). */
+  async clearCredentialPause(id: string, until?: Date) {
+    await this.db
+      .update(credentials)
+      .set({ rateLimitedUntil: null, rateLimitExact: true })
+      .where(
+        and(eq(credentials.id, id), ...(until ? [lte(credentials.rateLimitedUntil, until)] : [])),
+      );
+  }
+  /** Every credential with a stored pause, past or future (boot re-arms or clears them). */
+  async pausedCredentials(): Promise<{ id: string; name: string; until: Date; exact: boolean }[]> {
+    const rows = await this.db
+      .select({
+        id: credentials.id,
+        name: credentials.name,
+        until: credentials.rateLimitedUntil,
+        exact: credentials.rateLimitExact,
+      })
+      .from(credentials)
+      .where(isNotNull(credentials.rateLimitedUntil));
+    return rows.flatMap((r) => (r.until ? [{ ...r, until: r.until }] : []));
+  }
+  async credentialName(id: string): Promise<string | undefined> {
+    const [row] = await this.db
+      .select({ name: credentials.name })
+      .from(credentials)
+      .where(eq(credentials.id, id));
+    return row?.name;
   }
 
   // events

@@ -1,9 +1,16 @@
 import type { AgentRuntime, RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventBus } from "../agents/event-bus.ts";
-import type { SlotPort, WakeReason } from "./slots.ts";
+import type { EventStore } from "../agents/event-store.ts";
+import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
 
 /** A wake waiting for a slot (spec §5.2). At most one per agent; `requestedAt` is its FIFO place. */
 type Entry = { agentId: string; reason: WakeReason; requestedAt: number; pulling?: boolean };
+
+/** A paused credential (spec §7.2): one reset timer each. `until` is epoch ms. */
+type Pause = { until: number; exact: boolean; timer?: ReturnType<typeof setTimeout> };
+
+/** setTimeout's longest delay; a longer window re-arms when it fires early. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 export interface SupervisorDeps {
   max: number;
@@ -12,7 +19,10 @@ export interface SupervisorDeps {
   bus: EventBus;
   log: RuntimeLog;
   credentialOf(agentId: string): string;
-  paused(credentialId: string): boolean;
+  /** The reset's durable side (spec §7.2): owed agents, the credential's name, clearing the columns. */
+  rateLimits: Pick<EventStore, "owedAgents" | "credentialName" | "clearCredentialPause">;
+  /** Loads an agent's runtime (an owed agent may be hibernated and not loaded). */
+  load(slug: string): Promise<AgentRuntime | undefined>;
 }
 
 /**
@@ -26,6 +36,8 @@ export class Supervisor implements SlotPort {
   private readonly granted = new Map<string, Entry>();
   private queue: Entry[] = [];
   private readonly pendingEvictions = new Set<string>();
+  /** Paused credentials by id; an entry lasts until its reset has run, so nothing starts in between. */
+  private readonly pauses = new Map<string, Pause>();
   private closed = false;
   private seq = 0;
 
@@ -93,6 +105,8 @@ export class Supervisor implements SlotPort {
     this.closed = true;
     const dropped = this.queue.splice(0);
     this.pendingEvictions.clear();
+    // Reset timers too (spec §5.6): the columns and owed flags are durable, boot re-arms them.
+    for (const p of this.pauses.values()) clearTimeout(p.timer);
     for (const rt of this.d.runtimes.all()) rt.setNoStart();
     for (const e of dropped) this.d.runtimes.get(e.agentId)?.publishStatus();
   }
@@ -115,19 +129,100 @@ export class Supervisor implements SlotPort {
     return false;
   }
 
-  /** Whether the agent's credential is paused right now; read at every check, so a credential change applies. */
-  pausedFor(agentId: string): boolean {
-    return this.d.paused(this.d.credentialOf(agentId));
+  /** Whether the credential is rate-limit paused (spec §7.2). */
+  paused(credentialId: string): boolean {
+    return this.pauses.has(credentialId);
   }
 
-  /** A credential's pause ended: its agents re-check their warm timers, and skipped entries become eligible. */
+  /** Whether the agent's credential is paused right now; read at every check, so a credential change applies. */
+  pausedFor(agentId: string): boolean {
+    return this.paused(this.d.credentialOf(agentId));
+  }
+
+  pauseOf(agentId: string): CredentialPause | undefined {
+    const p = this.pauses.get(this.d.credentialOf(agentId));
+    return p ? { until: new Date(p.until), exact: p.exact } : undefined;
+  }
+
+  /**
+   * Pauses the credential (spec §7.2) with one reset timer. A later window replaces the timer; an earlier or equal
+   * one changes nothing. Its agents re-check in a job: their status, and the warm timer (a paused idle agent may
+   * hibernate with messages held).
+   */
+  pause(credentialId: string, until: Date, exact: boolean): void {
+    if (this.closed) return;
+    const cur = this.pauses.get(credentialId);
+    if (cur && cur.until >= until.getTime()) return;
+    if (cur) clearTimeout(cur.timer);
+    const p: Pause = { until: until.getTime(), exact };
+    this.pauses.set(credentialId, p);
+    this.armReset(credentialId, p);
+    for (const rt of this.onCredential(credentialId)) rt.recheck();
+  }
+
+  /**
+   * A credential's pause ended (its reset ran, spec §7.2): skipped entries become eligible in FIFO order, then each
+   * of its agents flushes (running) or asks for a wake (pending items).
+   */
   onCredentialReset(credentialId: string): void {
-    for (const rt of this.d.runtimes.all())
-      if (this.d.credentialOf(rt.agent.id) === credentialId) rt.recheck();
+    const p = this.pauses.get(credentialId);
+    if (p) clearTimeout(p.timer);
+    this.pauses.delete(credentialId);
+    if (this.closed) return;
     this.pump();
+    for (const rt of this.onCredential(credentialId)) rt.resumeAfterReset();
   }
 
   // ---------- internals ----------
+
+  private *onCredential(credentialId: string): Iterable<AgentRuntime> {
+    for (const rt of this.d.runtimes.all())
+      if (this.d.credentialOf(rt.agent.id) === credentialId) yield rt;
+  }
+
+  private armReset(credentialId: string, p: Pause) {
+    p.timer = setTimeout(
+      () => {
+        if (this.closed || this.pauses.get(credentialId) !== p) return;
+        if (Date.now() < p.until) this.armReset(credentialId, p);
+        else void this.reset(credentialId, p);
+      },
+      Math.min(MAX_TIMER_MS, Math.max(0, p.until - Date.now())),
+    );
+  }
+
+  /**
+   * The reset (spec §7.2, §7.3): owed agents get `rate_limit_reset` and the continue notice while the credential is
+   * still paused (so the notice leads the first batch), then the columns are cleared and the pause lifted.
+   */
+  private async reset(credentialId: string, p: Pause) {
+    try {
+      const owed = await this.d.rateLimits.owedAgents(credentialId);
+      if (owed.length) {
+        const name = (await this.d.rateLimits.credentialName(credentialId)) ?? credentialId;
+        for (const a of owed) {
+          if (this.closed) return; // the owed flags stay: boot creates the notices
+          try {
+            const rt = this.d.runtimes.get(a.id) ?? (await this.d.load(a.slug));
+            await rt?.rateLimitReset({
+              credential: name,
+              ...(p.exact ? { at: new Date(p.until) } : {}),
+            });
+          } catch (err) {
+            // That agent keeps its owed flag (boot retries); the others still get theirs.
+            this.d.log.error({ err, agent: a.slug }, "continue notice failed");
+          }
+        }
+      }
+      if (this.closed || this.pauses.get(credentialId) !== p) return;
+      await this.d.rateLimits.clearCredentialPause(credentialId, new Date(p.until));
+    } catch (err) {
+      // Lift the pause anyway: a stuck pause would hold its agents forever. Boot retries what wasn't recorded.
+      this.d.log.error({ err, credentialId }, "rate-limit reset failed");
+    }
+    if (this.closed || this.pauses.get(credentialId) !== p) return;
+    this.onCredentialReset(credentialId);
+  }
 
   private entry(agentId: string, reason: WakeReason): Entry {
     this.seq += 1;

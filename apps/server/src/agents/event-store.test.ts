@@ -124,3 +124,37 @@ test("createNotice replaces a pending notice of the same type and leaves a deliv
   const [still] = await t.sql`select state from messages where id = ${second.id}`;
   expect(still?.state).toBe("delivered");
 });
+
+test("credential pauses extend, never shorten; a conditional clear keeps a later window", async () => {
+  const at = (min: number) => new Date(Date.UTC(2026, 10, 19, 14, min));
+  expect(await store.pauseCredential("cred-a1", at(30), true)).toEqual({
+    name: "cred-a1",
+    until: at(30),
+    exact: true,
+  });
+  expect(await store.pauseCredential("cred-a1", at(10), false)).toEqual({
+    name: "cred-a1",
+    until: at(30),
+    exact: true,
+  });
+  expect(await store.pauseCredential("cred-a1", at(50), false)).toMatchObject({
+    until: at(50),
+    exact: false,
+  });
+  await store.clearCredentialPause("cred-a1", at(30)); // the timer of the old window
+  expect(await store.pausedCredentials()).toEqual([
+    { id: "cred-a1", name: "cred-a1", until: at(50), exact: false },
+  ]);
+  await store.clearCredentialPause("cred-a1", at(50));
+  expect(await store.pausedCredentials()).toEqual([]);
+  const [row] = await t.sql`select rate_limit_exact from credentials where id = 'cred-a1'`;
+  expect(row?.rate_limit_exact).toBe(true);
+});
+
+test("owed agents: per credential, flag set and cleared", async () => {
+  await store.setNoticeOwed("a1", true);
+  expect(await store.owedAgents("cred-a1")).toEqual([{ id: "a1", slug: "dev" }]);
+  expect(await store.owedAgents("cred-a2")).toEqual([]);
+  await store.setNoticeOwed("a1", false);
+  expect(await store.owedAgents("cred-a1")).toEqual([]);
+});

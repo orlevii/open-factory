@@ -383,33 +383,53 @@ export class AgentRuntime {
 
   // ---------- public API (each runs as a job) ----------
 
-  async sendMessage(m: {
-    fromUserId: string;
-    fromHandle: string;
-    body: string;
-    urgent: boolean;
-  }): Promise<QueueItem> {
+  /**
+   * S6 §7.3: a committed `message` row handed over by the Router. Inserted in (created_at, id) order after the
+   * notices unless this runtime already has it (`init()` may have loaded it); the wake, the urgent interrupt and the
+   * flush run either way. Archived meanwhile: the row becomes `rejected`. Only a human's message starts an attempt on
+   * an errored agent; another agent's wakes with `agent_message`, which never wakes an errored one.
+   */
+  deliver(
+    row: PendingRow,
+    o: { sender: "human" | "agent"; fromLabel: string },
+  ): Promise<QueueItem> {
     return this.apiJob(async () => {
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      const row = await this.d.store.createMessage({
-        from: { userId: m.fromUserId },
-        toAgentId: this.agent.id,
-        body: m.body,
-        urgent: m.urgent,
-      });
-      const entry: MessageEntry = { kind: "message", row, from: `@${m.fromHandle}` };
-      this.seen.add(row.id);
-      this.queue.push(entry);
-      this.publishQueue();
-      // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
-      if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
-      else {
-        if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
-        await this.wakeInline("message");
+      if (this.archived) {
+        await this.d.store.markRejected(row.id);
+        const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === row.id);
+        if (at !== -1) {
+          this.queue.splice(at, 1);
+          this.publishQueue();
+        }
+        throw new AgentArchivedError(this.agent.slug);
       }
-      if (m.urgent) await this.urgentInterrupt(m.fromHandle);
+      let entry = this.queue.find(
+        (e): e is MessageEntry => e.kind === "message" && e.row.id === row.id,
+      );
+      if (!this.seen.has(row.id)) {
+        entry = entryOf(row);
+        this.seen.add(row.id);
+        // At its (created_at, id) place, so concurrent sends keep their order: it moves ahead only of newer
+        // messages at the tail, never of a notice or a compact (a barrier).
+        let at = this.queue.length;
+        for (; at > 0; at--) {
+          const e = this.queue[at - 1];
+          if (e?.kind !== "message" || isNotice(e) || byCreated(e, entry) < 0) break;
+        }
+        this.queue.splice(at, 0, entry);
+        this.publishQueue();
+      }
+      if (o.sender === "human") {
+        // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
+        if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
+        else {
+          if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
+          await this.wakeInline("message");
+        }
+      } else await this.wakeInline("agent_message");
+      if (row.urgent) await this.urgentInterrupt(o.fromLabel);
       await this.flush();
-      return this.itemOf(entry);
+      return this.itemOf(entry ?? entryOf(row));
     });
   }
 
@@ -2374,6 +2394,7 @@ export class AgentRuntime {
     this.snapshotTimer = timer;
   }
 
+  /** `by` is the sender as prose writes it: `@handle` for a human, `@slug` for an agent. */
   private async urgentInterrupt(by: string) {
     // idle → normal send; hold active → no second interrupt; a compact in flight is never interrupted (it
     // waits behind the barrier instead)
@@ -2406,7 +2427,7 @@ export class AgentRuntime {
       });
     }, this.d.holdTimeoutMs ?? 10_000);
     this.hold = hold;
-    await this.append(this.openTurnId, { type: "control", cmd: "interrupt", by: `@${by}` });
+    await this.append(this.openTurnId, { type: "control", cmd: "interrupt", by });
   }
 
   private releaseHold() {

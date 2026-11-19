@@ -6,7 +6,13 @@ import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.t
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import { ev, type FakeDriver } from "./testing/fake-driver.ts";
-import { noopTokens, okSpec, RuntimeHarness, silentLog } from "./testing/runtime-harness.ts";
+import {
+  noopTokens,
+  okSpec,
+  RuntimeHarness,
+  sendAs,
+  silentLog,
+} from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 const h = new RuntimeHarness();
@@ -30,7 +36,7 @@ async function makeRuntime(opts: { startError?: Error; sessionId?: string; statu
   return rt;
 }
 const send = (body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
   (await store.after(agentId, 0, 1000)).map((e) => ({
     seq: e.seq,
@@ -181,15 +187,17 @@ test("an unexpected prepareStart failure is a generic AgentStartError, logged, n
   });
 });
 
-test("archived: send, compact and interrupt refuse inside the job; a refused message is not stored", async () => {
+test("archived: send, compact and interrupt refuse inside the job; a message handed over is marked rejected", async () => {
   await makeRuntime();
   rt.markArchived();
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
   await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
   await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
-  expect(
-    await t.sql`select count(*)::int as n from messages where to_agent_id = ${agentId}`,
-  ).toEqual([{ n: 0 }]);
+  // The Router committed the row before the hand-off (S6 §7.3): its state tells the truth.
+  expect(await t.sql`select state from messages where to_agent_id = ${agentId}`).toEqual([
+    { state: "rejected" },
+  ]);
+  expect(rt.queueItems()).toEqual([]);
 });
 
 test("prepareStart reporting an archived agent marks the runtime archived", async () => {

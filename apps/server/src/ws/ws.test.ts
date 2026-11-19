@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
+import { sendAs } from "../agents/testing/runtime-harness.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -146,7 +147,7 @@ describe("agent subscriptions", () => {
 
   test("subscribe replays from afterSeq, then streams live, with no gaps or duplicates", async () => {
     const rt = await a.app.runtimes.bySlug("dev");
-    await rt?.sendMessage({
+    await sendAs(a.app.store, rt, {
       fromUserId: s.user.id,
       fromHandle: s.user.handle,
       body: "one",
@@ -157,7 +158,7 @@ describe("agent subscriptions", () => {
     const c = await connect();
     c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 2 }));
     // live events written while the replay is being read
-    await rt?.sendMessage({
+    await sendAs(a.app.store, rt, {
       fromUserId: s.user.id,
       fromHandle: s.user.handle,
       body: "two",

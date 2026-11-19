@@ -1,4 +1,5 @@
 import { mkdir, realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import { createClaudeDriver, type HarnessDriver, localTransport } from "@open-factory/harness";
@@ -20,7 +21,14 @@ import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
+import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
+import { startAgentListener } from "./mcp/listener.ts";
+import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
+import { listPeersTool } from "./mcp/tools/list-peers.ts";
+import { sendMessageTool } from "./mcp/tools/send-message.ts";
+import { Neighborhood } from "./messaging/neighborhood.ts";
+import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -38,6 +46,7 @@ import { SecretService } from "./secrets/secret-service.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
+import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
 import { migrateWorkdirState } from "./workspace/state-migration.ts";
 import { Workspace } from "./workspace/workspace.ts";
@@ -59,8 +68,16 @@ declare module "fastify" {
     credentials: CredentialService;
     secrets: SecretService;
     projects: ProjectService;
+    router: Router;
+    neighborhood: Neighborhood;
+    agentTokens: AgentTokens;
+    agentListener: { port: number; close(): Promise<void> };
   }
 }
+
+/** Spec §5.3's upgrade note: an S5 setup may still point FACTORY_AGENT_URL at the human port. */
+export const AGENT_URL_ON_HUMAN_PORT_WARNING =
+  "FACTORY_AGENT_URL points at the human port; set it to the agent listener's port (FACTORY_AGENT_PORT) or Docker agents can't reach the factory tools.";
 
 export interface AppDeps {
   db: Db;
@@ -149,6 +166,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     prepareStart,
     tokens,
     log: app.log,
+    memberUpdateDebounceMs: config.memberUpdateDebounceMs,
     maxRunningAgents: config.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
@@ -195,11 +213,26 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("store", store);
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
+  const neighborhood = new Neighborhood(deps.db);
+  const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  app.decorate("neighborhood", neighborhood);
+  app.decorate("router", router);
+  app.decorate("agentTokens", tokens);
+  let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
+    // A send still waiting for a boot that failed must not hold the agent listener open.
+    router.close();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
+    // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
+    tokens.revokeAll();
+    await agentListener?.close();
   });
+
+  if (new URL(config.agentUrl).port === String(config.port)) {
+    app.log.warn(AGENT_URL_ON_HUMAN_PORT_WARNING);
+  }
 
   await app.register(statusRoutes, { sql: deps.sql });
   await app.register(authRoutes);
@@ -211,6 +244,25 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
   await registerStatic(app, deps.webRoot);
+  // The agent listener (spec §5.3) starts before boot reconciliation: step 6 can start agents, and Claude connects to
+  // its MCP servers only at startup. A bind failure fails the boot.
+  try {
+    agentListener = await listenForAgents(config, {
+      docker,
+      tokens,
+      store,
+      router,
+      neighborhood,
+      runtimes,
+      log: app.log,
+    });
+  } catch (err) {
+    await app
+      .close()
+      .catch((e: unknown) => app.log.error({ err: e }, "closing after a failed boot failed"));
+    throw err;
+  }
+  app.decorate("agentListener", agentListener);
   // Boot reconciliation (spec §5.7): after the migrations, before the server listens. Leftovers of the previous run
   // are reaped (with the real journal whatever the driver: it only ever signals a pid whose start time matches).
   try {
@@ -223,12 +275,74 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       memberUpdateDebounceMs: config.memberUpdateDebounceMs,
       log: app.log,
     });
+    router.bootDone();
   } catch (err) {
-    // A wake may already have started a process. A failing close is logged and never masks the boot's error.
+    // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
+    // failing close is logged and never masks the boot's error.
     await app
       .close()
       .catch((e: unknown) => app.log.error({ err: e }, "closing after a failed boot failed"));
     throw err;
   }
   return app;
+}
+
+/**
+ * Binds the agent listener (spec §5.1, §5.3) with the factory MCP behind it. With `FACTORY_AGENT_PORT=0` the port
+ * the OS chose becomes `config.agentPort` (and a derived `agentUrl`'s port) before any agent can start.
+ */
+async function listenForAgents(
+  config: Config,
+  d: {
+    docker: ReturnType<typeof dockerodeClient>;
+    tokens: AgentTokens;
+    store: EventStore;
+    router: Router;
+    neighborhood: Neighborhood;
+    runtimes: AgentRuntimes;
+    log: FastifyInstance["log"];
+  },
+) {
+  const bind = resolveAgentBindHosts({
+    platform: process.platform,
+    ...(config.agentHosts ? { override: config.agentHosts } : {}),
+    ...(process.platform === "linux" && !config.agentHosts
+      ? { bridge: await bridgeInfo(d.docker) }
+      : {}),
+    interfaces: os.networkInterfaces(),
+    localAllowed: localRuntimeAllowed(config),
+    warn: (msg) => d.log.warn(msg),
+  });
+  const mcp = createFactoryMcp({
+    version: FACTORY_VERSION,
+    onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
+    tools: [
+      sendMessageTool(d.router),
+      listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+    ],
+  });
+  const listener = await startAgentListener({
+    hosts: bind.hosts,
+    port: config.agentPort,
+    allowedSources: bind.allowedSources,
+    version: FACTORY_VERSION,
+    tokens: d.tokens,
+    // An unknown agent is treated like an archived one: its token can't act.
+    isArchived: async (agentId) => {
+      const a = await d.store.agentById(agentId);
+      return !a || a.archivedAt !== null;
+    },
+    mcp,
+    log: d.log,
+  });
+  if (config.agentPort === 0) {
+    config.agentPort = listener.port;
+    const url = new URL(config.agentUrl);
+    if (url.port === "0") {
+      url.port = String(listener.port);
+      config.agentUrl = url.toString().replace(/\/$/, "");
+    }
+  }
+  d.log.info({ hosts: bind.hosts, port: listener.port }, "agent listener ready");
+  return listener;
 }

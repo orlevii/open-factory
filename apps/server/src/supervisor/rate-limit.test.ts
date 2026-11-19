@@ -7,7 +7,7 @@ import { EventStore } from "../agents/event-store.ts";
 import { notices } from "../agents/notices.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import { noopTokens, okSpec, sendAs, silentLog } from "../agents/testing/runtime-harness.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -127,7 +127,7 @@ afterEach(async () => {
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const send = (rt: AgentRuntime, body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const status = (rt: AgentRuntime) => rt.live().status;
 const started = (rt: AgentRuntime) => w.starts(rt).length > 0;
 const sentBodies = (rt: AgentRuntime) => w.proc(rt).sent.map((b) => b.map((m) => m.body));

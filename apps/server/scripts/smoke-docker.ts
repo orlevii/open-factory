@@ -248,7 +248,8 @@ async function turn(body: string, ms = 240_000): Promise<{ from: number; events:
   const from = await lastSeq();
   const rt = await app.runtimes.bySlug(SLUG);
   if (!rt) throw new Error(`no runtime for ${SLUG}`);
-  await rt.sendMessage({ fromUserId: "smoke", fromHandle: "smoke", body, urgent: false });
+  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, SLUG, body, false);
+  if (!sent.ok) throw new Error(`send to ${SLUG} failed: ${sent.message}`);
   const got = await until(
     "the turn to end",
     async () => {

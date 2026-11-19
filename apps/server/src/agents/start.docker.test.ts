@@ -30,7 +30,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
-import { noopTokens, silentLog } from "./testing/runtime-harness.ts";
+import { noopTokens, sendAs, silentLog } from "./testing/runtime-harness.ts";
 
 /**
  * The Docker start path end to end over a fake Docker daemon (spec §10, §11): the real prepareStart, Workspace,
@@ -210,7 +210,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
 }
 
 const send = (w: World, body = "hi") =>
-  w.rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent: false });
+  sendAs(store, w.rt, { fromUserId: "u1", fromHandle: "or", body, urgent: false });
 const events = async (w: World): Promise<AnyEvent[]> =>
   (await store.after(w.agent.id, 0, 1000)).map((e) => e.event as AnyEvent);
 const until = (check: () => unknown | Promise<unknown>) =>

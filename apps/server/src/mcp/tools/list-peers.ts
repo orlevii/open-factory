@@ -13,7 +13,8 @@ type Relation = "manager" | "peer" | "report" | "other";
 
 export function listPeersTool(d: {
   neighborhood: Neighborhood;
-  statusOf(agentId: string): AgentStatus;
+  /** The live status (a loaded runtime) or what the row says. */
+  statusOf(agent: AgentRow): AgentStatus;
 }): ToolRegistration {
   return {
     register(server: McpServer) {
@@ -44,7 +45,7 @@ export function listPeersTool(d: {
               displayName: a.displayName,
               description: a.description,
               relation,
-              status: d.statusOf(a.id),
+              status: d.statusOf(a),
             })),
             humans: await d.neighborhood.humans(),
           });

@@ -5,7 +5,14 @@ import { EventBus } from "../agents/event-bus.ts";
 import { EventStore } from "../agents/event-store.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import {
+  deliverHuman,
+  humanRow,
+  noopTokens,
+  okSpec,
+  sendAs,
+  silentLog,
+} from "../agents/testing/runtime-harness.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -101,7 +108,7 @@ afterEach(async () => {
 });
 
 const send = (rt: AgentRuntime, body: string) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent: false });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent: false });
 const status = (rt: AgentRuntime) => rt.live().status;
 const started = (rt: AgentRuntime) => w.starts(rt).length > 0;
 const stopped = (rt: AgentRuntime) => w.starts(rt).some((p) => p.stopped);
@@ -296,8 +303,13 @@ test("a victim that refuses is replaced by the next candidate", async () => {
   await idleAt(b, 2000);
   // A message reaches a between the pick and its hibernate job: a re-checks in its job and refuses.
   const original = a.hibernate.bind(a);
+  const meanwhile = await humanRow(store, a, {
+    fromUserId: "u1",
+    body: "meanwhile",
+    urgent: false,
+  });
   vi.spyOn(a, "hibernate").mockImplementationOnce((reason) => {
-    void send(a, "meanwhile");
+    void deliverHuman(a, meanwhile); // enqueued ahead of the hibernate job
     return original(reason);
   });
   await send(c, "hi");

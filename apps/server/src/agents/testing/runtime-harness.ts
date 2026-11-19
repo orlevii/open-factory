@@ -9,6 +9,38 @@ import { FakeDriver } from "./fake-driver.ts";
 import { insertAgent } from "./rows.ts";
 import { unlimitedSlots } from "./unlimited-slots.ts";
 
+/** A human's committed message row for `rt`, as the Router writes it before the hand-off (S6 §7.3). */
+export function humanRow(
+  store: EventStore,
+  rt: AgentRuntime,
+  m: { fromUserId: string; body: string; urgent: boolean },
+) {
+  return store.createMessage({
+    from: { userId: m.fromUserId },
+    toAgentId: rt.agent.id,
+    body: m.body,
+    urgent: m.urgent,
+  });
+}
+
+/** The hand-off of a human's row: the recipient's delivery job, enqueued synchronously. */
+export const deliverHuman = (rt: AgentRuntime, row: PendingRow) =>
+  rt.deliver(row, { sender: "human", fromLabel: `@${row.fromHandle}` });
+
+/**
+ * A human's message as the Router sends it: the committed row, then the delivery job (awaited by the caller, like
+ * the REST route). `fromHandle` is ignored: the label comes from the joined row. Tests that need the job enqueued
+ * at a precise moment use `humanRow` and `deliverHuman` instead.
+ */
+export async function sendAs(
+  store: EventStore,
+  rt: AgentRuntime | undefined,
+  m: { fromUserId: string; fromHandle?: string; body: string; urgent: boolean },
+) {
+  if (!rt) throw new Error("no runtime");
+  return deliverHuman(rt, await humanRow(store, rt, m));
+}
+
 export const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 
 /** A token port for tests that don't look at tokens. */
@@ -138,7 +170,11 @@ export class RuntimeHarness {
   }
 
   send = (body: string, urgent = false) =>
-    this.rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+    sendAs(this.store, this.rt, { fromUserId: "u1", body, urgent });
+
+  /** A committed human message row for the current runtime, not yet handed over. */
+  row = (body: string, urgent = false) =>
+    humanRow(this.store, this.rt, { fromUserId: "u1", body, urgent });
 
   /** Hands a held row (member update, peer event) to the runtime and waits for its jobs. */
   receive = async (row: PendingRow) => {

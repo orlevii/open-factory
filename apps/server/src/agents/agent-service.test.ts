@@ -22,6 +22,7 @@ import { makeTestApp } from "../test/helpers.ts";
 import { resyncPendingDir } from "../workspace/paths.ts";
 import type { AgentService } from "./agent-service.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
+import { sendAs } from "./testing/runtime-harness.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let svc: AgentService;
@@ -243,7 +244,7 @@ async function startAndStop(slug: string, start: boolean) {
   if (!rt) throw new Error("no runtime");
   if (start) {
     const u = await t.signUpUser();
-    await rt.sendMessage({
+    await sendAs(t.app.store, rt, {
       fromUserId: u.user.id,
       fromHandle: u.user.handle,
       body: "hi",
@@ -371,7 +372,7 @@ test("hasProcess is true while a start waits in prepare, before the spawn", asyn
   const u = await t.signUpUser();
   let send: Promise<unknown> = Promise.resolve();
   await t.app.workspace.lock.run("stage-e", async () => {
-    send = rt.sendMessage({
+    send = sendAs(t.app.store, rt, {
       fromUserId: u.user.id,
       fromHandle: u.user.handle,
       body: "hi",
@@ -400,7 +401,7 @@ test("a failing apply keeps resync-pending/ staged", async () => {
   const rt = await runtimes.bySlug("stage-f");
   const u = await t.signUpUser();
   await expect(
-    rt?.sendMessage({
+    sendAs(t.app.store, rt, {
       fromUserId: u.user.id,
       fromHandle: u.user.handle,
       body: "hi",

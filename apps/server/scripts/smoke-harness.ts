@@ -85,8 +85,15 @@ const make = () =>
   });
 let rt = make();
 await rt.init();
-const send = (body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "smoke", fromHandle: "smoke", body, urgent });
+const send = async (body: string, urgent = false) => {
+  const row = await store.createMessage({
+    from: { userId: "smoke" },
+    toAgentId: rt.agent.id,
+    body,
+    urgent,
+  });
+  return rt.deliver(row, { sender: "human", fromLabel: "@smoke" });
+};
 const waitFor = async (pred: (e: AnyEvent) => boolean, from: number, ms = 120_000) => {
   const end = Date.now() + ms;
   while (Date.now() < end) {

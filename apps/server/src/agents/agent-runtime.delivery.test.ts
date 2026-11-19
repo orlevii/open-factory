@@ -7,7 +7,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { noopTokens } from "./testing/runtime-harness.ts";
+import { noopTokens, sendAs } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -72,7 +72,7 @@ async function makeRuntime(
   return rt;
 }
 const send = (body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
   (await store.after(agentId, 0, 1000)).map((e) => ({
     seq: e.seq,

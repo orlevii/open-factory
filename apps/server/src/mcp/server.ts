@@ -21,7 +21,7 @@ export function callerOf(tctx: ToolContext): string {
 
 export function toolUseIdOf(tctx: ToolContext): string | null {
   const v = tctx.mcpReq?._meta?.["claudecode/toolUseId"];
-  return typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v) ? v : null;
+  return typeof v === "string" && /^toolu_[A-Za-z0-9]{1,120}$/.test(v) ? v : null;
 }
 
 export function textResult(value: unknown) {

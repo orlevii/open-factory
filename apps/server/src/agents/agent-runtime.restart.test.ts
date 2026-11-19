@@ -3,7 +3,7 @@ import type { AgentRuntime } from "./agent-runtime.ts";
 import { AgentStartError } from "./errors.ts";
 import type { EventStore } from "./event-store.ts";
 import { ev, type FakeDriver, type FakeProcess } from "./testing/fake-driver.ts";
-import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 
 const h = new RuntimeHarness();
 let store: EventStore;
@@ -364,7 +364,8 @@ test("an unexpected exit clears restartPending; only the crash recovery starts a
 });
 
 test("requestRestart racing a start: the start wins the queue, the restart waits for the first turn", async () => {
-  const p = send("hi");
+  const row = await h.row("hi");
+  const p = deliverHuman(rt, row); // enqueued first: the start wins the queue
   const r = rt.requestRestart();
   await Promise.all([p, r]);
   expect(driver.starts).toHaveLength(1);

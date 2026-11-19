@@ -3,6 +3,7 @@ import { makeTestApp } from "../test/helpers.ts";
 import { versionCheckEnv } from "./runtimes.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
+import { sendAs } from "./testing/runtime-harness.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 const driver = new FakeDriver();
@@ -63,7 +64,7 @@ test("the first GET /api/agents after boot carries runtimeDisabled for a local a
 test("app.close stops running agents gracefully", async () => {
   const u = await t.signUpUser();
   const rt = await t.app.runtimes.bySlug("dev");
-  await rt?.sendMessage({
+  await sendAs(t.app.store, rt, {
     fromUserId: u.user.id,
     fromHandle: u.user.handle,
     body: "hi",
@@ -107,7 +108,7 @@ test("stopAll still stops healthy runtimes when another init fails", async () =>
     const u = await t.signUpUser();
     const dev = await t.app.runtimes.bySlug("dev");
     const before = driver.starts.length;
-    await dev?.sendMessage({
+    await sendAs(t.app.store, dev, {
       fromUserId: u.user.id,
       fromHandle: u.user.handle,
       body: "again",

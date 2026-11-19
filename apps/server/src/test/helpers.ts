@@ -49,6 +49,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       FACTORY_HOME: factoryHome,
       FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
       FACTORY_ALLOW_LOCAL_RUNTIME: "true",
+      // Every app binds a real agent listener: let the OS pick the port so test files can run in parallel.
+      FACTORY_AGENT_PORT: "0",
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);

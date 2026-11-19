@@ -1,5 +1,6 @@
 import type { AgentDetail, EventsPage, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { agentSummary } from "@/test/session-fixtures";
 import { eventsInOrder, highestSeq, initialSessionState, sessionReducer } from "./session-state";
 
 const ev = (seq: number): SessionEvent => ({
@@ -13,15 +14,9 @@ const page = (seqs: number[], hasMore = { before: false, after: false }): Events
   events: seqs.map(ev),
   hasMore,
 });
+const noRestart = { restartPending: false, restartWaitingOn: 0 } as const;
 const detail: AgentDetail = {
-  agent: {
-    slug: "dev",
-    displayName: "Dev agent",
-    description: "",
-    status: "idle",
-    turnOpen: false,
-    runtime: "local",
-  },
+  agent: agentSummary(),
   queue: [],
   lastSeq: 9,
 };
@@ -73,7 +68,13 @@ test("earlier pages prepend; status, queue and resync frames", () => {
   expect(s.hasMoreBefore).toBe(false);
   s = sessionReducer(s, {
     type: "frame",
-    message: { type: "agent_status", agent: "dev", status: "working", turnOpen: true },
+    message: {
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      ...noRestart,
+    },
   });
   expect(s.agent?.status).toBe("working");
   expect(s.agent?.turnOpen).toBe(true);
@@ -166,12 +167,13 @@ test("an agent_status frame without lastError clears the previous one", () => {
       status: "errored",
       turnOpen: false,
       lastError: "boom",
+      ...noRestart,
     }),
   );
   expect(s.agent?.lastError).toBe("boom");
   s = sessionReducer(
     s,
-    frame({ type: "agent_status", agent: "dev", status: "idle", turnOpen: false }),
+    frame({ type: "agent_status", agent: "dev", status: "idle", turnOpen: false, ...noRestart }),
   );
   expect(s.agent?.lastError).toBeUndefined();
 });

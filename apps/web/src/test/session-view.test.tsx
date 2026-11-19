@@ -101,7 +101,14 @@ test("working status shows the working line; a status frame removes it", async (
   await screen.findByText("Two entries.");
   expect(document.querySelector("[data-working-line]")).toBeInTheDocument();
   act(() =>
-    ws.onMessage?.({ type: "agent_status", agent: "dev", status: "idle", turnOpen: false }),
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "idle",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
   );
   await vi.waitFor(() =>
     expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument(),

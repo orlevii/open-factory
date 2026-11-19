@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 export const PLACEHOLDER_SECRET = "change-me-to-a-random-string-of-32-chars-or-more";
@@ -17,7 +18,21 @@ export interface Config {
   isProduction: boolean;
   claudeBin: string;
   hostSkillsDir: string;
+  maxRunningAgents: number;
+  allowLocalRuntime: boolean;
+  defaultImage: string;
+  dockerClaudeBin: string;
+  cliBundle: string;
+  agentUrl: string;
 }
+
+export function localRuntimeAllowed(c: Pick<Config, "allowLocalRuntime">): boolean {
+  return c.allowLocalRuntime;
+}
+
+const DEFAULT_CLI_BUNDLE = fileURLToPath(
+  new URL("../../../apps/cli/dist/open-factory.js", import.meta.url),
+);
 
 export class ConfigError extends Error {
   constructor(public readonly issues: string[]) {
@@ -46,6 +61,16 @@ const envSchema = z.object({
   NODE_ENV: z.string().optional(),
   FACTORY_CLAUDE_BIN: z.string().min(1).default("claude"),
   FACTORY_HOST_SKILLS_DIR: z.string().min(1).default("~/.claude/skills"),
+  FACTORY_MAX_RUNNING_AGENTS: z.coerce
+    .number({ message: "must be a whole number" })
+    .int()
+    .min(1)
+    .default(8),
+  FACTORY_ALLOW_LOCAL_RUNTIME: z.enum(["true", "false"]).default("false"),
+  FACTORY_DEFAULT_IMAGE: z.string().min(1).default("ghcr.io/orlevii/open-factory/base:latest"),
+  FACTORY_DOCKER_CLAUDE_BIN: z.string().min(1).default("claude"),
+  FACTORY_CLI_BUNDLE: z.string().min(1).default(DEFAULT_CLI_BUNDLE),
+  FACTORY_AGENT_URL: httpUrl.optional(),
 });
 
 function expandHome(p: string): string {
@@ -74,5 +99,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     isProduction: e.NODE_ENV === "production",
     claudeBin: e.FACTORY_CLAUDE_BIN,
     hostSkillsDir: expandHome(e.FACTORY_HOST_SKILLS_DIR),
+    maxRunningAgents: e.FACTORY_MAX_RUNNING_AGENTS,
+    allowLocalRuntime: e.FACTORY_ALLOW_LOCAL_RUNTIME === "true",
+    defaultImage: e.FACTORY_DEFAULT_IMAGE,
+    dockerClaudeBin: e.FACTORY_DOCKER_CLAUDE_BIN,
+    cliBundle: path.resolve(e.FACTORY_CLI_BUNDLE),
+    agentUrl: (e.FACTORY_AGENT_URL ?? `http://host.docker.internal:${e.PORT}`).replace(/\/$/, ""),
   };
 }

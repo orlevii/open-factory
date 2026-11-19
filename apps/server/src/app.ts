@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@open-factory/db";
 import { createClaudeDriver, type HarnessDriver } from "@open-factory/harness";
@@ -100,6 +100,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("auth", createAuth(config, deps.db));
   registerErrorHandlers(app);
 
+  await mkdir(config.factoryHome, { recursive: true });
+  config.factoryHome = await realpath(config.factoryHome);
+  await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
+  await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
+
   const store = new EventStore(deps.db);
   const bus = new EventBus();
   const vault = new Vault(config.secretKey);
@@ -112,8 +117,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
   });
   const prepareStart = createPrepareStart({ db: deps.db, config, vault, workspace, lock });
-  await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
-  await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
   const runtimes = new AgentRuntimes({
     store,
     bus,

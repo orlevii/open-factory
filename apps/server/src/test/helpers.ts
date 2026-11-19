@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -38,7 +38,7 @@ export interface TestAppOptions {
 export async function makeTestApp(opts: TestAppOptions = {}) {
   const tdb = await createTestDatabase();
   await migrate(tdb.url, MIGRATIONS_DIR);
-  const factoryHome = mkdtempSync(path.join(tmpdir(), "of-home-"));
+  const factoryHome = realpathSync(mkdtempSync(path.join(tmpdir(), "of-home-")));
   const hostSkillsDir = mkdtempSync(path.join(tmpdir(), "of-skills-"));
   const build = async (o: TestAppOptions) => {
     const config = loadConfig({
@@ -48,6 +48,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       LOG_LEVEL: "silent",
       FACTORY_HOME: factoryHome,
       FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+      FACTORY_ALLOW_LOCAL_RUNTIME: "true",
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);

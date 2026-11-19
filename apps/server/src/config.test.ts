@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { ConfigError, loadConfig, PLACEHOLDER_SECRET } from "./config.ts";
+import { ConfigError, loadConfig, localRuntimeAllowed, PLACEHOLDER_SECRET } from "./config.ts";
 
 const ok = { DATABASE_URL: "postgres://u:p@localhost:5432/db", FACTORY_SECRET_KEY: "x".repeat(32) };
 
@@ -23,6 +23,26 @@ describe("loadConfig", () => {
     const c = loadConfig({ ...ok, PORT: "4000", FACTORY_HOME: "~/x/../y" });
     expect(c.publicUrl).toBe("http://localhost:4000");
     expect(c.factoryHome).toBe(path.join(os.homedir(), "y"));
+  });
+  test("S5 defaults", () => {
+    const c = loadConfig(ok);
+    expect(c.maxRunningAgents).toBe(8);
+    expect(c.allowLocalRuntime).toBe(false);
+    expect(c.defaultImage).toBe("ghcr.io/orlevii/open-factory/base:latest");
+    expect(c.dockerClaudeBin).toBe("claude");
+    expect(c.agentUrl).toBe("http://host.docker.internal:3000");
+    expect(c.cliBundle).toMatch(/apps\/cli\/dist\/open-factory\.js$/);
+    expect(path.isAbsolute(c.cliBundle)).toBe(true);
+    expect(loadConfig({ ...ok, PORT: "4000" }).agentUrl).toBe("http://host.docker.internal:4000");
+  });
+  test("FACTORY_ALLOW_LOCAL_RUNTIME only accepts true/false", () => {
+    expect(loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "true" }).allowLocalRuntime).toBe(true);
+    expect(() => loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "yes" })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...ok, FACTORY_MAX_RUNNING_AGENTS: "0" })).toThrow(ConfigError);
+  });
+  test("localRuntimeAllowed follows allowLocalRuntime", () => {
+    expect(localRuntimeAllowed({ allowLocalRuntime: true })).toBe(true);
+    expect(localRuntimeAllowed({ allowLocalRuntime: false })).toBe(false);
   });
   test("reports every problem at once", () => {
     let err: unknown;

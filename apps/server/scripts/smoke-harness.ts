@@ -1,4 +1,5 @@
-// Live smoke for S3 (spec §13.3). Needs Postgres (pnpm compose up -d) and CLAUDE_CODE_OAUTH_TOKEN.
+// Live smoke for S3 (spec §13.3). Needs Postgres (pnpm compose up -d) and CLAUDE_CODE_OAUTH_TOKEN in the env;
+// the token is stored as the test agent's credential (the server itself never reads it).
 // Uses the real runtime, driver and Postgres store; bypasses only HTTP and auth. Model: haiku.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,8 +11,12 @@ import type { AnyEvent } from "@open-factory/shared";
 import { AgentRuntime } from "../src/agents/agent-runtime.ts";
 import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
-import { seedDevAgent } from "../src/agents/seed-dev.ts";
+import { createPrepareStart } from "../src/agents/start.ts";
 import { loadConfig } from "../src/config.ts";
+import { Vault } from "../src/crypto/vault.ts";
+import { seedTestAgent } from "../src/test/helpers.ts";
+import { KeyedMutex } from "../src/workspace/lock.ts";
+import { Workspace } from "../src/workspace/workspace.ts";
 
 if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
   console.error("Set CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) first.");
@@ -27,7 +32,24 @@ const config = loadConfig({
   FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-smoke-")),
 });
 await sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
-const agent = await seedDevAgent(db, config);
+const vault = new Vault(config.secretKey);
+const lock = new KeyedMutex();
+const workspace = new Workspace({
+  factoryHome: config.factoryHome,
+  hostSkillsDir: config.hostSkillsDir,
+  claudeBin: config.claudeBin,
+  lock,
+});
+const agent = await seedTestAgent(
+  { db, config, vault, workspace },
+  {
+    config: { model: "haiku" },
+    ...(process.env.CLAUDE_CODE_OAUTH_TOKEN
+      ? { credentialValue: process.env.CLAUDE_CODE_OAUTH_TOKEN }
+      : {}),
+  },
+);
+const prepareStart = createPrepareStart({ db, config, vault, workspace, lock });
 const store = new EventStore(db);
 const bus = new EventBus();
 const log = { debug() {}, info: console.log, warn: console.warn, error: console.error };
@@ -48,7 +70,7 @@ function print(e: AnyEvent) {
   console.log(`  · ${e.type} ${brief}`);
 }
 const make = () =>
-  new AgentRuntime({ agent, store, bus, driver: createClaudeDriver(log), config, log });
+  new AgentRuntime({ agent, store, bus, driver: createClaudeDriver(log), prepareStart, log });
 let rt = make();
 await rt.init();
 const send = (body: string, urgent = false) =>

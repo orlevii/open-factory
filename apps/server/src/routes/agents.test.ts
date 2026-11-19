@@ -7,7 +7,7 @@ let cookie: string;
 const driver = new FakeDriver();
 beforeAll(async () => {
   t = await makeTestApp({ harnessDriver: driver });
-  await t.seed();
+  await t.seedAgent();
   cookie = (await t.signUpUser({ handle: "or" })).cookie;
 });
 afterAll(() => t.close());
@@ -112,13 +112,10 @@ test("compact is accepted and queued; validation errors are 400", async () => {
   ).toBe(400);
 });
 
-test("start failure is 503 and the message stays queued", async () => {
-  const t2 = await makeTestApp({
-    harnessDriver: new FakeDriver(),
-    env: { CLAUDE_CODE_OAUTH_TOKEN: "" },
-  });
+test("start failure is 503 with the fix text and the message stays queued", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
-    await t2.seed();
+    await t2.seedAgent({ config: { secrets: ["GH_TOKEN"] } });
     const c2 = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({
       method: "POST",
@@ -126,18 +123,39 @@ test("start failure is 503 and the message stays queued", async () => {
       headers: { cookie: c2 },
       payload: { body: "hi", urgent: false },
     });
+    const message = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toEqual({
-      error: { code: "agent_start_failed", message: "Set CLAUDE_CODE_OAUTH_TOKEN to run agents" },
-    });
+    expect(res.json()).toEqual({ error: { code: "agent_start_failed", message } });
     const detail = (
       await t2.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c2 } })
     ).json();
     expect(detail.queue.map((q: { body: string }) => q.body)).toEqual(["hi"]);
-    expect(detail.agent).toMatchObject({
-      status: "errored",
-      lastError: "Set CLAUDE_CODE_OAUTH_TOKEN to run agents",
-    });
+    expect(detail.agent).toMatchObject({ status: "errored", lastError: message });
+  } finally {
+    await t2.close();
+  }
+});
+
+test("an archived agent refuses messages, compact and interrupt with 409 agent_archived", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
+  try {
+    await t2.seedAgent();
+    await t2.sql`update agents set archived_at = now() where slug = 'dev'`;
+    const c2 = (await t2.signUpUser({ handle: "or3" })).cookie;
+    for (const [url, payload] of [
+      ["/api/agents/dev/messages", { body: "hi", urgent: false }],
+      ["/api/agents/dev/compact", {}],
+      ["/api/agents/dev/interrupt", undefined],
+    ] as const) {
+      const res = await t2.app.inject({
+        method: "POST",
+        url,
+        headers: { cookie: c2 },
+        ...(payload ? { payload } : {}),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe("agent_archived");
+    }
   } finally {
     await t2.close();
   }

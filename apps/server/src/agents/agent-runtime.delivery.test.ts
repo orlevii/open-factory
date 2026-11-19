@@ -1,15 +1,12 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { loadConfig } from "../config.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { NoOpenTurnError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
+import { insertAgent } from "./testing/rows.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -29,18 +26,16 @@ let rt: AgentRuntime;
 let agentId: string;
 
 async function makeRuntime(
-  opts: { token?: string | null; sessionId?: string; status?: string; realHold?: boolean } = {},
+  opts: { startError?: Error; sessionId?: string; status?: string; realHold?: boolean } = {},
 ) {
   n += 1;
   agentId = `a${n}`;
-  await t.sql`insert into agents (id, slug, display_name, session_id, status)
-              values (${agentId}, ${`dev${n}`}, 'Dev agent', ${opts.sessionId ?? null}, ${opts.status ?? "hibernated"})`;
-  const env: Record<string, string> = {
-    DATABASE_URL: t.url,
-    FACTORY_SECRET_KEY: "k".repeat(40),
-    FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-")),
-  };
-  if (opts.token !== null) env.CLAUDE_CODE_OAUTH_TOKEN = opts.token ?? "tok";
+  await insertAgent(t.sql, {
+    id: agentId,
+    slug: `dev${n}`,
+    ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+    ...(opts.status ? { status: opts.status } : {}),
+  });
   driver = new FakeDriver();
   bus = new EventBus();
   frames = [];
@@ -53,7 +48,19 @@ async function makeRuntime(
     store,
     bus,
     driver,
-    config: loadConfig(env),
+    prepareStart: async (a) => {
+      if (opts.startError) throw opts.startError;
+      return {
+        agentId: a.id,
+        slug: a.slug,
+        cwd: "/w",
+        env: { TOKEN_SEEN: "yes" },
+        claudeBin: "claude",
+        runtime: "local",
+        permissionMode: "auto",
+        mounts: [],
+      };
+    },
     log: silentLog,
     ...(opts.realHold ? {} : { holdTimeoutMs: 200 }),
   });
@@ -119,7 +126,7 @@ test("compact is a barrier: written only with no open turn, and nothing passes i
   await rt.settled();
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact", arg: "keep the API" }]);
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task"); // "after compact" not written yet
-  expect(rt.summary().status).toBe("working"); // compact in flight
+  expect(rt.live().status).toBe("working"); // compact in flight
   // a self-started turn ending meanwhile does not release the barrier
   driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
   await rt.settled();
@@ -190,7 +197,7 @@ test("a DB failure in the hold-timeout flush stops the process and marks errored
   await vi.advanceTimersByTimeAsync(10_000);
   await rt.settled();
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
-  expect(rt.summary().status).toBe("errored");
+  expect(rt.live().status).toBe("errored");
   expect((await types()).at(-1)).toBe("exited");
 });
 
@@ -245,10 +252,10 @@ test("a rejected interrupt write (process going away) is not an internal error: 
   expect(item.body).toBe("STOP");
   await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError);
   expect(driver.last.controls).toEqual([]);
-  expect(rt.summary().status).not.toBe("errored");
+  expect(rt.live().status).not.toBe("errored");
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
   await rt.stop(); // the expected exit arrives
-  expect(rt.summary().status).toBe("hibernated");
+  expect(rt.live().status).toBe("hibernated");
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
   expect(a?.status).toBe("hibernated");
   await send("next");
@@ -265,7 +272,7 @@ test("a rejected interrupt write before an unexpected exit keeps the real exit r
   await send("STOP", true);
   driver.last.exit(1);
   await rt.settled();
-  expect(rt.summary()).toMatchObject({
+  expect(rt.live()).toMatchObject({
     status: "errored",
     lastError: "Exited unexpectedly (code 1)",
   });

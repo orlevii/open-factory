@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
 import type { AgentRow, MessageRow } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
@@ -11,17 +10,15 @@ import {
 import type {
   AgentStatus,
   AgentStatusFrame,
-  AgentSummary,
   AnyEvent,
   HarnessEvent,
   QueueItem,
 } from "@open-factory/shared";
-import type { Config } from "../config.ts";
-import { AgentStartError, NoOpenTurnError } from "./errors.ts";
+import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Tx } from "./event-store.ts";
-import { agentConfigDir, buildRuntimeSpec, resolveClaudeToken } from "./runtime-spec.ts";
 import { SerialQueue } from "./serial-queue.ts";
+import type { PrepareStart } from "./start.ts";
 
 export interface RuntimeLog {
   debug(obj: object, msg: string): void;
@@ -35,10 +32,10 @@ export interface RuntimeDeps {
   store: EventStore;
   bus: EventBus;
   driver: HarnessDriver;
-  config: Config;
+  /** Builds the spec for a process start. It takes the agent's slug lock itself: never call it while holding that lock. */
+  prepareStart: PrepareStart;
   log: RuntimeLog;
   holdTimeoutMs?: number;
-  serverEnv?: NodeJS.ProcessEnv;
   /** Called with the spec of the first start (AgentRuntimes uses it for the one-time version check). */
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
 }
@@ -56,7 +53,7 @@ const toFactory = (e: MessageEntry): FactoryMessage => ({
 });
 
 export class AgentRuntime {
-  readonly agent: AgentRow;
+  agent: AgentRow;
   private readonly jobs = new SerialQueue();
   private proc: HarnessProcess | undefined;
   private deadProc: HarnessProcess | undefined;
@@ -69,6 +66,7 @@ export class AgentRuntime {
   private compactInFlight = false;
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
+  private archived: boolean;
   private lastError: string | undefined;
   private lastStatusJson = "";
   private firstStartDone = false;
@@ -77,6 +75,7 @@ export class AgentRuntime {
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
     this.errored = d.agent.status === "errored";
+    this.archived = Boolean(d.agent.archivedAt);
   }
 
   async init() {
@@ -92,14 +91,15 @@ export class AgentRuntime {
     body: string;
     urgent: boolean;
   }): Promise<QueueItem> {
-    const row = await this.d.store.createMessage({
-      fromUserId: m.fromUserId,
-      toAgentId: this.agent.id,
-      body: m.body,
-      urgent: m.urgent,
-    });
-    const entry: MessageEntry = { kind: "message", row, fromHandle: m.fromHandle };
     return this.apiJob(async () => {
+      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      const row = await this.d.store.createMessage({
+        fromUserId: m.fromUserId,
+        toAgentId: this.agent.id,
+        body: m.body,
+        urgent: m.urgent,
+      });
+      const entry: MessageEntry = { kind: "message", row, fromHandle: m.fromHandle };
       this.queue.push(entry);
       this.publishQueue();
       await this.ensureStarted();
@@ -118,6 +118,7 @@ export class AgentRuntime {
       ...(c.focus ? { focus: c.focus } : {}),
     };
     return this.apiJob(async () => {
+      if (this.archived) throw new AgentArchivedError(this.agent.slug);
       this.queue.push(entry);
       this.publishQueue();
       await this.ensureStarted();
@@ -128,6 +129,7 @@ export class AgentRuntime {
 
   async interrupt(c: { byHandle: string }): Promise<void> {
     return this.apiJob(async () => {
+      if (this.archived) throw new AgentArchivedError(this.agent.slug);
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
         await this.proc.control("interrupt");
@@ -144,27 +146,43 @@ export class AgentRuntime {
     });
   }
 
-  summary(): AgentSummary {
+  /** Refreshes the row (renames, template-driven edits) and the archived flag. */
+  async reload(): Promise<void> {
+    await this.run(async () => {
+      const r = await this.d.store.agentById(this.agent.id);
+      if (r) {
+        this.agent = r;
+        this.archived = Boolean(r.archivedAt);
+      }
+      this.publishStatus();
+    });
+  }
+
+  /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
+  markArchived(): void {
+    this.archived = true;
+  }
+
+  /** The fields that only the runtime knows. Task 13 fills in the restart fields. */
+  live(): {
+    status: AgentStatus;
+    turnOpen: boolean;
+    lastError?: string;
+    restartPending: boolean;
+    restartWaitingOn: number;
+  } {
     return {
-      slug: this.agent.slug,
-      displayName: this.agent.displayName,
-      description: this.agent.description,
       status: this.status(),
       turnOpen: Boolean(this.openTurnId),
-      runtime: "local",
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
+      restartPending: false,
+      restartWaitingOn: 0,
     };
   }
 
   statusFrame(): AgentStatusFrame {
-    const s = this.summary();
-    return {
-      type: "agent_status",
-      agent: s.slug,
-      status: s.status,
-      turnOpen: s.turnOpen,
-      ...(s.lastError ? { lastError: s.lastError } : {}),
-    };
+    const l = this.live();
+    return { type: "agent_status", agent: this.agent.slug, ...l };
   }
 
   queueItems(): QueueItem[] {
@@ -204,7 +222,14 @@ export class AgentRuntime {
       try {
         return await job();
       } catch (err) {
-        if (!(err instanceof AgentStartError || err instanceof NoOpenTurnError) && this.proc)
+        if (
+          !(
+            err instanceof AgentStartError ||
+            err instanceof AgentArchivedError ||
+            err instanceof NoOpenTurnError
+          ) &&
+          this.proc
+        )
           await this.onJobFailure(this.proc, err);
         throw err;
       }
@@ -276,16 +301,30 @@ export class AgentRuntime {
   /** Only called from API jobs (send, compact): a flush never restarts a dead process. */
   private async ensureStarted() {
     if (this.proc) return;
-    const token = resolveClaudeToken(this.d.config);
-    if (!token) {
-      const message = "Set CLAUDE_CODE_OAUTH_TOKEN to run agents";
-      await this.append(null, { type: "error", source: "spawn", message });
+    if (this.archived) throw new AgentArchivedError(this.agent.slug);
+    // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
+    // lock: it has no handle to it, and its own serialization is the job queue.
+    let spec: AgentRuntimeSpec;
+    try {
+      spec = await this.d.prepareStart(this.agent);
+    } catch (err) {
+      if (err instanceof AgentArchivedError) {
+        this.archived = true;
+        throw err;
+      }
+      const known = err instanceof AgentStartError;
+      const message = known ? err.message : "The agent couldn't be prepared to start.";
+      if (!known) this.d.log.error({ err, agent: this.agent.slug }, "prepareStart failed");
+      await this.append(null, {
+        type: "error",
+        source: "spawn",
+        message,
+        ...(known && err.fix ? { fix: err.fix } : {}),
+      });
       await this.setErrored(message);
       this.publishStatus();
-      throw new AgentStartError(message);
+      throw known ? err : new AgentStartError(message);
     }
-    await mkdir(agentConfigDir(this.d.config, this.agent.slug), { recursive: true });
-    const spec = buildRuntimeSpec(this.agent, this.d.config, token, this.d.serverEnv);
     if (!this.firstStartDone) {
       this.firstStartDone = true;
       this.d.onFirstStart?.(spec);

@@ -253,3 +253,14 @@ test("prepare runs under the workspace lock for the agent's slug", async () => {
   await p;
   expect(done).toBe(true);
 });
+
+test("an invalid stored config is an AgentStartError with the edit_agent fix", async () => {
+  await t.db
+    .update(schema.agents)
+    .set({ config: { name: 5 } as never })
+    .where(eq(schema.agents.id, agent.id));
+  await expect(prepareStart(agent)).rejects.toMatchObject({
+    name: "AgentStartError",
+    fix: "edit_agent",
+  });
+});

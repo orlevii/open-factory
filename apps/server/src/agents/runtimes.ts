@@ -1,19 +1,19 @@
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import type { AgentSummary } from "@open-factory/shared";
-import type { Config } from "../config.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
+import type { PrepareStart } from "./start.ts";
 
 export interface RuntimesDeps {
   store: EventStore;
   bus: EventBus;
   driver: HarnessDriver;
-  config: Config;
+  prepareStart: PrepareStart;
   log: RuntimeLog;
-  serverEnv?: NodeJS.ProcessEnv;
   holdTimeoutMs?: number;
 }
+
+export type LiveFields = ReturnType<AgentRuntime["live"]>;
 
 export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
@@ -30,9 +30,8 @@ export class AgentRuntimes {
         store: this.d.store,
         bus: this.d.bus,
         driver: this.d.driver,
-        config: this.d.config,
+        prepareStart: this.d.prepareStart,
         log: this.d.log,
-        serverEnv: this.d.serverEnv,
         holdTimeoutMs: this.d.holdTimeoutMs,
         onFirstStart: (spec) => this.checkVersionOnce(spec.claudeBin, spec.env),
       });
@@ -47,14 +46,26 @@ export class AgentRuntimes {
     return rt;
   }
 
-  async list(): Promise<AgentSummary[]> {
-    const rows = await this.d.store.listAgents();
-    const out: AgentSummary[] = [];
-    for (const r of rows) {
-      const rt = await this.bySlug(r.slug);
-      if (rt) out.push(rt.summary());
-    }
-    return out;
+  /** The runtime if it already exists. Never creates one. */
+  async get(agentId: string): Promise<AgentRuntime | undefined> {
+    return this.byId.get(agentId)?.catch(() => undefined);
+  }
+
+  /** Refreshes a loaded runtime's row; a no-op when none is loaded. */
+  async refresh(agentId: string): Promise<void> {
+    await (await this.get(agentId))?.reload();
+  }
+
+  /** Runtime-only fields; defaults for an agent that has no runtime yet. */
+  async liveFields(agentId: string, row: { status: string }): Promise<LiveFields> {
+    const rt = await this.get(agentId);
+    if (rt) return rt.live();
+    return {
+      status: row.status === "errored" ? "errored" : "hibernated",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    };
   }
 
   /**

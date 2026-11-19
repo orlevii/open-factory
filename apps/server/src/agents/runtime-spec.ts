@@ -24,15 +24,20 @@ export function buildAgentEnv(
     secrets: Record<string, string>;
   },
 ): Record<string, string> {
-  const env: Record<string, string> = {};
+  // Secrets go in first so nothing a user names a secret can override what the factory sets below.
+  const env: Record<string, string> = { ...extra.secrets };
   for (const k of ENV_ALLOWLIST) {
     const v = serverEnv[k];
     if (v) env[k] = v;
+    else delete env[k];
   }
   env.CLAUDE_CONFIG_DIR = extra.configDir;
-  env[extra.credential.kind === "api_key" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"] =
-    extra.credential.value;
-  for (const [k, v] of Object.entries(extra.secrets)) env[k] = v;
+  const [credVar, otherVar] =
+    extra.credential.kind === "api_key"
+      ? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+      : ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
+  env[credVar as string] = extra.credential.value;
+  delete env[otherVar as string]; // exactly one credential var, whatever a secret is called
   env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = extra.slug;
   env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = `${extra.slug}@open-factory.local`;
   return env;

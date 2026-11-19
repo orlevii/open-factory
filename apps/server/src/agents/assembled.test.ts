@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
@@ -10,7 +11,7 @@ let cookie: string;
 beforeAll(async () => {
   // no harnessDriver: the real Claude driver, pointed at the fake executable
   t = await makeTestApp({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
-  await t.seed();
+  await t.seedAgent();
   cookie = (await t.signUpUser({ handle: "or" })).cookie;
 });
 afterAll(() => t.close());
@@ -62,6 +63,9 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
   const start = sessionStarts()[0];
   expect(start?.kind === "start" && start.env.DATABASE_URL).toBeUndefined();
   expect(start?.kind === "start" && start.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("test-token");
+  expect(start?.kind === "start" && start.env.CLAUDE_CONFIG_DIR).toBe(
+    path.join(t.factoryHome, "agents", "dev", ".claude-config"),
+  );
 
   const page = (
     await t.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie } })

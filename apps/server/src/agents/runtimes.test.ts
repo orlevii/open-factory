@@ -1,29 +1,37 @@
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
+import { insertAgent } from "./testing/rows.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 const driver = new FakeDriver();
 beforeAll(async () => {
   t = await makeTestApp({ harnessDriver: driver });
-  await t.seed();
+  await t.seedAgent();
 });
 afterAll(() => t.close());
 
-test("list shows the seeded agent as hibernated; bySlug caches one runtime per agent", async () => {
-  expect(await t.app.runtimes.list()).toEqual([
-    {
-      slug: "dev",
-      displayName: "Dev agent",
-      description: expect.any(String),
-      status: "hibernated",
-      turnOpen: false,
-      runtime: "local",
-    },
-  ]);
+test("get never creates a runtime; bySlug caches one per agent; liveFields has defaults without one", async () => {
+  const [row] = await t.sql`select id, status from agents where slug = 'dev'`;
+  const id = String(row?.id);
+  expect(await t.app.runtimes.get(id)).toBeUndefined();
+  expect(await t.app.runtimes.liveFields(id, { status: "hibernated" })).toEqual({
+    status: "hibernated",
+    turnOpen: false,
+    restartPending: false,
+    restartWaitingOn: 0,
+  });
+  expect((await t.app.runtimes.liveFields(id, { status: "errored" })).status).toBe("errored");
+  await t.app.runtimes.refresh(id); // no-op without a runtime
+  expect(await t.app.runtimes.get(id)).toBeUndefined();
   const a = await t.app.runtimes.bySlug("dev");
   expect(await t.app.runtimes.bySlug("dev")).toBe(a);
+  expect(await t.app.runtimes.get(id)).toBe(a);
   expect(await t.app.runtimes.bySlug("nope")).toBeUndefined();
+  await t.sql`update agents set display_name = 'Renamed' where id = ${id}`;
+  await t.app.runtimes.refresh(id);
+  expect(a?.agent.displayName).toBe("Renamed");
+  await t.sql`update agents set display_name = 'Test agent' where id = ${id}`;
 });
 
 test("app.close stops running agents gracefully", async () => {
@@ -37,16 +45,16 @@ test("app.close stops running agents gracefully", async () => {
   });
   expect(driver.starts).toHaveLength(1);
   await t.app.runtimes.stopAll();
-  expect(rt?.summary().status).toBe("hibernated");
+  expect(rt?.live().status).toBe("hibernated");
 });
 
 test("a rejected init is evicted, so the next lookup retries", async () => {
-  await t.sql`insert into agents (id, slug, display_name) values ('agent-b', 'b', 'B')`;
+  await insertAgent(t.sql, { id: "agent-b", slug: "b" });
   const spy = vi.spyOn(t.app.store, "pendingQueue").mockRejectedValueOnce(new Error("db blip"));
   try {
     await expect(t.app.runtimes.bySlug("b")).rejects.toThrow("db blip");
     const rt = await t.app.runtimes.bySlug("b");
-    expect(rt?.summary().slug).toBe("b");
+    expect(rt?.agent.slug).toBe("b");
     expect(spy).toHaveBeenCalledTimes(2);
   } finally {
     spy.mockRestore();
@@ -54,7 +62,7 @@ test("a rejected init is evicted, so the next lookup retries", async () => {
 });
 
 test("stopAll still stops healthy runtimes when another init fails", async () => {
-  await t.sql`insert into agents (id, slug, display_name) values ('agent-c', 'c', 'C')`;
+  await insertAgent(t.sql, { id: "agent-c", slug: "c" });
   let rejectInit: ((e: Error) => void) | undefined;
   const spy = vi.spyOn(t.app.store, "pendingQueue").mockImplementationOnce(
     () =>
@@ -76,11 +84,11 @@ test("stopAll still stops healthy runtimes when another init fails", async () =>
       urgent: false,
     });
     expect(driver.starts.length).toBe(before + 1);
-    expect(dev?.summary().status).not.toBe("hibernated");
+    expect(dev?.live().status).not.toBe("hibernated");
     const stopping = t.app.runtimes.stopAll();
     rejectInit?.(new Error("db blip"));
     await expect(stopping).resolves.toBeUndefined();
-    expect(dev?.summary().status).toBe("hibernated");
+    expect(dev?.live().status).toBe("hibernated");
   } finally {
     spy.mockRestore();
   }

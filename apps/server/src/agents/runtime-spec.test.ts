@@ -44,6 +44,29 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
   });
 });
 
+test("secrets can never override PATH, the credential var, the config dir or the git identity", () => {
+  const env = buildAgentEnv(serverEnv, {
+    configDir: "/c",
+    slug: "a1",
+    credential: { kind: "oauth_token", value: "factory-token" },
+    secrets: {
+      PATH: "/evil",
+      ANTHROPIC_API_KEY: "evil-key",
+      CLAUDE_CODE_OAUTH_TOKEN: "evil-token",
+      CLAUDE_CONFIG_DIR: "/evil",
+      GIT_AUTHOR_NAME: "evil",
+      GH_TOKEN: "gh",
+    },
+  });
+  expect(env.PATH).toBe("/usr/bin");
+  expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("factory-token");
+  expect(env.CLAUDE_CONFIG_DIR).toBe("/c");
+  expect(env.GIT_AUTHOR_NAME).toBe("a1");
+  expect(env.GH_TOKEN).toBe("gh");
+  // a secret named like the other credential var is not a way to set two credentials
+  expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+});
+
 test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => {
   const env = buildAgentEnv(serverEnv, {
     configDir: "/c",

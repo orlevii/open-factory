@@ -1,5 +1,6 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
+import { templateConfigSchema } from "@open-factory/shared";
 import { asc, eq } from "drizzle-orm";
 import type { Config } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
@@ -30,7 +31,15 @@ export function createPrepareStart(d: {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
       if (agent.archivedAt) throw new AgentArchivedError(agent.slug);
-      const config = agent.config;
+      // The jsonb column is typed, not enforced: parse the snapshot rather than trust the row type.
+      const parsedConfig = templateConfigSchema.safeParse(agent.config);
+      if (!parsedConfig.success) {
+        throw new AgentStartError(
+          `The saved configuration of @${agent.slug} is invalid. Edit the agent to fix it.`,
+          "edit_agent",
+        );
+      }
+      const config = parsedConfig.data;
 
       const [cred] = await d.db
         .select()

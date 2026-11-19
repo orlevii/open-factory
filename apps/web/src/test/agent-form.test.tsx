@@ -299,3 +299,135 @@ test("the credential select lists names with their kind", async () => {
     "personal: API key",
   ]);
 });
+
+const projectsError = () =>
+  json(
+    {
+      error: {
+        code: "validation_error",
+        message: "Invalid body",
+        fields: { projects: "Project docs isn't registered." },
+      },
+    },
+    400,
+  );
+
+test("a server projects error shows under Projects and focuses the group (create)", async () => {
+  mockWorld({ extra: { "POST /api/agents": projectsError } });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  const msg = await screen.findByText("Project docs isn't registered.");
+  const group = screen.getByRole("group", { name: /Projects/ });
+  expect(group).toContainElement(msg);
+  expect(group.getAttribute("aria-describedby")).toContain(msg.closest("[id]")?.id);
+  expect(group).toHaveAttribute("aria-invalid", "true");
+  await vi.waitFor(() =>
+    expect(within(group).getByRole("checkbox", { name: /app/ })).toHaveFocus(),
+  );
+});
+
+test("a server projects error shows under Projects (edit)", async () => {
+  const lead = agentSummary({ slug: "lead", template: "lead", projects: ["app"] });
+  mockWorld({ agents: [lead], extra: { "PATCH /api/agents/lead": projectsError } });
+  renderApp("/agents/lead/edit", alice);
+  const group = await screen.findByRole("group", { name: /Projects/ });
+  await userEvent.click(await within(group).findByRole("checkbox", { name: /docs/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await within(group).findByText("Project docs isn't registered.")).toBeInTheDocument();
+});
+
+test("Edit: a toggle sends the project array, Use template default sends null", async () => {
+  const lead = agentSummary({ slug: "lead", template: "lead", projects: ["app"] });
+  const api = mockWorld({
+    agents: [lead],
+    extra: {
+      "PATCH /api/agents/lead": (body) =>
+        json({
+          agent: {
+            ...lead,
+            grantsOverridden: (body as { projects: unknown }).projects !== null,
+          },
+        }),
+    },
+  });
+  renderApp("/agents/lead/edit", alice);
+  const group = await screen.findByRole("group", { name: /Projects/ });
+  await userEvent.click(await within(group).findByRole("checkbox", { name: /docs/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await screen.findByText(/^Saved\./);
+  await userEvent.click(within(group).getByRole("button", { name: "Use template default" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await vi.waitFor(() =>
+    expect(api.calls.filter((c) => c.method === "PATCH").map((c) => c.body)).toEqual([
+      { projects: ["app", "docs"] },
+      { projects: null },
+    ]),
+  );
+});
+
+test("toggling the grants back to the template's set is not Custom", async () => {
+  const api = mockWorld({
+    extra: { "POST /api/agents": () => new Promise<Response>(() => {}) },
+  });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  const group = screen.getByRole("group", { name: /Projects/ });
+  await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
+  expect(within(group).getByText("Custom")).toBeInTheDocument();
+  await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
+  expect(within(group).getByText("From the template")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  await vi.waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
+  expect(api.calls.find((c) => c.method === "POST")?.body).not.toHaveProperty("projects");
+});
+
+test("an unknown ?template= counts as unchosen", async () => {
+  const api = mockWorld();
+  renderApp("/agents/new?template=nope", alice);
+  await screen.findByRole("button", { name: "Create agent" });
+  await vi.waitFor(() =>
+    expect((field("Template") as unknown as HTMLSelectElement).disabled).toBe(false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("a local template's summary says Unsandboxed", async () => {
+  mockWorld();
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  expect(screen.getByText("Unsandboxed")).toBeInTheDocument();
+});
+
+test("Edit: the restart line follows the response's restartPending", async () => {
+  const lead = agentSummary({ slug: "lead", displayName: "Lead", status: "hibernated" });
+  mockWorld({
+    agents: [lead],
+    extra: {
+      "PATCH /api/agents/lead": () =>
+        json({ agent: { ...lead, displayName: "Boss", restartPending: true } }),
+    },
+  });
+  renderApp("/agents/lead/edit", alice);
+  const name = (await screen.findByLabelText("Display name")) as HTMLInputElement;
+  await vi.waitFor(() => expect(name.value).toBe("Lead"));
+  await userEvent.clear(name);
+  await userEvent.type(name, "Boss");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(
+    await screen.findByText(/^Saved\. The agent restarts when idle to apply the changes\./),
+  ).toBeInTheDocument();
+});
+
+test("display name over the shared limit errors on blur", async () => {
+  mockWorld();
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  const name = field("Display name");
+  await userEvent.clear(name);
+  await userEvent.type(name, "x".repeat(81));
+  await userEvent.tab();
+  expect(await screen.findByText(/80 characters or fewer/)).toBeInTheDocument();
+});

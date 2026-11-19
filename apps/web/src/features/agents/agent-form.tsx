@@ -2,6 +2,7 @@ import {
   type AgentSummary,
   ApiError,
   type CreateAgentBody,
+  createAgentBodySchema,
   type PatchAgentBody,
   slugSchema,
   type TemplateConfig,
@@ -179,6 +180,8 @@ export function AgentForm(props: Props) {
         if (!create) return undefined;
         if (v.template === "") return "Choose a template.";
         const t = templates.data?.templates.find((x) => x.name === v.template);
+        // A name that isn't listed (a stale ?template=) shows as unchosen, so it is.
+        if (templates.data && !t) return "Choose a template.";
         if (t && t.errors > 0) return `Template ${v.template} has errors. Fix them first.`;
         return undefined;
       }
@@ -189,14 +192,15 @@ export function AgentForm(props: Props) {
         return r.success ? undefined : r.error.issues[0]?.message;
       }
       case "displayName": {
-        const s = v.displayName.trim();
-        if (s === "") return "Enter a display name.";
-        return s.length > 80 ? "Keep the display name to 80 characters or fewer." : undefined;
+        if (createAgentBodySchema.shape.displayName.safeParse(v.displayName).success) return;
+        return v.displayName.trim() === ""
+          ? "Enter a display name."
+          : "Keep the display name to 80 characters or fewer.";
       }
       case "description":
-        return v.description.trim().length > 500
-          ? "Keep the description to 500 characters or fewer."
-          : undefined;
+        return createAgentBodySchema.shape.description.safeParse(v.description).success
+          ? undefined
+          : "Keep the description to 500 characters or fewer.";
       case "credential":
         return v.credential === "" ? "Choose a credential." : undefined;
       default:
@@ -226,12 +230,18 @@ export function AgentForm(props: Props) {
 
   const setProjects = (next: string[]) => {
     setProjectsTouched(true);
-    setCustom(true);
+    // Back to exactly the template's set is the template default again, not an override.
+    const sameAsTemplate =
+      config !== undefined &&
+      next.length === config.projects.length &&
+      config.projects.every((p) => next.includes(p));
+    setCustom(!sameAsTemplate);
     set("projects", next);
   };
   const applyTemplateDefault = () => {
     setProjectsTouched(true);
     setCustom(false);
+    setErrors((e) => ({ ...e, projects: undefined }));
     // The template's set when it's known; the server resolves it either way (projects: null).
     if (config) set("projects", config.projects);
   };
@@ -289,9 +299,10 @@ export function AgentForm(props: Props) {
         setCustom(saved.grantsOverridden);
         setOutcome({
           tone: "success",
-          content: wasRunning
-            ? "Saved. The agent restarts when idle to apply the changes. Reminders it scheduled in this session are lost."
-            : "Saved.",
+          content:
+            saved.restartPending || wasRunning
+              ? "Saved. The agent restarts when idle to apply the changes. Reminders it scheduled in this session are lost."
+              : "Saved.",
         });
       }
     } catch (err) {
@@ -510,6 +521,7 @@ export function AgentForm(props: Props) {
           projects={projects.data}
           value={values.projects}
           custom={custom}
+          error={errors.projects}
           onChange={setProjects}
           onUseDefault={applyTemplateDefault}
         />
@@ -553,7 +565,7 @@ function TemplateSummary({
   missingSecrets: string[];
 }) {
   const parts = [
-    config.runtime === "docker" ? "Docker" : "Local",
+    config.runtime === "docker" ? "Docker" : "Unsandboxed",
     config.model && `model ${config.model}`,
     config.skills.length > 0 && `skills: ${config.skills.join(", ")}`,
     config.plugins.length > 0 && `plugins: ${config.plugins.length}`,

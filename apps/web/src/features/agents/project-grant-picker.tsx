@@ -1,5 +1,6 @@
 import type { ProjectSummary } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
+import { CircleAlert } from "lucide-react";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 
@@ -9,18 +10,26 @@ export function ProjectGrantPicker({
   projects,
   value,
   custom,
+  error,
   onChange,
   onUseDefault,
 }: {
   projects: ProjectSummary[] | undefined;
   value: string[];
   custom: boolean;
+  /** A server field error (e.g. a project removed while the form was open). */
+  error?: string;
   onChange: (next: string[]) => void;
   onUseDefault: () => void;
 }) {
   const noteId = "field-projects-note";
+  const errorId = "field-projects-error";
   return (
-    <fieldset className="grid min-w-0 gap-2" aria-describedby={noteId}>
+    <fieldset
+      className="grid min-w-0 gap-2"
+      aria-describedby={error ? `${noteId} ${errorId}` : noteId}
+      aria-invalid={error ? true : undefined}
+    >
       <legend className="mb-1.5 flex items-baseline gap-2 text-[0.8125rem] font-medium">
         Projects
         <span id={noteId} className="font-normal text-muted-foreground">
@@ -70,6 +79,15 @@ export function ProjectGrantPicker({
             );
           })}
         </ul>
+      )}
+      {error && (
+        <p
+          id={errorId}
+          className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
+        >
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          {error}
+        </p>
       )}
       {custom && (
         <div>

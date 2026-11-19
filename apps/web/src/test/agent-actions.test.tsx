@@ -231,3 +231,14 @@ test("an unknown agent shows the not-found state", async () => {
   expect(await screen.findByText("Agent not found.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Back to agents" })).toHaveAttribute("href", "/agents");
 });
+
+test("a pending re-sync is announced once: the button keeps its label", async () => {
+  world({ extra: { "POST /api/agents/lead/resync": () => new Promise<Response>(() => {}) } });
+  const section = await open();
+  await userEvent.click(within(section).getByRole("button", { name: "Re-sync" }));
+  expect(await within(section).findAllByText("Re-syncing…")).toHaveLength(1);
+  expect(within(section).getByRole("button", { name: "Re-sync" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});

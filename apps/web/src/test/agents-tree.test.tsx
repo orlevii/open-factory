@@ -212,3 +212,21 @@ test("the header links to New agent", async () => {
     "/agents/new",
   );
 });
+
+test("archived view: a report whose manager isn't listed isn't indented but names it", async () => {
+  mockWorld({
+    archived: [
+      agentSummary({
+        slug: "old",
+        displayName: "Old one",
+        reportsTo: "lead",
+        depth: 1,
+        archivedAt: "2026-11-01",
+      }),
+    ],
+  });
+  renderApp("/agents?archived=only", alice);
+  const row = await screen.findByRole("link", { name: /Old one/ });
+  expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("0px");
+  expect(within(row).getByText("reports to @lead")).toHaveClass("sr-only");
+});

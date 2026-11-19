@@ -1,7 +1,6 @@
 import { type AgentSummary, ApiError } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
@@ -194,8 +193,11 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
     setLifeOutcome({ tone: "pending", content: `Archiving @${slug}…` });
     try {
       await archiveAgent(slug);
-      await refresh();
+      // Leave first: refreshing this agent while the page is mounted would flash its archived
+      // layout. The list refetches on arrival.
+      await qc.invalidateQueries({ queryKey: ["agents"] });
       await navigate({ to: "/agents", search: { justArchived: slug } });
+      void qc.invalidateQueries({ queryKey: ["agent", slug] });
     } catch (err) {
       const reports = err instanceof ApiError ? err.body.reports : undefined;
       setLifeOutcome({
@@ -241,13 +243,6 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
     }
   }
 
-  const pendingLabel = (label: string, pending: string, on: boolean) => (
-    <>
-      {on && <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />}
-      {on ? pending : label}
-    </>
-  );
-
   return (
     <section
       aria-labelledby="agent-actions-title"
@@ -268,7 +263,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
               aria-disabled={Boolean(busy) || resyncBlocked || undefined}
               onClick={() => void resync()}
             >
-              {pendingLabel("Re-sync", "Re-syncing…", busy === "resync")}
+              Re-sync
             </Button>
           }
           reason={
@@ -294,7 +289,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
               aria-disabled={Boolean(busy) || undefined}
               onClick={() => void restore()}
             >
-              {pendingLabel("Restore", "Restoring…", busy === "restore")}
+              Restore
             </Button>
           }
           outcome={lifeOutcome}
@@ -311,7 +306,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
               aria-disabled={Boolean(busy) || undefined}
               onClick={() => void archive()}
             >
-              {pendingLabel(`Archive @${slug}`, "Archiving…", busy === "archive")}
+              {`Archive @${slug}`}
             </Button>
           }
           outcome={lifeOutcome}

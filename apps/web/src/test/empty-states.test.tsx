@@ -1,5 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
+import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -12,9 +13,10 @@ test.each([
   ["/tasks", "Tasks", "No tasks yet."],
   ["/schedules", "Schedules", "No schedules yet."],
 ])("%s shows its heading and empty line", async (path, title, text) => {
+  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
   renderApp(path, alice);
   expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
-  expect(screen.getByText(text)).toBeInTheDocument();
+  expect(await screen.findByText(text)).toBeInTheDocument();
 });
 
 test("the dashboard shows the Inbox and Agents panels, each empty", async () => {

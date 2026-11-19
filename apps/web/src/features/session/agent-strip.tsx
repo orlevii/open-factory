@@ -1,8 +1,10 @@
 import type { AgentSummary, WaitingOn } from "@open-factory/shared";
+import { Link } from "@tanstack/react-router";
 import { RotateCw, ShieldOff } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { LINK_CLASS } from "./message-block";
 import { resetPhrase } from "./status-badge";
 
 const Dot = () => <span aria-hidden="true">·</span>;
@@ -160,6 +162,32 @@ function DetailSegment({ agent, slotsMax }: { agent: AgentSummary; slotsMax?: nu
   );
 }
 
+/** The agent's place in the org (S6 UI design §3): "Reports to @lead · 3 reports". The manager is a
+ *  link to its session; the count is plain text. */
+function OrgSegment({ agent }: { agent: AgentSummary }) {
+  const reports =
+    agent.reports > 0 && ` · ${agent.reports} ${agent.reports === 1 ? "report" : "reports"}`;
+  return (
+    <span data-strip-org>
+      {agent.reportsTo ? (
+        <>
+          Reports to{" "}
+          <Link
+            to="/agents/$slug"
+            params={{ slug: agent.reportsTo }}
+            className={`font-mono text-foreground ${LINK_CLASS}`}
+          >
+            @{agent.reportsTo}
+          </Link>
+        </>
+      ) : (
+        "No manager"
+      )}
+      {reports}
+    </span>
+  );
+}
+
 /** Muted strip under the header (UI design §3.2). Waiting on, the paused/queued detail and the
  *  per-minute timer sit outside the `role="status"` region: the session announcer already reports
  *  status changes, so nothing here is re-announced every minute. */
@@ -173,13 +201,7 @@ export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?
       <Dot />
       <span className="font-mono">{agent.template}</span>
       <Dot />
-      {agent.reportsTo ? (
-        <span>
-          reports to <span className="font-mono">@{agent.reportsTo}</span>
-        </span>
-      ) : (
-        <span>No manager</span>
-      )}
+      <OrgSegment agent={agent} />
       <Dot />
       <span>
         credential <span className="font-mono">{agent.credential}</span>

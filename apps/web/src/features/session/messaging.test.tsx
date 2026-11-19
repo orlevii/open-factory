@@ -488,3 +488,51 @@ test("?message= highlights the row holding that envelope, not the event's first 
   expect(lit).toHaveTextContent("second body");
   expect(lit).not.toHaveTextContent("first body");
 });
+
+test("the strip's manager is a link to its session; the reports count is plain text", async () => {
+  mockApi({
+    "GET /api/agents/dev": () => json(detail({ reportsTo: "lead", reports: 3 })),
+    "GET /api/agents/dev/events?": () =>
+      json({
+        hasMore: { before: false, after: false },
+        events: [se({ type: "assistant_text", text: "x" })],
+      }),
+    "GET /api/agents?archived=exclude": () =>
+      json({
+        agents: [agentSummary({ reportsTo: "lead", reports: 3 })],
+        running: { count: 1, max: 8 },
+      }),
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "@lead" })).toHaveAttribute(
+    "href",
+    "/agents/lead",
+  );
+  expect(screen.queryByRole("link", { name: /3 reports/ })).toBeNull();
+});
+
+test("held updates show as quiet lines from the queue", async () => {
+  mockApi({
+    "GET /api/agents/dev": () =>
+      json(
+        detail({}, [
+          { id: "h1", kind: "held", from: "b", count: 2, waitReason: "turn", createdAt: AT },
+        ]),
+      ),
+    "GET /api/agents/dev/events?": () =>
+      json({
+        hasMore: { before: false, after: false },
+        events: [se({ type: "assistant_text", text: "x" })],
+      }),
+    "GET /api/agents?archived=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev", alice);
+  expect(
+    await screen.findByText(
+      (_, el) =>
+        el?.textContent === "2 updates from @b waiting for this turn to end" &&
+        el.tagName === "SPAN",
+    ),
+  ).toBeInTheDocument();
+});

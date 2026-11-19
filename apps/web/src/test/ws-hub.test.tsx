@@ -3,6 +3,7 @@ import { act, screen } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { WsOptions } from "@/lib/ws";
 import { useWs, type WsHub } from "@/lib/ws-context";
+import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -47,6 +48,7 @@ beforeEach(() => {
 const frame = (agent: string): ServerMessage => ({ type: "resync", agent });
 
 test("hub fans frames out to listeners; unsubscribe removes one; send follows the connection", async () => {
+  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
   const { unmount } = renderApp("/inbox", alice);
   await screen.findByText("probe 0");
   const hub = () => h.hub as WsHub;

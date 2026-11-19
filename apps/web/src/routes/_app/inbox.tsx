@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { EmptyState } from "@/components/empty-state";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { InboxList } from "@/features/inbox/inbox-list";
 
 export const Route = createFileRoute("/_app/inbox")({
   component: () => (
     <>
       <PageHeader title="Inbox" />
       <PageBody>
-        <EmptyState text="Nothing in your inbox." />
+        <InboxList />
       </PageBody>
     </>
   ),

@@ -37,8 +37,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { querystring: agentListQuerySchema, response: { 200: agentListSchema } } },
     async (req) => ({
       agents: await app.agents.list(req.query.archived),
-      // Placeholder until the supervisor lands (S5): no cap is enforced yet.
-      running: { count: 0, max: 8 },
+      running: app.runtimes.supervisor.running(),
     }),
   );
 

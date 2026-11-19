@@ -130,6 +130,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     bus,
     prepareStart,
     log: app.log,
+    maxRunningAgents: config.maxRunningAgents,
     driver:
       deps.harnessDriver ??
       createClaudeDriver({ log: app.log, transports: { local: localTransport } }),
@@ -168,6 +169,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("runtimes", runtimes);
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
+    // The closing latch first (spec §5.6): nothing may start once shutdown has begun.
+    runtimes.supervisor.close();
     await runtimes.stopAll();
   });
 

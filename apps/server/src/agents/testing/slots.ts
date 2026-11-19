@@ -18,4 +18,7 @@ export class RecordingSlots implements SlotPort {
   closing() {
     return false;
   }
+  isQueued() {
+    return false;
+  }
 }

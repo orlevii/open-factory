@@ -1,5 +1,5 @@
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import type { SlotPort } from "../supervisor/slots.ts";
+import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
@@ -14,8 +14,8 @@ export interface RuntimesDeps {
   holdTimeoutMs?: number;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The slot port every runtime starts through (the Supervisor, Task 17); unlimited until then. */
-  slots?: SlotPort;
+  /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default, 8. */
+  maxRunningAgents?: number;
 }
 
 /** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
@@ -31,8 +31,22 @@ export type LiveFields = ReturnType<AgentRuntime["live"]>;
 
 export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
+  /** The runtimes whose init finished: the Supervisor's synchronous view. */
+  private readonly loaded = new Map<string, AgentRuntime>();
   private versionChecked = false;
-  constructor(private readonly d: RuntimesDeps) {}
+  /** The one owner of the cap; every runtime starts through it. */
+  readonly supervisor: Supervisor;
+  constructor(private readonly d: RuntimesDeps) {
+    this.supervisor = new Supervisor({
+      max: d.maxRunningAgents ?? 8,
+      runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
+      bus: d.bus,
+      log: d.log,
+      credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
+      // Rate-limit pauses land in Task 18.
+      paused: () => false,
+    });
+  }
 
   async bySlug(slug: string): Promise<AgentRuntime | undefined> {
     const row = await this.d.store.agentBySlug(slug);
@@ -47,13 +61,17 @@ export class AgentRuntimes {
         prepareStart: this.d.prepareStart,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
-        slots: this.d.slots,
+        slots: this.supervisor,
+        credentialPaused: () => this.supervisor.pausedFor(row.id),
         // Local agents only: a Docker agent's claude runs in its image, not on the host.
         onFirstStart: (spec) => {
           if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);
         },
       });
-      const pending = runtime.init().then(() => runtime);
+      const pending = runtime.init().then(() => {
+        if (this.byId.get(row.id) === pending) this.loaded.set(row.id, runtime);
+        return runtime;
+      });
       rt = pending;
       this.byId.set(row.id, pending);
       // Evict a failed init (e.g. a DB blip) so a later lookup retries instead of failing forever.

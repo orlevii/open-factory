@@ -22,6 +22,8 @@ export interface SlotPort {
   release(agentId: string): void;
   becameHibernatable(agentId: string): void;
   closing(): boolean;
+  /** The agent has an entry in the wake queue (the `queued` status input, spec §5.4). */
+  isQueued(agentId: string): boolean;
 }
 
 /** Always "granted", for tests that predate the Supervisor. */
@@ -30,4 +32,5 @@ export const unlimitedSlots: SlotPort = {
   release: () => {},
   becameHibernatable: () => {},
   closing: () => false,
+  isQueued: () => false,
 };

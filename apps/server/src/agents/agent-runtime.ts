@@ -7,13 +7,14 @@ import {
   type HarnessProcess,
   ProcessNotRunningError,
 } from "@open-factory/harness";
-import type {
-  AgentStatus,
-  AgentStatusFrame,
-  AnyEvent,
-  HarnessEvent,
-  QueueItem,
-  WaitingOn,
+import {
+  type AgentStatus,
+  type AgentStatusFrame,
+  type AnyEvent,
+  type HarnessEvent,
+  type QueueItem,
+  statusOf,
+  type WaitingOn,
 } from "@open-factory/shared";
 import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/slots.ts";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
@@ -73,6 +74,14 @@ type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; c
 type Entry = MessageEntry | CompactEntry;
 
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
+
+/** The only reasons that wake an errored agent (spec §5.2, §9.2); `message` is a human's (notices never wake). */
+const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
+  "crash_recovery",
+  "restart",
+  "reset",
+  "message",
+]);
 
 const fromOf = (e: MessageEntry): string => {
   if (e.row.kind === "system") return "@factory";
@@ -301,7 +310,14 @@ export class AgentRuntime {
         this.d.log.error({ agent: this.agent.slug, reason }, "grant for an agent that is running");
         return;
       }
-      if (this.archived || this.noStart || this.slots.closing() || !this.queue.length) {
+      // The whole eligibility predicate again (spec §5.2): the grant was bookkeeping, this is the agent's own turn.
+      if (
+        this.noStart ||
+        this.slots.closing() ||
+        !this.acceptsWake(reason) ||
+        !this.hasDeliverable() ||
+        this.credentialPaused()
+      ) {
         this.slots.release(this.agent.id);
         this.publishStatus();
         return;
@@ -318,6 +334,30 @@ export class AgentRuntime {
       this.publishStatus();
       return ok;
     });
+  }
+
+  /**
+   * The Supervisor's drop rules that only the runtime knows (spec §5.2): never archived or latched, and an errored
+   * agent only for crash recovery, Restart, reset or a human's message.
+   */
+  acceptsWake(reason: WakeReason): boolean {
+    if (this.archived || this.noStart) return false;
+    return !this.errored || ERRORED_WAKES.has(reason);
+  }
+
+  /** A wake is only granted with something to write: a pending message or notice, or a queued compact (spec §5.2). */
+  hasDeliverable(): boolean {
+    return this.queue.length > 0;
+  }
+
+  /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
+  isStopping(): boolean {
+    return Boolean(this.proc) && this.stopping;
+  }
+
+  /** A job that changes nothing, so its end re-evaluates the warm timer (a credential pause changed, spec §6.3). */
+  recheck(): void {
+    void this.run(async () => this.publishStatus());
   }
 
   /** The fields that only the runtime knows. */
@@ -389,7 +429,7 @@ export class AgentRuntime {
       !this.pinned() &&
       !this.restartPending &&
       !this.errored &&
-      (this.queue.length === 0 || (this.d.credentialPaused?.() ?? false))
+      (this.queue.length === 0 || this.credentialPaused())
     );
   }
 
@@ -474,11 +514,24 @@ export class AgentRuntime {
   // ---------- internals ----------
 
   private status(): AgentStatus {
-    if (this.errored) return "errored";
-    if (!this.proc) return "hibernated";
-    if (!this.started || this.openTurnId || this.awaiting.length || this.compactInFlight)
-      return "working";
-    return "idle";
+    return statusOf({
+      errored: this.errored,
+      attempting: false, // the crash policy (Task 19) sets it
+      working:
+        this.starting ||
+        (Boolean(this.proc) && !this.started) ||
+        Boolean(this.openTurnId) ||
+        this.awaiting.length > 0 ||
+        this.compactInFlight,
+      credentialPaused: this.credentialPaused(),
+      hasPendingWork: this.queue.length > 0,
+      queuedWake: this.slots.isQueued(this.agent.id),
+      processRunning: Boolean(this.proc),
+    });
+  }
+
+  private credentialPaused(): boolean {
+    return this.d.credentialPaused?.() ?? false;
   }
 
   private itemOf(e: Entry): QueueItem {
@@ -511,7 +564,8 @@ export class AgentRuntime {
     return dto;
   }
 
-  private publishStatus() {
+  /** Publishes the status frame when it changed. The Supervisor calls it when the agent's queue entry changes. */
+  publishStatus() {
     const frame = this.statusFrame();
     const json = JSON.stringify(frame);
     if (json === this.lastStatusJson) return;

@@ -9,7 +9,13 @@ import { backupDiffering, copyTargets, resyncStamp, templateTargets } from "./fi
 import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
-import { buildMounts, checkMounts, declaredMarketplaceDirs, dockerSocketPaths } from "./mounts.ts";
+import {
+  buildMounts,
+  checkMounts,
+  declaredMarketplaceDirs,
+  dockerSocketPaths,
+  type MountCheckContext,
+} from "./mounts.ts";
 import {
   agentConfigDir,
   agentStateDir,
@@ -157,7 +163,13 @@ export class Workspace {
    * Lock contract: no Workspace method takes a lock itself. Callers must hold `lock.run(slug, …)`
    * around materialize, resync and prepare (createPrepareStart does so for prepare).
    */
-  async prepare(i: PrepareInput): Promise<{ workdir: string; configDir: string; mounts: Mount[] }> {
+  async prepare(i: PrepareInput): Promise<{
+    workdir: string;
+    configDir: string;
+    mounts: Mount[];
+    /** Docker only: the context `mounts` passed `checkMounts` with, for the pre-start re-check. */
+    mountCheck?: MountCheckContext;
+  }> {
     const workdir = this.workdir(i.slug);
     const configDir = agentConfigDir(workdir);
     const configRel = path.relative(workdir, configDir);
@@ -217,15 +229,18 @@ export class Workspace {
       cliBundle: this.d.cliBundle,
     };
     const mounts = buildMounts(mountInputs);
-    // Local agents ignore mounts; a Docker start fails closed on any refused one.
+    // Local agents ignore mounts. A Docker start fails closed on any refused mount and gets the
+    // checked (realpath) mounts plus the context, so the launcher re-checks right before each
+    // container create/start (checkMounts' doc comment).
     if (i.config.runtime === "docker") {
       const home = os.homedir();
-      await checkMounts(mounts, {
+      const mountCheck: MountCheckContext = {
         ...mountInputs,
         factoryHome: this.d.factoryHome,
         home,
         dockerSockets: dockerSocketPaths(this.serverEnv, home),
-      });
+      };
+      return { workdir, configDir, mounts: await checkMounts(mounts, mountCheck), mountCheck };
     }
     return { workdir, configDir, mounts };
   }

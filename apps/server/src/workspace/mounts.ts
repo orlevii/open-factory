@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import { WorkspaceError } from "./safe-fs.ts";
@@ -75,32 +76,54 @@ export interface MountCheckContext {
   dockerSockets: string[];
 }
 
-/** Canonical form of a path the factory names; a path that can't be resolved keeps its absolute spelling. */
+/** Canonical form of a path the factory names. A missing tail keeps its spelling under the
+ *  canonical form of its deepest existing ancestor (a not-yet-created socket still compares right). */
 async function canon(p: string): Promise<string> {
-  try {
-    return await realpath(p);
-  } catch {
-    return path.resolve(p);
+  const abs = path.resolve(p);
+  const tail: string[] = [];
+  for (let dir = abs; ; dir = path.dirname(dir)) {
+    try {
+      return path.join(await realpath(dir), ...tail.reverse());
+    } catch {
+      if (dir === path.dirname(dir)) return abs;
+      tail.push(path.basename(dir));
+    }
   }
 }
 
 const isUnder = (child: string, parent: string) =>
   child !== parent && child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 
+/** The account's home from the user database, which `$HOME` can't override. */
+function userDbHome(): string | undefined {
+  try {
+    return os.userInfo().homedir || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Spec §11.4 (defence in depth): `realpath`s each source and refuses `/`, the host home,
  * FACTORY_HOME, FACTORY_HOME/state, a Docker socket, or an ancestor of any of them; anything under
  * FACTORY_HOME except this agent's workdir and its plugins dir; and anything that isn't exactly one
  * of the allowed kinds with the expected read-only flag and target.
+ *
+ * Returns the checked mounts with each source replaced by its realpath (and parity targets by the
+ * same path), so Docker binds the exact path that was validated, not a link that could be swapped
+ * afterwards. Bind sources resolve again at every container start, so the Docker launcher must
+ * pass only these returned mounts and re-run `checkMounts` (same context) immediately before each
+ * container create or start, including when it reuses an existing container.
  */
-export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Promise<void> {
+export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Promise<Mount[]> {
   const factoryHome = await canon(ctx.factoryHome);
   const forbidden: { path: string; name: string }[] = [];
   const forbid = async (p: string, name: string) => {
     // Both spellings: the raw path is what a mount of an unresolvable or linked path would name.
     for (const q of new Set([path.resolve(p), await canon(p)])) forbidden.push({ path: q, name });
   };
-  await forbid(ctx.home, "the host home directory");
+  for (const h of new Set([ctx.home, userDbHome()]))
+    if (h) await forbid(h, "the host home directory");
   await forbid(ctx.factoryHome, "FACTORY_HOME");
   await forbid(path.join(ctx.factoryHome, "state"), "the factory state directory");
   for (const s of ctx.dockerSockets) await forbid(s, "a Docker socket");
@@ -116,8 +139,11 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
     ...(await kind([ctx.cliBundle], true, false)),
   ];
 
+  const checked: Mount[] = [];
   for (const m of mounts) {
     const refuse = (reason: string) => new MountRefusedError(m.source, reason);
+    if (!path.isAbsolute(m.source) || !path.isAbsolute(m.target))
+      throw refuse("its source and target must be absolute paths");
     let real: string;
     try {
       real = await realpath(m.source);
@@ -136,9 +162,15 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
     const sameFlag = kinds.filter((a) => a.readOnly === m.readOnly);
     if (!sameFlag.length)
       throw refuse(`it must be ${kinds[0]?.readOnly ? "read-only" : "writable"}`);
-    const targetOk = sameFlag.some((a) =>
+    const match = sameFlag.find((a) =>
       a.parity ? m.target === m.source || m.target === real : m.target === CLI_BUNDLE_TARGET,
     );
-    if (!targetOk) throw refuse(`its target ${m.target} isn't the allowed one`);
+    if (!match) throw refuse(`its target ${m.target} isn't the allowed one`);
+    checked.push({
+      source: real,
+      target: match.parity ? real : CLI_BUNDLE_TARGET,
+      readOnly: m.readOnly,
+    });
   }
+  return checked;
 }

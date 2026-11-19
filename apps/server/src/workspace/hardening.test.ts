@@ -300,6 +300,18 @@ test("a granted project inside FACTORY_HOME fails the Docker start", async () =>
   );
 });
 
+test("a Docker prepare returns the realpath of a symlinked granted project", async () => {
+  const real = prep.grants[0]?.hostPath as string;
+  const link = path.join(tmp("plink-"), "app");
+  await symlink(real, link);
+  prep = { ...prep, grants: [{ name: "app", hostPath: link }] };
+  asDocker();
+  const { mounts, mountCheck } = await prepareAgent();
+  expect(mounts).toContainEqual({ source: real, target: real, readOnly: false });
+  expect(mounts.map((m) => m.source)).not.toContain(link);
+  expect(mountCheck?.grantedPaths).toEqual([link]);
+});
+
 test("a granted project that contains FACTORY_HOME fails the Docker start", async () => {
   const parent = path.dirname(home);
   prep = { ...prep, grants: [{ name: "app", hostPath: parent }] };

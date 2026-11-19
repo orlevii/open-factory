@@ -99,20 +99,41 @@ beforeEach(() => {
   };
 });
 
+// Each source is also declared (rw and ro), so only its specific forbidden rule can refuse it.
 test.each([
-  ["/", "root"],
-  [os.homedir(), "home"],
-  ["<home>", "FACTORY_HOME"],
-  ["<home>/state", "state"],
-  ["<parent>", "ancestor of FACTORY_HOME"],
-  ["/var/run/docker.sock", "docker socket"],
-  ["<home>/agents/other", "another agent's workdir"],
-  ["<home>/state/agents/other/plugins-config/plugins", "another agent's plugins"],
-])("refuses %s (%s)", async (raw) => {
-  const src = raw.replace("<home>", home).replace("<parent>", path.dirname(home));
-  await expect(checkMounts([{ source: src, target: src, readOnly: true }], ctx)).rejects.toThrow(
-    MountRefusedError,
-  );
+  ["/", "root", "it is the filesystem root"],
+  [os.homedir(), "home", "it is the host home directory"],
+  ["<home>", "FACTORY_HOME", "it is FACTORY_HOME"],
+  ["<home>/state", "state", "it is the factory state directory"],
+  ["<parent>", "ancestor of FACTORY_HOME", "it contains FACTORY_HOME"],
+  ["<sock>", "docker socket", "it is a Docker socket"],
+  [
+    "<home>/agents/other",
+    "another agent's workdir",
+    "it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir",
+  ],
+  [
+    "<home>/state/agents/other/plugins-config/plugins",
+    "another agent's plugins",
+    "it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir",
+  ],
+])("refuses %s (%s)", async (raw, _kind, reason) => {
+  const sock = path.join(tmp("sock-"), "docker.sock");
+  writeFileSync(sock, "");
+  const src = raw
+    .replace("<home>", home)
+    .replace("<parent>", path.dirname(home))
+    .replace("<sock>", sock);
+  const declared = {
+    ...ctx,
+    grantedPaths: [src],
+    hostSkillPaths: [src],
+    dockerSockets: [...ctx.dockerSockets, sock],
+  };
+  for (const readOnly of [true, false])
+    await expect(checkMounts([{ source: src, target: src, readOnly }], declared)).rejects.toThrow(
+      `Mount ${src} isn't allowed: ${reason}.`,
+    );
 });
 
 test("refuses a home ancestor and a Docker socket even when they are declared inputs", async () => {
@@ -131,7 +152,7 @@ test("refuses a home ancestor and a Docker socket even when they are declared in
 });
 
 test("allows exactly the declared kinds with the right read-only flags", async () => {
-  await expect(checkMounts(buildMounts(inputs), ctx)).resolves.toBeUndefined();
+  await expect(checkMounts(buildMounts(inputs), ctx)).resolves.toEqual(buildMounts(inputs));
   expect(
     buildMounts(inputs).find((m) => m.target === "/opt/factory/bin/open-factory"),
   ).toMatchObject({ readOnly: true });
@@ -187,4 +208,63 @@ test("checkMounts resolves symlinks before checking", async () => {
       grantedPaths: [link],
     }),
   ).rejects.toThrow(`Mount ${link} isn't allowed: it is the host home directory.`);
+});
+
+test("returns the realpath, so Docker binds the checked path and not a swappable link", async () => {
+  const [repo] = inputs.grantedPaths as [string];
+  const link = path.join(tmp("link-"), "app");
+  symlinkSync(repo, link);
+  await expect(
+    checkMounts([{ source: link, target: link, readOnly: false }], {
+      ...ctx,
+      grantedPaths: [link],
+    }),
+  ).resolves.toEqual([{ source: repo, target: repo, readOnly: false }]);
+  await expect(
+    checkMounts(
+      [{ source: inputs.cliBundle, target: "/opt/factory/bin/open-factory", readOnly: true }],
+      ctx,
+    ),
+  ).resolves.toEqual([
+    { source: inputs.cliBundle, target: "/opt/factory/bin/open-factory", readOnly: true },
+  ]);
+});
+
+test("a not-yet-created socket under a linked prefix is still forbidden", async () => {
+  const real = tmp("dh-");
+  mkdirSync(path.join(real, "run"));
+  const linkDir = path.join(tmp("dhl-"), "alias");
+  symlinkSync(real, linkDir);
+  const runDir = path.join(real, "run");
+  await expect(
+    checkMounts([{ source: runDir, target: runDir, readOnly: false }], {
+      ...ctx,
+      grantedPaths: [runDir],
+      dockerSockets: [path.join(linkDir, "run/d.sock")],
+    }),
+  ).rejects.toThrow(`Mount ${runDir} isn't allowed: it contains a Docker socket.`);
+});
+
+test("refuses relative sources and targets", async () => {
+  const [repo] = inputs.grantedPaths as [string];
+  await expect(
+    checkMounts([{ source: "mk", target: "mk", readOnly: true }], {
+      ...ctx,
+      declaredMarketplaceDirs: ["mk"],
+    }),
+  ).rejects.toThrow("Mount mk isn't allowed: its source and target must be absolute paths.");
+  await expect(
+    checkMounts([{ source: repo, target: "app", readOnly: false }], ctx),
+  ).rejects.toThrow("its source and target must be absolute paths");
+});
+
+test("forbids the account's home even when HOME points elsewhere", async () => {
+  const real = os.userInfo().homedir;
+  await expect(
+    checkMounts([{ source: real, target: real, readOnly: false }], {
+      ...ctx,
+      home: tmp("fake-home-"),
+      grantedPaths: [real],
+    }),
+  ).rejects.toThrow(`Mount ${real} isn't allowed: it is the host home directory.`);
 });

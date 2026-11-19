@@ -33,7 +33,7 @@ No new colour token. `document.title` = "Terminated · Tech Lead · ab12 · Open
   - "Terminated 19 Nov · workspace deleted"
   - "Archived 19 Nov"
 
-  "No archived agents." becomes "No ended agents." S5's running count stays hidden on Ended.
+  "No archived agents." becomes "No ended agents." The list shows the newest 200; when there are more, a muted line under it says "Showing the latest 200 ended agents." S5's running count stays hidden on Ended.
 - **Mobile:** the name cell keeps the " · ab12" tail visible: when the display name truncates, it truncates the part before " · " (S4's `MiddleTruncate` pattern), since the suffix is what tells siblings apart. The same rule applies to the session header's `h1`.
 
 ## 4. Spawner's timeline
@@ -61,7 +61,7 @@ Children's text and facts arrive as S6 update groups, unchanged. Peer events for
 
 ### 4.4 Links and the `by` mapping
 
-- **`AgentLink`** (S6 §2.1) resolves slugs from the active list **and** the ended list (`agentsListQueryOptions("only")`, fetched lazily when a slug isn't in the active list), so a terminated agent keeps its link and display name: its read-only session is worth opening. An archived agent keeps S6's plain mono slug, no link (unchanged).
+- **`AgentLink`** (S6 §2.1) resolves slugs from the active list **and** the ended list (`agentsListQueryOptions("only")`, fetched lazily when a slug isn't in the active list), so a terminated agent keeps its link and display name: its read-only session is worth opening. A terminated agent older than the newest 200 ended ones still gets the link (the session route resolves any slug), shown as the mono slug without a display name. An archived agent keeps S6's plain mono slug, no link (unchanged).
 - **`by`** (the `terminated` event, `subject.left.by`, `terminatedBy`): a bare slug → `AgentLink` ("terminated by `@lead`"); a human `@handle` → plain mono; `@factory` → "after 3 days without activity" (never shown as "@factory").
 
 ## 5. A spawned agent's session

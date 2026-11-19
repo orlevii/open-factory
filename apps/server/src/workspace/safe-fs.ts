@@ -17,7 +17,7 @@ import path from "node:path";
 export class WorkspaceError extends Error {
   constructor(
     message: string,
-    readonly fix?: "projects" | "edit_agent",
+    readonly fix?: "projects" | "edit_agent" | "resync",
   ) {
     super(message);
     this.name = "WorkspaceError";
@@ -206,6 +206,19 @@ export class SafeFs {
     } finally {
       await fh.close();
     }
+  }
+
+  /** Moves a real (non-link) entry out to factory-owned `dest`, which must not exist. A rename
+   *  moves the entry itself and never follows anything inside it. */
+  async moveOut(rel: string, dest: string): Promise<void> {
+    const abs = this.abs(rel);
+    const st = await this.entry(rel);
+    if (!st) throw Object.assign(new Error(`${abs} is missing.`), { code: "ENOENT" });
+    if (st.isSymbolicLink()) throw new UnsafePathError(abs);
+    if (await lstatOrNull(dest)) {
+      throw Object.assign(new Error(`${dest} already exists.`), { code: "EEXIST" });
+    }
+    await rename(abs, dest);
   }
 
   /** undefined for missing, a symlink, or anything that isn't a regular file. */

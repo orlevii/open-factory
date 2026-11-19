@@ -663,6 +663,20 @@ test("an error with fix edit_agent links to the edit page", async () => {
   );
 });
 
+test("an error with fix resync links to the agent's Re-sync", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message: "Re-sync @dev to reinstall its plugins into the factory-managed location.",
+    fix: "resync",
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Re-sync the agent" })).toHaveAttribute(
+    "href",
+    "/agents/dev/edit",
+  );
+});
+
 test("a resume error names pnpm agent:reset-session with the slug", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",

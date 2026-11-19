@@ -81,13 +81,13 @@ test("a plugin install failure with URL credentials and a token in stderr is nev
   const cfg = mkdtempSync(path.join(tmpdir(), "cfg-"));
   const err = await installPlugins({
     claudeBin: fake.bin,
-    configDir: cfg,
-    cwd: cfg,
+    pluginsConfig: cfg,
     plugins: [ref],
     tplSettings: {
       extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/x/mk" } } },
     },
-    serverEnv: process.env,
+    hostHome: process.env.HOME,
+    path: process.env.PATH,
   }).catch((e) => e);
   expect(err.output).toContain("[redacted]");
   // The way the app logs failures: the error itself, and its output field.

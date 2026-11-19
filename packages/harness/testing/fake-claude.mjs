@@ -11,11 +11,32 @@ process.title = "claude";
 const argv0 = process.argv.slice(2);
 if (argv0[0] === "plugin") {
   const cfg = process.env.CLAUDE_CONFIG_DIR;
+  // Like Claude, apply `env` from the config-dir and project settings (S5 R1: that is how a planted
+  // settings.json reached git), then emulate git honouring GIT_TRACE and a `!touch` credential helper.
+  const readJson = (p) => {
+    try {
+      return JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      return {};
+    }
+  };
+  for (const p of [
+    `${cfg}/settings.json`,
+    `${process.cwd()}/.claude/settings.json`,
+    `${process.cwd()}/.claude/settings.local.json`,
+  ])
+    Object.assign(process.env, readJson(p).env ?? {});
+  if (process.env.GIT_TRACE?.startsWith("/")) appendFileSync(process.env.GIT_TRACE, "trace\n");
+  for (let i = 0; i < Number(process.env.GIT_CONFIG_COUNT ?? 0); i++) {
+    const helper = /^!touch (.+)$/.exec(process.env[`GIT_CONFIG_VALUE_${i}`] ?? "");
+    if (process.env[`GIT_CONFIG_KEY_${i}`] === "credential.helper" && helper)
+      writeFileSync(helper[1], "");
+  }
   appendFileSync(
     `${process.env.FAKE_CLAUDE_DIR}/plugin.log`,
-    `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort(), cwd: process.cwd() })}\n`,
+    `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort(), cwd: process.cwd(), configDir: cfg })}\n`,
   );
-  mkdirSync(cfg, { recursive: true });
+  mkdirSync(`${cfg}/plugins`, { recursive: true });
   const f = `${cfg}/settings.json`;
   const s = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {};
   if (argv0[1] === "marketplace" && argv0[2] === "add") {

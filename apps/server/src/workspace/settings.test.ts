@@ -9,7 +9,7 @@ const base = {
   grantedPaths: ["/code/app"],
 };
 
-test("rebuild: template base, plugin keys carried and filtered, agent keys dropped", () => {
+test("rebuild: template base, plugin keys from plugins-config carried and filtered, agent keys dropped", () => {
   const s = buildSettings({
     ...base,
     tpl: {
@@ -18,7 +18,7 @@ test("rebuild: template base, plugin keys carried and filtered, agent keys dropp
       extraKnownMarketplaces: { m: { source: { source: "directory", path: "/new" } } },
       enabledPlugins: { "x@y": true },
     },
-    prev: {
+    pluginKeys: {
       enabledPlugins: { "p@m": true, "old@m": true },
       extraKnownMarketplaces: {
         m: { source: { source: "directory", path: "/old" } },
@@ -44,7 +44,7 @@ test("rebuild: template base, plugin keys carried and filtered, agent keys dropp
 test("autoMode: $defaults first in every list, deduped; factory environment appended", () => {
   const s = buildSettings({
     ...base,
-    prev: {},
+    pluginKeys: {},
     tpl: {
       autoMode: {
         hard_deny: ["$defaults", "Never X."],
@@ -69,7 +69,7 @@ test("bypass sets bypassPermissions; no grants → 'none' in the environment ent
     ...base,
     permissionMode: "bypass",
     grantedPaths: [],
-    prev: {},
+    pluginKeys: {},
     tpl: {},
   });
   expect((s.permissions as { defaultMode: string }).defaultMode).toBe("bypassPermissions");
@@ -84,6 +84,6 @@ test("claudeMdExcludes: every ancestor's four files plus the workdir's own CLAUD
   expect(ex).toContain("/h/of/agents/lead/CLAUDE.md");
   expect(ex).toContain("/h/of/agents/lead/CLAUDE.local.md");
   expect(ex).not.toContain("/h/of/agents/lead/AGENTS.md");
-  const s = buildSettings({ ...base, prev: {}, tpl: { claudeMdExcludes: ["/x/CLAUDE.md"] } });
+  const s = buildSettings({ ...base, pluginKeys: {}, tpl: { claudeMdExcludes: ["/x/CLAUDE.md"] } });
   expect((s.claudeMdExcludes as string[])[0]).toBe("/x/CLAUDE.md");
 });

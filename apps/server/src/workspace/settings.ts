@@ -8,7 +8,9 @@ const strs = (v: unknown): string[] =>
 
 export interface SettingsInput {
   tpl: Record<string, unknown>;
-  prev: Record<string, unknown>;
+  /** `enabledPlugins`/`extraKnownMarketplaces` from the factory-owned `plugins-config/settings.json`
+   *  (spec §11.7), never from the agent's config-dir settings, which the agent can write. */
+  pluginKeys: Record<string, unknown>;
   slug: string;
   workdir: string;
   permissionMode: "auto" | "bypass";
@@ -45,12 +47,12 @@ export function claudeMdExcludes(workdir: string): string[] {
 export function buildSettings(i: SettingsInput): Record<string, unknown> {
   const tpl = structuredClone(i.tpl);
   delete tpl.enabledPlugins;
-  const prevPlugins = obj(i.prev.enabledPlugins);
+  const installed = obj(i.pluginKeys.enabledPlugins);
   const enabledPlugins = Object.fromEntries(
-    Object.entries(prevPlugins).filter(([k]) => i.plugins.includes(k)),
+    Object.entries(installed).filter(([k]) => i.plugins.includes(k)),
   );
   const extraKnownMarketplaces = {
-    ...obj(i.prev.extraKnownMarketplaces),
+    ...obj(i.pluginKeys.extraKnownMarketplaces),
     ...obj(i.tpl.extraKnownMarketplaces),
   };
   const perms = obj(tpl.permissions);

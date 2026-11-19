@@ -91,6 +91,13 @@ function FixLink({
         Edit the agent
       </Link>
     );
+  // Re-sync lives on the agent's edit page.
+  if (fix === "resync")
+    return (
+      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
+        Re-sync the agent
+      </Link>
+    );
   const label = {
     credentials: "Credentials",
     secrets: "Secrets",

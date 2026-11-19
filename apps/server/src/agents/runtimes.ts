@@ -11,6 +11,17 @@ export interface RuntimesDeps {
   prepareStart: PrepareStart;
   log: RuntimeLog;
   holdTimeoutMs?: number;
+  /** The server's own env; only its PATH and HOME reach the version check. */
+  serverEnv?: NodeJS.ProcessEnv;
+}
+
+/** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
+ *  agent's env or its agent-writable `CLAUDE_CONFIG_DIR`, only `PATH` and the host `HOME`. */
+export function versionCheckEnv(serverEnv: NodeJS.ProcessEnv): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (serverEnv.PATH) env.PATH = serverEnv.PATH;
+  if (serverEnv.HOME) env.HOME = serverEnv.HOME;
+  return env;
 }
 
 export type LiveFields = ReturnType<AgentRuntime["live"]>;
@@ -33,7 +44,10 @@ export class AgentRuntimes {
         prepareStart: this.d.prepareStart,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
-        onFirstStart: (spec) => this.checkVersionOnce(spec.claudeBin, spec.env),
+        // Local agents only: a Docker agent's claude runs in its image, not on the host.
+        onFirstStart: (spec) => {
+          if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);
+        },
       });
       const pending = runtime.init().then(() => runtime);
       rt = pending;
@@ -88,16 +102,18 @@ export class AgentRuntimes {
       if (r.status === "rejected") this.d.log.error({ err: r.reason }, "Stopping an agent failed");
   }
 
-  private checkVersionOnce(bin: string, env: Record<string, string>) {
+  private checkVersionOnce(bin: string) {
     if (this.versionChecked) return;
     this.versionChecked = true;
-    void checkClaudeVersion(bin, env).then(({ version, tooOld }) => {
-      if (version) this.d.log.info({ version }, "Claude Code version");
-      if (tooOld)
-        this.d.log.warn(
-          { version, minimum: MIN_CLAUDE_VERSION },
-          "Claude Code is older than the version S3 was verified on",
-        );
-    });
+    void checkClaudeVersion(bin, versionCheckEnv(this.d.serverEnv ?? process.env)).then(
+      ({ version, tooOld }) => {
+        if (version) this.d.log.info({ version }, "Claude Code version");
+        if (tooOld)
+          this.d.log.warn(
+            { version, minimum: MIN_CLAUDE_VERSION },
+            "Claude Code is older than the version S3 was verified on",
+          );
+      },
+    );
   }
 }

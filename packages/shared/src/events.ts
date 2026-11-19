@@ -125,7 +125,9 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     message: z.string(),
     detail: z.string().optional(),
     code: z.string().optional(),
-    fix: z.enum(["credentials", "secrets", "projects", "edit_agent", "runtime"]).optional(),
+    fix: z
+      .enum(["credentials", "secrets", "projects", "edit_agent", "runtime", "resync"])
+      .optional(),
   }),
   z.object({
     type: z.literal("exited"),

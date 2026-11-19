@@ -9,14 +9,14 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
-import { lstat, readdir, readlink, rm, symlink } from "node:fs/promises";
+import { lstat, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createFakeClaude } from "@open-factory/harness/testing";
+import { createFakeClaude, type FakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { beforeEach, expect, test } from "vitest";
 import { KeyedMutex } from "./lock.ts";
-import { resyncRoot } from "./paths.ts";
+import { pluginsConfigDir, resyncRoot } from "./paths.ts";
 import { UnsafePathError } from "./safe-fs.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -29,6 +29,7 @@ let workdir: string;
 let ws: Workspace;
 let tpl: Parameters<Workspace["resync"]>[1];
 let prep: Parameters<Workspace["prepare"]>[0];
+let fake: FakeClaude;
 
 beforeEach(async () => {
   home = tmp("of-hard-");
@@ -49,10 +50,11 @@ beforeEach(async () => {
     skills: ["grilling"],
     projects: ["app"],
   });
+  fake = createFakeClaude({ scenario: "reply" });
   ws = new Workspace({
     factoryHome: home,
     hostSkillsDir: hs,
-    claudeBin: createFakeClaude({ scenario: "reply" }).bin,
+    claudeBin: fake.bin,
     lock: new KeyedMutex(),
   });
   tpl = { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } };
@@ -149,5 +151,92 @@ test("create's rollback never follows a link inside the workdir", async () => {
   await symlink(hostDir, `${workdir}/escape`);
   await ws.discard("lead");
   expect(existsSync(workdir)).toBe(false);
+  expect(readdirSync(hostDir)).toEqual(["keep"]);
+});
+
+// Spec §11.7 (blocker R1): the reviewer's repro. A planted settings env reached git during
+// `claude plugin marketplace add`; with a credential helper that is host code execution.
+function withPlugins() {
+  const config = { ...tpl.config, plugins: ["p@mk"] };
+  tpl = {
+    ...tpl,
+    config,
+    tplSettings: {
+      extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
+    },
+  };
+  prep = { ...prep, config };
+}
+const pluginLog = (): { argv: string[]; env: string[]; cwd: string; configDir: string }[] => {
+  try {
+    return readFileSync(path.join(fake.dir, "plugin.log"), "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+};
+
+test("the install never sees the agent's config dir, cwd or settings (GIT_TRACE / GIT_CONFIG_* repro)", async () => {
+  const marker = path.join(tmp("marker-"), "PWNED");
+  const planted = {
+    env: {
+      GIT_TRACE: `${marker}-trace`,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "credential.helper",
+      GIT_CONFIG_VALUE_0: `!touch ${marker}`,
+    },
+  };
+  await writeFile(`${workdir}/.claude-config/settings.json`, JSON.stringify(planted));
+  mkdirSync(`${workdir}/.claude`, { recursive: true });
+  await writeFile(`${workdir}/.claude/settings.json`, JSON.stringify(planted));
+  withPlugins();
+  await resync();
+  const runs = pluginLog();
+  expect(runs.length).toBeGreaterThan(0);
+  for (const r of runs) {
+    // r.env is the sorted key list the fake saw (its wrapper adds FAKE_CLAUDE_*): the planted keys must be absent
+    expect(r.env).toEqual(expect.arrayContaining(["CLAUDE_CONFIG_DIR", "HOME", "PATH"]));
+    for (const k of [
+      "GIT_TRACE",
+      "GIT_CONFIG_COUNT",
+      "GIT_CONFIG_KEY_0",
+      "GIT_CONFIG_VALUE_0",
+      "DATABASE_URL",
+      "FACTORY_SECRET_KEY",
+    ])
+      expect(r.env).not.toContain(k);
+    expect(r.cwd.startsWith(workdir)).toBe(false);
+    expect(existsSync(r.cwd)).toBe(false); // a fresh temp dir, removed afterwards
+    expect(r.configDir).toBe(pluginsConfigDir(home, "lead"));
+  }
+  expect(existsSync(marker)).toBe(false);
+  expect(existsSync(`${marker}-trace`)).toBe(false);
+});
+
+test("enabledPlugins and marketplaces come from plugins-config, not the agent's settings", async () => {
+  withPlugins();
+  await resync();
+  await writeFile(
+    `${workdir}/.claude-config/settings.json`,
+    JSON.stringify({
+      enabledPlugins: { "evil@m": true, "p@mk": true },
+      extraKnownMarketplaces: { evil: { source: { source: "directory", path: "/evil" } } },
+    }),
+  );
+  await prepareAgent();
+  const s = JSON.parse(readFileSync(`${workdir}/.claude-config/settings.json`, "utf8"));
+  expect(s.enabledPlugins).toEqual({ "p@mk": true });
+  expect(s.extraKnownMarketplaces).not.toHaveProperty("evil");
+});
+
+test("a .claude-config/plugins symlink to a host dir is replaced, never followed", async () => {
+  writeFileSync(path.join(hostDir, "keep"), "x");
+  await symlink(hostDir, `${workdir}/.claude-config/plugins`);
+  await prepareAgent();
+  expect(await readlink(`${workdir}/.claude-config/plugins`)).toBe(
+    `${pluginsConfigDir(home, "lead")}/plugins`,
+  );
   expect(readdirSync(hostDir)).toEqual(["keep"]);
 });

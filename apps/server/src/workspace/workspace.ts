@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
@@ -9,10 +9,30 @@ import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from 
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
 import { buildMounts } from "./mounts.ts";
-import { agentConfigDir, agentWorkdir, resyncRoot, templateCopyDir } from "./paths.ts";
+import {
+  agentConfigDir,
+  agentStateDir,
+  agentWorkdir,
+  pluginsConfigDir,
+  resyncRoot,
+  templateCopyDir,
+} from "./paths.ts";
 import { installPlugins } from "./plugins.ts";
 import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
+
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await lstat(p);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
 
 export interface PrepareInput {
   slug: string;
@@ -88,7 +108,9 @@ export class Workspace {
       tpl.tplMcp,
     );
     await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
-    if (tpl.config.plugins.length) await this.install(workdir, configDir, tpl);
+    // A new agent starts from a clean plugin dir (a failed earlier create of this slug may have left one).
+    await rm(pluginsConfigDir(this.d.factoryHome, slug), { recursive: true, force: true });
+    if (tpl.config.plugins.length) await this.install(slug, tpl);
     const skills = await resolveHostSkills(this.d.hostSkillsDir, check.config.skills);
     await linkHostSkills(workdir, this.d.hostSkillsDir, skills, { checkOnly: true });
     await linkProjects(workdir, check.grants, { checkOnly: true });
@@ -122,7 +144,9 @@ export class Workspace {
       tpl.tplMcp,
     );
     await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
-    if (tpl.config.plugins.length) await this.install(workdir, configDir, tpl);
+    if (tpl.config.plugins.length) await this.install(slug, tpl);
+    // The human act that migrates an S4 agent: its old real plugins dir moves aside (spec §11.7).
+    await this.linkPlugins(slug, workdir);
     return backup ? path.relative(this.d.factoryHome, backup) : undefined;
   }
 
@@ -141,31 +165,24 @@ export class Workspace {
       copy,
       "mcp.json",
     );
-    let prev: Record<string, unknown> = {};
-    // Read without following links: a settings.json linked to a host file must not leak into ours.
-    const prevRaw = await safe.readIfRegular(path.join(configRel, "settings.json"));
-    if (prevRaw) {
-      try {
-        const parsed: unknown = JSON.parse(prevRaw.toString("utf8"));
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          prev = parsed as Record<string, unknown>;
-        } else {
-          this.log.warn(
-            { slug: i.slug },
-            "previous settings.json isn't an object; starting from {}",
-          );
-        }
-      } catch {
-        this.log.warn({ slug: i.slug }, "previous settings.json didn't parse; starting from {}");
-      }
+    // Fail closed before touching anything: plugins are third-party code, so a start never installs
+    // them (S4 Q7); an S4 agent, or one whose install didn't finish, needs the human's re-sync.
+    const pluginKeys = await this.readPluginKeys(i.slug);
+    const installed = obj(pluginKeys.enabledPlugins);
+    if (i.config.plugins.some((p) => !Object.hasOwn(installed, p))) {
+      throw new WorkspaceError(
+        `Re-sync @${i.slug} to reinstall its plugins into the factory-managed location.`,
+        "resync",
+      );
     }
+    await this.linkPlugins(i.slug, workdir);
     const skills = await resolveHostSkills(this.d.hostSkillsDir, i.config.skills);
     await linkHostSkills(workdir, this.d.hostSkillsDir, skills);
     await linkProjects(workdir, i.grants);
     const grantedPaths = i.grants.map((g) => g.hostPath);
     const settings = buildSettings({
       tpl,
-      prev,
+      pluginKeys,
       slug: i.slug,
       workdir,
       permissionMode: i.config.permissionMode,
@@ -213,14 +230,56 @@ export class Workspace {
     }
   }
 
-  private install(workdir: string, configDir: string, tpl: TemplateSource) {
-    return installPlugins({
+  /** Installs into the factory-owned plugins-config/, never the agent's config dir or cwd (§11.7, R1). */
+  private async install(slug: string, tpl: TemplateSource): Promise<void> {
+    const pluginsConfig = pluginsConfigDir(this.d.factoryHome, slug);
+    await mkdir(pluginsConfig, { recursive: true });
+    await installPlugins({
       claudeBin: this.d.claudeBin,
-      configDir,
-      cwd: workdir,
+      pluginsConfig,
       plugins: tpl.config.plugins,
       tplSettings: tpl.tplSettings,
-      serverEnv: this.serverEnv,
+      hostHome: this.serverEnv.HOME,
+      path: this.serverEnv.PATH,
     });
+  }
+
+  /** `plugins-config/settings.json`: factory-owned, so it is the only source of the plugin keys. */
+  private async readPluginKeys(slug: string): Promise<Record<string, unknown>> {
+    const p = path.join(pluginsConfigDir(this.d.factoryHome, slug), "settings.json");
+    let raw: string;
+    try {
+      raw = await readFile(p, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+      throw err;
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        return parsed as Record<string, unknown>;
+    } catch {}
+    this.log.warn({ slug }, "plugins-config settings.json isn't a JSON object; ignoring it");
+    return {};
+  }
+
+  /** Makes `.claude-config/plugins` a factory-made link to `plugins-config/plugins`. A real folder
+   *  there (an S4 install, or Claude's own `plugins/store/`) moves aside to `plugins-legacy-<ts>/`. */
+  private async linkPlugins(slug: string, workdir: string): Promise<void> {
+    const safe = new SafeFs(workdir);
+    const rel = path.join(path.relative(workdir, agentConfigDir(workdir)), "plugins");
+    const target = path.join(pluginsConfigDir(this.d.factoryHome, slug), "plugins");
+    await mkdir(target, { recursive: true });
+    const st = await safe.entry(rel);
+    if (st && !st.isSymbolicLink()) {
+      const state = agentStateDir(this.d.factoryHome, slug);
+      const stamp = resyncStamp();
+      let dest = path.join(state, `plugins-legacy-${stamp}`);
+      for (let n = 2; await exists(dest); n++)
+        dest = path.join(state, `plugins-legacy-${stamp}-${n}`);
+      await safe.moveOut(rel, dest);
+      this.log.warn({ slug, movedTo: dest }, "moved the agent's old plugins folder aside");
+    }
+    await safe.link(rel, target);
   }
 }

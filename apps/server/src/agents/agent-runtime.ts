@@ -368,6 +368,7 @@ export class AgentRuntime {
    */
   receiveHeld(row: PendingRow): Promise<void> {
     return this.run(async () => {
+      // Archived: the row just stays pending (spec §16's `rejected` rule is about send_message, Router-side).
       if (!this.seen.has(row.id) && !this.archived) {
         const entry = entryOf(row);
         if (!isHeld(entry)) throw new Error(`message ${row.id} isn't a held kind`);
@@ -2478,8 +2479,10 @@ export class AgentRuntime {
    * S6 §8.2: one timer per runtime, a derived cache of the held rows, re-evaluated at the end of every job (and by
    * `init()`, the closing latch and archive). It arms for the next due time; once due, a running process flushes
    * (the flush writes only while no turn is open; otherwise the turn end does), and with none it requests a
-   * `member_updates` wake when one is accepted. It fires once per due time, so a write that keeps failing or a wake
-   * that is dropped never spins; whatever changes the held rows gives a new due time. Never throws.
+   * `member_updates` wake when one is accepted. Once due it fires only while that action can be taken, and it is
+   * marked as fired for that due time only when the action was taken (a flush, or a wake that was requested), so a
+   * write that keeps failing or a wake the Supervisor dropped never spins, while a manager that couldn't be woken
+   * (errored, rate-limited, starting) gets its wake as soon as it can be (S6 §8.2, §16). Never throws.
    */
   private updateHeldTimer() {
     if (this.heldTimer) clearTimeout(this.heldTimer);
@@ -2487,26 +2490,16 @@ export class AgentRuntime {
     const at = this.heldDueAt();
     if (at === undefined || this.noStart || this.archived) return;
     const dueIn = this.dueAtTurnEnd ? 0 : at - Date.now();
-    if (dueIn <= 0) {
-      if (this.heldFiredFor === at) return;
-      if (this.proc) {
-        if (this.turnOpen() || this.credentialPaused()) return; // the turn end or the reset flushes
-      } else if (
-        this.starting ||
-        this.stopsInProgress > 0 ||
-        this.slots.closing() ||
-        this.slots.isQueued(this.agent.id) ||
-        !this.acceptsWake("member_updates")
-      )
-        return;
-    }
+    if (dueIn <= 0 && (this.heldFiredFor === at || !this.heldActionable())) return;
     const timer: ReturnType<typeof setTimeout> = setTimeout(
       () => {
         void this.run(async () => {
           if (this.heldTimer !== timer) return;
           this.heldTimer = undefined;
           const due = this.heldDueAt();
-          if (due === undefined || !this.heldDue()) return;
+          // Not actionable now (a turn open, paused, errored...): unmarked, so the end of the job that changes that
+          // re-arms it.
+          if (due === undefined || !this.heldDue() || !this.heldActionable()) return;
           this.heldFiredFor = due;
           if (this.proc) await this.flushOrStop("flush of due member updates failed");
           else await this.wakeFromJob("member_updates");
@@ -2520,6 +2513,21 @@ export class AgentRuntime {
     this.heldTimer = timer;
   }
 
+  /**
+   * Whether the held timer can act now: with a process, flush (no turn open, not paused; otherwise the turn end or the
+   * reset flushes); without one, request a `member_updates` wake the runtime accepts and nothing else is waking it.
+   */
+  private heldActionable(): boolean {
+    if (this.proc) return !this.turnOpen() && !this.credentialPaused();
+    return !(
+      this.starting ||
+      this.stopsInProgress > 0 ||
+      this.slots.closing() ||
+      this.slots.isQueued(this.agent.id) ||
+      !this.acceptsWake("member_updates")
+    );
+  }
+
   /** False when the write was rejected (the batch is back at the head of the queue). */
   private async writeBatch(batch: MessageEntry[]): Promise<boolean> {
     const proc = this.proc;
@@ -2528,8 +2536,9 @@ export class AgentRuntime {
       return false;
     }
     const ids = batch.map((m) => m.row.id);
-    const envelopes = toEnvelopes(batch);
+    let envelopes: FactoryMessage[];
     try {
+      envelopes = toEnvelopes(batch); // inside the try: a throw here must not lose the batch
       await proc.send(envelopes);
     } catch (err) {
       this.requeue(batch);

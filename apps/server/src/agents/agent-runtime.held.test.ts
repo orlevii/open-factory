@@ -458,3 +458,47 @@ test("C3: every write records the message_in seq on its rows, before session_sta
   const second = await h.send("second");
   expect(await seqOf(second.id)).toBe((await messageIns()).at(-1)?.seq);
 });
+
+test("fix 1: updates due while errored go out as soon as the error clears (Start a new session, no human message)", async () => {
+  await h.makeRuntime({ slots, status: "errored", sessionId: "sess-1", errorKind: "resume" });
+  await update("due while errored");
+  await tick(31_000); // the timer fires; the wake isn't accepted, so the due time isn't marked as fired
+  expect(slots.events).not.toContainEqual(["request", "member_updates"]);
+  await h.rt.resetSession({ byHandle: "or" });
+  await h.rt.settled();
+  expect(h.driver.starts).toHaveLength(0); // no human message: no attempt
+  await tick(0);
+  expect(slots.events).toContainEqual(["request", "member_updates"]);
+  expect(h.driver.starts).toHaveLength(1);
+  expect(h.driver.last.sent[0]?.map((m) => m.kind)).toEqual(["member_update"]);
+});
+
+test("fix 1 (§16): a rate-limited manager holds due updates and gets them at the reset", async () => {
+  const paused = new PausableSlots();
+  await h.makeRuntime({ slots: paused });
+  await idle();
+  paused.paused = { until: new Date(Date.now() + 3_600_000), exact: true };
+  await update("held by the pause");
+  await tick(31_000);
+  expect(anyUpdateWritten()).toBe(false);
+  paused.paused = undefined;
+  h.rt.resumeAfterReset();
+  await h.rt.settled();
+  expect(kinds().at(-1)).toEqual(["member_update"]);
+
+  // Hibernated: the due wake is requested (the Supervisor queues it while paused) and runs at the reset.
+  const asleep = new PausableSlots();
+  asleep.paused = { until: new Date(Date.now() + 3_600_000), exact: true };
+  asleep.answer = "queued";
+  await h.makeRuntime({ slots: asleep });
+  await update("held while asleep");
+  await tick(31_000);
+  expect(asleep.events).toContainEqual(["request", "member_updates"]);
+  expect(h.driver.starts).toHaveLength(0);
+  asleep.paused = undefined;
+  asleep.answer = "granted";
+  h.rt.resumeAfterReset();
+  await h.rt.settled();
+  expect(asleep.events).toContainEqual(["request", "rate_limit_reset"]);
+  expect(h.driver.last.sent[0]?.map((m) => m.kind)).toEqual(["member_update"]);
+});

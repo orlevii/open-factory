@@ -10,17 +10,18 @@ export function PasswordInput({ className, ...props }: Omit<ComponentProps<"inpu
     <div className="relative">
       <Input
         type={shown ? "text" : "password"}
+        className={cn("h-9 bg-card pr-10 font-mono dark:bg-card", className)}
+        {...props}
+        // After the spread: no caller turns the password-manager opt-out back on.
         autoComplete="new-password"
         data-1p-ignore
         data-lpignore="true"
-        className={cn("h-9 bg-card pr-10 font-mono dark:bg-card", className)}
-        {...props}
       />
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        aria-label={shown ? "Hide" : "Show"}
+        aria-label={shown ? "Hide value" : "Show value"}
         onClick={() => setShown((s) => !s)}
         className="absolute top-1 right-1"
       >

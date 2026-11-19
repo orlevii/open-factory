@@ -50,7 +50,7 @@ test("PasswordInput toggles visibility and opts out of managers", async () => {
   expect(field).toHaveAttribute("type", "password");
   expect(field).toHaveAttribute("autocomplete", "new-password");
   expect(field).toHaveAttribute("data-1p-ignore");
-  await userEvent.click(screen.getByRole("button", { name: "Show" }));
+  await userEvent.click(screen.getByRole("button", { name: "Show value" }));
   expect(field).toHaveAttribute("type", "text");
-  expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hide value" })).toBeInTheDocument();
 });

@@ -9,8 +9,7 @@ import {
   templatesListSchema,
 } from "@open-factory/shared";
 import { queryOptions } from "@tanstack/react-query";
-import type { z } from "zod";
-import { z as zod } from "zod";
+import { type z, z as zod } from "zod";
 
 const path = (name: string) => `/api/templates/${encodeURIComponent(name)}`;
 

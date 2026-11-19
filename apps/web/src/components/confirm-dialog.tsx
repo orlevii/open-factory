@@ -1,5 +1,6 @@
+import { ApiError } from "@open-factory/shared";
 import { Loader2 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,17 +29,28 @@ export function ConfirmDialog({
   onConfirm(): Promise<void> | void;
 }) {
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  // The error belongs to one opening of the dialog.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on every open/close
+  useEffect(() => setError(undefined), [open]);
   async function confirm(e: { preventDefault(): void }) {
     // Radix closes on Action click; hold it open until the work resolves.
     e.preventDefault();
+    if (pending) return;
     setPending(true);
+    setError(undefined);
     try {
       await onConfirm();
       onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Try again.");
     } finally {
       setPending(false);
     }
   }
+  // While pending, Escape, outside click and Cancel are ignored: the request cannot be
+  // abandoned, so the dialog says so by staying put and showing the action's pending label.
+  // The action uses aria-disabled (not disabled) so focus stays on it instead of falling to <body>.
   return (
     <AlertDialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
       <AlertDialogContent>
@@ -46,11 +58,25 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{body}</AlertDialogDescription>
         </AlertDialogHeader>
+        <div
+          role="alert"
+          className="text-[0.8125rem] leading-[1.125rem] text-destructive empty:hidden"
+        >
+          {error}
+        </div>
         <AlertDialogFooter>
-          <AlertDialogCancel autoFocus disabled={pending}>
+          <AlertDialogCancel
+            autoFocus
+            aria-disabled={pending || undefined}
+            onClick={(e) => pending && e.preventDefault()}
+          >
             Cancel
           </AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={pending} onClick={confirm}>
+          <AlertDialogAction
+            variant="destructive"
+            aria-disabled={pending || undefined}
+            onClick={confirm}
+          >
             {pending && <Loader2 aria-hidden="true" className="animate-spin" />}
             {confirmLabel}
           </AlertDialogAction>

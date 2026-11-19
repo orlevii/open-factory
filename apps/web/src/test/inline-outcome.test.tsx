@@ -33,3 +33,11 @@ test("focusOnMount without undo focuses the line", () => {
   );
   expect(screen.getByText("Nope.").closest("[tabindex]")).toHaveFocus();
 });
+
+test("error text appears in an already-mounted alert region", () => {
+  const { rerender } = render(<InlineOutcome tone="success">Saved.</InlineOutcome>);
+  const alert = screen.getByRole("alert");
+  rerender(<InlineOutcome tone="error">Could not save.</InlineOutcome>);
+  expect(screen.getByRole("alert")).toBe(alert);
+  expect(alert).toHaveTextContent("Could not save.");
+});

@@ -1,30 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, CircleAlert } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
-import { formatResetTime } from "@/features/session/format";
+import { formatInboxTime } from "@/features/session/format";
 import { type InboxItem, useInbox } from "./api";
 
 const PREVIEW_MAX = 280;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/** Past time for a row (S6 UI design §4): `14:32` today, `Yesterday 14:32`, `27 Nov 09:10`, and
- *  `27 Nov 2025 09:10` for another year. Future times (clock skew) fall back to S5's format. */
-export function formatInboxTime(at: Date, now: Date): string {
-  const hhmm = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
-  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
-  const days = Math.round((day(now) - day(at)) / 86_400_000);
-  if (days < 0) return formatResetTime(at, now);
-  if (days === 0) return hhmm;
-  if (days === 1) return `Yesterday ${hhmm}`;
-  const date = `${at.getDate()} ${MONTHS[at.getMonth()]}`;
-  return at.getFullYear() === now.getFullYear()
-    ? `${date} ${hhmm}`
-    : `${date} ${at.getFullYear()} ${hhmm}`;
-}
-
 const previewOf = (s: string) => (s.length > PREVIEW_MAX ? `${s.slice(0, PREVIEW_MAX)}…` : s);
 
 /** "Factory about ops" for factory items, "dev" for agents; `@` added by the callers. */
@@ -60,9 +42,10 @@ function Row({ item, now }: { item: InboxItem; now: Date }) {
         to="/agents/$slug"
         params={{ slug: item.link.agentSlug }}
         search={search}
+        data-inbox-id={item.id}
         aria-label={label}
         aria-describedby={previewId}
-        className="flex min-h-14 flex-col justify-center gap-0.5 px-2 py-2 text-sm transition-colors duration-100 hover:bg-sidebar-accent"
+        className="flex min-h-14 flex-col justify-center gap-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent"
       >
         <span className="flex items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
           <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
@@ -92,11 +75,19 @@ function Row({ item, now }: { item: InboxItem; now: Date }) {
   );
 }
 
-const ErrorLine = ({ text, onRetry }: { text: string; onRetry(): void }) => (
+const ErrorLine = ({
+  text,
+  onRetry,
+  autoFocus,
+}: {
+  text: string;
+  onRetry(): void;
+  autoFocus?: boolean;
+}) => (
   <div className="flex items-center gap-2 text-sm">
     <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-    <span className="min-w-0">{text}</span>
-    <Button variant="ghost" size="sm" onClick={onRetry}>
+    <span className="min-w-0 text-destructive">{text}</span>
+    <Button variant="ghost" size="sm" onClick={onRetry} autoFocus={autoFocus}>
       Retry
     </Button>
   </div>
@@ -108,24 +99,37 @@ export function InboxList() {
   const q = useInbox();
   const items = q.data;
   const list = useRef<HTMLUListElement>(null);
-  // After a page loads, focus moves to its first new row: the button that was pressed may be gone.
-  const focusFrom = useRef<number | null>(null);
+  // Pending focus, set only once a fetch has settled successfully: the control that was pressed may
+  // have unmounted. A row id means "the row after it" (the last row when nothing new arrived);
+  // "first" is the first row. Never armed by an error, so a later refetch can't steal focus.
+  const [focusAfter, setFocusAfter] = useState<string | "first" | null>(null);
   useEffect(() => {
-    const from = focusFrom.current;
-    if (from === null || !items || items.length <= from) return;
-    focusFrom.current = null;
-    list.current?.querySelectorAll<HTMLElement>("a")[from]?.focus();
-  }, [items]);
+    if (focusAfter === null) return;
+    setFocusAfter(null);
+    const links = [...(list.current?.querySelectorAll<HTMLElement>("a") ?? [])];
+    const i =
+      focusAfter === "first" ? 0 : links.findIndex((l) => l.dataset.inboxId === focusAfter) + 1;
+    (links[i] ?? links.at(-1))?.focus();
+  }, [focusAfter]);
 
   if (!items)
     return q.isError ? (
-      <ErrorLine text="Couldn't load the inbox." onRetry={() => void q.refetch()} />
+      <ErrorLine
+        text="Couldn't load the inbox."
+        onRetry={() =>
+          void q.refetch().then((r) => {
+            if (r.isSuccess) setFocusAfter("first");
+          })
+        }
+      />
     ) : null;
   if (items.length === 0) return <EmptyState text="Nothing in your inbox." />;
 
   const loadEarlier = () => {
-    focusFrom.current = items.length;
-    void q.fetchNextPage();
+    const last = items.at(-1)?.id;
+    void q.fetchNextPage().then((r) => {
+      if (r.isSuccess && last !== undefined) setFocusAfter(last);
+    });
   };
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
     const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
@@ -155,7 +159,7 @@ export function InboxList() {
         ))}
       </ul>
       {q.isFetchNextPageError ? (
-        <ErrorLine text="Couldn't load earlier messages." onRetry={loadEarlier} />
+        <ErrorLine text="Couldn't load earlier messages." onRetry={loadEarlier} autoFocus />
       ) : (
         q.hasNextPage && (
           <div>

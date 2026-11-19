@@ -66,3 +66,13 @@ test("rate-limited with an unreported window says retrying", () => {
   );
   expect(line("3 updates from @dev held retrying at 14:30")).toBeInTheDocument();
 });
+
+test("a group whose first row is a factory fact is from the report, never @@factory", () => {
+  render(
+    <QueueItems
+      items={[held({ from: "@factory", about: "dev", waitReason: "turn" })]}
+      agent={agentSummary()}
+    />,
+  );
+  expect(line("3 updates from @dev waiting for this turn to end")).toBeInTheDocument();
+});

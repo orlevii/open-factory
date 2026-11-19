@@ -2,9 +2,9 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { formatInboxTime } from "@/features/session/format";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { formatInboxTime } from "./inbox-list";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({
@@ -103,6 +103,25 @@ test("Load earlier fetches the next page, merges by id and moves focus to the fi
   ).toHaveFocus();
 });
 
+test("a page of only already-shown rows focuses the last row, and a later refetch steals no focus", async () => {
+  let items = [item(1)];
+  mockApi({
+    "GET /api/inbox?": (_b, url) =>
+      url.includes("before=c1")
+        ? json({ items: [item(1)], nextCursor: null })
+        : json({ items, nextCursor: "c1" }),
+  });
+  renderApp("/inbox", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
+  const row = await screen.findByRole("link", { name: /From @dev/ });
+  await waitFor(() => expect(row).toHaveFocus());
+  (document.activeElement as HTMLElement).blur();
+  items = [item(2), item(1)];
+  act(() => ws.onMessage?.({ type: "inbox_changed" }));
+  await waitFor(() => expect(screen.getAllByRole("link", { name: /^From @dev/ })).toHaveLength(2));
+  expect(document.body).toHaveFocus();
+});
+
 test("a failed page load says so inline and Retry loads it", async () => {
   let fail = true;
   mockApi({
@@ -117,6 +136,7 @@ test("a failed page load says so inline and Retry loads it", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("Couldn't load earlier messages.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /From @dev/ })).toBeInTheDocument(); // loaded rows stay
+  expect(screen.getByRole("button", { name: "Retry" })).toHaveFocus(); // not lost to the body
   fail = false;
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(screen.getAllByRole("link", { name: /^From @dev/ })).toHaveLength(2));

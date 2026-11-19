@@ -17,6 +17,9 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** One quiet line per held group (S6 UI design §2.6): fixed text, nothing ticks, outside any live
  *  region. `rate_limited` reuses S5's reset phrase; a window shows its fixed `dueAt`. */
 function HeldLine({ item, agent }: { item: QueueItem; agent: AgentSummary }) {
+  // A group's `from` is its first row's sender, which can be "@factory" for a fact about the report:
+  // the report named by `about` is who the updates are from.
+  const who = (item.about ?? item.from).replace(/^@/, "");
   const count = plural(item.count ?? 1, "update", "updates");
   const tail = (() => {
     switch (item.waitReason) {
@@ -44,7 +47,7 @@ function HeldLine({ item, agent }: { item: QueueItem; agent: AgentSummary }) {
   const text = tail.startsWith(" held") || tail.startsWith(" waiting") ? tail : ` waiting${tail}`;
   return (
     <QuietLine icon={<Clock aria-hidden="true" />}>
-      {count} from <span className="font-mono">@{item.from}</span>
+      {count} from <span className="font-mono">@{who}</span>
       {text}
     </QuietLine>
   );

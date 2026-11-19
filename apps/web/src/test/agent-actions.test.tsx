@@ -47,16 +47,16 @@ test("Re-sync success names the backup folder in mono and the restart", async ()
   world({
     extra: {
       "POST /api/agents/lead/resync": () =>
-        json({ agent: lead, backupDir: ".factory/resync/2026-11-19T10-22-31Z" }),
+        json({ agent: lead, backupDir: "state/agents/lead/resync/2026-11-19T10-22-31Z" }),
     },
   });
   const section = await open();
   await userEvent.click(within(section).getByRole("button", { name: "Re-sync" }));
-  const path = await within(section).findByText(".factory/resync/2026-11-19T10-22-31Z");
+  const path = await within(section).findByText("state/agents/lead/resync/2026-11-19T10-22-31Z");
   expect(path.tagName).toBe("CODE");
   const line = path.closest("[role=status]") as HTMLElement;
   expect(line).toHaveTextContent(
-    "Re-synced. Previous files saved in .factory/resync/2026-11-19T10-22-31Z. The agent restarts when idle.",
+    "Re-synced. Previous files saved in state/agents/lead/resync/2026-11-19T10-22-31Z. The agent restarts when idle.",
   );
 });
 

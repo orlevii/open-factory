@@ -94,6 +94,7 @@ async function safeParent(workdir: string, rel: string): Promise<string> {
 export async function copyTargets(
   _tplDir: string,
   workdir: string,
+  templateCopy: string,
   targets: { from: string; to: string }[],
   tplSettings: Record<string, unknown>,
   tplMcp: unknown,
@@ -122,22 +123,19 @@ export async function copyTargets(
       throw err;
     }
   }
-  await writeAtomic(
-    path.join(workdir, ".factory/template/settings.json"),
-    JSON.stringify(tplSettings, null, 2),
-  );
-  await writeAtomic(
-    path.join(workdir, ".factory/template/mcp.json"),
-    JSON.stringify(tplMcp, null, 2),
-  );
+  await writeAtomic(path.join(templateCopy, "settings.json"), JSON.stringify(tplSettings, null, 2));
+  await writeAtomic(path.join(templateCopy, "mcp.json"), JSON.stringify(tplMcp, null, 2));
 }
 
+/** Copies the workdir files an incoming template would change into `<backupRoot>/<stamp>/`.
+ *  Returns that absolute dir, or undefined when nothing differed. */
 export async function backupDiffering(
   workdir: string,
+  backupRoot: string,
   incoming: { to: string; data: Buffer }[],
   stamp: string,
 ): Promise<string | undefined> {
-  const rel = path.join(".factory", "resync", stamp);
+  const dir = path.join(backupRoot, stamp);
   let copied = false;
   for (const i of incoming) {
     const existing = path.join(workdir, i.to);
@@ -149,7 +147,7 @@ export async function backupDiffering(
       throw err;
     }
     if (cur.equals(i.data)) continue;
-    const dest = path.join(workdir, rel, i.to);
+    const dest = path.join(dir, i.to);
     await mkdir(path.dirname(dest), { recursive: true });
     for (let n = 0; ; n++) {
       try {
@@ -161,7 +159,7 @@ export async function backupDiffering(
     }
     copied = true;
   }
-  return copied ? rel : undefined;
+  return copied ? dir : undefined;
 }
 
 export function resyncStamp(d: Date = new Date()): string {

@@ -15,7 +15,7 @@ import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from 
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
 import { buildMounts } from "./mounts.ts";
-import { agentConfigDir, agentWorkdir, templateCopyDir } from "./paths.ts";
+import { agentConfigDir, agentWorkdir, resyncRoot, templateCopyDir } from "./paths.ts";
 import { installPlugins } from "./plugins.ts";
 import { buildSettings } from "./settings.ts";
 
@@ -87,6 +87,7 @@ export class Workspace {
     await copyTargets(
       tpl.dir,
       workdir,
+      templateCopyDir(this.d.factoryHome, slug),
       await templateTargets(tpl.dir, tpl.config),
       tpl.tplSettings,
       tpl.tplMcp,
@@ -103,28 +104,30 @@ export class Workspace {
     await rm(this.workdir(slug), { recursive: true, force: true });
   }
 
-  /** Under the caller-held lock: backup + overwrite + install. Returns the relative backup dir. */
+  /** Under the caller-held lock: backup + overwrite + install. Returns the backup dir relative to FACTORY_HOME. */
   async resync(slug: string, tpl: TemplateSource): Promise<string | undefined> {
     const workdir = this.workdir(slug);
     const configDir = agentConfigDir(workdir);
     const targets = await templateTargets(tpl.dir, tpl.config);
     const incoming: { to: string; data: Buffer }[] = [];
     for (const t of targets) incoming.push({ to: t.to, data: await readFile(t.from) });
-    incoming.push(
-      {
-        to: path.join(".factory", "template", "settings.json"),
-        data: Buffer.from(JSON.stringify(tpl.tplSettings, null, 2)),
-      },
-      {
-        to: path.join(".factory", "template", "mcp.json"),
-        data: Buffer.from(JSON.stringify(tpl.tplMcp, null, 2)),
-      },
+    const backup = await backupDiffering(
+      workdir,
+      resyncRoot(this.d.factoryHome, slug),
+      incoming,
+      resyncStamp(),
     );
-    const backup = await backupDiffering(workdir, incoming, resyncStamp());
-    await copyTargets(tpl.dir, workdir, targets, tpl.tplSettings, tpl.tplMcp);
+    await copyTargets(
+      tpl.dir,
+      workdir,
+      templateCopyDir(this.d.factoryHome, slug),
+      targets,
+      tpl.tplSettings,
+      tpl.tplMcp,
+    );
     await mkdir(configDir, { recursive: true });
     if (tpl.config.plugins.length) await this.install(workdir, configDir, tpl);
-    return backup;
+    return backup ? path.relative(this.d.factoryHome, backup) : undefined;
   }
 
   /**
@@ -134,7 +137,7 @@ export class Workspace {
   async prepare(i: PrepareInput): Promise<{ workdir: string; configDir: string; mounts: Mount[] }> {
     const workdir = this.workdir(i.slug);
     const configDir = agentConfigDir(workdir);
-    const copy = templateCopyDir(workdir);
+    const copy = templateCopyDir(this.d.factoryHome, i.slug);
     const tpl = await this.readTemplateJson<Record<string, unknown>>(copy, "settings.json");
     const tplMcp = await this.readTemplateJson<{ mcpServers: Record<string, unknown> }>(
       copy,

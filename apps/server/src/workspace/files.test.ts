@@ -26,16 +26,16 @@ test("targets: AGENTS.md, skills (when localSkills), files/ contents at the root
     ".claude/skills/s1/SKILL.md",
   );
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
+  const copyDir = mkdtempSync(path.join(tmpdir(), "copy-"));
   await copyTargets(
     t,
     wd,
+    copyDir,
     await templateTargets(t, { localSkills: true }),
     { a: 1 },
     { mcpServers: {} },
   );
-  expect(readFileSync(path.join(wd, ".factory/template/settings.json"), "utf8")).toContain(
-    '"a": 1',
-  );
+  expect(readFileSync(path.join(copyDir, "settings.json"), "utf8")).toContain('"a": 1');
   expect(existsSync(path.join(wd, "docs/x.md"))).toBe(true);
 });
 test("backup only differing files; none when nothing differs; stamp has no colons", async () => {
@@ -44,8 +44,10 @@ test("backup only differing files; none when nothing differs; stamp has no colon
   writeFileSync(path.join(wd, "same.md"), "same");
   const stamp = resyncStamp(new Date("2026-11-19T10:22:31.123Z"));
   expect(stamp).toBe("2026-11-19T10-22-31Z");
+  const root = mkdtempSync(path.join(tmpdir(), "bk-"));
   const dir = await backupDiffering(
     wd,
+    root,
     [
       { to: "AGENTS.md", data: Buffer.from("template") },
       { to: "same.md", data: Buffer.from("same") },
@@ -53,11 +55,11 @@ test("backup only differing files; none when nothing differs; stamp has no colon
     ],
     stamp,
   );
-  expect(dir).toBe(".factory/resync/2026-11-19T10-22-31Z");
-  expect(readFileSync(path.join(wd, dir as string, "AGENTS.md"), "utf8")).toBe("edited");
-  expect(existsSync(path.join(wd, dir as string, "same.md"))).toBe(false);
+  expect(dir).toBe(path.join(root, "2026-11-19T10-22-31Z"));
+  expect(readFileSync(path.join(dir as string, "AGENTS.md"), "utf8")).toBe("edited");
+  expect(existsSync(path.join(dir as string, "same.md"))).toBe(false);
   expect(
-    await backupDiffering(wd, [{ to: "same.md", data: Buffer.from("same") }], "s2"),
+    await backupDiffering(wd, root, [{ to: "same.md", data: Buffer.from("same") }], "s2"),
   ).toBeUndefined();
   await writeAtomic(path.join(wd, "a.json"), "{}");
   expect(readFileSync(path.join(wd, "a.json"), "utf8")).toBe("{}");
@@ -77,7 +79,14 @@ test("copyTargets never writes through symlinks in the destination", async () =>
   mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
   symlinkSync(host, path.join(wd, ".claude/skills/grilling"));
   await expect(
-    copyTargets(t, wd, await templateTargets(t, { localSkills: true }), {}, {}),
+    copyTargets(
+      t,
+      wd,
+      path.join(wd, "sc"),
+      await templateTargets(t, { localSkills: true }),
+      {},
+      {},
+    ),
   ).rejects.toBeInstanceOf(WorkspaceError);
   expect(readFileSync(path.join(host, "SKILL.md"), "utf8")).toBe("host original");
 
@@ -87,7 +96,14 @@ test("copyTargets never writes through symlinks in the destination", async () =>
   mkdirSync(path.join(wd, "projects"));
   symlinkSync(repo, path.join(wd, "projects/app"));
   await expect(
-    copyTargets(t2, wd, await templateTargets(t2, { localSkills: false }), {}, {}),
+    copyTargets(
+      t2,
+      wd,
+      path.join(wd, "sc"),
+      await templateTargets(t2, { localSkills: false }),
+      {},
+      {},
+    ),
   ).rejects.toThrow(/link/);
   expect(readdirSync(repo)).toEqual([]);
 });
@@ -98,11 +114,11 @@ test("copyTargets: read-only re-copy, mode masked, symlink targets, no real-file
   chmodSync(path.join(t, "AGENTS.md"), 0o4444);
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
   const targets = await templateTargets(t, { localSkills: false });
-  await copyTargets(t, wd, targets, {}, {});
+  await copyTargets(t, wd, path.join(wd, "state-copy"), targets, {}, {});
   chmodSync(path.join(t, "AGENTS.md"), 0o644);
   writeFileSync(path.join(t, "AGENTS.md"), "v2");
   chmodSync(path.join(t, "AGENTS.md"), 0o4444);
-  await copyTargets(t, wd, targets, {}, {});
+  await copyTargets(t, wd, path.join(wd, "state-copy"), targets, {}, {});
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("v2");
   expect(statSync(path.join(wd, "AGENTS.md")).mode & 0o7777).toBe(0o444);
   expect(readdirSync(wd).filter((n) => n.includes(".tmp-"))).toEqual([]);
@@ -111,11 +127,25 @@ test("copyTargets: read-only re-copy, mode masked, symlink targets, no real-file
   symlinkSync("AGENTS.md", path.join(t, "files/link"));
   writeFileSync(path.join(wd, "link"), "precious");
   await expect(
-    copyTargets(t, wd, await templateTargets(t, { localSkills: false }), {}, {}),
+    copyTargets(
+      t,
+      wd,
+      path.join(wd, "sc"),
+      await templateTargets(t, { localSkills: false }),
+      {},
+      {},
+    ),
   ).rejects.toBeInstanceOf(WorkspaceError);
   expect(readFileSync(path.join(wd, "link"), "utf8")).toBe("precious");
   const wd2 = mkdtempSync(path.join(tmpdir(), "wd-"));
-  await copyTargets(t, wd2, await templateTargets(t, { localSkills: false }), {}, {});
+  await copyTargets(
+    t,
+    wd2,
+    path.join(wd2, "sc"),
+    await templateTargets(t, { localSkills: false }),
+    {},
+    {},
+  );
   expect(lstatSync(path.join(wd2, "link")).isSymbolicLink()).toBe(true);
 });
 
@@ -123,18 +153,19 @@ test("backupDiffering rethrows read errors and never overwrites an earlier backu
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
   writeFileSync(path.join(wd, "a.md"), "one");
   const inc = [{ to: "a.md", data: Buffer.from("tpl") }];
-  const d1 = await backupDiffering(wd, inc, "s");
+  const root = mkdtempSync(path.join(tmpdir(), "bk-"));
+  const d1 = await backupDiffering(wd, root, inc, "s");
   writeFileSync(path.join(wd, "a.md"), "two");
-  const d2 = await backupDiffering(wd, inc, "s");
+  const d2 = await backupDiffering(wd, root, inc, "s");
   expect(d2).toBe(d1);
-  const files = readdirSync(path.join(wd, d1 as string)).sort();
+  const files = readdirSync(path.join(d1 as string)).sort();
   expect(files.length).toBe(2);
-  expect(files.map((f) => readFileSync(path.join(wd, d1 as string, f), "utf8")).sort()).toEqual([
+  expect(files.map((f) => readFileSync(path.join(d1 as string, f), "utf8")).sort()).toEqual([
     "one",
     "two",
   ]);
   mkdirSync(path.join(wd, "dir.md"));
   await expect(
-    backupDiffering(wd, [{ to: "dir.md", data: Buffer.from("x") }], "s3"),
+    backupDiffering(wd, root, [{ to: "dir.md", data: Buffer.from("x") }], "s3"),
   ).rejects.toThrow();
 });

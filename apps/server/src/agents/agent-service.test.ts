@@ -210,7 +210,7 @@ test("resync: backup dir, runtime column, grants follow unless overridden; refus
     "name: lead\ndisplay_name: Lead\nruntime: local\nprojects: []\n",
   );
   const r = await svc.resync("lead");
-  expect(r.backupDir).toMatch(/^\.factory\/resync\//);
+  expect(r.backupDir).toMatch(/^state\/agents\/lead\/resync\//);
   expect(r.agent.projects).toEqual([]);
 });
 

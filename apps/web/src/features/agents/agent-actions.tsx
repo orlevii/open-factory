@@ -171,7 +171,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
           content: (
             <>
               Plugin install failed. Some files were already copied (previous versions in{" "}
-              <Mono>.factory/resync/</Mono>). Fix the template and re-sync again.
+              <Mono>state/agents/{slug}/resync/</Mono>). Fix the template and re-sync again.
               <ShowOutput output={(err as ApiError).body.output} />
             </>
           ),

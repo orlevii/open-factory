@@ -152,10 +152,13 @@ export async function seedTestAgent(
   if (!row) throw new Error("seed failed");
   const workdir = agentWorkdir(app.config.factoryHome, slug);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
-  mkdirSync(templateCopyDir(workdir), { recursive: true });
+  mkdirSync(templateCopyDir(app.config.factoryHome, slug), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  writeFileSync(path.join(templateCopyDir(workdir), "settings.json"), "{}");
-  writeFileSync(path.join(templateCopyDir(workdir), "mcp.json"), '{"mcpServers":{}}');
+  writeFileSync(path.join(templateCopyDir(app.config.factoryHome, slug), "settings.json"), "{}");
+  writeFileSync(
+    path.join(templateCopyDir(app.config.factoryHome, slug), "mcp.json"),
+    '{"mcpServers":{}}',
+  );
   return row;
 }
 

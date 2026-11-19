@@ -1,6 +1,6 @@
 import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import type { Db } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import { createClaudeDriver, type HarnessDriver, localTransport } from "@open-factory/harness";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
@@ -33,6 +33,7 @@ import { SecretService } from "./secrets/secret-service.ts";
 import { registerStatic } from "./static.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
+import { migrateWorkdirState } from "./workspace/state-migration.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -104,6 +105,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   config.factoryHome = await realpath(config.factoryHome);
   await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
+
+  await migrateWorkdirState(
+    config.factoryHome,
+    (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
+    app.log,
+  );
 
   const store = new EventStore(deps.db);
   const bus = new EventBus();

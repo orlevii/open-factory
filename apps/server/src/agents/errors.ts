@@ -1,7 +1,18 @@
+export type StartFix = "credentials" | "secrets" | "projects" | "edit_agent";
+
 export class AgentStartError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly fix?: StartFix,
+  ) {
     super(message);
     this.name = "AgentStartError";
+  }
+}
+export class AgentArchivedError extends Error {
+  constructor(slug: string) {
+    super(`@${slug} is archived. Restore it first.`);
+    this.name = "AgentArchivedError";
   }
 }
 export class NoOpenTurnError extends Error {

@@ -11,7 +11,7 @@ import {
   templateTargets,
   writeAtomic,
 } from "./files.ts";
-import { linkHostSkills, linkProjects, resolveHostSkills } from "./links.ts";
+import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
 import { buildMounts } from "./mounts.ts";
@@ -127,16 +127,29 @@ export class Workspace {
     return backup;
   }
 
-  /** Callers must hold the agent's workspace lock. */
+  /**
+   * Lock contract: no Workspace method takes a lock itself. Callers must hold `lock.run(slug, …)`
+   * around materialize, resync and prepare (createPrepareStart does so for prepare).
+   */
   async prepare(i: PrepareInput): Promise<{ workdir: string; configDir: string; mounts: Mount[] }> {
     const workdir = this.workdir(i.slug);
     const configDir = agentConfigDir(workdir);
     const copy = templateCopyDir(workdir);
-    const tpl = JSON.parse(await readFile(path.join(copy, "settings.json"), "utf8"));
-    const tplMcp = JSON.parse(await readFile(path.join(copy, "mcp.json"), "utf8"));
+    const tpl = await this.readTemplateJson<Record<string, unknown>>(copy, "settings.json");
+    const tplMcp = await this.readTemplateJson<{ mcpServers: Record<string, unknown> }>(
+      copy,
+      "mcp.json",
+    );
     let prev: Record<string, unknown> = {};
     try {
-      prev = JSON.parse(await readFile(path.join(configDir, "settings.json"), "utf8"));
+      const parsed: unknown = JSON.parse(
+        await readFile(path.join(configDir, "settings.json"), "utf8"),
+      );
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        prev = parsed as Record<string, unknown>;
+      } else {
+        this.log.warn({ slug: i.slug }, "previous settings.json isn't an object; starting from {}");
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         this.log.warn({ slug: i.slug }, "previous settings.json didn't parse; starting from {}");
@@ -183,6 +196,20 @@ export class Workspace {
         tplSettings: tpl,
       }),
     };
+  }
+
+  private async readTemplateJson<T>(copy: string, file: string): Promise<T> {
+    const p = path.join(copy, file);
+    try {
+      return JSON.parse(await readFile(p, "utf8"));
+    } catch (err) {
+      const why =
+        (err as NodeJS.ErrnoException).code === "ENOENT" ? "is missing" : "isn't valid JSON";
+      throw new WorkspaceError(
+        `The template copy ${p} ${why}. Re-sync the agent from its template.`,
+        "edit_agent",
+      );
+    }
   }
 
   private install(workdir: string, configDir: string, tpl: TemplateSource) {

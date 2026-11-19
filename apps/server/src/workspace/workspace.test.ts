@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -123,4 +124,33 @@ test("resync backs up differing files and never deletes", async () => {
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
   expect(existsSync(path.join(wd, "mine.md"))).toBe(true);
   expect(await ws.resync("lead", tpl)).toBeUndefined();
+});
+
+test("prepare treats a non-object previous settings.json like a parse failure", async () => {
+  for (const bad of ["null", "[1,2]", "7", "{nope"]) {
+    const { ws, tpl, prep } = setup();
+    await ws.materialize("lead", "lead", tpl, prep);
+    const sp = path.join(ws.workdir("lead"), ".claude-config/settings.json");
+    writeFileSync(sp, bad);
+    await ws.prepare(prep);
+    const s = JSON.parse(readFileSync(sp, "utf8"));
+    expect(s.permissions.deny).toEqual(["Bash(curl:*)"]);
+  }
+});
+
+test("prepare reports a missing or malformed template copy as a WorkspaceError", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const copy = path.join(ws.workdir("lead"), ".factory/template");
+  writeFileSync(path.join(copy, "settings.json"), "{nope");
+  await expect(ws.prepare(prep)).rejects.toMatchObject({
+    name: "WorkspaceError",
+    message: expect.stringContaining("settings.json"),
+  });
+  writeFileSync(path.join(copy, "settings.json"), "{}");
+  rmSync(path.join(copy, "mcp.json"));
+  await expect(ws.prepare(prep)).rejects.toMatchObject({
+    name: "WorkspaceError",
+    message: expect.stringContaining("mcp.json"),
+  });
 });

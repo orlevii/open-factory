@@ -134,10 +134,14 @@ test("Re-sync 502 shows the plugin line and a collapsed Show output", async () =
 });
 
 test("Archive is an ink ghost button and lands on the list with the Undo line", async () => {
-  world({
+  const api = world({
     extra: {
-      "POST /api/agents/lead/archive": () =>
-        json({ agent: { ...lead, archivedAt: "2026-11-19T10:00:00Z" } }),
+      "POST /api/agents/lead/archive": () => {
+        const archived = { ...lead, archivedAt: "2026-11-19T10:00:00Z" };
+        api.on("GET /api/agents?archived=exclude", () => json({ agents: [] }));
+        api.on("GET /api/agents?archived=only", () => json({ agents: [archived] }));
+        return json({ agent: archived });
+      },
     },
   });
   renderApp("/agents/lead/edit", alice);
@@ -241,4 +245,33 @@ test("a pending re-sync is announced once: the button keeps its label", async ()
     "aria-disabled",
     "true",
   );
+});
+
+test("Undo on the archived line restores, keeps the line, and drops ?justArchived", async () => {
+  const archived = { ...lead, archivedAt: "2026-11-19T10:00:00Z" };
+  const api = world({
+    agents: [],
+    archived: [archived],
+    extra: {
+      "POST /api/agents/lead/unarchive": () => {
+        api.on("GET /api/agents?archived=exclude", () => json({ agents: [lead] }));
+        api.on("GET /api/agents?archived=only", () => json({ agents: [] }));
+        return json({ agent: lead });
+      },
+    },
+  });
+  const { router } = renderApp("/agents?justArchived=lead", alice);
+  expect(await screen.findByText("Archived @lead.")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(await screen.findByText(/Restored @lead\./)).toBeInTheDocument();
+  await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
+  expect(screen.getByText(/Restored @lead\./)).toBeInTheDocument();
+});
+
+test("?justArchived for an agent that isn't archived shows no Undo line", async () => {
+  world();
+  renderApp("/agents?justArchived=lead", alice);
+  expect(await screen.findByText("Team Lead")).toBeInTheDocument();
+  expect(screen.queryByText("Archived @lead.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
 });

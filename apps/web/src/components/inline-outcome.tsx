@@ -38,7 +38,7 @@ export function InlineOutcome({
     <div
       ref={lineRef}
       tabIndex={-1}
-      className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.8125rem] leading-[1.125rem] outline-none"
+      className="flex items-center gap-x-1.5 text-[0.8125rem] leading-[1.125rem] outline-none"
     >
       {tone === "success" && (
         <CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />
@@ -52,7 +52,9 @@ export function InlineOutcome({
           className="size-3.5 shrink-0 text-muted-foreground motion-safe:animate-spin"
         />
       )}
-      <span className={tone === "error" ? "text-destructive" : "text-muted-foreground"}>
+      <span
+        className={`min-w-0 ${tone === "error" ? "text-destructive" : "text-muted-foreground"}`}
+      >
         {children}
       </span>
       {undo && (

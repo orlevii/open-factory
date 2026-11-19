@@ -145,7 +145,11 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className="grid scroll-mt-6 gap-3">
+    <section
+      id={id}
+      aria-labelledby={`${id}-title`}
+      className="grid min-w-0 scroll-mt-6 grid-cols-[minmax(0,1fr)] gap-3"
+    >
       <div className="grid gap-0.5">
         <h2 id={`${id}-title`} tabIndex={-1} className="text-[0.8125rem] font-medium outline-none">
           {title}
@@ -164,7 +168,7 @@ export function SettingsList({ children }: { children: ReactNode }) {
 /** The first line of a row: the name, its facts, then the actions at the right edge. */
 export function RowLine({ children, actions }: { children: ReactNode; actions: ReactNode }) {
   return (
-    <div className="flex min-h-9 flex-wrap items-center gap-x-4 gap-y-1">
+    <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
       {children}
       <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
     </div>

@@ -109,6 +109,7 @@ test("the Active / Archived radio pair writes ?archived=only and lists archived 
 test("?justArchived shows the Undo line focused; Undo restores", async () => {
   const api = mockWorld({
     agents: tree,
+    archived: [agentSummary({ slug: "reviewer", archivedAt: "2026-11-19T10:00:00Z" })],
     extra: {
       "POST /api/agents/reviewer/unarchive": () => json({ agent: tree[2] }),
       "GET /api/agents/reviewer": () => json({ agent: tree[2], queue: [], lastSeq: 0 }),
@@ -129,6 +130,7 @@ test("?justArchived shows the Undo line focused; Undo restores", async () => {
 test("Undo mentions pending messages when the agent has some", async () => {
   mockWorld({
     agents: tree,
+    archived: [agentSummary({ slug: "reviewer", archivedAt: "2026-11-19T10:00:00Z" })],
     extra: {
       "POST /api/agents/reviewer/unarchive": () => json({ agent: tree[2] }),
       "GET /api/agents/reviewer": () =>
@@ -149,6 +151,7 @@ test("Undo mentions pending messages when the agent has some", async () => {
 test("an Undo failure shows the error with a link to the edit page", async () => {
   mockWorld({
     agents: tree,
+    archived: [agentSummary({ slug: "reviewer", archivedAt: "2026-11-19T10:00:00Z" })],
     extra: {
       "POST /api/agents/reviewer/unarchive": () =>
         json(

@@ -470,7 +470,11 @@ export function CredentialsSection() {
               const noun = valueNoun(c.kind);
               const busy = verifying.has(c.name);
               return (
-                <li key={c.name} data-name={c.name} className="grid gap-1 px-2 py-1.5">
+                <li
+                  key={c.name}
+                  data-name={c.name}
+                  className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
+                >
                   <RowLine
                     actions={
                       <>

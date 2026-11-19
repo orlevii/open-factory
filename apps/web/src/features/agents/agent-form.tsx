@@ -146,10 +146,16 @@ export function AgentForm(props: Props) {
   }, [create, credentials.data, values.credential]);
 
   // New agent: the chosen template fills the fields the user hasn't edited. The slug takes the
-  // template's name when that slug is free and valid.
+  // template's name when that slug is free and valid. The detail lands asynchronously, so a field
+  // the user is already in when it lands counts as theirs too: filling it would mix the prefill
+  // into what they are about to type.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-apply only when the template or the taken slugs change
   useEffect(() => {
     if (!create || !config) return;
+    const active = document.activeElement?.id;
+    for (const f of ["slug", "displayName", "description"] as const) {
+      if (active === `field-${f}`) touched.current[f] = true;
+    }
     setValues((v) => {
       const next = { ...v };
       if (!touched.current.displayName) next.displayName = config.displayName;

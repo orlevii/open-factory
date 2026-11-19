@@ -317,7 +317,14 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
 }
 
 /** The list's line after an archive: "Archived @x. Undo", focused; Undo restores in place. */
-export function UndoArchiveLine({ slug }: { slug: string }) {
+export function UndoArchiveLine({
+  slug,
+  onRestored,
+}: {
+  slug: string;
+  /** After a successful Undo, so the page can drop the one-shot `justArchived` from its URL. */
+  onRestored?: () => void;
+}) {
   const qc = useQueryClient();
   const [outcome, setOutcome] = useState<Outcome>({
     tone: "success",
@@ -333,6 +340,7 @@ export function UndoArchiveLine({ slug }: { slug: string }) {
       const note = await pendingNote(qc, slug);
       void qc.invalidateQueries({ queryKey: ["agents"] });
       setOutcome({ tone: "success", content: `Restored @${slug}.${note}`, focusKey: 2 });
+      onRestored?.();
     } catch (err) {
       setOutcome({
         tone: "error",

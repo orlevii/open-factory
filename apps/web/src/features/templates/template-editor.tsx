@@ -8,7 +8,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Loader2, Trash2, UserPlus } from "lucide-react";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
@@ -94,6 +94,8 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const seq = useRef(0);
   const leaving = useRef(false);
   const headingId = useId();
+  // Stable, so it runs only when a conflict block mounts: keyboard users land on its Reload.
+  const focusOnMount = useCallback((el: HTMLButtonElement | null) => el?.focus(), []);
 
   const dirty = TEMPLATE_FILES.some((f) => isDirty(files[f]));
   useBlocker({
@@ -199,6 +201,9 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
       });
       // Overwrite removes the conflict block that held focus.
       if (baseHash !== s.baseHash) refs.current[f]?.focus();
+      // The header (display name, runtime, description) and the list read the saved config;
+      // the editor itself was seeded once and keeps its own state.
+      void qc.invalidateQueries({ queryKey: ["templates"] });
     } catch (e) {
       if (e instanceof ApiError && e.code === "changed_on_disk") {
         const h = e.body.currentHash;
@@ -311,7 +316,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         )}
       </div>
       <PageBody>
-        <div className="grid gap-5">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
           {issues.length > 0 && (
             <section
               aria-labelledby={headingId}
@@ -325,7 +330,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               <IssueList issues={issues} onJump={jumpTo} />
             </section>
           )}
-          <Tabs value={tab} onValueChange={(v) => setTab(v as TemplateFile)} className="gap-3">
+          <Tabs
+            value={tab}
+            onValueChange={(v) => setTab(v as TemplateFile)}
+            className="min-w-0 gap-3"
+          >
             <TabsList
               variant="line"
               className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0"
@@ -360,7 +369,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               const canSave = isDirty(s) && !busy;
               const save$ = () => void save(f);
               return (
-                <TabsContent key={f} value={f} className="grid gap-3">
+                <TabsContent
+                  key={f}
+                  value={f}
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3"
+                >
                   {!s.started ? (
                     <div className="grid justify-items-start gap-2 rounded-lg border border-dashed border-border p-4">
                       <p className="text-sm text-muted-foreground">Not created</p>
@@ -413,6 +426,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       </p>
                       <div className="flex gap-2">
                         <Button
+                          ref={focusOnMount}
                           variant="ghost"
                           aria-describedby={`conflict-${f}`}
                           onClick={() => void reload(f)}

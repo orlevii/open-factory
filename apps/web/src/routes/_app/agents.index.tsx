@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
+import { useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,15 @@ function AgentsPage() {
   const { archived, justArchived } = Route.useSearch();
   const filter = archived ?? "exclude";
   const { data: agents, isError } = useQuery(agentsListQueryOptions(filter));
+  const navigate = useNavigate();
+  // The Undo line is for an agent that is archived right now: a reload or a revisited URL after
+  // an Undo must not offer to restore an active agent.
+  const archivedList = useQuery({ ...agentsListQueryOptions("only"), enabled: !!justArchived });
+  const stillArchived =
+    justArchived !== undefined && !!archivedList.data?.some((a) => a.slug === justArchived);
+  // Restored from the line on this visit: the line stays to say so after the URL is cleared.
+  const [restored, setRestored] = useState<string>();
+  const lineSlug = stillArchived ? justArchived : restored;
   return (
     <>
       <PageHeader
@@ -40,10 +50,21 @@ function AgentsPage() {
       />
       <PageBody>
         <div className="grid gap-4">
-          {justArchived && (
+          {lineSlug && (
             // One grid item: the line's two live regions shouldn't each take a gap.
             <div>
-              <UndoArchiveLine key={justArchived} slug={justArchived} />
+              <UndoArchiveLine
+                key={lineSlug}
+                slug={lineSlug}
+                onRestored={() => {
+                  setRestored(lineSlug);
+                  void navigate({
+                    to: "/agents",
+                    search: (s) => ({ ...s, justArchived: undefined }),
+                    replace: true,
+                  });
+                }}
+              />
             </div>
           )}
           {isError && !agents && (

@@ -283,7 +283,11 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
         ) : (
           <SettingsList>
             {secrets.map((s) => (
-              <li key={s.name} data-name={s.name} className="grid gap-1 px-2 py-1.5">
+              <li
+                key={s.name}
+                data-name={s.name}
+                className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
+              >
                 <RowLine
                   actions={
                     <>

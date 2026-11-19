@@ -447,3 +447,30 @@ test("'Deleted x.' shows once: it is cleared from history state after it is read
   );
   expect(screen.getByText("Deleted lead.")).toBeInTheDocument(); // still shown while mounted
 });
+
+test("saving template.yaml refreshes the header without touching what is being typed", async () => {
+  const saved = detail();
+  const api = mockApi({ "GET /api/templates/lead": () => json(detail()) });
+  renderApp("/templates/lead", alice);
+  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
+  expect(screen.getByText("Local")).toBeInTheDocument();
+  api.on("PUT /api/templates/lead/files/template.yaml", () => {
+    // The disk now says docker and a new display name; the refetch returns that.
+    saved.template.config.runtime = "docker";
+    saved.template.config.displayName = "Renamed Lead";
+    api.on("GET /api/templates/lead", () => json(saved));
+    return json({ hash: "h-saved", issues: [] });
+  });
+  await userEvent.type(editor, "runtime: docker\n");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved.");
+  expect(await screen.findByText("Docker")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Renamed Lead" })).toBeInTheDocument();
+  // The editor keeps its own state: the refetch does not reseed it.
+  expect(editor).toHaveValue("name: lead\ndisplay_name: Lead\nruntime: docker\n");
+});
+
+test("the changed-on-disk block takes focus on its Reload button", async () => {
+  await conflictPage();
+  expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
+});

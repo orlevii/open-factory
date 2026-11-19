@@ -54,7 +54,7 @@ function SettingsPage() {
     <>
       <PageHeader title="Settings" />
       <PageBody>
-        <div className="grid max-w-5xl gap-10">
+        <div className="grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-10">
           {failed && (
             <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
               <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />

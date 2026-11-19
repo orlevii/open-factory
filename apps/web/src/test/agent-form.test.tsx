@@ -431,3 +431,26 @@ test("display name over the shared limit errors on blur", async () => {
   await userEvent.tab();
   expect(await screen.findByText(/80 characters or fewer/)).toBeInTheDocument();
 });
+
+test("the template prefill never overwrites a field the user is in or has typed into", async () => {
+  let land: (r: Response) => void = () => {};
+  mockWorld({
+    extra: {
+      "GET /api/templates/lead": () =>
+        new Promise<Response>((resolve) => {
+          land = resolve;
+        }),
+    },
+  });
+  renderApp("/agents/new", alice);
+  await screen.findByRole("option", { name: "lead" });
+  await userEvent.selectOptions(field("Template") as unknown as HTMLSelectElement, "lead");
+  // Straight into Slug and Description while the template detail is still in flight.
+  await userEvent.type(field("Description"), "Mine");
+  await userEvent.click(field("Slug"));
+  await act(async () => land(json(templateDetail(templateConfig()))));
+  await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
+  await userEvent.type(field("Slug"), "lead-one");
+  expect(field("Slug").value).toBe("lead-one");
+  expect(field("Description").value).toBe("Mine");
+});

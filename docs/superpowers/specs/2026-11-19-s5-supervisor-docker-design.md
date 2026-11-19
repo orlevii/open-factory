@@ -7,7 +7,7 @@
 - **Product sources of truth:** `docs/product/architecture/agent-runtime.md`, `harness-driver.md`, `base-image.md`, `workspace.md`, `permissions.md`, `system-overview.md`, `data-model.md`; `docs/product/concepts/agent.md`, `session.md`, `message.md`, `schedule.md`, `credential.md`; `docs/product/behavior/agents-and-sessions.md`; ADRs 0008, 0009, 0010, 0011, 0013, 0018; `docs/product/open-questions.md` ("Verified during design", the S0 findings).
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md): harness driver, `AgentRuntime`, event store), S4 ([spec](2026-11-19-s4-templates-workspace-design.md): templates, workspace, `prepareStart`, `requestRestart`, credentials, `buildMounts`) and S2 ([spec](2026-11-18-s2-base-image-design.md) §5.1: the base image runtime contract).
 - **Evidence:** the S0 fixtures in `packages/harness/fixtures/`, plus what this design verified (§19).
-- **Decision log:** the GitHub issue "S5 Supervisor and Docker runtime: design decisions".
+- **Decision log:** #38 ("S5 Supervisor and Docker runtime: design decisions").
 - **Stacked on:** `spec/s4-templates-workspace` (PR #37), itself stacked on `spec/s3-walking-skeleton` (PR #27).
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -560,8 +560,8 @@ Roadmap/product deviations taken at certainty 4 that Or should still see (§20):
 
 ## 22. Issues consumed and follow-ups
 
-Consumed: **#10** (the S2 runtime contract: HOST_UID/GID, tmpfs, ready wait with logs, `-u agent -w`, CLI mount), **#18** (gate), **#19** (restart policy and unrecoverable resumes), **#20** (leftover cleanup), **#24** (evaluated and rejected with V1; close), **#31** (apply-restart tells the agent which crons stopped; S9 still owns the pinning UI). Also S4's PR notes: the timed-out stop, the owed notification, the double `proc.stop`, the workspace symlink and template-copy hardening, and Docker templates failing closed.
+Consumed: **#10** (the S2 runtime contract: HOST_UID/GID, tmpfs, ready wait with logs, `-u agent -w`, CLI mount), **#18** (gate), **#19** (restart policy and unrecoverable resumes), **#20** (leftover cleanup), **#24** (evaluated and rejected with V1; closed), **#31** (apply-restart tells the agent which crons stopped; S9 still owns the pinning UI). Also S4's PR notes: the timed-out stop, the owed notification, the double `proc.stop`, the workspace symlink and template-copy hardening, and Docker templates failing closed.
 
 Untouched: **#23**, **#26** (a compact to a hibernated agent wakes it; durability stays a follow-up), #29, #30, #32–#36.
 
-Follow-ups to open: base image sudo under `no-new-privileges` (S2 smoke test and docs, whether to drop sudo, an `allow_sudo` opt-in shape); container resource limits and `oom_score_adj`; pin `FACTORY_DEFAULT_IMAGE` to a released version or digest; persist `/home/agent` across container re-creation; verify the documented `rejected` rate-limit shape and the poisoned-resume texts when they occur; Linux factory reachability for containers in S6 (bind address and agent auth); persisting live crons (S9); the Docker integration tests in CI with a cached image.
+Follow-ups: base image sudo under `no-new-privileges` (#39); container resource limits and `oom_score_adj` (#40); pin `FACTORY_DEFAULT_IMAGE` to a released version or digest (#41); persist `/home/agent` across container re-creation (#42); verify the documented `rejected` rate-limit shape and the poisoned-resume texts (#43); Linux factory reachability and agent auth in S6 (#44); the Docker integration tests in CI (#45); persisting live crons stays with S9.

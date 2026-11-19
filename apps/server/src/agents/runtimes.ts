@@ -24,8 +24,8 @@ export interface RuntimesDeps {
   holdTimeoutMs?: number;
   /** `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` in ms (S6 §8.2); the runtime's 30 s default when unset. */
   memberUpdateDebounceMs?: number;
-  /** S6 §9.1: every runtime's forwarding port (the Router's `forward`); absent, nothing is forwarded. */
-  forward?: (f: Forward) => Promise<void>;
+  /** S6 §9.1: every runtime's forwarding port (the Router's `forward`). */
+  forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
   /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
@@ -174,7 +174,7 @@ export class AgentRuntimes {
         ...(this.d.memberUpdateDebounceMs !== undefined
           ? { memberUpdateDebounceMs: this.d.memberUpdateDebounceMs }
           : {}),
-        ...(this.d.forward ? { forward: this.d.forward } : {}),
+        forward: this.d.forward,
         slots: this.supervisor,
         ...(this.d.localRuntimeAllowed ? { localRuntimeAllowed: this.d.localRuntimeAllowed } : {}),
         ...(this.d.journal ? { journal: this.d.journal } : {}),

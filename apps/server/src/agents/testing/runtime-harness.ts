@@ -45,6 +45,9 @@ export async function sendAs(
 export const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 
 /** A token port for tests that don't look at tokens. */
+/** A forwarding port for tests that don't look at forwarding (S6 §9.1): nothing is persisted. */
+export const noForward = async (): Promise<void> => {};
+
 export const noopTokens = {
   mint: () => ({ token: "tok", generation: 1 }),
   revoke: () => {},

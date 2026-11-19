@@ -7,6 +7,7 @@ import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import { ev, type FakeDriver } from "./testing/fake-driver.ts";
 import {
+  noForward,
   noopTokens,
   okSpec,
   RuntimeHarness,
@@ -228,6 +229,7 @@ test("the runtime does not hold the slug lock around prepareStart (the real one 
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
     tokens: noopTokens,
+    forward: noForward,
     agent,
     store,
     bus,
@@ -380,6 +382,7 @@ test("pending after a failed start, then delivered as one turn on the next start
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
     tokens: noopTokens,
+    forward: noForward,
     agent,
     store,
     bus,

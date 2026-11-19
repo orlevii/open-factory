@@ -439,3 +439,50 @@ test("reconcile forwards factory_restarted lost work to the manager", async () =
     },
   ]);
 });
+
+test("R4 (owner): a restart that cuts short a human retry inside a reported episode adds no inbox item", async () => {
+  await signUp(h.app, { handle: "or" });
+  await startIdle("lead"); // a second user, "hlead"
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("seed");
+  proc("lead")?.emit(ev.turn());
+  proc("lead")?.exit(137);
+  await settle("lead");
+  proc("lead")?.exit(1); // the automatic attempt fails: the episode is reported
+  await settle("lead");
+  const errored = () =>
+    h.sql`select 1 from messages where notice = 'agent_errored' and subject_agent_id = ${lead.id}`;
+  expect(await errored()).toHaveLength(1);
+  expect((await h.sql`select errored_reported from agents where id = ${lead.id}`)[0]).toEqual({
+    errored_reported: true,
+  });
+  // A human retry was under way when the factory stopped: boot finds it cut short.
+  await h.sql`update agents set attempting = true where id = ${lead.id}`;
+  await h.app.close();
+  await h.reopen({ harnessDriver: new FakeDriver(), env: { FACTORY_AGENT_PORT: "0" } });
+  expect(await errored()).toHaveLength(1);
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(2);
+});
+
+test("errored_reported clears with the error, so the next episode is reported", async () => {
+  await startIdle("lead");
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("seed");
+  proc("lead")?.emit(ev.turn());
+  proc("lead")?.exit(137);
+  await settle("lead");
+  proc("lead")?.exit(1);
+  await settle("lead");
+  const { cookie } = await signUp(h.app, { handle: "sam" });
+  await h.app.inject({
+    method: "POST",
+    url: "/api/agents/lead/messages",
+    headers: { cookie },
+    payload: { body: "retry" },
+  });
+  proc("lead")?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
+  await settle("lead");
+  expect((await h.sql`select errored_reported from agents where id = ${lead.id}`)[0]).toEqual({
+    errored_reported: false,
+  });
+});

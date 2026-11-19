@@ -187,6 +187,15 @@ export class Router {
   async forward(f: Forward): Promise<void> {
     const agent = await this.d.store.agentById(f.agentId);
     if (!agent) return;
+    await this.persistForward(agent, f);
+    // Durable episode state (R4): a restart never reports the same errored episode twice.
+    if (f.fact === "errored") await this.d.store.setErroredReported(f.agentId);
+  }
+
+  private async persistForward(
+    agent: NonNullable<Awaited<ReturnType<EventStore["agentById"]>>>,
+    f: Forward,
+  ): Promise<void> {
     if (agent.reportsTo) {
       const row = await this.d.store.createHeld({
         kind: "member_update",

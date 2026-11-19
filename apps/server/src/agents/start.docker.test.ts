@@ -30,7 +30,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
-import { noopTokens, sendAs, silentLog } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, silentLog } from "./testing/runtime-harness.ts";
 
 /**
  * The Docker start path end to end over a fake Docker daemon (spec §10, §11): the real prepareStart, Workspace,
@@ -182,6 +182,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
   });
   const runtimes = new AgentRuntimes({
     tokens: noopTokens,
+    forward: noForward,
     store,
     bus: new EventBus(),
     driver: createClaudeDriver({

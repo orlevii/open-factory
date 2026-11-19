@@ -82,6 +82,7 @@ const make = () =>
     tokens: new AgentTokens(),
     log,
     slots: unlimitedSlots,
+    forward: async () => {}, // a lone agent: nothing to forward to
   });
 let rt = make();
 await rt.init();

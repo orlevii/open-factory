@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vi
 import { CAP_BYTES } from "./cap.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 const h = new RuntimeHarness();
 beforeAll(() => h.setup());
@@ -161,4 +162,68 @@ test("lost background work is forwarded with its descriptions quoted", async () 
   await h.rt.settled();
   expect(facts()).toContain("work_lost");
   expect(h.forwarded.find((f) => f.fact === "work_lost")?.body).toContain("> pnpm test");
+});
+
+test("a recoverable crash whose attempt can't begin (closing) is errored, not crashed", async () => {
+  let closing = false;
+  await h.makeRuntime({ slots: { ...unlimitedSlots, closing: () => closing } });
+  await idle();
+  closing = true;
+  h.driver.last.emit(ev.turn());
+  h.driver.last.exit(137);
+  await h.rt.settled();
+  expect(facts()).toEqual(["errored"]);
+  expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "crash" });
+});
+
+test("a crash recovery whose wake is dropped ends its attempt errored, reported once", async () => {
+  let wake: "granted" | "dropped" = "granted";
+  await h.makeRuntime({ slots: { ...unlimitedSlots, requestWake: () => wake } });
+  await idle();
+  wake = "dropped";
+  h.driver.last.emit(ev.turn());
+  h.driver.last.exit(137);
+  await h.rt.settled();
+  expect(facts()).toEqual(["crashed", "errored"]);
+  expect(h.rt.live().status).toBe("errored");
+});
+
+test("a failed errored insert reports nothing, so a later errored path in the episode retries it", async () => {
+  await idle();
+  h.driver.last.emit(ev.turn());
+  h.driver.last.exit(137);
+  await h.rt.settled();
+  h.forwardError = new Error("db down");
+  h.driver.last.emit(ev.session(), ev.turn());
+  h.driver.last.exit(1); // the automatic attempt fails; its errored insert fails too
+  await h.rt.settled();
+  expect(facts()).toEqual(["crashed"]);
+  h.forwardError = undefined;
+  await h.send("are you there");
+  h.driver.last.emit(ev.session(), ev.turn());
+  h.driver.last.exit(1); // a human retry fails: the episode is reported now, once
+  await h.rt.settled();
+  expect(facts()).toEqual(["crashed", "errored"]);
+});
+
+test("Start a new session still makes its attempt when forwarding recovered fails", async () => {
+  await h.makeRuntime({
+    status: "errored",
+    sessionId: "sess-gone",
+    errorKind: "resume_unrecoverable",
+    seed: async (id) => {
+      await h.store.createMessage({
+        from: { userId: "u1" },
+        toAgentId: id,
+        body: "pending",
+        urgent: false,
+      });
+    },
+  });
+  const starts = h.driver.starts.length;
+  h.forwardError = new Error("db down");
+  await h.rt.resetSession({ byHandle: "or" });
+  await h.rt.settled();
+  expect(h.driver.starts.length).toBe(starts + 1);
+  expect(h.driver.last.sent.flat().map((m) => m.body)).toContain("pending");
 });

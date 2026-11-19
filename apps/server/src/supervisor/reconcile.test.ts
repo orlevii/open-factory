@@ -8,7 +8,7 @@ import { EventStore } from "../agents/event-store.ts";
 import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import { noForward, noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
@@ -41,6 +41,7 @@ class Boot {
   constructor(max = 8) {
     this.runtimes = new AgentRuntimes({
       tokens: noopTokens,
+      forward: noForward,
       store,
       bus: new EventBus(),
       driver: this.driver,
@@ -260,9 +261,13 @@ test("an agent whose attempt was cut short is errored and not woken", async () =
   await t.sql`update agents set attempting = true where id = ${fresh}`;
   await store.createNotice({ toAgentId: fresh, notice: "crash", body: "crashed" });
   const resumeFailed = await agent({ status: "errored" });
-  await t.sql`update agents set attempting = true, error_kind = 'resume', last_error = 'No conversation'
-              where id = ${resumeFailed}`;
+  await t.sql`update agents set attempting = true, error_kind = 'resume', last_error = 'No conversation',
+              errored_reported = true where id = ${resumeFailed}`;
   await pending(resumeFailed, "hi");
+  // A crash whose automatic attempt failed (reported), then a human retry the restart cut short: same episode.
+  const crashRetry = await agent({ status: "errored" });
+  await t.sql`update agents set attempting = true, error_kind = 'crash', last_error = 'Exited unexpectedly (code 1)',
+              errored_reported = true where id = ${crashRetry}`;
   boot = new Boot();
   await boot.run();
   expect(await row(fresh)).toMatchObject({
@@ -279,7 +284,7 @@ test("an agent whose attempt was cut short is errored and not woken", async () =
   });
   await boot.settleAll([fresh, resumeFailed]);
   expect(boot.driver.starts).toHaveLength(0);
-  // S6 §9.1: the cut-short automatic attempt starts an errored episode; the cut-short human retry was inside one.
+  // S6 §9.1: the cut-short automatic attempt starts an errored episode; the cut-short human retries were inside one.
   expect(boot.forwarded.filter((f) => f.fact === "errored").map((f) => f.agentId)).toEqual([fresh]);
   const body = boot.forwarded.find((f) => f.agentId === fresh)?.body;
   expect(body).toContain("is errored and needs a human. Reported by @");

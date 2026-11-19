@@ -8,6 +8,7 @@ import { insertAgent } from "../agents/testing/rows.ts";
 import {
   deliverHuman,
   humanRow,
+  noForward,
   noopTokens,
   okSpec,
   sendAs,
@@ -63,6 +64,7 @@ class World {
     if (!agent) throw new Error("no agent");
     const rt = new AgentRuntime({
       tokens: noopTokens,
+      forward: noForward,
       agent,
       store,
       bus: this.bus,

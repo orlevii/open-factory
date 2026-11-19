@@ -45,6 +45,11 @@ export const agents = pgTable("agents", {
   lastError: text("last_error"),
   errorKind: text("error_kind"),
   attempting: boolean("attempting").notNull().default(false),
+  /**
+   * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to the manager or the humans). Set once
+   * per episode; cleared with the error. Read at boot so a restart never reports one episode twice.
+   */
+  erroredReported: boolean("errored_reported").notNull().default(false),
   runtimeJournal: jsonb("runtime_journal").$type<RuntimeJournal>(),
   rateLimitNoticeOwed: boolean("rate_limit_notice_owed").notNull().default(false),
   archivedAt: timestamp("archived_at", { withTimezone: true }),

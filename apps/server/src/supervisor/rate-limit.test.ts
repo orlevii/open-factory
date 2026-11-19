@@ -7,7 +7,13 @@ import { EventStore } from "../agents/event-store.ts";
 import { notices } from "../agents/notices.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { noopTokens, okSpec, sendAs, silentLog } from "../agents/testing/runtime-harness.ts";
+import {
+  noForward,
+  noopTokens,
+  okSpec,
+  sendAs,
+  silentLog,
+} from "../agents/testing/runtime-harness.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -68,6 +74,7 @@ class World {
     if (!agent) throw new Error("no agent");
     const rt = new AgentRuntime({
       tokens: noopTokens,
+      forward: noForward,
       agent,
       store,
       bus: this.bus,

@@ -111,10 +111,9 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
         { agent: a.slug },
         "an attempt was cut short by the restart; the agent is errored",
       );
-      // Errored with no attempt pending (S6 §9.1), once per episode: an agent already errored for another reason was
-      // inside a reported episode (only a human retries it); a crash's automatic attempt or a boot_resume was not. The
-      // runtime, loaded errored, never repeats it.
-      if (a.status !== "errored" || a.errorKind === "crash")
+      // Errored with no attempt pending (S6 §9.1), once per episode: a human retry cut short was inside an episode
+      // already reported (`errored_reported`, set by the Router); a crash's automatic attempt or a boot_resume was not.
+      if (!a.erroredReported)
         await forward(d, a, "errored", { text: a.lastError ?? ATTEMPT_CUT_SHORT });
     }
 
@@ -161,6 +160,7 @@ async function forward(
   try {
     await d.forward({ agentId: a.id, fact, body: factFor(fact, a.slug, detail) });
   } catch (err) {
+    // The fact is then not reported (for a cut-short attempt: its errored episode stays unreported); boot goes on.
     d.log.error({ err, agent: a.slug, fact }, "forwarding a fact to the manager failed");
   }
 }

@@ -106,8 +106,18 @@ export class EventStore {
   async clearErrored(agentId: string) {
     await this.db
       .update(agents)
-      .set({ status: "hibernated", lastError: null, errorKind: null, attempting: false })
+      .set({
+        status: "hibernated",
+        lastError: null,
+        errorKind: null,
+        attempting: false,
+        erroredReported: false,
+      })
       .where(eq(agents.id, agentId));
+  }
+  /** S6 §9.1: the current errored episode's `errored` fact was forwarded; cleared by `clearErrored`. */
+  async setErroredReported(agentId: string) {
+    await this.db.update(agents).set({ erroredReported: true }).where(eq(agents.id, agentId));
   }
   async setAttempting(agentId: string, attempting: boolean) {
     await this.db.update(agents).set({ attempting }).where(eq(agents.id, agentId));

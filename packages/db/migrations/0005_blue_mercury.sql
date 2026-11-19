@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "errored_reported" boolean DEFAULT false NOT NULL;

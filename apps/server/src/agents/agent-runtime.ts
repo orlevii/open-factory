@@ -93,9 +93,9 @@ export interface RuntimeDeps {
   /**
    * S6 §9.1: persists one forwarded item (the Router: a held `member_update` to the manager, the `errored` fact to the
    * humans for a top-level agent, otherwise dropped). Awaited inside the report's job: a failed insert is a failed event
-   * write (§16). Only the hand-off to the manager is deferred. Absent: nothing is forwarded.
+   * write (§16). Only the hand-off to the manager is deferred. Tests that don't look at it pass `noForward`.
    */
-  forward?: (f: Forward) => Promise<void>;
+  forward: (f: Forward) => Promise<void>;
 }
 
 export interface DockerDeps {
@@ -310,7 +310,7 @@ export class AgentRuntime {
   // A human's message reached an errored agent whose failing process hadn't exited yet: attempt at that exit.
   private attemptOwedAtExit = false;
   // S6 §9.1 (R4): `errored` is forwarded at most once per errored episode, which runs until the error clears (an
-  // attempt succeeds or Start a new session). An agent loaded errored is inside an episode already reported.
+  // attempt succeeds or Start a new session). Loaded from `errored_reported`, which the Router sets durably.
   private erroredForwarded: boolean;
   private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
   private readonly tokenGens = new WeakMap<HarnessProcess, number>(); // the token generation each process was started with
@@ -357,7 +357,7 @@ export class AgentRuntime {
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
     this.errored = d.agent.status === "errored";
-    this.erroredForwarded = this.errored;
+    this.erroredForwarded = d.agent.erroredReported;
     this.lastError = d.agent.lastError ?? undefined;
     const kind = errorKindSchema.safeParse(d.agent.errorKind);
     this.errorKind = kind.success ? kind.data : undefined;
@@ -626,13 +626,17 @@ export class AgentRuntime {
       this.lastError = undefined;
       this.errorKind = undefined;
       await this.d.store.clearErrored(this.agent.id);
-      await this.forwardRecovered();
       const humans = this.queue.some((e) => e.kind === "message") || this.inFlight.length > 0;
       if (this.proc) {
         // The failed start's process is still exiting: its exit makes the wake.
         if (humans) await this.markAttempting("reset");
         this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
       } else if (humans) await this.beginAttempt("reset", false);
+      // After the attempt began: a failed forward must not leave the pending human messages without one. The reset is
+      // done, so the failure is logged rather than failing the human's call.
+      await this.forwardRecovered().catch((err: unknown) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "forwarding recovered failed"),
+      );
       this.publishStatus();
     });
   }
@@ -1112,7 +1116,6 @@ export class AgentRuntime {
    * as `turn_failed`, denials as `denied`. Subagent text, tool calls, blank text and everything else stay here.
    */
   private async forwardEvent(e: AnyEvent) {
-    if (!this.d.forward) return;
     if (e.type === "assistant_text") {
       if (e.parentToolUseId || !e.text.trim()) return;
       await this.d.forward({ agentId: this.agent.id, body: capText(e.text) });
@@ -1123,7 +1126,7 @@ export class AgentRuntime {
   }
 
   private async forwardFact(fact: FactCode, detail?: FactDetail) {
-    await this.d.forward?.({
+    await this.d.forward({
       agentId: this.agent.id,
       fact,
       body: factFor(fact, this.agent.slug, detail),
@@ -1133,8 +1136,15 @@ export class AgentRuntime {
   /** Errored with no attempt pending (S6 §9.1): forwarded once per errored episode. */
   private async forwardErrored() {
     if (this.erroredForwarded) return;
-    this.erroredForwarded = true; // before the write: a failed insert must not report the episode twice
-    await this.forwardFact("errored", this.lastError ? { text: this.lastError } : {});
+    // Set before the write so a re-entrant failure path (onJobFailure → setErrored) doesn't report it again; a failed
+    // insert reported nothing, so the flag is cleared and a later errored path can retry.
+    this.erroredForwarded = true;
+    try {
+      await this.forwardFact("errored", this.lastError ? { text: this.lastError } : {});
+    } catch (err) {
+      this.erroredForwarded = false;
+      throw err;
+    }
   }
 
   /** The error cleared (an attempt succeeded, or Start a new session): the episode ends. */
@@ -1271,6 +1281,9 @@ export class AgentRuntime {
     this.attemptReason = undefined;
     await this.d.store.setAttempting(this.agent.id, false);
     this.publishStatus();
+    // S6 §9.1: an errored agent whose attempt never started is errored with no attempt pending (a crash's recovery
+    // dropped or refused). Inside an episode already reported (a human retry) this is a no-op.
+    if (this.errored) await this.forwardErrored();
   }
 
   /** Spec §9.2: the attempt's batch turn ended with the process running. Clears the attempt and the error. */
@@ -1938,7 +1951,10 @@ export class AgentRuntime {
     // failed_start and internal never wake; a crash makes one automatic attempt only when work was lost (§9.2).
     const canAttempt = !keepSlot && this.stopsInProgress === 0 && !this.slots.closing();
     if (policy === "recover" && !keepSlot) {
-      if (canAttempt) await this.beginAttempt("crash_recovery", false);
+      if (canAttempt) {
+        await this.forwardFact("crashed"); // one automatic recovery is under way (S6 §9.1)
+        await this.beginAttempt("crash_recovery", false);
+      } else await this.forwardErrored(); // no attempt can begin: errored with none pending
     } else if ((intent?.kind === "failed_start" || intent?.kind === "internal") && attemptOwed) {
       // A human's message arrived while the failing process was still exiting (spec §9.2 step 5).
       if (canAttempt && this.messageStartsAttempt() && this.hasDeliverable())
@@ -2144,7 +2160,6 @@ export class AgentRuntime {
       await this.forwardErrored();
       return; // only a human acts next
     }
-    await this.forwardFact("crashed");
     await this.addNotice(
       "crash",
       notices.crash({

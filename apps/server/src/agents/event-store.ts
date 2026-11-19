@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Db, schema } from "@open-factory/db";
 import { type AnyEvent, anyEventSchema, type SessionEvent } from "@open-factory/shared";
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { capPayload } from "./cap.ts";
 import type { NoticeType } from "./notices.ts";
 
@@ -191,11 +191,11 @@ export class EventStore {
    * A system notice from `@factory`. One pending notice of each type per agent: a second one replaces the pending
    * one's body (same row); a written (delivered) one is never touched.
    */
-  async createNotice(m: {
-    toAgentId: string;
-    notice: NoticeType;
-    body: string;
-  }): Promise<MessageRow> {
+  async createNotice(
+    m: { toAgentId: string; notice: NoticeType; body: string },
+    /** Ids written to a process but not yet marked delivered: never replaced. */
+    inFlightIds: string[] = [],
+  ): Promise<MessageRow> {
     const [existing] = await this.db
       .update(messages)
       .set({ body: m.body })
@@ -205,6 +205,7 @@ export class EventStore {
           eq(messages.kind, "system"),
           eq(messages.notice, m.notice),
           eq(messages.state, "pending"),
+          ...(inFlightIds.length ? [notInArray(messages.id, inFlightIds)] : []),
         ),
       )
       .returning();

@@ -327,3 +327,25 @@ test("a second notice of the same type replaces a pending one; an in-flight one 
     await t.sql`select body, state from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
   expect(rows.map((r) => r.body)).toEqual(["second", "third"]);
 });
+
+test("a notice written but not yet confirmed (no session_started) is never replaced: a new row is queued", async () => {
+  await send("a"); // process started, no session_started yet: batches stay in flight
+  await rt.postNotice("restart", "first"); // written, row still pending in the DB
+  await rt.postNotice("restart", "second");
+  expect(driver.last.sent.map((b) => b.map((m) => m.body))).toEqual([["a"], ["first"], ["second"]]);
+  const rows =
+    await t.sql`select body from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+  expect(rows.map((r) => r.body)).toEqual(["first", "second"]);
+});
+
+test("rolled-back batches go behind notices queued meanwhile", async () => {
+  await send("a"); // in flight
+  driver.last.failWrites = true;
+  await rt.postNotice("crash", "c"); // write rejected: queued
+  driver.last.exit();
+  await rt.settled();
+  expect(rt.queueItems().map((q) => [q.kind, q.body])).toEqual([
+    ["notice", "c"],
+    ["message", "a"],
+  ]);
+});

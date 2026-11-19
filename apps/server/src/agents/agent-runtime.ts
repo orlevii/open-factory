@@ -47,9 +47,17 @@ type MessageEntry = { kind: "message"; row: MessageRow; fromHandle: string | nul
 type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; createdAt: Date };
 type Entry = MessageEntry | CompactEntry;
 
+const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
+
+const fromOf = (e: MessageEntry): string => {
+  if (e.row.kind === "system") return "@factory";
+  if (e.fromHandle === null) throw new Error(`message ${e.row.id} has no sender`);
+  return `@${e.fromHandle}`;
+};
+
 const toFactory = (e: MessageEntry): FactoryMessage => ({
   id: e.row.id,
-  from: e.row.kind === "system" ? "@factory" : `@${e.fromHandle}`,
+  from: fromOf(e),
   kind: e.row.kind === "system" ? "system" : "message",
   urgent: e.row.urgent,
   body: e.row.body,
@@ -126,13 +134,16 @@ export class AgentRuntime {
    * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
    */
   async addNotice(type: NoticeType, body: string) {
-    const row = await this.d.store.createNotice({ toAgentId: this.agent.id, notice: type, body });
+    const row = await this.d.store.createNotice(
+      { toAgentId: this.agent.id, notice: type, body },
+      this.inFlight.flat().map((e) => e.row.id),
+    );
     const existing = this.queue.find(
       (e): e is MessageEntry => e.kind === "message" && e.row.id === row.id,
     );
     if (existing) existing.row = row;
     else {
-      const at = this.queue.findIndex((e) => e.kind !== "message" || e.row.kind !== "system");
+      const at = this.queue.findIndex((e) => !isNotice(e));
       this.queue.splice(at === -1 ? this.queue.length : at, 0, {
         kind: "message",
         row,
@@ -327,7 +338,7 @@ export class AgentRuntime {
           kind: e.row.kind === "system" ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
-          from: e.row.kind === "system" ? "@factory" : `@${e.fromHandle}`,
+          from: fromOf(e),
           createdAt: e.row.createdAt.toISOString(),
         }
       : {
@@ -565,6 +576,8 @@ export class AgentRuntime {
     const usage = this.lastUsage;
     // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7).
     this.queue.unshift(...rolledBack.flat());
+    // Notices go ahead of rolled-back batches (spec §9.5); a stable partition keeps each group in order.
+    this.queue = [...this.queue.filter(isNotice), ...this.queue.filter((e) => !isNotice(e))];
     this.openTurnId = undefined;
     this.releaseHold();
     this.compactInFlight = false;

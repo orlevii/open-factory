@@ -23,7 +23,7 @@ import {
 } from "@open-factory/shared";
 import { and, count, eq, isNull, notInArray } from "drizzle-orm";
 import { stringify } from "yaml";
-import type { Config } from "../config.ts";
+import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
 
@@ -117,6 +117,7 @@ export class TemplateIndex {
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
       hostSkillsDir: this.config.hostSkillsDir,
+      localRuntimeAllowed: localRuntimeAllowed(this.config),
     };
   }
 

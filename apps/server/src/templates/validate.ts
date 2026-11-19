@@ -6,6 +6,7 @@ import {
   type TemplateIssue,
   templateYamlSchema,
 } from "@open-factory/shared";
+import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { parseJson, parseYaml } from "./parse.ts";
 
 export interface ValidationContext {
@@ -13,6 +14,8 @@ export interface ValidationContext {
   secrets: Set<string>;
   templates: Set<string>;
   hostSkillsDir: string;
+  /** `localRuntimeAllowed(config)`: the one gate rule. */
+  localRuntimeAllowed: boolean;
 }
 
 const RESERVED_FILES = [
@@ -167,6 +170,8 @@ export async function validateTemplate(
           line: lineOf(["projects", i]),
           path: `projects.${i}`,
         });
+    if (config.runtime === "local" && !ctx.localRuntimeAllowed)
+      warn("template.yaml", LOCAL_RUNTIME_DISABLED, { path: "runtime" });
     if (config.permissionMode === "bypass" && config.runtime === "local")
       err("template.yaml", "permission_mode: bypass needs runtime: docker.", {
         line: lineOf(["permission_mode"]),

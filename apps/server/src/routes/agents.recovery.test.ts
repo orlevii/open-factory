@@ -117,10 +117,12 @@ test("restart of resume_unrecoverable: 409 with the new-session hint", async () 
 });
 
 test("restart with the local runtime gate off: 409 runtime_disabled", async () => {
-  const { slug } = await resumeErrored();
+  const { slug, rt } = await resumeErrored();
   const config = t.app.config as { allowLocalRuntime: boolean };
+  expect(rt.live().runtimeDisabled).toBeUndefined();
   config.allowLocalRuntime = false;
   try {
+    expect(rt.live().runtimeDisabled).toBe("The local runtime is disabled on this factory.");
     const r = await post(`/api/agents/${slug}/restart`);
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("runtime_disabled");

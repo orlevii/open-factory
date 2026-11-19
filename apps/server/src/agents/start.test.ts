@@ -13,8 +13,8 @@ import { type AgentRow, schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { loadConfig } from "../config.ts";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
@@ -30,6 +30,7 @@ let hs: string;
 let workspace: Workspace;
 let lock: KeyedMutex;
 let prepareStart: PrepareStart;
+let factoryConfig: Config;
 let agent: AgentRow;
 let seq = 0;
 const vault = new Vault(KEY);
@@ -120,14 +121,16 @@ async function seedStartFixture() {
       grants,
     },
   );
+  factoryConfig = loadConfig({
+    DATABASE_URL: t.url,
+    FACTORY_SECRET_KEY: KEY,
+    FACTORY_HOME: home,
+    FACTORY_ALLOW_LOCAL_RUNTIME: "true",
+    LOG_LEVEL: "silent",
+  });
   prepareStart = createPrepareStart({
     db: t.db,
-    config: loadConfig({
-      DATABASE_URL: t.url,
-      FACTORY_SECRET_KEY: KEY,
-      FACTORY_HOME: home,
-      LOG_LEVEL: "silent",
-    }),
+    config: factoryConfig,
     vault,
     workspace,
     lock,
@@ -285,4 +288,40 @@ test("prepare fails closed when .claude-config is a symlink to a host dir", asyn
   await expect(prepareStart(agent)).rejects.toThrow(AgentStartError);
   await expect(prepareStart(agent)).rejects.toThrow(/is a symlink/);
   expect(readdirSync(hostDir)).toEqual([]);
+});
+
+test("gate off: local start fails closed with fix=runtime, before prepare; nothing is touched", async () => {
+  const prepare = vi.spyOn(workspace, "prepare");
+  factoryConfig.allowLocalRuntime = false;
+  try {
+    await expect(prepareStart(agent)).rejects.toMatchObject({
+      name: "AgentStartError",
+      message:
+        "The local runtime is disabled on this factory. Set FACTORY_ALLOW_LOCAL_RUNTIME=true to run agents unsandboxed.",
+      fix: "runtime",
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    factoryConfig.allowLocalRuntime = true;
+    prepare.mockRestore();
+  }
+});
+
+test("gate on: local starts as before", async () => {
+  const spec = await prepareStart(agent);
+  expect(spec.runtime).toBe("local");
+});
+
+test("gate off: a docker agent is never gated", async () => {
+  await t.db.update(schema.agents).set({ runtime: "docker" }).where(eq(schema.agents.id, agent.id));
+  factoryConfig.allowLocalRuntime = false;
+  try {
+    const outcome = await prepareStart(await reload(agent.id)).then(
+      () => "started",
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toMatchObject({ fix: "runtime" });
+  } finally {
+    factoryConfig.allowLocalRuntime = true;
+  }
 });

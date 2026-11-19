@@ -19,6 +19,7 @@ import {
   statusOf,
   type WaitingOn,
 } from "@open-factory/shared";
+import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/slots.ts";
 import {
   AgentArchivedError,
@@ -64,6 +65,8 @@ export interface RuntimeDeps {
    * the cleanup can reap what a dead process left. Absent with a fake driver: a fake pid is not ours to journal.
    */
   journal?: { snapshot(claudePid: number): Promise<ProcessPart> };
+  /** The local gate (`localRuntimeAllowed(config)`), read live because it can change; defaults to allowed. */
+  localRuntimeAllowed?: () => boolean;
 }
 
 /** The local part of `runtime_journal` (spec §12). */
@@ -389,10 +392,7 @@ export class AgentRuntime {
           "This session can't be resumed. Start a new session instead.",
         );
       if (!r.runtimeAllowed)
-        throw new RecoveryRefusedError(
-          "runtime_disabled",
-          "The local runtime is disabled on this factory.",
-        );
+        throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
       this.refuseWhileStopping();
       const by = `@${r.byHandle}`;
       const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
@@ -587,6 +587,7 @@ export class AgentRuntime {
     waitingOn: WaitingOn;
     rateLimitedUntil?: string;
     rateLimitExact?: boolean;
+    runtimeDisabled?: string;
   } {
     const pause = this.slots.pauseOf(this.agent.id);
     return {
@@ -597,6 +598,9 @@ export class AgentRuntime {
         : {}),
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
       ...(this.errorKind && this.errored ? { errorKind: this.errorKind } : {}),
+      ...(this.agent.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
+        ? { runtimeDisabled: LOCAL_RUNTIME_DISABLED }
+        : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
       waitingOn: this.waitingOn(),

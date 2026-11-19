@@ -25,6 +25,8 @@ export interface RuntimesDeps {
    * process's pid is not ours, and must never be journaled or signalled.
    */
   journal?: ProcessJournal;
+  /** The local gate, read live (`() => localRuntimeAllowed(config)`). */
+  localRuntimeAllowed?: () => boolean;
 }
 
 /**
@@ -96,6 +98,7 @@ export class AgentRuntimes {
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
         slots: this.supervisor,
+        ...(this.d.localRuntimeAllowed ? { localRuntimeAllowed: this.d.localRuntimeAllowed } : {}),
         ...(this.d.journal
           ? { journal: this.d.journal, cleanup: localCleanup(this.d.store, this.d.journal) }
           : {}),

@@ -1,4 +1,4 @@
-export type StartFix = "credentials" | "secrets" | "projects" | "edit_agent" | "resync";
+export type StartFix = "credentials" | "secrets" | "projects" | "edit_agent" | "resync" | "runtime";
 
 export class AgentStartError extends Error {
   constructor(

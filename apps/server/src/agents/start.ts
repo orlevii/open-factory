@@ -2,7 +2,7 @@ import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import { templateConfigSchema } from "@open-factory/shared";
 import { asc, eq } from "drizzle-orm";
-import type { Config } from "../config.ts";
+import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
@@ -31,6 +31,9 @@ export function createPrepareStart(d: {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
       if (agent.archivedAt) throw new AgentArchivedError(agent.slug);
+      // The local gate fails closed before anything else: no prepare, no mounts, no process (spec §13).
+      if (agent.runtime === "local" && !localRuntimeAllowed(d.config))
+        throw new AgentStartError(LOCAL_RUNTIME_START_MESSAGE, "runtime");
       // The jsonb column is typed, not enforced: parse the snapshot rather than trust the row type.
       const parsedConfig = templateConfigSchema.safeParse(agent.config);
       if (!parsedConfig.success) {

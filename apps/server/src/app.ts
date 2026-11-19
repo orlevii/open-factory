@@ -15,7 +15,7 @@ import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
-import type { Config } from "./config.ts";
+import { type Config, localRuntimeAllowed } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
@@ -132,6 +132,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     prepareStart,
     log: app.log,
     maxRunningAgents: config.maxRunningAgents,
+    localRuntimeAllowed: () => localRuntimeAllowed(config),
     // Only the real driver's processes are ours to journal and reap (spec §12).
     ...(deps.harnessDriver ? {} : { journal: new ProcessJournal() }),
     driver:

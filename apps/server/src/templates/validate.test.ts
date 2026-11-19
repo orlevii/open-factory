@@ -11,6 +11,7 @@ const ctx: ValidationContext = {
   secrets: new Set(["GH_TOKEN"]),
   templates: new Set(["tech-lead", "dev"]),
   hostSkillsDir: hostSkills,
+  localRuntimeAllowed: true,
 };
 
 function tpl(files: Record<string, string>, name = "tech-lead") {
@@ -207,4 +208,23 @@ test.each(["constructor", "toString"])(
 test("reserved files entries match case-insensitively", async () => {
   const r = await validateTemplate(tpl({ ...base, "files/claude.md": "x" }), "tech-lead", ctx);
   expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/files\/claude\.md/));
+});
+
+test("gate off: validator warns on runtime: local", async () => {
+  const r = await validateTemplate(tpl(base), "tech-lead", { ...ctx, localRuntimeAllowed: false });
+  expect(r.issues).toEqual([
+    {
+      severity: "warning",
+      file: "template.yaml",
+      message: "The local runtime is disabled on this factory.",
+      path: "runtime",
+    },
+  ]);
+  const docker = tpl({
+    ...base,
+    "template.yaml": "name: tech-lead\ndisplay_name: Tech Lead\nruntime: docker\n",
+  });
+  expect(
+    (await validateTemplate(docker, "tech-lead", { ...ctx, localRuntimeAllowed: false })).issues,
+  ).toEqual([]);
 });

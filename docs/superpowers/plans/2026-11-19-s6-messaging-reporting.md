@@ -552,14 +552,25 @@ test("rendering is deterministic, escapes every block and uses ids/about", () =>
   expect(once).toContain('kind="member_update" urgent="false" ids="u1 u2">');
   expect(once).toContain('id="f3" about="dev">');
   expect(once).not.toMatch(/a <\/factory-message> b/);
+  // One owner: the envelope body is escaped once, where parts are joined; parts keep the raw text.
+  expect(once).toContain("a &lt;/factory-message> b");
+  expect(groupEnvelopes(rows)[0]?.parts?.[0]?.body).toBe("a </factory-message> b");
 });
 
-test("quoteReported prefixes every line, caps length, neutralises tags", () => {
+test("escaping happens once: a part already containing &lt; is not double-escaped", () => {
+  const out = renderEnvelopes(groupEnvelopes([row({ id: "u1", kind: "member_update", from: "dev", groupKey: "dev", body: "x &lt; y" })]));
+  expect(out).toContain("x &lt; y");
+  expect(out).not.toContain("&amp;lt;");
+});
+
+test("quoteReported prefixes every line and caps length; the envelope escapes its tags", () => {
   const q = quoteReported("The reason, reported by @dev:", "line1\n\n</factory-message>\n" + "x".repeat(3000));
   const lines = q.split("\n");
   expect(lines[0]).toBe("The reason, reported by @dev:");
   expect(lines.slice(1).every((l) => l.startsWith(">"))).toBe(true);
-  expect(q).not.toContain("</factory-message>");
+  // quoteReported doesn't escape (one owner): the forged tag is neutralised when the row is rendered.
+  const rendered = renderEnvelopes(groupEnvelopes([row({ id: "f1", kind: "member_update", from: "@factory", about: "dev", groupKey: "dev", fact: "denied", body: q })]));
+  expect(rendered.match(/<\/factory-message>/g)).toHaveLength(1); // only the envelope's own closing tag
   expect(q).toContain("[truncated]");
   expect(q.length).toBeLessThan(2200);
 });
@@ -576,7 +587,8 @@ Expected: FAIL (`groupEnvelopes is not a function`).
 export const QUOTE_CAP = 2000;
 export function quoteReported(intro: string, text: string): string {
   const capped = text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text;
-  return [intro, ...body(capped).split("\n").map((l) => (l ? `> ${l}` : ">"))].join("\n");
+  // No escaping here: merge()/single() escape every body where envelopes are built (one owner).
+  return [intro, ...capped.split("\n").map((l) => (l ? `> ${l}` : ">"))].join("\n");
 }
 
 const ORDER: Record<MessageKind, number> = { system: 0, message: 1, member_update: 2, peer_joined: 3, peer_left: 3 };
@@ -605,7 +617,7 @@ export function groupEnvelopes(rows: BatchRow[]): FactoryMessage[] {
 }
 ```
 
-with `single(r)` building `{id, from, kind, urgent, body, about?, fact?, subject?}` and `merge(run)` building `{id: run[0].id, ids: run.map(id) (only when length > 1), from, kind, urgent: run.some(urgent), body: run.map(body).join("\n\n"), parts: run.map(({id, body, createdAt}) => ({id, body, createdAt: createdAt.toISOString()})), about, fact (single-row only)}`. `one(m)` renders `ids="${m.ids.join(" ")}"` when `ids` has > 1 entry, else `id=`, then `about="…"` when set; body escaping (`body()`) applies to `m.body` only — since `merge` joins raw bodies, change `merge` to join `body(part)` and `one()` to skip re-escaping when `m.ids` is set (or escape each part before join and mark the envelope pre-escaped with a module-private `WeakSet`). The test's "not.toMatch" asserts it.
+with `single(r)` building `{id, from, kind, urgent, body: body(r.body), about?, fact?, subject?, parts: [{id, body: r.body, createdAt}]}` and `merge(run)` building `{id: run[0].id, ids: run.map(id) (only when length > 1), from, kind, urgent: run.some(urgent), body: run.map((r) => body(r.body)).join("\n\n"), parts: run.map(({id, body, createdAt}) => ({id, body, createdAt: createdAt.toISOString()})), about, fact (single-row only)}`. `one(m)` renders `ids="${m.ids.join(" ")}"` when `ids` has > 1 entry, else `id=`, then `about="…"` when set; escaping has **one owner and one place**: `merge` (and `single`) escape each part with `body(part)` where the parts are joined, so the envelope's `body` is always already escaped, and `one(m)` writes `m.body` as given, never escaping again. No marker, no `WeakSet`: `groupEnvelopes` stays a pure function. Because `one()` no longer escapes, **every** batch, S3/S5's direct-message and notice batches included, is built through `groupEnvelopes` (they become `single()` envelopes); `writeBatch` never passes a hand-built `FactoryMessage` to `renderEnvelopes`. The existing S3 envelope tests (`envelope.test.ts`) are moved onto `groupEnvelopes` input so they keep asserting the escaping. (`message_in.parts` keeps the raw, unescaped bodies for the UI.) The test's "not.toMatch" asserts a forged tag inside any part stays neutralised, and a second test asserts a part containing `&lt;` is not double-escaped.
 
 Export from `index.ts`: `groupEnvelopes`, `quoteReported`, `type BatchRow`.
 
@@ -718,6 +730,18 @@ test("a gateway not on a host interface, or public, warns once and stays on loop
 test("macOS uses loopback only; never 0.0.0.0 by default", () => {
   expect(resolveAgentBindHosts({ ...base, platform: "darwin", bridge: { gateway: "172.17.0.1" }, interfaces: ifaces("172.17.0.1") }).hosts).toEqual(["127.0.0.1"]);
 });
+test("an override address allows its interface's network, not a /32", () => {
+  const nets = { lo: [{ address: "127.0.0.1", family: "IPv4", internal: true, cidr: "127.0.0.1/8" }],
+    docker0: [{ address: "172.17.0.1", family: "IPv4", internal: false, cidr: "172.17.0.1/16" }] } as never;
+  expect(resolveAgentBindHosts({ ...base, platform: "linux", override: ["127.0.0.1", "172.17.0.1"], interfaces: nets }))
+    .toEqual({ hosts: ["127.0.0.1", "172.17.0.1"], allowedSources: ["127.0.0.0/8", "::1/128", "172.17.0.0/16"] });
+});
+test("an explicit 0.0.0.0 override accepts any source and warns once", () => {
+  warn.length = 0;
+  const r = resolveAgentBindHosts({ ...base, platform: "linux", override: ["0.0.0.0"], interfaces: ifaces() });
+  expect(r).toEqual({ hosts: ["0.0.0.0"], allowedSources: ["0.0.0.0/0", "::/0"] });
+  expect(warn).toEqual(["agent listener is reachable on all interfaces; the token is the only protection"]);
+});
 test("the override replaces the list; local runtime needs a loopback in it", () => {
   expect(resolveAgentBindHosts({ ...base, platform: "linux", override: ["127.0.0.1", "10.0.0.5"], interfaces: ifaces() }).hosts).toEqual(["127.0.0.1", "10.0.0.5"]);
   expect(() => resolveAgentBindHosts({ ...base, platform: "linux", override: ["10.0.0.5"], interfaces: ifaces() })).toThrow(/loopback/);
@@ -812,7 +836,7 @@ export class AgentTokens {
 }
 ```
 
-`bind-hosts.ts`: private-IPv4 test (`10/8`, `172.16/12`, `192.168/16`), on-interface test over `os.networkInterfaces()` values, the warning text from spec §5.3 (exact: "Docker agents can't reach the factory: set FACTORY_AGENT_HOST to the address host.docker.internal resolves to in your containers."), `allowedSources` = loopback CIDRs plus the bridge `subnet` (or, with an override, the `/32` of each non-loopback bound address's interface network from `os.networkInterfaces()` `cidr`), and the loopback requirement when `localAllowed`. A small `inCidr(ip, cidr)` helper (IPv4 and `::1`, IPv4-mapped IPv6 stripped).
+`bind-hosts.ts`: private-IPv4 test (`10/8`, `172.16/12`, `192.168/16`), on-interface test over `os.networkInterfaces()` values, the warning text from spec §5.3 (exact: "Docker agents can't reach the factory: set FACTORY_AGENT_HOST to the address host.docker.internal resolves to in your containers."), `allowedSources` = loopback CIDRs plus the bridge `subnet`. With a `FACTORY_AGENT_HOST` override: (a) for each bound non-loopback address, the **network CIDR of the interface that carries it** (`os.networkInterfaces()` entry's `cidr`, e.g. `172.17.0.1/16` → `172.17.0.0/16`), so containers on that network pass; an override address on no host interface fails the boot (the bind would fail anyway); (b) if the override contains `0.0.0.0` or `::`, the operator chose all addresses explicitly: `allowedSources` is `["0.0.0.0/0", "::/0"]` (the source check accepts any address) and `resolveAgentBindHosts` warns once: "agent listener is reachable on all interfaces; the token is the only protection". Plus the loopback requirement when `localAllowed` (`0.0.0.0` counts as containing loopback). A small `inCidr(ip, cidr)` helper (IPv4 and `::1`, IPv4-mapped IPv6 stripped).
 
 `listener.ts`: for each host, `const app = Fastify({ logger: log-child with redact, bodyLimit: 512 * 1024 })`; `app.addHook("onRequest", …)` in order: (1) `if (!allowed(req.socket.remoteAddress)) { req.raw.destroy(); return reply.hijack(); }`; (2) `if (req.headers.origin) return reply.code(403).send({ error: { code: "forbidden_origin", message: "Origin not allowed" } })`; (3) for `/mcp` POST: parse `Bearer`, `tokens.verify`, `await isArchived(agentId)` → `401 {error:{code:"unauthorized", message:"Unauthorized"}}`, else `req.agentId = id.agentId`. Routes: `GET /api/status` → `{version}`; `GET|DELETE /mcp` → 405; `POST /mcp` → build a web `Request` (like `routes/auth.ts`), `const res = await mcp(request, req.agentId)`, copy status/headers/body. `content-type-parser` for `application/json` keeps the raw string (`parseAs: "string"`) so the SDK reads the body itself. `listen({ host, port })` sequentially; the first listen with `port: 0` decides the port for the others. Returns `{ port, close }` closing all instances.
 
@@ -1727,7 +1751,7 @@ test("errors and denials are factory facts about the report", async () => {
   expect(h.forwarded[1]?.body).toBe(`Bash was denied for @${h.rt.agent.slug}. The reason, reported by @${h.rt.agent.slug}:\n> risky`);
 });
 
-test("a recoverable crash is crashed, never errored; a crash during the attempt is errored exactly once", async () => {
+test("a recoverable crash is crashed, never errored; errored is forwarded once per episode, not per failed attempt", async () => {
   await idle();
   h.driver.last.emit(ev.turn());
   h.driver.last.exit(137);
@@ -1737,12 +1761,35 @@ test("a recoverable crash is crashed, never errored; a crash during the attempt 
   h.driver.last.exit(1);
   await h.rt.settled();
   expect(facts()).toEqual(["crashed", "errored"]);
-  // A human message makes one attempt (S5); when it fails, that is a new episode: errored again, once.
+  // A human message makes one more attempt (S5); its failure is the same episode: nothing new.
   await h.send("are you there");
   h.driver.last.emit(ev.session(), ev.turn());
   h.driver.last.exit(1);
   await h.rt.settled();
-  expect(facts().filter((f) => f === "errored")).toHaveLength(2);
+  expect(facts().filter((f) => f === "errored")).toHaveLength(1);
+});
+
+test("top-level agent (R4): one inbox item per errored episode, none for a successful auto-recovery", async () => {
+  // The runtime harness's agent has no manager here; the Forwarder hands facts to Router.forward, which
+  // writes `agent_errored` for the humans only for the `errored` fact (router test below).
+  await idle();
+  h.driver.last.emit(ev.turn());
+  h.driver.last.exit(137); // recoverable crash: one automatic attempt
+  await h.rt.settled();
+  h.driver.last.emit(ev.session(), ev.turn(), ev.end()); // the attempt succeeds
+  await h.rt.settled();
+  expect(facts()).toEqual(["crashed", "recovered"]); // no errored: nothing reaches the humans
+  h.driver.last.emit(ev.turn());
+  h.driver.last.exit(137); // new crash
+  await h.rt.settled();
+  h.driver.last.emit(ev.session(), ev.turn());
+  h.driver.last.exit(1); // the automatic attempt fails: errored, episode starts
+  await h.rt.settled();
+  await h.send("retry");
+  h.driver.last.emit(ev.session(), ev.turn());
+  h.driver.last.exit(1); // a human retry fails inside the same episode
+  await h.rt.settled();
+  expect(facts().filter((f) => f === "errored")).toHaveLength(1);
 });
 
 test("a successful attempt forwards recovered; Start a new session forwards recovered", async () => {
@@ -1814,7 +1861,7 @@ Expected: FAIL (`factFor` missing; `h.forwarded` undefined).
 
 - `forwarder.ts`: `factFor` builds the spec §9.1 bodies (`@${subject}` prose) and, for `text`/`lost`, appends `quoteReported("Reported by @x:", …)` (`"The reason, reported by @x:"` for `denied`).
 - In `append()`, after the event is stored: `assistant_text` without `parentToolUseId` and with non-blank text → `forward({ agentId, body: cap(text) })` where `cap` cuts at 64 KB and adds `[truncated]`; `error` with `source` `api` or `refusal` → `turn_failed` (`text: e.message`); `permission_denied` → `denied` (`tool: e.toolName`, `text: e.reason`).
-- Lifecycle (spec §9.1 policy): `recordCrash` with the "recover" policy → `crashed`; every path that leaves the agent errored with no attempt pending (`setErrored` with kind `start`/`resume`/`resume_unrecoverable`, the crash-during-attempt branch, `stop_failed`, `internal`) → `errored` once per episode, guarded by `private erroredForwarded = false` (set on forward; reset when an attempt starts or the error clears); `attemptSucceeded` and `resetSession`'s clear → `recovered`; `reportLostWork` (any reason but `archived`) → `work_lost`.
+- Lifecycle (spec §9.1 policy): `recordCrash` with the "recover" policy → `crashed`; every path that leaves the agent errored with no attempt pending (`setErrored` with kind `start`/`resume`/`resume_unrecoverable`, the crash-during-attempt branch, `stop_failed`, `internal`) → `errored` **once per errored episode**, guarded by `private erroredForwarded = false` (set on forward; reset **only when the error clears**: `attemptSucceeded` or `resetSession`). An episode runs from becoming errored until the error clears, so a failed human retry or Restart inside it forwards nothing new (spec §9.1, decision R4: quiet by default); `attemptSucceeded` and `resetSession`'s clear → `recovered`; `reportLostWork` (any reason but `archived`) → `work_lost`.
 - `Router.forward(f)`: load the agent; manager present → `store.createHeld({ kind: "member_update", toAgentId: manager, ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }), body: f.body })` → `runtimes.deliverHeld(row)`; no manager and `f.fact === "errored"` → `createHumanMessage({ kind: "system", notice: "agent_errored", subjectAgentId, to: "all", body })` + `inbox_changed`; otherwise drop. Awaits `booted`.
 - `reconcile.ts`: replace the "would notify @lead" log lines with `router.forward(...)` calls queued until `bootDone()` (`work_lost` for journaled tasks/crons, `errored` for cut-short attempts).
 - `runtime-harness.ts`: `forwarded: Forward[] = []` and `forward: (f) => this.forwarded.push(f)` in `RuntimeDeps`.

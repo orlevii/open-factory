@@ -1,12 +1,6 @@
 import { expect, test } from "vitest";
 import { loadConfig } from "../config.ts";
-import {
-  agentConfigDir,
-  agentWorkdir,
-  buildAgentEnv,
-  buildRuntimeSpec,
-  resolveClaudeToken,
-} from "./runtime-spec.ts";
+import { agentConfigDir, agentWorkdir, buildAgentEnv, buildRuntimeSpec } from "./runtime-spec.ts";
 
 const base = {
   DATABASE_URL: "postgres://x",
@@ -53,20 +47,12 @@ test("env is an allowlist: secrets and unknown vars never reach the agent", () =
 test("config: new vars and defaults", () => {
   const c = loadConfig(base);
   expect(c.claudeBin).toBe("claude");
-  expect(c.claudeToken).toBeUndefined();
-  expect(c.devModel).toBeUndefined();
-  const d = loadConfig({
-    ...base,
-    CLAUDE_CODE_OAUTH_TOKEN: "t",
-    FACTORY_CLAUDE_BIN: "/opt/claude",
-    FACTORY_DEV_MODEL: "haiku",
-  });
-  expect([d.claudeToken, d.claudeBin, d.devModel]).toEqual(["t", "/opt/claude", "haiku"]);
-  expect(resolveClaudeToken(d)).toBe("t");
+  const d = loadConfig({ ...base, FACTORY_CLAUDE_BIN: "/opt/claude" });
+  expect(d.claudeBin).toBe("/opt/claude");
 });
 
 test("runtime spec: workdir, config dir, model, auto mode", () => {
-  const c = loadConfig({ ...base, FACTORY_DEV_MODEL: "haiku" });
+  const c = loadConfig(base);
   expect(agentWorkdir(c, "dev")).toBe("/tmp/of-home/agents/dev");
   expect(agentConfigDir(c, "dev")).toBe("/tmp/of-home/agents/dev/.claude-config");
   const spec = buildRuntimeSpec({ id: "a1", slug: "dev" }, c, "tok", { PATH: "/bin" });
@@ -75,7 +61,6 @@ test("runtime spec: workdir, config dir, model, auto mode", () => {
     slug: "dev",
     cwd: "/tmp/of-home/agents/dev",
     claudeBin: "claude",
-    model: "haiku",
     permissionMode: "auto",
     env: {
       PATH: "/bin",

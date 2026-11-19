@@ -73,4 +73,16 @@ describe("loadConfig", () => {
   test("production flag", () => {
     expect(loadConfig({ ...ok, NODE_ENV: "production" }).isProduction).toBe(true);
   });
+  test("host skills dir defaults to ~/.claude/skills and expands ~", () => {
+    const c = loadConfig({ DATABASE_URL: "x", FACTORY_SECRET_KEY: "k".repeat(40) });
+    expect(c.hostSkillsDir).toBe(path.join(os.homedir(), ".claude", "skills"));
+    expect(
+      loadConfig({
+        DATABASE_URL: "x",
+        FACTORY_SECRET_KEY: "k".repeat(40),
+        FACTORY_HOST_SKILLS_DIR: "~/s",
+      }).hostSkillsDir,
+    ).toBe(path.join(os.homedir(), "s"));
+    expect("claudeToken" in c).toBe(false);
+  });
 });

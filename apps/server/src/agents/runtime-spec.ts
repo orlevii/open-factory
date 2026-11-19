@@ -21,8 +21,8 @@ export const agentConfigDir = (config: Config, slug: string) =>
   path.join(agentWorkdir(config, slug), ".claude-config");
 
 /** The one place the agent's Claude credential comes from. S4 replaces it with named credentials. */
-export function resolveClaudeToken(config: Config): string | undefined {
-  return config.claudeToken;
+export function resolveClaudeToken(_config: Config): string | undefined {
+  return process.env.CLAUDE_CODE_OAUTH_TOKEN; // removed in Task 12
 }
 
 /** The complete child env. S4 extends this with credentials and secrets. */
@@ -52,7 +52,7 @@ export function buildRuntimeSpec(
     cwd: agentWorkdir(config, agent.slug),
     env: buildAgentEnv(serverEnv, { configDir: agentConfigDir(config, agent.slug), token }),
     claudeBin: config.claudeBin,
-    ...(config.devModel ? { model: config.devModel } : {}),
+    // model comes from the template (Task 11/12); config.devModel is gone
     permissionMode: "auto",
   };
 }

@@ -18,8 +18,6 @@ test("the OAuth token is redacted at every realistic depth", async () => {
   const app = Fastify({
     logger: { ...opts, stream: { write: (s: string) => void lines.push(s) } },
   });
-  app.log.info({ claudeToken: secret }, "top");
-  app.log.info({ config: { claudeToken: secret } }, "config");
   app.log.info({ env: { CLAUDE_CODE_OAUTH_TOKEN: secret } }, "env");
   app.log.info({ spec: { env: { CLAUDE_CODE_OAUTH_TOKEN: secret } } }, "spec");
   await app.close();

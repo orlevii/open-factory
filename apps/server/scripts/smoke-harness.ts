@@ -25,7 +25,6 @@ const config = loadConfig({
   DATABASE_URL: tdb.url,
   FACTORY_SECRET_KEY: "s".repeat(40),
   FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-smoke-")),
-  FACTORY_DEV_MODEL: "haiku",
 });
 await sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 const agent = await seedDevAgent(db, config);

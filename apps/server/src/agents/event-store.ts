@@ -113,12 +113,17 @@ export class EventStore {
       .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
     return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
   }
-  /** Boot (spec §5.7 step 7): every journal was read and acted on. */
-  async clearRuntimeJournals() {
+  /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
+  async clearRuntimeJournals(keep: string[] = []) {
     await this.db
       .update(agents)
       .set({ runtimeJournal: null })
-      .where(isNotNull(agents.runtimeJournal));
+      .where(
+        and(
+          isNotNull(agents.runtimeJournal),
+          ...(keep.length ? [notInArray(agents.id, keep)] : []),
+        ),
+      );
   }
   /** The cut-off agent is owed one continue notice at the reset (spec §7.3). */
   async setNoticeOwed(agentId: string, owed: boolean) {

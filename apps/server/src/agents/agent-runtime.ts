@@ -730,6 +730,11 @@ export class AgentRuntime {
    * after `markArchived`) in a job, taking over a hibernate already stopping; then waits until the exit is recorded,
    * escalating a stop that times out (§9.6). Call it from outside this agent's jobs (the shutdown hook, the archive
    * route). `opts` is the stop's timing when this call begins it (default 3 s grace, 10 s after SIGTERM).
+   *
+   * Not bounded on its own: the stop begins only once the job at the head of the agent's queue finishes (a hung DB
+   * call, a Docker `exited` job's container stop, bounded at 15 s). At shutdown the 20 s force-exit is the backstop,
+   * and the next boot reaps whatever was left (the journal of an unclean exit isn't cleared; Docker containers are
+   * stopped, spec §5.7).
    */
   async stop(opts?: { graceMs?: number; termWaitMs?: number }) {
     // Synchronously, before any await: nothing launches from here on (refuseWhileStopping), even a start already

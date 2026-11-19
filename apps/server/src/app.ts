@@ -220,7 +220,10 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       log: app.log,
     });
   } catch (err) {
-    await app.close(); // a wake may already have started a process
+    // A wake may already have started a process. A failing close is logged and never masks the boot's error.
+    await app
+      .close()
+      .catch((e: unknown) => app.log.error({ err: e }, "closing after a failed boot failed"));
     throw err;
   }
   return app;

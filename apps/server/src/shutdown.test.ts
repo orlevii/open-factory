@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { createShutdown } from "./shutdown.ts";
+import { createShutdown, listenOrClose } from "./shutdown.ts";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -69,4 +69,47 @@ test("the default force-exit budget is 20 s (agents get 3 s + 10 s to stop)", as
   expect(exit).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   expect(exit).toHaveBeenCalledWith(1);
+});
+
+test("listenOrClose: a failed listen closes, then rethrows the listen error", async () => {
+  const calls: string[] = [];
+  const err = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
+  await expect(
+    listenOrClose(
+      async () => {
+        calls.push("listen");
+        throw err;
+      },
+      async () => void calls.push("close"),
+      () => {},
+    ),
+  ).rejects.toBe(err);
+  expect(calls).toEqual(["listen", "close"]);
+});
+
+test("listenOrClose: a failing close is logged and never masks the listen error", async () => {
+  const err = new Error("listen EADDRINUSE");
+  const log = vi.fn();
+  await expect(
+    listenOrClose(
+      async () => {
+        throw err;
+      },
+      async () => {
+        throw new Error("db down");
+      },
+      log,
+    ),
+  ).rejects.toBe(err);
+  expect(log).toHaveBeenCalledExactlyOnceWith("Closing after a failed listen failed: db down");
+});
+
+test("listenOrClose: a successful listen closes nothing", async () => {
+  const close = vi.fn(async () => {});
+  await listenOrClose(
+    async () => {},
+    close,
+    () => {},
+  );
+  expect(close).not.toHaveBeenCalled();
 });

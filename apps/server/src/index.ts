@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { buildApp } from "./app.ts";
 import { type Config, ConfigError, loadConfig } from "./config.ts";
-import { createShutdown } from "./shutdown.ts";
+import { createShutdown, listenOrClose } from "./shutdown.ts";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 // esbuild defines __BUNDLED__ in build.mjs; it is undefined under tsx (pnpm dev).
@@ -32,7 +32,18 @@ async function main() {
   });
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  await app.listen({ host: config.host, port: config.port });
+  // A failed listen closes the app and the DB first (boot may have woken agents), then main() exits 1.
+  await listenOrClose(
+    () => app.listen({ host: config.host, port: config.port }),
+    async () => {
+      try {
+        await app.close();
+      } finally {
+        await close();
+      }
+    },
+    (message) => console.error(message),
+  );
 }
 
 main().catch((err) => {

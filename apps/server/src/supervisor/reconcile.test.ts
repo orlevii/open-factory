@@ -380,3 +380,30 @@ test("a cap lowered at boot with more agents waking than slots starts the first 
   expect(boot.startOrder().slice(3)).toEqual([d, e]);
   expect(boot.runtimes.supervisor.running()).toEqual({ count: 3, max: 3 });
 });
+
+test("a reap that fails keeps the agent's journal and doesn't wake it", async () => {
+  const failed = await agent();
+  const reaped = await agent();
+  const gone = (pid: number) => ({ pid, start: "Thu Jan 1 00:00:00 1970" });
+  await setJournal(failed, { claude: gone(999_998), tasks: [], crons: [] });
+  await setJournal(reaped, { claude: gone(999_999), tasks: [], crons: [] });
+  await pending(failed, "waiting");
+  await pending(reaped, "waiting too");
+  boot = new Boot();
+  const journal = new ProcessJournal({ sleep: async () => {} });
+  const reap = journal.reap.bind(journal);
+  journal.reap = async (j) => {
+    if (j.claude?.pid === 999_998) throw new Error("ps failed");
+    return reap(j);
+  };
+  await boot.run(journal);
+  await boot.settleAll([failed, reaped]);
+  expect((await row(failed)).runtimeJournal?.claude).toEqual(gone(999_998));
+  expect((await row(reaped)).runtimeJournal).toBeNull();
+  expect(boot.starts(failed)).toHaveLength(0);
+  expect(boot.starts(reaped)).toHaveLength(1);
+  expect(boot.logs).toContainEqual({
+    level: "error",
+    msg: "reaping the previous run's processes failed; the agent isn't woken",
+  });
+});

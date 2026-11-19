@@ -1,11 +1,12 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { createFakeClaude, type FakeClaude } from "@open-factory/harness/testing";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
+import { listenOrClose } from "../shutdown.ts";
 import { makeTestApp, TEST_ORIGIN } from "../test/helpers.ts";
 
 const fake = createFakeClaude({ scenario: "reply" });
@@ -273,3 +274,35 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
     await w.close();
   }
 }, 30_000);
+
+test("assembled: a listen that fails after the boot woke an agent closes the app; no claude process is left", async () => {
+  const f = createFakeClaude({ scenario: "reply" });
+  const env = { FACTORY_CLAUDE_BIN: f.bin };
+  const w = await makeTestApp({ env });
+  const taken = net.createServer();
+  await new Promise<void>((r) => taken.listen(0, "127.0.0.1", r));
+  const port = (taken.address() as AddressInfo).port;
+  try {
+    const agent = await w.seedAgent();
+    const { user } = await w.signUpUser({ handle: "or" });
+    await w.app.close();
+    await w.sql`insert into messages (id, from_user_id, to_agent_id, body, urgent)
+                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false)`;
+    const next = await w.reopen({ env });
+    await until(() => startsOf(f).length === 1); // the boot woke it before any listen
+    const pid = startsOf(f)[0]?.pid ?? 0;
+    const log: string[] = [];
+    await expect(
+      listenOrClose(
+        () => next.app.listen({ port, host: "127.0.0.1" }),
+        () => next.app.close(),
+        (m) => log.push(m),
+      ),
+    ).rejects.toMatchObject({ code: "EADDRINUSE" });
+    expect(alive(pid)).toBe(false);
+    expect(log).toEqual([]);
+  } finally {
+    await new Promise((r) => taken.close(r));
+    await w.close();
+  }
+}, 20_000);

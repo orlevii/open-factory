@@ -40,3 +40,25 @@ export function createShutdown(
     }
   };
 }
+
+/**
+ * Listens; a listen that fails (a port taken, say) first closes what the boot started: reconciliation runs before the
+ * listen and may already have woken agents (spec §5.7), whose processes must not outlive a server that never came up.
+ * The listen error is rethrown; a failing close is logged and never masks it.
+ */
+export async function listenOrClose(
+  listen: () => Promise<unknown>,
+  close: () => Promise<unknown>,
+  log: (message: string) => void,
+): Promise<void> {
+  try {
+    await listen();
+  } catch (err) {
+    try {
+      await close();
+    } catch (e) {
+      log(`Closing after a failed listen failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    throw err;
+  }
+}

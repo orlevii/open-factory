@@ -44,6 +44,9 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
 
   // 1. Local leftovers: the journaled Claude and its descendants, each signalled only while its start time matches.
   const killed = new Map<string, number>();
+  // A reap that failed may have left a process running: its journal is kept (the next boot tries again) and the agent
+  // isn't woken, so it never runs beside a leftover.
+  const reapFailed = new Set<string>();
   await Promise.all(
     rows
       .filter((a) => hasProcess(a.runtimeJournal))
@@ -53,7 +56,11 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
         try {
           killed.set(a.id, await d.journal.reap(j));
         } catch (err) {
-          d.log.error({ err, agent: a.slug }, "reaping the previous run's processes failed");
+          reapFailed.add(a.id);
+          d.log.error(
+            { err, agent: a.slug },
+            "reaping the previous run's processes failed; the agent isn't woken",
+          );
         }
       }),
   );
@@ -109,7 +116,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
 
   // 7, ahead of 6: every journal was read and acted on. Cleared before any wake, so a process started below never
   // has its own fresh journal wiped.
-  await d.store.clearRuntimeJournals();
+  await d.store.clearRuntimeJournals([...reapFailed]);
 
   // 6. Reset timers first (a wake on a paused credential must wait, not start a process that can't write its first
   // line); a window that already passed resets at once, creating the owed continue notices.
@@ -117,6 +124,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   // Then the wakes, by each agent's oldest pending item, one at a time so the queue keeps that order. Each runtime is
   // loaded first: the Supervisor only wakes a loaded runtime.
   for (const w of await d.store.bootWakes()) {
+    if (reapFailed.has(w.id)) continue;
     try {
       const rt = await d.runtimes.bySlug(w.slug);
       await rt?.bootWake(w.resume ? "boot_resume" : "boot");

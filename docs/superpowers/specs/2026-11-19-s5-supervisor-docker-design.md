@@ -304,12 +304,14 @@ dockerode for everything (new `apps/server` dependency, added through the lockfi
   - `HostConfig.Tmpfs: {"/run/open-factory": ""}` (ready marker, cleared on stop);
   - `HostConfig.Binds`/`Mounts`: from §11.4 only;
   - `HostConfig.ExtraHosts: ["host.docker.internal:host-gateway"]`;
-  - `HostConfig.SecurityOpt: ["no-new-privileges:true"]` (pending §21 Q11b, see below); never `Privileged`; no `CapAdd`; `NetworkMode` the default bridge (never `host`); `PidMode` never `host`; never the Docker socket or the host home among the mounts (also enforced by §11.4);
+  - `HostConfig.SecurityOpt: ["no-new-privileges:true"]` (see "No sudo" below); never `Privileged`; no `CapAdd`; `NetworkMode` the default bridge (never `host`); `PidMode` never `host`; never the Docker socket or the host home among the mounts (also enforced by §11.4);
   - `Init`: not set (the image's ENTRYPOINT already runs `tini`).
 - **Ready wait:** after start, poll for `/run/open-factory/ready` (an exec of `test -f` as root, every 200 ms, 30 s timeout). On timeout or if the container exits, the start fails with the last 50 lines of the container logs.
 - **Claude** runs as `docker exec -i -u agent -w <workdir>` (S2 contract): `Cmd = ["sh", "-c", "echo $$ > /tmp/open-factory-claude.pid && exec claude \"$@\"", "claude", ...claudeArgs]`. The script is a fixed string; Claude's arguments are argv entries, never interpolated. `Env` = §11.5. `/run/open-factory` is root-owned and not writable by `agent` (verified), so the pid file lives in the container's own `/tmp` (not mounted).
 
-**Q11b (no-new-privileges vs sudo):** verified live that the entrypoint's UID remap works under `no-new-privileges` (ready marker, `id` 502:20, a bind-mounted file owned 502:20 on the host), but `sudo -n true` as `agent` then fails, while the S2 image deliberately gives `agent` passwordless sudo and its smoke test asserts it. The proxy's decision is recorded in §21 and this section follows it.
+**No sudo in agent containers (decision Q11b).** `no-new-privileges` is on for every agent container, so `agent` can't become root. Verified live: the entrypoint's UID remap still works under it (ready marker, `id` 502:20, a bind-mounted file owned 502:20 on the host), and `sudo -n true` as `agent` then fails. This deliberately reverses what the S2 image offers (passwordless sudo, asserted by its smoke test), because the container is the only real boundary for unattended and `bypass` agents: a manager's instruction can get `sudo …` approved by the classifier (S0), root writes root-owned files into bind-mounted repos (breaking AC5), and root widens the kernel surface. Agents that need system packages get them from a user image `FROM` the base (reproducible, unlike a runtime `apt-get`). The base image is **not** changed in S5; a follow-up issue updates S2's smoke test and `base-image.md`, decides whether to drop passwordless sudo from the image, and records a per-template `allow_sudo` opt-in as the likely shape if a real need appears. PR rollout note: agents can no longer sudo inside containers.
+
+A test writes a non-integer, a zero, a negative and an over-long value into the pid file and asserts no `kill` exec is made from it and the stop falls back to the container stop.
 
 ### 11.2 Image and re-create (decision Q12)
 
@@ -428,7 +430,7 @@ No automated test calls a live model. Few, thorough tests per behaviour.
 
 ### 18.1 Unit
 
-`statusOf` (table); `classifyResumeFailure` (the S0 fixture text, the two documented 400 texts, an unknown error); `checkMounts` (every allowed kind, every refused kind, realpath through a symlink, ancestors); the container create options (hardening: no `Privileged`, no host network or pid, `no-new-privileges` per §21 Q11b, tmpfs, extra hosts, only allowed binds); the spec hash (changes on image id, grants, uid; not on secrets); `buildAgentEnv` for both runtimes; the notice texts (lists omitted when empty; no exact time on the fallback); the journal's tree walk over canned `ps` output and its start-time match.
+`statusOf` (table); `classifyResumeFailure` (the S0 fixture text, the two documented 400 texts, an unknown error); `checkMounts` (every allowed kind, every refused kind, realpath through a symlink, ancestors); the container create options (hardening: no `Privileged`, no host network or pid, `no-new-privileges`, tmpfs, extra hosts, only allowed binds); the spec hash (changes on image id, grants, uid; not on secrets); `buildAgentEnv` for both runtimes; the notice texts (lists omitted when empty; no exact time on the fallback); the journal's tree walk over canned `ps` output and its start-time match.
 
 ### 18.2 Harness
 
@@ -479,7 +481,7 @@ The new statuses and labels, the waiting-on strip, Restart and Start a new sessi
 - `architecture/harness-driver.md`: `system/session_state_changed` is a turn signal, not a busy signal.
 - `concepts/message.md`: a `system` kind from `@factory` (crash, restart, apply-change and rate-limit notices).
 - `concepts/session.md` → Controls: "Start a new session" (errored after an unrecoverable resume).
-- `architecture/base-image.md`: depends on §21 Q11b (sudo under `no-new-privileges`).
+- `architecture/base-image.md` → Contents / User: agent containers run with `no-new-privileges`, so the image's passwordless `sudo` doesn't work for agents; system packages belong in a user image.
 - S4's Known gap "the product docs expect `settings.json` to keep agent changes" stands (unchanged by S5).
 
 ## 21. Decisions needing Or's call (owner-proxy certainty 3/5)
@@ -489,7 +491,7 @@ The new statuses and labels, the waiting-on strip, Restart and Start a new sessi
 - **Q9 journal mechanism:** `ps` snapshots on events and every 10 s while busy, start-time-verified reaping; best effort locally.
 - **Q17 apply-restart vs crons:** a config change restarts a pinned agent without waiting for its crons, and the agent is told which crons stopped.
 - **Q18 continue notice:** a rate-limit-cut turn gets one "continue" notice at reset.
-- **Q11b sudo vs no-new-privileges:** pending the proxy's answer.
+- **Q11b no sudo in containers:** `no-new-privileges` on every agent container, reversing the S2 image's passwordless sudo for agents; system packages come from user images.
 
 ## 22. Issues consumed and follow-ups
 
@@ -497,4 +499,4 @@ Consumed: **#10** (the S2 runtime contract: HOST_UID/GID, tmpfs, ready wait with
 
 Untouched: **#23**, **#26** (a compact to a hibernated agent wakes it; durability stays a follow-up), #29, #30, #32–#36.
 
-Follow-ups to open: container resource limits and `oom_score_adj`; pin `FACTORY_DEFAULT_IMAGE` to a released version or digest; verify the documented `rejected` rate-limit shape and the poisoned-resume texts when they occur; Linux factory reachability for containers in S6 (bind address and agent auth); persisting live crons (S9); the Docker integration tests in CI with a cached image.
+Follow-ups to open: base image sudo under `no-new-privileges` (S2 smoke test and docs, whether to drop sudo, an `allow_sudo` opt-in shape); container resource limits and `oom_score_adj`; pin `FACTORY_DEFAULT_IMAGE` to a released version or digest; verify the documented `rejected` rate-limit shape and the poisoned-resume texts when they occur; Linux factory reachability for containers in S6 (bind address and agent auth); persisting live crons (S9); the Docker integration tests in CI with a cached image.

@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { inCidr } from "./bind-hosts.ts";
 import type { AgentTokens } from "./tokens.ts";
@@ -33,6 +35,8 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
     // The token travels in this header; no log line may carry it.
     loggerInstance: i.log.child({}, { redact: ["req.headers.authorization"] } as never),
     bodyLimit: AGENT_BODY_LIMIT,
+    // An open SSE stream (Claude's `subscriptions/listen`) never ends on its own: close() destroys every connection.
+    forceCloseConnections: true,
   });
   // Keep the body raw so the MCP SDK parses it itself.
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) =>
@@ -80,16 +84,27 @@ function buildInstance(i: AgentListenerInput, allowed: (addr: string | undefined
       headers.set(k, Array.isArray(v) ? v.join(", ") : v);
     }
     const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
+    // The client going away (or close() destroying the socket) aborts the handler's request.
+    const ac = new AbortController();
+    reply.raw.on("close", () => ac.abort());
     const request = new Request(`http://agent.local${req.url}`, {
       method: "POST",
       headers,
       body,
+      signal: ac.signal,
     });
     const res = await i.mcp(request, agentId);
     reply.status(res.status);
     res.headers.forEach((value, key) => {
       if (key !== "content-length" && key !== "transfer-encoding") reply.header(key, value);
     });
+    // An SSE response may never end (Claude's `subscriptions/listen` waits for its first event, the acknowledgement):
+    // stream it. Destroying the Node stream when the response closes cancels the upstream reader.
+    if (res.body && res.headers.get("content-type")?.startsWith("text/event-stream")) {
+      const stream = Readable.fromWeb(res.body as NodeReadableStream<Uint8Array>);
+      reply.raw.on("close", () => stream.destroy());
+      return reply.send(stream);
+    }
     return reply.send(res.body ? Buffer.from(await res.arrayBuffer()) : null);
   });
   return app;

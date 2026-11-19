@@ -93,5 +93,5 @@ Not captured as traces, checked by hand: a plugin installed in the config dir bu
 - Era that served `tools/call`: `modern` (`ctx.era` in the factory callback).
 - Context paths that worked in the tool handler (second argument): `tctx.mcpReq._meta["claudecode/toolUseId"]` (a `toolu_…` id) and `tctx.http.authInfo.clientId` (from the `authInfo` passed to `handler.fetch`).
 - No `Origin` header was sent on any request (every request logged `origin= -`).
-- `system/init` lists the server as `pending` (init is emitted before the connection completes); the tool call still succeeded.
+- `system/init` lists the server as `pending` (init is emitted before the connection completes); the tool call still succeeded, but only after a ~25 s wait. Correction (S6 live check): with protocol `2026-07-28` Claude POSTs `subscriptions/listen` after `server/discover` and waits for its acknowledgement before `tools/list`. The SDK serves that request as a never-ending SSE stream (whatever the `responseMode`) whose first event is `notifications/subscriptions/acknowledged`, so the HTTP layer must stream it. A server that buffers the body never delivers the ack, and Claude cancels `listen:0` after 25 s and lists the tools without it.
 - `responseMode: "json"` drops mid-call notifications (the SDK warns at startup).

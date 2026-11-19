@@ -187,3 +187,91 @@ test("logs redact the authorization header", async () => {
   expect(out).toContain("[Redacted]");
   expect(out).not.toContain(token);
 });
+
+/**
+ * Claude Code's `subscriptions/listen` (protocol 2026-07-28) gets an SSE stream that never ends; Claude waits for its
+ * first event (the acknowledgement) before it lists the tools. The listener must stream it, not buffer it.
+ */
+function sseHandler() {
+  let cancelled!: () => void;
+  const cancelledP = new Promise<void>((r) => {
+    cancelled = r;
+  });
+  let aborted!: () => void;
+  const abortedP = new Promise<void>((r) => {
+    aborted = r;
+  });
+  const mcp = async (req: Request) => {
+    req.signal.addEventListener("abort", () => aborted());
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('event: message\ndata: {"ack":true}\n\n'));
+      },
+      cancel() {
+        cancelled();
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  return { mcp, cancelled: cancelledP, aborted: abortedP };
+}
+async function openStream(url: string, token: string, signal?: AbortSignal) {
+  const r = await fetch(`${url}/mcp`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: '{"jsonrpc":"2.0","id":"listen:0","method":"subscriptions/listen"}',
+    ...(signal ? { signal } : {}),
+  });
+  const reader = r.body?.getReader();
+  const first = await reader?.read();
+  return { r, reader, first: new TextDecoder().decode(first?.value) };
+}
+
+test("an SSE response is streamed: headers and the first event arrive while the stream stays open", async () => {
+  const h = sseHandler();
+  const { url, tokens } = await start({ mcp: h.mcp });
+  const { r, reader, first } = await openStream(url, tokens.mint("ag1").token);
+  expect(r.status).toBe(200);
+  expect(r.headers.get("content-type")).toBe("text/event-stream");
+  expect(first).toContain('data: {"ack":true}');
+  await reader?.cancel();
+});
+
+test("a client disconnect cancels the upstream stream and aborts the handler's request", async () => {
+  const h = sseHandler();
+  const { url, tokens } = await start({ mcp: h.mcp });
+  const ac = new AbortController();
+  const { first } = await openStream(url, tokens.mint("ag1").token, ac.signal);
+  expect(first).toContain("ack");
+  ac.abort();
+  await Promise.all([h.cancelled, h.aborted]);
+});
+
+test("close() resolves while an SSE stream is open, and the stream is cancelled", async () => {
+  const h = sseHandler();
+  const servers = () =>
+    process.getActiveResourcesInfo().filter((r) => r === "TCPServerWrap").length;
+  const before = servers();
+  const tokens = new AgentTokens();
+  const l = await startAgentListener({
+    hosts: ["127.0.0.1"],
+    port: 0,
+    allowedSources: ["127.0.0.0/8"],
+    version: "9.9.9",
+    tokens,
+    isArchived: async () => false,
+    mcp: h.mcp,
+    log,
+  });
+  const { reader, first } = await openStream(
+    `http://127.0.0.1:${l.port}`,
+    tokens.mint("ag1").token,
+  );
+  expect(first).toContain("ack");
+  await l.close();
+  await h.cancelled;
+  // No listening socket left behind.
+  expect(servers()).toBeLessThanOrEqual(before);
+  // The client side sees the stream end (closed or errored), never a hang.
+  await reader?.read().catch(() => undefined);
+});

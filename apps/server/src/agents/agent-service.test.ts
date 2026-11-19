@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -309,6 +312,71 @@ test("a second staged re-sync replaces the pending dir", async () => {
   expect(readFileSync(path.join(pending, "AGENTS.md"), "utf8")).toBe("# TWO\n");
   expect(existsSync(path.join(pending, "only-first.txt"))).toBe(false);
   await startAndStop("stage-c", false);
+});
+
+test("a staged relative symlink from the template is applied as a link", async () => {
+  await makeStageAgent("stage-d");
+  const filesDir = path.join(home, "templates/stage-d/files");
+  mkdirSync(filesDir, { recursive: true });
+  writeFileSync(path.join(filesDir, "real.txt"), "r");
+  symlinkSync("real.txt", path.join(filesDir, "alias.txt"));
+  await startAndStop("stage-d", true);
+  expect((await svc.resync("stage-d")).applied).toBe("on_restart");
+  await startAndStop("stage-d", false);
+  await startAndStop("stage-d", true);
+  const alias = path.join(home, "agents/stage-d/alias.txt");
+  expect(lstatSync(alias).isSymbolicLink()).toBe(true);
+  expect(readlinkSync(alias)).toBe("real.txt");
+  expect(existsSync(resyncPendingDir(home, "stage-d"))).toBe(false);
+  await startAndStop("stage-d", false);
+});
+
+test("hasProcess is true while a start waits in prepare, before the spawn", async () => {
+  await makeStageAgent("stage-e");
+  const rt = await runtimes.bySlug("stage-e");
+  if (!rt) throw new Error("no runtime");
+  expect(rt.hasProcess()).toBe(false);
+  const u = await t.signUpUser();
+  let send: Promise<unknown> = Promise.resolve();
+  await t.app.workspace.lock.run("stage-e", async () => {
+    send = rt.sendMessage({
+      fromUserId: u.user.id,
+      fromHandle: u.user.handle,
+      body: "hi",
+      urgent: false,
+    });
+    send.catch(() => {});
+    // prepareStart is queued behind this lock: no process yet, but a resync here must stage.
+    await vi.waitFor(() => expect(rt.hasProcess()).toBe(true));
+  });
+  await send;
+  await startAndStop("stage-e", false);
+  expect(rt.hasProcess()).toBe(false);
+});
+
+test("a failing apply keeps resync-pending/ staged", async () => {
+  await makeStageAgent("stage-f");
+  const filesDir = path.join(home, "templates/stage-f/files/sub");
+  mkdirSync(filesDir, { recursive: true });
+  writeFileSync(path.join(filesDir, "x.txt"), "x");
+  await startAndStop("stage-f", true);
+  await svc.resync("stage-f");
+  await startAndStop("stage-f", false);
+  // the agent planted a link where the factory expects a folder: SafeFs refuses the apply
+  const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
+  symlinkSync(outside, path.join(home, "agents/stage-f/sub"));
+  const rt = await runtimes.bySlug("stage-f");
+  const u = await t.signUpUser();
+  await expect(
+    rt?.sendMessage({
+      fromUserId: u.user.id,
+      fromHandle: u.user.handle,
+      body: "hi",
+      urgent: false,
+    }),
+  ).rejects.toBeDefined();
+  expect(existsSync(path.join(resyncPendingDir(home, "stage-f"), "sub/x.txt"))).toBe(true);
+  expect(existsSync(path.join(outside, "x.txt"))).toBe(false);
 });
 
 test("archive is blocked while active reports exist", async () => {

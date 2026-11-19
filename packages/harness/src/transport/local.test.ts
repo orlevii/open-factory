@@ -23,7 +23,9 @@ test("localTransport: SIGTERM ends a child; forceKill SIGKILLs one that traps TE
   expect(await t.terminate()).toBe(true);
   await t.forceKill();
   expect((await t.exit).signal).toBe("SIGKILL");
-});
+  // Spawn-and-kill is the load-sensitive part: the full suite runs ~100 workers, so the default 5 s
+  // test timeout, not the logic, is what flaked (150 concurrent runs under CPU load never failed).
+}, 20_000);
 
 test("localTransport: lines are delivered before exit; write after exit rejects", async () => {
   const t = localTransport(spec, ["-c", "echo one; echo two >&2"]);

@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
@@ -166,9 +166,10 @@ export class Workspace {
       // The old plugins folder moves aside at the next prepare (linkPlugins), a workdir write.
       return { applied: "on_restart" };
     }
-    // A fresh re-sync supersedes anything staged earlier.
-    await rm(resyncPendingDir(this.d.factoryHome, slug), { recursive: true, force: true });
     const backup = await this.applyTargets(slug, targets);
+    // A fresh re-sync supersedes anything staged earlier, but only once it applied: a failed apply
+    // keeps the older staged files rather than losing both.
+    await rm(resyncPendingDir(this.d.factoryHome, slug), { recursive: true, force: true });
     await writeTemplateCopy(templateCopyDir(this.d.factoryHome, slug), tpl.tplSettings, tpl.tplMcp);
     await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
     if (tpl.config.plugins.length) await this.install(slug, tpl);
@@ -184,7 +185,17 @@ export class Workspace {
   ): Promise<string | undefined> {
     const workdir = this.workdir(slug);
     const incoming: { to: string; data: Buffer }[] = [];
-    for (const t of targets) incoming.push({ to: t.to, data: await readFile(t.from) });
+    for (const t of targets) {
+      // A link target is compared by its link text (never followed: a relative link staged under
+      // resync-pending/ would resolve elsewhere), like `writeTargets` writes it.
+      const st = await lstat(t.from);
+      incoming.push({
+        to: t.to,
+        data: st.isSymbolicLink()
+          ? Buffer.from(`\0symlink:${await readlink(t.from)}`)
+          : await readFile(t.from),
+      });
+    }
     const backup = await backupDiffering(
       workdir,
       resyncRoot(this.d.factoryHome, slug),

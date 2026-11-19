@@ -59,6 +59,7 @@ export class AgentRuntime {
   private proc: HarnessProcess | undefined;
   private deadProc: HarnessProcess | undefined;
   private started = false; // session_started seen for this process
+  private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
   private queue: Entry[] = [];
@@ -344,8 +345,6 @@ export class AgentRuntime {
   hasProcess(): boolean {
     return Boolean(this.proc) || this.starting;
   }
-
-  private starting = false;
 
   /** Only called from API jobs (send, compact): a flush never restarts a dead process. */
   private async ensureStarted() {

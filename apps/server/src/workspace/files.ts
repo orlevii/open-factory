@@ -1,21 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  readlink,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { WorkspaceError } from "./links.ts";
+import { SafeFs, WorkspaceError } from "./safe-fs.ts";
 
+/** Atomic write for factory-owned paths outside agent workdirs (`FACTORY_HOME/state`). Anything
+ *  under a workdir goes through `SafeFs` instead. */
 export async function writeAtomic(file: string, data: string): Promise<void> {
   const tmp = `${file}.tmp-${randomUUID()}`;
   await mkdir(path.dirname(file), { recursive: true });
@@ -68,29 +57,6 @@ export async function templateTargets(
   return out;
 }
 
-/** Create the parent directories of `rel` under `workdir`, refusing any component that is a symlink
- *  (a link into a granted repo or host skill must never be written through). */
-async function safeParent(workdir: string, rel: string): Promise<string> {
-  let cur = workdir;
-  for (const part of path
-    .dirname(rel)
-    .split(path.sep)
-    .filter((p) => p && p !== ".")) {
-    cur = path.join(cur, part);
-    let st = await lstat(cur).catch(() => null);
-    if (!st) {
-      await mkdir(cur);
-      st = await lstat(cur);
-    }
-    if (st.isSymbolicLink() || !st.isDirectory()) {
-      throw new WorkspaceError(
-        `${path.relative(workdir, cur)} is a link or not a folder, so the template can't write ${rel} there; move it away.`,
-      );
-    }
-  }
-  return cur;
-}
-
 export async function copyTargets(
   _tplDir: string,
   workdir: string,
@@ -99,59 +65,42 @@ export async function copyTargets(
   tplSettings: Record<string, unknown>,
   tplMcp: unknown,
 ): Promise<void> {
+  const safe = new SafeFs(workdir);
   for (const t of targets) {
-    const parent = await safeParent(workdir, t.to);
-    const dest = path.join(parent, path.basename(t.to));
-    const tmp = `${dest}.tmp-${randomUUID()}`;
+    // The source is the human's template dir (trusted); only the workdir side is guarded.
     const st = await lstat(t.from);
-    const existing = await lstat(dest).catch(() => null);
-    try {
-      if (st.isSymbolicLink()) {
-        if (existing && !existing.isSymbolicLink()) {
-          throw new WorkspaceError(
-            `${t.to} exists and isn't a link, so the template link can't replace it; move it away.`,
-          );
-        }
-        await symlink(await readlink(t.from), tmp);
-      } else {
-        await copyFile(t.from, tmp);
-        await chmod(tmp, st.mode & 0o777);
-      }
-      await rename(tmp, dest);
-    } catch (err) {
-      await rm(tmp, { force: true }).catch(() => {});
-      throw err;
-    }
+    if (st.isSymbolicLink()) await safe.link(t.to, await readlink(t.from));
+    else await safe.writeFile(t.to, await readFile(t.from), st.mode & 0o777);
   }
   await writeAtomic(path.join(templateCopy, "settings.json"), JSON.stringify(tplSettings, null, 2));
   await writeAtomic(path.join(templateCopy, "mcp.json"), JSON.stringify(tplMcp, null, 2));
 }
 
 /** Copies the workdir files an incoming template would change into `<backupRoot>/<stamp>/`.
- *  Returns that absolute dir, or undefined when nothing differed. */
+ *  A symlink is backed up as a symlink, never its target's bytes. Returns that absolute dir, or
+ *  undefined when nothing differed. */
 export async function backupDiffering(
   workdir: string,
   backupRoot: string,
   incoming: { to: string; data: Buffer }[],
   stamp: string,
 ): Promise<string | undefined> {
+  const safe = new SafeFs(workdir);
   const dir = path.join(backupRoot, stamp);
   let copied = false;
   for (const i of incoming) {
-    const existing = path.join(workdir, i.to);
-    let cur: Buffer;
-    try {
-      cur = await readFile(existing);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
+    const st = await safe.entry(i.to);
+    if (!st) continue;
+    if (!st.isSymbolicLink()) {
+      const cur = await safe.readIfRegular(i.to);
+      if (!cur) throw new WorkspaceError(`${path.join(workdir, i.to)} isn't a file; move it away.`);
+      if (cur.equals(i.data)) continue;
     }
-    if (cur.equals(i.data)) continue;
     const dest = path.join(dir, i.to);
     await mkdir(path.dirname(dest), { recursive: true });
     for (let n = 0; ; n++) {
       try {
-        await copyFile(existing, n === 0 ? dest : `${dest}.${n}`, constants.COPYFILE_EXCL);
+        await safe.copyOut(i.to, n === 0 ? dest : `${dest}.${n}`);
         break;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;

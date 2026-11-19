@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type AgentRow, schema } from "@open-factory/db";
@@ -11,6 +19,7 @@ import { Vault } from "../crypto/vault.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
+import { AgentStartError } from "./errors.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
 
 const KEY = "k".repeat(40);
@@ -263,4 +272,14 @@ test("an invalid stored config is an AgentStartError with the edit_agent fix", a
     name: "AgentStartError",
     fix: "edit_agent",
   });
+});
+
+test("prepare fails closed when .claude-config is a symlink to a host dir", async () => {
+  const hostDir = mkdtempSync(path.join(tmpdir(), "host-"));
+  const workdir = workspace.workdir(agent.slug);
+  rmSync(`${workdir}/.claude-config`, { recursive: true, force: true });
+  symlinkSync(hostDir, `${workdir}/.claude-config`);
+  await expect(prepareStart(agent)).rejects.toThrow(AgentStartError);
+  await expect(prepareStart(agent)).rejects.toThrow(/is a symlink/);
+  expect(readdirSync(hostDir)).toEqual([]);
 });

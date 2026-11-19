@@ -1,22 +1,17 @@
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
 import { buildClaudeMd } from "./claude-md.ts";
-import {
-  backupDiffering,
-  copyTargets,
-  resyncStamp,
-  templateTargets,
-  writeAtomic,
-} from "./files.ts";
+import { backupDiffering, copyTargets, resyncStamp, templateTargets } from "./files.ts";
 import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
 import { buildMounts } from "./mounts.ts";
 import { agentConfigDir, agentWorkdir, resyncRoot, templateCopyDir } from "./paths.ts";
 import { installPlugins } from "./plugins.ts";
+import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
 
 export interface PrepareInput {
@@ -92,16 +87,17 @@ export class Workspace {
       tpl.tplSettings,
       tpl.tplMcp,
     );
-    await mkdir(configDir, { recursive: true });
+    await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
     if (tpl.config.plugins.length) await this.install(workdir, configDir, tpl);
     const skills = await resolveHostSkills(this.d.hostSkillsDir, check.config.skills);
     await linkHostSkills(workdir, this.d.hostSkillsDir, skills, { checkOnly: true });
     await linkProjects(workdir, check.grants, { checkOnly: true });
   }
 
-  /** Removes a folder this process created (only call after a successful materialize claim). */
+  /** Removes a folder this process created (only call after a successful materialize claim).
+   *  Never follows a link the folder holds (or a link in its place). */
   async discard(slug: string): Promise<void> {
-    await rm(this.workdir(slug), { recursive: true, force: true });
+    await new SafeFs(this.workdir(slug)).removeAll();
   }
 
   /** Under the caller-held lock: backup + overwrite + install. Returns the backup dir relative to FACTORY_HOME. */
@@ -125,7 +121,7 @@ export class Workspace {
       tpl.tplSettings,
       tpl.tplMcp,
     );
-    await mkdir(configDir, { recursive: true });
+    await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
     if (tpl.config.plugins.length) await this.install(workdir, configDir, tpl);
     return backup ? path.relative(this.d.factoryHome, backup) : undefined;
   }
@@ -137,6 +133,8 @@ export class Workspace {
   async prepare(i: PrepareInput): Promise<{ workdir: string; configDir: string; mounts: Mount[] }> {
     const workdir = this.workdir(i.slug);
     const configDir = agentConfigDir(workdir);
+    const configRel = path.relative(workdir, configDir);
+    const safe = new SafeFs(workdir);
     const copy = templateCopyDir(this.d.factoryHome, i.slug);
     const tpl = await this.readTemplateJson<Record<string, unknown>>(copy, "settings.json");
     const tplMcp = await this.readTemplateJson<{ mcpServers: Record<string, unknown> }>(
@@ -144,17 +142,20 @@ export class Workspace {
       "mcp.json",
     );
     let prev: Record<string, unknown> = {};
-    try {
-      const parsed: unknown = JSON.parse(
-        await readFile(path.join(configDir, "settings.json"), "utf8"),
-      );
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        prev = parsed as Record<string, unknown>;
-      } else {
-        this.log.warn({ slug: i.slug }, "previous settings.json isn't an object; starting from {}");
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+    // Read without following links: a settings.json linked to a host file must not leak into ours.
+    const prevRaw = await safe.readIfRegular(path.join(configRel, "settings.json"));
+    if (prevRaw) {
+      try {
+        const parsed: unknown = JSON.parse(prevRaw.toString("utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          prev = parsed as Record<string, unknown>;
+        } else {
+          this.log.warn(
+            { slug: i.slug },
+            "previous settings.json isn't an object; starting from {}",
+          );
+        }
+      } catch {
         this.log.warn({ slug: i.slug }, "previous settings.json didn't parse; starting from {}");
       }
     }
@@ -171,13 +172,10 @@ export class Workspace {
       plugins: i.config.plugins,
       grantedPaths,
     });
-    await writeAtomic(path.join(configDir, "settings.json"), JSON.stringify(settings, null, 2));
-    await writeAtomic(
-      path.join(workdir, ".mcp.json"),
-      JSON.stringify(buildMcpJson(tplMcp), null, 2),
-    );
-    await writeAtomic(
-      path.join(configDir, "CLAUDE.md"),
+    await safe.writeFile(path.join(configRel, "settings.json"), JSON.stringify(settings, null, 2));
+    await safe.writeFile(".mcp.json", JSON.stringify(buildMcpJson(tplMcp), null, 2));
+    await safe.writeFile(
+      path.join(configRel, "CLAUDE.md"),
       buildClaudeMd({
         slug: i.slug,
         displayName: i.displayName,

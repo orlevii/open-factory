@@ -85,6 +85,7 @@ export const createAgentBodySchema = z.object({
   credential: nameSchema,
   projects: z.array(nameSchema).optional(),
 });
+export type CreateAgentBody = z.infer<typeof createAgentBodySchema>;
 export const patchAgentBodySchema = z
   .object({
     displayName: z.string().trim().min(1, "Enter a display name.").max(80),
@@ -94,6 +95,7 @@ export const patchAgentBodySchema = z
     projects: z.array(nameSchema).nullable(),
   })
   .partial();
+export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;
 export const agentResponseSchema = z.object({ agent: agentSummarySchema });
 export const resyncResponseSchema = z.object({
   agent: agentSummarySchema,

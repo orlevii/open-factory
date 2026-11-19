@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { schema } from "@open-factory/db";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -155,6 +159,84 @@ test("an archived agent refuses messages, compact and interrupt with 409 agent_a
       });
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe("agent_archived");
+    }
+    const stored = await t2.sql`select count(*)::int as n from messages`;
+    expect(stored[0]?.n).toBe(0);
+  } finally {
+    await t2.close();
+  }
+});
+
+test("agent management routes: create, patch, resync, archive, unarchive, list filter, bad slugs", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
+  try {
+    const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
+    const call = (method: "GET" | "POST" | "PATCH", url: string, payload?: object) =>
+      t2.app.inject({ method, url, headers: { cookie: c2 }, ...(payload ? { payload } : {}) });
+    const tdir = path.join(t2.factoryHome, "templates/lead");
+    mkdirSync(tdir, { recursive: true });
+    writeFileSync(
+      path.join(tdir, "template.yaml"),
+      "name: lead\ndisplay_name: Lead\nruntime: local\n",
+    );
+    writeFileSync(path.join(tdir, "AGENTS.md"), "# Lead\n");
+    const credId = randomUUID();
+    await t2.db.insert(schema.credentials).values({
+      id: credId,
+      name: "work",
+      kind: "oauth_token",
+      valueEnc: t2.app.vault.seal("tok", `credentials:${credId}`),
+    });
+    const body = {
+      template: "lead",
+      slug: "boss",
+      displayName: "Boss",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+    };
+
+    const created = await call("POST", "/api/agents", body);
+    expect(created.statusCode).toBe(201);
+    expect(created.json().agent).toMatchObject({ slug: "boss", credential: "work" });
+    const bad = await call("POST", "/api/agents", { ...body, slug: "Bad Slug" });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.fields).toHaveProperty("slug");
+    expect((await call("POST", "/api/agents", body)).json().error.code).toBe("slug_taken");
+
+    const patched = await call("PATCH", "/api/agents/boss", { description: "the boss" });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json().agent.description).toBe("the boss");
+    const rs = await call("POST", "/api/agents/boss/resync");
+    expect(rs.statusCode).toBe(200);
+    expect(rs.json().agent.slug).toBe("boss");
+
+    expect((await call("POST", "/api/agents/boss/archive")).statusCode).toBe(200);
+    expect((await call("POST", "/api/agents/boss/resync")).json().error.code).toBe(
+      "agent_archived",
+    );
+    expect(
+      (await call("GET", "/api/agents?archived=only"))
+        .json()
+        .agents.map((a: { slug: string }) => a.slug),
+    ).toEqual(["boss"]);
+    expect((await call("GET", "/api/agents")).json().agents).toEqual([]);
+    expect((await call("POST", "/api/agents/boss/unarchive")).json().agent.archivedAt).toBeNull();
+
+    for (const [m, url] of [
+      ["GET", "/api/agents/..%2F..%2Fetc"],
+      ["GET", "/api/agents/..%2F..%2Fetc/events"],
+      ["PATCH", "/api/agents/..%2F..%2Fetc"],
+      ["POST", "/api/agents/..%2F..%2Fetc/resync"],
+      ["POST", "/api/agents/..%2F..%2Fetc/archive"],
+      ["POST", "/api/agents/..%2F..%2Fetc/unarchive"],
+      ["POST", "/api/agents/..%2F..%2Fetc/messages"],
+      ["POST", "/api/agents/..%2F..%2Fetc/compact"],
+      ["POST", "/api/agents/..%2F..%2Fetc/interrupt"],
+    ] as const) {
+      const res = await call(m, url, m === "GET" ? undefined : { body: "x", description: "x" });
+      expect(res.statusCode, `${m} ${url}`).toBe(400);
+      expect(res.json().error.code).toBe("validation_error");
     }
   } finally {
     await t2.close();

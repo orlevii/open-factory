@@ -1,0 +1,427 @@
+import { randomUUID } from "node:crypto";
+import { type AgentRow, type Db, schema } from "@open-factory/db";
+import {
+  type AgentSummary,
+  type CreateAgentBody,
+  type PatchAgentBody,
+  slugSchema,
+  treeOrder,
+} from "@open-factory/shared";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { ApiError, FieldError } from "../errors.ts";
+import type { TemplateIndex } from "../templates/template-index.ts";
+import { WorkspaceError } from "../workspace/links.ts";
+import type { KeyedMutex } from "../workspace/lock.ts";
+import { PluginInstallError } from "../workspace/plugins.ts";
+import type { PrepareInput, Workspace } from "../workspace/workspace.ts";
+import type { RuntimeLog } from "./agent-runtime.ts";
+import type { AgentRuntimes } from "./runtimes.ts";
+
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+const slugTaken = () => new FieldError("slug", "That slug is taken.", "slug_taken");
+
+function isSlugUnique(e: unknown): boolean {
+  for (let x = e as { code?: string; constraint_name?: string; cause?: unknown } | undefined; x; ) {
+    if (x.code === "23505" && (x.constraint_name ?? "").includes("slug")) return true;
+    x = x.cause as typeof x;
+  }
+  return false;
+}
+
+function pluginFailure(err: unknown): unknown {
+  if (err instanceof PluginInstallError)
+    return new ApiError(502, "plugin_install_failed", err.message, { output: err.output });
+  if (err instanceof WorkspaceError) return new ApiError(409, "template_invalid", err.message);
+  return err;
+}
+
+function reportsMessage(slugs: string[]): string {
+  const tags = slugs.map((s) => `@${s}`);
+  const who =
+    tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags[tags.length - 1]}`;
+  return `${who} ${tags.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
+}
+
+export class AgentService {
+  constructor(
+    private readonly d: {
+      db: Db;
+      templates: TemplateIndex;
+      workspace: Workspace;
+      lock: KeyedMutex;
+      runtimes: AgentRuntimes;
+      log: RuntimeLog;
+    },
+  ) {}
+
+  async list(archived: "exclude" | "include" | "only"): Promise<AgentSummary[]> {
+    const { db } = this.d;
+    const rows = await db
+      .select()
+      .from(schema.agents)
+      .where(
+        archived === "exclude"
+          ? isNull(schema.agents.archivedAt)
+          : archived === "only"
+            ? isNotNull(schema.agents.archivedAt)
+            : undefined,
+      );
+    const slugById = new Map(
+      (await db.select({ id: schema.agents.id, slug: schema.agents.slug }).from(schema.agents)).map(
+        (r) => [r.id, r.slug],
+      ),
+    );
+    const credName = new Map(
+      (await db.select().from(schema.credentials)).map((c) => [c.id, c.name]),
+    );
+    const grants = await db
+      .select({ agentId: schema.agentProjectGrants.agentId, name: schema.projects.name })
+      .from(schema.agentProjectGrants)
+      .innerJoin(schema.projects, eq(schema.projects.id, schema.agentProjectGrants.projectId));
+    const projectsOf = new Map<string, string[]>();
+    for (const g of grants)
+      projectsOf.set(g.agentId, [...(projectsOf.get(g.agentId) ?? []), g.name]);
+
+    const info = rows.map((r) => ({
+      row: r,
+      reportsTo: r.reportsTo ? (slugById.get(r.reportsTo) ?? null) : null,
+    }));
+    const order = treeOrder(
+      info.map((i) => ({
+        slug: i.row.slug,
+        displayName: i.row.displayName,
+        reportsTo: i.reportsTo,
+      })),
+    );
+    const bySlug = new Map(info.map((i) => [i.row.slug, i]));
+    return Promise.all(
+      order.map(async ({ slug, depth }) => {
+        const i = bySlug.get(slug);
+        if (!i) throw new Error("tree order returned an unknown slug");
+        const r = i.row;
+        return {
+          slug: r.slug,
+          displayName: r.displayName,
+          description: r.description,
+          kind: "persistent" as const,
+          template: r.template,
+          runtime: r.runtime,
+          reportsTo: i.reportsTo,
+          credential: credName.get(r.credentialId) ?? "",
+          projects: (projectsOf.get(r.id) ?? []).sort(),
+          grantsOverridden: r.grantsOverridden,
+          depth,
+          archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
+          ...(await this.d.runtimes.liveFields(r.id, r)),
+        };
+      }),
+    );
+  }
+
+  async summary(slug: string): Promise<AgentSummary> {
+    const found = (await this.list("include")).find((a) => a.slug === slug);
+    if (!found) throw this.notFound(slug);
+    return found;
+  }
+
+  private notFound(slug: string) {
+    return new ApiError(404, "agent_not_found", `No agent named ${slug}`);
+  }
+
+  private async rowBySlug(slug: string): Promise<AgentRow> {
+    const [row] = await this.d.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+    if (!row) throw this.notFound(slug);
+    return row;
+  }
+
+  private async credentialId(name: string): Promise<string> {
+    const [c] = await this.d.db
+      .select({ id: schema.credentials.id })
+      .from(schema.credentials)
+      .where(eq(schema.credentials.name, name));
+    if (!c) throw new FieldError("credential", "Choose a credential.");
+    return c.id;
+  }
+
+  private async activeManager(slug: string): Promise<AgentRow> {
+    const [m] = await this.d.db
+      .select()
+      .from(schema.agents)
+      .where(and(eq(schema.agents.slug, slug), isNull(schema.agents.archivedAt)));
+    if (!m) throw new FieldError("reportsTo", "Choose an active agent.");
+    return m;
+  }
+
+  /** Registered projects by name, in the order given; the first unknown name is a field error. */
+  private async projectRows(
+    names: string[],
+  ): Promise<{ id: string; name: string; hostPath: string }[]> {
+    const found = names.length
+      ? await this.d.db
+          .select({
+            id: schema.projects.id,
+            name: schema.projects.name,
+            hostPath: schema.projects.hostPath,
+          })
+          .from(schema.projects)
+          .where(inArray(schema.projects.name, names))
+      : [];
+    const byName = new Map(found.map((p) => [p.name, p]));
+    return names.map((n) => {
+      const p = byName.get(n);
+      if (!p) throw new FieldError("projects", `Project ${n} isn't registered.`);
+      return p;
+    });
+  }
+
+  async create(b: CreateAgentBody): Promise<AgentSummary> {
+    const slugOk = slugSchema.safeParse(b.slug);
+    if (!slugOk.success)
+      throw new FieldError("slug", slugOk.error.issues[0]?.message ?? "Invalid slug.");
+    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b));
+  }
+
+  private async createLocked(b: CreateAgentBody): Promise<AgentSummary> {
+    const { db, workspace } = this.d;
+    const [taken] = await db
+      .select({ id: schema.agents.id })
+      .from(schema.agents)
+      .where(eq(schema.agents.slug, b.slug));
+    if (taken) throw slugTaken();
+    const tpl = await this.d.templates.loadValid(b.template);
+    const credentialId = await this.credentialId(b.credential);
+    const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
+    const projects = await this.projectRows(b.projects ?? tpl.config.projects);
+
+    const prep: PrepareInput = {
+      slug: b.slug,
+      displayName: b.displayName,
+      description: b.description,
+      template: b.template,
+      config: tpl.config,
+      manager: manager ? { slug: manager.slug, displayName: manager.displayName } : null,
+      grants: projects.map((p) => ({ name: p.name, hostPath: p.hostPath })),
+    };
+    try {
+      await workspace.lock.run(b.slug, () => workspace.materialize(b.slug, b.slug, tpl, prep));
+    } catch (err) {
+      // folder_exists means the folder isn't ours: leave it alone.
+      if (!(err instanceof FieldError && err.code === "folder_exists"))
+        await workspace.discard(b.slug).catch(() => {});
+      throw pluginFailure(err);
+    }
+
+    const id = randomUUID();
+    try {
+      await db.transaction(async (tx) => {
+        await tx.insert(schema.agents).values({
+          id,
+          slug: b.slug,
+          displayName: b.displayName,
+          description: b.description,
+          template: b.template,
+          config: tpl.config,
+          runtime: tpl.config.runtime,
+          reportsTo: manager?.id ?? null,
+          credentialId,
+          grantsOverridden: b.projects !== undefined,
+        });
+        if (projects.length)
+          await tx
+            .insert(schema.agentProjectGrants)
+            .values(projects.map((p) => ({ agentId: id, projectId: p.id })));
+      });
+    } catch (err) {
+      await workspace.discard(b.slug).catch(() => {});
+      if (isSlugUnique(err)) throw slugTaken();
+      throw err;
+    }
+    return this.summary(b.slug);
+  }
+
+  async update(slug: string, b: PatchAgentBody): Promise<AgentSummary> {
+    const { db, runtimes } = this.d;
+    const row = await this.rowBySlug(slug);
+    const currentGrants = await this.grantNames(row.id);
+    const changed = { feeds: false, text: false };
+    const set: Partial<typeof schema.agents.$inferInsert> = {};
+
+    if (b.displayName !== undefined && b.displayName !== row.displayName) {
+      set.displayName = b.displayName;
+      changed.text = true;
+    }
+    if (b.description !== undefined && b.description !== row.description) {
+      set.description = b.description;
+      changed.text = true;
+    }
+    if (b.credential !== undefined) {
+      const id = await this.credentialId(b.credential);
+      if (id !== row.credentialId) {
+        set.credentialId = id;
+        changed.feeds = true;
+      }
+    }
+    if (b.reportsTo !== undefined) {
+      const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
+      if (manager) await this.assertNoCycle(slug, row.id, manager);
+      if ((manager?.id ?? null) !== row.reportsTo) {
+        set.reportsTo = manager?.id ?? null;
+        changed.feeds = true;
+      }
+    }
+    let newGrants: { id: string; name: string }[] | undefined;
+    if (b.projects !== undefined) {
+      const names = b.projects === null ? row.config.projects : b.projects;
+      newGrants = await this.projectRows(names);
+      set.grantsOverridden = b.projects !== null;
+      const same =
+        [...newGrants.map((p) => p.name)].sort().join("\0") ===
+        [...currentGrants].sort().join("\0");
+      if (!same) changed.feeds = true;
+    }
+
+    await db.transaction(async (tx) => {
+      if (Object.keys(set).length)
+        await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
+      if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
+    });
+
+    await runtimes.refresh(row.id);
+    if (changed.feeds || changed.text) await runtimes.requestRestart(row.id);
+    if (changed.text) {
+      const reports = await db
+        .select({ id: schema.agents.id })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.reportsTo, row.id), isNull(schema.agents.archivedAt)));
+      for (const r of reports) await runtimes.requestRestart(r.id);
+    }
+    return this.summary(slug);
+  }
+
+  private async grantNames(agentId: string): Promise<string[]> {
+    const rows = await this.d.db
+      .select({ name: schema.projects.name })
+      .from(schema.agentProjectGrants)
+      .innerJoin(schema.projects, eq(schema.projects.id, schema.agentProjectGrants.projectId))
+      .where(eq(schema.agentProjectGrants.agentId, agentId));
+    return rows.map((r) => r.name);
+  }
+
+  private async replaceGrants(tx: Tx, agentId: string, projects: { id: string }[]) {
+    await tx
+      .delete(schema.agentProjectGrants)
+      .where(eq(schema.agentProjectGrants.agentId, agentId));
+    if (projects.length)
+      await tx
+        .insert(schema.agentProjectGrants)
+        .values(projects.map((p) => ({ agentId, projectId: p.id })));
+  }
+
+  /** Walks reportsTo upward from the new manager; reaching the agent itself is a cycle. */
+  private async assertNoCycle(slug: string, id: string, manager: AgentRow) {
+    const seen = new Set<string>();
+    let cur: AgentRow | undefined = manager;
+    while (cur && !seen.has(cur.id)) {
+      if (cur.id === id)
+        throw new FieldError(
+          "reportsTo",
+          `That would make @${slug} report to itself through @${manager.slug}.`,
+        );
+      seen.add(cur.id);
+      if (!cur.reportsTo) return;
+      const [next] = await this.d.db
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, cur.reportsTo));
+      cur = next;
+    }
+  }
+
+  async resync(slug: string): Promise<{ agent: AgentSummary; backupDir?: string }> {
+    const { db, runtimes, workspace } = this.d;
+    const row = await this.rowBySlug(slug);
+    if (row.archivedAt)
+      throw new ApiError(409, "agent_archived", `@${slug} is archived. Restore it first.`);
+    const tpl = await this.d.templates.loadValid(row.template);
+    let backupDir: string | undefined;
+    try {
+      await workspace.lock.run(slug, async () => {
+        // Checked before any disk change, so a stale template project leaves everything as it was.
+        const projects = row.grantsOverridden
+          ? undefined
+          : await this.templateProjects(tpl.config.projects, row.template);
+        backupDir = await workspace.resync(slug, tpl);
+        await db.transaction(async (tx) => {
+          await tx
+            .update(schema.agents)
+            .set({ config: tpl.config, runtime: tpl.config.runtime })
+            .where(eq(schema.agents.id, row.id));
+          if (projects) await this.replaceGrants(tx, row.id, projects);
+        });
+      });
+    } catch (err) {
+      throw pluginFailure(err);
+    }
+    await runtimes.refresh(row.id);
+    await runtimes.requestRestart(row.id);
+    return { agent: await this.summary(slug), ...(backupDir ? { backupDir } : {}) };
+  }
+
+  private async templateProjects(names: string[], template: string) {
+    try {
+      return await this.projectRows(names);
+    } catch (err) {
+      if (err instanceof FieldError)
+        throw new ApiError(409, "template_invalid", `Template ${template}: ${err.message}`);
+      throw err;
+    }
+  }
+
+  async archive(slug: string): Promise<AgentSummary> {
+    const { db, runtimes } = this.d;
+    const row = await this.rowBySlug(slug);
+    if (row.archivedAt) return this.summary(slug);
+    const reports = (
+      await db
+        .select({ slug: schema.agents.slug })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.reportsTo, row.id), isNull(schema.agents.archivedAt)))
+    )
+      .map((r) => r.slug)
+      .sort();
+    if (reports.length)
+      throw new ApiError(409, "has_reports", reportsMessage(reports), { reports });
+    await db
+      .update(schema.agents)
+      .set({ archivedAt: new Date() })
+      .where(eq(schema.agents.id, row.id));
+    const rt = await runtimes.get(row.id);
+    rt?.markArchived();
+    try {
+      await rt?.stop({ graceMs: 3000, termWaitMs: 10_000 });
+    } catch (err) {
+      this.d.log.error({ err, slug }, "Stopping an archived agent failed");
+    }
+    await runtimes.refresh(row.id);
+    return this.summary(slug);
+  }
+
+  async unarchive(slug: string): Promise<AgentSummary> {
+    const { db, runtimes } = this.d;
+    const row = await this.rowBySlug(slug);
+    if (!row.archivedAt) return this.summary(slug);
+    if (row.reportsTo) {
+      const [m] = await db.select().from(schema.agents).where(eq(schema.agents.id, row.reportsTo));
+      if (m?.archivedAt)
+        throw new ApiError(
+          409,
+          "manager_archived",
+          `Its manager @${m.slug} is archived. Change its manager first.`,
+        );
+    }
+    await db.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
+    await runtimes.refresh(row.id);
+    return this.summary(slug);
+  }
+}

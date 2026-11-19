@@ -1,43 +1,25 @@
-import type { AgentRow } from "@open-factory/db";
-import type { AgentSummary } from "@open-factory/shared";
 import {
   agentDetailSchema,
+  agentListQuerySchema,
   agentListSchema,
+  agentResponseSchema,
   compactBodySchema,
+  createAgentBodySchema,
   eventsPageSchema,
   eventsQuerySchema,
+  patchAgentBodySchema,
   queueItemResponseSchema,
+  resyncResponseSchema,
   sendMessageBodySchema,
+  slugSchema,
 } from "@open-factory/shared";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "../agents/errors.ts";
-import type { LiveFields } from "../agents/runtimes.ts";
 import { requireUser } from "../auth/require-user.ts";
 
-const slugParams = z.object({ slug: z.string() });
-/**
- * Interim: the summary from the row plus the runtime's live fields. Task 14 replaces it with
- * AgentService.list()/summary() and deletes it.
- */
-function summaryFromRow(row: AgentRow, live: LiveFields): AgentSummary {
-  return {
-    slug: row.slug,
-    displayName: row.displayName,
-    description: row.description,
-    kind: "persistent",
-    template: row.template,
-    runtime: row.runtime,
-    reportsTo: null,
-    credential: "",
-    projects: [],
-    grantsOverridden: row.grantsOverridden,
-    depth: 0,
-    archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
-    ...live,
-  };
-}
+const slugParams = z.object({ slug: slugSchema });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
 
@@ -50,24 +32,57 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     return req.user;
   };
 
-  app.get("/api/agents", { schema: { response: { 200: agentListSchema } } }, async () => {
-    const rows = await app.store.listAgents();
-    return {
-      agents: await Promise.all(
-        rows.map(async (r) => summaryFromRow(r, await app.runtimes.liveFields(r.id, r))),
-      ),
-    };
-  });
+  app.get(
+    "/api/agents",
+    { schema: { querystring: agentListQuerySchema, response: { 200: agentListSchema } } },
+    async (req) => ({ agents: await app.agents.list(req.query.archived) }),
+  );
+
+  app.post(
+    "/api/agents",
+    { schema: { body: createAgentBodySchema, response: { 201: agentResponseSchema } } },
+    async (req, reply) => reply.code(201).send({ agent: await app.agents.create(req.body) }),
+  );
 
   app.get("/api/agents/:slug", { schema: { params: slugParams } }, async (req, reply) => {
     const rt = await app.runtimes.bySlug(req.params.slug);
     if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
     return agentDetailSchema.parse({
-      agent: summaryFromRow(rt.agent, rt.live()),
+      agent: await app.agents.summary(req.params.slug),
       queue: rt.queueItems(),
       lastSeq: await app.store.lastSeq(rt.agent.id),
     });
   });
+
+  app.patch(
+    "/api/agents/:slug",
+    {
+      schema: {
+        params: slugParams,
+        body: patchAgentBodySchema,
+        response: { 200: agentResponseSchema },
+      },
+    },
+    async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
+  );
+
+  app.post(
+    "/api/agents/:slug/resync",
+    { schema: { params: slugParams, response: { 200: resyncResponseSchema } } },
+    async (req) => app.agents.resync(req.params.slug),
+  );
+
+  app.post(
+    "/api/agents/:slug/archive",
+    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
+    async (req) => ({ agent: await app.agents.archive(req.params.slug) }),
+  );
+
+  app.post(
+    "/api/agents/:slug/unarchive",
+    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
+    async (req) => ({ agent: await app.agents.unarchive(req.params.slug) }),
+  );
 
   app.get(
     "/api/agents/:slug/events",

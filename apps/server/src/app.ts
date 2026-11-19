@@ -9,6 +9,7 @@ import {
   type ZodTypeProvider,
 } from "fastify-type-provider-zod";
 import type postgres from "postgres";
+import { AgentService } from "./agents/agent-service.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
@@ -22,6 +23,7 @@ import { authRoutes } from "./routes/auth.ts";
 import { meRoutes } from "./routes/me.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { registerStatic } from "./static.ts";
+import { TemplateIndex } from "./templates/template-index.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
@@ -37,6 +39,8 @@ declare module "fastify" {
     workspace: Workspace;
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
     workspaceLock: KeyedMutex;
+    templates: TemplateIndex;
+    agents: AgentService;
   }
 }
 
@@ -106,7 +110,18 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     driver: deps.harnessDriver ?? createClaudeDriver(app.log),
   });
+  const templates = new TemplateIndex({ db: deps.db, config });
+  const agents = new AgentService({
+    db: deps.db,
+    templates,
+    workspace,
+    lock,
+    runtimes,
+    log: app.log,
+  });
   app.decorate("vault", vault);
+  app.decorate("templates", templates);
+  app.decorate("agents", agents);
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
   app.decorate("store", store);

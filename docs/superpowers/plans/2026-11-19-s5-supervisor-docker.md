@@ -42,7 +42,7 @@
 - **Docker tests** run only with `FACTORY_DOCKER_TESTS=1` and the local image `open-factory-base:dev`. Default CI never needs Docker.
 - **UI rules (DESIGN.md + UI doc):** status = shape + label (the tooth only for `working`, never a dot); orange only for live/focused/selected; never `transition-all`; type in rem; no toasts; confirmation dialogs only for Delete template, Delete credential, Delete secret and Start a new session; inline outcomes; "crons" is the only term for in-session crons; credential names in mono; "retrying at HH:MM" whenever `rateLimitExact` is false; UI copy never mentions roadmap IDs.
 - `docs/product/` is gitignored and read-only: never edit it.
-- **Commits:** one per task, conventional message, ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
+- **Commits:** one per task, conventional message, ending with the `Co-Authored-By` attribution line from your own session's system reminder (not a fixed model name; the examples below show the shape).
 
 ## File Structure
 
@@ -171,7 +171,7 @@ Wait for `/run/open-factory/ready`, then `docker exec -i -u agent -w $G/agent/wd
 git add packages/harness/fixtures/README.md
 git commit -m "chore(harness): record the S5 plugin symlink gate with a git marketplace
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+<the Co-Authored-By line from your session's system reminder>"
 ```
 
 ---
@@ -602,7 +602,8 @@ test("projects/ as a symlink to a directory fails the start", async () => {
 - Produces:
   - `installPlugins({claudeBin, pluginsConfig, plugins, tplSettings, hostHome, path})`: env exactly `{PATH, HOME: hostHome, CLAUDE_CONFIG_DIR: pluginsConfig}`, cwd a fresh `mkdtemp` removed afterwards;
   - `buildSettings({... pluginKeys})`: `enabledPlugins`/`extraKnownMarketplaces` taken from `<plugins-config>/settings.json` (passed as `pluginKeys`), never from the agent's config-dir `settings.json` (`prev` is no longer read for them);
-  - `prepare` ensures `<workdir>/.claude-config/plugins` is a factory-made link to `<plugins-config>/plugins`; when `plugins-config/` doesn't exist and the snapshot lists plugins, it installs first (lazy migration), then replaces a real `.claude-config/plugins/` dir with the link (after moving it aside to `state/agents/<slug>/plugins-legacy-<ts>/`).
+  - `prepare` ensures `<workdir>/.claude-config/plugins` is a factory-made link to `<plugins-config>/plugins`; when `plugins-config/` doesn't exist and the snapshot lists plugins, it **fails closed** (no install at start, S4 Q7): `WorkspaceError("Re-sync @<slug> to reinstall its plugins into the factory-managed location.", "resync")` (`"resync"` joins the `StartFix` union and the shared `error.fix` enum; the UI links it to the agent's Re-sync). An agent whose snapshot lists no plugins migrates silently (the link is created over an empty or missing dir).
+  - `resync` (the human act) installs into `plugins-config/`, then moves a real `.claude-config/plugins/` dir aside to `state/agents/<slug>/plugins-legacy-<ts>/` and creates the link.
   - `checkClaudeVersion(bin, {PATH, HOME})` only (local agents only; Docker skipped).
 
 - [ ] **Step 1: Failing tests**
@@ -634,7 +635,9 @@ test("enabledPlugins come from plugins-config, not the agent's settings", async 
   const s = JSON.parse(await prepareAndReadSettings());
   expect(s.enabledPlugins).not.toHaveProperty("evil@m");
 });
-test("lazy migration: an S4 agent with a real plugins dir gets reinstalled and linked", async () => { /* ... */ });
+test("an S4 agent with plugins and no plugins-config fails to start with the re-sync fix, and nothing is installed", async () => { /* ... */ });
+test("re-sync installs into plugins-config, moves the old real plugins dir to plugins-legacy-<ts>/ and links it", async () => { /* ... */ });
+test("an S4 agent without plugins migrates silently at prepare", async () => { /* ... */ });
 ```
 
 (The fake records `CLAUDE_CONFIG_DIR` value as `configDir` in `plugin.log`: extend Task 6's fake change to include it.)
@@ -1031,6 +1034,7 @@ test("with two idle-warm agents, the least recently active hibernates to free a 
 });
 test("never evicts a busy, pinned or mid-turn agent", async () => {});
 test("never evicts two agents for one queued entry", async () => {});
+test("a cap lowered by config at boot with more queued than slots evicts only as many as the queue needs", async () => {});
 test("a victim that refuses is replaced by the next candidate", async () => {});
 test("dedupe: a second request keeps the original place", async () => {});
 test("granted state closes the double-start window", async () => {
@@ -1265,7 +1269,7 @@ export function containerName(slug: string, agentId: string): string; // open-fa
 export function createOptions(i: { name: string; image: string; imageId: string; mounts: Mount[]; uid: number; gid: number; agentId: string; slug: string; specHash: string }): ContainerCreateOptions;
 export function specHash(i: { imageId: string; mounts: Mount[]; uid: number; gid: number }): string; // + extra hosts, security opts, tmpfs, LAUNCHER_VERSION
 export class ContainerManager {
-  constructor(d: { docker: DockerClient; log: RuntimeLog; uid?: number; gid?: number; extraMounts?: Mount[] });
+  constructor(d: { docker: DockerClient; log: RuntimeLog; uid?: number; gid?: number });
   ensureImage(ref: string, signal: AbortSignal): Promise<void>;     // pull only when missing
   stopIfRunning(agentId: string, slug: string): Promise<boolean>;
   ensure(i: { agentId: string; slug: string; image: string; mounts: Mount[] }): Promise<{ containerId: string; action: "created" | "recreated" | "started"; imageId: string; claudeCodeVersion?: string }>;
@@ -1276,7 +1280,7 @@ export class ContainerManager {
 ```
 
 - `ensure`: refuse uid/gid 0 ("The factory runs as root; Docker agents need a non-root host user."); compute the hash; if a container exists with another hash → stop + remove + create (`recreated`); else create if missing; start; poll `test -f /run/open-factory/ready` as root every 200 ms for 30 s; on timeout or exit → throw `AgentStartError` with `logsTail(id, 50)`.
-- `extraMounts` (test seam) is appended after the caller's `checkMounts` ran; `buildApp` never sets it.
+- No test seam: every mount comes from the caller after `checkMounts` (owner's required change: no parameter may bypass `checkMounts` or `buildAgentEnv`).
 
 - [ ] **Step 1: Failing tests** (a `FakeDockerClient` recording calls)
 
@@ -1313,7 +1317,7 @@ test("root host user is refused", async () => {});
 
 **Interfaces:**
 - Consumes: `Transport` (Task 5), `DockerClient` (Task 23).
-- Produces: `dockerTransport(d: { docker: DockerClient; containers: ContainerManager; extraEnv?: Record<string,string> }): TransportFactory` using `spec.docker.containerId`, `spec.docker.claudeBin`, `spec.cwd`, `spec.env`; `parsePid(s: string): number | undefined`.
+- Produces: `dockerTransport(d: { docker: DockerClient; containers: ContainerManager }): TransportFactory` using `spec.docker.containerId`, `spec.docker.claudeBin`, `spec.cwd`, `spec.env`; `parsePid(s: string): number | undefined`.
 
 ```ts
 export const CLAUDE_WRAPPER = 'echo $$ > /tmp/open-factory-claude.pid && exec "$0" "$@"';
@@ -1496,10 +1500,11 @@ test("re-sync outcome says the changes apply on restart when applied=on_restart"
 
 **Files:**
 - Create: `apps/server/src/runtime/docker/docker.int.test.ts` (skipped unless `FACTORY_DOCKER_TESTS=1`)
-- Modify: `packages/harness/testing/index.ts` (a helper that returns the fake's script path and env for the `extraMounts`/`extraEnv` seam)
+- Modify: `packages/harness/testing/index.ts` (a helper that copies the fake claude and the fixtures it replays into a test agent's workdir and returns the in-container path and the `FAKE_CLAUDE_*` values)
 
 **Interfaces:**
-- Consumes: `ContainerManager({extraMounts})`, `dockerTransport({extraEnv})`, the fake claude (Node in the image; `process.title = "claude"`), `FACTORY_DOCKER_CLAUDE_BIN` pointing at the mounted fake.
+- Consumes: the production `ContainerManager` and `dockerTransport` (no seams), the fake claude (Node in the image; `process.title = "claude"`).
+- **How the fake gets in through the real paths:** the helper copies `fake-claude.mjs` and its fixtures into the test agent's **workdir** (already a checked read-write mount at path parity) and `FACTORY_DOCKER_CLAUDE_BIN` points at that path; the `FAKE_CLAUDE_*` values (scenario, log path inside the workdir) are defined as factory **secrets** and listed in the test template's `secrets`, so they reach the exec env through `buildAgentEnv` like any secret (the names pass the secret-name rules). If any of this turns out impossible, stop and ask the owner before adding a seam; any seam must go through `checkMounts`/`buildAgentEnv`, never after them.
 
 - [ ] **Step 1: Write the tests** (they're the deliverable; each must fail before Tasks 23–26 are wired, which you can confirm by reverting one wiring line)
 
@@ -1515,7 +1520,6 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", () => {
   test("boot reconciliation stops a running labelled container", async () => {});
   test("a container left running by a dropped exec is stopped before the next start", async () => {});
   test("server restart invariant: one claude per agent (local and Docker)", async () => {});
-  test("production wiring passes no extraMounts/extraEnv", () => {});
 });
 ```
 
@@ -1544,7 +1548,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", () => {
 - [ ] **Step 1:** Update the docs.
 - [ ] **Step 2:** `pnpm lint:ci && pnpm typecheck && pnpm test && pnpm build` → green. `FACTORY_DOCKER_TESTS=1` suite and `pnpm smoke:docker` → green (record output). `pnpm smoke:harness` and `pnpm smoke:workspace` still pass (with `FACTORY_ALLOW_LOCAL_RUNTIME=true`).
 - [ ] **Step 3:** Manual pass in a real browser through ACs 1–8 (spec §2), including both themes for the status badges and 390 px for the session header.
-- [ ] **Step 4:** Open the PR per `.github/pull_request_template.md`, stacked on `spec/s4-templates-workspace`. Changes must list the S4 behaviour changes (owed-notification bound, idempotent stop, escalation, flush held during stops, apply-restart no longer waits for crons, plugins in `state/`, `.factory` moved). Rollout notes: `FACTORY_ALLOW_LOCAL_RUNTIME=true` for existing local agents; agents can no longer sudo in containers; the one-time `.factory` move and lazy plugin reinstall; container re-creation wipes `/home/agent`; `pnpm agent:reset-session` is gone. `Closes #38`, and mention #10, #18, #19, #20, #31.
+- [ ] **Step 4:** Open the PR per `.github/pull_request_template.md`, stacked on `spec/s4-templates-workspace`. Changes must list the S4 behaviour changes (owed-notification bound, idempotent stop, escalation, flush held during stops, apply-restart no longer waits for crons, plugins in `state/`, `.factory` moved). Rollout notes: `FACTORY_ALLOW_LOCAL_RUNTIME=true` for existing local agents; agents can no longer sudo in containers; the one-time `.factory` move; S4 agents with plugins need one re-sync before they start again (no install at start); container re-creation wipes `/home/agent`; `pnpm agent:reset-session` is gone. `Closes #38`, and mention #10, #18, #19, #20, #31.
 - [ ] **Step 5: Commit** `docs: S5 Docker runtime, local gate and recovery`.
 
 ---
@@ -1555,7 +1559,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", () => {
 2. **`DockerClient` wraps dockerode behind a small interface** (Task 23): unit tests use a fake, and only `client.ts` imports dockerode (spec §4's "nothing outside runtime/docker imports dockerode").
 3. **`Transport.terminate()` returns a boolean** (Task 5): the pid-file checks can fail closed without throwing, and `stop()` falls through to its timeout and escalation.
 4. **Error codes `409 reset_not_allowed` and `409 attempt_in_progress`** (Task 20): the spec names the conditions; these names keep the S1 error shape.
-5. **A real `.claude-config/plugins/` dir found during the lazy migration is moved to `state/agents/<slug>/plugins-legacy-<ts>/`, not deleted** (Task 9): nothing is lost if the reinstall misbehaves.
+5. **A real `.claude-config/plugins/` dir found during the migration re-sync is moved to `state/agents/<slug>/plugins-legacy-<ts>/`, not deleted** (Task 9): nothing is lost if the reinstall misbehaves. (Owner's required change: no install at start; S4 agents with plugins fail closed with a "Re-sync" fix until a human re-syncs.)
 6. **The rejected rate-limit fixture's `resetsAt` is a fixed epoch (1795000000)** and tests use fake timers relative to it (Task 6): deterministic.
 7. **`FACTORY_CLI_BUNDLE` defaults to `apps/cli/dist/open-factory.js` resolved from `config.ts`'s location** (Task 4): works from source and from the built server without extra config.
 8. **The owed-notification bound and journal snapshots use the runtime's existing timer style (setTimeout + a job), not a new scheduler** (Tasks 15, 21): one pattern, testable with fake timers.

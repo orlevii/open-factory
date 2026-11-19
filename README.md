@@ -35,21 +35,39 @@ Environment variables (`npm start` loads `.env` if present):
 | `HOST`               | no       | `127.0.0.1`                | fail-closed default; servers set `HOST=0.0.0.0` explicitly                                                                                   |
 | `LOG_LEVEL`          | no       | `info`                     | pino level                                                                                                                                   |
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
-| `CLAUDE_CODE_OAUTH_TOKEN` | no | none | Claude Code OAuth token (`claude setup-token`). Optional for boot, required to start an agent. Never logged                                       |
 | `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
-| `FACTORY_DEV_MODEL`  | no       | none                       | model for the dev agent (e.g. `haiku`); a stopgap until templates exist                                                                      |
+| `FACTORY_HOST_SKILLS_DIR` | no | `~/.claude/skills` | where host skills named in a template's `skills:` list are read from; a leading `~` is expanded |
 
-## Run the dev agent (S3 walking skeleton)
+## Run an agent
 
-1. Get a Claude Code OAuth token: `claude setup-token`, and put it in `.env` as `CLAUDE_CODE_OAUTH_TOKEN=...`.
-   Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`.
-2. `pnpm seed:dev-agent` (creates the `dev` agent and `~/open-factory/agents/dev/`).
-3. `pnpm dev`, sign in, open **Agents -> Dev agent** and send a message.
+1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up.
+2. In **Settings**, add a credential: run `claude setup-token` and paste the token. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
+3. Optional: register a project (a git repo on this machine) so agents can be granted access to it.
+4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` with `runtime: local` in `template.yaml` (see "Templates").
+5. Create an agent from the template, pick its credential, and send it a message.
 
-The dev agent runs on the **local runtime, unsandboxed**: Claude Code runs directly on your machine in
-auto permission mode. Optional: `FACTORY_DEV_MODEL=haiku` (a stopgap until templates exist),
-`FACTORY_CLAUDE_BIN` if `claude` isn't on your PATH. If the agent's session is lost
-("No conversation found"), stop the server and run `pnpm seed:dev-agent --reset-session`.
+The local runtime is **unsandboxed**: Claude Code runs directly on your machine as you, in auto permission mode.
+
+- `HOME` is yours, so your host git config and credential helpers apply (only the commit name and email are the agent's).
+- Push over HTTPS with a token: add it as a secret named `GH_TOKEN` in Settings and grant it in the template. `SSH_AUTH_SOCK` is not passed to agents, so SSH remotes won't authenticate.
+- Set `FACTORY_CLAUDE_BIN` if `claude` isn't on your PATH.
+
+If an agent's session is lost ("No conversation found"), stop the server and run `pnpm agent:reset-session <slug>` (an interim command).
+
+## Templates
+
+A template is a folder under `${FACTORY_HOME}/templates/<name>/`:
+
+```
+template.yaml     name, display_name, description, runtime, model, skills, projects
+AGENTS.md         the persona
+settings.json     optional, Claude Code settings (permissions, env, ...)
+mcp.json          optional, MCP servers
+skills/<name>/    optional, skills only agents from this template have (SKILL.md)
+files/            optional, copied into the agent's working directory
+```
+
+Template settings apply as written: templates are authored by the factory's operators. The factory owns `permissions.defaultMode`, keeps Claude's default `autoMode` rules (`$defaults`, so autoMode lists extend the defaults and can't replace them), appends granted project paths to `additionalDirectories`, and writes `claudeMdExcludes`.
 
 ## Running on a server
 

@@ -130,6 +130,7 @@ test("resumes with the stored session id; a successful start clears errored", as
   expect((await events()).find((e) => e.type === "process_started")?.event).toEqual({
     type: "process_started",
     resumed: true,
+    reason: "message",
   });
 });
 

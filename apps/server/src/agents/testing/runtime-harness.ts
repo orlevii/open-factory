@@ -1,5 +1,6 @@
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
+import { type SlotPort, unlimitedSlots } from "../../supervisor/slots.ts";
 import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime } from "../agent-runtime.ts";
 import { EventBus } from "../event-bus.ts";
@@ -49,7 +50,9 @@ export class RuntimeHarness {
     return this.t.close();
   }
 
-  async makeRuntime(opts: { startError?: Error; sessionId?: string; status?: string } = {}) {
+  async makeRuntime(
+    opts: { startError?: Error; sessionId?: string; status?: string; slots?: SlotPort } = {},
+  ) {
     this.n += 1;
     this.agentId = `a${this.n}`;
     this.startError = opts.startError;
@@ -82,6 +85,7 @@ export class RuntimeHarness {
       },
       log: silentLog,
       holdTimeoutMs: 200,
+      slots: opts.slots ?? unlimitedSlots,
     });
     await this.rt.init();
     return this.rt;

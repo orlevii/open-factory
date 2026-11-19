@@ -1,4 +1,5 @@
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
+import { type SlotPort, unlimitedSlots } from "../supervisor/slots.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
@@ -13,6 +14,8 @@ export interface RuntimesDeps {
   holdTimeoutMs?: number;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
+  /** The slot port every runtime starts through (the Supervisor, Task 17); unlimited until then. */
+  slots?: SlotPort;
 }
 
 /** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
@@ -44,6 +47,7 @@ export class AgentRuntimes {
         prepareStart: this.d.prepareStart,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
+        slots: this.d.slots ?? unlimitedSlots,
         // Local agents only: a Docker agent's claude runs in its image, not on the host.
         onFirstStart: (spec) => {
           if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);

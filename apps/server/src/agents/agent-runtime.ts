@@ -15,6 +15,7 @@ import type {
   QueueItem,
   WaitingOn,
 } from "@open-factory/shared";
+import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/slots.ts";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Tx } from "./event-store.ts";
@@ -40,7 +41,23 @@ export interface RuntimeDeps {
   holdTimeoutMs?: number;
   /** Called with the spec of the first start (AgentRuntimes uses it for the one-time version check). */
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
+  /** The Supervisor's slot port (spec §5.2); defaults to unlimited slots. */
+  slots?: SlotPort;
 }
+
+export type HibernateReason =
+  | "warm_window"
+  | "freed_slot"
+  | "apply_changes"
+  | "shutdown"
+  | "archived";
+
+/** What the `exited` job must do, recorded when a deliberate stop begins (spec §5.5). */
+export type AfterExit =
+  | { kind: "hibernate"; reason: HibernateReason }
+  | { kind: "restart"; by: string }
+  | { kind: "failed_start" } // S3's stop after a spawn or resume failure
+  | { kind: "internal" }; // S3's onJobFailure stop
 
 /** A queued message row; `fromHandle` is null for a `@factory` system notice (row.kind === "system"). */
 type MessageEntry = { kind: "message"; row: MessageRow; fromHandle: string | null };
@@ -85,9 +102,11 @@ export class AgentRuntime {
   private submitted = 0;
   // Apply-restart (spec §13)
   private restartPending = false;
-  private restarting = false; // a deliberate stop is in progress; flush() writes nothing
-  private stopping = false; // stop()/archive/shutdown: an exit must never respawn
+  private stopping = false; // a deliberate stop of the current process began: flush() writes nothing
   private stopsInProgress = 0; // stop() calls not yet returned: no process may be spawned meanwhile
+  private afterExit: AfterExit | undefined; // the intent of the stop in progress, consumed by the `exited` job
+  private noStart = false; // the closing latch (spec §5.6): never launch again
+  private readonly slots: SlotPort;
   private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
   private liveTasks = new Map<string, boolean>(); // taskId → ambient
   private owedNotifications = 0;
@@ -96,6 +115,7 @@ export class AgentRuntime {
     this.agent = d.agent;
     this.errored = d.agent.status === "errored";
     this.archived = Boolean(d.agent.archivedAt);
+    this.slots = d.slots ?? unlimitedSlots;
   }
 
   async init() {
@@ -122,7 +142,7 @@ export class AgentRuntime {
       const entry: MessageEntry = { kind: "message", row, fromHandle: m.fromHandle };
       this.queue.push(entry);
       this.publishQueue();
-      await this.ensureStarted();
+      await this.wakeInline("message");
       if (m.urgent) await this.urgentInterrupt(m.fromHandle);
       await this.flush();
       return this.itemOf(entry);
@@ -173,7 +193,7 @@ export class AgentRuntime {
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       this.queue.push(entry);
       this.publishQueue();
-      await this.ensureStarted();
+      await this.wakeInline("compact");
       await this.flush();
       return this.itemOf(entry);
     });
@@ -221,8 +241,7 @@ export class AgentRuntime {
         this.proc &&
         this.proc !== this.deadProc &&
         this.proc !== this.failingProc &&
-        !this.stopping &&
-        !this.restarting
+        !this.stopping
       ) {
         this.restartPending = true;
         this.maybeRestart();
@@ -234,6 +253,39 @@ export class AgentRuntime {
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
   markArchived(): void {
     this.archived = true;
+  }
+
+  /** The closing latch (spec §5.6). Synchronous: a start already inside prepareStart re-checks it before the launch. */
+  setNoStart(): void {
+    this.noStart = true;
+  }
+
+  /** The Supervisor's grant job: start with the slot it handed over, or give it back when no longer eligible. */
+  grant(reason: WakeReason): Promise<void> {
+    return this.run(async () => {
+      if (
+        this.archived ||
+        this.proc ||
+        this.noStart ||
+        this.slots.closing() ||
+        !this.queue.length
+      ) {
+        this.slots.release(this.agent.id);
+        this.publishStatus();
+        return;
+      }
+      await this.startAndFlush(reason, "granted start failed");
+      this.publishStatus();
+    });
+  }
+
+  /** Begins a hibernate in a job (spec §6.4). Resolves false when refused. Never waits for the exit. */
+  hibernate(reason: HibernateReason): Promise<boolean> {
+    return this.run(async () => {
+      const ok = this.beginHibernate(reason);
+      this.publishStatus();
+      return ok;
+    });
   }
 
   /** The fields that only the runtime knows. */
@@ -269,7 +321,9 @@ export class AgentRuntime {
     // Synchronously, before any await: the exit this causes (or a restart's exit already on its way) never respawns.
     this.stopping = true;
     this.restartPending = false;
-    this.restarting = false;
+    // Takes over a hibernate or restart already under way (its exit must not wake); a failing start keeps its intent.
+    if (this.proc && this.afterExit?.kind !== "failed_start" && this.afterExit?.kind !== "internal")
+      this.afterExit = { kind: "hibernate", reason: this.archived ? "archived" : "shutdown" };
     this.publishStatus();
     this.stopsInProgress += 1;
     try {
@@ -388,18 +442,54 @@ export class AgentRuntime {
     return Boolean(this.proc) || this.starting;
   }
 
-  /** Only called from API jobs (send, compact): a flush never restarts a dead process. */
-  private async ensureStarted() {
+  /**
+   * Only called from API jobs (send, compact): asks for a slot and, when granted, starts inline so an immediate
+   * start failure still rejects the call (S3's 503). A flush never restarts a dead process.
+   */
+  private async wakeInline(reason: WakeReason) {
     if (this.proc) return;
-    this.starting = true;
+    if (this.slots.requestWake(this.agent.id, reason, true) === "granted")
+      await this.startNow(reason);
+  }
+
+  /** From inside a job that isn't an API call: request a wake and start at once when the port grants it. */
+  private async wakeFromJob(reason: WakeReason) {
+    if (this.slots.requestWake(this.agent.id, reason, false) === "granted")
+      await this.startAndFlush(reason, "wake failed");
+  }
+
+  /** `startNow` and a flush, with failures handled here (no API call to reject). */
+  private async startAndFlush(reason: WakeReason, what: string) {
     try {
-      await this.startProcess();
-    } finally {
-      this.starting = false;
+      await this.startNow(reason);
+      await this.flush();
+    } catch (err) {
+      // A start failure is already recorded (an `error` event, errored with its real message and fix).
+      if (!(err instanceof AgentStartError || err instanceof AgentArchivedError)) {
+        if (this.proc) await this.onJobFailure(this.proc, err);
+        else this.d.log.error({ err, agent: this.agent.slug }, what);
+      }
     }
   }
 
-  private async startProcess() {
+  /**
+   * Internal primitive, call only inside this agent's own job, with a slot granted: prepare, launch,
+   * `process_started`. Any throw before the launch gives the slot back.
+   */
+  private async startNow(reason: WakeReason) {
+    let launched = false;
+    this.starting = true;
+    try {
+      await this.launch(reason, () => {
+        launched = true;
+      });
+    } finally {
+      this.starting = false;
+      if (!launched) this.slots.release(this.agent.id);
+    }
+  }
+
+  private async launch(reason: WakeReason, onLaunched: () => void) {
     if (this.archived) throw new AgentArchivedError(this.agent.slug);
     this.refuseWhileStopping();
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
@@ -425,29 +515,36 @@ export class AgentRuntime {
       this.publishStatus();
       throw known ? err : new AgentStartError(message);
     }
-    // A stop() that arrived during prepare (it can't stop a process that doesn't exist yet) must not be outrun.
-    this.refuseWhileStopping();
     if (!this.firstStartDone) {
       this.firstStartDone = true;
       this.d.onFirstStart?.(spec);
     }
     const row = await this.d.store.agentById(this.agent.id);
     const resumeSessionId = row?.sessionId ?? undefined;
+    // Right before the launch: a stop() or the closing latch that arrived during prepare must not be outrun.
+    this.refuseWhileStopping();
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
+    onLaunched();
     this.proc = proc;
     this.started = false;
     this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
+    this.afterExit = undefined;
     this.liveTasks = new Map();
     this.owedNotifications = 0;
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
-    await this.append(null, { type: "process_started", resumed: Boolean(resumeSessionId) });
+    await this.append(null, {
+      type: "process_started",
+      resumed: Boolean(resumeSessionId),
+      reason,
+    });
     this.publishStatus();
   }
 
   /** Not recorded as a start failure: the agent isn't broken, it is being stopped (shutdown, archive). */
   private refuseWhileStopping() {
-    if (this.stopsInProgress > 0) throw new AgentStartError("The agent is being stopped.");
+    if (this.stopsInProgress > 0 || this.noStart || this.slots.closing())
+      throw new AgentStartError("The agent is being stopped.");
   }
 
   private async pump(proc: HarnessProcess) {
@@ -473,7 +570,8 @@ export class AgentRuntime {
       return;
     }
     this.deadProc = proc;
-    void proc.stop({ graceMs: 0 });
+    if (proc === this.proc) this.beginForceStop({ kind: "internal" });
+    else void proc.stop({ graceMs: 0 }); // already gone from the runtime (its exit is being recorded)
     await this.setErrored("Internal error while recording the session").catch(() => {
       this.errored = true; // the DB may be the thing that failed; keep the in-memory truth
     });
@@ -551,6 +649,8 @@ export class AgentRuntime {
         if (!this.started && (e.source === "resume" || e.source === "spawn")) {
           await this.setErrored(e.message);
           this.failingProc = proc;
+          this.stopping = true;
+          this.afterExit = { kind: "failed_start" };
           void proc.stop({ graceMs: 1000 });
         }
         break;
@@ -565,8 +665,8 @@ export class AgentRuntime {
   }
 
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
-    const wasRestart = this.restarting && !this.stopping && !this.archived;
-    this.restarting = false;
+    const intent = this.afterExit;
+    this.afterExit = undefined;
     this.restartPending = false;
     this.liveTasks = new Map();
     this.owedNotifications = 0;
@@ -584,14 +684,7 @@ export class AgentRuntime {
     this.awaiting = [];
     if (this.proc === proc) this.proc = undefined;
     this.started = false;
-    const unexpected = !e.expected && !this.errored;
-    if (unexpected) {
-      this.errored = true;
-      this.lastError =
-        e.code !== null
-          ? `Exited unexpectedly (code ${e.code})`
-          : `Exited unexpectedly (${e.signal ?? "unknown"})`;
-    }
+    const crash = !intent && !e.expected ? this.onCrash(e) : false;
     try {
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
@@ -611,66 +704,107 @@ export class AgentRuntime {
           usage,
         });
       await this.append(null, e);
-      if (unexpected) await this.d.store.setStatus(this.agent.id, "errored");
+      if (crash) await this.d.store.setStatus(this.agent.id, "errored");
     } finally {
       this.publishQueue();
+      // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed.
+      this.slots.release(this.agent.id);
     }
-    // S3 rule 5 changes here: a deliberate restart may start the process; crash exits still never do.
-    // Re-checked here, not only at the top: a stop() or archive may have landed while the exit was being recorded.
-    if (wasRestart && this.queue.length && !this.stopping && !this.archived) {
-      try {
-        await this.ensureStarted();
-        await this.flush();
-      } catch (err) {
-        // A start failure is already recorded (an `error` event, errored with its real message and fix).
-        if (!(err instanceof AgentStartError || err instanceof AgentArchivedError)) {
-          if (this.proc) await this.onJobFailure(this.proc, err);
-          else this.d.log.error({ err, agent: this.agent.slug }, "restart failed");
-        }
-      }
-    }
+    // failed_start and internal never wake; a crash never wakes until the crash policy lands (Task 19).
+    if (intent?.kind === "hibernate") {
+      if (intent.reason !== "shutdown" && intent.reason !== "archived")
+        await this.wakeAfterExit("queued_items");
+    } else if (intent?.kind === "restart") await this.wakeAfterExit("restart");
+  }
+
+  /** S3's crash handling, kept until the crash policy (spec §9.2) replaces it. True when it marked errored. */
+  private onCrash(e: Extract<HarnessEvent, { type: "exited" }>): boolean {
+    if (this.errored) return false;
+    this.errored = true;
+    this.lastError =
+      e.code !== null
+        ? `Exited unexpectedly (code ${e.code})`
+        : `Exited unexpectedly (${e.signal ?? "unknown"})`;
+    return true;
   }
 
   /**
-   * Stops the process for a pending restart once nothing would be lost (spec §13). Synchronous: it never awaits
+   * A wake at the end of an `exited` job, only with something to deliver. Re-checked here, not only when the stop
+   * began: a stop(), archive or the closing latch may have landed while the exit was being recorded.
+   */
+  private async wakeAfterExit(reason: WakeReason) {
+    if (!this.queue.length || this.proc) return;
+    if (this.stopsInProgress > 0 || this.archived || this.noStart || this.slots.closing()) return;
+    await this.wakeFromJob(reason);
+  }
+
+  /** The S4 conditions under which a stop would lose work (Task 15 widens this into `busy()`). */
+  private busyNow(): boolean {
+    return (
+      !this.started ||
+      Boolean(this.openTurnId) ||
+      this.inFlight.length > 0 ||
+      this.awaiting.length > 0 ||
+      this.compactInFlight ||
+      Boolean(this.hold) ||
+      this.nonAmbient() > 0 ||
+      this.owedNotifications > 0
+    );
+  }
+
+  /**
+   * Stops the process for a pending restart once nothing would be lost (spec §6.5). Synchronous: it never awaits
    * the stop, because the `exited` that ends it is a job queued behind the caller.
    */
   private maybeRestart() {
+    if (!this.restartPending || this.errored) return;
+    this.beginHibernate("apply_changes");
+  }
+
+  /**
+   * Internal primitive, call only inside this agent's own job (spec §6.4). Records the intent and starts the stop
+   * without awaiting it; the `exited` job does the rest. False when refused.
+   */
+  private beginHibernate(reason: HibernateReason): boolean {
     const proc = this.proc;
-    if (
-      !this.restartPending ||
-      !proc ||
-      proc === this.deadProc ||
-      this.errored ||
-      this.restarting ||
-      this.stopping
-    )
-      return;
-    if (
-      this.openTurnId ||
-      this.inFlight.length ||
-      this.awaiting.length ||
-      this.compactInFlight ||
-      this.hold
-    )
-      return;
-    if (this.nonAmbient() > 0 || this.owedNotifications > 0) return;
-    this.restarting = true;
+    if (!proc || proc === this.deadProc || proc === this.failingProc || this.stopping) return false;
+    if (reason === "warm_window" || reason === "freed_slot") {
+      if (this.busyNow() || this.errored || this.restartPending || this.queue.length) return false;
+    } else if (reason === "apply_changes" && this.busyNow()) return false;
+    const intent: AfterExit = { kind: "hibernate", reason };
+    this.stopping = true;
+    this.afterExit = intent;
     void proc.stop({ graceMs: 3000, termWaitMs: 10_000 }).then(
       (r) => {
         if (!r.timedOut) return;
         void this.run(async () => {
-          if (!this.restarting) return; // stop() or archive took over
-          this.restarting = false;
+          if (this.afterExit !== intent) return; // stop() or archive took over
+          this.afterExit = { kind: "internal" }; // a late exit must not wake (escalation lands in Task 19)
           this.restartPending = false;
           this.deadProc = proc;
-          await this.setErrored("Couldn't restart the agent: the process didn't stop.");
-          this.d.log.error({ agent: this.agent.slug }, "restart stop timed out");
+          await this.setErrored(
+            reason === "apply_changes"
+              ? "Couldn't restart the agent: the process didn't stop."
+              : "Couldn't stop the agent: the process didn't stop.",
+          );
+          this.d.log.error({ agent: this.agent.slug, reason }, "hibernate stop timed out");
           this.publishStatus();
         });
       },
-      (err) => this.d.log.error({ err, agent: this.agent.slug }, "restart stop failed"),
+      (err) => this.d.log.error({ err, agent: this.agent.slug }, "hibernate stop failed"),
     );
+    return true;
+  }
+
+  /** Internal primitive, call only inside this agent's own job: stop the current process now, never awaited. */
+  private beginForceStop(intent: AfterExit): void {
+    const proc = this.proc;
+    if (!proc) return;
+    this.stopping = true;
+    this.afterExit = intent;
+    void proc
+      .stop({ graceMs: 0 })
+      .catch((err) => this.d.log.error({ err, agent: this.agent.slug }, "force stop failed"));
   }
 
   private nonAmbient() {
@@ -719,11 +853,11 @@ export class AgentRuntime {
     this.hold = undefined;
   }
 
-  /** Strict FIFO from the head while allowed (spec §8.3). Never starts a process. Holds everything during a restart. */
+  /** Strict FIFO from the head while allowed (spec §8.3). Never starts a process. Holds everything during a stop. */
   private async flush() {
     while (
       this.proc &&
-      !this.restarting &&
+      !this.stopping &&
       !this.hold &&
       !this.compactInFlight &&
       this.queue.length

@@ -92,8 +92,8 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
 test("runs in its own process group", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
-  await new Promise((r) => setTimeout(r, 200));
-  // the wrapper execs node, so the pid is the fake itself
+  // spawn() returns once the child has exec'd, so its setsid() already happened: no wait needed. The wrapper execs
+  // node, so the pid is the fake itself.
   const pgid = Number(
     execFileSync("ps", ["-o", "pgid=", "-p", String(p.pid)])
       .toString()
@@ -124,11 +124,10 @@ test("interrupt writes a control_request", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
-  const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
   await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "ping" }]);
-  while (!events.some((e) => e.type === "tool_call")) await new Promise((r) => setTimeout(r, 20));
+  await collectUntil(p.events, (e) => e.type === "tool_call", events);
   await p.control("interrupt");
-  await done;
+  await collectUntil(p.events, (e) => e.type === "turn_end", events);
   expect(events.at(-1)).toMatchObject({
     type: "turn_end",
     isError: true,
@@ -146,6 +145,10 @@ test("stop closes stdin; the process exits 0 and emits exited{expected:true}", a
   const fake = createFakeClaude({ scenario: "reply" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
+  // A finished turn proves the fake is up and reading stdin. Stopping a process that hasn't booted yet races the
+  // grace against node's startup (seconds under full-suite load), and a SIGTERM then wins instead of the stdin close.
+  await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }]);
+  await collectUntil(p.events, (e) => e.type === "turn_end", events);
   const all = collectUntil(p.events, () => false, events);
   const info = await p.stop({ graceMs: 3000 });
   await all;
@@ -160,9 +163,10 @@ test("stop falls back to SIGTERM when the process doesn't exit on stdin close", 
   const fake = createFakeClaude({ scenario: "long-tool" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "ping" }]);
-  await new Promise((r) => setTimeout(r, 300));
+  // Mid-tool, so the fake is up (its SIGTERM handler installed) and won't exit on the stdin close.
+  await collectUntil(p.events, (e) => e.type === "tool_call", []);
   const info = await p.stop({ graceMs: 200, termWaitMs: 5000 });
-  expect(info.code ?? info.signal).toBeTruthy(); // 143 (handled) or SIGTERM
+  expect(info).toMatchObject({ code: 143 });
 });
 
 test("resume of an unknown id maps to a resume error and exits 1", async () => {
@@ -248,8 +252,11 @@ test("stop reports timedOut when the process ignores SIGTERM", async () => {
   while (!existsSync(ready)) await new Promise((r) => setTimeout(r, 20));
   const info = await p.stop({ graceMs: 100, termWaitMs: 200 });
   expect(info).toEqual({ code: null, signal: null, timedOut: true });
-  // let it finish on its own so the test leaves no process behind
-  await new Promise((r) => setTimeout(r, 3200));
+  // The escalation's SIGKILL, awaited, so the test leaves no process behind.
+  await p.forceKill();
+  const events: HarnessEvent[] = [];
+  await collectUntil(p.events, () => false, events);
+  expect(events.at(-1)).toMatchObject({ type: "exited", signal: "SIGKILL" });
 });
 
 test("stop() is idempotent: one stdin close, one SIGTERM, one promise", async () => {

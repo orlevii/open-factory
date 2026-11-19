@@ -47,7 +47,7 @@ test("noStart blocks a start already inside prepareStart", async () => {
     open = r;
   });
   const p = h.send("hi");
-  await vi.waitFor(() => expect(h.prepareCalls).toBe(1)); // the send job is suspended in prepareStart
+  await h.prepared(1); // the send job is suspended in prepareStart
   h.rt.setNoStart();
   open();
   await expect(p).rejects.toThrow(/being stopped/);

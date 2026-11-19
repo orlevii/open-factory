@@ -428,12 +428,27 @@ test("a cap lowered at boot with more agents waking than slots starts the first 
   await boot.run();
   await boot.settleAll(ids);
   const [a, b, c, d, e] = ids as [string, string, string, string, string];
-  expect(boot.startOrder()).toEqual([a, b, c]);
+  // The first three in line hold the slots. Their grant jobs run concurrently, so the spawn order among them is the
+  // DB's, not the queue's: the queue order shows in who is still waiting.
+  expect([...boot.startOrder()].sort()).toEqual([a, b, c].sort());
   expect((await boot.rt(d)).live().status).toBe("queued");
   expect((await boot.rt(e)).live().status).toBe("queued");
-  for (const id of [a, b, c]) (boot.starts(id)[0] as FakeProcess).emit(...ev.fullTurn());
+  const procs = [a, b, c].map((id) => boot?.starts(id)[0] as FakeProcess);
+  for (const p of procs) {
+    p.holdStop = true;
+    p.emit(...ev.fullTurn());
+  }
   await boot.settleAll(ids);
-  // Two idle holders are hibernated for the two waiting; the slots go to the queue in FIFO order.
+  // Two idle holders are hibernated for the two waiting; the slots go to the queue in FIFO order. One slot at a time,
+  // for the same reason as above.
+  const evicted = procs.filter((p) => p.stopped);
+  expect(evicted).toHaveLength(2);
+  evicted[0]?.releaseStop();
+  await boot.settleAll(ids);
+  expect(boot.startOrder().slice(3)).toEqual([d]);
+  expect((await boot.rt(e)).live().status).toBe("queued");
+  evicted[1]?.releaseStop();
+  await boot.settleAll(ids);
   expect(boot.startOrder().slice(3)).toEqual([d, e]);
   expect(boot.runtimes.supervisor.running()).toEqual({ count: 3, max: 3 });
 });

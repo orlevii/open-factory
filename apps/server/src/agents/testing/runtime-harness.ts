@@ -80,6 +80,7 @@ export class RuntimeHarness {
   /** When set, `prepareStart` waits for it (a slow prepare). */
   prepareGate: Promise<void> | undefined;
   prepareCalls = 0;
+  private prepareWaiters: { n: number; resolve: () => void }[] = [];
   /** Every token mint and revoke of the current runtime, in order. Reset by `makeRuntime`. */
   tokenCalls: ["mint" | "revoke", string, number][] = [];
   /** The `agentToken` the last `prepareStart` received. */
@@ -90,6 +91,12 @@ export class RuntimeHarness {
   forwardError: Error | undefined;
   private minted = 0;
   private n = 0;
+
+  /** Resolves once `prepareStart` has been entered `n` times (it may still be suspended in `prepareGate`). */
+  prepared(n: number): Promise<void> {
+    if (this.prepareCalls >= n) return Promise.resolve();
+    return new Promise((resolve) => this.prepareWaiters.push({ n, resolve }));
+  }
 
   async setup() {
     this.t = await createTestDb();
@@ -123,6 +130,7 @@ export class RuntimeHarness {
     this.forwardError = undefined;
     this.prepareGate = undefined;
     this.prepareCalls = 0;
+    this.prepareWaiters = [];
     this.tokenCalls = [];
     this.lastAgentToken = undefined;
     this.minted = 0;
@@ -159,6 +167,11 @@ export class RuntimeHarness {
       },
       prepareStart: async (a, extra) => {
         this.prepareCalls += 1;
+        this.prepareWaiters = this.prepareWaiters.filter((w) => {
+          if (this.prepareCalls < w.n) return true;
+          w.resolve();
+          return false;
+        });
         this.lastAgentToken = extra.agentToken;
         if (this.prepareGate) await this.prepareGate;
         if (this.startError) throw this.startError;

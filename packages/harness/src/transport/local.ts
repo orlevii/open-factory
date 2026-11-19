@@ -63,11 +63,24 @@ export function localTransport(spec: AgentRuntimeSpec, args: string[]): Transpor
       // Reaped already: the pgid may have been reused.
       if (settled) return;
       // The whole group, so a child that traps TERM does not leave its own children holding the pipes.
+      const pid = child.pid;
       try {
-        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        if (pid !== undefined) process.kill(-pid, "SIGKILL");
       } catch {
         child.kill("SIGKILL");
+        return;
       }
+      // A child forked while the group signal is delivered can miss it (seen on macOS): it outlives the leader,
+      // holds the pipes, and `exit` never resolves. So sweep the group once more as the leader is reaped ("exit"
+      // fires right after the reap; a survivor keeps the pgid in use, so it is still this group's).
+      if (pid !== undefined && child.exitCode === null && child.signalCode === null)
+        child.once("exit", () => {
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            // ESRCH: nothing escaped the first kill.
+          }
+        });
     },
   };
 }

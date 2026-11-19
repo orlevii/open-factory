@@ -242,10 +242,14 @@ test("a cap lowered by config at boot with more queued than slots evicts only as
   }
   expect([a, b, c].map(stopped)).toEqual([true, true, false]);
   expect([a.isStopping(), b.isStopping(), c.hibernatable()]).toEqual([true, true, true]);
+  // The freed slots go to the queue in FIFO order. One at a time: two slots freed together start d and e in two
+  // concurrent grant jobs, whose spawn order is up to the DB, not the queue.
   w.proc(a).releaseStop();
+  await w.settleAll();
+  expect([started(d), started(e)]).toEqual([true, false]);
+  expect(status(e)).toBe("queued");
   w.proc(b).releaseStop();
   await w.settleAll();
-  // The freed slots go to the queue in FIFO order.
   const order = w.driver.starts.map((p) => p.spec.agentId);
   expect(order.slice(3)).toEqual([d.agent.id, e.agent.id]);
   expect(stopped(c)).toBe(false);

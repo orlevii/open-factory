@@ -658,6 +658,8 @@ test.each(["abc", "0", "-5", "12345678901"])(
     w.docker.pidFile = pidFile;
     await w.rt.stop({ graceMs: 50, termWaitMs: 200 });
     await until(async () => expect((await events(w)).map((e) => e.type)).toContain("exited"));
+    // `exited` is appended mid-job and the slot is released further down that same job: let the job finish.
+    await w.rt.settled();
 
     expect(execRuns(w)).toContainEqual(["cat", CLAUDE_PID_FILE]);
     expect(execRuns(w).some((cmd) => cmd[0] === "kill")).toBe(false);

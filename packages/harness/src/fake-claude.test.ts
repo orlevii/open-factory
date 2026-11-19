@@ -16,20 +16,34 @@ function run(bin: string, args: string[] = []) {
   );
   runs.push(() => child.kill("SIGTERM"));
   const lines: Record<string, unknown>[] = [];
-  createInterface({ input: child.stdout }).on("line", (l) => lines.push(JSON.parse(l)));
+  const waiters = new Set<() => void>();
+  createInterface({ input: child.stdout }).on("line", (l) => {
+    lines.push(JSON.parse(l));
+    for (const w of [...waiters]) w();
+  });
   let stderr = "";
   child.stderr.on("data", (d) => {
     stderr += d;
   });
   const exited = new Promise<number | null>((r) => child.on("exit", (code) => r(code)));
+  // "close" comes after stdout is drained, so every line was seen by then.
+  const closed = new Promise<void>((r) => child.on("close", () => r()));
   const send = (o: unknown) => child.stdin.write(`${JSON.stringify(o)}\n`);
-  const waitFor = async (pred: (l: Record<string, unknown>) => boolean) => {
-    for (let i = 0; i < 200; i++) {
-      if (lines.some(pred)) return;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    throw new Error("timeout");
-  };
+  /** Resolves on the first line matching `pred` (bounded only by the test timeout, not by node's startup time);
+   *  rejects if the process closes its stdout without one. */
+  const waitFor = (pred: (l: Record<string, unknown>) => boolean) =>
+    new Promise<void>((resolve, reject) => {
+      const check = () => {
+        if (!lines.some(pred)) return;
+        waiters.delete(check);
+        resolve();
+      };
+      waiters.add(check);
+      check();
+      void closed.then(() => {
+        if (waiters.delete(check)) reject(new Error("closed without the awaited line"));
+      });
+    });
   return { child, lines, send, waitFor, exited, stderr: () => stderr };
 }
 const user = (content: string) => ({ type: "user", message: { role: "user", content } });

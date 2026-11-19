@@ -30,10 +30,31 @@ describe("loadConfig", () => {
     expect(c.allowLocalRuntime).toBe(false);
     expect(c.defaultImage).toBe("ghcr.io/orlevii/open-factory/base:latest");
     expect(c.dockerClaudeBin).toBe("claude");
-    expect(c.agentUrl).toBe("http://host.docker.internal:3000");
+    expect(c.agentUrl).toBe("http://host.docker.internal:3001");
     expect(c.cliBundle).toMatch(/apps\/cli\/dist\/open-factory\.js$/);
     expect(path.isAbsolute(c.cliBundle)).toBe(true);
-    expect(loadConfig({ ...ok, PORT: "4000" }).agentUrl).toBe("http://host.docker.internal:4000");
+    expect(loadConfig({ ...ok, PORT: "4000" }).agentUrl).toBe("http://host.docker.internal:4001");
+  });
+  test("agent listener settings", () => {
+    const c = loadConfig({ ...ok, PORT: "4000" });
+    expect(c.agentPort).toBe(4001);
+    expect(c.agentHosts).toBeUndefined();
+    expect(c.memberUpdateDebounceMs).toBe(30_000);
+    const o = loadConfig({
+      ...ok,
+      FACTORY_AGENT_PORT: "0",
+      FACTORY_AGENT_HOST: "127.0.0.1, 10.0.0.5",
+      FACTORY_AGENT_URL: "http://factory:9000/",
+    });
+    expect(o.agentPort).toBe(0);
+    expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
+    expect(o.agentUrl).toBe("http://factory:9000");
+    expect(
+      loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0" }).memberUpdateDebounceMs,
+    ).toBe(0);
+    expect(() => loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "-1" })).toThrow(
+      ConfigError,
+    );
   });
   test("FACTORY_ALLOW_LOCAL_RUNTIME only accepts true/false", () => {
     expect(loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "true" }).allowLocalRuntime).toBe(true);

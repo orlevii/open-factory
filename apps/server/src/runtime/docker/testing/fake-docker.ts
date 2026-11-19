@@ -179,4 +179,10 @@ export class FakeDockerClient implements DockerClient {
     this.rec("logsTail", id, n);
     return this.logs;
   }
+
+  bridge: { gateway?: string; subnet?: string } = {};
+  async bridgeNetwork() {
+    this.rec("bridgeNetwork");
+    return this.bridge;
+  }
 }

@@ -45,6 +45,8 @@ export interface DockerClient {
     o: { cmd: string[]; user: string; workdir: string; env: string[] },
   ): Promise<ExecStream>;
   logsTail(id: string, n: number): Promise<string>;
+  /** The default bridge network's first IPAM entry (`GET /networks/bridge`). */
+  bridgeNetwork(): Promise<{ gateway?: string; subnet?: string }>;
 }
 
 const statusOf = (err: unknown) => (err as { statusCode?: number } | null)?.statusCode;
@@ -223,6 +225,14 @@ export function dockerodeClient(): DockerClient {
         .getContainer(id)
         .logs({ stdout: true, stderr: true, tail: n, follow: false });
       return demuxBuffer(Buffer.from(buf)).all; // stdout and stderr in the order they were written
+    },
+
+    async bridgeNetwork() {
+      const info = (await docker.getNetwork("bridge").inspect()) as {
+        IPAM?: { Config?: { Gateway?: string; Subnet?: string }[] };
+      };
+      const cfg = info.IPAM?.Config?.find((c) => c.Gateway && !c.Gateway.includes(":"));
+      return { gateway: cfg?.Gateway, subnet: cfg?.Subnet };
     },
   };
 }

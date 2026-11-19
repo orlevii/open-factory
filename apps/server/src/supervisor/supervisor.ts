@@ -101,8 +101,18 @@ export class Supervisor implements SlotPort {
     return { count: this.holders.size, max: this.d.max };
   }
 
+  /**
+   * Waiting for a start (the `queued` status input, spec §5.4): a queue entry, or a slot granted whose grant job
+   * hasn't started the agent yet (so the status never flickers to hibernated in between). An entry that can never
+   * start (archived, an errored agent's non-waking reason, nothing deliverable) is dropped here at once.
+   */
   isQueued(agentId: string): boolean {
-    return this.queue.some((e) => e.agentId === agentId);
+    if (this.granted.has(agentId)) return true;
+    const at = this.queue.findIndex((e) => e.agentId === agentId);
+    if (at === -1) return false;
+    if (this.eligibility(this.queue[at] as Entry) !== "drop") return true;
+    this.queue.splice(at, 1);
+    return false;
   }
 
   /** Whether the agent's credential is paused right now; read at every check, so a credential change applies. */
@@ -125,7 +135,7 @@ export class Supervisor implements SlotPort {
   }
 
   private requeue(e: Entry) {
-    if (this.isQueued(e.agentId)) return;
+    if (this.queue.some((q) => q.agentId === e.agentId)) return;
     const at = this.queue.findIndex((q) => q.requestedAt > e.requestedAt);
     this.queue.splice(at === -1 ? this.queue.length : at, 0, e);
     this.d.runtimes.get(e.agentId)?.publishStatus();
@@ -188,16 +198,18 @@ export class Supervisor implements SlotPort {
   }
 
   /**
-   * Early hibernation (spec §5.3): while more entries are eligible than slots already on their way (evictions
-   * asked for, holders stopping for another reason), ask the least recently active hibernatable holder to go.
+   * Early hibernation (spec §5.3): while more entries are eligible than slots free or already on their way
+   * (evictions asked for, holders stopping for another reason), ask the least recently active hibernatable holder
+   * to go. Free slots are counted too, so a caller that didn't pump first can't over-evict.
    */
   private evict() {
     if (this.closed) return;
     const eligible = this.queue.filter((e) => this.eligibility(e) === "yes").length;
+    const free = Math.max(0, this.d.max - this.holders.size);
     let stopping = 0;
     for (const id of this.holders)
       if (!this.pendingEvictions.has(id) && this.d.runtimes.get(id)?.isStopping()) stopping += 1;
-    while (eligible > this.pendingEvictions.size + stopping) {
+    while (eligible > free + this.pendingEvictions.size + stopping) {
       const victim = this.pickVictim();
       if (!victim) return;
       this.pendingEvictions.add(victim.agent.id);

@@ -3,6 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+/** `FACTORY_MAX_RUNNING_AGENTS` when unset (spec §5.2). */
+export const DEFAULT_MAX_RUNNING_AGENTS = 8;
+
 export const PLACEHOLDER_SECRET = "change-me-to-a-random-string-of-32-chars-or-more";
 
 export interface Config {
@@ -65,7 +68,7 @@ const envSchema = z.object({
     .number({ message: "must be a whole number" })
     .int()
     .min(1)
-    .default(8),
+    .default(DEFAULT_MAX_RUNNING_AGENTS),
   FACTORY_ALLOW_LOCAL_RUNTIME: z.enum(["true", "false"]).default("false"),
   FACTORY_DEFAULT_IMAGE: z.string().min(1).default("ghcr.io/orlevii/open-factory/base:latest"),
   FACTORY_DOCKER_CLAUDE_BIN: z.string().min(1).default("claude"),

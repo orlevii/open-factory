@@ -22,7 +22,7 @@ export interface SlotPort {
   release(agentId: string): void;
   becameHibernatable(agentId: string): void;
   closing(): boolean;
-  /** The agent has an entry in the wake queue (the `queued` status input, spec §5.4). */
+  /** The agent waits for a start: a wake queue entry or a granted slot (the `queued` status input, spec §5.4). */
   isQueued(agentId: string): boolean;
 }
 

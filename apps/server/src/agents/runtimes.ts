@@ -1,4 +1,5 @@
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
+import { DEFAULT_MAX_RUNNING_AGENTS } from "../config.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -14,7 +15,7 @@ export interface RuntimesDeps {
   holdTimeoutMs?: number;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default, 8. */
+  /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
   maxRunningAgents?: number;
 }
 
@@ -38,7 +39,7 @@ export class AgentRuntimes {
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
     this.supervisor = new Supervisor({
-      max: d.maxRunningAgents ?? 8,
+      max: d.maxRunningAgents ?? DEFAULT_MAX_RUNNING_AGENTS,
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,

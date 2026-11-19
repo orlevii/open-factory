@@ -35,7 +35,9 @@ type FileState = {
   started: boolean;
   conflict?: { currentHash: string | null };
 };
-type Outcome = { tone: "success" | "error"; text: string } | { tone: "pending"; text: string };
+type Outcome =
+  | { tone: "success" | "error"; text: string }
+  | { tone: "pending"; text: string; kind: "checking" | "saving" | "reloading" };
 
 const OPTIONAL_SEED: Partial<Record<TemplateFile, string>> = {
   "settings.json": "{}\n",
@@ -68,6 +70,9 @@ function lineOffset(content: string, line: number) {
   return lines.slice(0, n - 1).reduce((sum, l) => sum + l.length + 1, 0);
 }
 
+/** A save or reload in flight blocks another; a blur validate never does (Save supersedes it). */
+const isBusy = (o?: Outcome) => o?.tone === "pending" && o.kind !== "checking";
+
 const goneMessage = "This template no longer exists on disk.";
 
 export function TemplateEditor({ template }: { template: TemplateDetail }) {
@@ -99,6 +104,10 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     enableBeforeUnload: () => dirty && !leaving.current,
   });
 
+  const edit = (f: TemplateFile, content: string) => {
+    patch(f, { content });
+    setOutcomes((all) => (all[f]?.tone === "success" ? { ...all, [f]: undefined } : all));
+  };
   const patch = (f: TemplateFile, p: Partial<FileState>) =>
     setFiles((s) => ({ ...s, [f]: { ...s[f], ...p } }));
   const setOutcome = (f: TemplateFile, o?: Outcome) => setOutcomes((s) => ({ ...s, [f]: o }));
@@ -140,19 +149,31 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     setOutcome(f, { tone: "error", text: e instanceof ApiError ? e.message : fallback });
   }
 
+  /** A superseded validate must not leave its "Checking…" line behind (a save or reload may
+   *  have replaced it with its own outcome, which stays). */
+  function clearChecking(f: TemplateFile) {
+    setOutcomes((all) => {
+      const o = all[f];
+      return o?.tone === "pending" && o.kind === "checking" ? { ...all, [f]: undefined } : all;
+    });
+  }
+
   async function validate(f: TemplateFile) {
     const s = files[f];
     if (!s.started || checked.current[f] === s.content) return;
     checked.current[f] = s.content;
     const mine = ++seq.current;
-    setOutcome(f, { tone: "pending", text: "Checking…" });
+    setOutcome(f, { tone: "pending", text: "Checking…", kind: "checking" });
     try {
       const next = await validateTemplateFile(name, f, s.content);
-      if (mine !== seq.current) return;
+      if (mine !== seq.current) return clearChecking(f);
       setIssues(next);
       setOutcome(f, undefined);
     } catch (e) {
-      if (mine !== seq.current) return;
+      if (mine !== seq.current) {
+        checked.current[f] = undefined;
+        return clearChecking(f);
+      }
       checked.current[f] = undefined;
       failed(f, e, "Couldn't check this file. Saving still works.");
     }
@@ -160,10 +181,10 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
 
   async function save(f: TemplateFile, baseHash = files[f].baseHash) {
     const s = files[f];
-    if (!isDirty(s) || outcomes[f]?.tone === "pending") return;
+    if (!isDirty(s) || isBusy(outcomes[f])) return;
     const mine = ++seq.current;
     patch(f, { conflict: undefined });
-    setOutcome(f, { tone: "pending", text: "Saving…" });
+    setOutcome(f, { tone: "pending", text: "Saving…", kind: "saving" });
     try {
       const r = await saveTemplateFile(name, f, s.content, baseHash);
       checked.current[f] = s.content;
@@ -176,6 +197,8 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
           ? "Saved. Fix the errors before creating agents from this template."
           : "Saved.",
       });
+      // Overwrite removes the conflict block that held focus.
+      if (baseHash !== s.baseHash) refs.current[f]?.focus();
     } catch (e) {
       if (e instanceof ApiError && e.code === "changed_on_disk") {
         const h = e.body.currentHash;
@@ -186,7 +209,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   }
 
   async function reload(f: TemplateFile) {
-    setOutcome(f, { tone: "pending", text: "Reloading…" });
+    setOutcome(f, { tone: "pending", text: "Reloading…", kind: "reloading" });
     try {
       const fresh = await qc.fetchQuery({ ...templateQueryOptions(name), staleTime: 0 });
       const s = initial(fresh)[f];
@@ -195,6 +218,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
       seq.current++;
       setIssues(fresh.issues);
       setOutcome(f, undefined);
+      refs.current[f]?.focus();
     } catch (e) {
       failed(f, e, "Couldn't reload this file. Try again.");
     }
@@ -333,8 +357,8 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               const s = files[f];
               const mine = sortIssues(issues.filter((i) => i.file === f));
               const outcome = outcomes[f];
-              const pending = outcome?.tone === "pending";
-              const canSave = isDirty(s) && !pending;
+              const busy = isBusy(outcome);
+              const canSave = isDirty(s) && !busy;
               const save$ = () => void save(f);
               return (
                 <TabsContent key={f} value={f} className="grid gap-3">
@@ -342,6 +366,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                     <div className="grid justify-items-start gap-2 rounded-lg border border-dashed border-border p-4">
                       <p className="text-sm text-muted-foreground">Not created</p>
                       <Button
+                        id={`create-${f}`}
                         variant="ghost"
                         onClick={() => {
                           patch(f, { started: true, content: OPTIONAL_SEED[f] ?? "" });
@@ -354,7 +379,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                   ) : f === "AGENTS.md" ? (
                     <MarkdownEditor
                       value={s.content}
-                      onChange={(v) => patch(f, { content: v })}
+                      onChange={(v) => edit(f, v)}
                       id={`editor-${f}`}
                       aria-label={f}
                       view={mdView}
@@ -373,7 +398,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       id={`editor-${f}`}
                       aria-label={f}
                       value={s.content}
-                      onChange={(v) => patch(f, { content: v })}
+                      onChange={(v) => edit(f, v)}
                       onBlur={() => void validate(f)}
                       onSave={save$}
                       textareaRef={attach(f)}
@@ -383,12 +408,21 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                   {s.conflict && (
                     <div className="grid justify-items-start gap-2 text-sm">
                       <p role="alert">This file changed on disk since you opened it.</p>
+                      <p id={`conflict-${f}`} className="text-[0.8125rem] text-muted-foreground">
+                        Reload discards your edits and shows the file as it is on disk. Overwrite
+                        replaces the file on disk with your version.
+                      </p>
                       <div className="flex gap-2">
-                        <Button variant="ghost" onClick={() => void reload(f)}>
+                        <Button
+                          variant="ghost"
+                          aria-describedby={`conflict-${f}`}
+                          onClick={() => void reload(f)}
+                        >
                           Reload
                         </Button>
                         <Button
                           variant="ghost"
+                          aria-describedby={`conflict-${f}`}
                           onClick={() => void save(f, s.conflict?.currentHash ?? null)}
                         >
                           Overwrite
@@ -402,10 +436,26 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       <div className="ml-auto flex gap-2">
                         <Button
                           variant="ghost"
-                          disabled={!isDirty(s) || s.baseHash === null}
+                          aria-disabled={!isDirty(s) || undefined}
+                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => {
-                            patch(f, { content: s.saved, conflict: undefined });
+                            if (!isDirty(s)) return;
                             setOutcome(f, undefined);
+                            if (isOptional(f) && s.baseHash === null) {
+                              // Never written: back to "Not created".
+                              patch(f, {
+                                started: false,
+                                content: "",
+                                saved: "",
+                                conflict: undefined,
+                              });
+                              requestAnimationFrame(() =>
+                                document.getElementById(`create-${f}`)?.focus(),
+                              );
+                              return;
+                            }
+                            patch(f, { content: s.saved, conflict: undefined });
+                            refs.current[f]?.focus();
                           }}
                         >
                           Discard
@@ -415,7 +465,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                           className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => canSave && save$()}
                         >
-                          {pending && outcome?.text === "Saving…" && (
+                          {outcome?.tone === "pending" && outcome.kind === "saving" && (
                             <Loader2 aria-hidden="true" className="animate-spin" />
                           )}
                           Save

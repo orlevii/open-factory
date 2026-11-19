@@ -38,6 +38,7 @@ export function IssueList({
         const body = (
           <>
             <IssueIcon severity={i.severity} />
+            <span className="sr-only">{i.severity === "error" ? "Error" : "Warning"}</span>
             {showFile && <span className="font-mono text-[0.8125rem]">{i.file}</span>}
             {pos && <span className="font-mono text-[0.8125rem] text-muted-foreground">{pos}</span>}
             <span>{i.message}</span>
@@ -52,7 +53,7 @@ export function IssueList({
               <button
                 type="button"
                 // The name is "<file> <line>:<col> <message>" even when the file is hidden.
-                aria-label={`${i.file} ${pos} ${i.message}`}
+                aria-label={`${i.severity === "error" ? "Error" : "Warning"}: ${i.file} ${pos} ${i.message}`}
                 onClick={() => onJump(i.file, i.line as number)}
                 className={cn(
                   row,

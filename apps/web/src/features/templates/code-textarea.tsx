@@ -79,14 +79,8 @@ export function CodeTextarea({
         />
       </div>
       {/* Always in the DOM so aria-describedby resolves; shown while the field has focus.
-          Touch has no Tab key, so it stays hidden there. */}
-      <p
-        id={hintId}
-        className={cn(
-          "text-xs text-muted-foreground [@media(pointer:coarse)]:hidden",
-          !focused && "sr-only",
-        )}
-      >
+          Tablets have keyboards, so it applies on touch too. */}
+      <p id={hintId} className={cn("text-xs text-muted-foreground", !focused && "sr-only")}>
         Esc then Tab to leave the editor
       </p>
     </div>

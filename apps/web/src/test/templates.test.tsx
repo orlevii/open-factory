@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -289,4 +289,161 @@ test("new template: blur validates the name; submit validates everything", async
   expect(await screen.findByText("Enter a display name.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);
   expect(name).toHaveFocus();
+});
+
+// --- review fixes ---------------------------------------------------------------------
+
+/** A validate handler whose responses are released by hand, in any order. */
+function deferredValidate() {
+  const pending: { file: string; release(issues: unknown[]): void }[] = [];
+  const handler = (body: unknown) =>
+    new Promise<Response>((resolve) => {
+      pending.push({
+        file: (body as { file: string }).file,
+        release: (issues) => resolve(json({ issues })),
+      });
+    });
+  return { pending, handler };
+}
+
+test("Save works while a blur validate is still in flight", async () => {
+  const v = deferredValidate();
+  const api = mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "POST /api/templates/lead/validate": v.handler,
+    "PUT /api/templates/lead/files/template.yaml": () => json({ hash: "h2", issues: [] }),
+  });
+  renderApp("/templates/lead", alice);
+  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
+  // The mouse click blurs the textarea first, which starts a validate that never answers.
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByText("Saved.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "PUT")).toBe(true);
+});
+
+test("a superseded validate does not leave 'Checking…' behind", async () => {
+  const v = deferredValidate();
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "POST /api/templates/lead/validate": v.handler,
+  });
+  renderApp("/templates/lead", alice);
+  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
+  await userEvent.keyboard("{Escape}{Tab}"); // validate template.yaml (A), pending
+  expect(await screen.findByText("Checking…")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("tab", { name: /settings\.json/ }));
+  await userEvent.type(screen.getByRole("textbox", { name: "settings.json" }), "y");
+  await userEvent.keyboard("{Escape}{Tab}"); // validate settings.json (B) supersedes A
+  await vi.waitFor(() => expect(v.pending).toHaveLength(2));
+  await act(async () => v.pending[1]?.release([]));
+  await act(async () => v.pending[0]?.release([])); // A answers late and is stale
+  await userEvent.click(screen.getByRole("tab", { name: /template\.yaml/ }));
+  expect(screen.queryByText("Checking…")).not.toBeInTheDocument();
+});
+
+test("issue rows say Error or Warning in words", async () => {
+  mockApi({
+    "GET /api/templates/lead": () =>
+      json(
+        detail([
+          { severity: "warning", file: "skills", message: "Skill x has no SKILL.md." },
+          { severity: "error", file: "settings.json", message: "JSON: bad", line: 2, column: 3 },
+        ]),
+      ),
+  });
+  renderApp("/templates/lead", alice);
+  expect(
+    await screen.findByRole("button", { name: /^Error.*settings\.json.*JSON: bad/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Warning")).toBeInTheDocument();
+});
+
+async function conflictPage() {
+  const api = mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "POST /api/templates/lead/validate": () => json({ issues: [] }),
+    "PUT /api/templates/lead/files/template.yaml": () =>
+      json({ error: { code: "changed_on_disk", message: "x", currentHash: "h-new" } }, 409),
+  });
+  renderApp("/templates/lead", alice);
+  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
+  await userEvent.type(editor, "zz");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("This file changed on disk since you opened it.");
+  return { api, editor };
+}
+
+test("Reload says it discards edits and returns focus to the editor", async () => {
+  const { api, editor } = await conflictPage();
+  expect(screen.getByRole("button", { name: "Reload" })).toHaveAccessibleDescription(
+    /discards your edits/i,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await vi.waitFor(() => expect(editor).toHaveValue("name: lead\ndisplay_name: Lead\n"));
+  expect(editor).toHaveFocus();
+  expect(api.calls.filter((c) => c.method === "GET").length).toBeGreaterThan(1);
+});
+
+test("Overwrite and Discard return focus to the editor", async () => {
+  const { api, editor } = await conflictPage();
+  api.on("PUT /api/templates/lead/files/template.yaml", () => json({ hash: "h3", issues: [] }));
+  await userEvent.click(screen.getByRole("button", { name: "Overwrite" }));
+  await screen.findByText("Saved.");
+  expect(editor).toHaveFocus();
+  await userEvent.type(editor, "q");
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(editor).toHaveFocus();
+});
+
+test("'Saved.' clears once the file is edited again", async () => {
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "PUT /api/templates/lead/files/template.yaml": () => json({ hash: "h2", issues: [] }),
+  });
+  renderApp("/templates/lead", alice);
+  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
+  await userEvent.type(editor, "x");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved.");
+  await userEvent.type(editor, "y");
+  expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+});
+
+test("Discard on a just-created optional file returns to 'Not created'", async () => {
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "POST /api/templates/lead/validate": () => json({ issues: [] }),
+  });
+  renderApp("/templates/lead", alice);
+  await userEvent.click(await screen.findByRole("tab", { name: /mcp\.json/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Create file" }));
+  expect(screen.getByRole("textbox", { name: "mcp.json" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.getByText("Not created")).toBeInTheDocument();
+});
+
+test("the keyboard hint shows on focus, also on touch", async () => {
+  render(<Harness onSave={() => {}} />);
+  const hint = screen.getByText("Esc then Tab to leave the editor");
+  expect(hint.className).not.toMatch(/pointer:coarse/);
+});
+
+test("'Deleted x.' shows once: it is cleared from history state after it is read", async () => {
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "DELETE /api/templates/lead": () => json(null, 204),
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+  });
+  const { router } = renderApp("/templates/lead", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
+  await userEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete lead" }),
+  );
+  expect(await screen.findByText("Deleted lead.")).toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(
+      (router.state.location.state as { deletedTemplate?: string }).deletedTemplate,
+    ).toBeUndefined(),
+  );
+  expect(screen.getByText("Deleted lead.")).toBeInTheDocument(); // still shown while mounted
 });

@@ -65,3 +65,4 @@ export const deletedTemplateFrom = (state: unknown): string | undefined => {
   const v = (state as { deletedTemplate?: unknown } | undefined)?.deletedTemplate;
   return typeof v === "string" ? v : undefined;
 };
+export const clearedState = () => ({}) as never;

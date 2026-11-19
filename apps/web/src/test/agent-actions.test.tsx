@@ -47,7 +47,11 @@ test("Re-sync success names the backup folder in mono and the restart", async ()
   world({
     extra: {
       "POST /api/agents/lead/resync": () =>
-        json({ agent: lead, backupDir: "state/agents/lead/resync/2026-11-19T10-22-31Z" }),
+        json({
+          agent: lead,
+          applied: "now",
+          backupDir: "state/agents/lead/resync/2026-11-19T10-22-31Z",
+        }),
     },
   });
   const section = await open();
@@ -63,7 +67,7 @@ test("Re-sync success names the backup folder in mono and the restart", async ()
 test("Re-sync with nothing differing says so", async () => {
   world({
     agents: [{ ...lead, status: "hibernated" }],
-    extra: { "POST /api/agents/lead/resync": () => json({ agent: lead }) },
+    extra: { "POST /api/agents/lead/resync": () => json({ agent: lead, applied: "now" }) },
   });
   const section = await open();
   await userEvent.click(within(section).getByRole("button", { name: "Re-sync" }));
@@ -221,7 +225,7 @@ test("Restore success says so", async () => {
   world({
     agents: [],
     archived: [archived],
-    extra: { "POST /api/agents/lead/unarchive": () => json({ agent: lead }) },
+    extra: { "POST /api/agents/lead/unarchive": () => json({ agent: lead, applied: "now" }) },
   });
   const section = await open();
   await userEvent.click(within(section).getByRole("button", { name: "Restore" }));

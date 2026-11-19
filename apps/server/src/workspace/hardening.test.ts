@@ -76,7 +76,7 @@ beforeEach(async () => {
 });
 
 const prepareAgent = () => ws.prepare(prep);
-const resync = () => ws.resync("lead", tpl);
+const resync = () => ws.resync("lead", tpl, { canWriteNow: true });
 async function findBackup(rel: string): Promise<string> {
   const root = resyncRoot(home, "lead");
   const [stamp] = await readdir(root);

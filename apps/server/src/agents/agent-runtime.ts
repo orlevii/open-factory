@@ -340,9 +340,25 @@ export class AgentRuntime {
     await this.d.store.setStatus(this.agent.id, "errored");
   }
 
+  /** True while a process exists or a start is under way (prepare to spawn): host writes to the workdir must be staged. */
+  hasProcess(): boolean {
+    return Boolean(this.proc) || this.starting;
+  }
+
+  private starting = false;
+
   /** Only called from API jobs (send, compact): a flush never restarts a dead process. */
   private async ensureStarted() {
     if (this.proc) return;
+    this.starting = true;
+    try {
+      await this.startProcess();
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startProcess() {
     if (this.archived) throw new AgentArchivedError(this.agent.slug);
     this.refuseWhileStopping();
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that

@@ -1,5 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { SafeFs, WorkspaceError } from "./safe-fs.ts";
 
@@ -65,15 +77,63 @@ export async function copyTargets(
   tplSettings: Record<string, unknown>,
   tplMcp: unknown,
 ): Promise<void> {
+  await writeTargets(workdir, targets);
+  await writeTemplateCopy(templateCopy, tplSettings, tplMcp);
+}
+
+/** Writes targets into the workdir through `SafeFs`. A source symlink stays a link. */
+export async function writeTargets(
+  workdir: string,
+  targets: { from: string; to: string }[],
+): Promise<void> {
   const safe = new SafeFs(workdir);
   for (const t of targets) {
-    // The source is the human's template dir (trusted); only the workdir side is guarded.
+    // The source is factory-owned or the human's template dir (trusted); only the workdir side is guarded.
     const st = await lstat(t.from);
     if (st.isSymbolicLink()) await safe.link(t.to, await readlink(t.from));
     else await safe.writeFile(t.to, await readFile(t.from), st.mode & 0o777);
   }
+}
+
+export async function writeTemplateCopy(
+  templateCopy: string,
+  tplSettings: Record<string, unknown>,
+  tplMcp: unknown,
+): Promise<void> {
   await writeAtomic(path.join(templateCopy, "settings.json"), JSON.stringify(tplSettings, null, 2));
   await writeAtomic(path.join(templateCopy, "mcp.json"), JSON.stringify(tplMcp, null, 2));
+}
+
+/** Replaces `pendingDir` with a copy of the targets (latest wins), built aside and renamed in so
+ *  a crash never leaves a half-staged dir. Links stay links. `pendingDir` is factory state. */
+export async function stageTargets(
+  pendingDir: string,
+  targets: { from: string; to: string }[],
+): Promise<void> {
+  const tmp = `${pendingDir}.tmp-${randomUUID()}`;
+  try {
+    await mkdir(tmp, { recursive: true });
+    for (const t of targets) {
+      const dest = path.join(tmp, t.to);
+      await mkdir(path.dirname(dest), { recursive: true });
+      const st = await lstat(t.from);
+      if (st.isSymbolicLink()) await symlink(await readlink(t.from), dest);
+      else {
+        await copyFile(t.from, dest);
+        await chmod(dest, st.mode & 0o777);
+      }
+    }
+    await rm(pendingDir, { recursive: true, force: true });
+    await rename(tmp, pendingDir);
+  } catch (err) {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/** The staged files as targets (`from` inside `pendingDir`), or none when nothing is pending. */
+export async function pendingTargets(pendingDir: string): Promise<{ from: string; to: string }[]> {
+  return (await walk(pendingDir)).map((r) => ({ from: path.join(pendingDir, r), to: r }));
 }
 
 /** Copies the workdir files an incoming template would change into `<backupRoot>/<stamp>/`.

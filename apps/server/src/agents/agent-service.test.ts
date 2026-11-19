@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
@@ -7,6 +15,7 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
+import { resyncPendingDir } from "../workspace/paths.ts";
 import type { AgentService } from "./agent-service.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
@@ -212,6 +221,94 @@ test("resync: backup dir, runtime column, grants follow unless overridden; refus
   const r = await svc.resync("lead");
   expect(r.backupDir).toMatch(/^state\/agents\/lead\/resync\//);
   expect(r.agent.projects).toEqual([]);
+});
+
+async function makeStageAgent(slug: string) {
+  writeTemplate(slug, yaml(slug));
+  await svc.create({
+    template: slug,
+    slug,
+    displayName: slug,
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+}
+async function startAndStop(slug: string, start: boolean) {
+  const rt = await runtimes.bySlug(slug);
+  if (!rt) throw new Error("no runtime");
+  if (start) {
+    const u = await t.signUpUser();
+    await rt.sendMessage({
+      fromUserId: u.user.id,
+      fromHandle: u.user.handle,
+      body: "hi",
+      urgent: false,
+    });
+    await vi.waitFor(() => expect(rt.hasProcess()).toBe(true));
+  } else await rt.stop({ graceMs: 3000, termWaitMs: 10_000 });
+  return rt;
+}
+
+test("re-sync of a running agent stages files and applies them at the next prepare", async () => {
+  await makeStageAgent("stage-a");
+  const wd = path.join(home, "agents/stage-a");
+  const agentsMd = path.join(wd, "AGENTS.md");
+  const OLD = readFileSync(agentsMd, "utf8");
+  await startAndStop("stage-a", true);
+  writeFileSync(path.join(home, "templates/stage-a/AGENTS.md"), "# NEW\n");
+  const r = await svc.resync("stage-a");
+  expect(r.applied).toBe("on_restart");
+  expect(r.backupDir).toBeUndefined();
+  expect(readFileSync(agentsMd, "utf8")).toBe(OLD);
+  expect(readFileSync(path.join(resyncPendingDir(home, "stage-a"), "AGENTS.md"), "utf8")).toBe(
+    "# NEW\n",
+  );
+  // the template copy in state/ is written at once
+  expect(existsSync(path.join(home, "state/agents/stage-a/template/settings.json"))).toBe(true);
+  await startAndStop("stage-a", false);
+  await startAndStop("stage-a", true);
+  expect(readFileSync(agentsMd, "utf8")).toBe("# NEW\n");
+  expect(existsSync(resyncPendingDir(home, "stage-a"))).toBe(false);
+  expect(
+    readFileSync(
+      path.join(
+        home,
+        "state/agents/stage-a/resync",
+        readdirSync(path.join(home, "state/agents/stage-a/resync"))[0] ?? "",
+        "AGENTS.md",
+      ),
+      "utf8",
+    ),
+  ).toBe(OLD);
+  await startAndStop("stage-a", false);
+});
+
+test("re-sync of a hibernated agent applies at once", async () => {
+  await makeStageAgent("stage-b");
+  writeFileSync(path.join(home, "templates/stage-b/AGENTS.md"), "# NEW\n");
+  const r = await svc.resync("stage-b");
+  expect(r.applied).toBe("now");
+  expect(readFileSync(path.join(home, "agents/stage-b/AGENTS.md"), "utf8")).toBe("# NEW\n");
+  expect(existsSync(resyncPendingDir(home, "stage-b"))).toBe(false);
+});
+
+test("a second staged re-sync replaces the pending dir", async () => {
+  await makeStageAgent("stage-c");
+  await startAndStop("stage-c", true);
+  const tplMd = path.join(home, "templates/stage-c/AGENTS.md");
+  writeFileSync(tplMd, "# ONE\n");
+  writeFileSync(path.join(home, "templates/stage-c/extra.txt"), "x");
+  mkdirSync(path.join(home, "templates/stage-c/files"), { recursive: true });
+  writeFileSync(path.join(home, "templates/stage-c/files/only-first.txt"), "1");
+  await svc.resync("stage-c");
+  rmSync(path.join(home, "templates/stage-c/files"), { recursive: true });
+  writeFileSync(tplMd, "# TWO\n");
+  expect((await svc.resync("stage-c")).applied).toBe("on_restart");
+  const pending = resyncPendingDir(home, "stage-c");
+  expect(readFileSync(path.join(pending, "AGENTS.md"), "utf8")).toBe("# TWO\n");
+  expect(existsSync(path.join(pending, "only-first.txt"))).toBe(false);
+  await startAndStop("stage-c", false);
 });
 
 test("archive is blocked while active reports exist", async () => {

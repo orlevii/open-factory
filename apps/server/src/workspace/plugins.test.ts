@@ -239,7 +239,7 @@ test("a plugin listed in the snapshot but missing from plugins-config also asks 
 test("re-sync installs into plugins-config, moves the old real plugins dir to plugins-legacy-<ts>/ and links it", async () => {
   const { home, ws, tpl, prep, workdir, makeS4 } = await setupAgent(["p@mk"]);
   await makeS4();
-  await ws.resync("lead", tpl);
+  await ws.resync("lead", tpl, { canWriteNow: true });
   const cfg = pluginsConfigDir(home, "lead");
   expect(JSON.parse(readFileSync(`${cfg}/settings.json`, "utf8")).enabledPlugins).toEqual({
     "p@mk": true,

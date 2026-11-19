@@ -138,4 +138,5 @@ export const agentResponseSchema = z.object({ agent: agentSummarySchema });
 export const resyncResponseSchema = z.object({
   agent: agentSummarySchema,
   backupDir: z.string().optional(),
+  applied: z.enum(["now", "on_restart"]),
 });

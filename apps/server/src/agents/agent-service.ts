@@ -340,20 +340,28 @@ export class AgentService {
     }
   }
 
-  async resync(slug: string): Promise<{ agent: AgentSummary; backupDir?: string }> {
+  async resync(
+    slug: string,
+  ): Promise<{ agent: AgentSummary; backupDir?: string; applied: "now" | "on_restart" }> {
     const { db, runtimes, workspace } = this.d;
     const row = await this.rowBySlug(slug);
     if (row.archivedAt)
       throw new ApiError(409, "agent_archived", `@${slug} is archived. Restore it first.`);
     const tpl = await this.d.templates.loadValid(row.template);
     let backupDir: string | undefined;
+    let applied: "now" | "on_restart" = "now";
     try {
       await workspace.lock.run(slug, async () => {
         // Checked before any disk change, so a stale template project leaves everything as it was.
         const projects = row.grantsOverridden
           ? undefined
           : await this.templateProjects(tpl.config.projects, row.template);
-        backupDir = await workspace.resync(slug, tpl);
+        // Decided under the lock every start also takes, so a start can't slip in between.
+        // Docker: Task 23 adds `!(await containers.isRunning(agentId))`.
+        const rt = await runtimes.get(row.id);
+        const r = await workspace.resync(slug, tpl, { canWriteNow: !rt?.hasProcess() });
+        backupDir = r.backupDir;
+        applied = r.applied;
         await db.transaction(async (tx) => {
           await tx
             .update(schema.agents)
@@ -367,7 +375,7 @@ export class AgentService {
     }
     await runtimes.refresh(row.id);
     await runtimes.requestRestart(row.id);
-    return { agent: await this.summary(slug), ...(backupDir ? { backupDir } : {}) };
+    return { agent: await this.summary(slug), applied, ...(backupDir ? { backupDir } : {}) };
   }
 
   private async templateProjects(names: string[], template: string) {

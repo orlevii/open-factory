@@ -5,7 +5,16 @@ import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
 import { buildClaudeMd } from "./claude-md.ts";
-import { backupDiffering, copyTargets, resyncStamp, templateTargets } from "./files.ts";
+import {
+  backupDiffering,
+  copyTargets,
+  pendingTargets,
+  resyncStamp,
+  stageTargets,
+  templateTargets,
+  writeTargets,
+  writeTemplateCopy,
+} from "./files.ts";
 import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
@@ -21,6 +30,7 @@ import {
   agentStateDir,
   agentWorkdir,
   pluginsConfigDir,
+  resyncPendingDir,
   resyncRoot,
   templateCopyDir,
 } from "./paths.ts";
@@ -131,11 +141,48 @@ export class Workspace {
     await new SafeFs(this.workdir(slug)).removeAll();
   }
 
-  /** Under the caller-held lock: backup + overwrite + install. Returns the backup dir relative to FACTORY_HOME. */
-  async resync(slug: string, tpl: TemplateSource): Promise<string | undefined> {
+  /**
+   * Under the caller-held lock: install, then either write the workdir files at once
+   * (`canWriteNow`: nothing can race the writes) or stage them in `resync-pending/` for the next
+   * `prepare` (spec §11.4 part 4). The template copy in state/ and the plugin install are
+   * factory-owned, so they are always written at once. `backupDir` is relative to FACTORY_HOME.
+   */
+  async resync(
+    slug: string,
+    tpl: TemplateSource,
+    opts: { canWriteNow: boolean },
+  ): Promise<{ backupDir?: string; applied: "now" | "on_restart" }> {
     const workdir = this.workdir(slug);
     const configDir = agentConfigDir(workdir);
     const targets = await templateTargets(tpl.dir, tpl.config);
+    if (!opts.canWriteNow) {
+      await stageTargets(resyncPendingDir(this.d.factoryHome, slug), targets);
+      await writeTemplateCopy(
+        templateCopyDir(this.d.factoryHome, slug),
+        tpl.tplSettings,
+        tpl.tplMcp,
+      );
+      if (tpl.config.plugins.length) await this.install(slug, tpl);
+      // The old plugins folder moves aside at the next prepare (linkPlugins), a workdir write.
+      return { applied: "on_restart" };
+    }
+    // A fresh re-sync supersedes anything staged earlier.
+    await rm(resyncPendingDir(this.d.factoryHome, slug), { recursive: true, force: true });
+    const backup = await this.applyTargets(slug, targets);
+    await writeTemplateCopy(templateCopyDir(this.d.factoryHome, slug), tpl.tplSettings, tpl.tplMcp);
+    await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
+    if (tpl.config.plugins.length) await this.install(slug, tpl);
+    // The human act that migrates an S4 agent: its old real plugins dir moves aside (spec §11.7).
+    await this.linkPlugins(slug, workdir);
+    return { ...(backup ? { backupDir: backup } : {}), applied: "now" };
+  }
+
+  /** Backs up the differing workdir files, then writes the targets through SafeFs. Returns the backup dir relative to FACTORY_HOME. */
+  private async applyTargets(
+    slug: string,
+    targets: { from: string; to: string }[],
+  ): Promise<string | undefined> {
+    const workdir = this.workdir(slug);
     const incoming: { to: string; data: Buffer }[] = [];
     for (const t of targets) incoming.push({ to: t.to, data: await readFile(t.from) });
     const backup = await backupDiffering(
@@ -144,19 +191,21 @@ export class Workspace {
       incoming,
       resyncStamp(),
     );
-    await copyTargets(
-      tpl.dir,
-      workdir,
-      templateCopyDir(this.d.factoryHome, slug),
-      targets,
-      tpl.tplSettings,
-      tpl.tplMcp,
-    );
-    await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
-    if (tpl.config.plugins.length) await this.install(slug, tpl);
-    // The human act that migrates an S4 agent: its old real plugins dir moves aside (spec §11.7).
-    await this.linkPlugins(slug, workdir);
+    await writeTargets(workdir, targets);
     return backup ? path.relative(this.d.factoryHome, backup) : undefined;
+  }
+
+  /** Applies a staged re-sync (backup + SafeFs writes) and removes it. A failure keeps it staged. */
+  private async applyPending(slug: string): Promise<void> {
+    const pending = resyncPendingDir(this.d.factoryHome, slug);
+    const targets = await pendingTargets(pending);
+    if (!targets.length) {
+      await rm(pending, { recursive: true, force: true });
+      return;
+    }
+    const backup = await this.applyTargets(slug, targets);
+    await rm(pending, { recursive: true, force: true });
+    this.log.warn({ slug, backupDir: backup }, "applied the staged re-sync files");
   }
 
   /**
@@ -174,6 +223,8 @@ export class Workspace {
     const configDir = agentConfigDir(workdir);
     const configRel = path.relative(workdir, configDir);
     const safe = new SafeFs(workdir);
+    // Staged re-sync files go first: no process runs during prepare (spec §11.4 part 4).
+    await this.applyPending(i.slug);
     const copy = templateCopyDir(this.d.factoryHome, i.slug);
     const tpl = await this.readTemplateJson<Record<string, unknown>>(copy, "settings.json");
     const tplMcp = await this.readTemplateJson<{ mcpServers: Record<string, unknown> }>(

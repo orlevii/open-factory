@@ -121,12 +121,12 @@ test("resync backs up differing files and never deletes", async () => {
   const wd = ws.workdir("lead");
   writeFileSync(path.join(wd, "AGENTS.md"), "# Lead\nlearned things\n");
   writeFileSync(path.join(wd, "mine.md"), "keep");
-  const dir = await ws.resync("lead", tpl);
+  const dir = (await ws.resync("lead", tpl, { canWriteNow: true })).backupDir;
   expect(dir).toMatch(/^state\/agents\/lead\/resync\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/);
   expect(readFileSync(path.join(home, dir as string, "AGENTS.md"), "utf8")).toContain("learned");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
   expect(existsSync(path.join(wd, "mine.md"))).toBe(true);
-  expect(await ws.resync("lead", tpl)).toBeUndefined();
+  expect((await ws.resync("lead", tpl, { canWriteNow: true })).backupDir).toBeUndefined();
 });
 
 test("prepare treats a non-object previous settings.json like a parse failure", async () => {

@@ -36,7 +36,7 @@ export type WaitingOn = z.infer<typeof waitingOnSchema>;
 export const agentLiveShape = {
   rateLimitedUntil: z.string().optional(),
   rateLimitExact: z.boolean().optional(),
-  runtimeDisabled: z.boolean().optional(),
+  runtimeDisabled: z.string().optional(),
   errorKind: errorKindSchema.optional(),
   image: z.string().optional(),
   pulling: z.boolean().optional(),

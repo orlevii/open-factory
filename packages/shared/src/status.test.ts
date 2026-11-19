@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import type { AgentStatus } from "./agents.ts";
 import { type StatusInputs, statusOf } from "./status.ts";
 
 const base: StatusInputs = {
@@ -10,7 +11,7 @@ const base: StatusInputs = {
   queuedWake: false,
   processRunning: false,
 };
-test.each<[string, Partial<StatusInputs>, string]>([
+test.each<[string, Partial<StatusInputs>, AgentStatus]>([
   ["nothing", {}, "hibernated"],
   ["warm", { processRunning: true }, "idle"],
   ["working", { processRunning: true, working: true }, "working"],

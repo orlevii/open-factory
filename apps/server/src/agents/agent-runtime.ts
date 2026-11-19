@@ -59,7 +59,15 @@ export interface RuntimeDeps {
    * failed, which makes the agent `stop_failed` (§9.6). Defaults to a no-op.
    */
   cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined>;
+  /**
+   * Local agents only (spec §12): snapshots Claude's process tree (pids with start times) into `runtime_journal`, so
+   * the cleanup can reap what a dead process left. Absent with a fake driver: a fake pid is not ours to journal.
+   */
+  journal?: { snapshot(claudePid: number): Promise<ProcessPart> };
 }
+
+/** The local part of `runtime_journal` (spec §12). */
+export type ProcessPart = Required<Pick<RuntimeJournal, "claude" | "descendants">>;
 
 export type CleanupResult = { killedProcesses?: number; container?: "stopped" };
 
@@ -116,6 +124,8 @@ const stopFailedMessage = (pid: number | undefined) =>
 
 /** The owed-notification bound (spec §6.1). */
 const OWED_BOUND_MS = 30_000;
+/** Local process-tree snapshots while a turn is open or a task is live (spec §12). */
+const JOURNAL_SNAPSHOT_MS = 10_000;
 /** The pause when a `rejected` rate limit reports no usable reset time (spec §7.2). */
 const RATE_LIMIT_FALLBACK_MS = 30 * 60_000;
 /** Claude expires an in-session cron 7 days after it was created (spec §6.2). */
@@ -164,6 +174,7 @@ export class AgentRuntime {
   // A human's message reached an errored agent whose failing process hadn't exited yet: attempt at that exit.
   private attemptOwedAtExit = false;
   private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
+  private readonly escalated = new WeakSet<HarnessProcess>(); // SIGKILLed or container-stopped: its exit reaps (§9.6)
   private escalationTimer: ReturnType<typeof setTimeout> | undefined;
   private lastStatusJson = "";
   private firstStartDone = false;
@@ -184,7 +195,11 @@ export class AgentRuntime {
   private cronExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   private cronExpiryAt: number | undefined;
   private wasHibernatable = false;
-  private journalJson = "null"; // the tasks/crons part last written to runtime_journal
+  // runtime_journal (spec §12): the tasks/crons part and the local process part, merged into one write.
+  private journalWork: LostWork = { tasks: [], crons: [] };
+  private journalProc: ProcessPart | undefined;
+  private journalJson = "null"; // what was last written, without takenAt
+  private snapshotTimer: ReturnType<typeof setTimeout> | undefined;
   private rateLimitedTurn = false; // a `rate_limited` event since the last turn end (spec §7.3)
   /** The last turn end, delivery or start (spec §5.3: the least recently active is evicted first). */
   lastActivityAt = Date.now();
@@ -681,6 +696,7 @@ export class AgentRuntime {
         return await job();
       } finally {
         this.updateWarmTimer(); // every input change re-evaluates the warm timer (spec §6.3)
+        this.updateSnapshotTimer();
       }
     });
   }
@@ -863,6 +879,8 @@ export class AgentRuntime {
       this.slots.stopFailed(this.agent.id);
       return;
     }
+    this.journalProc = undefined;
+    await this.persistJournal();
     if (done) await this.append(null, { type: "cleanup", ...done });
     this.slots.release(this.agent.id);
     await this.wakeFromJob("restart");
@@ -1016,6 +1034,7 @@ export class AgentRuntime {
       resumed: Boolean(resumeSessionId),
       reason,
     });
+    await this.snapshotJournal(proc);
     this.publishStatus();
     return true;
   }
@@ -1145,6 +1164,10 @@ export class AgentRuntime {
         this.rateLimitedTurn = true;
         await this.pauseCredential(e);
         break;
+      case "background_task_started":
+        await this.append(this.openTurnId, e);
+        await this.snapshotJournal(proc); // its process may detach from Claude's tree later
+        break;
       case "background_task_finished":
         this.owedNotifications += 1;
         this.armOwedBound();
@@ -1208,6 +1231,8 @@ export class AgentRuntime {
     this.escalationTimer = undefined;
     // Spec §9.1: no recorded intent and not expected, whether or not the agent is errored or attempting.
     const crash = !intent && !e.expected;
+    // Leftovers are cleaned up after a crash, an escalation and a Restart's force stop (spec §9.2, §9.6, §9.7, §12).
+    const reap = crash || intent?.kind === "restart" || this.escalated.has(proc);
     const lost = this.lostSnapshot(); // before the tasks and crons are reset below
     this.liveTasks = new Map(); // tasks and crons die with the process
     this.crons = new Map();
@@ -1233,7 +1258,8 @@ export class AgentRuntime {
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
-      if (crash) keepSlot = !(await this.cleanUpAfterCrash());
+      if (reap) keepSlot = !(await this.cleanUpLeftovers(crash));
+      else this.journalProc = undefined; // a clean exit: nothing of it is left to reap
       await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
@@ -1266,13 +1292,19 @@ export class AgentRuntime {
       if (intent?.kind === "restart") await this.reportLostWork("restart", lost);
       if (policy !== "none" && policy !== "hibernated")
         await this.recordCrash(e, policy, live, keepSlot);
-      // A crash keeps its journal: the lost work is reported from it.
+      // A crash keeps the journal's tasks and crons (the lost work is reported from them); a reap drops its pids.
       if (!crash) await this.writeJournal();
+      else await this.persistJournal();
     } finally {
       this.publishQueue();
       // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed; a crash whose
       // cleanup failed keeps it (stop_failed, §9.6).
       if (!keepSlot) this.slots.release(this.agent.id);
+    }
+    if (keepSlot) {
+      // The cleanup failed: stop_failed (§9.6), no wake; a Restart's attempt ends here.
+      if (this.attemptReason) await this.endAttemptIfNothingStarts(this.attemptReason);
+      return;
     }
     // failed_start and internal never wake; a crash makes one automatic attempt only when work was lost (§9.2).
     const canAttempt = !keepSlot && this.stopsInProgress === 0 && !this.slots.closing();
@@ -1432,17 +1464,22 @@ export class AgentRuntime {
     return policy;
   }
 
-  /** Spec §9.2 step 1: clean up leftovers first. False when it failed (the agent is then `stop_failed`, §9.6). */
-  private async cleanUpAfterCrash(): Promise<boolean> {
+  /**
+   * Spec §9.2 step 1 (and §9.6, §9.7): clean up leftovers first; a local reap clears the journal's pids. False when it
+   * failed (the agent is then `stop_failed`, §9.6, and the journal keeps its pids for a later try).
+   */
+  private async cleanUpLeftovers(crash: boolean): Promise<boolean> {
     let done: CleanupResult | undefined;
     try {
       done = await this.d.cleanup?.(this.agent);
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "cleanup after a crash failed");
+      const what = crash ? "cleanup after a crash failed" : "cleanup after a stop failed";
+      this.d.log.error({ err, agent: this.agent.slug }, what);
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
       this.slots.stopFailed(this.agent.id);
       return false;
     }
+    this.journalProc = undefined;
     if (done) await this.append(null, { type: "cleanup", ...done });
     return true;
   }
@@ -1568,6 +1605,7 @@ export class AgentRuntime {
     await this.append(null, { type: "stop_escalated", how }).catch((err) =>
       this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),
     );
+    this.escalated.add(proc); // even a failed one: whenever it exits, the exit reaps
     try {
       await proc.forceKill();
     } catch (err) {
@@ -1707,15 +1745,67 @@ export class AgentRuntime {
     this.owedTimer = undefined;
   }
 
-  /** Writes runtime_journal's tasks and crons (spec §12) when they changed; cleared once both are empty. */
+  /** Writes runtime_journal's tasks and crons (spec §12) from the live state, merged with the process part. */
   private async writeJournal() {
-    const { tasks, crons } = this.lostSnapshot();
-    const j: RuntimeJournal | null =
-      tasks.length || crons.length ? { tasks, crons, takenAt: new Date().toISOString() } : null;
-    const json = j ? JSON.stringify({ tasks, crons }) : "null";
+    this.journalWork = this.lostSnapshot();
+    await this.persistJournal();
+  }
+
+  /**
+   * One write of the whole column (spec §12): the tasks/crons part and the local process part, when either changed;
+   * cleared once both are empty.
+   */
+  private async persistJournal() {
+    const { tasks, crons } = this.journalWork;
+    const proc = this.journalProc;
+    const body = proc || tasks.length || crons.length ? { ...proc, tasks, crons } : null;
+    const json = JSON.stringify(body);
     if (json === this.journalJson) return;
-    await this.d.store.setRuntimeJournal(this.agent.id, j);
+    await this.d.store.setRuntimeJournal(
+      this.agent.id,
+      body ? { ...body, takenAt: new Date().toISOString() } : null,
+    );
     this.journalJson = json;
+  }
+
+  /**
+   * Local only (spec §12): snapshot Claude's process tree into the journal. Best effort: a failure (the process just
+   * exited, `ps` or the DB failed) is logged and never stops the agent.
+   */
+  private async snapshotJournal(proc: HarnessProcess) {
+    const journal = this.d.journal;
+    if (!journal || this.agent.runtime !== "local" || proc !== this.proc) return;
+    if (proc.pid === undefined) return;
+    try {
+      this.journalProc = await journal.snapshot(proc.pid);
+      await this.persistJournal();
+    } catch (err) {
+      this.d.log.warn(
+        { err, agent: this.agent.slug, pid: proc.pid },
+        "process journal snapshot failed",
+      );
+    }
+  }
+
+  /** Every 10 s while a turn is open or a background task is live: the only ways a descendant outlives Claude. */
+  private updateSnapshotTimer() {
+    const busy = Boolean(this.openTurnId) || this.liveTasks.size > 0;
+    if (!this.d.journal || this.agent.runtime !== "local" || !this.proc || !busy) {
+      if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = undefined;
+      return;
+    }
+    if (this.snapshotTimer) return;
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      void this.run(async () => {
+        if (this.snapshotTimer !== timer) return;
+        this.snapshotTimer = undefined; // the end of this job arms the next one while still busy
+        if (this.proc) await this.snapshotJournal(this.proc);
+      }).catch((err) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "journal snapshot job failed"),
+      );
+    }, JOURNAL_SNAPSHOT_MS);
+    this.snapshotTimer = timer;
   }
 
   private async urgentInterrupt(by: string) {

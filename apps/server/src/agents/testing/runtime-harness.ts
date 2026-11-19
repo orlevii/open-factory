@@ -58,6 +58,7 @@ export class RuntimeHarness {
       slots?: SlotPort;
       warmWindowMinutes?: number;
       cleanup?: RuntimeDeps["cleanup"];
+      journal?: RuntimeDeps["journal"];
     } = {},
   ) {
     this.n += 1;
@@ -95,6 +96,7 @@ export class RuntimeHarness {
       holdTimeoutMs: 200,
       slots: opts.slots ?? unlimitedSlots,
       ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),
+      ...(opts.journal ? { journal: opts.journal } : {}),
     });
     await this.rt.init();
     return this.rt;

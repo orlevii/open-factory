@@ -1,8 +1,10 @@
+import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import { errorKindSchema } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS } from "../config.ts";
+import type { ProcessJournal } from "../runtime/local/journal.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
-import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
+import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import type { PrepareStart } from "./start.ts";
@@ -18,6 +20,28 @@ export interface RuntimesDeps {
   serverEnv?: NodeJS.ProcessEnv;
   /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
   maxRunningAgents?: number;
+  /**
+   * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake
+   * process's pid is not ours, and must never be journaled or signalled.
+   */
+  journal?: ProcessJournal;
+}
+
+/**
+ * The local cleanup (spec §9.2 step 1, §12): reap the processes `runtime_journal` names now, each only while its start
+ * time still matches. Docker agents have nothing here (their container stop is Task 25).
+ */
+export function localCleanup(
+  store: Pick<EventStore, "agentById">,
+  journal: Pick<ProcessJournal, "reap">,
+): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+  return async (agent) => {
+    if (agent.runtime !== "local") return undefined;
+    const j = (await store.agentById(agent.id))?.runtimeJournal;
+    if (!j?.claude && !j?.descendants?.length) return undefined;
+    const killedProcesses = await journal.reap(j);
+    return killedProcesses ? { killedProcesses } : undefined;
+  };
 }
 
 /** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
@@ -64,6 +88,9 @@ export class AgentRuntimes {
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
         slots: this.supervisor,
+        ...(this.d.journal
+          ? { journal: this.d.journal, cleanup: localCleanup(this.d.store, this.d.journal) }
+          : {}),
         // Local agents only: a Docker agent's claude runs in its image, not on the host.
         onFirstStart: (spec) => {
           if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);

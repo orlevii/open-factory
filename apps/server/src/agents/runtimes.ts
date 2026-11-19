@@ -1,5 +1,5 @@
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import { type SlotPort, unlimitedSlots } from "../supervisor/slots.ts";
+import type { SlotPort } from "../supervisor/slots.ts";
 import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
@@ -47,7 +47,7 @@ export class AgentRuntimes {
         prepareStart: this.d.prepareStart,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
-        slots: this.d.slots ?? unlimitedSlots,
+        slots: this.d.slots,
         // Local agents only: a Docker agent's claude runs in its image, not on the host.
         onFirstStart: (spec) => {
           if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);

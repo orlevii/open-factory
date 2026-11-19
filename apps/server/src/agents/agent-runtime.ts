@@ -263,13 +263,12 @@ export class AgentRuntime {
   /** The Supervisor's grant job: start with the slot it handed over, or give it back when no longer eligible. */
   grant(reason: WakeReason): Promise<void> {
     return this.run(async () => {
-      if (
-        this.archived ||
-        this.proc ||
-        this.noStart ||
-        this.slots.closing() ||
-        !this.queue.length
-      ) {
+      if (this.proc) {
+        // Never release here: the slot is held by the running process and its exit releases it.
+        this.d.log.error({ agent: this.agent.slug, reason }, "grant for an agent that is running");
+        return;
+      }
+      if (this.archived || this.noStart || this.slots.closing() || !this.queue.length) {
         this.slots.release(this.agent.id);
         this.publishStatus();
         return;
@@ -521,8 +520,8 @@ export class AgentRuntime {
     }
     const row = await this.d.store.agentById(this.agent.id);
     const resumeSessionId = row?.sessionId ?? undefined;
-    // Right before the launch: a stop() or the closing latch that arrived during prepare must not be outrun.
-    this.refuseWhileStopping();
+    // Right before the launch: a stop(), archive or the closing latch that arrived during prepare must not be outrun.
+    this.refuseBeforeLaunch();
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
     onLaunched();
     this.proc = proc;
@@ -545,6 +544,12 @@ export class AgentRuntime {
   private refuseWhileStopping() {
     if (this.stopsInProgress > 0 || this.noStart || this.slots.closing())
       throw new AgentStartError("The agent is being stopped.");
+  }
+
+  /** The last check before the launch: the stop latches, and an archive that landed during prepare. */
+  private refuseBeforeLaunch() {
+    if (this.archived) throw new AgentArchivedError(this.agent.slug);
+    this.refuseWhileStopping();
   }
 
   private async pump(proc: HarnessProcess) {

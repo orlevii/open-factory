@@ -1,4 +1,5 @@
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import type { AgentRow } from "@open-factory/db";
 
 export type { McpServer };
 
@@ -37,14 +38,19 @@ export function toolError(message: string) {
  * listener has already authenticated the token, and the agent id reaches handlers as `authInfo.clientId`.
  */
 export function createFactoryMcp(d: {
-  tools: ToolRegistration[];
   version: string;
   onerror(err: Error): void;
+  loadCaller(agentId: string): Promise<AgentRow | undefined>;
+  tools(caller: AgentRow): ToolRegistration[];
 }) {
+  // The server is built per request, so each caller gets its own tool list (spec §7.1; verified live in Task 1).
   const handler = createMcpHandler(
-    () => {
+    async (ctx) => {
+      const id = ctx.authInfo?.clientId;
+      const caller = id ? await d.loadCaller(id) : undefined;
+      if (!caller) throw new Error("factory MCP request without a known caller"); // the listener's token hook ran first
       const server = new McpServer({ name: "factory", version: d.version });
-      for (const t of d.tools) t.register(server);
+      for (const t of d.tools(caller)) t.register(server);
       return server;
     },
     {

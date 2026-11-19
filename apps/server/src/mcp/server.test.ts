@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
 import { createTestDb } from "../test/helpers.ts";
@@ -28,7 +29,8 @@ test("list_peers reads the caller from authInfo and reports relations and status
   const mcp = createFactoryMcp({
     version: "0.0.0",
     onerror: (e) => errors.push(e),
-    tools: [listPeersTool({ neighborhood: new Neighborhood(t.db), statusOf: () => "idle" })],
+    loadCaller: (id) => new EventStore(t.db).agentById(id),
+    tools: () => [listPeersTool({ neighborhood: new Neighborhood(t.db), statusOf: () => "idle" })],
   });
   const call = async (agentId: string, scope?: string) => {
     const res = await mcp(
@@ -76,7 +78,8 @@ test("an agent id smuggled in the arguments is ignored: list_peers answers for t
   const mcp = createFactoryMcp({
     version: "0.0.0",
     onerror: () => {},
-    tools: [listPeersTool({ neighborhood: new Neighborhood(t.db), statusOf: () => "idle" })],
+    loadCaller: (id) => new EventStore(t.db).agentById(id),
+    tools: () => [listPeersTool({ neighborhood: new Neighborhood(t.db), statusOf: () => "idle" })],
   });
   const res = await mcp(
     rpc("tools/call", {

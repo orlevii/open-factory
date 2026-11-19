@@ -27,6 +27,8 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
+import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
+import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
@@ -45,6 +47,7 @@ import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
+import { maySpawn } from "./spawning/may-spawn.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
@@ -263,6 +266,10 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
+      // STUBS until Tasks 7b (spawn) and 9 (terminate) replace them with the real services. They keep the tools
+      // honest in the meantime: a call fails with a clear message instead of half-working.
+      spawner: { spawn: async () => ({ ok: false, message: NOT_AVAILABLE_YET }) },
+      terminator: { terminateChild: async () => ({ ok: false, message: NOT_AVAILABLE_YET }) },
       log: app.log,
     });
   } catch (err) {
@@ -297,6 +304,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   return app;
 }
 
+const NOT_AVAILABLE_YET = "Spawning isn't available yet.";
+
 /**
  * Binds the agent listener (spec §5.1, §5.3) with the factory MCP behind it. With `FACTORY_AGENT_PORT=0` the port
  * the OS chose becomes `config.agentPort` (and a derived `agentUrl`'s port) before any agent can start.
@@ -310,6 +319,8 @@ async function listenForAgents(
     router: Router;
     neighborhood: Neighborhood;
     runtimes: AgentRuntimes;
+    spawner: SpawnPort;
+    terminator: TerminatePort;
     log: FastifyInstance["log"];
   },
 ) {
@@ -326,9 +337,19 @@ async function listenForAgents(
   const mcp = createFactoryMcp({
     version: FACTORY_VERSION,
     onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
-    tools: [
+    loadCaller: (id) => d.store.agentById(id),
+    tools: (caller) => [
       sendMessageTool(d.router),
       listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+      ...(maySpawn(caller)
+        ? [
+            spawnAgentTool({
+              spawn: d.spawner,
+              templates: caller.config.canSpawn as [string, ...string[]],
+            }),
+            terminateAgentTool({ terminate: d.terminator }),
+          ]
+        : []),
     ],
   });
   const listener = await startAgentListener({

@@ -23,6 +23,7 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
   });
   expect((await t.app.runtimes.liveFields(id, { status: "errored" })).status).toBe("errored");
   await t.app.runtimes.refresh(id); // no-op without a runtime
+  await t.app.runtimes.requestRestart(id); // likewise
   expect(await t.app.runtimes.get(id)).toBeUndefined();
   const a = await t.app.runtimes.bySlug("dev");
   expect(await t.app.runtimes.bySlug("dev")).toBe(a);
@@ -44,8 +45,12 @@ test("app.close stops running agents gracefully", async () => {
     urgent: false,
   });
   expect(driver.starts).toHaveLength(1);
+  // the first batch is in flight, so the restart waits; stopAll clears it
+  await t.app.runtimes.requestRestart(String(rt?.agent.id));
+  expect(rt?.live().restartPending).toBe(true);
   await t.app.runtimes.stopAll();
-  expect(rt?.live().status).toBe("hibernated");
+  expect(rt?.live()).toMatchObject({ status: "hibernated", restartPending: false });
+  expect(driver.starts).toHaveLength(1);
 });
 
 test("a rejected init is evicted, so the next lookup retries", async () => {

@@ -71,6 +71,12 @@ export class AgentRuntime {
   private lastStatusJson = "";
   private firstStartDone = false;
   private submitted = 0;
+  // Apply-restart (spec §13)
+  private restartPending = false;
+  private restarting = false; // a deliberate stop is in progress; flush() writes nothing
+  private stopping = false; // stop()/archive/shutdown: an exit must never respawn
+  private liveTasks = new Map<string, boolean>(); // taskId → ambient
+  private owedNotifications = 0;
 
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
@@ -158,12 +164,27 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Applies config changes at the next safe moment: stop the process gracefully and resume the same session on
+   * the next start, whose prepareStart reloads everything from the DB. A no-op when no process is running.
+   */
+  async requestRestart(): Promise<void> {
+    await this.run(async () => {
+      // Not running (or already going away): the next start reads the new values anyway.
+      if (this.proc && this.proc !== this.deadProc && !this.stopping && !this.restarting) {
+        this.restartPending = true;
+        this.maybeRestart();
+      }
+      this.publishStatus();
+    });
+  }
+
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
   markArchived(): void {
     this.archived = true;
   }
 
-  /** The fields that only the runtime knows. Task 13 fills in the restart fields. */
+  /** The fields that only the runtime knows. */
   live(): {
     status: AgentStatus;
     turnOpen: boolean;
@@ -175,8 +196,8 @@ export class AgentRuntime {
       status: this.status(),
       turnOpen: Boolean(this.openTurnId),
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
-      restartPending: false,
-      restartWaitingOn: 0,
+      restartPending: this.restartPending,
+      restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
     };
   }
 
@@ -191,6 +212,11 @@ export class AgentRuntime {
 
   /** Graceful stop (server shutdown, tests). Waits until the exit is persisted. */
   async stop(opts?: { graceMs?: number; termWaitMs?: number }) {
+    // Synchronously, before any await: the exit this causes (or a restart's exit already on its way) never respawns.
+    this.stopping = true;
+    this.restartPending = false;
+    this.restarting = false;
+    this.publishStatus();
     const p = this.proc;
     if (p) await p.stop(opts);
     await this.settled();
@@ -334,6 +360,9 @@ export class AgentRuntime {
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
     this.proc = proc;
     this.started = false;
+    this.stopping = false;
+    this.liveTasks = new Map();
+    this.owedNotifications = 0;
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
     await this.append(null, { type: "process_started", resumed: Boolean(resumeSessionId) });
@@ -419,10 +448,23 @@ export class AgentRuntime {
         }
         this.openTurnId = undefined;
         if (e.command === "compact") this.compactInFlight = false;
+        if (e.originKind === "task-notification")
+          this.owedNotifications = Math.max(0, this.owedNotifications - 1);
         this.releaseHold();
         await this.flush();
+        this.maybeRestart();
         break;
       }
+      case "background_tasks":
+        this.liveTasks = new Map(e.tasks.map((t) => [t.taskId, Boolean(t.ambient)]));
+        await this.append(this.openTurnId, e);
+        // Safe despite the empty set arriving before the notification turn: owedNotifications covers that turn.
+        this.maybeRestart();
+        break;
+      case "background_task_finished":
+        this.owedNotifications += 1;
+        await this.append(this.openTurnId, e);
+        break;
       case "error":
         await this.append(this.openTurnId, e);
         if (!this.started && (e.source === "resume" || e.source === "spawn")) {
@@ -432,6 +474,7 @@ export class AgentRuntime {
         break;
       case "exited":
         await this.onExited(proc, e);
+        this.maybeRestart();
         break;
       default:
         await this.append(this.openTurnId, e);
@@ -440,6 +483,11 @@ export class AgentRuntime {
   }
 
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
+    const wasRestart = this.restarting && !this.stopping && !this.archived;
+    this.restarting = false;
+    this.restartPending = false;
+    this.liveTasks = new Map();
+    this.owedNotifications = 0;
     // Reset the in-memory state first, so the runtime can restart even if recording the exit fails (DB down).
     const rolledBack = this.inFlight.splice(0);
     const openTurnId = this.openTurnId;
@@ -483,6 +531,67 @@ export class AgentRuntime {
     } finally {
       this.publishQueue();
     }
+    // S3 rule 5 changes here: a deliberate restart may start the process; crash exits still never do.
+    if (wasRestart && this.queue.length) {
+      try {
+        await this.ensureStarted();
+        await this.flush();
+      } catch (err) {
+        // A start failure is already recorded (an `error` event, errored with its real message and fix).
+        if (!(err instanceof AgentStartError || err instanceof AgentArchivedError)) {
+          if (this.proc) await this.onJobFailure(this.proc, err);
+          else this.d.log.error({ err, agent: this.agent.slug }, "restart failed");
+        }
+      }
+    }
+  }
+
+  /**
+   * Stops the process for a pending restart once nothing would be lost (spec §13). Synchronous: it never awaits
+   * the stop, because the `exited` that ends it is a job queued behind the caller.
+   */
+  private maybeRestart() {
+    const proc = this.proc;
+    if (
+      !this.restartPending ||
+      !proc ||
+      proc === this.deadProc ||
+      this.errored ||
+      this.restarting ||
+      this.stopping
+    )
+      return;
+    if (
+      this.openTurnId ||
+      this.inFlight.length ||
+      this.awaiting.length ||
+      this.compactInFlight ||
+      this.hold
+    )
+      return;
+    if (this.nonAmbient() > 0 || this.owedNotifications > 0) return;
+    this.restarting = true;
+    void proc.stop({ graceMs: 3000, termWaitMs: 10_000 }).then(
+      (r) => {
+        if (!r.timedOut) return;
+        void this.run(async () => {
+          if (!this.restarting) return; // stop() or archive took over
+          this.restarting = false;
+          this.restartPending = false;
+          this.deadProc = proc;
+          await this.setErrored("Couldn't restart the agent: the process didn't stop.");
+          this.d.log.error({ agent: this.agent.slug }, "restart stop timed out");
+          this.publishStatus();
+        });
+      },
+      (err) => this.d.log.error({ err, agent: this.agent.slug }, "restart stop failed"),
+    );
+  }
+
+  private nonAmbient() {
+    let n = 0;
+    for (const ambient of this.liveTasks.values()) if (!ambient) n += 1;
+    return n;
   }
 
   private async urgentInterrupt(by: string) {
@@ -507,6 +616,7 @@ export class AgentRuntime {
         this.releaseHold();
         try {
           await this.flush();
+          this.maybeRestart();
         } catch (err) {
           if (this.proc) await this.onJobFailure(this.proc, err);
           else
@@ -524,9 +634,15 @@ export class AgentRuntime {
     this.hold = undefined;
   }
 
-  /** Strict FIFO from the head while allowed (spec §8.3). Never starts a process. */
+  /** Strict FIFO from the head while allowed (spec §8.3). Never starts a process. Holds everything during a restart. */
   private async flush() {
-    while (this.proc && !this.hold && !this.compactInFlight && this.queue.length) {
+    while (
+      this.proc &&
+      !this.restarting &&
+      !this.hold &&
+      !this.compactInFlight &&
+      this.queue.length
+    ) {
       const head = this.queue[0];
       if (!head) break;
       if (head.kind === "compact") {

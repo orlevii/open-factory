@@ -56,6 +56,11 @@ export class AgentRuntimes {
     await (await this.get(agentId))?.reload();
   }
 
+  /** Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. */
+  async requestRestart(agentId: string): Promise<void> {
+    await (await this.get(agentId))?.requestRestart();
+  }
+
   /** Runtime-only fields; defaults for an agent that has no runtime yet. */
   async liveFields(agentId: string, row: { status: string }): Promise<LiveFields> {
     const rt = await this.get(agentId);

@@ -1,26 +1,22 @@
-import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
-import { EventBus } from "./event-bus.ts";
-import { EventStore } from "./event-store.ts";
-import { ev, FakeDriver } from "./testing/fake-driver.ts";
-import { insertAgent } from "./testing/rows.ts";
+import type { EventBus } from "./event-bus.ts";
+import type { EventStore } from "./event-store.ts";
+import { ev, type FakeDriver } from "./testing/fake-driver.ts";
+import { okSpec, RuntimeHarness, silentLog } from "./testing/runtime-harness.ts";
 
-let t: Awaited<ReturnType<typeof createTestDb>>;
+const h = new RuntimeHarness();
+let t: RuntimeHarness["t"];
 let store: EventStore;
-let n = 0;
 beforeAll(async () => {
-  t = await createTestDb();
-  store = new EventStore(t.db);
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await h.setup();
+  ({ t, store } = h);
 });
-afterAll(() => t.close());
+afterAll(() => h.close());
 
-const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 let driver: FakeDriver;
 let bus: EventBus;
 let frames: ServerMessage[];
@@ -28,46 +24,10 @@ let rt: AgentRuntime;
 let agentId: string;
 
 async function makeRuntime(opts: { startError?: Error; sessionId?: string; status?: string } = {}) {
-  n += 1;
-  agentId = `a${n}`;
-  await insertAgent(t.sql, {
-    id: agentId,
-    slug: `dev${n}`,
-    ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
-    ...(opts.status ? { status: opts.status } : {}),
-  });
-  driver = new FakeDriver();
-  bus = new EventBus();
-  frames = [];
-  bus.subscribeAll((m) => frames.push(m));
-  const agent = await store.agentById(agentId);
-  if (!agent) throw new Error("no agent");
-  bus.subscribe(agent.slug, (m) => frames.push(m));
-  rt = new AgentRuntime({
-    agent,
-    store,
-    bus,
-    driver,
-    prepareStart: async (a) => {
-      if (opts.startError) throw opts.startError;
-      return okSpec(a);
-    },
-    log: silentLog,
-    holdTimeoutMs: 200,
-  });
-  await rt.init();
+  await h.makeRuntime(opts);
+  ({ driver, bus, frames, rt, agentId } = h);
   return rt;
 }
-const okSpec = (a: { id: string; slug: string }): AgentRuntimeSpec => ({
-  agentId: a.id,
-  slug: a.slug,
-  cwd: "/w",
-  env: { TOKEN_SEEN: "yes" },
-  claudeBin: "claude",
-  runtime: "local",
-  permissionMode: "auto",
-  mounts: [],
-});
 const send = (body: string, urgent = false) =>
   rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>

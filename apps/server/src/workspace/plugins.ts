@@ -27,8 +27,16 @@ export function marketplaceSourceArg(entry: unknown): string {
 
 export function redactOutput(s: string): string {
   return s
-    .replace(/(https?:\/\/)[^\s/@]+@/g, "$1[redacted]@")
-    .replace(/sk-ant-[A-Za-z0-9_-]+/g, "[redacted]");
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi, "$1[redacted]@")
+    .replace(/sk-ant-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9]+/g, "[redacted]")
+    .replace(/\bgithub_pat_[A-Za-z0-9_]+/g, "[redacted]")
+    .replace(/\bglpat-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(
+      /\b((?:access_|refresh_|id_)?token|password|passwd|secret|api[_-]?key)=[^\s&'"]+/gi,
+      "$1=[redacted]",
+    );
 }
 
 export async function installPlugins(o: {
@@ -51,6 +59,10 @@ export async function installPlugins(o: {
     new Promise<void>((resolve, reject) => {
       if (over)
         return reject(new PluginInstallError("Plugin install took longer than 4 minutes.", ""));
+      for (const a of args) {
+        if (a.startsWith("-"))
+          return reject(new PluginInstallError("Plugin install failed: invalid argument.", ""));
+      }
       const child = execFile(
         o.claudeBin,
         ["plugin", ...args],
@@ -62,7 +74,10 @@ export async function installPlugins(o: {
           const errLines = String(stderr)
             .split("\n")
             .filter((l) => l.trim());
-          const first = errLines[0] ?? (err as Error).message;
+          const timedOut = (err as { killed?: boolean }).killed === true;
+          const first = timedOut
+            ? `${args[0]} ${args[1] ?? ""} timed out after ${(o.commandTimeoutMs ?? 120_000) / 1000} s`
+            : (errLines[0] ?? (err as Error).message);
           reject(
             new PluginInstallError(
               `Plugin install failed: ${redactOutput(first)}`,
@@ -75,7 +90,7 @@ export async function installPlugins(o: {
     });
 
   const sequence = async () => {
-    const markets = new Set(o.plugins.map((p) => p.split("@")[1]).filter((m): m is string => !!m));
+    const markets = new Set(o.plugins.map((p) => p.slice(p.lastIndexOf("@") + 1)).filter((m) => m));
     const known = (o.tplSettings.extraKnownMarketplaces ?? {}) as Record<string, unknown>;
     for (const m of markets) await run(["marketplace", "add", marketplaceSourceArg(known[m])]);
     for (const p of o.plugins) await run(["install", p]);

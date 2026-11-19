@@ -62,3 +62,79 @@ test("backup only differing files; none when nothing differs; stamp has no colon
   await writeAtomic(path.join(wd, "a.json"), "{}");
   expect(readFileSync(path.join(wd, "a.json"), "utf8")).toBe("{}");
 });
+
+import { chmodSync, lstatSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import { WorkspaceError } from "./links.ts";
+
+test("copyTargets never writes through symlinks in the destination", async () => {
+  const t = mkdtempSync(path.join(tmpdir(), "t-"));
+  const host = mkdtempSync(path.join(tmpdir(), "host-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
+  writeFileSync(path.join(host, "SKILL.md"), "host original");
+  mkdirSync(path.join(t, "skills/grilling"), { recursive: true });
+  writeFileSync(path.join(t, "skills/grilling/SKILL.md"), "template");
+  const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
+  mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
+  symlinkSync(host, path.join(wd, ".claude/skills/grilling"));
+  await expect(
+    copyTargets(t, wd, await templateTargets(t, { localSkills: true }), {}, {}),
+  ).rejects.toBeInstanceOf(WorkspaceError);
+  expect(readFileSync(path.join(host, "SKILL.md"), "utf8")).toBe("host original");
+
+  const t2 = mkdtempSync(path.join(tmpdir(), "t-"));
+  mkdirSync(path.join(t2, "files/projects/app"), { recursive: true });
+  writeFileSync(path.join(t2, "files/projects/app/x"), "x");
+  mkdirSync(path.join(wd, "projects"));
+  symlinkSync(repo, path.join(wd, "projects/app"));
+  await expect(
+    copyTargets(t2, wd, await templateTargets(t2, { localSkills: false }), {}, {}),
+  ).rejects.toThrow(/link/);
+  expect(readdirSync(repo)).toEqual([]);
+});
+
+test("copyTargets: read-only re-copy, mode masked, symlink targets, no real-file clobber", async () => {
+  const t = mkdtempSync(path.join(tmpdir(), "t-"));
+  writeFileSync(path.join(t, "AGENTS.md"), "v1");
+  chmodSync(path.join(t, "AGENTS.md"), 0o4444);
+  const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
+  const targets = await templateTargets(t, { localSkills: false });
+  await copyTargets(t, wd, targets, {}, {});
+  chmodSync(path.join(t, "AGENTS.md"), 0o644);
+  writeFileSync(path.join(t, "AGENTS.md"), "v2");
+  chmodSync(path.join(t, "AGENTS.md"), 0o4444);
+  await copyTargets(t, wd, targets, {}, {});
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("v2");
+  expect(statSync(path.join(wd, "AGENTS.md")).mode & 0o7777).toBe(0o444);
+  expect(readdirSync(wd).filter((n) => n.includes(".tmp-"))).toEqual([]);
+
+  mkdirSync(path.join(t, "files"), { recursive: true });
+  symlinkSync("AGENTS.md", path.join(t, "files/link"));
+  writeFileSync(path.join(wd, "link"), "precious");
+  await expect(
+    copyTargets(t, wd, await templateTargets(t, { localSkills: false }), {}, {}),
+  ).rejects.toBeInstanceOf(WorkspaceError);
+  expect(readFileSync(path.join(wd, "link"), "utf8")).toBe("precious");
+  const wd2 = mkdtempSync(path.join(tmpdir(), "wd-"));
+  await copyTargets(t, wd2, await templateTargets(t, { localSkills: false }), {}, {});
+  expect(lstatSync(path.join(wd2, "link")).isSymbolicLink()).toBe(true);
+});
+
+test("backupDiffering rethrows read errors and never overwrites an earlier backup", async () => {
+  const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
+  writeFileSync(path.join(wd, "a.md"), "one");
+  const inc = [{ to: "a.md", data: Buffer.from("tpl") }];
+  const d1 = await backupDiffering(wd, inc, "s");
+  writeFileSync(path.join(wd, "a.md"), "two");
+  const d2 = await backupDiffering(wd, inc, "s");
+  expect(d2).toBe(d1);
+  const files = readdirSync(path.join(wd, d1 as string)).sort();
+  expect(files.length).toBe(2);
+  expect(files.map((f) => readFileSync(path.join(wd, d1 as string, f), "utf8")).sort()).toEqual([
+    "one",
+    "two",
+  ]);
+  mkdirSync(path.join(wd, "dir.md"));
+  await expect(
+    backupDiffering(wd, [{ to: "dir.md", data: Buffer.from("x") }], "s3"),
+  ).rejects.toThrow();
+});

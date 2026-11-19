@@ -74,3 +74,64 @@ test("source args and redaction", () => {
     "clone https://[redacted]@host/x [redacted]",
   );
 });
+
+test("redaction covers tokens, bearer, query secrets and userinfo with @", () => {
+  expect(redactOutput("https://u:p@ss@h/x")).toBe("https://[redacted]@h/x");
+  expect(redactOutput("ssh://git:pw@h/x")).toBe("ssh://[redacted]@h/x");
+  const out = redactOutput(
+    "ghp_abcDEF123 github_pat_11AA_bb glpat-xyz_1-2 Authorization: Bearer abc.def?x=1 u?access_token=zzz&password=hunter2&token=t1",
+  );
+  for (const secret of [
+    "ghp_abcDEF123",
+    "github_pat_11AA_bb",
+    "glpat-xyz_1-2",
+    "abc.def",
+    "zzz",
+    "hunter2",
+    "t1",
+  ])
+    expect(out).not.toContain(secret);
+});
+test("failure message and output are redacted; timeouts say so; dash-leading args refused", async () => {
+  const fake = createFakeClaude({
+    scenario: "reply",
+    env: { FAKE_CLAUDE_PLUGIN_FAIL: "https://u:p@ss@h/x?token=abc@mk" },
+  });
+  const cfg = mkdtempSync(path.join(tmpdir(), "cfg-"));
+  const e = await installPlugins({
+    claudeBin: fake.bin,
+    configDir: cfg,
+    cwd: cfg,
+    plugins: ["https://u:p@ss@h/x?token=abc@mk"],
+    tplSettings,
+    serverEnv: process.env,
+  }).catch((x) => x);
+  expect(e).toBeInstanceOf(PluginInstallError);
+  expect(e.message + e.output).not.toMatch(/p@ss|abc/);
+  expect(e.output).toContain("[redacted]");
+  const slow = createFakeClaude({
+    scenario: "reply",
+    env: { FAKE_CLAUDE_PLUGIN_SLEEP_MS: "3000" },
+  });
+  await expect(
+    installPlugins({
+      claudeBin: slow.bin,
+      configDir: cfg,
+      cwd: cfg,
+      plugins: ["p@mk"],
+      tplSettings,
+      serverEnv: process.env,
+      commandTimeoutMs: 300,
+    }),
+  ).rejects.toThrow(/timed out after 0\.3 s/);
+  await expect(
+    installPlugins({
+      claudeBin: fake.bin,
+      configDir: cfg,
+      cwd: cfg,
+      plugins: ["--evil@mk"],
+      tplSettings,
+      serverEnv: process.env,
+    }),
+  ).rejects.toBeInstanceOf(PluginInstallError);
+});

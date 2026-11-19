@@ -8,21 +8,14 @@ import { createInterface } from "node:readline";
 
 const argv0 = process.argv.slice(2);
 if (argv0[0] === "plugin") {
-  const {
-    readFileSync: rf,
-    writeFileSync: wf,
-    existsSync: ex,
-    mkdirSync: mk,
-    appendFileSync: af,
-  } = await import("node:fs");
   const cfg = process.env.CLAUDE_CONFIG_DIR;
-  af(
+  appendFileSync(
     `${process.env.FAKE_CLAUDE_DIR}/plugin.log`,
     `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort() })}\n`,
   );
-  mk(cfg, { recursive: true });
+  mkdirSync(cfg, { recursive: true });
   const f = `${cfg}/settings.json`;
-  const s = ex(f) ? JSON.parse(rf(f, "utf8")) : {};
+  const s = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {};
   if (argv0[1] === "marketplace" && argv0[2] === "add") {
     const src = argv0[3];
     const name = src.split("/").pop();
@@ -42,7 +35,7 @@ if (argv0[0] === "plugin") {
       await new Promise((r) => setTimeout(r, Number(process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)));
     s.enabledPlugins = { ...s.enabledPlugins, [ref]: true };
   }
-  wf(f, JSON.stringify(s, null, 2));
+  writeFileSync(f, JSON.stringify(s, null, 2));
   process.stdout.write("\u2714 ok\n");
   process.exit(0);
 }

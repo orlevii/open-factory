@@ -1,6 +1,6 @@
 import { lstat, mkdir, readdir, readlink, realpath, stat, symlink, unlink } from "node:fs/promises";
 import path from "node:path";
-import { HOST_SKILL_PATTERN } from "@open-factory/shared";
+import { HOST_SKILL_PATTERN, NAME_PATTERN } from "@open-factory/shared";
 
 export class WorkspaceError extends Error {
   constructor(
@@ -54,6 +54,10 @@ async function syncLinks(
   opts: { checkOnly?: boolean; onlyUnder?: string },
 ): Promise<void> {
   const write = !opts.checkOnly;
+  const pst = await lstatOrNull(parent);
+  if (pst && (pst.isSymbolicLink() || !pst.isDirectory())) {
+    throw new WorkspaceError(`${parent} is a link or not a folder; move it away.`);
+  }
   if (write) await mkdir(parent, { recursive: true });
   for (const w of wanted) {
     const entry = path.join(parent, w.name);
@@ -75,7 +79,11 @@ async function syncLinks(
     const entry = path.join(parent, name);
     const st = await lstatOrNull(entry);
     if (!st?.isSymbolicLink()) continue;
-    if (opts.onlyUnder && !(await readlink(entry)).startsWith(opts.onlyUnder + path.sep)) continue;
+    if (
+      opts.onlyUnder &&
+      !(await readlink(entry)).startsWith(path.resolve(opts.onlyUnder) + path.sep)
+    )
+      continue;
     if (write) await unlink(entry);
   }
 }
@@ -104,6 +112,8 @@ export async function linkProjects(
   opts?: { checkOnly?: boolean },
 ): Promise<void> {
   for (const g of grants) {
+    if (!NAME_PATTERN.test(g.name))
+      throw new WorkspaceError(`${g.name} isn't a valid project name.`, "projects");
     if (!(await isDir(g.hostPath))) {
       throw new WorkspaceError(`Project ${g.name}'s folder ${g.hostPath} is missing.`, "projects");
     }

@@ -63,3 +63,26 @@ test("projects: created, retargeted, revoked removed; missing folder fails; chec
     WorkspaceError,
   );
 });
+
+test("links: unnormalized hostSkillsDir, symlinked or file parents, bad project names", async () => {
+  const hs = tmp("hs-");
+  mkdirSync(path.join(hs, "old"));
+  const wd = tmp("wd-");
+  mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
+  symlinkSync(path.join(hs, "old"), path.join(wd, ".claude/skills/old"));
+  await linkHostSkills(wd, `${hs}/`, []);
+  expect(existsSync(path.join(wd, ".claude/skills/old"))).toBe(false);
+  const outside = tmp("out-");
+  const other = tmp("other-");
+  symlinkSync(other, path.join(outside, "keep"));
+  const wd2 = tmp("wd2-");
+  symlinkSync(outside, path.join(wd2, "projects"));
+  await expect(linkProjects(wd2, [])).rejects.toBeInstanceOf(WorkspaceError);
+  expect(lstatSync(path.join(outside, "keep")).isSymbolicLink()).toBe(true);
+  const wd3 = tmp("wd3-");
+  writeFileSync(path.join(wd3, "projects"), "x");
+  await expect(linkProjects(wd3, [])).rejects.toBeInstanceOf(WorkspaceError);
+  await expect(
+    linkProjects(tmp("wd4-"), [{ name: "../x", hostPath: other }]),
+  ).rejects.toBeInstanceOf(WorkspaceError);
+});

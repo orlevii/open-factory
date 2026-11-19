@@ -111,15 +111,15 @@ function AddSecretForm({
     try {
       onDone(await putSecret(name, value));
     } catch (err) {
-      if (err instanceof ApiError && err.code === "validation_error") {
-        const fields = (err.body.fields ?? {}) as Record<string, string>;
-        if (fields.name || fields.value) {
-          setErrors({ name: fields.name, value: fields.value });
-          focus(fields.name ? "name" : "value");
-        } else setFormError(err.message);
-      } else {
-        setFormError(err instanceof ApiError ? err.message : "Couldn't add the secret. Try again.");
-      }
+      if (!(err instanceof ApiError)) return setFormError("Couldn't add the secret. Try again.");
+      // Server field errors land under their fields whatever the code; a reserved name is a
+      // Name error even when the server sends no `fields`.
+      const fields = (err.body.fields ?? {}) as Record<string, string | undefined>;
+      if (err.code === "secret_name_reserved" && !fields.name) fields.name = err.message;
+      if (fields.name || fields.value) {
+        setErrors({ name: fields.name, value: fields.value });
+        focus(fields.name ? "name" : "value");
+      } else setFormError(err.message);
     } finally {
       setPending(false);
     }
@@ -360,8 +360,12 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
           {outcome?.content}
         </InlineOutcome>
       </div>
-      {adding ? (
+      {/* Only once the list is loaded: the add is an upsert, so without the list an existing
+          name would be silently overwritten instead of refused on the Name field. */}
+      {!data ? null : adding ? (
         <AddSecretForm
+          // A later ?addSecret remounts the open form with the new name and refocuses Value.
+          key={prefill}
           initialName={prefill}
           existing={secrets.map((s) => s.name)}
           onCancel={() => {

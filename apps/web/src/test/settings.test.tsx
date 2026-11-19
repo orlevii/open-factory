@@ -538,3 +538,90 @@ test("#projects focuses the Projects heading once the sections load", async () =
   const heading = await screen.findByRole("heading", { level: 2, name: "Projects" });
   await waitFor(() => expect(heading).toHaveFocus());
 });
+
+test("Add secret waits for the secrets list: a failed load shows no add button or form", async () => {
+  mockApi({
+    "GET /api/credentials": () => json({ credentials: [] }),
+    "GET /api/secrets": () => json({ error: { code: "internal", message: "boom" } }, 500),
+    "GET /api/projects": () => json({ projects: [] }),
+  });
+  renderApp("/settings?addSecret=GH_TOKEN#secrets", alice);
+  const region = await section("Secrets");
+  expect(within(region).queryByRole("button", { name: "Add secret" })).not.toBeInTheDocument();
+  expect(within(region).queryByLabelText("Name")).not.toBeInTheDocument();
+});
+
+test("the query error line has a crimson icon", async () => {
+  mockApi({
+    "GET /api/credentials": () => json({ error: { code: "internal", message: "boom" } }, 500),
+    "GET /api/secrets": () => json({ secrets: [] }),
+    "GET /api/projects": () => json({ projects: [] }),
+  });
+  renderApp("/settings", alice);
+  const alert = await screen.findByText("Couldn't load settings.");
+  const line = alert.closest("[role='alert']") as HTMLElement;
+  expect(line).toHaveTextContent("Couldn't load settings.");
+  const icon = line.querySelector("svg");
+  expect(icon).toHaveAttribute("aria-hidden", "true");
+  expect(icon).toHaveClass("text-destructive");
+});
+
+test("a later ?addSecret updates the open add form and refocuses the value field", async () => {
+  world();
+  const { router } = renderApp("/settings?addSecret=GH_TOKEN#secrets", alice);
+  const region = await section("Secrets");
+  await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
+  await userEvent.click(within(region).getByLabelText("Name"));
+  await router.navigate({ to: "/settings", search: { addSecret: "NPM_TOKEN" }, hash: "secrets" });
+  await waitFor(() => expect(within(region).getByLabelText("Name")).toHaveValue("NPM_TOKEN"));
+  await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
+});
+
+test("add secret: 409 secret_name_reserved lands under Name and focuses it", async () => {
+  world({
+    extra: {
+      "PUT /api/secrets/MY_VAR": () =>
+        json(
+          {
+            error: {
+              code: "secret_name_reserved",
+              message: "That name is reserved for the agent's environment.",
+            },
+          },
+          409,
+        ),
+    },
+  });
+  renderApp("/settings", alice);
+  const region = await section("Secrets");
+  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
+  await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
+  await userEvent.type(within(region).getByLabelText("Value"), "v");
+  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
+  const name = within(region).getByLabelText("Name");
+  await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
+  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(name).toHaveFocus();
+  expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
+});
+
+test("add secret: server fields land under their fields, whatever the code", async () => {
+  world({
+    extra: {
+      "PUT /api/secrets/MY_VAR": () =>
+        json(
+          { error: { code: "secret_invalid", message: "Bad.", fields: { name: "Name is bad." } } },
+          409,
+        ),
+    },
+  });
+  renderApp("/settings", alice);
+  const region = await section("Secrets");
+  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
+  await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
+  await userEvent.type(within(region).getByLabelText("Value"), "v");
+  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
+  const name = within(region).getByLabelText("Name");
+  await waitFor(() => expect(describedText(name)).toBe("Name is bad."));
+  expect(name).toHaveFocus();
+});

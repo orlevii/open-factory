@@ -1,5 +1,6 @@
 import { useQueries } from "@tanstack/react-query";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { CircleAlert } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -55,7 +56,8 @@ function SettingsPage() {
       <PageBody>
         <div className="grid max-w-5xl gap-10">
           {failed && (
-            <p role="alert" className="text-sm text-muted-foreground">
+            <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
               Couldn't load settings.
             </p>
           )}

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRow, MessageRow } from "@open-factory/db";
+import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
   type FactoryMessage,
@@ -43,6 +43,8 @@ export interface RuntimeDeps {
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
   /** The Supervisor's slot port (spec §5.2); defaults to unlimited slots. */
   slots?: SlotPort;
+  /** Whether the agent's credential is rate-limit paused (spec §6.3, D1); defaults to never. */
+  credentialPaused?: () => boolean;
 }
 
 export type HibernateReason =
@@ -70,6 +72,20 @@ const fromOf = (e: MessageEntry): string => {
   if (e.row.kind === "system") return "@factory";
   if (e.fromHandle === null) throw new Error(`message ${e.row.id} has no sender`);
   return `@${e.fromHandle}`;
+};
+
+/** The owed-notification bound (spec §6.1). */
+const OWED_BOUND_MS = 30_000;
+/** Claude expires an in-session cron 7 days after it was created (spec §6.2). */
+const CRON_EXPIRY_MS = 7 * 24 * 3_600_000;
+const DEFAULT_WARM_WINDOW_MINUTES = 70;
+
+type LiveTask = { ambient: boolean; description: string; startedAt: number };
+type LiveCron = {
+  recurring: boolean;
+  humanSchedule: string;
+  nextFireAt: number;
+  createdAt: number;
 };
 
 const toFactory = (e: MessageEntry): FactoryMessage => ({
@@ -108,8 +124,17 @@ export class AgentRuntime {
   private noStart = false; // the closing latch (spec §5.6): never launch again
   private readonly slots: SlotPort;
   private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
-  private liveTasks = new Map<string, boolean>(); // taskId → ambient
+  private liveTasks = new Map<string, LiveTask>(); // startedAt = first seen in a `background_tasks` set
+  private crons = new Map<string, LiveCron>(); // the live in-session crons (spec §6.2): pin the agent
   private owedNotifications = 0;
+  private owedTimer: ReturnType<typeof setTimeout> | undefined;
+  private warmTimer: ReturnType<typeof setTimeout> | undefined;
+  private cronExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+  private cronExpiryAt: number | undefined;
+  private wasHibernatable = false;
+  private journalJson = "null"; // the tasks/crons part last written to runtime_journal
+  /** The last turn end, delivery or start (spec §5.3: the least recently active is evicted first). */
+  lastActivityAt = Date.now();
 
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
@@ -258,6 +283,8 @@ export class AgentRuntime {
   /** The closing latch (spec §5.6). Synchronous: a start already inside prepareStart re-checks it before the launch. */
   setNoStart(): void {
     this.noStart = true;
+    this.updateWarmTimer();
+    this.clearOwedBound();
   }
 
   /** The Supervisor's grant job: start with the slot it handed over, or give it back when no longer eligible. */
@@ -302,8 +329,62 @@ export class AgentRuntime {
       ...(this.lastError && this.errored ? { lastError: this.lastError } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
-      waitingOn: { tasks: [], crons: 0 },
+      waitingOn: this.waitingOn(),
     };
+  }
+
+  /** What keeps the agent warm: live non-ambient tasks (oldest first) and the live cron count. */
+  waitingOn(): WaitingOn {
+    const tasks: WaitingOn["tasks"] = [];
+    for (const [taskId, t] of this.liveTasks)
+      if (!t.ambient)
+        tasks.push({
+          taskId,
+          description: t.description,
+          startedAt: new Date(t.startedAt).toISOString(),
+        });
+    return { tasks, crons: this.crons.size };
+  }
+
+  /** Spec §6.1: a stop now would lose work. */
+  busy(): boolean {
+    return (
+      this.starting ||
+      (Boolean(this.proc) && !this.started) ||
+      Boolean(this.openTurnId) ||
+      this.inFlight.length > 0 ||
+      this.awaiting.length > 0 ||
+      this.compactInFlight ||
+      Boolean(this.hold) ||
+      this.nonAmbient() > 0 ||
+      this.owedNotifications > 0
+    );
+  }
+
+  /** Spec §6.2: a live in-session cron keeps the process (and its slot) until it is gone. */
+  pinned(): boolean {
+    return this.crons.size > 0;
+  }
+
+  /**
+   * Spec §6.3: running and started, not busy or pinned, no restart or stop under way, not errored, and nothing
+   * deliverable queued unless the credential is paused (held deliveries wait for the reset wake).
+   */
+  hibernatable(): boolean {
+    const proc = this.proc;
+    return (
+      Boolean(proc) &&
+      this.started &&
+      proc !== this.deadProc &&
+      proc !== this.failingProc &&
+      !this.stopping &&
+      !this.noStart &&
+      !this.busy() &&
+      !this.pinned() &&
+      !this.restartPending &&
+      !this.errored &&
+      (this.queue.length === 0 || (this.d.credentialPaused?.() ?? false))
+    );
   }
 
   statusFrame(): AgentStatusFrame {
@@ -348,7 +429,13 @@ export class AgentRuntime {
   /** Every job goes through here, so `settled()` can tell when no new job was submitted. */
   private run<T>(job: () => Promise<T>): Promise<T> {
     this.submitted += 1;
-    return this.jobs.run(job);
+    return this.jobs.run(async () => {
+      try {
+        return await job();
+      } finally {
+        this.updateWarmTimer(); // every input change re-evaluates the warm timer (spec §6.3)
+      }
+    });
   }
 
   /**
@@ -529,7 +616,10 @@ export class AgentRuntime {
     this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
     this.afterExit = undefined;
     this.liveTasks = new Map();
+    this.crons = new Map();
     this.owedNotifications = 0;
+    this.clearOwedBound();
+    this.lastActivityAt = Date.now();
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
     await this.append(null, {
@@ -607,6 +697,7 @@ export class AgentRuntime {
         break;
       }
       case "turn_started":
+        this.clearOwedBound(); // the bound only runs while no turn is open
         this.openTurnId = await this.d.store.openTurn(this.agent.id);
         this.lastUsage = undefined;
         await this.append(this.openTurnId, e);
@@ -631,23 +722,54 @@ export class AgentRuntime {
           }
         }
         this.openTurnId = undefined;
+        this.lastActivityAt = Date.now();
         if (e.command === "compact") this.compactInFlight = false;
         if (e.originKind === "task-notification")
           this.owedNotifications = Math.max(0, this.owedNotifications - 1);
+        this.armOwedBound();
+        if (e.originKind === "cron") await this.dropFiredOneShots();
         this.releaseHold();
         await this.flush();
         this.maybeRestart();
         break;
       }
-      case "background_tasks":
-        this.liveTasks = new Map(e.tasks.map((t) => [t.taskId, Boolean(t.ambient)]));
+      case "background_tasks": {
+        const now = Date.now();
+        this.liveTasks = new Map(
+          e.tasks.map((t) => [
+            t.taskId,
+            {
+              ambient: Boolean(t.ambient),
+              description: t.description ?? "",
+              startedAt: this.liveTasks.get(t.taskId)?.startedAt ?? now,
+            },
+          ]),
+        );
         await this.append(this.openTurnId, e);
+        await this.writeJournal();
         // Safe despite the empty set arriving before the notification turn: owedNotifications covers that turn.
         this.maybeRestart();
         break;
+      }
       case "background_task_finished":
         this.owedNotifications += 1;
+        this.armOwedBound();
         await this.append(this.openTurnId, e);
+        break;
+      case "cron_created":
+        this.crons.set(e.cronId, {
+          recurring: e.recurring,
+          humanSchedule: e.humanSchedule,
+          nextFireAt: e.nextFireAt,
+          createdAt: Date.now(),
+        });
+        await this.append(this.openTurnId, e);
+        await this.writeJournal();
+        break;
+      case "cron_deleted":
+        this.crons.delete(e.cronId);
+        await this.append(this.openTurnId, e);
+        await this.writeJournal();
         break;
       case "error":
         await this.append(this.openTurnId, e);
@@ -673,8 +795,10 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
-    this.liveTasks = new Map();
+    this.liveTasks = new Map(); // tasks and crons die with the process
+    this.crons = new Map();
     this.owedNotifications = 0;
+    this.clearOwedBound();
     // Reset the in-memory state first, so the runtime can restart even if recording the exit fails (DB down).
     const rolledBack = this.inFlight.splice(0);
     const openTurnId = this.openTurnId;
@@ -709,7 +833,17 @@ export class AgentRuntime {
           usage,
         });
       await this.append(null, e);
+      if (intent?.kind === "hibernate")
+        await this.append(null, {
+          type: "hibernated",
+          reason: intent.reason,
+          ...(intent.reason === "warm_window"
+            ? { idleMinutes: Math.round((Date.now() - this.lastActivityAt) / 60_000) }
+            : {}),
+        });
       if (crash) await this.d.store.setStatus(this.agent.id, "errored");
+      // A crash keeps its journal: the lost work is reported from it.
+      else await this.writeJournal();
     } finally {
       this.publishQueue();
       // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed.
@@ -743,20 +877,6 @@ export class AgentRuntime {
     await this.wakeFromJob(reason);
   }
 
-  /** The S4 conditions under which a stop would lose work (Task 15 widens this into `busy()`). */
-  private busyNow(): boolean {
-    return (
-      !this.started ||
-      Boolean(this.openTurnId) ||
-      this.inFlight.length > 0 ||
-      this.awaiting.length > 0 ||
-      this.compactInFlight ||
-      Boolean(this.hold) ||
-      this.nonAmbient() > 0 ||
-      this.owedNotifications > 0
-    );
-  }
-
   /**
    * Stops the process for a pending restart once nothing would be lost (spec §6.5). Synchronous: it never awaits
    * the stop, because the `exited` that ends it is a job queued behind the caller.
@@ -774,8 +894,8 @@ export class AgentRuntime {
     const proc = this.proc;
     if (!proc || proc === this.deadProc || proc === this.failingProc || this.stopping) return false;
     if (reason === "warm_window" || reason === "freed_slot") {
-      if (this.busyNow() || this.errored || this.restartPending || this.queue.length) return false;
-    } else if (reason === "apply_changes" && this.busyNow()) return false;
+      if (!this.hibernatable()) return false;
+    } else if (reason === "apply_changes" && this.busy()) return false;
     const intent: AfterExit = { kind: "hibernate", reason };
     this.stopping = true;
     this.afterExit = intent;
@@ -814,8 +934,115 @@ export class AgentRuntime {
 
   private nonAmbient() {
     let n = 0;
-    for (const ambient of this.liveTasks.values()) if (!ambient) n += 1;
+    for (const t of this.liveTasks.values()) if (!t.ambient) n += 1;
     return n;
+  }
+
+  /**
+   * Runs at the end of every job (spec §6.3): arms the warm timer when the agent is hibernatable, cancels it when
+   * it isn't, and tells the Supervisor on the false→true edge. Also keeps the cron expiry timer. Never throws.
+   */
+  private updateWarmTimer() {
+    const h = this.hibernatable();
+    if (!h && this.warmTimer) {
+      clearTimeout(this.warmTimer);
+      this.warmTimer = undefined;
+    } else if (h && !this.warmTimer) {
+      const minutes = this.agent.config.warmWindowMinutes ?? DEFAULT_WARM_WINDOW_MINUTES;
+      const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+        void this.run(async () => {
+          if (this.warmTimer !== timer) return; // cancelled, or a newer window began
+          this.warmTimer = undefined;
+          if (this.beginHibernate("warm_window")) this.publishStatus(); // re-checks hibernatable
+        });
+      }, minutes * 60_000);
+      this.warmTimer = timer;
+    }
+    if (h && !this.wasHibernatable) this.slots.becameHibernatable(this.agent.id);
+    this.wasHibernatable = h;
+    this.updateCronExpiry();
+  }
+
+  /** One timer at the earliest cron expiry, so a pin can't outlive Claude's own 7-day expiry. */
+  private updateCronExpiry() {
+    const at =
+      this.crons.size && !this.noStart
+        ? Math.min(...[...this.crons.values()].map((c) => c.createdAt)) + CRON_EXPIRY_MS
+        : undefined;
+    if (at === this.cronExpiryAt) return;
+    if (this.cronExpiryTimer) clearTimeout(this.cronExpiryTimer);
+    this.cronExpiryTimer = undefined;
+    this.cronExpiryAt = at;
+    if (at === undefined) return;
+    this.cronExpiryTimer = setTimeout(
+      () => {
+        void this.run(async () => {
+          this.cronExpiryAt = undefined; // the end of this job arms the next expiry, if any
+          const now = Date.now();
+          const before = this.crons.size;
+          for (const [id, c] of this.crons)
+            if (now - c.createdAt >= CRON_EXPIRY_MS) this.crons.delete(id);
+          if (this.crons.size !== before) {
+            await this.writeJournal();
+            this.publishStatus();
+          }
+        });
+      },
+      Math.max(0, at - Date.now()),
+    );
+  }
+
+  /** One-shots auto-delete with no `CronDelete` (S0): gone once their time passed and a cron turn ended after it. */
+  private async dropFiredOneShots() {
+    const now = Date.now();
+    const before = this.crons.size;
+    for (const [id, c] of this.crons)
+      if (!c.recurring && c.nextFireAt <= now) this.crons.delete(id);
+    if (this.crons.size !== before) await this.writeJournal();
+  }
+
+  /** Spec §6.1: armed only while no turn is open and a notification turn is owed. */
+  private armOwedBound() {
+    this.clearOwedBound();
+    if (this.owedNotifications <= 0 || this.openTurnId || this.noStart) return;
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      void this.run(async () => {
+        if (this.owedTimer !== timer) return;
+        this.owedTimer = undefined;
+        if (this.owedNotifications <= 0 || this.openTurnId) return;
+        this.d.log.warn(
+          { agent: this.agent.slug, owed: this.owedNotifications },
+          "no notification turn within 30 s; no longer waiting for it",
+        );
+        this.owedNotifications = 0;
+        this.maybeRestart();
+        this.publishStatus();
+      });
+    }, OWED_BOUND_MS);
+    this.owedTimer = timer;
+  }
+
+  private clearOwedBound() {
+    if (this.owedTimer) clearTimeout(this.owedTimer);
+    this.owedTimer = undefined;
+  }
+
+  /** Writes runtime_journal's tasks and crons (spec §12) when they changed; cleared once both are empty. */
+  private async writeJournal() {
+    const tasks = this.waitingOn().tasks.map(({ taskId, description }) => ({
+      taskId,
+      description,
+    }));
+    const crons = [...this.crons].map(([cronId, c]) => ({
+      cronId,
+      humanSchedule: c.humanSchedule,
+    }));
+    const j: RuntimeJournal | null =
+      tasks.length || crons.length ? { tasks, crons, takenAt: new Date().toISOString() } : null;
+    const json = j ? JSON.stringify({ tasks, crons }) : "null";
+    if (json === this.journalJson) return;
+    await this.d.store.setRuntimeJournal(this.agent.id, j);
+    this.journalJson = json;
   }
 
   private async urgentInterrupt(by: string) {
@@ -939,6 +1166,7 @@ export class AgentRuntime {
       agent: this.agent.slug,
       event: dto,
     });
+    this.lastActivityAt = Date.now();
     if (!this.started) this.inFlight.push(batch);
     if (!turnAtWrite) this.awaiting.push(ids);
     this.publishQueue();

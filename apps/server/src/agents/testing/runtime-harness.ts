@@ -51,7 +51,13 @@ export class RuntimeHarness {
   }
 
   async makeRuntime(
-    opts: { startError?: Error; sessionId?: string; status?: string; slots?: SlotPort } = {},
+    opts: {
+      startError?: Error;
+      sessionId?: string;
+      status?: string;
+      slots?: SlotPort;
+      warmWindowMinutes?: number;
+    } = {},
   ) {
     this.n += 1;
     this.agentId = `a${this.n}`;
@@ -63,6 +69,7 @@ export class RuntimeHarness {
       slug: `dev${this.n}`,
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),
+      ...(opts.warmWindowMinutes ? { warmWindowMinutes: opts.warmWindowMinutes } : {}),
     });
     this.driver = new FakeDriver();
     this.bus = new EventBus();

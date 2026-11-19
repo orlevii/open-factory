@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Db, schema } from "@open-factory/db";
+import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
 import { type AnyEvent, anyEventSchema, type SessionEvent } from "@open-factory/shared";
 import { and, asc, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { capPayload } from "./cap.ts";
@@ -39,6 +39,10 @@ export class EventStore {
   }
   async setStatus(agentId: string, status: "hibernated" | "errored") {
     await this.db.update(agents).set({ status }).where(eq(agents.id, agentId));
+  }
+  /** Replaces the whole journal (spec §12); null clears it. */
+  async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {
+    await this.db.update(agents).set({ runtimeJournal }).where(eq(agents.id, agentId));
   }
 
   // events

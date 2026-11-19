@@ -133,7 +133,9 @@ export const ev = {
     ev.usage(),
     ev.end(),
   ],
-  background: (tasks: { taskId: string; ambient?: boolean }[]): HarnessEvent => ({
+  background: (
+    tasks: { taskId: string; ambient?: boolean; description?: string }[],
+  ): HarnessEvent => ({
     type: "background_tasks",
     tasks: tasks.map((t) => ({ taskType: "local_bash", ...t })),
   }),
@@ -142,5 +144,15 @@ export const ev = {
     taskId,
     status: "completed",
     summary: "",
+  }),
+  cron: (
+    cronId: string,
+    o: { recurring?: boolean; humanSchedule?: string; inMs?: number } = {},
+  ): HarnessEvent => ({
+    type: "cron_created",
+    cronId,
+    recurring: o.recurring ?? true,
+    humanSchedule: o.humanSchedule ?? "every 5 minutes",
+    nextFireAt: Date.now() + (o.inMs ?? 300_000),
   }),
 };

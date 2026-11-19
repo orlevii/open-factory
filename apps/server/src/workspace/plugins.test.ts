@@ -185,6 +185,7 @@ async function setupAgent(plugins: string[]) {
     config,
     manager: null,
     grants: [],
+    mcpUrl: "http://127.0.0.1:3001/mcp",
   };
   await ws.materialize("lead", "lead", tpl, prep);
   const workdir = ws.workdir("lead");

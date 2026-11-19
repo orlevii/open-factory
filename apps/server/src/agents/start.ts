@@ -26,7 +26,11 @@ export interface DockerLaunch {
 /** The spec of one start; a Docker start also carries its `launch` (never passed to the driver). */
 export type PreparedSpec = AgentRuntimeSpec & { launch?: DockerLaunch };
 
-export type PrepareStart = (agent: AgentRow) => Promise<PreparedSpec>;
+/** `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. */
+export type PrepareStart = (
+  agent: AgentRow,
+  extra: { agentToken: string },
+) => Promise<PreparedSpec>;
 
 export const CLI_BUNDLE_MISSING = "Build the CLI first (pnpm build).";
 
@@ -52,7 +56,7 @@ export function createPrepareStart(d: {
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
-  return (stale) =>
+  return (stale, { agentToken }) =>
     d.lock.run(stale.slug, async () => {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
@@ -156,6 +160,10 @@ export function createPrepareStart(d: {
           config,
           manager,
           grants,
+          mcpUrl:
+            config.runtime === "docker"
+              ? `${d.config.agentUrl}/mcp`
+              : `http://127.0.0.1:${d.config.agentPort}/mcp`,
         });
       } catch (err) {
         if (err instanceof WorkspaceError) throw new AgentStartError(err.message, err.fix);
@@ -179,6 +187,7 @@ export function createPrepareStart(d: {
             credential: { kind: cred.kind, value: credentialValue },
             secrets,
             agentUrl: d.config.agentUrl,
+            agentToken,
           },
           config.runtime,
         ),

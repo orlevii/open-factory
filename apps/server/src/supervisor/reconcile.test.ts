@@ -8,7 +8,7 @@ import { EventStore } from "../agents/event-store.ts";
 import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import { noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
@@ -38,6 +38,7 @@ class Boot {
   };
   constructor(max = 8) {
     this.runtimes = new AgentRuntimes({
+      tokens: noopTokens,
       store,
       bus: new EventBus(),
       driver: this.driver,

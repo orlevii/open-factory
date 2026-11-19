@@ -79,13 +79,14 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
     "process_started",
     "message_in",
     "session_started",
+    "mcp_unavailable", // the fake Claude lists no factory MCP server
     "turn_started",
     "assistant_text",
     "usage",
     "turn_end",
   ]);
-  await until(() => seen.length === 7);
-  expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  await until(() => seen.length === 8);
+  expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   ws.close();
 });
 

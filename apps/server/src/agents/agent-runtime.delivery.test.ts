@@ -7,6 +7,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
+import { noopTokens } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -45,6 +46,7 @@ async function makeRuntime(
   if (!agent) throw new Error("no agent");
   bus.subscribe(agent.slug, (m) => frames.push(m));
   rt = new AgentRuntime({
+    tokens: noopTokens,
     agent,
     store,
     bus,

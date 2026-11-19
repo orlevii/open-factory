@@ -55,6 +55,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     config,
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
+    mcpUrl: "http://127.0.0.1:3001/mcp",
   };
   return { home, hs, repo, ws, tpl, prep };
 }
@@ -74,7 +75,14 @@ test("materialize then prepare: the full layout", async () => {
   expect(s.permissions.additionalDirectories).toEqual([repo]);
   expect(s.permissions.deny).toEqual(["Bash(curl:*)"]);
   expect(JSON.parse(readFileSync(path.join(wd, ".mcp.json"), "utf8"))).toEqual({
-    mcpServers: { x: { command: "x" } },
+    mcpServers: {
+      x: { command: "x" },
+      factory: {
+        type: "http",
+        url: "http://127.0.0.1:3001/mcp",
+        headers: { Authorization: "Bearer ${OPEN_FACTORY_AGENT_TOKEN}" },
+      },
+    },
   });
   expect(readFileSync(path.join(wd, ".claude-config/CLAUDE.md"), "utf8")).toContain("@lead");
   expect(out.mounts.map((m) => m.target)).toEqual([
@@ -155,5 +163,17 @@ test("prepare reports a missing or malformed template copy as a WorkspaceError",
   await expect(ws.prepare(prep)).rejects.toMatchObject({
     name: "WorkspaceError",
     message: expect.stringContaining("mcp.json"),
+  });
+});
+
+test(".mcp.json gets the factory server with an env-expanded header and no secret", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.prepare({ ...prep, mcpUrl: "http://host.docker.internal:3001/mcp" });
+  const raw = readFileSync(path.join(ws.workdir("lead"), ".mcp.json"), "utf8");
+  expect(JSON.parse(raw).mcpServers.factory).toEqual({
+    type: "http",
+    url: "http://host.docker.internal:3001/mcp",
+    headers: { Authorization: "Bearer ${OPEN_FACTORY_AGENT_TOKEN}" },
   });
 });

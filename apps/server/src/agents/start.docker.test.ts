@@ -30,7 +30,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
-import { silentLog } from "./testing/runtime-harness.ts";
+import { noopTokens, silentLog } from "./testing/runtime-harness.ts";
 
 /**
  * The Docker start path end to end over a fake Docker daemon (spec §10, §11): the real prepareStart, Workspace,
@@ -181,6 +181,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
     containers,
   });
   const runtimes = new AgentRuntimes({
+    tokens: noopTokens,
     store,
     bus: new EventBus(),
     driver: createClaudeDriver({
@@ -623,7 +624,10 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
   const message =
     "Can't reach Docker at unix:///tmp/of-test-docker.sock: connect ECONNREFUSED /tmp/of-test-docker.sock.";
   // The prepare path (the image is known): stopIfRunning can't reach the daemon.
-  await expect(w.prepareStart(w.agent)).rejects.toMatchObject({ name: "AgentStartError", message });
+  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
+    name: "AgentStartError",
+    message,
+  });
   expect(w.workspace.prepare).not.toHaveBeenCalled();
   // A wake: the image check can't reach it either.
   await send(w);
@@ -634,7 +638,7 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
 test("missing CLI bundle: 'Build the CLI first (pnpm build).'", async () => {
   const w = await setup();
   rmSync(w.cliBundle);
-  await expect(w.prepareStart(w.agent)).rejects.toMatchObject({
+  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
     message: "Build the CLI first (pnpm build).",
   });

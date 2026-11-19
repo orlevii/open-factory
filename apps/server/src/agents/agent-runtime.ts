@@ -21,6 +21,7 @@ import {
   type WaitingOn,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import type { AgentTokens } from "../mcp/tokens.ts";
 import {
   type ContainerManager,
   type EnsureResult,
@@ -56,6 +57,8 @@ export interface RuntimeDeps {
   driver: HarnessDriver;
   /** Builds the spec for a process start. It takes the agent's slug lock itself: never call it while holding that lock. */
   prepareStart: PrepareStart;
+  /** Per-launch agent tokens (spec §5.2): minted before each start, revoked when that process exits. */
+  tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
   /** Called with the spec of the first start (AgentRuntimes uses it for the one-time version check). */
@@ -230,6 +233,7 @@ export class AgentRuntime {
   // A human's message reached an errored agent whose failing process hadn't exited yet: attempt at that exit.
   private attemptOwedAtExit = false;
   private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
+  private readonly tokenGens = new WeakMap<HarnessProcess, number>(); // the token generation each process was started with
   private readonly escalated = new WeakSet<HarnessProcess>(); // SIGKILLed or container-stopped: its exit reaps (§9.6)
   private escalationTimer: ReturnType<typeof setTimeout> | undefined;
   private lastStatusJson = "";
@@ -1116,11 +1120,31 @@ export class AgentRuntime {
   private async launch(reason: WakeReason, onLaunched: () => void): Promise<boolean> {
     if (this.archived) throw new AgentArchivedError(this.agent.slug);
     this.refuseWhileStopping();
+    // One token per launch (spec §5.2), revoked when its process exits; a start that never gets a process revokes it
+    // here, whatever the failure and whether or not the slot is kept. The plaintext goes only to prepareStart.
+    const { token, generation } = this.d.tokens.mint(this.agent.id);
+    let assigned = false;
+    try {
+      return await this.launchWith(reason, token, generation, () => {
+        assigned = true;
+        onLaunched();
+      });
+    } finally {
+      if (!assigned) this.d.tokens.revoke(this.agent.id, generation);
+    }
+  }
+
+  private async launchWith(
+    reason: WakeReason,
+    agentToken: string,
+    generation: number,
+    onLaunched: () => void,
+  ): Promise<boolean> {
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
     let prepared: PreparedSpec;
     try {
-      prepared = await this.d.prepareStart(this.agent);
+      prepared = await this.d.prepareStart(this.agent, { agentToken });
     } catch (err) {
       if (err instanceof AgentArchivedError) {
         this.archived = true;
@@ -1160,6 +1184,7 @@ export class AgentRuntime {
       return false;
     }
     const proc = this.d.driver.start(spec, resumeSessionId ? { resumeSessionId } : {});
+    this.tokenGens.set(proc, generation);
     onLaunched();
     this.proc = proc;
     this.procRuntime = spec.runtime;
@@ -1361,6 +1386,21 @@ export class AgentRuntime {
   }
 
   private async pump(proc: HarnessProcess) {
+    try {
+      await this.pumpEvents(proc);
+    } finally {
+      this.revokeToken(proc); // every exit path, even one whose `exited` event never arrived
+    }
+  }
+
+  private revokeToken(proc: HarnessProcess) {
+    const generation = this.tokenGens.get(proc);
+    if (generation === undefined) return;
+    this.tokenGens.delete(proc);
+    this.d.tokens.revoke(this.agent.id, generation);
+  }
+
+  private async pumpEvents(proc: HarnessProcess) {
     for await (const e of proc.events) {
       // The failure handling runs inside the same job, so it is ordered before the next event and `settled()` covers it.
       await this.run(async () => {
@@ -1405,6 +1445,18 @@ export class AgentRuntime {
           );
         // An errored agent's error clears only when its attempt succeeds (spec §9.2), not at session_started.
         await this.append(null, e);
+        // `pending` is normal: init precedes the MCP connection. Only a missing entry or a failure is unavailable.
+        if (e.mcpServers) {
+          const factory = e.mcpServers.find((m) => m.name === "factory");
+          if (!factory || (factory.status !== "connected" && factory.status !== "pending")) {
+            const status = factory?.status ?? "missing";
+            this.d.log.warn(
+              { agent: this.agent.slug, status },
+              "the factory MCP server isn't connected",
+            );
+            await this.append(null, { type: "mcp_unavailable", status });
+          }
+        }
         for (const batch of this.inFlight.splice(0))
           await this.d.store.markDelivered(batch.map((m) => m.row.id));
         break;
@@ -1531,6 +1583,7 @@ export class AgentRuntime {
   }
 
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
+    this.revokeToken(proc);
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;

@@ -207,7 +207,7 @@ export class AgentService {
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
     const projects = await this.projectRows(b.projects ?? tpl.config.projects);
 
-    const prep: PrepareInput = {
+    const prep: Omit<PrepareInput, "mcpUrl"> = {
       slug: b.slug,
       displayName: b.displayName,
       description: b.description,

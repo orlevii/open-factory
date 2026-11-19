@@ -2,6 +2,7 @@ import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import { errorKindSchema } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import type { AgentTokens } from "../mcp/tokens.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
@@ -16,6 +17,7 @@ export interface RuntimesDeps {
   bus: EventBus;
   driver: HarnessDriver;
   prepareStart: PrepareStart;
+  tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
   /** The server's own env; only its PATH and HOME reach the version check. */
@@ -142,6 +144,7 @@ export class AgentRuntimes {
         bus: this.d.bus,
         driver: this.d.driver,
         prepareStart: this.d.prepareStart,
+        tokens: this.d.tokens,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
         slots: this.supervisor,

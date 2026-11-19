@@ -59,6 +59,8 @@ export interface PrepareInput {
   config: TemplateConfig;
   manager: { slug: string; displayName: string } | null;
   grants: { name: string; hostPath: string }[];
+  /** The agent listener's MCP endpoint as this agent reaches it (local loopback, or the Docker agentUrl). */
+  mcpUrl: string;
 }
 
 export interface TemplateSource {
@@ -101,7 +103,7 @@ export class Workspace {
     _agentKey: string,
     slug: string,
     tpl: TemplateSource,
-    check: PrepareInput,
+    check: Omit<PrepareInput, "mcpUrl">,
   ): Promise<void> {
     const workdir = this.workdir(slug);
     await mkdir(path.join(this.d.factoryHome, "agents"), { recursive: true });
@@ -267,7 +269,10 @@ export class Workspace {
       grantedPaths,
     });
     await safe.writeFile(path.join(configRel, "settings.json"), JSON.stringify(settings, null, 2));
-    await safe.writeFile(".mcp.json", JSON.stringify(buildMcpJson(tplMcp), null, 2));
+    await safe.writeFile(
+      ".mcp.json",
+      JSON.stringify(buildMcpJson(tplMcp, { url: i.mcpUrl }), null, 2),
+    );
     await safe.writeFile(
       path.join(configRel, "CLAUDE.md"),
       buildClaudeMd({

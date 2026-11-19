@@ -11,6 +11,12 @@ import { unlimitedSlots } from "./unlimited-slots.ts";
 
 export const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 
+/** A token port for tests that don't look at tokens. */
+export const noopTokens = {
+  mint: () => ({ token: "tok", generation: 1 }),
+  revoke: () => {},
+};
+
 export const okSpec = (a: { id: string; slug: string }): AgentRuntimeSpec => ({
   agentId: a.id,
   slug: a.slug,
@@ -38,6 +44,11 @@ export class RuntimeHarness {
   /** When set, `prepareStart` waits for it (a slow prepare). */
   prepareGate: Promise<void> | undefined;
   prepareCalls = 0;
+  /** Every token mint and revoke of the current runtime, in order. Reset by `makeRuntime`. */
+  tokenCalls: ["mint" | "revoke", string, number][] = [];
+  /** The `agentToken` the last `prepareStart` received. */
+  lastAgentToken: string | undefined;
+  private minted = 0;
   private n = 0;
 
   async setup() {
@@ -54,6 +65,7 @@ export class RuntimeHarness {
   async makeRuntime(
     opts: {
       startError?: Error;
+      errorKind?: string;
       sessionId?: string;
       status?: string;
       slots?: SlotPort;
@@ -67,9 +79,13 @@ export class RuntimeHarness {
     this.startError = opts.startError;
     this.prepareGate = undefined;
     this.prepareCalls = 0;
+    this.tokenCalls = [];
+    this.lastAgentToken = undefined;
+    this.minted = 0;
     await insertAgent(this.t.sql, {
       id: this.agentId,
       slug: `dev${this.n}`,
+      ...(opts.errorKind ? { errorKind: opts.errorKind } : {}),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),
       ...(opts.warmWindowMinutes ? { warmWindowMinutes: opts.warmWindowMinutes } : {}),
@@ -87,8 +103,19 @@ export class RuntimeHarness {
       store: this.store,
       bus: this.bus,
       driver: this.driver,
-      prepareStart: async (a) => {
+      tokens: {
+        mint: (id) => {
+          this.minted += 1;
+          this.tokenCalls.push(["mint", id, this.minted]);
+          return { token: `tok-${this.minted}`, generation: this.minted };
+        },
+        revoke: (id, generation) => {
+          this.tokenCalls.push(["revoke", id, generation]);
+        },
+      },
+      prepareStart: async (a, extra) => {
         this.prepareCalls += 1;
+        this.lastAgentToken = extra.agentToken;
         if (this.prepareGate) await this.prepareGate;
         if (this.startError) throw this.startError;
         return okSpec(a);

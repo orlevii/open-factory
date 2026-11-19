@@ -6,7 +6,7 @@ import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.t
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import { ev, type FakeDriver } from "./testing/fake-driver.ts";
-import { okSpec, RuntimeHarness, silentLog } from "./testing/runtime-harness.ts";
+import { noopTokens, okSpec, RuntimeHarness, silentLog } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 const h = new RuntimeHarness();
@@ -219,6 +219,7 @@ test("the runtime does not hold the slug lock around prepareStart (the real one 
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
+    tokens: noopTokens,
     agent,
     store,
     bus,
@@ -370,6 +371,7 @@ test("pending after a failed start, then delivered as one turn on the next start
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
+    tokens: noopTokens,
     agent,
     store,
     bus,

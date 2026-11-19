@@ -15,6 +15,7 @@ import { createPrepareStart } from "../src/agents/start.ts";
 import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
+import { AgentTokens } from "../src/mcp/tokens.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
 import { KeyedMutex } from "../src/workspace/lock.ts";
 import { Workspace } from "../src/workspace/workspace.ts";
@@ -78,6 +79,7 @@ const make = () =>
     bus,
     driver: createClaudeDriver({ log, transports: { local: localTransport } }),
     prepareStart,
+    tokens: new AgentTokens(),
     log,
     slots: unlimitedSlots,
   });

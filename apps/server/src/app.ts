@@ -20,6 +20,7 @@ import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
+import { AgentTokens } from "./mcp/tokens.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -133,6 +134,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const docker = dockerodeClient();
   const containers = new ContainerManager({ docker, log: app.log });
   const journal = new ProcessJournal();
+  const tokens = new AgentTokens();
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
@@ -145,6 +147,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     store,
     bus,
     prepareStart,
+    tokens,
     log: app.log,
     maxRunningAgents: config.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),

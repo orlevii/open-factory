@@ -58,6 +58,9 @@ export interface RuntimeDeps {
 
 export type CleanupResult = { killedProcesses?: number; container?: "stopped" };
 
+/** What a crashed process left (spec §9.2 step 3): an open turn, a written batch not yet answered, live tasks/crons. */
+type CrashLive = { turnOpen: boolean; batchUnanswered: boolean; lost: LostWork };
+
 export type HibernateReason =
   | "warm_window"
   | "freed_slot"
@@ -101,8 +104,9 @@ const fromOf = (e: MessageEntry): string => {
 
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
 const ESCALATION_EXIT_MS = 5_000;
-const STOP_FAILED_MESSAGE =
-  "The agent's process can't be stopped. Check the host or Docker, then restart again.";
+/** Spec §9.6's text; the pid, when known, is in the detail (the status line is just "Errored"). */
+const stopFailedMessage = (pid: number | undefined) =>
+  `The agent's process can't be stopped. Check the host${pid ? ` (pid ${pid})` : ""} or Docker, then restart again.`;
 
 /** The owed-notification bound (spec §6.1). */
 const OWED_BOUND_MS = 30_000;
@@ -151,6 +155,8 @@ export class AgentRuntime {
   private attempting: boolean;
   private attemptReason: WakeReason | undefined;
   private attemptBatchWritten = false;
+  // A human's message reached an errored agent whose failing process hadn't exited yet: attempt at that exit.
+  private attemptOwedAtExit = false;
   private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
   private escalationTimer: ReturnType<typeof setTimeout> | undefined;
   private lastStatusJson = "";
@@ -214,7 +220,10 @@ export class AgentRuntime {
       this.publishQueue();
       // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
       if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
-      else await this.wakeInline("message");
+      else {
+        if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
+        await this.wakeInline("message");
+      }
       if (m.urgent) await this.urgentInterrupt(m.fromHandle);
       await this.flush();
       return this.itemOf(entry);
@@ -356,10 +365,12 @@ export class AgentRuntime {
         this.credentialPaused()
       ) {
         this.slots.release(this.agent.id);
+        await this.endAttemptIfNothingStarts(reason);
         this.publishStatus();
         return;
       }
       await this.startAndFlush(reason, "granted start failed");
+      await this.endAttemptIfNothingStarts(reason);
       this.publishStatus();
     });
   }
@@ -680,8 +691,11 @@ export class AgentRuntime {
 
   /** Spec §9.2: a human's message to an errored agent makes one attempt, unless recovery needs another action. */
   private messageStartsAttempt(): boolean {
+    return !this.proc && this.messageMayAttempt();
+  }
+
+  private messageMayAttempt(): boolean {
     return (
-      !this.proc &&
       this.errored &&
       !this.attempting &&
       this.errorKind !== "resume_unrecoverable" &&
@@ -697,14 +711,29 @@ export class AgentRuntime {
     this.attempting = true;
     this.attemptReason = reason;
     this.attemptBatchWritten = false;
+    this.attemptOwedAtExit = false;
     await this.d.store.setAttempting(this.agent.id, true);
     this.publishStatus();
-    const requested = inline ? await this.wakeInline(reason) : await this.wakeFromJob(reason);
-    if (!requested && this.attempting && this.attemptReason === reason) {
-      this.attempting = false;
-      this.attemptReason = undefined;
-      await this.d.store.setAttempting(this.agent.id, false);
+    try {
+      if (inline) await this.wakeInline(reason);
+      else await this.wakeFromJob(reason);
+    } finally {
+      await this.endAttemptIfNothingStarts(reason);
     }
+  }
+
+  /**
+   * Every refusal of an attempt's start clears it (memory and DB): a dropped wake, a start refused without an error
+   * (a stop in progress, the closing latch, archived) or a grant found ineligible. Not while a process exists, a start
+   * is under way, or the wake still waits for a slot (queued, granted, or requeued for a pause).
+   */
+  private async endAttemptIfNothingStarts(reason: WakeReason) {
+    if (!this.attempting || this.attemptReason !== reason) return;
+    if (this.proc || this.starting || this.slots.isQueued(this.agent.id)) return;
+    this.attempting = false;
+    this.attemptReason = undefined;
+    await this.d.store.setAttempting(this.agent.id, false);
+    this.publishStatus();
   }
 
   /** Spec §9.2: the attempt's batch turn ended with the process running. Clears the attempt and the error. */
@@ -1026,6 +1055,8 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    const attemptOwed = this.attemptOwedAtExit; // only this process's exit honours it
+    this.attemptOwedAtExit = false;
     if (this.escalationTimer) clearTimeout(this.escalationTimer);
     this.escalationTimer = undefined;
     // Spec §9.1: no recorded intent and not expected, whether or not the agent is errored or attempting.
@@ -1046,10 +1077,13 @@ export class AgentRuntime {
     this.openTurnId = undefined;
     this.releaseHold();
     this.compactInFlight = false;
+    // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
+    const batchUnanswered = this.awaiting.length > 0;
     this.awaiting = [];
     if (this.proc === proc) this.proc = undefined;
     this.started = false;
-    const policy = crash ? this.onCrash(e, { turnOpen: Boolean(openTurnId), lost }) : "none";
+    const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
+    const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
       if (crash) keepSlot = !(await this.cleanUpAfterCrash());
@@ -1082,8 +1116,8 @@ export class AgentRuntime {
             : {}),
         });
       }
-      if (policy !== "none" && policy !== "hibernated" && !keepSlot)
-        await this.recordCrash(e, policy, { turnOpen: Boolean(openTurnId), lost });
+      if (policy !== "none" && policy !== "hibernated")
+        await this.recordCrash(e, policy, live, keepSlot);
       // A crash keeps its journal: the lost work is reported from it.
       if (!crash) await this.writeJournal();
     } finally {
@@ -1093,9 +1127,13 @@ export class AgentRuntime {
       if (!keepSlot) this.slots.release(this.agent.id);
     }
     // failed_start and internal never wake; a crash makes one automatic attempt only when work was lost (§9.2).
+    const canAttempt = !keepSlot && this.stopsInProgress === 0 && !this.slots.closing();
     if (policy === "recover" && !keepSlot) {
-      if (this.stopsInProgress === 0 && !this.slots.closing())
-        await this.beginAttempt("crash_recovery", false);
+      if (canAttempt) await this.beginAttempt("crash_recovery", false);
+    } else if ((intent?.kind === "failed_start" || intent?.kind === "internal") && attemptOwed) {
+      // A human's message arrived while the failing process was still exiting (spec §9.2 step 5).
+      if (canAttempt && this.messageStartsAttempt() && this.queue.length)
+        await this.beginAttempt("message", false);
     } else if (intent?.kind === "hibernate") {
       if (intent.reason !== "shutdown" && intent.reason !== "archived")
         await this.wakeAfterExit(
@@ -1207,15 +1245,21 @@ export class AgentRuntime {
    */
   private onCrash(
     e: Extract<HarnessEvent, { type: "exited" }>,
-    live: { turnOpen: boolean; lost: LostWork },
+    live: CrashLive,
   ): "attempt_failed" | "hibernated" | "recover" {
-    const message =
-      e.code !== null
+    // The same order as the crash notice: the signal when there is one, else the exit code.
+    const message = e.signal
+      ? `Exited unexpectedly (${e.signal})`
+      : e.code !== null
         ? `Exited unexpectedly (code ${e.code})`
-        : `Exited unexpectedly (${e.signal ?? "unknown"})`;
+        : "Exited unexpectedly";
     const policy = this.attempting
       ? "attempt_failed"
-      : !live.turnOpen && !live.lost.tasks.length && !live.lost.crons.length && !this.queue.length
+      : !live.turnOpen &&
+          !live.batchUnanswered &&
+          !live.lost.tasks.length &&
+          !live.lost.crons.length &&
+          !this.queue.length
         ? "hibernated"
         : "recover";
     if (policy === "hibernated") return policy;
@@ -1234,7 +1278,7 @@ export class AgentRuntime {
       done = await this.d.cleanup?.(this.agent);
     } catch (err) {
       this.d.log.error({ err, agent: this.agent.slug }, "cleanup after a crash failed");
-      await this.setErrored(STOP_FAILED_MESSAGE, "stop_failed");
+      await this.setErrored(stopFailedMessage(undefined), "stop_failed");
       this.slots.stopFailed(this.agent.id);
       return false;
     }
@@ -1242,14 +1286,22 @@ export class AgentRuntime {
     return true;
   }
 
-  /** The durable side of the crash policy: errored, and for a recovery the lost work and the crash notice. */
+  /**
+   * The durable side of the crash policy: errored (unless a failed cleanup made it stop_failed), the lost work
+   * (spec §9.4, always), and for a recovery the crash notice (not when the cleanup failed: no attempt follows).
+   */
   private async recordCrash(
     e: Extract<HarnessEvent, { type: "exited" }>,
     policy: "attempt_failed" | "recover",
-    live: { turnOpen: boolean; lost: LostWork },
+    live: CrashLive,
+    cleanupFailed: boolean,
   ) {
-    await this.d.store.setErrored(this.agent.id, this.lastError ?? "Exited unexpectedly", "crash");
-    if (policy === "attempt_failed") return; // only a human acts next
+    if (!cleanupFailed)
+      await this.d.store.setErrored(
+        this.agent.id,
+        this.lastError ?? "Exited unexpectedly",
+        "crash",
+      );
     const { tasks, crons } = live.lost;
     if (tasks.length || crons.length) {
       await this.append(null, { type: "background_work_lost", reason: "crash", tasks, crons });
@@ -1258,6 +1310,7 @@ export class AgentRuntime {
         "background work lost; would notify the manager",
       );
     }
+    if (policy === "attempt_failed" || cleanupFailed) return; // only a human acts next
     await this.addNotice(
       "crash",
       notices.crash({
@@ -1386,7 +1439,9 @@ export class AgentRuntime {
     this.restartPending = false;
     this.d.log.error({ agent: this.agent.slug, pid: proc.pid }, "the process can't be stopped");
     // setErrored sets the in-memory truth first; the DB may be what failed.
-    await this.setErrored(STOP_FAILED_MESSAGE, "stop_failed").catch(() => {});
+    await this.setErrored(stopFailedMessage(proc.pid), "stop_failed").catch(() => {});
+    // Restart of a stop_failed agent makes one more escalation try (spec §9.6, Task 20): don't cache this one.
+    this.escalations.delete(proc);
     this.slots.stopFailed(this.agent.id);
     this.publishStatus();
   }

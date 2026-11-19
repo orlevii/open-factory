@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
+import { AgentArchivedError } from "./errors.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
@@ -279,4 +280,97 @@ test("a failing crash cleanup is stop_failed and keeps the slot, with no attempt
   expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
   expect(slots.events.filter((e) => e[0] === "release")).toHaveLength(0);
   expect(h.driver.starts).toHaveLength(1);
+});
+
+test("a crash after a batch was written but before its turn began recovers it", async () => {
+  await h.makeRuntime();
+  await idle();
+  await h.send("next"); // written after session_started, its turn not started yet
+  h.driver.last.exit(1);
+  await h.rt.settled();
+  expect(h.driver.starts).toHaveLength(2);
+  expect(h.driver.last.sent[0]?.[0]?.body).toBe(
+    "Your previous process stopped unexpectedly (exit code 1). Check the state of that work and continue where you left off.",
+  );
+  const started = (await events()).filter((e) => e.type === "process_started");
+  expect(started.at(-1)).toMatchObject({ reason: "crash_recovery" });
+});
+
+test("an attempt whose start is refused without an error clears attempting", async () => {
+  await h.makeRuntime({ status: "errored", startError: new AgentArchivedError("x") });
+  await expect(h.send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
+  expect(await row()).toMatchObject({ attempting: false });
+  expect(h.rt.live().status).toBe("errored");
+});
+
+test("a human message during a failing start's stop makes its attempt at that exit", async () => {
+  await h.makeRuntime({ sessionId: "sess-1" });
+  await h.send("hi");
+  const p = h.driver.last;
+  p.holdStop = true;
+  p.emit({ type: "error", source: "resume", message: "Connection reset" });
+  await h.rt.settled();
+  await h.send("again"); // the failing process hasn't exited yet
+  expect(h.driver.starts).toHaveLength(1);
+  p.releaseStop();
+  await h.rt.settled();
+  expect(h.driver.starts).toHaveLength(2);
+  const started = (await events()).filter((e) => e.type === "process_started");
+  expect(started.at(-1)).toMatchObject({ reason: "message" });
+  expect(await row()).toMatchObject({ attempting: true });
+});
+
+test("a failed crash cleanup still records the lost work, with no notice", async () => {
+  await h.makeRuntime({
+    cleanup: async () => {
+      throw new Error("docker down");
+    },
+  });
+  await idle();
+  h.driver.last.emit(ev.background([{ taskId: "t1", description: "pnpm test" }]));
+  await h.rt.settled();
+  h.driver.last.exit(1);
+  await h.rt.settled();
+  expect(await events()).toContainEqual(
+    expect.objectContaining({ type: "background_work_lost", reason: "crash" }),
+  );
+  expect(await h.store.pendingQueue(h.agentId)).toEqual([]);
+  expect(h.rt.live().errorKind).toBe("stop_failed");
+});
+
+test("a signal exit: lastError and the notice both name the signal", async () => {
+  await h.makeRuntime();
+  await idle();
+  const p = h.driver.last;
+  p.emit(ev.turn(), {
+    type: "exited",
+    code: null,
+    signal: "SIGKILL",
+    stderrTail: "",
+    expected: false,
+  });
+  p.events.end();
+  await h.rt.settled();
+  expect(h.rt.live().lastError).toBe("Exited unexpectedly (SIGKILL)");
+  expect(h.driver.last.sent[0]?.[0]?.body).toContain("(signal SIGKILL) during a turn");
+});
+
+test("stop_failed names the pid and a later stop escalates again", async () => {
+  await h.makeRuntime();
+  await idle();
+  const p = h.driver.last;
+  p.stopResult = { code: null, signal: null, timedOut: true };
+  p.emitExitOnStop = false;
+  let kills = 0;
+  p.forceKill = async () => {
+    kills += 1;
+    throw new Error("EPERM");
+  };
+  await h.rt.hibernate("warm_window");
+  await h.rt.settled();
+  expect(h.rt.live().lastError).toBe(
+    "The agent's process can't be stopped. Check the host (pid 4242) or Docker, then restart again.",
+  );
+  await h.rt.stop();
+  expect(kills).toBe(2);
 });

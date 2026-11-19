@@ -4,6 +4,7 @@ import {
   type AgentRuntimeSpec,
   type ExitInfo,
   type FactoryMessage,
+  groupEnvelopes,
   type HarnessDriver,
   type HarnessProcess,
   ProcessNotRunningError,
@@ -190,13 +191,18 @@ type LiveCron = {
   createdAt: number;
 };
 
-const toFactory = (e: MessageEntry): FactoryMessage => ({
-  id: e.row.id,
-  from: fromOf(e),
-  kind: e.row.kind === "system" ? "system" : "message",
-  urgent: e.row.urgent,
-  body: e.row.body,
-});
+/** Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. */
+const toEnvelopes = (batch: MessageEntry[]): FactoryMessage[] =>
+  groupEnvelopes(
+    batch.map((e) => ({
+      id: e.row.id,
+      kind: e.row.kind === "system" ? ("system" as const) : ("message" as const),
+      from: fromOf(e),
+      urgent: e.row.urgent,
+      body: e.row.body,
+      createdAt: e.row.createdAt,
+    })),
+  );
 
 export class AgentRuntime {
   agent: AgentRow;
@@ -2220,7 +2226,7 @@ export class AgentRuntime {
     }
     const ids = batch.map((m) => m.row.id);
     try {
-      await proc.send(batch.map(toFactory));
+      await proc.send(toEnvelopes(batch));
     } catch (err) {
       this.queue.unshift(...batch);
       await this.append(null, {
@@ -2238,7 +2244,7 @@ export class AgentRuntime {
         const out = await this.d.store.append(
           this.agent.id,
           turnAtWrite ?? null,
-          { type: "message_in", messages: batch.map(toFactory) },
+          { type: "message_in", messages: toEnvelopes(batch) },
           tx,
         );
         if (this.started) await this.d.store.markDelivered(ids, tx);

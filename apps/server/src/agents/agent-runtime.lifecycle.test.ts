@@ -56,7 +56,16 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
   expect(p.opts).toEqual({});
   expect(p.spec.env).toEqual({ TOKEN_SEEN: "yes" });
   expect(p.sent).toEqual([
-    [{ id: expect.any(String), from: "@or", kind: "message", urgent: false, body: "hello" }],
+    [
+      {
+        id: expect.any(String),
+        from: "@or",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        parts: [{ id: expect.any(String), body: "hello", createdAt: expect.any(String) }],
+      },
+    ],
   ]);
   expect(rt.live().status).toBe("working");
   p.emit(ev.session(), ev.turn(), ev.text("hi"), ev.usage(), ev.end());

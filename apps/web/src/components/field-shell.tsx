@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 type Props = {
   name: string;
   label: string;
-  error?: string;
+  error?: ReactNode;
   /** Muted hint under the field. An error replaces it in the same slot. */
   help?: string;
   /** Group of controls: a fieldset with a legend instead of a label for one input. */

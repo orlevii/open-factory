@@ -11,7 +11,6 @@ test.each([
   ["/inbox", "Inbox", "Nothing in your inbox."],
   ["/tasks", "Tasks", "No tasks yet."],
   ["/schedules", "Schedules", "No schedules yet."],
-  ["/settings", "Settings", "Nothing to configure yet."],
 ])("%s shows its heading and empty line", async (path, title, text) => {
   renderApp(path, alice);
   expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();

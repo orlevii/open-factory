@@ -20,6 +20,7 @@ export function ConfirmDialog({
   body,
   confirmLabel,
   onConfirm,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange(o: boolean): void;
@@ -27,6 +28,8 @@ export function ConfirmDialog({
   body: ReactNode;
   confirmLabel: string;
   onConfirm(): Promise<void> | void;
+  /** Where focus goes on close, when there is no trigger to return to (opened from a menu). */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -53,7 +56,7 @@ export function ConfirmDialog({
   // The action uses aria-disabled (not disabled) so focus stays on it instead of falling to <body>.
   return (
     <AlertDialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
-      <AlertDialogContent>
+      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{body}</AlertDialogDescription>

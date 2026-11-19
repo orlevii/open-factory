@@ -70,11 +70,19 @@ export class AgentService {
             ? isNotNull(schema.agents.archivedAt)
             : undefined,
       );
-    const slugById = new Map(
-      (await db.select({ id: schema.agents.id, slug: schema.agents.slug }).from(schema.agents)).map(
-        (r) => [r.id, r.slug],
-      ),
-    );
+    const allAgents = await db
+      .select({
+        id: schema.agents.id,
+        slug: schema.agents.slug,
+        reportsTo: schema.agents.reportsTo,
+        archivedAt: schema.agents.archivedAt,
+      })
+      .from(schema.agents);
+    const slugById = new Map(allAgents.map((r) => [r.id, r.slug]));
+    const reportCount = new Map<string, number>();
+    for (const a of allAgents)
+      if (a.reportsTo && !a.archivedAt)
+        reportCount.set(a.reportsTo, (reportCount.get(a.reportsTo) ?? 0) + 1);
     const credName = new Map(
       (await db.select().from(schema.credentials)).map((c) => [c.id, c.name]),
     );
@@ -111,6 +119,7 @@ export class AgentService {
           template: r.template,
           runtime: r.runtime,
           reportsTo: i.reportsTo,
+          reports: reportCount.get(r.id) ?? 0,
           credential: credName.get(r.credentialId) ?? "",
           projects: (projectsOf.get(r.id) ?? []).sort(),
           grantsOverridden: r.grantsOverridden,

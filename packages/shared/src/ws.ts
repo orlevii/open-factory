@@ -36,5 +36,6 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   agentStatusFrameSchema,
   z.object({ type: z.literal("resync"), agent: z.string() }),
   z.object({ type: z.literal("supervisor"), running: z.number().int(), max: z.number().int() }),
+  z.object({ type: z.literal("inbox_changed") }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

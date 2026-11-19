@@ -53,6 +53,7 @@ export const agentSummarySchema = z.object({
   kind: z.literal("persistent"),
   template: z.string(),
   reportsTo: z.string().nullable(),
+  reports: z.number().int().nonnegative().default(0),
   credential: z.string(),
   projects: z.array(z.string()),
   grantsOverridden: z.boolean(),
@@ -67,8 +68,14 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice"]),
+  kind: z.enum(["message", "compact", "notice", "held"]),
   body: z.string().optional(),
+  count: z.number().int().positive().optional(),
+  about: z.string().optional(),
+  dueAt: z.string().optional(),
+  waitReason: z
+    .enum(["turn", "window", "starting", "errored", "rate_limited", "ride_along"])
+    .optional(),
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
@@ -105,6 +112,14 @@ export const sendMessageBodySchema = z.object({
     .min(1, "Message is empty")
     .refine((s) => utf8.encode(s).length <= MAX_BODY_BYTES, "Message is larger than 64 KB"),
   urgent: z.boolean().default(false),
+});
+export const sendMessageToolSchema = z.object({
+  to: z.string().min(1).max(64),
+  body: sendMessageBodySchema.shape.body,
+  urgent: z.boolean().default(false),
+});
+export const listPeersToolSchema = z.object({
+  scope: z.enum(["neighborhood", "all"]).optional(),
 });
 export const compactBodySchema = z.object({
   focus: z.string().trim().max(MAX_FOCUS_CHARS).optional(),

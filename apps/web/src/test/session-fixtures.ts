@@ -30,6 +30,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   kind: "persistent",
   template: "dev",
   reportsTo: null,
+  reports: 0,
   credential: "work",
   projects: [],
   grantsOverridden: false,

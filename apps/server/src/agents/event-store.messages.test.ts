@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { messageLookupSchema } from "@open-factory/shared";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
 import { EventStore } from "./event-store.ts";
 import { insertAgent } from "./testing/rows.ts";
@@ -145,4 +146,154 @@ test("markPending clears delivered_event_seq; rejected is a state", async () => 
   await store.markRejected(m.id);
   expect((await store.messageLookup(m.id))?.state).toBe("rejected");
   expect(await store.messageLookup("nope")).toBeUndefined();
+});
+
+test("rows stamped in the same millisecond keep insert order", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-03-01T00:00:00Z"));
+    const ids: string[] = [];
+    for (const body of ["one", "two", "three", "four"])
+      ids.push(
+        (
+          await store.createMessage({
+            from: { userId: "u1" },
+            toAgentId: "a4",
+            body,
+            urgent: false,
+          })
+        ).id,
+      );
+    const q = (await store.pendingQueue("a4")).filter((r) => ids.includes(r.id));
+    expect(q.map((r) => r.body)).toEqual(["one", "two", "three", "four"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("messageLookup satisfies the shared schema and renders from and to", async () => {
+  const m = await store.createMessage({
+    from: { agentId: "a1" },
+    toAgentId: "a2",
+    body: "x",
+    urgent: false,
+  });
+  const lookup = messageLookupSchema.parse(await store.messageLookup(m.id));
+  expect(lookup).toMatchObject({ kind: "message", from: "dev", to: "b", state: "pending" });
+  const human = await store.createHumanMessage({
+    kind: "message",
+    fromAgentId: "a1",
+    to: "all",
+    body: "h",
+    urgent: false,
+  });
+  expect(messageLookupSchema.parse(await store.messageLookup(human.row.id))).toMatchObject({
+    from: "dev",
+    to: "@humans",
+  });
+  const fact = await store.createHumanMessage({
+    kind: "system",
+    fromAgentId: null,
+    notice: "agent_errored",
+    subjectAgentId: "a1",
+    to: { userId: "u1" },
+    body: "f",
+    urgent: false,
+  });
+  expect(messageLookupSchema.parse(await store.messageLookup(fact.row.id))).toMatchObject({
+    kind: "system",
+    from: "@factory",
+    to: "@or",
+  });
+  const fromUser = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a2",
+    body: "u",
+    urgent: false,
+  });
+  expect((await store.messageLookup(fromUser.id))?.from).toBe("@or");
+});
+
+test("factory inbox items link the subject's session; unlinkable human rows are refused", async () => {
+  await t.sql`delete from messages where to_user_id is not null or to_all_humans`;
+  await store.createHumanMessage({
+    kind: "system",
+    fromAgentId: null,
+    notice: "agent_errored",
+    subjectAgentId: "a1",
+    to: "all",
+    body: "dev errored",
+    urgent: false,
+  });
+  expect((await store.inboxPage("u1")).items[0]).toMatchObject({
+    from: { kind: "factory" },
+    about: "dev",
+    link: { agentSlug: "dev" },
+  });
+  await expect(
+    store.createHumanMessage({
+      kind: "system",
+      fromAgentId: null,
+      notice: "agent_errored",
+      to: "all",
+      body: "x",
+      urgent: false,
+    }),
+  ).rejects.toThrow();
+});
+
+test("inbox preview is code-point safe", async () => {
+  await t.sql`delete from messages where to_user_id is not null or to_all_humans`;
+  await store.createHumanMessage({
+    kind: "message",
+    fromAgentId: "a1",
+    to: { userId: "u1" },
+    body: "😀".repeat(300),
+    urgent: false,
+  });
+  const preview = (await store.inboxPage("u1")).items[0]?.preview ?? "";
+  expect(Array.from(preview)).toHaveLength(280);
+});
+
+test("markRejected only touches pending rows", async () => {
+  const m = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a2",
+    body: "x",
+    urgent: false,
+  });
+  await store.markDelivered([m.id]);
+  await store.markRejected(m.id);
+  expect((await store.messageLookup(m.id))?.state).toBe("delivered");
+});
+
+test("bootWakes orders by deliverable rows only", async () => {
+  await insertAgent(t.sql, { id: "a5", slug: "e" });
+  await insertAgent(t.sql, { id: "a6", slug: "f" });
+  const peer = await store.createHeld({
+    kind: "peer_joined",
+    toAgentId: "a5",
+    subjectAgentId: "a1",
+    notice: "peer",
+    body: "p",
+  });
+  const m5 = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a5",
+    body: "m",
+    urgent: false,
+  });
+  const m6 = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a6",
+    body: "m",
+    urgent: false,
+  });
+  await at(peer.id, "2020-01-01T00:00:00Z");
+  await at(m6.id, "2020-06-01T00:00:00Z");
+  await at(m5.id, "2020-07-01T00:00:00Z");
+  const order = (await store.bootWakes(30_000))
+    .map((w) => w.id)
+    .filter((i) => i === "a5" || i === "a6");
+  expect(order).toEqual(["a6", "a5"]);
 });

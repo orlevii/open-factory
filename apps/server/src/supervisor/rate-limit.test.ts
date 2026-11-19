@@ -125,12 +125,8 @@ afterEach(async () => {
 });
 
 const nowSec = () => Math.floor(Date.now() / 1000);
-// Rows are stamped with the server clock (spec §7.3); under fake timers the clock only moves when the test moves it,
-// so each send first advances it 1 ms to keep created order explicit.
-const send = async (rt: AgentRuntime, body: string, urgent = false) => {
-  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(1);
-  return rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
-};
+const send = (rt: AgentRuntime, body: string, urgent = false) =>
+  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
 const status = (rt: AgentRuntime) => rt.live().status;
 const started = (rt: AgentRuntime) => w.starts(rt).length > 0;
 const sentBodies = (rt: AgentRuntime) => w.proc(rt).sent.map((b) => b.map((m) => m.body));

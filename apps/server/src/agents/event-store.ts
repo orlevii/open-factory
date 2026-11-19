@@ -34,6 +34,15 @@ export type PendingRow = MessageRow & {
   subjectSlug: string | null;
   subjectDisplayName: string | null;
 };
+export interface MessageLookup {
+  id: string;
+  kind: "message" | "system" | "member_update" | "peer_joined" | "peer_left";
+  from: string;
+  to: string;
+  state: "pending" | "delivered" | "rejected";
+  recipientEvent?: { agentSlug: string; seq: number };
+  senderEvent?: { agentSlug: string; seq: number };
+}
 export interface InboxEntry {
   id: string;
   messageId: string;
@@ -57,6 +66,14 @@ export interface TurnClose {
 
 export class EventStore {
   constructor(private readonly db: Db) {}
+
+  private lastStamp = 0;
+  /** Server-clock stamp, strictly increasing within this process so created order is insert order (spec §7.3). */
+  private stamp(): Date {
+    const t = Math.max(Date.now(), this.lastStamp + 1);
+    this.lastStamp = t;
+    return new Date(t);
+  }
 
   transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
     return this.db.transaction(fn);
@@ -144,7 +161,7 @@ export class EventStore {
     const cutoff = new Date(Date.now() - debounceMs);
     return sql`(${messages.kind} in ('message', 'system') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
-  /** Non-archived, non-errored agents whose only pending member updates are still inside the debounce window. */
+  /** Non-archived, non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
     const cutoff = new Date(Date.now() - debounceMs);
     const rows = await this.db
@@ -414,7 +431,7 @@ export class EventStore {
       body: m.body,
       urgent: m.urgent,
       fromToolUseId: m.fromToolUseId ?? null,
-      createdAt: new Date(),
+      createdAt: this.stamp(),
     });
     return this.pendingRow(id, tx);
   }
@@ -439,7 +456,7 @@ export class EventStore {
       subjectAgentId: m.subjectAgentId ?? null,
       notice: m.notice ?? null,
       body: m.body,
-      createdAt: new Date(),
+      createdAt: this.stamp(),
     });
     return this.pendingRow(id, tx);
   }
@@ -458,7 +475,11 @@ export class EventStore {
     fromToolUseId?: string | null;
   }): Promise<{ row: MessageRow; userIds: string[] }> {
     return this.db.transaction(async (tx) => {
-      const now = new Date();
+      if (m.kind === "system" ? !m.subjectAgentId : !m.fromAgentId)
+        throw new Error(
+          "a human message needs a sender agent; a factory fact needs its subject agent",
+        );
+      const now = this.stamp();
       const [row] = await tx
         .insert(messages)
         .values({
@@ -562,6 +583,7 @@ export class EventStore {
         notice: m.notice,
         toAgentId: m.toAgentId,
         body: m.body,
+        createdAt: this.stamp(),
       })
       .returning();
     if (!row) throw new Error("insert returned no row");
@@ -616,29 +638,43 @@ export class EventStore {
   }
   /** The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). */
   async markRejected(id: string, tx: Exec = this.db) {
-    await tx.update(messages).set({ state: "rejected" }).where(eq(messages.id, id));
+    await tx
+      .update(messages)
+      .set({ state: "rejected" })
+      .where(and(eq(messages.id, id), eq(messages.state, "pending")));
   }
 
-  /** One message with the events that show it on each side (spec §11). */
-  async messageLookup(id: string): Promise<
-    | {
-        id: string;
-        state: string;
-        recipientEvent?: { agentSlug: string; seq: number };
-        senderEvent?: { agentSlug: string; seq: number };
-      }
-    | undefined
-  > {
-    const [m] = await this.db.select().from(messages).where(eq(messages.id, id));
-    if (!m) return undefined;
-    const out: NonNullable<Awaited<ReturnType<EventStore["messageLookup"]>>> = {
+  /** One message with the events that show it on each side (spec §11); from and to rendered as in the inbox. */
+  async messageLookup(id: string): Promise<MessageLookup | undefined> {
+    const fa = alias(agents, "fa");
+    const ta = alias(agents, "ta");
+    const fu = alias(users, "fu");
+    const tu = alias(users, "tu");
+    const [r] = await this.db
+      .select({
+        m: messages,
+        fromSlug: fa.slug,
+        fromHandle: fu.handle,
+        toSlug: ta.slug,
+        toHandle: tu.handle,
+      })
+      .from(messages)
+      .leftJoin(fa, eq(fa.id, messages.fromAgentId))
+      .leftJoin(fu, eq(fu.id, messages.fromUserId))
+      .leftJoin(ta, eq(ta.id, messages.toAgentId))
+      .leftJoin(tu, eq(tu.id, messages.toUserId))
+      .where(eq(messages.id, id));
+    if (!r) return undefined;
+    const { m } = r;
+    const out: MessageLookup = {
       id: m.id,
-      state: m.state,
+      kind: m.kind as MessageLookup["kind"],
+      from: r.fromSlug ?? (r.fromHandle ? `@${r.fromHandle}` : "@factory"),
+      to: m.toAllHumans ? "@humans" : (r.toSlug ?? `@${r.toHandle ?? ""}`),
+      state: m.state as MessageLookup["state"],
     };
-    if (m.state === "delivered" && m.deliveredEventSeq !== null && m.toAgentId) {
-      const to = await this.agentById(m.toAgentId);
-      if (to) out.recipientEvent = { agentSlug: to.slug, seq: m.deliveredEventSeq };
-    }
+    if (m.state === "delivered" && m.deliveredEventSeq !== null && r.toSlug)
+      out.recipientEvent = { agentSlug: r.toSlug, seq: m.deliveredEventSeq };
     const sender = await this.senderEvent(m);
     if (sender) out.senderEvent = sender;
     return out;
@@ -660,6 +696,40 @@ export class EventStore {
       )
       .limit(1);
     return row ? { agentSlug: row.slug, seq: row.seq } : undefined;
+  }
+
+  /** The sender's tool-call events for several messages in one query, by message id. */
+  private async senderEvents(
+    rows: MessageRow[],
+  ): Promise<Map<string, { agentSlug: string; seq: number }>> {
+    const withCall = rows.filter((m) => m.fromAgentId && m.fromToolUseId);
+    const out = new Map<string, { agentSlug: string; seq: number }>();
+    if (!withCall.length) return out;
+    const pairs = sql.join(
+      withCall.map((m) => sql`(${m.fromAgentId}, ${m.fromToolUseId})`),
+      sql`, `,
+    );
+    const found = await this.db
+      .select({
+        agentId: sessionEvents.agentId,
+        toolUseId: sql<string>`${sessionEvents.payload}->>'toolUseId'`,
+        seq: sessionEvents.seq,
+        slug: agents.slug,
+      })
+      .from(sessionEvents)
+      .innerJoin(agents, eq(agents.id, sessionEvents.agentId))
+      .where(
+        and(
+          eq(sessionEvents.type, "tool_call"),
+          sql`(${sessionEvents.agentId}, ${sessionEvents.payload}->>'toolUseId') in (${pairs})`,
+        ),
+      )
+      .orderBy(asc(sessionEvents.seq));
+    for (const m of withCall) {
+      const f = found.find((x) => x.agentId === m.fromAgentId && x.toolUseId === m.fromToolUseId);
+      if (f) out.set(m.id, { agentSlug: f.slug, seq: f.seq });
+    }
+    return out;
   }
 
   /** The user's inbox, newest first. Cursor is `created_at|id` in base64url (spec §11). */
@@ -684,6 +754,7 @@ export class EventStore {
         fromSlug: fa.slug,
         subjectSlug: sa.slug,
         toHandle: tu.handle,
+        preview: sql<string>`left(${messages.body}, 280)`,
         createdAtIso: sql<string>`to_char(${inboxItems.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
       .from(inboxItems)
@@ -695,10 +766,11 @@ export class EventStore {
       .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
       .limit(limit + 1);
     const page = rows.slice(0, limit);
+    const senders = await this.senderEvents(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
       const factory = r.m.kind === "system" || !r.fromSlug;
-      const sender = await this.senderEvent(r.m);
+      const sender = senders.get(r.m.id);
       const agentSlug =
         sender?.agentSlug ?? (factory ? r.subjectSlug : r.fromSlug) ?? r.subjectSlug ?? "";
       items.push({
@@ -709,7 +781,7 @@ export class EventStore {
           : { kind: "agent", name: r.fromSlug ?? "" },
         ...(r.subjectSlug ? { about: r.subjectSlug } : {}),
         to: r.m.toAllHumans ? "@humans" : `@${r.toHandle ?? ""}`,
-        preview: r.m.body.slice(0, 280),
+        preview: r.preview,
         urgent: r.m.urgent,
         createdAt: r.item.createdAt.toISOString(),
         link: { agentSlug, ...(sender ? { seq: sender.seq } : {}) },

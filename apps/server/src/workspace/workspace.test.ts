@@ -43,6 +43,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     factoryHome: home,
     hostSkillsDir: hs,
     claudeBin: fake.bin,
+    cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
   });
   const tpl = { dir: tdir, config, tplSettings, tplMcp: { mcpServers: { x: { command: "x" } } } };
@@ -59,7 +60,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
 }
 
 test("materialize then prepare: the full layout", async () => {
-  const { ws, tpl, prep, repo, hs } = setup();
+  const { ws, tpl, prep, repo, hs, home } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
   const wd = ws.workdir("lead");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
@@ -81,6 +82,8 @@ test("materialize then prepare: the full layout", async () => {
     repo,
     realpathSync(path.join(hs, "grilling")),
     "/mk",
+    path.join(home, "state/agents/lead/plugins-config/plugins"),
+    "/opt/factory/bin/open-factory",
   ]);
 });
 

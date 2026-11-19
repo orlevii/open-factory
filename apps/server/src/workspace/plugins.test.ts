@@ -162,12 +162,18 @@ async function setupAgent(plugins: string[]) {
   const tdir = path.join(home, "templates/lead");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Lead\n");
-  const config = templateYamlSchema.parse({ name: "lead", display_name: "Lead", plugins });
+  const config = templateYamlSchema.parse({
+    name: "lead",
+    display_name: "Lead",
+    runtime: "local",
+    plugins,
+  });
   const fake = createFakeClaude({ scenario: "reply" });
   const ws = new Workspace({
     factoryHome: home,
     hostSkillsDir: hs,
     claudeBin: fake.bin,
+    cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
   });
   const tpl = { dir: tdir, config, tplSettings, tplMcp: { mcpServers: {} } };

@@ -96,10 +96,13 @@ async function seedStartFixture() {
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
   const fake = createFakeClaude({ scenario: "reply" });
+  const cliBundle = path.join(mkdtempSync(path.join(tmpdir(), "cli-")), "open-factory.js");
+  writeFileSync(cliBundle, "//");
   workspace = new Workspace({
     factoryHome: home,
     hostSkillsDir: hs,
     claudeBin: fake.bin,
+    cliBundle,
     lock,
   });
   const grants = [{ name: "app", hostPath: repo }];

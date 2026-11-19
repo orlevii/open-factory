@@ -38,6 +38,7 @@ const workspace = new Workspace({
   factoryHome: config.factoryHome,
   hostSkillsDir: config.hostSkillsDir,
   claudeBin: config.claudeBin,
+  cliBundle: config.cliBundle,
   lock,
 });
 const agent = await seedTestAgent(

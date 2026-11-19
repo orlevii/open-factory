@@ -1,4 +1,5 @@
 import { lstat, mkdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
@@ -8,7 +9,7 @@ import { backupDiffering, copyTargets, resyncStamp, templateTargets } from "./fi
 import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
-import { buildMounts } from "./mounts.ts";
+import { buildMounts, checkMounts, declaredMarketplaceDirs, dockerSocketPaths } from "./mounts.ts";
 import {
   agentConfigDir,
   agentStateDir,
@@ -63,6 +64,8 @@ export class Workspace {
       factoryHome: string;
       hostSkillsDir: string;
       claudeBin: string;
+      /** The CLI bundle mounted read-only into Docker agents (spec §11.6). */
+      cliBundle: string;
       serverEnv?: NodeJS.ProcessEnv;
       lock: KeyedMutex;
       log?: { warn: (o: object, msg: string) => void };
@@ -204,16 +207,27 @@ export class Workspace {
         secretNames: i.config.secrets,
       }),
     );
-    return {
+    // Spec §11.4: mounts come only from factory-owned inputs (`tpl` is the copy under state/).
+    const mountInputs = {
       workdir,
-      configDir,
-      mounts: buildMounts({
-        workdir,
-        grantedPaths,
-        hostSkillPaths: skills.map((s) => s.realDir),
-        tplSettings: tpl,
-      }),
+      grantedPaths,
+      hostSkillPaths: skills.map((s) => s.realDir),
+      declaredMarketplaceDirs: declaredMarketplaceDirs(tpl),
+      pluginsDir: path.join(pluginsConfigDir(this.d.factoryHome, i.slug), "plugins"),
+      cliBundle: this.d.cliBundle,
     };
+    const mounts = buildMounts(mountInputs);
+    // Local agents ignore mounts; a Docker start fails closed on any refused one.
+    if (i.config.runtime === "docker") {
+      const home = os.homedir();
+      await checkMounts(mounts, {
+        ...mountInputs,
+        factoryHome: this.d.factoryHome,
+        home,
+        dockerSockets: dockerSocketPaths(this.serverEnv, home),
+      });
+    }
+    return { workdir, configDir, mounts };
   }
 
   private async readTemplateJson<T>(copy: string, file: string): Promise<T> {

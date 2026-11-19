@@ -120,6 +120,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     factoryHome: config.factoryHome,
     hostSkillsDir: config.hostSkillsDir,
     claudeBin: config.claudeBin,
+    cliBundle: config.cliBundle,
     lock,
     log: app.log,
   });

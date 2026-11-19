@@ -10,12 +10,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { lstat, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { createFakeClaude, type FakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { beforeEach, expect, test } from "vitest";
 import { KeyedMutex } from "./lock.ts";
+import { MountRefusedError } from "./mounts.ts";
 import { pluginsConfigDir, resyncRoot } from "./paths.ts";
 import { UnsafePathError } from "./safe-fs.ts";
 import { Workspace } from "./workspace.ts";
@@ -51,10 +52,13 @@ beforeEach(async () => {
     projects: ["app"],
   });
   fake = createFakeClaude({ scenario: "reply" });
+  const cliBundle = path.join(tmp("cli-"), "open-factory.js");
+  writeFileSync(cliBundle, "//");
   ws = new Workspace({
     factoryHome: home,
     hostSkillsDir: hs,
     claudeBin: fake.bin,
+    cliBundle,
     lock: new KeyedMutex(),
   });
   tpl = { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } };
@@ -239,4 +243,68 @@ test("a .claude-config/plugins symlink to a host dir is replaced, never followed
     `${pluginsConfigDir(home, "lead")}/plugins`,
   );
   expect(readdirSync(hostDir)).toEqual(["keep"]);
+});
+
+// Spec §11.4 part 2: mounts come from factory-owned inputs only.
+const asDocker = () => {
+  prep = { ...prep, config: { ...prep.config, runtime: "docker" } };
+};
+
+test("a marketplace path planted in the agent's config-dir settings never becomes a mount", async () => {
+  await writeFile(
+    `${workdir}/.claude-config/settings.json`,
+    JSON.stringify({
+      extraKnownMarketplaces: { x: { source: { source: "directory", path: os.homedir() } } },
+    }),
+  );
+  const { mounts } = await prepareAgent();
+  expect(mounts.map((m) => m.source)).not.toContain(os.homedir());
+  asDocker();
+  await expect(prepareAgent()).resolves.toMatchObject({ workdir });
+});
+
+test("a marketplace path planted in the old .factory/template copy never becomes a mount", async () => {
+  mkdirSync(`${workdir}/.factory/template`, { recursive: true });
+  writeFileSync(
+    `${workdir}/.factory/template/settings.json`,
+    JSON.stringify({
+      extraKnownMarketplaces: { x: { source: { source: "directory", path: os.homedir() } } },
+    }),
+  );
+  const { mounts } = await prepareAgent();
+  expect(mounts.map((m) => m.source)).not.toContain(os.homedir());
+});
+
+test("a Docker start's mounts pass checkMounts with the plugins dir and CLI bundle read-only", async () => {
+  asDocker();
+  const { mounts } = await prepareAgent();
+  expect(mounts).toContainEqual({
+    source: `${pluginsConfigDir(home, "lead")}/plugins`,
+    target: `${pluginsConfigDir(home, "lead")}/plugins`,
+    readOnly: true,
+  });
+  expect(mounts.find((m) => m.target === "/opt/factory/bin/open-factory")).toMatchObject({
+    readOnly: true,
+  });
+});
+
+test("a granted project inside FACTORY_HOME fails the Docker start", async () => {
+  const other = path.join(home, "agents/other");
+  mkdirSync(other, { recursive: true });
+  prep = { ...prep, grants: [{ name: "app", hostPath: other }] };
+  await expect(prepareAgent()).resolves.toBeDefined(); // local ignores mounts
+  asDocker();
+  await expect(prepareAgent()).rejects.toBeInstanceOf(MountRefusedError);
+  await expect(prepareAgent()).rejects.toThrow(
+    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir.`,
+  );
+});
+
+test("a granted project that contains FACTORY_HOME fails the Docker start", async () => {
+  const parent = path.dirname(home);
+  prep = { ...prep, grants: [{ name: "app", hostPath: parent }] };
+  asDocker();
+  await expect(prepareAgent()).rejects.toThrow(
+    `Mount ${parent} isn't allowed: it contains FACTORY_HOME.`,
+  );
 });

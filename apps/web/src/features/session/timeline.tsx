@@ -215,6 +215,7 @@ export function Timeline(props: {
                 className={`group relative rounded-md pr-8 ${row.kind === "message" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
               >
                 <TimelineRow
+                  slug={props.slug}
                   row={row}
                   expanded={expanded}
                   toggle={toggle}

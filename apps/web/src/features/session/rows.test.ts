@@ -185,3 +185,42 @@ test("interruptedTurnEnds: an errored turn_end after a control interrupt in the 
   ];
   expect([...interruptedTurnEnds(events)]).toEqual([3]);
 });
+
+test("a denial whose toolUseId matches a loaded call attaches to it; an unpaired one keeps its row", () => {
+  seq = 0;
+  const denial = {
+    type: "permission_denied",
+    toolName: "Read",
+    toolUseId: "a",
+    reasonType: "rule",
+    reason: "no",
+  } as const;
+  const rows = buildRows([
+    e({ type: "tool_call", toolUseId: "a", name: "Read", input: {} }),
+    e(denial),
+    e({ type: "tool_result", toolUseId: "a", content: "x", isError: true }),
+    e({ ...denial, toolUseId: "elsewhere" }),
+  ]);
+  expect(rows.map((r) => r.kind)).toEqual(["tool", "denied"]);
+  const tool = rows[0] as Extract<(typeof rows)[number], { kind: "tool" }>;
+  expect(tool.denial).toEqual(denial);
+  expect(tool.state).toBe("failed");
+});
+
+test("a denial pairs with a nested call too", () => {
+  seq = 0;
+  const rows = buildRows([
+    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({ type: "tool_call", toolUseId: "c", name: "Bash", input: {}, parentToolUseId: "p" }),
+    e({
+      type: "permission_denied",
+      toolName: "Bash",
+      toolUseId: "c",
+      reasonType: "subcommandResults",
+      reason: "",
+    }),
+  ]);
+  expect(rows.map((r) => r.kind)).toEqual(["tool"]);
+  const child = (rows[0] as Extract<(typeof rows)[number], { kind: "tool" }>).children[0];
+  expect(child && "denial" in child && child.denial?.toolUseId).toBe("c");
+});

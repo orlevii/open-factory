@@ -80,7 +80,7 @@ Children's text and facts arrive as S6 update groups, unchanged. Peer events for
   - Title: "Terminate @tech-lead-ab12?"
   - Body: "It stops now, ending any work in progress, and its session can't continue. Messages waiting for it are dropped. Its workspace is deleted 3 days later unless you pin it; worktrees it made in projects stay."
   - Confirm: "Terminate @tech-lead-ab12" (danger style).
-  - **Failure:** `ConfirmDialog`'s existing behaviour: the dialog stays open and shows the error in its own `role="alert"` line. A `409 agent_terminated` (terminated by someone else meanwhile) counts as success.
+  - **Failure:** `ConfirmDialog`'s existing behaviour: the dialog stays open and shows the error in its own `role="alert"` line. An agent already terminated by someone else meanwhile is a success (terminate is idempotent, spec §7.3).
   - **Success:** the detail query is updated from the response (or refetched) before `onCloseAutoFocus` runs; focus then moves to **Pin workspace** (§5.3), or to the read-only line when there is no workspace to pin.
 
 ### 5.3 Terminated agent (read-only)

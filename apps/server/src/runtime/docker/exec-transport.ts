@@ -31,6 +31,8 @@ const lines = (input: Readable, queue: AsyncQueue<string>) =>
     const rl = createInterface({ input });
     rl.on("line", (l) => queue.push(l));
     rl.on("close", resolve);
+    // A stream error must not crash the server; closing still lets `exit` settle.
+    rl.on("error", () => rl.close());
   });
 
 /**
@@ -99,12 +101,20 @@ export function dockerTransport(d: {
       return d.docker.execRun(container.containerId, { cmd, user: AGENT_USER });
     };
 
-    /** cat the pid file, parse it strictly, require comm == claude, then `kill -TERM` as agent. Argv only. */
-    const signalClaude = async (): Promise<boolean> => {
+    /**
+     * cat the pid file, parse it strictly, require comm == claude, then `kill -TERM` as agent. Argv only.
+     * Trust boundary: the pid file and comm are agent-controlled. A forged value can only make the factory SIGTERM
+     * another `agent`-owned process in this same container (own pid namespace, no root); the stop then times out
+     * and falls back to the container stop.
+     * `live()` turns false once terminate's bound has passed, so a late-answering daemon gets no further exec.
+     */
+    const signalClaude = async (live: () => boolean): Promise<boolean> => {
+      const s = await started;
+      if (!s || settled || !live()) return false;
       const pid = parsePid((await run(["cat", CLAUDE_PID_FILE])).stdout);
-      if (!pid) return false;
+      if (!pid || !live()) return false;
       const comm = (await run(["cat", `/proc/${pid}/comm`])).stdout.trim();
-      if (comm !== CLAUDE_COMM) return false;
+      if (comm !== CLAUDE_COMM || !live()) return false;
       return (await run(["kill", "-TERM", String(pid)])).code === 0;
     };
 
@@ -129,14 +139,18 @@ export function dockerTransport(d: {
       exit,
       async terminate() {
         if (settled) return false;
-        const s = await started;
-        if (!s || settled) return false;
+        // The whole body is bounded, including waiting for the exec to start: a daemon that never answers
+        // can't hang the stop (spec §9.6 escalation runs after termWaitMs).
+        let expired = false;
         let timer: NodeJS.Timeout | undefined;
         const timeout = new Promise<boolean>((r) => {
-          timer = setTimeout(() => r(false), TERMINATE_BOUND_MS);
+          timer = setTimeout(() => {
+            expired = true;
+            r(false);
+          }, TERMINATE_BOUND_MS);
         });
         try {
-          return await Promise.race([signalClaude(), timeout]);
+          return await Promise.race([signalClaude(() => !expired), timeout]);
         } catch {
           return false;
         } finally {

@@ -150,6 +150,30 @@ test("a daemon that never answers: terminate reports false after the bound", asy
   }
 });
 
+test("an exec that never starts: terminate reports false after the bound, with no exec", async () => {
+  vi.useFakeTimers();
+  try {
+    const d = fakeDocker({ pidFile: "42\n", comm: "claude\n" });
+    let start!: (s: ExecStream) => void;
+    d.client.execStream = async (id, e) => {
+      d.streams.push({ id, ...e });
+      return new Promise<ExecStream>((r) => {
+        start = r;
+      });
+    };
+    const t = transport(d);
+    const r = t.terminate();
+    await vi.advanceTimersByTimeAsync(TERMINATE_BOUND_MS);
+    expect(await r).toBe(false);
+    // A daemon that answers late gets no exec from the expired terminate.
+    start(d.s.stream);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.execs).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("terminate after exit signals nothing", async () => {
   const d = fakeDocker({ pidFile: "42\n", comm: "claude\n" });
   const t = transport(d);
@@ -208,8 +232,16 @@ test("endInput half-closes; exit code from inspect; write after exit rejects", a
   t.endInput();
   await vi.waitFor(() => expect(d.s.stream.closeStdin).toHaveBeenCalledTimes(1));
   await expect(t.write("x")).rejects.toMatchObject({ name: "ProcessNotRunningError" });
+  // Half-close: output keeps flowing after stdin EOF.
+  d.s.stdout.write("after eof\n");
+  const out: string[] = [];
+  const pump = (async () => {
+    for await (const l of t.stdout) out.push(l);
+  })();
   d.s.finish(null);
   expect(await t.exit).toEqual({ code: null, signal: null });
+  await pump;
+  expect(out).toEqual(["after eof"]);
   await expect(t.write("x")).rejects.toMatchObject({ name: "ProcessNotRunningError" });
 });
 

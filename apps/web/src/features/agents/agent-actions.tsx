@@ -14,8 +14,6 @@ const Mono = ({ children }: { children: ReactNode }) => (
 );
 const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 
-const isRunning = (a: AgentSummary) => a.status === "working" || a.status === "idle";
-
 /** "Template x has errors." / "Template x no longer exists.", the name linking to the template. */
 function TemplateProblem({ name, problem }: { name: string; problem: "invalid" | "missing" }) {
   return (
@@ -140,16 +138,19 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
     setResyncOutcome({ tone: "pending", content: "Re-syncing…" });
     try {
       const r = await resyncAgent(slug);
-      const restart = isRunning(agent) ? " The agent restarts when idle." : "";
+      // Staged while the agent runs: nothing looks applied before it is (spec §11.4).
       setResyncOutcome({
         tone: "success",
-        content: r.backupDir ? (
-          <>
-            Re-synced. Previous files saved in <Mono>{r.backupDir}</Mono>.{restart}
-          </>
-        ) : (
-          `Re-synced. Nothing differed.${restart}`
-        ),
+        content:
+          r.applied === "on_restart" ? (
+            `Re-synced. The changes apply when @${slug} restarts (when idle).`
+          ) : r.backupDir ? (
+            <>
+              Re-synced. Previous files saved in <Mono>{r.backupDir}</Mono>.
+            </>
+          ) : (
+            "Re-synced. Nothing differed."
+          ),
       });
       void refresh();
     } catch (err) {

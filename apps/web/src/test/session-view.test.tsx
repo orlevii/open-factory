@@ -506,10 +506,10 @@ test("restart pending: the strip says so with the waiting count; Why? explains i
   expect(
     screen.getByText("Restarts when idle to apply changes (waiting on 1 background task)"),
   ).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Why?" }));
+  await userEvent.click(screen.getByRole("button", { name: "Why does it restart?" }));
   expect(
     await screen.findByText(
-      "The agent finishes its current work, then restarts with the new settings. Its session is kept. Reminders it scheduled in this session are lost.",
+      "The agent finishes its current turn and background tasks, then restarts with the new settings. Its session is kept. Its crons from this session stop, and it's told which, so it can recreate them.",
     ),
   ).toBeInTheDocument();
 });

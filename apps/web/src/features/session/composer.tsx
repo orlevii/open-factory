@@ -25,6 +25,11 @@ const coarse = () => typeof matchMedia === "function" && matchMedia("(pointer: c
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 
+/** Moves focus to the composer's textarea (after a Restart or a new session, UI design §3.1). */
+export function focusComposer() {
+  document.querySelector<HTMLTextAreaElement>("#composer textarea")?.focus();
+}
+
 export function Composer({
   slug,
   agent,
@@ -44,6 +49,10 @@ export function Composer({
   const hintId = `${id}-hint`;
   const boxId = `${id}-box`;
   const urgentId = `${id}-urgent`;
+  const waitHintId = `${id}-wait`;
+  // Messages still queue; only a new session delivers them (UI design §3.6).
+  const waitsForNewSession =
+    agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
   useEffect(() => writeDraft(slug, text), [slug, text]);
   const empty = text.trim() === "";
 
@@ -100,9 +109,20 @@ export function Composer({
           onKeyDown={onKeyDown}
           placeholder={`Message ${agent.displayName}`}
           rows={2}
-          aria-describedby={urgent ? hintId : undefined}
+          aria-describedby={
+            [waitsForNewSession && waitHintId, urgent && hintId].filter(Boolean).join(" ") ||
+            undefined
+          }
           className="max-h-[9rem] min-h-[3.5rem] resize-none bg-card md:max-h-[18rem] dark:bg-card"
         />
+        {waitsForNewSession && (
+          <p
+            id={waitHintId}
+            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+          >
+            Messages wait until a new session is started.
+          </p>
+        )}
         <div className="mt-2 flex items-center justify-end gap-3">
           <div className="flex items-center gap-2">
             <Checkbox

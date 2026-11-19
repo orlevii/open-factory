@@ -43,7 +43,7 @@ test("Edit shows template and slug read-only at the top", async () => {
   expect(line).toBeInTheDocument();
 });
 
-test("Re-sync success names the backup folder in mono and the restart", async () => {
+test("Re-sync success names the backup folder in mono", async () => {
   world({
     extra: {
       "POST /api/agents/lead/resync": () =>
@@ -60,8 +60,23 @@ test("Re-sync success names the backup folder in mono and the restart", async ()
   expect(path.tagName).toBe("CODE");
   const line = path.closest("[role=status]") as HTMLElement;
   expect(line).toHaveTextContent(
-    "Re-synced. Previous files saved in state/agents/lead/resync/2026-11-19T10-22-31Z. The agent restarts when idle.",
+    "Re-synced. Previous files saved in state/agents/lead/resync/2026-11-19T10-22-31Z.",
   );
+});
+
+test("re-sync outcome says the changes apply on restart when applied=on_restart", async () => {
+  world({
+    extra: {
+      "POST /api/agents/lead/resync": () => json({ agent: lead, applied: "on_restart" }),
+    },
+  });
+  const section = await open();
+  await userEvent.click(within(section).getByRole("button", { name: "Re-sync" }));
+  expect(
+    await within(section).findByText(
+      "Re-synced. The changes apply when @lead restarts (when idle).",
+    ),
+  ).toBeInTheDocument();
 });
 
 test("Re-sync with nothing differing says so", async () => {

@@ -29,7 +29,24 @@ export type Row =
   | { kind: "denied"; seq: number; event: Ev<"permission_denied">; key: string }
   | { kind: "quiet"; seq: number; event: AnyEvent; key: string };
 
-const HIDDEN = new Set(["session_started", "turn_started", "usage", "background_tasks"]);
+// `rate_limited` renders nothing from S5 on: `rate_limit_paused` is the one line for that moment.
+const HIDDEN = new Set([
+  "session_started",
+  "turn_started",
+  "usage",
+  "background_tasks",
+  "rate_limited",
+]);
+
+/** Events with no line of their own in context (S5 UI design §3.3). */
+function silent(e: AnyEvent, prev: Row | undefined): boolean {
+  if (e.type === "container") return e.action === "started";
+  if (e.type === "cleanup") return !e.container && !e.killedProcesses;
+  // The session_reset row already says a new session started.
+  if (e.type === "process_started")
+    return e.reason === "reset" || (prev?.kind === "quiet" && prev.event.type === "session_reset");
+  return false;
+}
 
 export function deliveryFailedIds(events: SessionEvent[]): Set<string> {
   const out = new Set<string>();
@@ -76,7 +93,7 @@ export function buildRows(events: SessionEvent[]): Row[] {
   };
   for (const se of events) {
     const e = se.event;
-    if (HIDDEN.has(e.type)) continue;
+    if (HIDDEN.has(e.type) || silent(e, top.at(-1))) continue;
     switch (e.type) {
       case "message_in":
         for (const [i, m] of e.messages.entries()) {

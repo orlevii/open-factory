@@ -20,13 +20,22 @@ const TOKEN: Record<Exclude<AgentStatus, "working">, string> = {
 
 type ResetInput = { rateLimitedUntil?: string | Date; rateLimitExact?: boolean };
 
-function resetPhrase({ rateLimitedUntil, rateLimitExact }: ResetInput, now: Date): string | null {
+/**
+ * The one place the fallback rule lives (UI design §2): "until 14:30", or "retrying at 14:30" when
+ * the window wasn't reported (`rateLimitExact: false`), so no string claims a time Claude didn't give.
+ * `bare` stands alone ("retrying at 14:30"); `joined` follows "rate-limited" (", retrying at 14:30").
+ */
+export function resetPhrase({
+  rateLimitedUntil,
+  rateLimitExact,
+}: ResetInput): { bare: string; joined: string } | null {
   if (!rateLimitedUntil) return null;
   const until = new Date(rateLimitedUntil);
   if (Number.isNaN(until.getTime())) return null;
-  const time = formatResetTime(until, now);
-  // A fallback window never claims a time Claude didn't report (UI design §2).
-  return rateLimitExact === false ? `retrying at ${time}` : `until ${time}`;
+  const time = formatResetTime(until, new Date());
+  return rateLimitExact === false
+    ? { bare: `retrying at ${time}`, joined: `, retrying at ${time}` }
+    : { bare: `until ${time}`, joined: ` until ${time}` };
 }
 
 /** Long label for the session header and strip: rate-limited carries the reset time. */
@@ -34,12 +43,9 @@ export function statusLabel(
   status: AgentStatus,
   size: "long" | "short",
   reset: ResetInput = {},
-  now: Date = new Date(),
 ): string {
   if (status !== "rate_limited" || size === "short") return SHORT[status];
-  const phrase = resetPhrase(reset, now);
-  if (!phrase) return SHORT[status];
-  return reset.rateLimitExact === false ? `Rate-limited, ${phrase}` : `Rate-limited ${phrase}`;
+  return `Rate-limited${resetPhrase(reset)?.joined ?? ""}`;
 }
 
 /** Screen-reader sentence for a status change (UI design §6). */
@@ -47,14 +53,9 @@ export function statusAnnouncement(
   name: string,
   status: AgentStatus,
   reset: ResetInput = {},
-  now: Date = new Date(),
 ): string {
-  if (status === "rate_limited") {
-    const phrase = resetPhrase(reset, now);
-    if (phrase)
-      return `${name} is rate-limited${reset.rateLimitExact === false ? "," : ""} ${phrase}`;
-    return `${name} is rate-limited`;
-  }
+  if (status === "rate_limited")
+    return `${name} is rate-limited${resetPhrase(reset)?.joined ?? ""}`;
   return `${name} is ${status}`;
 }
 
@@ -63,8 +64,8 @@ export function StatusBadge({
   status,
   rateLimitedUntil,
   rateLimitExact,
-  size = "short",
-}: ResetInput & { status: AgentStatus; size?: "long" | "short" }) {
+  size,
+}: ResetInput & { status: AgentStatus; size: "long" | "short" }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
       <span aria-hidden="true" className="inline-flex size-3 items-center justify-center">

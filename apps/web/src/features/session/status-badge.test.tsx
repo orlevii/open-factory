@@ -1,12 +1,14 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { StatusBadge, statusAnnouncement } from "./status-badge";
 
-const todayAt = (h: number, m: number) => {
-  const d = new Date();
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
-};
+// Pinned so "today 14:30" never crosses midnight while the suite runs.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 19, 10, 0));
+});
+afterEach(() => vi.useRealTimers());
+const todayAt = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 
 test("working renders the tooth, never a dot; others render a dot + label", () => {
   const { container } = render(<StatusBadge status="working" size="long" />);
@@ -58,6 +60,9 @@ describe("announcements", () => {
   test("strings", () => {
     expect(statusAnnouncement("Team Lead", "working")).toBe("Team Lead is working");
     expect(statusAnnouncement("Team Lead", "queued")).toBe("Team Lead is queued");
+    expect(statusAnnouncement("Team Lead", "idle")).toBe("Team Lead is idle");
+    expect(statusAnnouncement("Team Lead", "errored")).toBe("Team Lead is errored");
+    expect(statusAnnouncement("Team Lead", "hibernated")).toBe("Team Lead is hibernated");
     expect(statusAnnouncement("Team Lead", "rate_limited", reset(true))).toBe(
       "Team Lead is rate-limited until 14:30",
     );

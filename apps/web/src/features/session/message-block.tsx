@@ -1,26 +1,36 @@
-import { Clock } from "lucide-react";
+import { Clock, Factory } from "lucide-react";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { formatTime } from "./format";
 
 /** Incoming input (UI design §4.1): on the ground with a 1px rule edge and 6px radius, never a bubble.
- *  The sender line is generic (`from` + badges), never the raw envelope XML. */
+ *  The sender line is generic (`from` + badges), never the raw envelope XML. A `system` message is a
+ *  notice from the factory itself (S5 UI design §3.5): sender "Factory", never Urgent, never orange. */
 export function MessageBlock(props: {
   from: string;
+  system?: boolean;
   body: string;
   urgent?: boolean;
   at?: string;
   queued?: { reason?: string };
   failed?: boolean;
 }) {
-  const { from, body, urgent, at, queued, failed } = props;
+  const { from, system, body, urgent, at, queued, failed } = props;
   return (
     <div
+      data-message-block
       className={`rounded-lg border px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        <span className="font-mono text-foreground">{from}</span>
-        {urgent && (
+        {system ? (
+          <span className="flex items-center gap-1 text-foreground">
+            <Factory aria-hidden="true" className="size-3.5" />
+            Factory
+          </span>
+        ) : (
+          <span className="font-mono text-foreground">{from}</span>
+        )}
+        {urgent && !system && (
           <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
         )}
         {queued ? (

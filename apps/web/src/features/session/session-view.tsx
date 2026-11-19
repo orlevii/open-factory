@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -7,10 +8,12 @@ import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentStrip } from "./agent-strip";
+import { runningQueryOptions } from "./api";
 import { CompactPopover } from "./compact-popover";
 import { Composer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
 import { QueueItems } from "./queue-items";
+import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { Timeline } from "./timeline";
@@ -23,6 +26,8 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
   const navigate = useNavigate();
   const agent = s.state.agent;
   const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
+  // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
+  const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   if (s.error?.code === "agent_not_found") return <NotFound />;
   if (!agent) {
     if (!s.error) return null; // the route's pending component covers the first load
@@ -63,9 +68,9 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
             </span>
           </>
         }
-        actions={<SessionActions slug={slug} turnOpen={agent.turnOpen} archived={archived} />}
+        actions={<SessionActions agent={agent} archived={archived} />}
       />
-      <AgentStrip agent={agent} />
+      <AgentStrip agent={agent} slotsMax={running.data?.max} />
       {s.missingEvent !== undefined && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
           Event {s.missingEvent} isn't in this session. Showing the latest.
@@ -88,7 +93,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
                 {archived ? "No messages yet." : "No messages yet. Send the first one below."}
               </p>
             )}
-            <QueueItems items={s.state.queue} lastError={agent.lastError} />
+            <QueueItems items={s.state.queue} agent={agent} />
             {working && (
               <p
                 data-working-line
@@ -177,15 +182,8 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
   return msg;
 }
 
-function SessionActions({
-  slug,
-  turnOpen,
-  archived,
-}: {
-  slug: string;
-  turnOpen: boolean;
-  archived: boolean;
-}) {
+function SessionActions({ agent, archived }: { agent: AgentSummary; archived: boolean }) {
+  const slug = agent.slug;
   return (
     <>
       <Tooltip>
@@ -199,13 +197,17 @@ function SessionActions({
         </TooltipTrigger>
         <TooltipContent className="md:hidden">Edit</TooltipContent>
       </Tooltip>
-      {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). */}
-      {!archived && (
-        <>
-          <CompactPopover slug={slug} />
-          <InterruptButton slug={slug} turnOpen={turnOpen} />
-        </>
-      )}
+      {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). While
+          errored, the recovery actions replace them, so the header never holds more than two. */}
+      {!archived &&
+        (agent.status === "errored" ? (
+          <RecoveryActions agent={agent} />
+        ) : (
+          <>
+            <CompactPopover slug={slug} />
+            <InterruptButton slug={slug} turnOpen={agent.turnOpen} />
+          </>
+        ))}
     </>
   );
 }

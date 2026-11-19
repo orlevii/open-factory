@@ -6,6 +6,7 @@ import {
   type PatchAgentBody,
   slugSchema,
   type TemplateConfig,
+  type TemplateIssue,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -307,7 +308,7 @@ export function AgentForm(props: Props) {
           tone: "success",
           content:
             saved.restartPending || wasRunning
-              ? "Saved. The agent restarts when idle to apply the changes. Reminders it scheduled in this session are lost."
+              ? "Saved. The agent restarts when idle to apply the changes. Its crons from this session stop."
               : "Saved.",
         });
       }
@@ -413,7 +414,13 @@ export function AgentForm(props: Props) {
                     </>
                   )}
                 </NativeSelect>
-                {config && <TemplateSummary config={config} missingSecrets={missingSecrets} />}
+                {config && (
+                  <TemplateSummary
+                    config={config}
+                    issues={detail.data?.issues ?? []}
+                    missingSecrets={missingSecrets}
+                  />
+                )}
               </div>
             )}
           </FieldShell>
@@ -562,14 +569,21 @@ export function AgentForm(props: Props) {
   );
 }
 
-/** What the chosen template brings, plus the warnings that would stop its agents starting. */
+/** What the chosen template brings, plus the warnings that would stop its agents starting: the
+ *  validator's runtime warning (a local template while the factory's local runtime is off) and
+ *  secrets that aren't set. */
 function TemplateSummary({
   config,
+  issues,
   missingSecrets,
 }: {
   config: TemplateConfig;
+  issues: TemplateIssue[];
   missingSecrets: string[];
 }) {
+  const runtimeWarnings = issues
+    .filter((i) => i.severity === "warning" && i.path === "runtime")
+    .map((i) => i.message);
   const parts = [
     config.runtime === "docker" ? "Docker" : "Unsandboxed",
     config.model && `model ${config.model}`,
@@ -580,11 +594,9 @@ function TemplateSummary({
   return (
     <div id="template-summary" className="grid gap-1 text-[0.8125rem] leading-[1.125rem]">
       <p className="text-muted-foreground">{parts.join(" · ")}</p>
-      {config.runtime === "docker" && (
-        <Warning>
-          Agents from this template can't start yet: the Docker runtime isn't available.
-        </Warning>
-      )}
+      {runtimeWarnings.map((w) => (
+        <Warning key={w}>{w}</Warning>
+      ))}
       {missingSecrets.map((s) => (
         <Warning key={s}>
           Secret <span className="font-mono">{s}</span> isn't set. The agent won't start until you{" "}

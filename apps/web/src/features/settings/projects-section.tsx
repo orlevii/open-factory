@@ -429,7 +429,7 @@ export function ProjectsSection() {
                           tone: "success",
                           content:
                             r.grantedTo.length > 0
-                              ? "Saved. Granted agents restart when idle to use the new path. Reminders they scheduled in this session are lost."
+                              ? "Saved. Granted agents restart when idle to use the new path. Their crons from this session stop."
                               : "Saved.",
                           focusKey: Date.now(),
                         });

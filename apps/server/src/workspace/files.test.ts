@@ -149,6 +149,17 @@ test("copyTargets: read-only re-copy, mode masked, symlink targets, no real-file
   expect(lstatSync(path.join(wd2, "link")).isSymbolicLink()).toBe(true);
 });
 
+test("backupDiffering skips an unchanged symlink and backs up a changed one as a link", async () => {
+  const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
+  symlinkSync("AGENTS.md", path.join(wd, "link"));
+  const root = mkdtempSync(path.join(tmpdir(), "bk-"));
+  const same = [{ to: "link", data: Buffer.from("\0symlink:AGENTS.md") }];
+  expect(await backupDiffering(wd, root, same, "s1")).toBeUndefined();
+  const changed = [{ to: "link", data: Buffer.from("\0symlink:OTHER.md") }];
+  const dir = await backupDiffering(wd, root, changed, "s2");
+  expect(lstatSync(path.join(dir as string, "link")).isSymbolicLink()).toBe(true);
+});
+
 test("backupDiffering rethrows read errors and never overwrites an earlier backup", async () => {
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
   writeFileSync(path.join(wd, "a.md"), "one");

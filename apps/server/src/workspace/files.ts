@@ -151,7 +151,11 @@ export async function backupDiffering(
   for (const i of incoming) {
     const st = await safe.entry(i.to);
     if (!st) continue;
-    if (!st.isSymbolicLink()) {
+    if (st.isSymbolicLink()) {
+      // The incoming side of a link is its link text (see `applyTargets`): an unchanged link needs no backup.
+      const cur = Buffer.from(`\0symlink:${await readlink(path.join(workdir, i.to))}`);
+      if (cur.equals(i.data)) continue;
+    } else {
       const cur = await safe.readIfRegular(i.to);
       if (!cur) throw new WorkspaceError(`${path.join(workdir, i.to)} isn't a file; move it away.`);
       if (cur.equals(i.data)) continue;

@@ -3,8 +3,10 @@ import { type Db, schema } from "@open-factory/db";
 import { type AnyEvent, anyEventSchema, type SessionEvent } from "@open-factory/shared";
 import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { capPayload } from "./cap.ts";
+import type { NoticeType } from "./notices.ts";
 
 const { agents, sessionEvents, turns, messages } = schema;
+type MessageRow = typeof messages.$inferSelect;
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Exec = Db | Tx;
 
@@ -185,14 +187,61 @@ export class EventStore {
       .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
       .orderBy(asc(messages.createdAt), asc(messages.id));
   }
-  /** Pending messages in order, with the sender's handle (for envelopes and queue items). */
-  async pendingQueue(agentId: string) {
+  /**
+   * A system notice from `@factory`. One pending notice of each type per agent: a second one replaces the pending
+   * one's body (same row); a written (delivered) one is never touched.
+   */
+  async createNotice(m: {
+    toAgentId: string;
+    notice: NoticeType;
+    body: string;
+  }): Promise<MessageRow> {
+    const [existing] = await this.db
+      .update(messages)
+      .set({ body: m.body })
+      .where(
+        and(
+          eq(messages.toAgentId, m.toAgentId),
+          eq(messages.kind, "system"),
+          eq(messages.notice, m.notice),
+          eq(messages.state, "pending"),
+        ),
+      )
+      .returning();
+    if (existing) return existing;
+    const [row] = await this.db
+      .insert(messages)
+      .values({
+        id: randomUUID(),
+        kind: "system",
+        notice: m.notice,
+        toAgentId: m.toAgentId,
+        body: m.body,
+      })
+      .returning();
+    if (!row) throw new Error("insert returned no row");
+    return row;
+  }
+  /** Pending system notices describe the old session; "Start a new session" drops them. */
+  async deletePendingNotices(agentId: string): Promise<void> {
+    await this.db
+      .delete(messages)
+      .where(
+        and(
+          eq(messages.toAgentId, agentId),
+          eq(messages.kind, "system"),
+          eq(messages.state, "pending"),
+        ),
+      );
+  }
+  /** Pending items in delivery order (system notices first, then by age), with the sender's handle (null for `@factory`). */
+  async pendingQueue(agentId: string): Promise<(MessageRow & { fromHandle: string | null })[]> {
     const rows = await this.db
       .select({ m: messages, fromHandle: schema.users.handle })
       .from(messages)
-      .innerJoin(schema.users, eq(schema.users.id, messages.fromUserId))
+      .leftJoin(schema.users, eq(schema.users.id, messages.fromUserId))
       .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
-      .orderBy(asc(messages.createdAt), asc(messages.id));
+      .orderBy(sql`(${messages.kind} = 'system') desc`, asc(messages.createdAt), asc(messages.id));
     return rows.map((r) => ({ ...r.m, fromHandle: r.fromHandle }));
   }
   async markDelivered(ids: string[], tx: Exec = this.db) {

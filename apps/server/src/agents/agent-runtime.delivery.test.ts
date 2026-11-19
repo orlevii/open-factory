@@ -277,3 +277,53 @@ test("a rejected interrupt write before an unexpected exit keeps the real exit r
     lastError: "Exited unexpectedly (code 1)",
   });
 });
+
+test("the first batch after a notice begins with it, even ahead of an older pending message", async () => {
+  await store.createMessage({ fromUserId: "u1", toAgentId: agentId, body: "old", urgent: false });
+  await rt.init(); // as after a restart: "old" is pending
+  await rt.postNotice("crash", "it crashed"); // no process: nothing is written
+  expect(rt.queueItems().map((q) => [q.kind, q.from, q.body])).toEqual([
+    ["notice", "@factory", "it crashed"],
+    ["message", "@or", "old"],
+  ]);
+  await send("new"); // starts the process
+  expect(driver.last.sent[0]).toMatchObject([
+    { from: "@factory", kind: "system", body: "it crashed" },
+    { from: "@or", kind: "message", body: "old" },
+    { from: "@or", kind: "message", body: "new" },
+  ]);
+});
+
+test("a notice is written ahead of older pending messages in one batch", async () => {
+  await startedIdle();
+  driver.last.failWrites = true;
+  await send("a");
+  await send("b");
+  driver.last.failWrites = false;
+  await rt.postNotice("factory_restarted", "restarted");
+  expect(driver.last.sent.at(-1)).toMatchObject([
+    { from: "@factory", kind: "system", body: "restarted" },
+    { from: "@or", kind: "message", body: "a" },
+    { from: "@or", kind: "message", body: "b" },
+  ]);
+  const hist = (await events()).find(
+    (e) => e.event.type === "message_in" && e.event.messages[0]?.kind === "system",
+  );
+  expect(hist).toBeDefined(); // history with a system message_in parses (rowsToDto validates)
+});
+
+test("a second notice of the same type replaces a pending one; an in-flight one is untouched", async () => {
+  await startedIdle();
+  driver.last.failWrites = true;
+  await rt.postNotice("restart", "first");
+  await rt.postNotice("restart", "second");
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["second"]);
+  driver.last.failWrites = false;
+  await rt.postNotice("crash", "x"); // flush writes [second, x]
+  const sentBodies = driver.last.sent.at(-1)?.map((m) => m.body);
+  expect(sentBodies).toEqual(["second", "x"]);
+  await rt.postNotice("restart", "third"); // the earlier restart was written: a new row
+  const rows =
+    await t.sql`select body, state from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+  expect(rows.map((r) => r.body)).toEqual(["second", "third"]);
+});

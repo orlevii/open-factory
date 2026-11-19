@@ -18,6 +18,7 @@ import type {
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Tx } from "./event-store.ts";
+import type { NoticeType } from "./notices.ts";
 import { SerialQueue } from "./serial-queue.ts";
 import type { PrepareStart } from "./start.ts";
 
@@ -41,14 +42,15 @@ export interface RuntimeDeps {
   onFirstStart?: (spec: AgentRuntimeSpec) => void;
 }
 
-type MessageEntry = { kind: "message"; row: MessageRow; fromHandle: string };
+/** A queued message row; `fromHandle` is null for a `@factory` system notice (row.kind === "system"). */
+type MessageEntry = { kind: "message"; row: MessageRow; fromHandle: string | null };
 type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; createdAt: Date };
 type Entry = MessageEntry | CompactEntry;
 
 const toFactory = (e: MessageEntry): FactoryMessage => ({
   id: e.row.id,
-  from: `@${e.fromHandle}`,
-  kind: "message",
+  from: e.row.kind === "system" ? "@factory" : `@${e.fromHandle}`,
+  kind: e.row.kind === "system" ? "system" : "message",
   urgent: e.row.urgent,
   body: e.row.body,
 });
@@ -116,6 +118,35 @@ export class AgentRuntime {
       if (m.urgent) await this.urgentInterrupt(m.fromHandle);
       await this.flush();
       return this.itemOf(entry);
+    });
+  }
+
+  /**
+   * Adds (or refreshes) a `@factory` notice. Call inside a job. A new notice goes ahead of every non-notice entry
+   * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
+   */
+  async addNotice(type: NoticeType, body: string) {
+    const row = await this.d.store.createNotice({ toAgentId: this.agent.id, notice: type, body });
+    const existing = this.queue.find(
+      (e): e is MessageEntry => e.kind === "message" && e.row.id === row.id,
+    );
+    if (existing) existing.row = row;
+    else {
+      const at = this.queue.findIndex((e) => e.kind !== "message" || e.row.kind !== "system");
+      this.queue.splice(at === -1 ? this.queue.length : at, 0, {
+        kind: "message",
+        row,
+        fromHandle: null,
+      });
+    }
+    this.publishQueue();
+  }
+
+  /** `addNotice` as its own job, then a flush (never starts a process). */
+  postNotice(type: NoticeType, body: string): Promise<void> {
+    return this.apiJob(async () => {
+      await this.addNotice(type, body);
+      await this.flush();
     });
   }
 
@@ -293,10 +324,10 @@ export class AgentRuntime {
     return e.kind === "message"
       ? {
           id: e.row.id,
-          kind: "message",
+          kind: e.row.kind === "system" ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
-          from: `@${e.fromHandle}`,
+          from: e.row.kind === "system" ? "@factory" : `@${e.fromHandle}`,
           createdAt: e.row.createdAt.toISOString(),
         }
       : {

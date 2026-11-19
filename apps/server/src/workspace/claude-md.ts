@@ -23,7 +23,7 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     `- Template: ${i.template}`,
     "",
     "## How messages reach you",
-    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is the sender (`@handle` for a human). Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first.',
+    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is the sender (`@handle` for a human). Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits).',
     "",
     "Your whole session is visible to the humans who run this factory, so work in the open: say what you are doing and why.",
     "",

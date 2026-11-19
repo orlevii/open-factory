@@ -99,3 +99,28 @@ test("turns and messages", async () => {
     deliveredTurnId: null,
   });
 });
+
+test("pendingQueue returns system notices first, including sender-less rows", async () => {
+  await store.createMessage({ fromUserId: "u1", toAgentId: "a2", body: "older", urgent: false });
+  await store.createNotice({ toAgentId: "a2", notice: "crash", body: "n" });
+  const q = await store.pendingQueue("a2");
+  expect(q.map((m) => m.body)).toEqual(["n", "older"]);
+  expect(q.map((m) => m.fromHandle)).toEqual([null, "or"]);
+});
+
+test("createNotice replaces a pending notice of the same type and leaves a delivered one", async () => {
+  await store.createNotice({ toAgentId: "a1", notice: "restart", body: "one" });
+  const second = await store.createNotice({ toAgentId: "a1", notice: "restart", body: "two" });
+  const pend = (await store.pendingQueue("a1")).filter((m) => m.kind === "system");
+  expect(pend.map((m) => [m.id, m.body])).toEqual([[second.id, "two"]]);
+  await store.markDelivered([second.id]);
+  const third = await store.createNotice({ toAgentId: "a1", notice: "restart", body: "three" });
+  expect(third.id).not.toBe(second.id);
+  const [delivered] = await t.sql`select body from messages where id = ${second.id}`;
+  expect(delivered?.body).toBe("two");
+  await store.createNotice({ toAgentId: "a1", notice: "crash", body: "c" });
+  await store.deletePendingNotices("a1");
+  expect((await store.pendingQueue("a1")).filter((m) => m.kind === "system")).toEqual([]);
+  const [still] = await t.sql`select state from messages where id = ${second.id}`;
+  expect(still?.state).toBe("delivered");
+});

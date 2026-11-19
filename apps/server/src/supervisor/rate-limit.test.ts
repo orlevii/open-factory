@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import type { HarnessEvent } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { AgentRuntime } from "../agents/agent-runtime.ts";
@@ -99,10 +100,13 @@ class World {
 
   /** The reset runs outside any job (DB reads, then jobs): wait until `done` holds. */
   async until(done: () => boolean | Promise<boolean>) {
-    for (let i = 0; i < 200; i++) {
+    // Bounded by real time, not by a loop count: a slow database (CI) must not make this flaky.
+    // node:timers/promises is not covered by the fake timers.
+    const deadline = process.hrtime.bigint() + 15_000_000_000n;
+    while (process.hrtime.bigint() < deadline) {
       await this.settleAll();
       if (await done()) return;
-      await new Promise((r) => setImmediate(r));
+      await sleep(5);
     }
     throw new Error("condition never held");
   }

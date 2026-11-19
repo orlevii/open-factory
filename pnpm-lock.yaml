@@ -351,6 +351,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@open-factory/shared':
+        specifier: workspace:*
+        version: link:../shared
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(kysely@0.29.9)(postgres@4.1.1)

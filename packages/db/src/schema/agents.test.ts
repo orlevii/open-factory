@@ -18,9 +18,21 @@ afterAll(async () => {
 test("agent tables exist; seq is unique per agent; deleting an agent cascades", async () => {
   const { sql } = h;
   await sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
-  await sql`insert into agents (id, slug, display_name) values ('a1', 'dev', 'Dev agent'), ('a2', 'other', 'Other')`;
-  const [a] = await sql`select status, description, session_id from agents where id = 'a1'`;
-  expect(a).toEqual({ status: "hibernated", description: "", session_id: null });
+  await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
+  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
+    values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1')`;
+  const [a] = await sql`
+    select status, description, session_id, kind, reports_to, grants_overridden, archived_at
+    from agents where id = 'a1'`;
+  expect(a).toEqual({
+    status: "hibernated",
+    description: "",
+    session_id: null,
+    kind: "persistent",
+    reports_to: null,
+    grants_overridden: false,
+    archived_at: null,
+  });
   await sql`insert into turns (id, agent_id, started_at) values ('t1', 'a1', now())`;
   await sql`insert into session_events (agent_id, seq, turn_id, type, payload) values ('a1', 1, 't1', 'turn_started', '{}')`;
   await sql`insert into session_events (agent_id, seq, type, payload) values ('a2', 1, 'process_started', '{"resumed":false}')`;

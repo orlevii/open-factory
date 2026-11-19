@@ -374,3 +374,38 @@ test("stop_failed names the pid and a later stop escalates again", async () => {
   await h.rt.stop();
   expect(kills).toBe(2);
 });
+
+test("Restart of a stop_failed agent with no process: one more cleanup; a failure keeps the slot and wakes nothing", async () => {
+  const slots = new RecordingSlots();
+  let fail = true;
+  const cleanup = vi.fn(async () => {
+    if (fail) throw new Error("docker down");
+    return { container: "stopped" as const };
+  });
+  await h.makeRuntime({ slots, cleanup });
+  await idle();
+  h.driver.last.emit(ev.turn());
+  h.driver.last.exit(1);
+  await h.rt.settled();
+  expect(h.rt.live().errorKind).toBe("stop_failed");
+  slots.events.length = 0;
+
+  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.settled();
+  expect(cleanup).toHaveBeenCalledTimes(2);
+  expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
+  expect(slots.events).toEqual([["stop_failed"]]);
+  expect(h.driver.starts).toHaveLength(1);
+  expect(await row()).toMatchObject({ error_kind: "stop_failed", attempting: false });
+
+  // The retry succeeds: the held slot is released, then the restart's wake follows as usual.
+  fail = false;
+  slots.events.length = 0;
+  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.settled();
+  expect(slots.events.slice(0, 2)).toEqual([["release"], ["request", "restart"]]);
+  expect(await events()).toContainEqual({ type: "cleanup", container: "stopped" });
+  expect(h.driver.starts).toHaveLength(2);
+  expect(h.driver.last.sent[0]?.[0]?.body).toBe("Restarted by @or after an error.");
+  expect(await row()).toMatchObject({ attempting: true });
+});

@@ -272,11 +272,18 @@ export class Supervisor implements SlotPort {
 
   /**
    * Whether the entry can take a slot now. "drop" for an entry that can never start from this request (archived,
-   * an errored agent woken for a reason that doesn't wake it, nothing deliverable, already holding a slot).
+   * an errored agent woken for a reason that doesn't wake it, nothing deliverable, already holding a slot). An entry
+   * of an agent whose attempt began since it was queued (Restart, Start a new session) is that attempt's wake and
+   * keeps its place.
    */
   private eligibility(e: Entry): "yes" | "paused" | "drop" {
     const rt = this.d.runtimes.get(e.agentId);
-    if (!rt || this.holders.has(e.agentId) || !rt.acceptsWake(e.reason) || !rt.hasDeliverable())
+    if (
+      !rt ||
+      this.holders.has(e.agentId) ||
+      !rt.acceptsWake(rt.wakeReason(e.reason)) ||
+      !rt.hasDeliverable()
+    )
       return "drop";
     return this.pausedFor(e.agentId) ? "paused" : "yes";
   }

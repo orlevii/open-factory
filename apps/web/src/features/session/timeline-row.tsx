@@ -167,13 +167,6 @@ export function TimelineRow(props: TimelineRowProps) {
             <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
             {row.event.message}
           </p>
-          {row.event.source === "resume" && (
-            <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-              To start a new session: stop the server, run{" "}
-              <code className="font-mono">pnpm agent:reset-session {props.slug}</code>, then start
-              it again.
-            </p>
-          )}
           {row.event.fix && (
             <p>
               <FixLink fix={row.event.fix} slug={props.slug} />

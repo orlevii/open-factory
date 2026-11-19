@@ -677,17 +677,14 @@ test("an error with fix resync links to the agent's Re-sync", async () => {
   );
 });
 
-test("a resume error names pnpm agent:reset-session with the slug", async () => {
+test("a resume error no longer names the interim reset script", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "resume",
     message: "No conversation found",
   });
   renderApp("/agents/dev", alice);
-  const hint = await screen.findByText(/To start a new session/);
-  expect(hint.textContent).toBe(
-    "To start a new session: stop the server, run pnpm agent:reset-session dev, then start it again.",
-  );
-  expect(within(hint).getByText("pnpm agent:reset-session dev").tagName).toBe("CODE");
+  expect(await screen.findByText("No conversation found")).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/agent:reset-session|stop the server/);
   expect(document.body.textContent).not.toMatch(/seed:dev-agent/);
 });

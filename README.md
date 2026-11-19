@@ -52,7 +52,7 @@ The local runtime is **unsandboxed**: Claude Code runs directly on your machine 
 - Push over HTTPS with a token: add it as a secret named `GH_TOKEN` in Settings and grant it in the template. `SSH_AUTH_SOCK` is not passed to agents, so SSH remotes won't authenticate.
 - Set `FACTORY_CLAUDE_BIN` if `claude` isn't on your PATH.
 
-If an agent's session is lost ("No conversation found"), stop the server and run `pnpm agent:reset-session <slug>` (an interim command).
+If an agent's session can't be resumed ("No conversation found"), use **Start a new session** on the agent (`POST /api/agents/<slug>/reset-session`): its pending messages become the first turn of a fresh Claude session.
 
 ## Templates
 

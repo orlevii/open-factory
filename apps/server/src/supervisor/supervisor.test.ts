@@ -537,3 +537,22 @@ test("running counts are published as supervisor frames", async () => {
     { type: "supervisor", running: 0, max: 2 },
   ]);
 });
+
+test("a restart wake takes over a queued entry whose reason no longer wakes the agent", async () => {
+  w = new World(1);
+  const a = await w.agent();
+  const b = await w.agent({ pending: ["x"], status: "errored", errorKind: "crash" });
+  const c = await w.agent();
+  await busy(a);
+  expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
+  await send(c, "c1");
+  await b.restart({ byHandle: "or", runtimeAllowed: true });
+  expect(status(b)).toBe("queued"); // the entry kept its place, ahead of c, and is now the restart's wake
+  endTurnAndExit(a);
+  await w.settleAll();
+  expect(started(b)).toBe(true);
+  expect(started(c)).toBe(false);
+  expect(
+    (await store.after(b.agent.id, 0, 1000)).filter((e) => e.event.type === "process_started"),
+  ).toMatchObject([{ event: { reason: "restart" } }]);
+});

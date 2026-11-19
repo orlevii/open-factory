@@ -16,8 +16,14 @@ import {
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "../agents/errors.ts";
+import {
+  AgentArchivedError,
+  AgentStartError,
+  NoOpenTurnError,
+  RecoveryRefusedError,
+} from "../agents/errors.ts";
 import { requireUser } from "../auth/require-user.ts";
+import { localRuntimeAllowed } from "../config.ts";
 
 const slugParams = z.object({ slug: slugSchema });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
@@ -149,6 +155,44 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
         throw e;
+      }
+    },
+  );
+
+  /** Restart and Start a new session share their refusals (spec §9.7). */
+  const recoveryError = (reply: FastifyReply, e: unknown) => {
+    if (e instanceof RecoveryRefusedError) return err(reply, 409, e.code, e.message);
+    if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+    if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
+    throw e;
+  };
+
+  app.post("/api/agents/:slug/restart", { schema: { params: slugParams } }, async (req, reply) => {
+    const rt = await app.runtimes.bySlug(req.params.slug);
+    if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+    try {
+      await rt.restart({
+        byHandle: user(req).handle,
+        // A Restart certain to fail isn't offered (spec §13).
+        runtimeAllowed: rt.agent.runtime !== "local" || localRuntimeAllowed(app.config),
+      });
+      return reply.code(202).send({});
+    } catch (e) {
+      return recoveryError(reply, e);
+    }
+  });
+
+  app.post(
+    "/api/agents/:slug/reset-session",
+    { schema: { params: slugParams } },
+    async (req, reply) => {
+      const rt = await app.runtimes.bySlug(req.params.slug);
+      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      try {
+        await rt.resetSession({ byHandle: user(req).handle });
+        return reply.code(202).send({});
+      } catch (e) {
+        return recoveryError(reply, e);
       }
     },
   );

@@ -20,7 +20,12 @@ import {
   type WaitingOn,
 } from "@open-factory/shared";
 import { type SlotPort, unlimitedSlots, type WakeReason } from "../supervisor/slots.ts";
-import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
+import {
+  AgentArchivedError,
+  AgentStartError,
+  NoOpenTurnError,
+  RecoveryRefusedError,
+} from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Tx } from "./event-store.ts";
 import { type NoticeType, notices } from "./notices.ts";
@@ -77,6 +82,7 @@ export type LostWork = {
 /** What the `exited` job must do, recorded when a deliberate stop begins (spec §5.5). */
 export type AfterExit =
   | { kind: "hibernate"; reason: HibernateReason; lost: LostWork }
+  // Restart and Start a new session: the exit releases the slot and makes the attempt's wake, if one is on.
   | { kind: "restart"; by: string }
   | { kind: "failed_start" } // S3's stop after a spawn or resume failure
   | { kind: "internal" }; // S3's onJobFailure stop
@@ -336,6 +342,92 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Restart (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process left is force-stopped
+   * and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   */
+  restart(r: { byHandle: string; runtimeAllowed: boolean }): Promise<void> {
+    return this.apiJob(async () => {
+      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      this.refuseRecoveryWhileAttempting();
+      if (!this.errored)
+        throw new RecoveryRefusedError(
+          "not_errored",
+          `@${this.agent.slug} isn't errored. Restart is only for an errored agent.`,
+        );
+      if (this.errorKind === "resume_unrecoverable")
+        throw new RecoveryRefusedError(
+          "resume_unrecoverable",
+          "This session can't be resumed. Start a new session instead.",
+        );
+      if (!r.runtimeAllowed)
+        throw new RecoveryRefusedError(
+          "runtime_disabled",
+          "The local runtime is disabled on this factory.",
+        );
+      this.refuseWhileStopping();
+      const by = `@${r.byHandle}`;
+      const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
+      await this.addNotice(
+        "restart",
+        notices.restart({
+          by,
+          tasks: lost.tasks.map((t) => t.description || t.taskId),
+          crons: lost.crons.map((c) => c.humanSchedule),
+        }),
+      );
+      await this.append(null, { type: "control", cmd: "restart", by });
+      if (this.stopFailed()) await this.retryStopFailed(by);
+      else if (this.proc) {
+        await this.markAttempting("restart");
+        this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
+      } else await this.beginAttempt("restart", false);
+      this.publishStatus();
+    });
+  }
+
+  /**
+   * Start a new session (spec §9.7), only after a failed resume: clear the session id, `session_reset`, drop the
+   * pending notices (they describe the old session), clear errored, and make pending human messages the new
+   * session's first turn (one attempt). The old session's JSONL stays on disk.
+   */
+  resetSession(r: { byHandle: string }): Promise<void> {
+    return this.apiJob(async () => {
+      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      this.refuseRecoveryWhileAttempting();
+      if (
+        !this.errored ||
+        (this.errorKind !== "resume" && this.errorKind !== "resume_unrecoverable")
+      )
+        throw new RecoveryRefusedError(
+          "reset_not_allowed",
+          "Start a new session is only for an agent whose session couldn't be resumed.",
+        );
+      this.refuseWhileStopping();
+      const by = `@${r.byHandle}`;
+      await this.d.store.setSessionId(this.agent.id, null);
+      await this.append(null, { type: "session_reset", by });
+      await this.d.store.deletePendingNotices(this.agent.id);
+      // Written to a failing start but never confirmed: still pending rows, so they are gone too.
+      this.queue = this.queue.filter((e) => !isNotice(e));
+      this.inFlight = this.inFlight
+        .map((b) => b.filter((e) => !isNotice(e)))
+        .filter((b) => b.length > 0);
+      this.publishQueue();
+      this.errored = false;
+      this.lastError = undefined;
+      this.errorKind = undefined;
+      await this.d.store.clearErrored(this.agent.id);
+      const humans = this.queue.some((e) => e.kind === "message") || this.inFlight.length > 0;
+      if (this.proc) {
+        // The failed start's process is still exiting: its exit makes the wake.
+        if (humans) await this.markAttempting("reset");
+        this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
+      } else if (humans) await this.beginAttempt("reset", false);
+      this.publishStatus();
+    });
+  }
+
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
   markArchived(): void {
     this.archived = true;
@@ -349,8 +441,9 @@ export class AgentRuntime {
   }
 
   /** The Supervisor's grant job: start with the slot it handed over, or give it back when no longer eligible. */
-  grant(reason: WakeReason): Promise<void> {
+  grant(granted: WakeReason): Promise<void> {
     return this.run(async () => {
+      const reason = this.wakeReason(granted);
       if (this.proc) {
         // Never release here: the slot is held by the running process and its exit releases it.
         this.d.log.error({ agent: this.agent.slug, reason }, "grant for an agent that is running");
@@ -396,6 +489,15 @@ export class AgentRuntime {
     if (this.errorKind === "stop_failed") return reason === "restart";
     if (this.errorKind === "resume_unrecoverable") return reason === "reset";
     return ERRORED_WAKES.has(reason);
+  }
+
+  /**
+   * The reason a queued or granted wake starts this agent with. While attempting it is the attempt's own: a queue
+   * entry or grant from an older request (the Supervisor keeps one per agent, with its first reason) becomes the
+   * attempt's start, so Restart or Start a new session is never dropped for an entry it found.
+   */
+  wakeReason(requested: WakeReason): WakeReason {
+    return this.attempting && this.attemptReason ? this.attemptReason : requested;
   }
 
   /** A wake is only granted with something to write: a pending message or notice, or a queued compact (spec §5.2). */
@@ -596,7 +698,8 @@ export class AgentRuntime {
           !(
             err instanceof AgentStartError ||
             err instanceof AgentArchivedError ||
-            err instanceof NoOpenTurnError
+            err instanceof NoOpenTurnError ||
+            err instanceof RecoveryRefusedError
           ) &&
           this.proc
         )
@@ -708,18 +811,62 @@ export class AgentRuntime {
    * job (an immediate start failure rejects the call). A dropped wake ends the attempt at once: nothing will start.
    */
   private async beginAttempt(reason: WakeReason, inline: boolean) {
-    this.attempting = true;
-    this.attemptReason = reason;
-    this.attemptBatchWritten = false;
-    this.attemptOwedAtExit = false;
-    await this.d.store.setAttempting(this.agent.id, true);
-    this.publishStatus();
+    await this.markAttempting(reason);
     try {
       if (inline) await this.wakeInline(reason);
       else await this.wakeFromJob(reason);
     } finally {
       await this.endAttemptIfNothingStarts(reason);
     }
+  }
+
+  /** The attempt's flag (memory and DB) without its wake: a stop's exit requests it (Restart of a process left). */
+  private async markAttempting(reason: WakeReason) {
+    this.attempting = true;
+    this.attemptReason = reason;
+    this.attemptBatchWritten = false;
+    this.attemptOwedAtExit = false;
+    await this.d.store.setAttempting(this.agent.id, true);
+    this.publishStatus();
+  }
+
+  /** Spec §9.2: no Restart or Start a new session in the middle of an attempt. */
+  private refuseRecoveryWhileAttempting() {
+    if (this.attempting)
+      throw new RecoveryRefusedError(
+        "attempt_in_progress",
+        `@${this.agent.slug} is already being recovered. Wait for that attempt to finish.`,
+      );
+  }
+
+  /**
+   * Restart of a `stop_failed` agent (spec §9.6): one more escalation try. With the process left: SIGKILL or the
+   * container stop again, and the exit (intent restart) releases the slot and wakes; a failure is `stop_failed`
+   * again (intent internal, no wake). With no process (a crash's cleanup failed): the cleanup again, then the held
+   * slot is released and the restart's wake follows as usual.
+   */
+  private async retryStopFailed(by: string) {
+    await this.markAttempting("restart");
+    const proc = this.proc;
+    if (proc) {
+      this.stopping = true;
+      this.afterExit = { kind: "restart", by };
+      await this.escalateNow(proc);
+      return;
+    }
+    let done: CleanupResult | undefined;
+    try {
+      done = await this.d.cleanup?.(this.agent);
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "cleanup on restart failed");
+      await this.setErrored(stopFailedMessage(undefined), "stop_failed");
+      this.slots.stopFailed(this.agent.id);
+      return;
+    }
+    if (done) await this.append(null, { type: "cleanup", ...done });
+    this.slots.release(this.agent.id);
+    await this.wakeFromJob("restart");
+    await this.endAttemptIfNothingStarts("restart");
   }
 
   /**
@@ -1116,6 +1263,7 @@ export class AgentRuntime {
             : {}),
         });
       }
+      if (intent?.kind === "restart") await this.reportLostWork("restart", lost);
       if (policy !== "none" && policy !== "hibernated")
         await this.recordCrash(e, policy, live, keepSlot);
       // A crash keeps its journal: the lost work is reported from it.
@@ -1141,7 +1289,12 @@ export class AgentRuntime {
             ? "apply_changes"
             : "queued_items",
         );
-    } else if (intent?.kind === "restart") await this.wakeAfterExit("restart");
+    } else if (intent?.kind === "restart" && this.attempting && this.attemptReason) {
+      // Restart or Start a new session: the attempt's wake; if none can start now, the attempt ends.
+      const reason = this.attemptReason;
+      await this.wakeAfterExit(reason);
+      await this.endAttemptIfNothingStarts(reason);
+    }
   }
 
   /**
@@ -1154,13 +1307,8 @@ export class AgentRuntime {
   ) {
     const { reason, lost } = intent;
     const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
-    if (anyLost && reason !== "warm_window" && reason !== "freed_slot") {
-      await this.append(null, { type: "background_work_lost", reason, ...lost });
-      this.d.log.info(
-        { agent: this.agent.slug, manager: this.agent.reportsTo, reason, ...lost },
-        "background work lost; would notify the manager",
-      );
-    }
+    if (reason !== "warm_window" && reason !== "freed_slot")
+      await this.reportLostWork(reason, lost);
     if (reason === "shutdown" && (turnWasOpen || anyLost))
       await this.addNotice(
         "factory_restarted",
@@ -1171,6 +1319,19 @@ export class AgentRuntime {
         "restart_crons",
         notices.restartCrons({ crons: lost.crons.map((c) => c.humanSchedule) }),
       );
+  }
+
+  /** Spec §9.4: `background_work_lost` and the log line naming the manager, when live tasks or crons died. */
+  private async reportLostWork(
+    reason: "crash" | "restart" | Exclude<HibernateReason, "warm_window" | "freed_slot">,
+    lost: LostWork,
+  ) {
+    if (!lost.tasks.length && !lost.crons.length) return;
+    await this.append(null, { type: "background_work_lost", reason, ...lost });
+    this.d.log.info(
+      { agent: this.agent.slug, manager: this.agent.reportsTo, reason, ...lost },
+      "background work lost; would notify the manager",
+    );
   }
 
   /**
@@ -1303,13 +1464,7 @@ export class AgentRuntime {
         "crash",
       );
     const { tasks, crons } = live.lost;
-    if (tasks.length || crons.length) {
-      await this.append(null, { type: "background_work_lost", reason: "crash", tasks, crons });
-      this.d.log.info(
-        { agent: this.agent.slug, manager: this.agent.reportsTo, reason: "crash", tasks, crons },
-        "background work lost; would notify the manager",
-      );
-    }
+    await this.reportLostWork("crash", live.lost);
     if (policy === "attempt_failed" || cleanupFailed) return; // only a human acts next
     await this.addNotice(
       "crash",
@@ -1369,12 +1524,15 @@ export class AgentRuntime {
   }
 
   /** Internal primitive, call only inside this agent's own job: stop the current process now, never awaited. */
-  private beginForceStop(intent: AfterExit): void {
+  private beginForceStop(
+    intent: AfterExit,
+    opts: { graceMs: number; termWaitMs?: number } = { graceMs: 0 },
+  ): void {
     const proc = this.proc;
     if (!proc) return;
     this.stopping = true;
     this.afterExit = intent;
-    this.watchStop(proc, proc.stop({ graceMs: 0 }), "force stop failed");
+    this.watchStop(proc, proc.stop(opts), "force stop failed");
   }
 
   /** Observes a deliberate stop outside the job (never awaited in one): a timed-out stop escalates (spec §9.6). */

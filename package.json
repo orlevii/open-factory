@@ -16,7 +16,6 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "lint:ci": "biome ci .",
-    "agent:reset-session": "node --env-file-if-exists=.env --import tsx apps/server/scripts/reset-session.ts",
     "smoke:harness": "node --env-file-if-exists=.env --import tsx apps/server/scripts/smoke-harness.ts",
     "smoke:workspace": "node --env-file-if-exists=.env --import tsx apps/server/scripts/smoke-workspace.ts",
     "db:generate": "pnpm --filter @open-factory/db generate"

@@ -60,11 +60,6 @@ const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-ws-")));
 const factoryHome = path.join(root, "home");
 const hostSkillsDir = path.join(root, "host-skills");
 const repoDir = path.join(root, "smoke-repo");
-mkdirSync(path.join(hostSkillsDir, "smoke-skill"), { recursive: true });
-writeFileSync(
-  path.join(hostSkillsDir, "smoke-skill", "SKILL.md"),
-  "---\nname: smoke-skill\ndescription: The smoke skill word. Use when asked for the smoke skill word.\n---\n\nReply PLOVER-SKILL when asked for the smoke skill word.\n",
-);
 // The real host skills, by name only, to prove none of them leak into an agent's session.
 const realHostSkills = (() => {
   try {
@@ -103,33 +98,61 @@ const captureLog = {
 };
 
 // ---------- app ----------
-const tdb = await createTestDatabase();
-await migrate(tdb.url, MIGRATIONS_DIR);
-const { db, sql, close } = createDb(tdb.url);
-const config = loadConfig({
-  ...process.env,
-  DATABASE_URL: tdb.url,
-  FACTORY_SECRET_KEY: "s".repeat(40),
-  FACTORY_HOME: factoryHome,
-  FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
-});
-const app = await buildApp(config, {
-  db,
-  sql,
-  logger: false,
-  harnessDriver: createClaudeDriver(captureLog),
-});
-await sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
+// Everything that needs cleanup is tracked here so the cleanup can run from any point: a failed
+// setup, the end of the run, or SIGINT/SIGTERM. Each cleanup step is guarded on its own.
+let app!: Awaited<ReturnType<typeof buildApp>>;
+let appBuilt = false;
+let tdb: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
+let closeDb: (() => Promise<void>) | undefined;
+let cleaned: Promise<void> | undefined;
+function cleanup(): Promise<void> {
+  cleaned ??= (async () => {
+    if (appBuilt) {
+      // app.close() runs runtimes.stopAll() (onClose hook); then no process may be running.
+      try {
+        const rts = await Promise.all(
+          ["smoke-alpha", "smoke-beta"].map((s) => app.runtimes.bySlug(s).catch(() => undefined)),
+        );
+        let closeErr = "";
+        await app.close().catch((e) => {
+          closeErr = String(e);
+        });
+        const statuses = rts.map((r) => r?.live().status ?? "missing");
+        check(
+          "7. both runtimes stopped",
+          !closeErr && statuses.every((st) => st === "hibernated"),
+          `close: ${closeErr}; statuses: ${statuses.join(", ")}`,
+        );
+      } catch (e) {
+        fail("cleanup: closing the app failed", String(e));
+      }
+    }
+    try {
+      await closeDb?.();
+    } catch (e) {
+      console.error(`cleanup: closing the db pool failed: ${e}`);
+    }
+    try {
+      await tdb?.drop();
+    } catch (e) {
+      console.error(`cleanup: dropping the throwaway database failed: ${e}`);
+    }
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch (e) {
+      console.error(`cleanup: removing ${root} failed: ${e}`);
+    }
+  })();
+  return cleaned;
+}
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.on(sig, () => {
+    console.error(`\n${sig}: cleaning up`);
+    cleanup().finally(() => process.exit(130));
+  });
 
 // ---------- helpers ----------
 const events = new Map<string, AnyEvent[]>();
-for (const slug of ["smoke-alpha", "smoke-beta"]) {
-  const list: AnyEvent[] = [];
-  events.set(slug, list);
-  app.bus.subscribe(slug, (m) => {
-    if (m.type === "session_event") list.push(m.event.event);
-  });
-}
 async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[]> {
   const list = events.get(slug) ?? [];
   const from = list.length;
@@ -172,6 +195,39 @@ function writeTemplate(name: string, files: Record<string, string>) {
 }
 
 try {
+  // 0. Setup (inside the try so a failure here still cleans up).
+  mkdirSync(path.join(hostSkillsDir, "smoke-skill"), { recursive: true });
+  writeFileSync(
+    path.join(hostSkillsDir, "smoke-skill", "SKILL.md"),
+    "---\nname: smoke-skill\ndescription: The smoke skill word. Use when asked for the smoke skill word.\n---\n\nReply PLOVER-SKILL when asked for the smoke skill word.\n",
+  );
+  tdb = await createTestDatabase();
+  await migrate(tdb.url, MIGRATIONS_DIR);
+  const conn = createDb(tdb.url);
+  closeDb = conn.close;
+  const config = loadConfig({
+    ...process.env,
+    DATABASE_URL: tdb.url,
+    FACTORY_SECRET_KEY: "s".repeat(40),
+    FACTORY_HOME: factoryHome,
+    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+  });
+  app = await buildApp(config, {
+    db: conn.db,
+    sql: conn.sql,
+    logger: false,
+    harnessDriver: createClaudeDriver(captureLog),
+  });
+  appBuilt = true;
+  await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
+  for (const slug of ["smoke-alpha", "smoke-beta"]) {
+    const list: AnyEvent[] = [];
+    events.set(slug, list);
+    app.bus.subscribe(slug, (m) => {
+      if (m.type === "session_event") list.push(m.event.event);
+    });
+  }
+
   // 1. Credentials (each create runs the real verification turn).
   await step("1. credential smoke-a created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke-a", kind: "oauth_token", value: token }),
@@ -407,23 +463,7 @@ try {
   if (!(err instanceof StopRun))
     fail("unexpected error", err instanceof Error ? err.stack : String(err));
 } finally {
-  // app.close() runs runtimes.stopAll() (onClose hook); then no process may be running.
-  const rts = await Promise.all(
-    ["smoke-alpha", "smoke-beta"].map((s) => app.runtimes.bySlug(s).catch(() => undefined)),
-  );
-  let closeErr = "";
-  await app.close().catch((e) => {
-    closeErr = String(e);
-  });
-  const statuses = rts.map((r) => r?.live().status ?? "missing");
-  check(
-    "7. both runtimes stopped",
-    !closeErr && statuses.every((st) => st === "hibernated"),
-    `close: ${closeErr}; statuses: ${statuses.join(", ")}`,
-  );
-  await close();
-  await tdb.drop();
-  rmSync(root, { recursive: true, force: true });
+  await cleanup();
 }
 
 console.log(failures ? `\nSmoke FAILED (${failures} failed).` : "\nSmoke passed.");

@@ -15,6 +15,13 @@ export const sessionQueryOptions = queryOptions({
   staleTime: 60_000,
 });
 
+/**
+ * The signed-in guard's first check retries a failed one (5xx, network) with the query's own backoff
+ * (1s, 2s, 4s, 8s) under the pending mark, so a page loaded while the server restarts waits for it
+ * instead of landing on the error state. Only when it is still down after that does the error show.
+ */
+export const SESSION_GUARD_RETRIES = 4;
+
 /** Call after sign-in, sign-up and sign-out, before navigating, so the route guard never sees a stale session. */
 export async function refreshSession(qc: QueryClient) {
   await qc.invalidateQueries({ queryKey: ["session"] });

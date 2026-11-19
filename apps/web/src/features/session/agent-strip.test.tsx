@@ -139,3 +139,33 @@ test("strip: the restart Why? explains crons", async () => {
     ),
   ).toBeInTheDocument();
 });
+
+test("strip: a cap of one slot reads in the singular", () => {
+  const el = strip({ status: "queued" }, 1);
+  expect(within(el).getByText("Queued: the only slot is in use.")).toBeInTheDocument();
+  expect(el.textContent).not.toMatch(/all 1 slots/);
+});
+
+test("strip: each Why? popover holds its explanation in one paragraph", async () => {
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const el = strip({ runtime: "local", runtimeDisabled: "disabled", restartPending: true });
+  await user.click(within(el).getByRole("button", { name: "Why is the local runtime disabled?" }));
+  const local = await screen.findByText(/An operator has to allow unsandboxed agents/);
+  expect(local.tagName).toBe("P");
+  expect(local.parentElement?.children).toHaveLength(1);
+  await user.keyboard("{Escape}");
+  await user.click(within(el).getByRole("button", { name: "Why does it restart?" }));
+  const restart = await screen.findByText(/The agent finishes its current turn/);
+  expect(restart.tagName).toBe("P");
+});
+
+test("strip: the live region adds no layout item of its own, so an empty one leaves no double gap", () => {
+  const el = strip({ waitingOn: { tasks: [], crons: 2 } });
+  const region = liveRegion(el);
+  expect(region).toBeEmptyDOMElement();
+  expect(region).toHaveClass("contents");
+  document.body.innerHTML = "";
+  const filled = liveRegion(strip({ restartPending: true }));
+  expect(filled).toHaveClass("contents");
+  expect(filled.textContent).toBe("·Restarts when idle to apply changes");
+});

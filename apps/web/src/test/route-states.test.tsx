@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { alice, renderApp } from "@/test/render-app";
 
 const auth = vi.hoisted(() => ({ getSession: vi.fn() }));
@@ -10,6 +10,14 @@ vi.mock("@/lib/ws", () => ({
 }));
 
 beforeEach(() => auth.getSession.mockReset());
+afterEach(() => vi.useRealTimers());
+
+const failed = (status: number) => ({
+  data: null,
+  error: { status, statusText: "Bad Gateway", message: "" },
+});
+/** Runs the guard's retry backoff (1s, 2s, 4s, 8s) on a faked clock. */
+const runBackoff = () => act(() => vi.advanceTimersByTimeAsync(16_000));
 
 test("a slow session check shows the pilot-light pending screen", async () => {
   let resolve: (v: unknown) => void = () => {};
@@ -30,12 +38,28 @@ test("a fast session check never shows the pending screen", async () => {
   expect(screen.queryByText("Loading…")).toBeNull();
 });
 
-test("a failed session check shows the error state; Retry recovers", async () => {
+test("a session check that fails while the server restarts retries under the pending mark, then loads", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  auth.getSession
+    .mockResolvedValueOnce(failed(502))
+    .mockResolvedValueOnce(failed(502))
+    .mockResolvedValue({ data: alice });
+  renderApp("/", undefined);
+  await runBackoff();
+  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Something went wrong." })).toBeNull();
+  expect(auth.getSession).toHaveBeenCalledTimes(3);
+});
+
+test("a failed session check shows the error state once its retries run out; Retry recovers", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   auth.getSession.mockResolvedValue({
     data: null,
     error: { status: 500, statusText: "Internal Server Error", message: "boom" },
   });
   renderApp("/", undefined);
+  await runBackoff();
+  expect(auth.getSession).toHaveBeenCalledTimes(5);
   expect(await screen.findByRole("heading", { name: "Something went wrong." })).toBeInTheDocument();
   expect(screen.getByText(/Session check failed: 500 boom/)).toBeInTheDocument();
   expect(screen.getAllByRole("main")).toHaveLength(1);

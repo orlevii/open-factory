@@ -13,7 +13,9 @@ export const RESTART_WHY =
 const waitingText = (n: number) =>
   n > 0 ? ` (waiting on ${n} background ${n === 1 ? "task" : "tasks"})` : "";
 
-/** A "Why?" ghost button with its explanation in a popover; `label` is its distinct accessible name. */
+/** A "Why?" ghost button with its explanation in a popover; `label` is its distinct accessible name.
+ *  The explanation is one paragraph: PopoverContent is a flex column, so loose text and inline
+ *  elements would otherwise each land on their own line. */
 function Why({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Popover>
@@ -23,7 +25,7 @@ function Why({ label, children }: { label: string; children: ReactNode }) {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 text-[0.8125rem] leading-[1.125rem]">
-        {children}
+        <p>{children}</p>
       </PopoverContent>
     </Popover>
   );
@@ -136,8 +138,12 @@ function DetailSegment({ agent, slotsMax }: { agent: AgentSummary; slotsMax?: nu
   let text: ReactNode = null;
   if (agent.pulling) text = "Pulling the image…";
   else if (agent.status === "queued")
-    // Nothing until the cap is known: no copy beyond the UI doc's.
-    text = slotsMax ? `Queued: all ${slotsMax} slots are in use.` : null;
+    // Nothing until the cap is known. A cap of one has no "all": the singular form of the UI doc's line.
+    text = !slotsMax
+      ? null
+      : slotsMax === 1
+        ? "Queued: the only slot is in use."
+        : `Queued: all ${slotsMax} slots are in use.`;
   else if (agent.status === "rate_limited")
     text = (
       <>
@@ -180,8 +186,10 @@ export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?
       </span>
       <Dot />
       <Runtime agent={agent} />
-      {/* Mounted before it fills, so the change is announced when a status frame sets it. */}
-      <span role="status" className="inline-flex items-center gap-x-2">
+      {/* Mounted before it fills, so the change is announced when a status frame sets it.
+          `display: contents` keeps it out of the flex layout: empty, it adds no item (and no
+          second gap) before the next segment; filled, its children space like the rest. */}
+      <span role="status" className="contents">
         {agent.restartPending && (
           <>
             <Dot />

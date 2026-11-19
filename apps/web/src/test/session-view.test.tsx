@@ -232,6 +232,32 @@ const windowAround5 = () => {
 const page = (events: ReturnType<typeof se>[], before = false) =>
   json({ events, hasMore: { before, after: false } });
 
+test("a server restart: a reload that hits a 502 keeps the session on screen and retries when the socket is back", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  routes["/api/agents/dev"] = () =>
+    json({ error: { code: "bad_gateway", message: "Bad Gateway" } }, 502);
+  act(() => ws.onMessage?.({ type: "resync", agent: "dev" }));
+  expect(await screen.findByText(/Couldn't load this session/)).toBeInTheDocument();
+  expect(screen.getByText("Two entries.")).toBeInTheDocument(); // the last data stays
+  expect(screen.queryByRole("heading", { name: "Something went wrong." })).toBeNull();
+  routes["/api/agents/dev"] = () => json(detail());
+  act(() => ws.reopen());
+  await vi.waitFor(() => expect(screen.queryByText(/Couldn't load this session/)).toBeNull());
+  expect(screen.getByText("Two entries.")).toBeInTheDocument();
+});
+
+test("a first load that fails before the server is back retries itself on reconnect", async () => {
+  routes["/api/agents/dev"] = () =>
+    json({ error: { code: "bad_gateway", message: "Bad Gateway" } }, 502);
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByText(/Couldn't load this session/)).toBeInTheDocument();
+  routes["/api/agents/dev"] = () => json(detail());
+  act(() => ws.reopen());
+  expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
+  expect(screen.queryByText(/Couldn't load this session/)).toBeNull();
+});
+
 test("window mode: a reconnect resubscribes after the newest counted seq and doesn't double count", async () => {
   windowAround5();
   renderApp("/agents/dev?event=5", alice);

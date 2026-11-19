@@ -42,3 +42,17 @@ jobs:
       - run: pnpm build
       - name: CLI smoke
         run: scripts/smoke-cli.sh
+
+  linux-reach:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vitest run apps/server/src/mcp/linux-reach.test.ts
+        env:
+          FACTORY_LINUX_REACH_TEST: "1"

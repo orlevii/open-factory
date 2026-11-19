@@ -23,7 +23,18 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { capPayload } from "./cap.ts";
+import { InvalidCursorError } from "./errors.ts";
 import type { NoticeType } from "./notices.ts";
+
+/**
+ * Only an instant `inboxPage` minted (UTC ISO, microseconds kept) is accepted, so nothing malformed reaches Postgres;
+ * the round trip rejects calendar dates that don't exist (2026-02-31).
+ */
+function isCursorInstant(at: string): boolean {
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$/.test(at)) return false;
+  const d = new Date(at);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === at.slice(0, 19);
+}
 
 const { agents, credentials, sessionEvents, turns, messages, inboxItems, users } = schema;
 type MessageRow = typeof messages.$inferSelect;
@@ -754,7 +765,7 @@ export class EventStore {
     let cursor: SQL | undefined;
     if (before) {
       const [at, id] = Buffer.from(before, "base64url").toString().split("|");
-      if (!at || !id || Number.isNaN(Date.parse(at))) throw new Error("invalid cursor");
+      if (!at || !id || !isCursorInstant(at)) throw new InvalidCursorError();
       cursor = sql`(${inboxItems.createdAt}, ${inboxItems.id}) < (${at}::timestamptz, ${id})`;
     }
     const rows = await this.db

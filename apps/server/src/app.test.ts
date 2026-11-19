@@ -64,12 +64,14 @@ test("the agent listener is up after buildApp, its port reaches the config, and 
 
 test("a FACTORY_AGENT_URL on the human port logs the upgrade warning", async () => {
   const lines: string[] = [];
+  // The human port is set here, not taken from the helper's default, and read back from the app's config.
   const t = await makeTestApp({
     harnessDriver: new FakeDriver(),
-    env: { FACTORY_AGENT_URL: "http://host.docker.internal:3000" },
+    env: { PORT: "4719", FACTORY_AGENT_URL: "http://host.docker.internal:4719" },
     logStream: { write: (l) => void lines.push(l) },
   });
   try {
+    expect(new URL(t.app.config.agentUrl).port).toBe(String(t.app.config.port));
     expect(lines.join("")).toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
   } finally {
     await t.close();
@@ -116,11 +118,16 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     await callTool(url, token, "list_peers", {});
-    await t.app.inject({
-      method: "GET",
-      url: "/api/agents",
-      headers: { authorization: `Bearer ${token}` },
-    });
+    await callTool(url, token, "send_message", { to: "@h-dev", body: "for the inbox" });
+    await expect(callTool(url, `${token}x`, "list_peers", {})).rejects.toThrow("401");
+    for (const route of ["/api/agents", "/api/inbox", "/api/messages/nope"]) {
+      const r = await t.app.inject({
+        method: "GET",
+        url: route,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(r.statusCode, route).toBe(401);
+    }
     const out = lines.join("");
     expect(out).toContain('"url":"/mcp"'); // the listener's request lines are there
     expect(out).not.toContain(token);

@@ -38,3 +38,11 @@ export class NoOpenTurnError extends Error {
     this.name = "NoOpenTurnError";
   }
 }
+
+/** An inbox cursor that doesn't decode to `created_at|id` (spec §11); the route answers 400. */
+export class InvalidCursorError extends Error {
+  constructor() {
+    super("Invalid cursor");
+    this.name = "InvalidCursorError";
+  }
+}

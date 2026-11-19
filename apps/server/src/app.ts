@@ -33,7 +33,9 @@ import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
+import { inboxRoutes } from "./routes/inbox.ts";
 import { meRoutes } from "./routes/me.ts";
+import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
@@ -248,6 +250,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
+  await app.register(inboxRoutes);
+  await app.register(messagesRoutes);
   await registerStatic(app, deps.webRoot);
   // The agent listener (spec §5.3) starts before boot reconciliation: step 6 can start agents, and Claude connects to
   // its MCP servers only at startup. A bind failure fails the boot.

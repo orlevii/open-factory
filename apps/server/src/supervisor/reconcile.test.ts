@@ -464,3 +464,34 @@ test("a reap that fails keeps the agent's journal and doesn't wake it", async ()
     msg: "reaping the previous run's processes failed; the agent isn't woken",
   });
 });
+
+test("S6 §17.2: boot wakes only for due member updates and loads agents with young ones, whose timer wakes them", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], now: Date.now() + 60_000 });
+  try {
+    const report = await agent();
+    const young = await agent();
+    const due = await agent();
+    const update = (to: string) =>
+      store.createHeld({ kind: "member_update", toAgentId: to, fromAgentId: report, body: "b" });
+    await update(due);
+    vi.setSystemTime(Date.now() + 31_000);
+    await update(young);
+    boot = new Boot();
+    await boot.run();
+    await boot.settleAll([young, due]);
+    expect(boot.startOrder()).toEqual([due]);
+    const rt = await boot.runtimes.get(young);
+    expect(rt?.queueItems()).toEqual([
+      expect.objectContaining({ kind: "held", waitReason: "window", count: 1 }),
+    ]);
+    await vi.advanceTimersByTimeAsync(29_000);
+    await boot.settleAll([young]);
+    expect(boot.starts(young)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_500);
+    await boot.settleAll([young]);
+    expect(boot.starts(young)).toHaveLength(1);
+    expect(boot.starts(young)[0]?.sent[0]?.map((m) => m.kind)).toEqual(["member_update"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});

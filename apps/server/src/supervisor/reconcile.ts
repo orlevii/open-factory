@@ -19,12 +19,13 @@ export interface ReconcileDeps {
     | "clearRuntimeJournals"
     | "pausedCredentials"
     | "bootWakes"
+    | "agentsWithYoungUpdates"
   >;
   journal: Pick<ProcessJournal, "reap">;
   /** Absent when the factory has no Docker runtime; step 2 is then skipped. */
   containers?: Pick<ContainerManager, "listOurs" | "stopListed">;
   supervisor: Pick<Supervisor, "pause">;
-  runtimes: Pick<AgentRuntimes, "bySlug">;
+  runtimes: Pick<AgentRuntimes, "bySlug" | "load">;
   /** A member update younger than this is not yet deliverable (spec §8). */
   memberUpdateDebounceMs: number;
   /**
@@ -145,6 +146,16 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
       await rt?.bootWake(w.resume ? "boot_resume" : "boot");
     } catch (err) {
       d.log.error({ err, agent: w.slug }, "boot wake failed");
+    }
+  }
+  // S6 §8.2: an agent whose member updates are all still inside the window isn't woken, but its runtime is loaded so
+  // `init()` arms the debounce timer that wakes it once the oldest is due (spec §17.2 "arms timers for young ones").
+  for (const id of await d.store.agentsWithYoungUpdates(d.memberUpdateDebounceMs)) {
+    if (reapFailed.has(id)) continue;
+    try {
+      await d.runtimes.load(id);
+    } catch (err) {
+      d.log.error({ err, agent: id }, "loading an agent with held updates failed");
     }
   }
 }

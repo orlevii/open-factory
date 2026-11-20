@@ -18,9 +18,9 @@
 
 ## Global Constraints
 
-- **Working mode:** the dev works directly, test-first (red, green, commit), one commit per task, conventional message ending with the line `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; the PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Postgres must be up (`pnpm compose up -d`) for server and db tests.
+- **Working mode:** the dev works directly, test-first (red, green, commit), one commit per task, conventional message ending with a `Co-Authored-By:` line naming the model the dev actually runs as (e.g. `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`); the PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Postgres must be up (`pnpm compose up -d`) for server and db tests.
 - **Verify commands** (repo root; real script names from `package.json`): one file `pnpm vitest run <path>`; all `pnpm test`; `pnpm typecheck`; `pnpm lint` (`pnpm lint:fix` to format); `pnpm lint:ci` and `pnpm build` at the end; migrations `pnpm db:generate`. Every task's last step runs its file(s), then `pnpm typecheck` and `pnpm lint`.
-- **Dependencies:** only `croner`, added with `pnpm --filter @open-factory/shared add --save-exact croner@<version>` after checking `npm view croner time` against the repo's `minimumReleaseAge` policy (pick the newest release that passes; 11.0.0 at spec time). **Never loosen any pnpm supply-chain setting**, no overrides or exceptions; never `pnpm dlx <tool>@latest`. The web gets croner only through `@open-factory/shared` (one version). No pg-boss. shadcn: none expected.
+- **Dependencies:** only `croner`, added with `pnpm --filter @open-factory/shared add --save-exact croner@<version>` after Task 2 Step 1's concrete release-age check (record `pnpm config get minimumReleaseAge`; if it is unset, pick a croner release at least 14 days old; the PR names the version and its publish date; 11.0.0, published 2026-10-26, at spec time). **Never loosen any pnpm supply-chain setting**, no overrides or exceptions; never `pnpm dlx <tool>@latest`. The web gets croner only through `@open-factory/shared` (one version). No pg-boss. shadcn: none expected.
 - **Layout rules:** nothing outside `apps/server/src/mcp/` imports the MCP SDK; nothing outside `packages/harness/src/claude/` knows a stream-json field; croner is imported only by `packages/shared/src/cron.ts`.
 - **No DB triggers.** Every rule is app code.
 - **Lock order (spec §12.1), written once in `schedule-store.ts`'s header:** (1) unlocked read of the involved agents; (2) **agent rows in one global order** (persistent before spawned, then id), one row per statement with its own mode (the creating agent `FOR NO KEY UPDATE`, targets `FOR SHARE`, a row that is both `FOR NO KEY UPDATE`), re-check live; (3) schedule rows `FOR NO KEY UPDATE` (the firing: `FOR NO KEY UPDATE SKIP LOCKED`), **never `FOR UPDATE`**; (4) the pending scheduled message row `FOR NO KEY UPDATE`, then insert/update. **Invariant: agents before schedules before messages; no transaction locks a schedule row and then waits on an agent row.** A deadlock (`40P01`) is retried once from step 1. Every store call inside a transaction takes `tx`. **A transaction never awaits a runtime call** (`runtimes.load`, `statusOf`, `deliver`).
@@ -212,7 +212,7 @@ export function parseAt(at: string, zone: string): Date | null;  // ISO; no offs
 export function formatOffsetIso(at: Date, zone: string): string; // "2026-11-23T09:00:00+01:00"
 ```
 
-- [ ] **Step 1: Add croner.** `npm view croner time --json | tail -5`; pick the newest version older than the repo's `minimumReleaseAge`; `pnpm --filter @open-factory/shared add --save-exact croner@<v>`. If pnpm refuses because of release age, pick an older one; never change the policy. Confirm `packages/shared/package.json` shows the exact version (no caret) and `pnpm-workspace.yaml` is unchanged.
+- [ ] **Step 1: Add croner.** Record the effective policy: `pnpm config get minimumReleaseAge` (this worktree's `pnpm-workspace.yaml` sets none explicitly). If it is set, pick the newest croner release older than it; **if it is unset, pick the newest release at least 14 days old**. `npm view croner time --json | tail -8` gives the dates. `pnpm --filter @open-factory/shared add --save-exact croner@<v>`. Note the version, its publish date and the recorded policy value for the PR body. If pnpm refuses because of release age, pick an older one; never add, loosen or override any supply-chain setting. Confirm `packages/shared/package.json` shows the exact version (no caret) and `pnpm-workspace.yaml` is unchanged.
 - [ ] **Step 2: Write the failing tests** `cron.test.ts`, `keys.test.ts`:
 
 ```ts
@@ -423,6 +423,7 @@ Spec §8.4, §5 (bootWakes), §11 (queue items, lookup).
 Spec §6.1–§6.3 (create), §6.2, §12.1.
 
 **Files:**
+- Modify (config, moved here from Task 16 so Task 15 can rely on it): `apps/server/src/config.ts` (`FACTORY_TIMEZONE`, validated with the shared zone check, default `factoryZoneDefault()`; a boot error "Unknown time zone 'Mars/Base'; use an IANA name such as Europe/Berlin.") + `config.test.ts` (unset → default; invalid → boot error). The service's default zone for agent-created schedules comes from it.
 - Create: `apps/server/src/scheduling/limits.ts`, `schedule-store.ts`, `schedule-service.ts`, `schedule-service.create.test.ts`
 
 **Interfaces — Produces:**
@@ -526,7 +527,6 @@ export class Scheduler {
   - arms at `min(next_run_at)` but never more than 60 s ahead (a schedule 3 h out: the timer fires every 60 s, nothing fires until due);
   - fires at the time: one row (`firings 1`, `late false`, `due` = the run), `next_run_at` advanced, `last_fired_at` set, `deliver(row, "agent", "scheduled")` called after commit;
   - catch-up: clock jumps 3 days across a weekday cron → one row, `firings` = missed count, `late true`, `due` = latest run, `next_run_at` = next future run; one-shot past → one row, late, `next_run_at` null (done);
-  - **fallback branch** (spec §8.3) behind a constant `SKIP_LATE_RECURRING = false` with its own test showing `true` writes no row for a late recurring run (kept in the code, off);
   - archived target: no row, `next_run_at` advanced, `last_fired_at` unchanged; a one-shot to an archived target ends done with `ran` false;
   - 101 due schedules: two ticks, the second right after the first;
   - one tick at a time (a timer firing during a tick waits);
@@ -641,14 +641,14 @@ Spec §9.
 
 ---
 
-### Task 16: `FACTORY_TIMEZONE` and the generated CLAUDE.md
+### Task 16: The generated CLAUDE.md (Scheduling section)
 
 Spec §7.1, §10.5.
 
-**Files:** Modify `apps/server/src/config.ts` (+ test), `apps/server/src/workspace/claude-md.ts` (+ `claude-md.test.ts`), the call site that builds `ClaudeMdInput` (pass `scheduling: { zone, maxSchedules, minGapMinutes } | null` for persistent agents).
+**Files:** Modify `apps/server/src/workspace/claude-md.ts` (+ `claude-md.test.ts`), the call site that builds `ClaudeMdInput` (pass `scheduling: { zone, maxSchedules, minGapMinutes } | null` for persistent agents).
 
-- [ ] **Step 1: Failing tests:** config: unset → `factoryZoneDefault()`; `FACTORY_TIMEZONE=Mars/Base` → boot error with "Unknown time zone 'Mars/Base'; use an IANA name such as Europe/Berlin."; CLAUDE.md: the "How messages reach you" paragraph lists `scheduled` and the `@scheduler` sentence (spec §10.5 verbatim); a persistent agent has the three Scheduling bullets with "Schedules use Europe/Berlin unless you pass `timezone`." and "at most 20" / "every 15 minutes"; a spawned agent has only the CronCreate bullet; the file is byte-identical for identical inputs.
-- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/config.test.ts apps/server/src/workspace/claude-md.test.ts` → FAIL.
+- [ ] **Step 1: Failing tests** (the config part landed in Task 7): CLAUDE.md: the "How messages reach you" paragraph lists `scheduled` and the `@scheduler` sentence (spec §10.5 verbatim); a persistent agent has the three Scheduling bullets with "Schedules use Europe/Berlin unless you pass `timezone`." and "at most 20" / "every 15 minutes"; a spawned agent has only the CronCreate bullet; the file is byte-identical for identical inputs.
+- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/workspace/claude-md.test.ts` → FAIL.
 - [ ] **Step 3: Implement** (copy the spec's sentences exactly; update the snapshot once, reviewing the diff).
 - [ ] **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
 - [ ] **Step 5: Commit** `feat(server): scheduling guidance in the generated CLAUDE.md`.
@@ -714,26 +714,36 @@ Spec §10.2.
 
 ---
 
-### Task 21: Stop crons in the runtime
+### Task 21: `isPassive` everywhere (before Stop crons, so its tests can go green honestly)
 
-Spec §10.3 (state table and bullets).
+Spec §10.3 (the passive notice), round-2 finding 3.
+
+**Files:** Modify `agents/agent-runtime.ts` (the `reportLostWork` exclusion for `crons_stopped`; `isPassive(entry)`, used in `hasDeliverable`, the `queued_items` wake, `reapable`, `flush`), `agents/event-store.ts` (`deliverableWhere`: `kind = 'system' AND notice <> 'crons_stopped'`); Test `agents/agent-runtime.passive.test.ts`.
+
+- [ ] **Step 1: Failing tests** (insert the `crons_stopped` notice row directly with the store's `createNotice`; Stop crons doesn't exist yet): with only the passive notice queued: no `queued_items` wake after the exit; `hasDeliverable()` false; `bootWakes` doesn't return the agent; `flush` writes nothing to a running process; the Reaper reaps a spawned agent whose only queued item is the notice; a later human message → one batch with the notice first, then the message; a compact queued behind the passive notice runs (the compact is written, the notice stays queued); a second notice of that type replaces the first (one pending row of that type); `reportLostWork` doesn't forward a `background_work_lost` with reason `crons_stopped` (appended directly).
+- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/agents/agent-runtime.passive.test.ts` → FAIL.
+- [ ] **Step 3: Implement** the one predicate and its five uses; in `flush`, when the head is passive-only and the next entry is a compact, write the compact.
+- [ ] **Step 4: Run** → PASS; `pnpm vitest run apps/server/src/spawning apps/server/src/agents` → PASS; `pnpm typecheck`; `pnpm lint`.
+- [ ] **Step 5: Commit** `feat(server): the crons_stopped notice never wakes or keeps an agent`.
+
+---
+
+### Task 22a: Stop crons in the runtime: the basics
+
+Spec §10.3 (state table rows: none, ended, idle, busy, other stop under way; the notice). Task 22b adds the apply-restart interplay.
 
 **Files:**
-- Modify: `agents/agent-runtime.ts` (`stopCrons(byHandle): Promise<{status: "stopped" | "pending"}>`, `stopCronsPending`, the trigger, takeover of an `apply_changes` hibernate, `restart_crons` suppression, `maybeRestart` skip and re-run when crons reach 0), `agents/notices.ts` (`cronsStopped({by, crons})` → "@or stopped your crons: every 5 minutes; at 14:30, once. Don't recreate them unless you are asked to."), `agents/runtimes.ts` (`stopCrons(slug, by)` with archived/terminated refusals), the `reportLostWork` exclusion for `crons_stopped`
+- Modify: `agents/agent-runtime.ts` (`stopCrons(byHandle): Promise<{status: "stopped" | "pending"}>`, `stopCronsPending`, the trigger, takeover of an `apply_changes` hibernate, `restart_crons` suppression, `maybeRestart` skip and re-run when crons reach 0), `agents/notices.ts` (`cronsStopped({by, crons})` → "@or stopped your crons: every 5 minutes; at 14:30, once. Don't recreate them unless you are asked to."), `agents/runtimes.ts` (`stopCrons(slug, by)` with archived/terminated refusals)
 - Test: `apps/server/src/agents/agent-runtime.stop-crons.test.ts`
 
 **Interfaces — Produces:** `class StopCronsError extends ApiError` with codes `no_crons` (409, "@x has no crons.") and `stopping` (409, "@x is already stopping; its crons stop with it.").
 
-- [ ] **Step 1: Failing tests,** one per state-table row plus the bullets:
+- [ ] **Step 1: Failing tests** (this task: the idle and busy rows, the notice, the refusals):
   - no process / no crons → `no_crons`; archived / terminated → their refusals;
-  - idle with 2 crons → `{status:"stopped"}`; the process gets stdin closed (S5 path); `hibernated{reason:"crons_stopped", by:"@or"}` and `background_work_lost{reason:"crons_stopped", by:"@or", crons}` appended; the notice is pending, lists both crons; **no wake** follows; the manager receives **no** `work_lost` row;
+  - idle with 2 crons → `{status:"stopped"}`; the process gets stdin closed (S5 path); `hibernated{reason:"crons_stopped", by:"@or"}` and `background_work_lost{reason:"crons_stopped", by:"@or", crons}` appended; the notice is pending, lists both crons; **no wake** follows (Task 21's predicate); the manager receives **no** `work_lost` row (Task 21's exclusion);
   - busy (open turn) → `{status:"pending"}`, `stopCronsPending` in the frame; the turn ends → stops in that job though the pin is live and the warm window not reached; a cron created while pending is listed in the notice;
-  - restart pending (an apply-restart waiting on a background task): the stop runs at the first not-busy moment (it doesn't wait for `restartPending`); no `restart_crons` notice; the exit wakes the agent only because a non-passive item (the restart's queued message, if any) exists — with none, it stays hibernated, and the next start reads the new config (assert the runtime spec is rebuilt);
-  - an `apply_changes` hibernate already under way → taken over: reason `crons_stopped`, notice added, no `restart_crons`, `{status:"stopped"}`;
-  - any other stop under way (restart, shutdown, terminate, dead/failing process, `stop_failed`) → `stopping`;
-  - crons reach 0 while pending (a `cron_deleted`) → pending cleared, `maybeRestart()` runs (a held restart goes ahead);
-  - exit or shutdown while pending → cleared;
   - errored-with-a-process, attempting, rate-limited-with-a-process → pending, then stops when not busy;
+  - any other stop under way (restart, shutdown, terminate, dead/failing process, `stop_failed`) → `stopping`;
   - spawned agent: same behaviour.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/agents/agent-runtime.stop-crons.test.ts` → FAIL.
 - [ ] **Step 3: Implement.** The stop job adds the notice (from the crons live at that moment) and calls `beginHibernate("crons_stopped")` in the same job; `HibernateReason` gains `crons_stopped`.
@@ -742,17 +752,21 @@ Spec §10.3 (state table and bullets).
 
 ---
 
-### Task 22: `isPassive` everywhere
+### Task 22b: Stop crons in the runtime: apply-restart, crons reaching 0, exits
 
-Spec §10.3 (the passive notice), round-2 finding 3.
+Spec §10.3 (the apply-restart rows and bullets).
 
-**Files:** Modify `agents/agent-runtime.ts` (`isPassive(entry)`, used in `hasDeliverable`, the `queued_items` wake, `reapable`, `flush`), `agents/event-store.ts` (`deliverableWhere`: `kind = 'system' AND notice <> 'crons_stopped'`); Test `agents/agent-runtime.passive.test.ts`.
+**Files:** Modify `agents/agent-runtime.ts` (takeover of an `apply_changes` hibernate, `restart_crons` suppression, `maybeRestart` skip and re-run when crons reach 0, clearing on exit/shutdown); Test: the same `agent-runtime.stop-crons.test.ts`.
 
-- [ ] **Step 1: Failing tests:** with only the passive notice queued: no `queued_items` wake after the exit; `hasDeliverable()` false; `bootWakes` doesn't return the agent; `flush` writes nothing to a running process; the Reaper reaps a spawned agent whose only queued item is the notice; a later human message → one batch with the notice first, then the message; a compact queued behind the passive notice runs (the compact is written, the notice stays queued); a second Stop before the wake replaces the notice (one pending row of that type).
-- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/agents/agent-runtime.passive.test.ts` → FAIL.
-- [ ] **Step 3: Implement** the one predicate and its five uses; in `flush`, when the head is passive-only and the next entry is a compact, write the compact.
-- [ ] **Step 4: Run** → PASS; `pnpm vitest run apps/server/src/spawning apps/server/src/agents` → PASS; `pnpm typecheck`; `pnpm lint`.
-- [ ] **Step 5: Commit** `feat(server): the crons_stopped notice never wakes or keeps an agent`.
+- [ ] **Step 1: Failing tests:**
+  - restart pending (an apply-restart waiting on a background task): the stop runs at the first not-busy moment (it doesn't wait for `restartPending`); no `restart_crons` notice; the exit wakes the agent only because a non-passive item exists; with none it stays hibernated, and the next start reads the new config (assert the runtime spec is rebuilt);
+  - an `apply_changes` hibernate already under way → taken over: reason `crons_stopped`, notice added, no `restart_crons`, `{status:"stopped"}`;
+  - crons reach 0 while pending (a `cron_deleted`) → pending cleared, `maybeRestart()` runs (a held restart goes ahead);
+  - exit or shutdown while pending → cleared.
+- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/agents/agent-runtime.stop-crons.test.ts` → FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** → PASS; `pnpm vitest run apps/server/src/agents` → PASS (S5's apply-restart tests unchanged); `pnpm typecheck`; `pnpm lint`.
+- [ ] **Step 5: Commit** `feat(server): stop crons wins over a pending apply-restart`.
 
 ---
 
@@ -790,7 +804,7 @@ UI doc §2.
 
 **Files:** Create `features/schedules/{schedule-list.tsx,schedule-row.tsx,schedule-filters.tsx}` + tests; `routes/_app/schedules.index.tsx` (replaces `schedules.tsx`; regenerate `routeTree.gen.ts` with the existing router plugin/dev command).
 
-- [ ] **Step 1: Failing tests:** four-line rows with the exact texts per state (Next/Ran/Didn't run/(skipped)/—, "· archived", "· errored", authors line); the stretched link and the menu's accessible name "Actions for S-3"; Pause/Resume/Delete apply at once with the outcomes ("Paused S-3.", "Resumed S-3. Next run: …"); Delete → "Deleted S-3." + Undo with focus on Undo; Undo restores and focuses the row menu; a done restore with Show done off → "Restored S-3. It's done, so it's hidden." + "Show done"; `409 target_ended` text; filters in the URL; empty/filtered-empty/error/cap texts; outcomes passed as router state are shown once (not after reload); `schedules_changed` refetch keeps focus.
+- [ ] **Step 1: Failing tests:** four-line rows with the exact texts per state (Next/Ran/Didn't run/(skipped)/—, "· archived", "· errored", authors line); the stretched link and the menu's accessible name "Actions for S-3"; Pause/Resume/Delete apply at once with the outcomes ("Paused S-3.", "Resumed S-3. Next run: …"); Delete → "Deleted S-3." + Undo with focus on Undo; Undo restores and focuses the row menu; a done restore with Show done off → "Restored S-3. It's done, so it's hidden." + "Show done"; `409 target_ended` text; filters in the URL; empty/filtered-empty/error/cap texts; outcomes passed as router state are shown once (not after reload); `schedules_changed` refetch keeps focus; **escaping:** a body `<img src=x onerror=alert(1)>` followed by raw HTML and markdown (`<script>…</script>`, `**bold**`, `[x](javascript:alert(1))`) shows as the literal first line in plain text, creates no `img`/`script`/`a` element and runs nothing (a spy on `window.alert` and a DOM query assert it).
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/schedules` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
@@ -798,17 +812,31 @@ UI doc §2.
 
 ---
 
-### Task 26: Web: create and edit pages
+### Task 26a: Web: the create page and the When, zone and preview fields
 
-UI doc §3.
+UI doc §3 (fields 1–6, validation).
 
-**Files:** Create `features/schedules/{schedule-form.tsx,when-field.tsx,timezone-select.tsx,run-preview.tsx}` + tests; `routes/_app/schedules.new.tsx`, `routes/_app/schedules.$key.tsx`.
+**Files:** Create `features/schedules/{schedule-form.tsx,when-field.tsx,timezone-select.tsx,run-preview.tsx}` + tests; `routes/_app/schedules.new.tsx`.
 
-- [ ] **Step 1: Failing tests:** the When fieldset (two native radios, only the chosen field rendered, the other's value kept); help text and examples verbatim; the zone select grouped by region with UTC and the browser's/stored zone always present; preview updates on blur of the pattern/date and on radio/zone change only (not per keystroke, not from Message), with "(08:00 your time)" when zones differ; validation on blur with each sentence; submit focuses the first invalid field; edit sends **only changed fields** and validates only those (a done one-shot's message edit saves); the archived current target kept as an extra option; the spawned-agent helper; "Saving a changed message makes you its author." when the author is an agent; pending-firing notes; done header line; not-found and deleted states (read-only, Restore with pending/failure; no Restore when the target is terminated); the unsaved-changes guard on Cancel/navigation; create → `/schedules` with "Created S-8."; header actions become icon buttons below `md`.
+- [ ] **Step 1: Failing tests:** the When fieldset (two native radios, only the chosen field rendered, the other's value kept); help text and examples verbatim; the zone select grouped by region with UTC and the browser's zone always present; preview updates on blur of the pattern/date and on radio/zone change only (not per keystroke, not from Message), with "(08:00 your time)" when zones differ; validation on blur with each sentence; submit focuses the first invalid field; the "Choose an agent…" placeholder and the spawned-agent helper; the unsaved-changes guard on Cancel/navigation; create → `/schedules` with "Created S-8.".
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/schedules` → FAIL.
 - [ ] **Step 3: Implement** (reuse S4's `MarkdownEditor`, form layout and unsaved-changes guard; `cron.ts` from `@open-factory/shared` for the preview and the pattern check).
 - [ ] **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
-- [ ] **Step 5: Commit** `feat(web): create and edit schedules`.
+- [ ] **Step 5: Commit** `feat(web): create schedules`.
+
+---
+
+### Task 26b: Web: the edit page, deleted and restore states
+
+UI doc §3 (edit page only).
+
+**Files:** Modify the form files; create `routes/_app/schedules.$key.tsx` + tests.
+
+- [ ] **Step 1: Failing tests:** edit sends **only changed fields** and validates only those (a done one-shot's message edit saves); the archived current target kept as an extra option; "Saving a changed message makes you its author." when the author is an agent; pending-firing notes; done header line; `schedules_changed` keeps edited fields; not-found and deleted states (read-only, Restore with pending/failure; no Restore when the target is terminated); **escaping in the read-only deleted view:** the same hostile body as Task 25 renders through the existing sanitized `Markdown` renderer (or the editor's preview) with no `img`/`script` element, no `javascript:` link and no `alert` call; header actions become icon buttons below `md`.
+- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/schedules` → FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
+- [ ] **Step 5: Commit** `feat(web): edit, delete and restore schedules`.
 
 ---
 
@@ -828,7 +856,7 @@ UI doc §4.1, §4.3.
 
 **Files:** Modify `features/session/` (`MessageBlock` scheduled sender line and notes; queue item badge and "covers N runs"; timeline quiet lines for `hibernated`/`background_work_lost` with `crons_stopped` and `cron_created` durable) + tests.
 
-- [ ] **Step 1: Failing tests:** a delivered scheduled block shows "Scheduler", the `S-3` badge linking `/schedules/S-3`, "by @or" (an agent author links to its session), "due … · delivered late" only when `late`, "covers 3 runs" only when `firings > 1`; a pending one in the dashed block with the badge; the three quiet lines verbatim, using the events' `by` (no prose parsing).
+- [ ] **Step 1: Failing tests:** a delivered scheduled block shows "Scheduler", the `S-3` badge linking `/schedules/S-3`, "by @or" (an agent author links to its session), "due … · delivered late" only when `late`, "covers 3 runs" only when `firings > 1`; a pending one in the dashed block with the badge; the three quiet lines verbatim, using the events' `by` (no prose parsing); **escaping:** a scheduled block whose body is `<img src=x onerror=alert(1)>` plus raw HTML and markdown goes through the existing sanitized `Markdown` renderer: markdown formats, the HTML stays text, no `img`/`script` element, no `javascript:` href, `window.alert` never called.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/session` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
@@ -880,10 +908,10 @@ pnpm build
   - **Title:** `feat: durable schedules and stoppable in-session crons`
   - **What:** schedules (cron or one-shot, per-schedule zone) delivered as `scheduled` messages from `@scheduler`, replaced instead of stacked, fired once after downtime; three MCP tools for persistent agents; the Schedules page; the live cron list and Stop crons.
   - **Why:** the S9 roadmap item; link the spec `docs/superpowers/specs/2026-11-20-s9-scheduling-design.md`, the UI design, this plan and the decision issue #64. Closes #31.
-  - **Approach** (one bullet per decision, "X, rather than Y, because Z"): a `next_run_at` column and one in-process timer, rather than pg-boss, because replace-not-stack and catch-up are ours either way and pg-boss would add a schema and workers for one timer; update the pending row in place, rather than stacking or superseding rows, because an undelivered firing hasn't happened yet; fire once late after downtime, rather than skipping, because the agent can judge from `due`/`late`; `from="@scheduler" by="<author>"`, rather than a factory preface, because senders and authors both stay truthful; no `harness_crons` table, rather than persisting crons, because they die with the process; Stop crons hibernates the agent, rather than asking it to `CronDelete`, because it is deterministic; plain 5-field cron, rather than croner's extensions, because what we accept is what people know; no schedule tools for spawned agents, rather than per-agent TTL rules, because a spawned agent is one phase of work.
+  - **Approach** (one bullet per decision, "X, rather than Y, because Z"): a `next_run_at` column and one in-process timer, rather than pg-boss, because replace-not-stack and catch-up are ours either way and pg-boss would add a schema and workers for one timer; update the pending row in place, rather than stacking or superseding rows, because an undelivered firing hasn't happened yet; fire once late after downtime, rather than skipping, because the agent can judge from `due`/`late` (if Or prefers skipping, it is one branch and one test); `from="@scheduler" by="<author>"`, rather than a factory preface, because senders and authors both stay truthful; no `harness_crons` table, rather than persisting crons, because they die with the process; Stop crons hibernates the agent, rather than asking it to `CronDelete`, because it is deterministic; plain 5-field cron, rather than croner's extensions, because what we accept is what people know; no schedule tools for spawned agents, rather than per-agent TTL rules, because a spawned agent is one phase of work.
   - **Changes** grouped by area (shared, db, harness, server scheduling, server runtime, MCP, CLAUDE.md, REST, web schedules, web session, smoke). **Behaviour changes to S5–S8, listed explicitly:** `entryOf`/`senderLabel` render `scheduled` rows as `@scheduler`; `deliver` refreshes a seen, queued scheduled entry monotonically; `flush` re-reads scheduled rows before rendering; `writeBatch` writes the rendered scheduled fields back; boot clears write marks on pending rows; `isPassive` in `hasDeliverable`, the `queued_items` wake, `reapable`, `flush`, `deliverableWhere`; `unarchive` runs in a transaction and recomputes schedules; termination soft-deletes schedules targeting the agent; `reportLostWork` doesn't forward `crons_stopped`; apply-restart keeps not waiting for crons.
   - **Non-goals:** pg-boss, a `harness_crons` table, schedules to humans (#65), `TZ` in containers (#66), agent edit/pause tools, a cron describer, purging; #47/#57 notes only.
-  - **Verification:** Task 1's V1/V2 results, both smoke outputs (redacted), the test/typecheck/lint/build lines, the manual pass; Task 19 done or skipped (V2). New direct dependency `croner` (exact pin, release age checked); no supply-chain setting changed.
+  - **Verification:** Task 1's V1/V2 results, both smoke outputs (redacted), the test/typecheck/lint/build lines, the manual pass; Task 19 done or skipped (V2). New direct dependency `croner`: the exact version, its publish date and the recorded `minimumReleaseAge` value (or "unset; ≥ 14 days") from Task 2; no supply-chain setting changed. The skip-late fallback for Q3 is stated as a sentence (not shipped as a switch).
   - Remove the template's HTML comments; end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - [ ] **Step 2:** Report the PR URL to the lead.
 
@@ -903,4 +931,4 @@ pnpm build
 
 ## Spec §17 tests → tasks
 
-§17.1 unit → Tasks 2, 3, 5, 16. §17.2 Scheduler → Task 10; AC 1 and catch-up → Task 10; AC 3 replacement → Tasks 11, 12; backoff → Task 10; lifecycle → Task 13; races → Tasks 7, 14; tools → Task 15; REST → Task 23; harness crons, Stop crons and `isPassive` → Tasks 20, 21, 22; round-2 cases → Tasks 7, 11, 21, 22. §17.3 harness → Tasks 2, 5. §17.4 web → Tasks 24–26, 28, 29. §17.5 live → Tasks 1, 17, 30. §18 V1/V2 → Task 1 (V2 → Task 19); V3/V4 → Task 17; V5 → Task 4; V6 → Task 2.
+§17.1 unit → Tasks 2, 3, 5, 7 (config), 16. §17.2 Scheduler → Task 10; AC 1 and catch-up → Task 10; AC 3 replacement → Tasks 11, 12; backoff → Task 10; lifecycle → Task 13; races → Tasks 7, 14; tools → Task 15; REST → Task 23; harness crons, `isPassive` and Stop crons → Tasks 20, 21, 22a, 22b; round-2 cases → Tasks 7, 11, 21, 22b. §17.3 harness → Tasks 2, 5. §17.4 web → Tasks 24, 25, 26a, 26b, 28, 29. §17.5 live → Tasks 1, 17, 30. §18 V1/V2 → Task 1 (V2 → Task 19); V3/V4 → Task 17; V5 → Task 4; V6 → Task 2.

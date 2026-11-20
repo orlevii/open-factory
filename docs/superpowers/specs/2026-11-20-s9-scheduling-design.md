@@ -188,7 +188,7 @@ The `Scheduler` takes `now()` (injected; tests use fake timers plus that clock),
 
 ### 8.3 Catch-up (Q3)
 
-Boot is not special: after `bootDone` the Scheduler starts, and its first tick finds every schedule whose `next_run_at` passed while the factory was down. Each fires **once**, coalescing its missed occurrences (`firings` = missed), with `late = true` and `due` = the latest missed occurrence; then `next_run_at` moves to the next future occurrence. A one-shot that passed fires once, late. Laptop sleep is the same case (the 60 s clamp catches it). **Fallback if Or prefers skipping (P15):** step 2.3 writes no row when `late` is true for a recurring schedule; one branch behind a constant (`SKIP_LATE_RECURRING = false`), one test.
+Boot is not special: after `bootDone` the Scheduler starts, and its first tick finds every schedule whose `next_run_at` passed while the factory was down. Each fires **once**, coalescing its missed occurrences (`firings` = missed), with `late = true` and `due` = the latest missed occurrence; then `next_run_at` moves to the next future occurrence. A one-shot that passed fires once, late. Laptop sleep is the same case (the 60 s clamp catches it). **Fallback if Or prefers skipping (P15):** step 2.3 would write no row when `late` is true for a recurring schedule: one branch and one test, added only if Or flips Q3 (no off switch ships).
 
 ### 8.4 Delivery (Q8)
 
@@ -391,7 +391,7 @@ The early slice (§18) runs first; the whole script at the end; both outputs go 
 
 ## 19. Accepted risks and non-goals
 
-- **Catch-up after long downtime** fires once, late (Q3); the agent judges whether it still matters. Fallback: skip late recurring firings (one branch).
+- **Catch-up after long downtime** fires once, late (Q3); the agent judges whether it still matters. Fallback: skip late recurring firings (one branch, added only if Or flips Q3).
 - **Coalescing race** between a firing and a batch's rendering and commit (§8.2): never two rows, and the row always says what the agent read; at worst a firing that landed in that window is counted into it without the agent seeing the higher count.
 - **A pending row keeps its body** after an edit; a zone edit changes how a pending row's `due` renders.
 - **DST** can make a single real gap of an agent schedule shorter than 15 minutes (§6.2).

@@ -28,6 +28,8 @@ function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): string {
         : `Hibernated after ${plural(e.idleMinutes, "minute", "minutes")} idle`;
     case "freed_slot":
       return "Hibernated to free a slot";
+    case "crons_stopped":
+      return e.by ? `Hibernated: ${e.by} stopped its crons` : "Hibernated: its crons were stopped";
     case "apply_changes":
       return "Hibernated to apply changes";
     case "shutdown":
@@ -52,6 +54,7 @@ function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): strin
     ...e.tasks.map((t) => `${t.description ?? t.taskId} (background)`),
     ...e.crons.map((c) => `${c.humanSchedule?.toLowerCase() ?? c.cronId} (cron)`),
   ];
+  if (e.reason === "crons_stopped") return `Stopped by ${e.by ?? "a human"}: ${items.join(" · ")}`;
   const when = e.reason === "terminated" ? "it was terminated" : "the process stopped";
   return `Lost when ${when}: ${items.join(" · ")}`;
 }
@@ -108,7 +111,7 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
     case "background_task_finished":
       return `Background task ${e.status}: ${e.summary}`;
     case "cron_created":
-      return `Cron created: ${e.humanSchedule.toLowerCase()}`;
+      return `Cron created: ${e.humanSchedule.toLowerCase()}${e.durable ? " (kept on disk)" : ""}`;
     case "cron_deleted":
       return "Cron deleted";
     case "hibernated":
@@ -254,6 +257,17 @@ export function TimelineRow(props: TimelineRowProps) {
             urgent={row.message.urgent}
             at={row.at}
             failed={failedIds.has(row.message.id)}
+            {...(row.message.kind === "scheduled" && row.message.scheduleKey
+              ? {
+                  scheduled: {
+                    key: row.message.scheduleKey,
+                    by: row.message.by,
+                    due: row.message.due,
+                    late: row.message.late,
+                    firings: row.message.firings,
+                  },
+                }
+              : {})}
             badge={
               row.message.taskKey ? (
                 <TaskBadge

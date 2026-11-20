@@ -93,7 +93,8 @@ export class EventStore {
 
   private lastStamp = 0;
   /** Server-clock stamp, strictly increasing within this process so created order is insert order (spec §7.3). */
-  private stamp(): Date {
+  /** The one clock owner: `TaskStore` and the inbox read stamps share it. */
+  clock(): Date {
     const t = Math.max(Date.now(), this.lastStamp + 1);
     this.lastStamp = t;
     return new Date(t);
@@ -636,7 +637,7 @@ export class EventStore {
       body: m.body,
       urgent: m.urgent,
       fromToolUseId: m.fromToolUseId ?? null,
-      createdAt: this.stamp(),
+      createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);
   }
@@ -661,7 +662,7 @@ export class EventStore {
       subjectAgentId: m.subjectAgentId ?? null,
       notice: m.notice ?? null,
       body: m.body,
-      createdAt: this.stamp(),
+      createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);
   }
@@ -687,7 +688,7 @@ export class EventStore {
         throw new Error(
           "a human message needs a sender agent; a factory fact needs its subject agent",
         );
-      const now = this.stamp();
+      const now = this.clock();
       const [row] = await tx
         .insert(messages)
         .values({
@@ -791,7 +792,7 @@ export class EventStore {
         notice: m.notice,
         toAgentId: m.toAgentId,
         body: m.body,
-        createdAt: this.stamp(),
+        createdAt: this.clock(),
       })
       .returning();
     if (!row) throw new Error("insert returned no row");

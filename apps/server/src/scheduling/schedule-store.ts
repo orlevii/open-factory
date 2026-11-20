@@ -9,8 +9,8 @@
  *      live. A deadlock is still retried once from step 1 (`withDeadlockRetry`).
  *   3. Schedule rows `FOR NO KEY UPDATE` (edit, delete, restore) or `FOR NO KEY UPDATE SKIP LOCKED` (the firing).
  *      Never `FOR UPDATE`: it would conflict with the `KEY SHARE` that message inserts take through `schedule_id`.
- *      An edit that changes the target re-reads the schedule under its lock and, if the target changed meanwhile,
- *      retries once from step 1.
+ *      An edit re-reads the schedule under its lock. It takes an agent lock only for a NEW target (FOR SHARE, step 2),
+ *      so a target that changed meanwhile needs no retry: the old target's row is never needed.
  *   4. Message rows: the pending scheduled row `FOR NO KEY UPDATE`, then insert or update.
  *
  * Invariant: agents before schedules before messages. No transaction may lock a schedule row and then wait on an

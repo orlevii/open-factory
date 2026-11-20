@@ -104,7 +104,10 @@ export function countRuns(expr: string, zone: string, from: Date, to: Date, cap 
   return n;
 }
 
-/** The smallest gap in minutes between consecutive occurrences among the next `n` after `after`. */
+/**
+ * The smallest gap in minutes between consecutive occurrences among the next `n` after `after`. Sampling is sound for
+ * plain 5-field cron (gaps repeat within days); a DST shift can still make one real gap shorter (spec §6.2, accepted).
+ */
 export function minGapMinutes(expr: string, zone: string, after: Date, n = 10): number {
   const runs = nextRuns(expr, zone, after, n);
   let min = Number.POSITIVE_INFINITY;
@@ -155,7 +158,8 @@ export function parseAt(at: string, zone: string): Date | null {
     check.getUTCMonth() !== mo - 1 ||
     check.getUTCDate() !== d ||
     h > 23 ||
-    mi > 59
+    mi > 59 ||
+    sec > 59
   )
     return null;
   const o1 = offsetMs(zone, guess);

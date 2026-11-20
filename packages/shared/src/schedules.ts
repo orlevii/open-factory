@@ -10,13 +10,14 @@ export const SCHEDULE_STATES = [
 ] as const;
 export type ScheduleState = (typeof SCHEDULE_STATES)[number];
 
-const BODY_MAX = 64 * 1024;
+/** The body limit (the S6 message cap), shared by the schema and the service. */
+export const SCHEDULE_BODY_MAX = 64 * 1024;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 export const scheduleBodySchema = z
   .string()
   .refine((s) => bytes(s) >= 1, "The message can't be empty.")
-  .refine((s) => bytes(s) <= BODY_MAX, "The message is too long (64 KB at most).");
+  .refine((s) => bytes(s) <= SCHEDULE_BODY_MAX, "The message is too long (64 KB at most).");
 
 export const cronFieldSchema = z.string().superRefine((s, ctx) => {
   const e = validateCron(s);

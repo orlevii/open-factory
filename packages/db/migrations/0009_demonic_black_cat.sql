@@ -83,5 +83,5 @@ ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_kind_check" CHECK (
         AND due_at IS NULL AND firings IS NULL AND late IS NULL)
     OR (kind = 'scheduled' AND from_user_id IS NULL AND from_agent_id IS NULL AND notice IS NULL
         AND subject_agent_id IS NULL AND task_id IS NULL AND comment_id IS NULL AND to_agent_id IS NOT NULL
-        AND to_all_humans = false AND schedule_id IS NOT NULL AND num_nonnulls(author_agent_id, author_user_id) = 1
+        AND to_user_id IS NULL AND to_all_humans = false AND schedule_id IS NOT NULL AND num_nonnulls(author_agent_id, author_user_id) = 1
         AND due_at IS NOT NULL AND firings IS NOT NULL AND firings >= 1 AND late IS NOT NULL)));

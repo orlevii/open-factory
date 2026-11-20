@@ -124,6 +124,13 @@ test("wrong scheduled shapes are rejected", async () => {
   );
 });
 
+test("a scheduled row has no human recipient", async () => {
+  await bad(
+    sql`insert into messages (id,kind,to_agent_id,to_user_id,schedule_id,author_user_id,due_at,firings,late,body)
+        values ('tu','scheduled','a1','u1','s1','u1',now(),1,false,'x')`,
+  );
+});
+
 test("at most one pending row per schedule and target", async () => {
   await ok(sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
     values ('p1','scheduled','a2','s1','u1',now(),1,false,'x') returning id`);

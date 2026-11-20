@@ -7,6 +7,7 @@ import {
   nextRun,
   parseAt,
   parseKey,
+  SCHEDULE_BODY_MAX,
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
@@ -26,7 +27,6 @@ import {
 } from "./schedule-store.ts";
 
 const { schedules } = schema;
-const BODY_MAX = 64 * 1024;
 const TOOL_BODY_CAP = 2000;
 
 export type { Actor };
@@ -98,7 +98,7 @@ export class ScheduleService {
     const body = input.body;
     if (bytes(body) < 1)
       throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
-    if (bytes(body) > BODY_MAX)
+    if (bytes(body) > SCHEDULE_BODY_MAX)
       throw new ScheduleError(
         "invalid_schedule",
         "The message is too long (64 KB at most).",
@@ -157,8 +157,8 @@ export class ScheduleService {
 
   /** Cron or at: exactly one; valid; in the future; within the agent limits. Returns the stored form. */
   private checkTiming(actor: Actor, input: ScheduleInput, now: Date) {
-    const hasCron = input.cron !== undefined && input.cron !== "";
-    const hasAt = input.at !== undefined && input.at !== "";
+    const hasCron = input.cron !== undefined;
+    const hasAt = input.at !== undefined;
     if (hasCron === hasAt)
       throw new ScheduleError("invalid_schedule", "Pass either cron or at.", 400, "cron");
     if (!isValidZone(input.timezone))
@@ -303,7 +303,8 @@ export class ScheduleService {
       .sort((a, b) => b.number - a.number)
       .slice(0, 100)
       .map((r) => {
-        const long = r.body.length > TOOL_BODY_CAP;
+        const chars = Array.from(r.body);
+        const long = chars.length > TOOL_BODY_CAP;
         return {
           id: formatKey("S", r.number),
           to: r.target.slug,
@@ -315,7 +316,7 @@ export class ScheduleService {
           next_run: r.nextRunAt ? formatOffsetIso(r.nextRunAt, r.timezone) : null,
           paused: r.pausedAt !== null,
           yours: r.createdByAgentId === agentId,
-          body: long ? r.body.slice(0, TOOL_BODY_CAP) : r.body,
+          body: long ? chars.slice(0, TOOL_BODY_CAP).join("") : r.body,
           ...(long ? { truncated: true as const } : {}),
         };
       });
@@ -394,6 +395,19 @@ export class ScheduleService {
         } else if (patch.body !== undefined) {
           // Unchanged text: the editor is not its author.
         }
+        if (
+          patch.timezone !== undefined &&
+          patch.cron === undefined &&
+          patch.at === undefined &&
+          !row.cron &&
+          patch.timezone !== row.timezone
+        )
+          throw new ScheduleError(
+            "invalid_schedule",
+            "Change the time as well when you change a one-time schedule's time zone.",
+            400,
+            "timezone",
+          );
         const timing =
           patch.cron !== undefined || patch.at !== undefined || patch.timezone !== undefined;
         if (timing) {
@@ -489,16 +503,31 @@ export class ScheduleService {
     if (!probe) throw this.gone();
     const rec = await withDeadlockRetry(() =>
       this.d.db.transaction(async (tx) => {
-        const locked = await this.d.schedules.lockAgents(tx, [
-          { id: probe.targetAgentId, mode: "share" },
-        ]);
-        const t = locked[0];
+        // Agents first (§12.1): the target FOR SHARE, and an agent creator FOR NO KEY UPDATE so the limit can't be raced.
+        const wants: LockWant[] = [{ id: probe.targetAgentId, mode: "share" }];
+        if (probe.createdByAgentId) wants.push({ id: probe.createdByAgentId, mode: "update" });
+        const locked = await this.d.schedules.lockAgents(tx, wants);
+        const t = locked.find((a) => a.id === probe.targetAgentId);
         if (t?.terminatedAt)
           throw new ScheduleError("target_ended", `@${t.slug} was terminated.`, 409);
         if (t?.archivedAt) throw new ScheduleError("target_ended", `@${t.slug} is archived.`, 409);
         const row = await this.d.schedules.lockByNumber(tx, n);
         if (!row) throw this.gone();
         if (row.deletedAt) {
+          // A restore counts like a create toward an agent creator's 20 (delete + restore must not bypass it); a
+          // one-shot that restores as done doesn't count.
+          const asDone = row.runAt !== null && row.runAt.getTime() <= this.d.now().getTime();
+          const creator = locked.find((a) => a.id === row.createdByAgentId);
+          if (
+            creator &&
+            !asDone &&
+            (await this.d.schedules.countActiveCreatedBy(tx, creator.id)) >= MAX_AGENT_SCHEDULES
+          )
+            throw new ScheduleError(
+              "schedule_limit",
+              `@${creator.slug} already has ${MAX_AGENT_SCHEDULES} schedules; delete one first.`,
+              409,
+            );
           await this.d.schedules.update(tx, row.id, { deletedAt: null, updatedAt: this.d.now() });
           await this.recomputeFromNow(tx, row.id);
         }
@@ -566,7 +595,7 @@ export class ScheduleService {
   private checkBody(body: string) {
     if (bytes(body) < 1)
       throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
-    if (bytes(body) > BODY_MAX)
+    if (bytes(body) > SCHEDULE_BODY_MAX)
       throw new ScheduleError(
         "invalid_schedule",
         "The message is too long (64 KB at most).",

@@ -325,3 +325,35 @@ test("every change calls onChanged once after its commit", async () => {
   await svc.restore(or, s.key);
   expect(changed - before).toBe(5);
 });
+
+test("review 1: a timezone-only change of a one-shot is refused (the time must be re-entered with the zone)", async () => {
+  const s = await mk({ cron: undefined, at: "2026-12-01T09:00", timezone: "Europe/Berlin" });
+  await rejects(svc.edit(or, s.key, { timezone: "Asia/Tokyo" }), {
+    code: "invalid_schedule",
+    status: 400,
+    message: "Change the time as well when you change a one-time schedule's time zone.",
+  });
+  const ok = await svc.edit(or, s.key, { timezone: "Asia/Tokyo", at: "2026-12-01T09:00" });
+  expect(ok).toMatchObject({ timezone: "Asia/Tokyo", at: "2026-12-01T00:00:00.000Z" });
+});
+
+test("review 3: restore can't push an agent past its 20 schedules (delete then restore beyond 20)", async () => {
+  const first = await mk({}, agent("dev"));
+  await svc.remove(or, first.key);
+  for (let i = 0; i < MAX_AGENT_SCHEDULES; i++)
+    await svc.create(agent("dev"), { target: "ceo", ...weekday });
+  await rejects(svc.restore(or, first.key), {
+    code: "schedule_limit",
+    message: "@dev already has 20 schedules; delete one first.",
+  });
+  expect(await svc.get(first.key)).toBeUndefined();
+});
+
+test("review 7: list_schedules never cuts a body inside a surrogate pair", async () => {
+  const s = await mk({ body: `${"x".repeat(1999)}😀tail` }, agent("dev"));
+  const [v] = await svc.listForAgent("dev");
+  expect(v?.id).toBe(s.key);
+  expect(v?.truncated).toBe(true);
+  expect(v?.body).toBe(`${"x".repeat(1999)}😀`); // 2,000 characters, the emoji whole
+  expect(v?.body.at(-1)).not.toMatch(/[\ud800-\udbff]/);
+});

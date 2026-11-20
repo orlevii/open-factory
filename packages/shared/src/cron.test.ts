@@ -107,3 +107,11 @@ test("formatOffsetIso", () => {
     "2026-07-01T07:00:00+00:00",
   );
 });
+
+test("review 5: parseAt refuses impossible fields, including seconds above 59", () => {
+  expect(parseAt("2026-11-23T09:00:61", B)).toBeNull();
+  expect(parseAt("2026-11-23T09:60", B)).toBeNull();
+  expect(parseAt("2026-11-23T24:00", B)).toBeNull();
+  expect(parseAt("2026-02-30T09:00", B)).toBeNull();
+  expect(iso(parseAt("2026-11-23T09:00:59", B))).toBe("2026-11-23T08:00:59.000Z");
+});

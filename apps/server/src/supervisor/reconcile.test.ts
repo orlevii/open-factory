@@ -57,7 +57,7 @@ class Boot {
       driver: this.driver,
       prepareStart: async (a) => okSpec(a),
       log: silentLog,
-      maxRunningAgents: max,
+      maxRunningAgents: () => max,
       ...(o.dockerRuntime
         ? { docker: { containers: this.containers, claudeBin: "claude", defaultImage: "img" } }
         : {}),

@@ -29,8 +29,8 @@ export interface RuntimesDeps {
   forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The cap (the `max_running_agents` factory setting); defaults to `DEFAULT_MAX_RUNNING_AGENTS`. */
-  maxRunningAgents?: number;
+  /** The cap, read live (the `max_running_agents` factory setting); defaults to `DEFAULT_MAX_RUNNING_AGENTS`. */
+  maxRunningAgents?: () => number;
   /**
    * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake
    * process's pid is not ours, and must never be journaled or signalled.
@@ -141,7 +141,7 @@ export class AgentRuntimes {
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
     this.supervisor = new Supervisor({
-      max: d.maxRunningAgents ?? DEFAULT_MAX_RUNNING_AGENTS,
+      max: d.maxRunningAgents ?? (() => DEFAULT_MAX_RUNNING_AGENTS),
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,

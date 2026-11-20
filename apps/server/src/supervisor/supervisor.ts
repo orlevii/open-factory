@@ -16,7 +16,8 @@ type Pause = { until: number; exact: boolean; timer?: ReturnType<typeof setTimeo
 const MAX_TIMER_MS = 2_147_483_647;
 
 export interface SupervisorDeps {
-  max: number;
+  /** The cap, read live (S10 §8.2: the `max_running_agents` factory setting); `capChanged()` follows a change. */
+  max: () => number;
   /** The loaded runtimes. `all()` is for the closing latch and credential re-checks. */
   runtimes: { get(id: string): AgentRuntime | undefined; all(): Iterable<AgentRuntime> };
   bus: EventBus;
@@ -83,7 +84,7 @@ export class Supervisor implements SlotPort {
       return "queued";
     }
     if (at !== -1 && this.queue[at]?.pulling) return "queued";
-    if (!this.pausedFor(agentId) && this.holders.size < this.d.max) {
+    if (!this.pausedFor(agentId) && this.holders.size < this.d.max()) {
       const entry = at === -1 ? this.entry(agentId, reason) : this.queue.splice(at, 1)[0];
       if (!entry) return "dropped";
       if (inline) {
@@ -158,7 +159,7 @@ export class Supervisor implements SlotPort {
   }
 
   running(): { count: number; max: number } {
-    return { count: this.holders.size, max: this.d.max };
+    return { count: this.holders.size, max: this.d.max() };
   }
 
   /**
@@ -213,6 +214,16 @@ export class Supervisor implements SlotPort {
     this.pauses.set(credentialId, p);
     this.armReset(credentialId, p);
     for (const rt of this.onCredential(credentialId)) rt.recheck();
+  }
+
+  /**
+   * The cap changed (S10 §8.2): a raise grants queued wakes at once (FIFO); a lower stops no one, but while wakes
+   * are queued, idle hibernatable holders may hibernate early (`freed_slot`). Then the new max is published.
+   */
+  capChanged(): void {
+    this.pump();
+    this.evict();
+    this.publish();
   }
 
   /** Grants what became eligible outside a slot change (an agent moved off a paused credential, spec §5.2). */
@@ -377,7 +388,7 @@ export class Supervisor implements SlotPort {
   /** Grants free slots to the first eligible entries, in FIFO order; then evicts for what is still waiting. */
   private pump() {
     if (this.closed) return;
-    while (this.holders.size < this.d.max) {
+    while (this.holders.size < this.d.max()) {
       const next = this.firstEligible();
       if (!next) break;
       const rt = this.d.runtimes.get(next.agentId);
@@ -409,7 +420,7 @@ export class Supervisor implements SlotPort {
   private evict() {
     if (this.closed) return;
     const eligible = this.queue.filter((e) => this.eligibility(e) === "yes").length;
-    const free = Math.max(0, this.d.max - this.holders.size);
+    const free = Math.max(0, this.d.max() - this.holders.size);
     let stopping = 0;
     for (const id of this.holders)
       if (!this.pendingEvictions.has(id) && this.d.runtimes.get(id)?.isStopping()) stopping += 1;
@@ -451,6 +462,6 @@ export class Supervisor implements SlotPort {
   }
 
   private publish() {
-    this.d.bus.publishAll({ type: "supervisor", running: this.holders.size, max: this.d.max });
+    this.d.bus.publishAll({ type: "supervisor", running: this.holders.size, max: this.d.max() });
   }
 }

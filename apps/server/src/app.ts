@@ -210,11 +210,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     prepareStart,
     tokens,
     log: app.log,
-    // Read at construction for now; S10 Tasks 11 and 12 make the cap and the debounce live.
+    // Read at construction for now; S10 Task 12 makes the debounce live.
     memberUpdateDebounceMs: settings.memberUpdateDebounceMs(),
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
-    maxRunningAgents: settings.maxRunningAgents(),
+    // S10 §8.2: the cap is read live; `capChanged()` below grants and publishes on a change.
+    maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
     docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
@@ -226,6 +227,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
         log: app.log,
         transports: { local: localTransport, docker: dockerTransport({ docker, containers }) },
       }),
+  });
+  settings.onChange((prev, next) => {
+    if (prev.maxRunningAgents !== next.maxRunningAgents) runtimes.supervisor.capChanged();
   });
   const templates = new TemplateIndex({ db: deps.db, config });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });

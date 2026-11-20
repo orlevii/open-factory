@@ -451,7 +451,7 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     tokens: noopTokens,
     log: silentLog,
     forward: (f) => (router ? router.forward(f) : Promise.resolve()),
-    maxRunningAgents: 1,
+    maxRunningAgents: () => 1,
     memberUpdateDebounceMs: o.memberUpdateDebounceMs ?? 3_600_000,
     docker: { containers, claudeBin: "/usr/local/bin/claude", defaultImage: IMAGE },
   });

@@ -41,7 +41,7 @@ class World {
   constructor(max: number) {
     this.bus.subscribeAll((m) => this.frames.push(m));
     this.sup = new Supervisor({
-      max,
+      max: () => max,
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: this.bus,
       log: silentLog,

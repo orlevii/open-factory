@@ -127,3 +127,52 @@ Live gates V1, V2, V3 and V5 (Claude Code 2.1.327, Docker 29.9.3, dockerode 5.0.
 ```json
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795209600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.01,"resetsAt":1795209600,"status":"allowed"},"seven_day":{"utilization":0.26,"resetsAt":1795590000,"status":"allowed"}}},"uuid":"REDACTED","session_id":"REDACTED"}
 ```
+
+Live check `pnpm smoke:images` (Docker 29.9.3, Claude Code 2.1.327 in `open-factory-base:dev`, haiku, Docker agent on a user image, a throwaway database and `FACTORY_HOME`, only real routes over a real socket and the built CLI with a real bearer token), all passing. Redacted output (the evidence lines shortened):
+
+```text
+PASS 0. setup: prerequisites (CLI bundle, agent CLI bundle, local base image)
+PASS 1. first user @or signs up without an invite (bootstrap) → 200
+PASS 1. POST /api/credentials smoke (oauth_token, verified live) → 201
+    imageStatus: {"kind":"user","name":"smoke","status":"not_built"}
+PASS 1. template smoke-tpl (runtime docker, image smoke, haiku) is valid, image not_built
+PASS 1. POST /api/agents smoke (template smoke-tpl) → 201
+PASS 2. message smoke before the build → 202
+PASS 2. the start fails: error event (source spawn)
+PASS 2. the error has fix "image" and the exact "isn't built" message
+    fix=image; message=Image `smoke` isn't built. Build it in Templates → Images, or run `open-factory images build smoke`.
+PASS 2. no pull ran (no `pulling image` server log line)
+PASS 3. @or signs in; bearer from the set-auth-token header
+PASS 3. `open-factory images build smoke` (built CLI, bearer) exits 0
+PASS 3. the build log streamed to stdout
+    21 lines; first: Step 1/4 : FROM ghcr.io/orlevii/open-factory/base:latest; last 3: Successfully tagged open-factory-user/smoke:latest | Base image ghcr.io/orlevii/open-factory/base:latest: ghcr.io/orlevii/open-factory/base@sha256:d47a2f37… | Built smoke
+PASS 3. docker image inspect open-factory-user/smoke:latest has io.open-factory.context-hash
+PASS 3. GET /api/images → smoke built
+PASS 4. POST /api/agents/smoke/restart → 202
+PASS 4. message smoke after the build → 202
+PASS 4. smoke's turn for that message ends
+PASS 4. smoke answers
+    answer: PELICAN
+PASS 4. the container label io.open-factory.image = open-factory-user/smoke:latest
+PASS 4. GET /api/agents/smoke/usage?days=7 → turns ≥ 1
+    status 200; total {"costUsd":0.001877,"inputTokens":2,"outputTokens":7,"cacheWriteTokens":8787,"cacheReadTokens":11586,"turns":1}
+PASS 4. the turn row has credential_id set (credential smoke)
+PASS 4. GET /api/usage/credentials?days=7 shows smoke with a rateLimit (V5 in situ)
+    rateLimit {"status":"allowed","type":"five_hour","utilization":0.01,"resetsAt":"2026-11-20T21:20:00.000Z","observedAt":"2026-11-20T20:13:59.853Z"}
+PASS 5. touch images/smoke/new.txt → GET /api/images → out_of_date
+PASS 6. `images build local --no-pull` (FROM open-factory-base:dev) exits 0
+PASS 6. `images build local` without --no-pull exits 1 with the "couldn't be pulled" sentence
+    exit 1; stderr: Build of local failed: Base image open-factory-base:dev couldn't be pulled. If it's local-only, run `open-factory images build local --no-pull`.
+PASS 7. POST /api/invites → 201 with a link
+PASS 7. sign-up without an invite → 403 invite_required
+PASS 7. sign-up @sam with the invite → 200
+PASS 7. reusing the invite → 403 invite_invalid
+PASS 7. @sam signs in (bearer)
+PASS 7. @sam's bearer works before disable (GET /api/me → 200)
+PASS 7. @or disables @sam → 200
+PASS 7. @sam's bearer after disable → 401
+
+Smoke passed.
+```
+
+V5 in situ: the mapper's `utilization` (0.01) is the five-hour window's, matching the live `rate_limit_event`. Two live details worth keeping: a message sent while the image isn't built stays queued through the failed start and is delivered with the next message after the build and Restart (one batch, one turn), and the "no pull" check reads the server's `pulling image` log line (the Supervisor still marks the wake `pulling` for the moment the local image check takes).

@@ -364,6 +364,7 @@ async closeTurnWith(turnId: string, d: TurnClose, stampIds: string[], attribute:
   - one batch with messages of two tasks → NULL;
   - a non-task human message plus a task message → NULL (any non-system message without the task disqualifies);
   - a task message plus a `system` notice → the task;
+  - a task turn that absorbs a mid-turn human message → NULL;
   - a mid-turn absorbed task message of the same task → the task (and `messages.delivered_turn_id` set for both batches);
   - **a cron turn ends while a batch is awaiting** (fake driver emits `turn_started`, then `turn_end{originKind:"cron"}` with `awaiting` non-empty) → `awaiting` stays unstamped and the cron turn's `task_id` is NULL. The batch's own later turn gets the task, and S6's update-only computation is unchanged (assert `dueAtTurnEnd` via the existing held tests still passing);
   - process exit with an open turn and an awaiting task batch → NULL (S6's exit path unchanged; awaiting not stamped);
@@ -630,13 +631,13 @@ export async function handleSignUp(d: { db: Db; invites: InviteService; auth: Au
 - [ ] **Step 1: Failing tests** (`app.listen({port: 0, host: "127.0.0.1"})`, global `fetch`):
   - zero users: sign-up without an invite → 200;
   - one user: without an invite → `403 invite_required`; with a valid one → 200; reusing it → `403 invite_invalid`; expired, revoked and unknown → the same `403 invite_invalid` body;
-  - the bypass variants `/api/auth/./sign-up/email`, `/api/auth/x/../sign-up/email`, `/api/auth/%2e/sign-up/email` and `/api/auth/sign-up/./email`, without an invite and with one user → never 200, and the user count is unchanged;
+  - the bypass variants `/api/auth/./sign-up/email`, `/api/auth/x/../sign-up/email`, `/api/auth/%2e/sign-up/email`, `/api/auth/sign-up/./email`, `/api/auth/sign-up/email/` (trailing slash), `//api/auth/sign-up/email`, `/api/auth//sign-up/email` and `/API/auth/sign-up/email`, without an invite and with one user → never 200, and the user count is unchanged (whatever the router does with each; the ALS backstop must hold even where the gate's path match misses);
   - a direct `app.auth.api.signUpEmail(...)` outside the gate → refused (`invite_required`), even with zero users;
   - two concurrent sign-ups on one invite → exactly one 200;
   - two concurrent first sign-ups with zero users → exactly one 200; the other gets `403 invite_required`;
   - `GET /api/auth/sign-up-state` → `{bootstrap: true, invite: "missing"}` with zero users; with one user and a valid token → `{bootstrap: false, invite: "valid"}`.
 - [ ] **Step 2: Run** → FAIL.
-- [ ] **Step 3: Implement.** If Task 1's V3 showed the ALS store not reaching the hook, use the spec's V3 fallback (a header the catch-all strips from client input and sets itself) and note it in the PR.
+- [ ] **Step 3: Implement.** If Task 1's V3 showed the ALS store not reaching the hook, use the spec's V3 fallback (a header the catch-all strips from client input and sets itself) and note it in the PR. The fallback is acceptable only with two extra tests: a client-sent copy of the header is stripped and refused (one user, no invite → not 200, user count unchanged), and the header value is a per-process random secret (`randomBytes(32)` at boot), never a constant (assert two app instances use different values).
 - [ ] **Step 4: Run** the file, then the whole `pnpm test` (the helper change touches about 40 files) → PASS; `pnpm typecheck`; `pnpm lint`.
 - [ ] **Step 5: Commit** `feat(server): invite-only sign-up (closes #1 with disable)`.
 

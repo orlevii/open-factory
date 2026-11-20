@@ -94,8 +94,9 @@ function AgentsPage() {
           )}
           {agents && agents.length > 0 && (
             // The Ended view is flat, newest end first (S7 UI design §3): one grid item with its
-            // "more" line, so the line sits right under the list.
-            <div>
+            // "more" line, so the line sits right under the list. min-w-0: a grid item otherwise grows
+            // to its content, and a long ended note pushes the page wider than a phone instead of truncating.
+            <div className="min-w-0">
               <AgentTree agents={agents} flat={filter === "only"} />
               {filter === "only" && <EndedMoreLine />}
             </div>

@@ -234,8 +234,11 @@ test("read-all marks up to upTo (a newer item stays unread) and Undo restores ex
   await h.app.tasks.create(or, { title: "t" });
   for (const n of [1, 2, 3]) await h.app.tasks.comment(agent, "T-1", `@or note ${n}`);
   await h.app.tasks.comment(agent, "T-1", "@sam only sam");
-  const page = (await get("/api/inbox")).json().items as { id: string; createdAt: string }[];
-  const [first, second, third] = [page[2], page[1], page[0]] as { id: string; createdAt: string }[];
+  type Item = { id: string; createdAt: string };
+  const page = (await get("/api/inbox")).json().items as Item[];
+  const first = page[2] as Item;
+  const second = page[1] as Item;
+  const third = page[0] as Item;
   // The user read one item by click before: it is not part of the action.
   await post(`/api/inbox/${third.id}/read`);
   const upTo = second.createdAt;

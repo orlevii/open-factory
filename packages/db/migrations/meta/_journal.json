@@ -71,6 +71,13 @@
       "when": 1795183043194,
       "tag": "0009_demonic_black_cat",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795193850098,
+      "tag": "0010_bored_gambit",
+      "breakpoints": true
     }
   ]
 }

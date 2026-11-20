@@ -58,6 +58,8 @@ async function setup(o: { maxRunning?: number } = {}) {
     config: { canSpawn: ["dev"], maxLiveSpawns: 10 },
   });
   const { user } = await app.signUpUser();
+  // The app's own boot sweep has finished: it can't interfere with this test's runs.
+  await app.app.reaper.idle();
   const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const reaper = new Reaper({
     store: app.app.store,
@@ -250,6 +252,52 @@ test("recent activity (a process start, a turn end) resets the clock", async () 
   expect(await s.terminatedBy(c.id)).toBeNull();
 });
 
+test("a lost activity write never gets a recently active child reaped", async () => {
+  const s = await setup();
+  const c = await s.spawnHibernated("lw");
+  const old = new Date(Date.now() - 4 * day);
+  await s.t.db.update(schema.agents).set({ lastActivityAt: old }).where(eq(schema.agents.id, c.id));
+  vi.spyOn(s.t.app.store, "setLastActivity").mockRejectedValue(new Error("the database blipped"));
+  await s.human(c.rt, "more work");
+  await c.rt.settled();
+  const proc = s.procsOf(c.id).at(-1) as FakeProcess;
+  proc.emit(ev.session("sess-lw"), ev.turn(), ev.usage(), ev.end());
+  await c.rt.settled();
+  expect(await c.rt.hibernate("warm_window")).toBe(true);
+  await c.rt.settled();
+  expect((await s.row(c.id)).lastActivityAt).toEqual(old); // every write was lost
+  now = Date.now() + 60_000; // the row alone says idle for 4 days; the runtime saw activity just now
+  await s.reaper.run();
+  expect(await s.terminatedBy(c.id)).toBeNull();
+  expect(c.rt.isTerminated()).toBe(false);
+});
+
+test("a held member update waiting for its window keeps the child; a held peer event alone doesn't", async () => {
+  const s = await setup();
+  const a = await s.spawnHibernated("hu");
+  const b = await s.spawnHibernated("hp");
+  const update = await s.t.app.store.createHeld({
+    kind: "member_update",
+    toAgentId: a.id,
+    fromAgentId: s.lead.id,
+    body: "an update",
+  });
+  await a.rt.receiveHeld(update);
+  const peer = await s.t.app.store.createHeld({
+    kind: "peer_joined",
+    toAgentId: b.id,
+    subjectAgentId: a.id,
+    notice: "peer",
+    body: "joined",
+  });
+  await b.rt.receiveHeld(peer);
+  now = Date.now() + 3 * day + 1;
+  await s.reaper.run();
+  expect(await s.terminatedBy(a.id)).toBeNull();
+  expect(a.rt.isTerminated()).toBe(false);
+  expect(await s.terminatedBy(b.id)).toBe("@factory");
+});
+
 test("last_activity_at never moves backwards when an older write lands last", async () => {
   const s = await setup();
   const c = await s.spawnHibernated("m");
@@ -350,32 +398,34 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
   expect((await s.row(b.id)).workspaceDeletedAt).toEqual(new Date(now));
 });
 
-test("a pin taken while the deletion waits for the workspace lock keeps the workspace", async () => {
+test("a pin that lands after the candidate was read unpinned keeps the workspace (re-read under the lock)", async () => {
   const s = await setup();
   const c = await s.spawnHibernated("p");
   await s.t.app.terminator.terminate(c.id, "@or");
   await c.rt.settled();
   const ws = s.t.app.workspace;
-  // The pin route's shape (Task 16): under the same lock, set the pin.
-  let pinned!: () => void;
-  const pinning = new Promise<void>((r) => {
-    pinned = r;
+  const observed: boolean[] = [];
+  const original = ws.deleteWorkspace.bind(ws);
+  vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (slug, stillUnpinned, markDeleted) => {
+    // The candidate query read it unpinned; the guard agrees before the race.
+    observed.push(await stillUnpinned());
+    // The pin route (Task 16's shape) takes the workspace lock first and pins.
+    await ws.lock.run(slug, () => s.t.app.store.setWorkspacePinned(c.id, true));
+    return original(
+      slug,
+      async () => {
+        const v = await stillUnpinned();
+        observed.push(v);
+        return v;
+      },
+      markDeleted,
+    );
   });
-  let releasePin!: () => void;
-  const held = ws.lock.run(c.slug, async () => {
-    pinned();
-    await new Promise<void>((r) => {
-      releasePin = r;
-    });
-    await s.t.app.store.setWorkspacePinned(c.id, true);
-  });
-  await pinning;
   now = Date.now() + 3 * day + 1;
-  const run = s.reaper.run(); // read the candidate unpinned; waits on the lock
-  releasePin();
-  await held;
-  await run;
+  await s.reaper.run();
+  expect(observed).toEqual([true, false]);
   expect(existsSync(ws.workdir(c.slug))).toBe(true);
+  expect(existsSync(agentStateDir(s.t.factoryHome, c.slug))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
 });
 

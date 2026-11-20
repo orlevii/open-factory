@@ -372,6 +372,9 @@ export class AgentRuntime {
   private rateLimitedTurn = false; // a `rate_limited` event since the last turn end (spec §7.3)
   /** The last turn end, delivery or start (spec §5.3: the least recently active is evicted first). */
   lastActivityAt = Date.now();
+  // S7 §10.3: the latest activity this runtime recorded (start, turn end, delivery); undefined until one happens. The
+  // TTL check takes the later of it and the row's, so a lost `setLastActivity` write never gets an active agent reaped.
+  private activityRecorded: number | undefined;
 
   constructor(private readonly d: RuntimeDeps) {
     this.agent = d.agent;
@@ -816,7 +819,7 @@ export class AgentRuntime {
         row.terminatedAt ||
         row.archivedAt ||
         row.rateLimitNoticeOwed ||
-        row.lastActivityAt.getTime() >= cutoff
+        Math.max(row.lastActivityAt.getTime(), this.activityRecorded ?? 0) >= cutoff
       )
         return false;
       if (!this.reapable()) return false; // anything that changed while the row was read
@@ -835,7 +838,12 @@ export class AgentRuntime {
       this.starting ||
       this.stopsInProgress > 0 ||
       this.slots.isQueued(this.agent.id) ||
-      this.credentialPaused()
+      this.credentialPaused() ||
+      // Rows waiting for delivery to an agent that would be woken for them (a message, a notice, a compact, or a held
+      // member update, which wakes it once due): the termination would reject them, so wait for the delivery. Peer
+      // events alone never wake an agent and don't hold it; an errored agent's rows wait for a human's Restart, and an
+      // errored agent is reaped (spec §10.3).
+      ((this.queue.length > 0 || this.held.some(isUpdate)) && this.acceptsWake("queued_items"))
     );
   }
 
@@ -883,6 +891,7 @@ export class AgentRuntime {
 
   /** S7 §10.2: the in-memory activity time, persisted as its own statement; a failure is only logged. */
   private persistActivity() {
+    this.activityRecorded = Math.max(this.activityRecorded ?? 0, this.lastActivityAt);
     const at = new Date(this.lastActivityAt);
     void this.d.store
       .setLastActivity(this.agent.id, at)

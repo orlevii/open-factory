@@ -16,6 +16,8 @@ test.each([
   mockApi({
     "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
     "GET /api/tasks?": () => json({ tasks: [], nextCursor: null }),
+    "GET /api/schedules": () => json({ schedules: [], more: false }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   renderApp(path, alice);
   expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();

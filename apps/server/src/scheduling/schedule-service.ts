@@ -121,6 +121,9 @@ export class ScheduleService {
               "You can't schedule messages: you were terminated.",
               409,
             );
+          // Q12: spawned agents have no schedule tools; the service refuses them too (defence in depth).
+          if (me.kind === "ephemeral")
+            throw new ScheduleError("forbidden", "Spawned agents can't schedule messages.", 403);
         }
         const t = byId.get(target.id);
         if (!t) throw notFound(target.slug);
@@ -316,6 +319,17 @@ export class ScheduleService {
           ...(long ? { truncated: true as const } : {}),
         };
       });
+  }
+
+  /** Unarchive (spec §10.1): every schedule targeting the agent recomputes from now, in the caller's transaction. */
+  async recomputeForTarget(tx: Exec, agentId: string): Promise<void> {
+    for (const id of await this.d.schedules.idsTargeting(tx, agentId))
+      await this.recomputeFromNow(tx, id);
+  }
+
+  /** After a commit made elsewhere (unarchive): re-arm the timer and tell the pages. */
+  changed(): void {
+    this.d.onChanged();
   }
 
   async scheduleCountFor(agentId: string): Promise<number> {

@@ -185,6 +185,12 @@ export class EventStore {
       .where(eq(agents.id, agentId));
     await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
     await this.rejectPending(agentId, tx);
+    // S9 §10.1: a terminated target's schedules are soft-deleted in the same transaction, after the agent locks
+    // (agents before schedules). Soft: delivered `scheduled` rows keep their schedule, and Restore refuses.
+    await tx
+      .update(schedules)
+      .set({ deletedAt: new Date(), nextRunAt: null })
+      .where(and(eq(schedules.targetAgentId, agentId), isNull(schedules.deletedAt)));
   }
   /** Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). */
   async rejectPending(agentId: string, tx: Exec = this.db) {
@@ -369,10 +375,6 @@ export class EventStore {
     return rows.flatMap((r) => (r.id ? [r.id] : []));
   }
   /**
-   * Boot (S7 §8, §12): rows still pending to a terminated agent (one that raced in during the crash window, after the
-   * termination's transaction rejected the rest) become `rejected`, as `terminateRows` makes them.
-   */
-  /**
    * Boot (S9 §5): at boot no runtime is loaded, so a pending row's write mark (`delivered_event_seq`, set when a batch
    * was written to a process that hadn't started yet) is stale: the process is gone. Only `markPending` (the exit
    * rollback) cleared it before, so after a crash a row written to a not-yet-started process kept its seq forever and
@@ -384,6 +386,10 @@ export class EventStore {
       .set({ deliveredEventSeq: null, deliveredTurnId: null })
       .where(and(eq(messages.state, "pending"), isNotNull(messages.deliveredEventSeq)));
   }
+  /**
+   * Boot (S7 §8, §12): rows still pending to a terminated agent (one that raced in during the crash window, after the
+   * termination's transaction rejected the rest) become `rejected`, as `terminateRows` makes them.
+   */
   async rejectPendingToTerminated() {
     await this.db
       .update(messages)

@@ -100,6 +100,11 @@ export class AgentService {
       containers?: Pick<ContainerManager, "isRunning">;
       /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
       router: Pick<Router, "peerEvents" | "snapshot">;
+      /** S9 §10.1: unarchive recomputes every schedule targeting the agent in its transaction (no catch-up). */
+      scheduling?: {
+        recomputeForTarget(tx: Tx, agentId: string): Promise<void>;
+        changed(): void;
+      };
     },
   ) {}
 
@@ -726,8 +731,21 @@ export class AgentService {
           `Its manager @${m.slug} is archived. Change its manager first.`,
         );
     }
-    await db.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
+    // S9 §10.1: the agent row `FOR NO KEY UPDATE` first, then its schedules (agents before schedules).
+    await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ archivedAt: schema.agents.archivedAt })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, row.id))
+        .for("no key update");
+      if (!locked?.archivedAt) return;
+      await tx.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
+      await this.d.scheduling?.recomputeForTarget(tx, row.id);
+    });
     await runtimes.refresh(row.id);
+    // After the refresh: a firing in the millisecond before it reaches a runtime that still thinks the agent is
+    // archived and is rejected (accepted, spec §10.1).
+    this.d.scheduling?.changed();
     await this.peerEvents(row.id, { kind: "joined" }, { managerId: null, peerIds: [] });
     return this.summary(slug);
   }

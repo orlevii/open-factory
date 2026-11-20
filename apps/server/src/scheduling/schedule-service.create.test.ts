@@ -249,3 +249,11 @@ test("A schedules for B while B schedules for A: no deadlock escapes, both succe
     expect(res).toHaveLength(3);
   }
 });
+
+test("a spawned agent can't create schedules even when called directly (Q12)", async () => {
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'dev'`;
+  await expect(svc.create(agent("dev"), { target: "ceo", ...weekday })).rejects.toMatchObject({
+    code: "forbidden",
+    message: "Spawned agents can't schedule messages.",
+  });
+});

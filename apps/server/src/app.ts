@@ -214,6 +214,33 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   const templates = new TemplateIndex({ db: deps.db, config });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
+  const clock = deps.clock ?? (() => new Date());
+  const scheduleStore = new ScheduleStore({ db: deps.db });
+  const scheduler: Scheduler = new Scheduler({
+    db: deps.db,
+    store,
+    schedules: scheduleStore,
+    runtimes,
+    bus,
+    log: app.log,
+    now: clock,
+    ...deps.schedulerTimers,
+  });
+  const schedules = new ScheduleService({
+    db: deps.db,
+    store,
+    schedules: scheduleStore,
+    now: clock,
+    factoryZone: config.factoryTimezone,
+    onChanged: () => {
+      scheduler.rearm();
+      bus.publishAll({ type: "schedules_changed" });
+    },
+    statusOf: (a) => runtimes.statusOf(a as Parameters<typeof runtimes.statusOf>[0]),
+  });
+  app.decorate("schedules", schedules);
+  app.decorate("scheduler", scheduler);
   const agents = new AgentService({
     db: deps.db,
     templates,
@@ -223,6 +250,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     containers,
     router,
+    scheduling: schedules,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
@@ -286,33 +314,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     now: () => Date.now(),
   });
   app.decorate("reaper", reaper);
-  // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
-  const clock = deps.clock ?? (() => new Date());
-  const scheduleStore = new ScheduleStore({ db: deps.db });
-  const scheduler: Scheduler = new Scheduler({
-    db: deps.db,
-    store,
-    schedules: scheduleStore,
-    runtimes,
-    bus,
-    log: app.log,
-    now: clock,
-    ...deps.schedulerTimers,
-  });
-  const schedules = new ScheduleService({
-    db: deps.db,
-    store,
-    schedules: scheduleStore,
-    now: clock,
-    factoryZone: config.factoryTimezone,
-    onChanged: () => {
-      scheduler.rearm();
-      bus.publishAll({ type: "schedules_changed" });
-    },
-    statusOf: (a) => runtimes.statusOf(a as Parameters<typeof runtimes.statusOf>[0]),
-  });
-  app.decorate("schedules", schedules);
-  app.decorate("scheduler", scheduler);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {

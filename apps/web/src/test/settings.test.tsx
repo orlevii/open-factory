@@ -1,4 +1,11 @@
-import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-factory/shared";
+import type {
+  AgentUsageRow,
+  CredentialSummary,
+  CredentialUsageRow,
+  ProjectSummary,
+  SecretSummary,
+  Totals,
+} from "@open-factory/shared";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
@@ -40,7 +47,46 @@ const project = (o: Partial<ProjectSummary> = {}): ProjectSummary => ({
   ...o,
 });
 
+const totals = (o: Partial<Totals> = {}): Totals => ({
+  costUsd: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheWriteTokens: 0,
+  cacheReadTokens: 0,
+  turns: 0,
+  ...o,
+});
+function daily(n: number, cost = 0.5, turns = 1) {
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 10, 20 - (n - 1 - i)));
+    return { date: d.toISOString().slice(0, 10), ...totals({ costUsd: cost, turns }) };
+  });
+}
+const usageRow = (o: Partial<AgentUsageRow> & { slug: string }): AgentUsageRow => ({
+  displayName: o.slug,
+  kind: "persistent",
+  archived: false,
+  terminated: false,
+  own: totals(),
+  total: o.own ?? totals(),
+  ...o,
+});
+const credUsage = (o: Partial<CredentialUsageRow> = {}): CredentialUsageRow => ({
+  name: "work",
+  kind: "oauth_token",
+  totals: totals(),
+  agents: [],
+  rateLimit: null,
+  ...o,
+});
+type UsageWorld = {
+  daily?: ReturnType<typeof daily>;
+  agents?: AgentUsageRow[];
+  credentials?: CredentialUsageRow[];
+};
+
 type World = {
+  usage?: UsageWorld;
   credentials?: CredentialSummary[];
   secrets?: SecretSummary[];
   projects?: ProjectSummary[];
@@ -57,6 +103,11 @@ function world(w: World = {}) {
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
+    "GET /api/usage/daily?": () =>
+      json({ timezone: "Europe/Berlin", days: w.usage?.daily ?? daily(30, 0, 0) }),
+    "GET /api/usage/agents?": () => json({ agents: w.usage?.agents ?? [] }),
+    "GET /api/usage/credentials?": () =>
+      json({ credentials: w.usage?.credentials ?? [], unattributed: totals() }),
     ...w.extra,
   });
   return { api, state };
@@ -72,12 +123,15 @@ const describedText = (el: HTMLElement) =>
     .map((id) => document.getElementById(id)?.textContent ?? "")
     .join(" ");
 
-test("sections are Credentials, Secrets, Projects, each with its anchor and description", async () => {
+test("sections are Usage, Credentials, Secrets, Projects, Users, Factory, each with its anchor", async () => {
   world();
   renderApp("/settings", alice);
   await section("Credentials");
   const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-  expect(headings).toEqual(["Credentials", "Secrets", "Projects"]);
+  expect(headings).toEqual(["Usage", "Credentials", "Secrets", "Projects", "Users", "Factory"]);
+  for (const id of ["usage", "credentials", "secrets", "projects", "users", "factory"]) {
+    expect(document.getElementById(id)?.tagName).toBe("SECTION");
+  }
   expect(document.getElementById("credentials")).toHaveTextContent(
     "Claude logins agents use. Each agent picks one.",
   );
@@ -582,19 +636,276 @@ test("Add secret waits for the secrets list: a failed load shows no add button o
   expect(within(region).queryByLabelText("Name")).not.toBeInTheDocument();
 });
 
-test("the query error line has a crimson icon", async () => {
-  mockApi({
-    "GET /api/credentials": () => json({ error: { code: "internal", message: "boom" } }, 500),
-    "GET /api/secrets": () => json({ secrets: [] }),
-    "GET /api/projects": () => json({ projects: [] }),
+test("a failing section shows only its own error line, with Retry; the others render", async () => {
+  let fail = true;
+  world({
+    secrets: [secret()],
+    extra: {
+      "GET /api/credentials": () =>
+        fail
+          ? json({ error: { code: "internal", message: "boom" } }, 500)
+          : json({ credentials: [cred()] }),
+    },
   });
   renderApp("/settings", alice);
-  const alert = await screen.findByText("Couldn't load settings.");
-  const line = alert.closest("[role='alert']") as HTMLElement;
-  expect(line).toHaveTextContent("Couldn't load settings.");
+  const region = await section("Credentials");
+  const text = await within(region).findByText("Couldn't load credentials.");
+  const line = text.parentElement as HTMLElement;
   const icon = line.querySelector("svg");
   expect(icon).toHaveAttribute("aria-hidden", "true");
   expect(icon).toHaveClass("text-destructive");
+  expect(screen.queryByText("Couldn't load settings.")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Couldn't load (secrets|projects|usage)\./)).not.toBeInTheDocument();
+  expect(row(await section("Secrets"), "GH_TOKEN")).toBeInTheDocument();
+  expect(
+    await within(await section("Projects")).findByText("No projects yet."),
+  ).toBeInTheDocument();
+  fail = false;
+  await userEvent.click(within(line).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(row(region, "work")).toBeInTheDocument());
+  expect(within(region).queryByText("Couldn't load credentials.")).not.toBeInTheDocument();
+});
+
+test("secrets and projects show their own error lines", async () => {
+  world({
+    extra: {
+      "GET /api/secrets": () => json({ error: { code: "internal", message: "boom" } }, 500),
+      "GET /api/projects": () => json({ error: { code: "internal", message: "boom" } }, 500),
+    },
+  });
+  renderApp("/settings", alice);
+  expect(
+    await within(await section("Secrets")).findByText("Couldn't load secrets."),
+  ).toBeInTheDocument();
+  expect(
+    await within(await section("Projects")).findByText("Couldn't load projects."),
+  ).toBeInTheDocument();
+  expect(within(await section("Credentials")).getByText("No credentials yet.")).toBeInTheDocument();
+});
+
+test("On this page links all six anchors; #usage focuses the Usage heading", async () => {
+  world();
+  renderApp("/settings#usage", alice);
+  const nav = await screen.findByRole("navigation", { name: "On this page" });
+  const links = within(nav).getAllByRole("link");
+  expect(links.map((l) => l.textContent)).toEqual([
+    "Usage",
+    "Credentials",
+    "Secrets",
+    "Projects",
+    "Users",
+    "Factory",
+  ]);
+  expect(links.map((l) => l.getAttribute("href")?.replace(/^.*#/, "#"))).toEqual([
+    "#usage",
+    "#credentials",
+    "#secrets",
+    "#projects",
+    "#users",
+    "#factory",
+  ]);
+  const heading = await screen.findByRole("heading", { level: 2, name: "Usage" });
+  await waitFor(() => expect(heading).toHaveFocus());
+});
+
+const leadFamily = (): AgentUsageRow[] => [
+  usageRow({
+    slug: "writer",
+    own: totals({ costUsd: 0.5, turns: 4 }),
+    total: totals({ costUsd: 0.5, turns: 4 }),
+  }),
+  usageRow({
+    slug: "lead",
+    own: totals({ costUsd: 1.2, turns: 12 }),
+    spawned: totals({ costUsd: 3.4, turns: 29 }),
+    total: totals({ costUsd: 4.6, turns: 41 }),
+  }),
+  ...["lead-a1", "lead-b2", "lead-c3"].map((slug, i) =>
+    usageRow({
+      slug,
+      kind: "ephemeral",
+      spawnerSlug: "lead",
+      terminated: i === 0,
+      own: totals({ costUsd: 1 + i * 0.2, turns: 9 + i }),
+      total: totals({ costUsd: 1 + i * 0.2, turns: 9 + i }),
+    }),
+  ),
+  ...Array.from({ length: 8 }, (_, i) => usageRow({ slug: `idle-${i}` })),
+];
+
+test("Usage: range, Daily chart, estimate line, and the Agents table sorted by total", async () => {
+  const api = world({ usage: { daily: daily(30), agents: leadFamily() } }).api;
+  renderApp("/settings", alice);
+  const region = await section("Usage");
+  expect(within(region).getByRole("radio", { name: "30 days" })).toBeChecked();
+  expect(
+    await within(region).findByRole("heading", { level: 3, name: "Daily" }),
+  ).toBeInTheDocument();
+  expect(within(region).getByText("30 days to today, in Europe/Berlin.")).toBeInTheDocument();
+  expect(
+    within(region).getByText(
+      "Estimated at API prices. A subscription is billed by plan, not per token.",
+    ),
+  ).toBeInTheDocument();
+  expect(api.calls.some((c) => c.url === "/api/usage/agents?days=30")).toBe(true);
+
+  const table = within(region).getByRole("table", { name: "Agents" });
+  const headers = within(table)
+    .getAllByRole("columnheader")
+    .map((h) => h.textContent);
+  expect(headers).toEqual(["Agent", "Turns", "Own (est.)", "Spawned (est.)", "Total (est.)"]);
+  const bodyRows = within(table).getAllByRole("row").slice(1);
+  // lead (4.60) before writer (0.50); the children are collapsed behind the disclosure.
+  expect(bodyRows[0]).toHaveTextContent("@lead");
+  expect(bodyRows[0]).toHaveTextContent("$1.20");
+  expect(bodyRows[0]).toHaveTextContent("$3.40");
+  expect(bodyRows[0]).toHaveTextContent("$4.60");
+  const lead = within(table).getByRole("link", { name: "@lead" });
+  expect(lead).toHaveAttribute("href", "/agents/lead/usage");
+  expect(within(table).queryByText("@lead-a1")).not.toBeInTheDocument();
+
+  const disclosure = within(table).getByRole("button", { name: "Show 3 spawned agents of @lead" });
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  const child = within(table).getByRole("link", { name: "@lead-c3" });
+  expect(child).toHaveAttribute("href", "/agents/lead-c3/usage");
+  const childRow = child.closest("tr") as HTMLElement;
+  const cells = within(childRow).getAllByRole("cell");
+  // Agent, turns, own, spawned (blank), total.
+  expect(cells[2]).toHaveTextContent("$1.40");
+  expect(cells[3]).toHaveTextContent(/^$/);
+  expect(cells[4]).toHaveTextContent("$1.40");
+  expect(within(table).getByText("@writer").closest("tr")).toHaveTextContent("$0.50");
+});
+
+test("Usage: agents with no usage fold into one row with Show", async () => {
+  world({ usage: { daily: daily(30), agents: leadFamily() } });
+  renderApp("/settings", alice);
+  const region = await section("Usage");
+  const table = await within(region).findByRole("table", { name: "Agents" });
+  expect(within(table).queryByText("@idle-0")).not.toBeInTheDocument();
+  const fold = within(table).getByText("8 agents with no usage").closest("tr") as HTMLElement;
+  const show = within(fold).getByRole("button", { name: "Show" });
+  expect(show).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(show);
+  expect(within(table).getByRole("link", { name: "@idle-7" })).toHaveAttribute(
+    "href",
+    "/agents/idle-7/usage",
+  );
+});
+
+test("Usage: the Credentials table with cost, top agents and the rate-limit line", async () => {
+  world({
+    usage: {
+      daily: daily(30),
+      agents: leadFamily(),
+      credentials: [
+        credUsage({
+          totals: totals({ costUsd: 4.12, turns: 30 }),
+          agents: [
+            { slug: "lead", costUsd: 3 },
+            { slug: "writer", costUsd: 1.12 },
+          ],
+          rateLimit: {
+            status: "allowed_warning",
+            type: "five_hour",
+            utilization: 0.82,
+            resetsAt: new Date(Date.now() + 3_600_000).toISOString(),
+            observedAt: new Date(Date.now() - 60_000).toISOString(),
+          },
+        }),
+      ],
+    },
+  });
+  renderApp("/settings", alice);
+  const region = await section("Usage");
+  const table = await within(region).findByRole("table", { name: "Credentials" });
+  expect(
+    within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent),
+  ).toEqual(["Name", "Kind", "Cost (est.)", "Top agents", "Rate limit"]);
+  const r = within(table).getAllByRole("row")[1] as HTMLElement;
+  expect(r).toHaveTextContent("work");
+  expect(r).toHaveTextContent("OAuth token");
+  expect(r).toHaveTextContent("$4.12");
+  expect(within(r).getByRole("link", { name: "@lead" })).toHaveAttribute(
+    "href",
+    "/agents/lead/usage",
+  );
+  expect(r).toHaveTextContent("82% of the 5-hour limit used");
+});
+
+test("Usage: all-zero days show the empty line instead of the chart; credentials stay", async () => {
+  world({
+    usage: {
+      daily: daily(30, 0, 0),
+      agents: [usageRow({ slug: "lead" })],
+      credentials: [credUsage()],
+    },
+  });
+  renderApp("/settings", alice);
+  const region = await section("Usage");
+  expect(await within(region).findByText("No usage in the last 30 days.")).toBeInTheDocument();
+  expect(within(region).queryByText("30 days to today, in Europe/Berlin.")).not.toBeInTheDocument();
+  const table = within(region).getByRole("table", { name: "Credentials" });
+  expect(table).toHaveTextContent("work");
+  expect(table).toHaveTextContent("No rate-limit data yet");
+});
+
+test("Usage: ?days=7 asks for 7 days and a range switch keeps the page", async () => {
+  const { api } = world({ usage: { daily: daily(7), agents: leadFamily() } });
+  const { router } = renderApp("/settings?days=7", alice);
+  const region = await section("Usage");
+  expect(within(region).getByRole("radio", { name: "7 days" })).toBeChecked();
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/usage/daily?days=7")).toBe(true),
+  );
+  await userEvent.click(within(region).getByRole("radio", { name: "90 days" }));
+  await waitFor(() => expect(router.state.location.search).toEqual({ days: 90 }));
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/usage/credentials?days=90")).toBe(true),
+  );
+});
+
+test("a failing usage query shows Couldn't load usage. in its section only", async () => {
+  world({
+    extra: {
+      "GET /api/usage/agents?": () => json({ error: { code: "internal", message: "boom" } }, 500),
+    },
+  });
+  renderApp("/settings", alice);
+  const region = await section("Usage");
+  expect(await within(region).findByText("Couldn't load usage.")).toBeInTheDocument();
+  expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  expect(within(await section("Credentials")).getByText("No credentials yet.")).toBeInTheDocument();
+});
+
+test("credential rows show the rate-limit line", async () => {
+  const until = new Date(Date.now() + 2 * 3_600_000);
+  world({
+    credentials: [
+      cred({ name: "work", rateLimit: null }),
+      cred({ name: "paused", rateLimit: null, pausedUntil: until.toISOString(), pauseExact: true }),
+      cred({
+        name: "fine",
+        rateLimit: {
+          status: "allowed",
+          type: "five_hour",
+          utilization: 0.1,
+          resetsAt: null,
+          observedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+        },
+      }),
+    ],
+  });
+  renderApp("/settings", alice);
+  const region = await section("Credentials");
+  await waitFor(() => expect(row(region, "work")).toBeInTheDocument());
+  expect(row(region, "work")).toHaveTextContent("No rate-limit data yet");
+  expect(row(region, "paused")).toHaveTextContent(/Rate-limited until .*\d\d:\d\d/);
+  expect(row(region, "fine")).toHaveTextContent("Within limits · seen 5 minutes ago");
 });
 
 test("a later ?addSecret updates the open add form and refocuses the value field", async () => {

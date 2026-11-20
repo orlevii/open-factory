@@ -4,12 +4,13 @@ import { type ReactNode, useId } from "react";
 import { formatTokens } from "@/features/session/format";
 import { formatCost } from "./format";
 
-const linkClass =
+export const linkClass =
   "underline underline-offset-4 decoration-muted-foreground hover:decoration-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm";
-const th = "py-1.5 pr-4 text-left text-[0.8125rem] font-normal text-muted-foreground last:pr-0";
-const thNum = `${th} text-right`;
-const td = "py-1.5 pr-4 align-top last:pr-0";
-const tdNum = `${td} text-right tabular-nums`;
+export const th =
+  "py-1.5 pr-4 text-left text-[0.8125rem] font-normal text-muted-foreground last:pr-0";
+export const thNum = `${th} text-right`;
+export const td = "py-1.5 pr-4 align-top last:pr-0";
+export const tdNum = `${td} text-right tabular-nums`;
 
 const allTokens = (t: Totals) =>
   t.inputTokens + t.outputTokens + t.cacheWriteTokens + t.cacheReadTokens;

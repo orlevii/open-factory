@@ -2,6 +2,7 @@ import { type AgentSummary, ApiError, nameSchema, type ProjectSummary } from "@o
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
@@ -269,7 +270,8 @@ function ChangePathForm({
 
 export function ProjectsSection() {
   const qc = useQueryClient();
-  const { data } = useQuery(projectsQueryOptions);
+  const query = useQuery(projectsQueryOptions);
+  const { data } = query;
   // Only needed to name a spawned grantee's spawner; a failed list leaves the plain slugs.
   const { data: spawners } = useQuery({
     ...agentsQueryOptions,
@@ -368,6 +370,9 @@ export function ProjectsSection() {
         </>
       }
     >
+      {!data && query.isError && (
+        <ErrorLine text="Couldn't load projects." onRetry={() => void query.refetch()} />
+      )}
       {data &&
         (projects.length === 0 ? (
           <p className="text-sm text-muted-foreground">No projects yet.</p>

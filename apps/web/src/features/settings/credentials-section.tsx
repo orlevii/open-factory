@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Loader2, Plus, TriangleAlert } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -42,10 +43,11 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
+import { RateLimitLine } from "./rate-limit-line";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
-const KIND_LABEL: Record<CredentialKind, string> = {
+export const KIND_LABEL: Record<CredentialKind, string> = {
   oauth_token: "OAuth token",
   api_key: "API key",
 };
@@ -370,7 +372,8 @@ function VerificationState({ c }: { c: CredentialSummary }) {
 
 export function CredentialsSection() {
   const qc = useQueryClient();
-  const { data } = useQuery(credentialsQueryOptions);
+  const query = useQuery(credentialsQueryOptions);
+  const { data } = query;
   const focusLater = useFocusLater();
   const [adding, setAdding] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>();
@@ -460,6 +463,9 @@ export function CredentialsSection() {
       title="Credentials"
       description="Claude logins agents use. Each agent picks one."
     >
+      {!data && query.isError && (
+        <ErrorLine text="Couldn't load credentials." onRetry={() => void query.refetch()} />
+      )}
       {data &&
         (credentials.length === 0 ? (
           <p className="text-sm text-muted-foreground">No credentials yet.</p>
@@ -537,6 +543,11 @@ export function CredentialsSection() {
                       {KIND_LABEL[c.kind]}
                     </span>
                     <VerificationState c={c} />
+                    <RateLimitLine
+                      rateLimit={c.rateLimit}
+                      pausedUntil={c.pausedUntil}
+                      pauseExact={c.pauseExact}
+                    />
                     <Usage
                       active={c.usedBy}
                       archived={c.archivedUsedBy}

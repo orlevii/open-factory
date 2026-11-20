@@ -132,7 +132,7 @@ export function Usage({
   );
 }
 
-/** One settings section: the panel-heading h2, a muted line, then its list and forms. */
+/** One settings section: the panel-heading h2, an optional muted line, then its content. */
 export function SettingsSection({
   id,
   title,
@@ -141,8 +141,8 @@ export function SettingsSection({
 }: {
   id: string;
   title: string;
-  description: ReactNode;
-  children: ReactNode;
+  description?: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section
@@ -154,7 +154,7 @@ export function SettingsSection({
         <h2 id={`${id}-title`} tabIndex={-1} className="text-[0.8125rem] font-medium outline-none">
           {title}
         </h2>
-        <p className={`${smallClass} text-muted-foreground`}>{description}</p>
+        {description && <p className={`${smallClass} text-muted-foreground`}>{description}</p>}
       </div>
       {children}
     </section>

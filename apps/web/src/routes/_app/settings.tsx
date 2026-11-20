@@ -1,6 +1,5 @@
-import { useQueries } from "@tanstack/react-query";
-import { createFileRoute, useLocation } from "@tanstack/react-router";
-import { CircleAlert } from "lucide-react";
+import { type UsageDays, usageDaysSchema } from "@open-factory/shared";
+import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -12,58 +11,108 @@ import {
 import { CredentialsSection } from "@/features/settings/credentials-section";
 import { ProjectsSection } from "@/features/settings/projects-section";
 import { SecretsSection } from "@/features/settings/secrets-section";
+import { SettingsSection } from "@/features/settings/shared";
+import { UsageSection } from "@/features/settings/usage-section";
+import { agentsUsageQuery, credentialsUsageQuery, dailyUsageQuery } from "@/features/usage/api";
 
-const SECTIONS = ["credentials", "secrets", "projects"];
+const SECTIONS = [
+  { id: "usage", title: "Usage" },
+  { id: "credentials", title: "Credentials" },
+  { id: "secrets", title: "Secrets" },
+  { id: "projects", title: "Projects" },
+  { id: "users", title: "Users" },
+  { id: "factory", title: "Factory" },
+] as const;
+const IDS: readonly string[] = SECTIONS.map((s) => s.id);
 
-export const Route = createFileRoute("/_app/settings")({
+const DEFAULT_DAYS: UsageDays = 30;
+const searchSchema = z.object({
   // ?addSecret=NAME opens the add-secret form with the name filled in (the New agent warnings
   // link here).
-  validateSearch: z.object({ addSecret: z.string().optional().catch(undefined) }),
-  // Only so the first load shows the pending mark; failures render as the error line.
-  loader: async ({ context }) => {
+  addSecret: z.string().optional().catch(undefined),
+  // The Usage range; an unknown one falls back to the default.
+  days: usageDaysSchema.optional().catch(undefined),
+});
+
+export const Route = createFileRoute("/_app/settings")({
+  validateSearch: searchSchema,
+  // Only so the first load shows the pending mark (and a #hash lands on loaded content); each
+  // section renders its own failure. No loaderDeps: a range switch keeps the previous data.
+  loader: async ({ context, location }) => {
+    const days = searchSchema.parse(location.search).days ?? DEFAULT_DAYS;
+    const qc = context.queryClient;
     await Promise.allSettled([
-      context.queryClient.ensureQueryData(credentialsQueryOptions),
-      context.queryClient.ensureQueryData(secretsQueryOptions),
-      context.queryClient.ensureQueryData(projectsQueryOptions),
+      qc.ensureQueryData(dailyUsageQuery(days)),
+      qc.ensureQueryData(agentsUsageQuery(days)),
+      qc.ensureQueryData(credentialsUsageQuery(days)),
+      qc.ensureQueryData(credentialsQueryOptions),
+      qc.ensureQueryData(secretsQueryOptions),
+      qc.ensureQueryData(projectsQueryOptions),
     ]);
   },
   component: SettingsPage,
 });
 
 function SettingsPage() {
-  const { addSecret } = Route.useSearch();
+  const { addSecret, days = DEFAULT_DAYS } = Route.useSearch();
   const hash = useLocation({ select: (l) => l.hash });
-  const queries = useQueries({
-    queries: [credentialsQueryOptions, secretsQueryOptions, projectsQueryOptions],
-  });
-  const failed = queries.some((q) => q.isError && !q.data);
-  const settled = queries.every((q) => !q.isPending);
+  const navigate = useNavigate();
 
-  // #credentials, #secrets, #projects: bring the section into view once its content is there,
-  // and move focus to its heading so keyboard and screen-reader users land there too. With
+  // #usage … #factory: bring the section into view and move focus to its heading, so keyboard
+  // and screen-reader users land there too. The loader has already waited for the content. With
   // ?addSecret the add form has already taken focus (its value field).
   const handled = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!settled || !SECTIONS.includes(hash) || handled.current === hash) return;
+    if (!IDS.includes(hash)) {
+      handled.current = undefined;
+      return;
+    }
+    if (handled.current === hash) return;
     handled.current = hash;
     document.getElementById(hash)?.scrollIntoView?.({ block: "start" });
     if (!(addSecret && hash === "secrets")) document.getElementById(`${hash}-title`)?.focus();
-  }, [settled, hash, addSecret]);
+  }, [hash, addSecret]);
 
   return (
     <>
       <PageHeader title="Settings" />
       <PageBody>
         <div className="grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-10">
-          {failed && (
-            <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-              Couldn't load settings.
-            </p>
-          )}
+          <nav aria-label="On this page">
+            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem] leading-[1.125rem]">
+              {SECTIONS.map((s) => (
+                <li key={s.id}>
+                  <Link
+                    from={Route.fullPath}
+                    to="."
+                    search={(prev) => prev}
+                    hash={s.id}
+                    className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    {s.title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <UsageSection
+            days={days}
+            onDaysChange={(d) =>
+              void navigate({
+                from: Route.fullPath,
+                to: ".",
+                search: (prev) => ({ ...prev, days: d === DEFAULT_DAYS ? undefined : d }),
+                hash: true,
+                resetScroll: false,
+              })
+            }
+          />
           <CredentialsSection />
           <SecretsSection addSecret={addSecret} />
           <ProjectsSection />
+          {/* Filled by the Users and Factory work; the anchors exist so the list above is whole. */}
+          <SettingsSection id="users" title="Users" />
+          <SettingsSection id="factory" title="Factory" />
         </div>
       </PageBody>
     </>

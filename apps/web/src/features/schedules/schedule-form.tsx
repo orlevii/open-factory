@@ -8,7 +8,7 @@ import {
   validateCron,
 } from "@open-factory/shared";
 import { Link, useBlocker } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
@@ -90,6 +90,7 @@ export function ScheduleForm({
   );
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [toFocus, setToFocus] = useState<Field | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const leaving = useRef(false);
   const { agents } = useAssignableAgents();
@@ -158,6 +159,13 @@ export function ScheduleForm({
       ?.querySelector<HTMLElement>(`#field-${f === "timezone" ? "timezone" : f}`)
       ?.focus();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when asked for
+  useEffect(() => {
+    if (!toFocus) return;
+    focus(toFocus);
+    setToFocus(null);
+  }, [toFocus]);
+
   async function submit(ev: FormEvent) {
     ev.preventDefault();
     if (pending || readOnly) return;
@@ -185,7 +193,7 @@ export function ScheduleForm({
         for (const f of FIELDS) if (fields[f]) e[f] = fields[f];
         if (Object.keys(e).length > 0) {
           setErrors(e);
-          queueMicrotask(() => focus(FIELDS.find((f) => e[f]) as Field));
+          setToFocus(FIELDS.find((f) => e[f]) as Field); // once the fieldset is enabled again
           return;
         }
       }

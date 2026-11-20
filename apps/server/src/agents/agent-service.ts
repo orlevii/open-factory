@@ -7,12 +7,13 @@ import {
   slugSchema,
   treeOrder,
 } from "@open-factory/shared";
-import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
 import { isNameTaken } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
+import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
@@ -51,6 +52,40 @@ function reportsMessage(slugs: string[]): string {
   return `${who} ${tags.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
 }
 
+/** The ended list's cap (S7 §14): the newest 200; one more row is read to know whether older ones exist. */
+export const ENDED_LIST_LIMIT = 200;
+
+/**
+ * The ended agents (archived or terminated), newest end first. Its WHERE and ORDER BY are `agents_ended_idx`'s
+ * predicate and expression, so it is served by that index whatever the spawn history.
+ */
+export function endedAgentsQuery(db: Exec) {
+  const endedAt = sql`coalesce(${schema.agents.terminatedAt}, ${schema.agents.archivedAt})`;
+  return db
+    .select()
+    .from(schema.agents)
+    .where(or(isNotNull(schema.agents.terminatedAt), isNotNull(schema.agents.archivedAt)))
+    .orderBy(desc(endedAt))
+    .limit(ENDED_LIST_LIMIT + 1);
+}
+
+/** S7 §14: a terminated agent's fields; the grace end only while its workspace still exists. */
+function terminationFields(r: AgentRow) {
+  if (!r.terminatedAt) return {};
+  return {
+    terminatedAt: r.terminatedAt.toISOString(),
+    ...(r.terminatedBy ? { terminatedBy: r.terminatedBy } : {}),
+    workspacePinned: r.workspacePinned,
+    ...(r.workspaceDeletedAt
+      ? { workspaceDeletedAt: r.workspaceDeletedAt.toISOString() }
+      : {
+          workspaceGraceEndsAt: new Date(
+            r.terminatedAt.getTime() + WORKSPACE_GRACE_MS,
+          ).toISOString(),
+        }),
+  };
+}
+
 export class AgentService {
   constructor(
     private readonly d: {
@@ -84,82 +119,125 @@ export class AgentService {
     return this.d.router.snapshot(tx, id);
   }
 
-  async list(ended: "exclude" | "include" | "only"): Promise<AgentSummary[]> {
-    const { db } = this.d;
-    const rows = await db
+  /**
+   * `exclude`: the live agents (neither archived nor terminated), in tree order. `only`: the ended ones (archived or
+   * terminated), flat, newest end first, at most `ENDED_LIST_LIMIT` (`more` says whether older ones exist), so the cost
+   * stays flat as spawn history grows (S7 §14).
+   */
+  async list(ended: "exclude" | "only"): Promise<{ agents: AgentSummary[]; more: boolean }> {
+    if (ended === "exclude") return { agents: await this.listLive(), more: false };
+    const rows = await endedAgentsQuery(this.d.db);
+    const more = rows.length > ENDED_LIST_LIMIT;
+    const shown = rows.slice(0, ENDED_LIST_LIMIT);
+    return { agents: await this.summarize(shown.map((row) => ({ row, depth: 0 }))), more };
+  }
+
+  private async listLive(): Promise<AgentSummary[]> {
+    const rows = await this.d.db
       .select()
       .from(schema.agents)
-      .where(
-        ended === "exclude"
-          ? isNull(schema.agents.archivedAt)
-          : ended === "only"
-            ? isNotNull(schema.agents.archivedAt)
-            : undefined,
-      );
-    const allAgents = await db
-      .select({
-        id: schema.agents.id,
-        slug: schema.agents.slug,
-        reportsTo: schema.agents.reportsTo,
-        archivedAt: schema.agents.archivedAt,
-        terminatedAt: schema.agents.terminatedAt,
-      })
-      .from(schema.agents);
-    const slugById = new Map(allAgents.map((r) => [r.id, r.slug]));
+      .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt)));
+    const slugOf = await this.slugsOf(rows);
+    const order = treeOrder(
+      rows.map((r) => ({
+        slug: r.slug,
+        displayName: r.displayName,
+        reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
+      })),
+    );
+    const bySlug = new Map(rows.map((r) => [r.slug, r]));
+    return this.summarize(
+      order.map(({ slug, depth }) => {
+        const row = bySlug.get(slug);
+        if (!row) throw new Error("tree order returned an unknown slug");
+        return { row, depth };
+      }),
+      slugOf,
+    );
+  }
+
+  /** The managers' slugs of `rows`, read for those managers only. */
+  private async slugsOf(rows: AgentRow[]): Promise<Map<string, string>> {
+    const ids = [...new Set(rows.flatMap((r) => (r.reportsTo ? [r.reportsTo] : [])))];
+    if (ids.length === 0) return new Map();
+    const managers = await this.d.db
+      .select({ id: schema.agents.id, slug: schema.agents.slug })
+      .from(schema.agents)
+      .where(inArray(schema.agents.id, ids));
+    return new Map(managers.map((m) => [m.id, m.slug]));
+  }
+
+  /**
+   * The summaries of the shown rows only: their managers, their live reports (S7 §9.2: an ended agent has none to
+   * count) and their grants are each read for those rows, never for every agent ever spawned.
+   */
+  private async summarize(
+    shown: { row: AgentRow; depth: number }[],
+    managerSlugs?: Map<string, string>,
+  ): Promise<AgentSummary[]> {
+    const { db } = this.d;
+    if (shown.length === 0) return [];
+    const rows = shown.map((s) => s.row);
+    const slugOf = managerSlugs ?? (await this.slugsOf(rows));
+    const liveIds = rows.filter((r) => !r.archivedAt && !r.terminatedAt).map((r) => r.id);
     const reportCount = new Map<string, number>();
-    for (const a of allAgents)
-      if (a.reportsTo && !a.archivedAt && !a.terminatedAt)
-        reportCount.set(a.reportsTo, (reportCount.get(a.reportsTo) ?? 0) + 1);
+    if (liveIds.length > 0)
+      for (const r of await db
+        .select({ managerId: schema.agents.reportsTo, n: count() })
+        .from(schema.agents)
+        .where(and(inArray(schema.agents.reportsTo, liveIds), liveAgent))
+        .groupBy(schema.agents.reportsTo))
+        if (r.managerId) reportCount.set(r.managerId, r.n);
     const credName = new Map(
-      (await db.select().from(schema.credentials)).map((c) => [c.id, c.name]),
+      (
+        await db
+          .select({ id: schema.credentials.id, name: schema.credentials.name })
+          .from(schema.credentials)
+      ).map((c) => [c.id, c.name]),
     );
     const grants = await db
       .select({ agentId: schema.agentProjectGrants.agentId, name: schema.projects.name })
       .from(schema.agentProjectGrants)
-      .innerJoin(schema.projects, eq(schema.projects.id, schema.agentProjectGrants.projectId));
+      .innerJoin(schema.projects, eq(schema.projects.id, schema.agentProjectGrants.projectId))
+      .where(
+        inArray(
+          schema.agentProjectGrants.agentId,
+          rows.map((r) => r.id),
+        ),
+      );
     const projectsOf = new Map<string, string[]>();
     for (const g of grants)
       projectsOf.set(g.agentId, [...(projectsOf.get(g.agentId) ?? []), g.name]);
 
-    const info = rows.map((r) => ({
-      row: r,
-      reportsTo: r.reportsTo ? (slugById.get(r.reportsTo) ?? null) : null,
-    }));
-    const order = treeOrder(
-      info.map((i) => ({
-        slug: i.row.slug,
-        displayName: i.row.displayName,
-        reportsTo: i.reportsTo,
-      })),
-    );
-    const bySlug = new Map(info.map((i) => [i.row.slug, i]));
     return Promise.all(
-      order.map(async ({ slug, depth }) => {
-        const i = bySlug.get(slug);
-        if (!i) throw new Error("tree order returned an unknown slug");
-        const r = i.row;
-        return {
-          slug: r.slug,
-          displayName: r.displayName,
-          description: r.description,
-          kind: r.kind as "persistent" | "ephemeral",
-          template: r.template,
-          runtime: r.runtime,
-          reportsTo: i.reportsTo,
-          reports: reportCount.get(r.id) ?? 0,
-          credential: credName.get(r.credentialId ?? "") ?? null,
-          projects: (projectsOf.get(r.id) ?? []).sort(),
-          grantsOverridden: r.grantsOverridden,
-          depth,
-          archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
-          ...(await this.d.runtimes.liveFields(r.id, r)),
-        };
-      }),
+      shown.map(async ({ row: r, depth }) => ({
+        slug: r.slug,
+        displayName: r.displayName,
+        description: r.description,
+        kind: r.kind as "persistent" | "ephemeral",
+        template: r.template,
+        runtime: r.runtime,
+        reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
+        reports: reportCount.get(r.id) ?? 0,
+        credential: credName.get(r.credentialId ?? "") ?? null,
+        projects: (projectsOf.get(r.id) ?? []).sort(),
+        grantsOverridden: r.grantsOverridden,
+        depth,
+        archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
+        ...terminationFields(r),
+        ...(await this.d.runtimes.liveFields(r.id, r)),
+      })),
     );
   }
 
+  /** A live agent's summary comes from the live tree (its depth); an ended one's is read alone. */
   async summary(slug: string): Promise<AgentSummary> {
-    const found = (await this.list("include")).find((a) => a.slug === slug);
+    const [row] = await this.d.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+    if (!row) throw this.notFound(slug);
+    const found =
+      row.archivedAt || row.terminatedAt
+        ? (await this.summarize([{ row, depth: 0 }]))[0]
+        : (await this.listLive()).find((a) => a.slug === slug);
     if (!found) throw this.notFound(slug);
     return found;
   }

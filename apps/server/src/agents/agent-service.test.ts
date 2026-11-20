@@ -103,7 +103,7 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
     projects: [],
   });
   expect(b).toMatchObject({ projects: [], grantsOverridden: true, depth: 1 });
-  expect((await svc.list("exclude")).map((x) => x.slug)).toEqual(["lead", "dev-1"]);
+  expect((await svc.list("exclude")).agents.map((x) => x.slug)).toEqual(["lead", "dev-1"]);
 });
 
 test.each([
@@ -161,7 +161,8 @@ test("create: plugin failure removes the folder and inserts no row; existing fol
     }),
   ).rejects.toMatchObject({ code: "plugin_install_failed" });
   expect(existsSync(path.join(home, "agents/plug"))).toBe(false);
-  expect((await svc.list("include")).map((a) => a.slug)).not.toContain("plug");
+  for (const ended of ["exclude", "only"] as const)
+    expect((await svc.list(ended)).agents.map((a) => a.slug)).not.toContain("plug");
   mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
   writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
   await expect(
@@ -421,8 +422,8 @@ test("archive is blocked while active reports exist", async () => {
 
 test("archive hides, refuses re-sync, allows PATCH; unarchive restores", async () => {
   await svc.archive("dev-1");
-  expect((await svc.list("only")).map((a) => a.slug)).toEqual(["dev-1"]);
-  expect((await svc.list("exclude")).map((a) => a.slug)).not.toContain("dev-1");
+  expect((await svc.list("only")).agents.map((a) => a.slug)).toEqual(["dev-1"]);
+  expect((await svc.list("exclude")).agents.map((a) => a.slug)).not.toContain("dev-1");
   await expect(svc.resync("dev-1")).rejects.toMatchObject({ code: "agent_archived" });
   expect((await svc.update("dev-1", { description: "parked" })).description).toBe("parked");
   expect((await svc.unarchive("dev-1")).archivedAt).toBeNull();

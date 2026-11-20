@@ -43,7 +43,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/agents",
     { schema: { querystring: agentListQuerySchema, response: { 200: agentListSchema } } },
     async (req) => ({
-      agents: await app.agents.list(req.query.ended),
+      ...(await app.agents.list(req.query.ended)),
       running: app.runtimes.supervisor.running(),
     }),
   );
@@ -93,6 +93,50 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
     async (req) => ({ agent: await app.agents.unarchive(req.params.slug) }),
   );
+
+  /** S7 §8: the one termination path, with the human as `by`. Idempotent: a terminated agent stays as it is. */
+  app.post(
+    "/api/agents/:slug/terminate",
+    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
+    async (req, reply) => {
+      const row = await app.store.agentBySlug(req.params.slug);
+      if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      await app.terminator.terminate(row.id, `@${user(req).handle}`);
+      return { agent: await app.agents.summary(row.slug) };
+    },
+  );
+
+  /**
+   * S7 §10.4: pin or unpin a terminated agent's workspace. Under the workspace lock the sweep's deletion takes, with the
+   * row re-read under it: a pin that returned success always keeps the workspace.
+   */
+  const setPin =
+    (pinned: boolean) => async (req: { params: { slug: string } }, reply: FastifyReply) => {
+      const slug = req.params.slug;
+      const outcome = await app.workspace.lock.run(slug, async () => {
+        const row = await app.store.agentBySlug(slug);
+        if (!row) return "not_found" as const;
+        if (!row.terminatedAt) return "not_terminated" as const;
+        if (row.workspaceDeletedAt) return "workspace_deleted" as const;
+        await app.store.setWorkspacePinned(row.id, pinned);
+        return "ok" as const;
+      });
+      if (outcome === "not_found")
+        return err(reply, 404, "agent_not_found", `No agent named ${slug}`);
+      if (outcome === "not_terminated")
+        return err(
+          reply,
+          409,
+          "not_terminated",
+          "Only a terminated agent's workspace can be pinned.",
+        );
+      if (outcome === "workspace_deleted")
+        return err(reply, 409, "workspace_deleted", "This agent's workspace was already deleted.");
+      return { agent: await app.agents.summary(slug) };
+    };
+  const pinRoute = { schema: { params: slugParams, response: { 200: agentResponseSchema } } };
+  app.put("/api/agents/:slug/workspace-pin", pinRoute, setPin(true));
+  app.delete("/api/agents/:slug/workspace-pin", pinRoute, setPin(false));
 
   app.get(
     "/api/agents/:slug/events",

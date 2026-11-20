@@ -341,6 +341,8 @@ export class AgentRuntime {
   // Apply-restart (spec §13)
   private restartPending = false;
   private stopping = false; // a deliberate stop of the current process began: flush() writes nothing
+  /** S7 §8 step 5: the sweep's last Docker list showed a container left for this terminated agent. */
+  private containerListed = false;
   private stopsInProgress = 0; // stop() calls not yet returned: no process may be spawned meanwhile
   private afterExit: AfterExit | undefined; // the intent of the stop in progress, consumed by the `exited` job
   private noStart = false; // the closing latch (spec §5.6): never launch again
@@ -870,6 +872,7 @@ export class AgentRuntime {
       if (!this.terminationCommitted) this.markTerminated({ committed: true });
       const by = row.terminatedBy ?? "@factory";
       await this.ensureTerminatedEvent(by);
+      this.containerListed = Boolean(o.containerListed);
       const proc = this.proc;
       if (this.stopsInProgress > 0 || this.starting || (proc && proc !== this.deadProc))
         return "still";
@@ -891,6 +894,7 @@ export class AgentRuntime {
       // Docker: the removal finds a container still listed for it (running or stopped), or none.
       const r = await this.terminationCleanup({ container: o.containerListed });
       if (!r) return "still";
+      this.containerListed = false; // removed (or none was left)
       if (!stuck && !r.done) return "none";
       this.slots.release(this.agent.id);
       this.publishStatus();
@@ -1097,6 +1101,24 @@ export class AgentRuntime {
   /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
   isStopping(): boolean {
     return Boolean(this.proc) && this.stopping && !this.stopFailed();
+  }
+
+  /**
+   * S7 §8 step 5: a termination still stopping (a stop under way, a start, or a process whose stop hasn't failed) is
+   * never stuck.
+   */
+  terminationSettling(): boolean {
+    const proc = this.proc;
+    return (
+      this.stopsInProgress > 0 ||
+      this.starting ||
+      (Boolean(proc) && proc !== this.deadProc && !this.stopFailed())
+    );
+  }
+
+  /** S7 §8 step 5: the sweep's last list showed a container still left for this terminated agent. */
+  containerLeftListed(): boolean {
+    return this.containerListed;
   }
 
   /** The stop failed even after escalation (spec §9.6): the process may still run and keeps the slot. */

@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
+import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -45,6 +48,7 @@ test("list and detail", async () => {
   const list = await req("GET", "/api/agents");
   expect(list.json()).toEqual({
     agents: [expect.objectContaining({ slug: "dev", status: "hibernated", runtime: "local" })],
+    more: false,
     running: { count: 0, max: 8 },
   });
   expect((await req("GET", "/api/agents/dev")).json()).toEqual({
@@ -269,4 +273,273 @@ test("a human message to a terminated agent is 409 agent_terminated and writes n
   } finally {
     await t2.close();
   }
+});
+
+describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  let c: string;
+  let bossId: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: new FakeDriver() });
+    bossId = (await s.seedAgent({ slug: "boss" })).id;
+    c = (await s.signUpUser({ handle: "or7" })).cookie;
+  });
+  afterAll(() => s.close());
+
+  const call = (
+    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
+    url: string,
+    payload?: object,
+  ) => s.app.inject({ method, url, headers: { cookie: c }, ...(payload ? { payload } : {}) });
+  /** A live spawned agent of boss, with a workdir of its own. */
+  const child = async (slug: string) => {
+    await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
+      select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
+      from agents where id = ${bossId}`;
+    mkdirSync(path.join(s.factoryHome, "agents", slug), { recursive: true });
+  };
+
+  test("terminate: 200 with the terminated summary, idempotent; 409 not_ephemeral; 404", async () => {
+    await child("boss-aa11");
+    const res = await call("POST", "/api/agents/boss-aa11/terminate");
+    expect(res.statusCode).toBe(200);
+    const a = res.json().agent;
+    expect(a).toMatchObject({
+      slug: "boss-aa11",
+      kind: "ephemeral",
+      status: "terminated",
+      terminatedBy: "@or7",
+      workspacePinned: false,
+      depth: 0,
+    });
+    expect(a.workspaceGraceEndsAt).toBe(
+      new Date(Date.parse(a.terminatedAt) + WORKSPACE_GRACE_MS).toISOString(),
+    );
+    expect(a.workspaceDeletedAt).toBeUndefined();
+    expect(a.stuck).toBeUndefined();
+    const again = await call("POST", "/api/agents/boss-aa11/terminate");
+    expect(again.statusCode).toBe(200);
+    expect(again.json().agent.terminatedAt).toBe(a.terminatedAt);
+
+    const persistent = await call("POST", "/api/agents/boss/terminate");
+    expect(persistent.statusCode).toBe(409);
+    expect(persistent.json().error.code).toBe("not_ephemeral");
+    expect((await call("POST", "/api/agents/nope/terminate")).statusCode).toBe(404);
+
+    // Live agents only by default; the ended list holds it, flat.
+    const live = (await call("GET", "/api/agents")).json();
+    expect(live.agents.map((x: { slug: string }) => x.slug)).toEqual(["boss"]);
+    expect(live.more).toBe(false);
+    const ended = (await call("GET", "/api/agents?ended=only")).json();
+    expect(ended.agents).toEqual([
+      expect.objectContaining({
+        slug: "boss-aa11",
+        status: "terminated",
+        depth: 0,
+        reportsTo: "boss",
+      }),
+    ]);
+    expect(ended.more).toBe(false);
+  });
+
+  test("a terminated agent answers 409 agent_terminated to message, compact, interrupt, restart, reset-session", async () => {
+    await child("boss-bb22");
+    expect((await call("POST", "/api/agents/boss-bb22/terminate")).statusCode).toBe(200);
+    for (const [url, payload] of [
+      ["messages", { body: "hi", urgent: false }],
+      ["compact", {}],
+      ["interrupt", undefined],
+      ["restart", undefined],
+      ["reset-session", undefined],
+    ] as const) {
+      const res = await call("POST", `/api/agents/boss-bb22/${url}`, payload);
+      expect(res.statusCode, url).toBe(409);
+      expect(res.json().error.code, url).toBe("agent_terminated");
+    }
+  });
+
+  test("a spawned agent answers 409 ephemeral_agent to PATCH, resync, archive, unarchive", async () => {
+    await child("boss-cc33");
+    for (const [m, url, payload] of [
+      ["PATCH", "", { description: "x" }],
+      ["POST", "/resync", undefined],
+      ["POST", "/archive", undefined],
+      ["POST", "/unarchive", undefined],
+    ] as const) {
+      const res = await call(m, `/api/agents/boss-cc33${url}`, payload);
+      expect(res.statusCode, `${m} ${url}`).toBe(409);
+      expect(res.json().error.code, `${m} ${url}`).toBe("ephemeral_agent");
+    }
+  });
+
+  test("workspace pin: 409 not_terminated, pin and unpin, 409 workspace_deleted", async () => {
+    await child("boss-dd44");
+    for (const slug of ["boss", "boss-dd44"]) {
+      const res = await call("PUT", `/api/agents/${slug}/workspace-pin`);
+      expect(res.statusCode, slug).toBe(409);
+      expect(res.json().error.code, slug).toBe("not_terminated");
+    }
+    await call("POST", "/api/agents/boss-dd44/terminate");
+    const pinned = await call("PUT", "/api/agents/boss-dd44/workspace-pin");
+    expect(pinned.statusCode).toBe(200);
+    expect(pinned.json().agent).toMatchObject({ workspacePinned: true });
+    expect(pinned.json().agent.workspaceGraceEndsAt).toBeDefined();
+    const unpinned = await call("DELETE", "/api/agents/boss-dd44/workspace-pin");
+    expect(unpinned.statusCode).toBe(200);
+    expect(unpinned.json().agent).toMatchObject({ workspacePinned: false });
+
+    await s.sql`update agents set workspace_deleted_at = now() where slug = 'boss-dd44'`;
+    for (const m of ["PUT", "DELETE"] as const) {
+      const res = await call(m, "/api/agents/boss-dd44/workspace-pin");
+      expect(res.statusCode, m).toBe(409);
+      expect(res.json().error.code, m).toBe("workspace_deleted");
+    }
+    const a = (await call("GET", "/api/agents/boss-dd44")).json().agent;
+    expect(a.workspaceDeletedAt).toBeDefined();
+    expect(a.workspaceGraceEndsAt).toBeUndefined();
+    expect((await call("PUT", "/api/agents/nope/workspace-pin")).statusCode).toBe(404);
+  });
+
+  test("the pin waits for a deletion in progress (the workspace lock), then answers 409 workspace_deleted", async () => {
+    await child("boss-ee55");
+    await call("POST", "/api/agents/boss-ee55/terminate");
+    const [row] = await s.sql`select id from agents where slug = 'boss-ee55'`;
+    const id = row?.id as string;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let checked!: () => void;
+    const reached = new Promise<void>((r) => {
+      checked = r;
+    });
+    const order: string[] = [];
+    // The check reads the pin, then waits at the gate while holding the lock: a pin that didn't take the lock would
+    // commit here and still lose its workspace.
+    const deletion = s.app.workspace.deleteWorkspace(
+      "boss-ee55",
+      async () => {
+        const [r] = await s.sql`select workspace_pinned from agents where id = ${id}`;
+        checked();
+        await gate;
+        return r?.workspace_pinned === false;
+      },
+      async () => {
+        await s.sql`update agents set workspace_deleted_at = now() where id = ${id}`;
+        order.push("deleted");
+      },
+    );
+    await reached;
+    const pin = call("PUT", "/api/agents/boss-ee55/workspace-pin").then((r) => {
+      order.push("pin");
+      return r;
+    });
+    // The pin route is waiting on the lock: give it every chance to run ahead.
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    expect(order).toEqual([]);
+    release();
+    expect(await deletion).toBe(true);
+    const res = await pin;
+    expect(order).toEqual(["deleted", "pin"]);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("workspace_deleted");
+    const [after] = await s.sql`select workspace_pinned from agents where id = ${id}`;
+    expect(after?.workspace_pinned).toBe(false);
+  });
+
+  test("a terminated agent whose stop failed is stuck, loaded or not", async () => {
+    await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to,
+        terminated_at, terminated_by, status, error_kind, last_error)
+      select ${randomUUID()}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+        now(), '@or7', 'errored', 'stop_failed', 'x'
+      from agents where id = ${bossId}`;
+    const listed = (await call("GET", "/api/agents?ended=only")).json().agents;
+    expect(listed.find((a: { slug: string }) => a.slug === "boss-ff66")).toMatchObject({
+      status: "terminated",
+      stuck: true,
+    });
+    // The detail loads its runtime: no process, no stop under way, so still stuck.
+    expect((await call("GET", "/api/agents/boss-ff66")).json().agent).toMatchObject({
+      status: "terminated",
+      stuck: true,
+    });
+  });
+});
+
+describe("S7: the ended list is bounded", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  let c: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: new FakeDriver() });
+    await s.seedAgent({ slug: "boss" });
+    c = (await s.signUpUser({ handle: "or8" })).cookie;
+  });
+  afterAll(() => s.close());
+  const get = (url: string) => s.app.inject({ method: "GET", url, headers: { cookie: c } });
+  /** `n` archived agents, `old-<i>`, the higher `i` the older. */
+  const archived = (n: number, from = 0) =>
+    s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, archived_at)
+      select gen_random_uuid(), 'old-' || i, 'Old', template, config, runtime, credential_id,
+             now() - make_interval(hours => 1 + i)
+      from agents, generate_series(${from}::int, ${from + n - 1}::int) i where slug = 'boss'`;
+
+  test("newest end first, archived and terminated together; at most 200 with more", async () => {
+    await archived(199);
+    await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+      select gen_random_uuid(), 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), '@factory'
+      from agents where slug = 'boss'`;
+    let r = (await get("/api/agents?ended=only")).json();
+    expect(r.agents).toHaveLength(200);
+    expect(r.more).toBe(false);
+    expect(r.agents[0]).toMatchObject({ slug: "boss-new1", status: "terminated", depth: 0 });
+    expect(r.agents[1].slug).toBe("old-0");
+    expect(r.agents[199].slug).toBe("old-198");
+    await archived(1, 199);
+    r = (await get("/api/agents?ended=only")).json();
+    expect(r.agents).toHaveLength(200);
+    expect(r.more).toBe(true);
+    expect(r.agents[199].slug).toBe("old-198");
+    expect((await get("/api/agents")).json().agents.map((a: { slug: string }) => a.slug)).toEqual([
+      "boss",
+    ]);
+  });
+
+  test("the ended query is served by agents_ended_idx", async () => {
+    const q = endedAgentsQuery(s.db).toSQL();
+    const plan = await s.sql.begin(async (tx) => {
+      // A near-empty table would otherwise pick a seq scan (or a bitmap scan plus a sort); with both off, a plan
+      // without a Sort shows the index serves the ORDER BY too, not just the WHERE.
+      await tx`set local enable_seqscan = off`;
+      await tx`set local enable_bitmapscan = off`;
+      return tx.unsafe(`explain ${q.sql}`, q.params as never[]);
+    });
+    const text = plan.map((p) => String(p["QUERY PLAN"])).join("\n");
+    expect(text).toContain("Index Scan using agents_ended_idx");
+    expect(text).not.toMatch(/\bSort\b/);
+  });
+
+  test("list() reads only the rows it shows, their managers and live reports", async () => {
+    const queries: string[] = [];
+    const db = drizzle(s.sql, { schema, logger: { logQuery: (q) => queries.push(q) } });
+    const svc = new AgentService({
+      db,
+      templates: s.app.templates,
+      workspace: s.app.workspace,
+      lock: s.app.workspaceLock,
+      runtimes: s.app.runtimes,
+      log: s.app.log,
+      router: s.app.router,
+    });
+    for (const ended of ["exclude", "only"] as const) {
+      queries.length = 0;
+      await svc.list(ended);
+      const unscoped = queries.filter(
+        (q) => /from "(agents|agent_project_grants)"/.test(q) && !/ where /.test(q),
+      );
+      expect(unscoped, ended).toEqual([]);
+    }
+    queries.length = 0;
+    await svc.summary("old-5");
+    expect(queries.filter((q) => /from "agents"/.test(q) && !/ where /.test(q))).toEqual([]);
+  });
 });

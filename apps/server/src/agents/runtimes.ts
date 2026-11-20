@@ -109,6 +109,24 @@ function senderLabel(row: PendingRow): string {
   throw new Error(`message ${row.id} has no sender`);
 }
 
+/**
+ * S7 §8 step 5, from what is known without asking Docker: a terminated agent with no stop under way (a loaded
+ * runtime's; an unloaded one has none) whose stop failed, whose journal still names processes, or whose container the
+ * sweep's last list still showed. A termination still stopping is never stuck.
+ */
+function terminationStuck(
+  row: { errorKind?: string | null; runtimeJournal?: AgentRow["runtimeJournal"] },
+  rt: AgentRuntime | undefined,
+): boolean {
+  if (rt?.terminationSettling()) return false;
+  const j = row.runtimeJournal;
+  return (
+    row.errorKind === "stop_failed" ||
+    Boolean(j?.claude || j?.descendants?.length) ||
+    Boolean(rt?.containerLeftListed())
+  );
+}
+
 export type LiveFields = ReturnType<AgentRuntime["live"]>;
 
 export class AgentRuntimes {
@@ -323,14 +341,23 @@ export class AgentRuntimes {
    */
   async liveFields(
     agentId: string,
-    row: { status: string; lastError?: string | null; errorKind?: string | null; runtime?: string },
-  ): Promise<LiveFields> {
+    row: {
+      status: string;
+      lastError?: string | null;
+      errorKind?: string | null;
+      runtime?: string;
+      terminatedAt?: Date | null;
+      runtimeJournal?: AgentRow["runtimeJournal"];
+    },
+  ): Promise<LiveFields & { stuck?: true }> {
     const rt = await this.get(agentId);
-    if (rt) return rt.live();
+    const stuck = row.terminatedAt && terminationStuck(row, rt) ? { stuck: true as const } : {};
+    if (rt) return { ...rt.live(), ...stuck };
     const errored = row.status === "errored";
     const kind = errorKindSchema.safeParse(row.errorKind);
     return {
-      status: errored ? "errored" : "hibernated",
+      // An unloaded terminated agent: nothing runs for it, so it shows as what it is.
+      status: row.terminatedAt ? "terminated" : errored ? "errored" : "hibernated",
       ...(errored && row.lastError ? { lastError: row.lastError } : {}),
       ...(errored && kind.success ? { errorKind: kind.data } : {}),
       ...(row.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
@@ -340,6 +367,7 @@ export class AgentRuntimes {
       restartPending: false,
       restartWaitingOn: 0,
       waitingOn: { tasks: [], crons: 0 },
+      ...stuck,
     };
   }
 

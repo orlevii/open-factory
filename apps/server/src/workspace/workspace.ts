@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
+import type { DenyRules } from "../spawning/inherit.ts";
 import { buildClaudeMd, type OrgEntry } from "./claude-md.ts";
 import {
   backupDiffering,
@@ -63,7 +64,22 @@ export interface PrepareInput {
   reports: OrgEntry[];
   /** The agent listener's MCP endpoint as this agent reaches it (local loopback, or the Docker agentUrl). */
   mcpUrl: string;
+  kind: "persistent" | "ephemeral";
+  /** A spawned agent's spawner; null for a persistent agent. */
+  spawner: { slug: string } | null;
+  /** Set for an agent that holds the spawn tools (S7 §11.3). */
+  spawning: { maxLive: number; perHour: number } | null;
+  /** A spawned agent's deny rules inherited from its spawner at this start (S7 §6.3). */
+  inheritedDeny?: DenyRules;
+  /** The secrets this start actually passes (a spawned agent's are intersected with its spawner's). */
+  secretNames: string[];
 }
+
+/** What `materialize` checks: the prepare input minus what only a start knows. */
+export type MaterializeCheck = Omit<
+  PrepareInput,
+  "mcpUrl" | "peers" | "reports" | "kind" | "spawner" | "spawning" | "inheritedDeny" | "secretNames"
+>;
 
 export interface TemplateSource {
   dir: string;
@@ -105,7 +121,7 @@ export class Workspace {
     _agentKey: string,
     slug: string,
     tpl: TemplateSource,
-    check: Omit<PrepareInput, "mcpUrl" | "peers" | "reports">,
+    check: MaterializeCheck,
   ): Promise<void> {
     const workdir = this.workdir(slug);
     await mkdir(path.join(this.d.factoryHome, "agents"), { recursive: true });
@@ -143,6 +159,27 @@ export class Workspace {
    *  Never follows a link the folder holds (or a link in its place). */
   async discard(slug: string): Promise<void> {
     await new SafeFs(this.workdir(slug)).removeAll();
+  }
+
+  /**
+   * S7 §10.3 step 3: a terminated agent's workspace after the grace. The one Workspace method that takes the lock
+   * itself: under `lock.run(slug)` it re-reads the pin (`stillUnpinned`; the pin route takes the same lock, so a pin
+   * that returned success always keeps the workspace), then removes the workdir (`.claude-config` and its session
+   * JSONL included) and the factory's state for it, each through `SafeFs.removeAll` (a link is removed as a link,
+   * never followed), then records the deletion (`markDeleted`) before the lock is released. False when pinned.
+   */
+  async deleteWorkspace(
+    slug: string,
+    stillUnpinned: () => Promise<boolean>,
+    markDeleted: () => Promise<void>,
+  ): Promise<boolean> {
+    return this.lock.run(slug, async () => {
+      if (!(await stillUnpinned())) return false;
+      await new SafeFs(this.workdir(slug)).removeAll();
+      await new SafeFs(agentStateDir(this.d.factoryHome, slug)).removeAll();
+      await markDeleted();
+      return true;
+    });
   }
 
   /**
@@ -224,8 +261,8 @@ export class Workspace {
   }
 
   /**
-   * Lock contract: no Workspace method takes a lock itself. Callers must hold `lock.run(slug, …)`
-   * around materialize, resync and prepare (createPrepareStart does so for prepare).
+   * Lock contract: no Workspace method takes a lock itself except `deleteWorkspace`. Callers must hold
+   * `lock.run(slug, …)` around materialize, resync and prepare (createPrepareStart does so for prepare).
    */
   async prepare(i: PrepareInput): Promise<{
     workdir: string;
@@ -254,6 +291,7 @@ export class Workspace {
       throw new WorkspaceError(
         `Re-sync @${i.slug} to reinstall its plugins into the factory-managed location.`,
         "resync",
+        `The plugins of @${i.slug} aren't installed in the factory-managed location.`,
       );
     }
     await this.linkPlugins(i.slug, workdir);
@@ -270,6 +308,7 @@ export class Workspace {
       plugins: i.config.plugins,
       grantedPaths,
       mcpUrl: i.mcpUrl,
+      ...(i.inheritedDeny ? { inherited: i.inheritedDeny } : {}),
     });
     await safe.writeFile(path.join(configRel, "settings.json"), JSON.stringify(settings, null, 2));
     await safe.writeFile(
@@ -286,9 +325,12 @@ export class Workspace {
         manager: i.manager,
         workdir,
         projects: i.grants,
-        secretNames: i.config.secrets,
+        secretNames: i.secretNames,
         peers: i.peers,
         reports: i.reports,
+        kind: i.kind,
+        spawner: i.spawner,
+        spawning: i.spawning,
       }),
     );
     // Spec §11.4: mounts come only from factory-owned inputs (`tpl` is the copy under state/).
@@ -317,6 +359,22 @@ export class Workspace {
     return { workdir, configDir, mounts };
   }
 
+  /** An agent's factory-owned template `settings.json` (`state/agents/<slug>/template/`), read as `prepare` reads it.
+   *  Throws `WorkspaceError` when it is missing or isn't a JSON object. Callers hold no lock: the copy is written whole. */
+  async readTemplateSettings(slug: string): Promise<Record<string, unknown>> {
+    const copy = templateCopyDir(this.d.factoryHome, slug);
+    const v = await this.readTemplateJson<unknown>(copy, "settings.json");
+    if (!v || typeof v !== "object" || Array.isArray(v)) {
+      const diagnosis = `The template copy ${path.join(copy, "settings.json")} isn't a JSON object.`;
+      throw new WorkspaceError(
+        `${diagnosis} Re-sync the agent from its template.`,
+        "edit_agent",
+        diagnosis,
+      );
+    }
+    return v as Record<string, unknown>;
+  }
+
   private async readTemplateJson<T>(copy: string, file: string): Promise<T> {
     const p = path.join(copy, file);
     try {
@@ -324,9 +382,11 @@ export class Workspace {
     } catch (err) {
       const why =
         (err as NodeJS.ErrnoException).code === "ENOENT" ? "is missing" : "isn't valid JSON";
+      const diagnosis = `The template copy ${p} ${why}.`;
       throw new WorkspaceError(
-        `The template copy ${p} ${why}. Re-sync the agent from its template.`,
+        `${diagnosis} Re-sync the agent from its template.`,
         "edit_agent",
+        diagnosis,
       );
     }
   }

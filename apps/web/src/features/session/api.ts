@@ -1,29 +1,41 @@
 import {
   agentDetailSchema,
   agentListSchema,
+  agentResponseSchema,
   apiFetch,
   eventsPageSchema,
   messageLookupSchema,
   queueItemResponseSchema,
 } from "@open-factory/shared";
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
 
 type Running = { count: number; max: number };
-const fetchList = (archived: "exclude" | "only") =>
-  apiFetch(`/api/agents?archived=${archived}`, { schema: agentListSchema });
+const fetchList = (ended: "exclude" | "only") =>
+  apiFetch(`/api/agents?ended=${ended}`, { schema: agentListSchema });
 
 /** Key prefix ["agents"] covers every list variant, so one invalidation refreshes them all. Each
- *  fetch also refreshes the factory-wide running count (UI design §4). */
-export const agentsListQueryOptions = (archived: "exclude" | "only" = "exclude") =>
+ *  fetch also refreshes the factory-wide running count (UI design §4), and the ended list whether
+ *  older ended agents exist beyond the newest 200 it holds (S7 UI design §3). */
+export const agentsListQueryOptions = (ended: "exclude" | "only" = "exclude") =>
   queryOptions({
-    queryKey: ["agents", archived],
+    queryKey: ["agents", ended],
     queryFn: async ({ client }) => {
-      const r = await fetchList(archived);
+      const r = await fetchList(ended);
       client.setQueryData<Running>(runningQueryKey, r.running);
+      if (ended === "only") client.setQueryData<boolean>(endedMoreQueryKey, r.more);
       return r.agents;
     },
   });
+
+/** Outside the ["agents"] prefix: every value under it is an agent array (useAgentStatusFrames). */
+export const endedMoreQueryKey = ["ended-more"] as const;
+/** Filled by the ended list's fetch only (`skipToken`: it never fetches on its own). */
+export const endedMoreQueryOptions = queryOptions<boolean>({
+  queryKey: endedMoreQueryKey,
+  queryFn: skipToken,
+  staleTime: Number.POSITIVE_INFINITY,
+});
 
 /** Running agents and the cap, live from the `supervisor` frame (folded in by useAgentStatusFrames). */
 export const runningQueryKey = ["supervisor"] as const;
@@ -86,3 +98,18 @@ const postEmpty = (slug: string, action: "restart" | "reset-session") =>
   }).then(() => undefined);
 export const postRestart = (slug: string) => postEmpty(slug, "restart");
 export const postResetSession = (slug: string) => postEmpty(slug, "reset-session");
+
+/** S7: terminate a spawned agent (idempotent: one already terminated comes back as it is). */
+export const postTerminate = (slug: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/terminate`, {
+    method: "POST",
+    body: {},
+    schema: agentResponseSchema,
+  }).then((r) => r.agent);
+
+/** S7: pin (PUT) or unpin (DELETE) a terminated agent's workspace. */
+export const setWorkspacePin = (slug: string, pinned: boolean) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/workspace-pin`, {
+    method: pinned ? "PUT" : "DELETE",
+    schema: agentResponseSchema,
+  }).then((r) => r.agent);

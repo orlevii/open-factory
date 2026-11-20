@@ -151,6 +151,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "apply_changes",
         "member_updates",
         "agent_message",
+        "spawned",
       ])
       .optional(),
   }),
@@ -166,6 +167,8 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
     reason: z.string(),
   }),
   z.object({ type: z.literal("session_reset"), by: z.string() }),
+  z.object({ type: z.literal("spawned"), by: z.string(), template: z.string() }),
+  z.object({ type: z.literal("terminated"), by: z.string() }),
   z.object({
     type: z.literal("hibernated"),
     reason: z.string(),
@@ -194,6 +197,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
       "archived",
       "restart",
       "factory_restarted",
+      "terminated",
     ]),
     tasks: z.array(z.object({ taskId: z.string(), description: z.string().optional() })),
     crons: z.array(z.object({ cronId: z.string(), humanSchedule: z.string().optional() })),

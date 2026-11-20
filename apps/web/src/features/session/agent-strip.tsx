@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { LINK_CLASS } from "./message-block";
 import { resetPhrase } from "./status-badge";
+import { TerminatedSegment } from "./terminated-strip";
 
 const Dot = () => <span aria-hidden="true">·</span>;
 
@@ -171,7 +172,8 @@ function OrgSegment({ agent }: { agent: AgentSummary }) {
     <span data-strip-org>
       {agent.reportsTo ? (
         <>
-          Reports to{" "}
+          {/* A spawned agent reports to the agent that spawned it (S7 UI design §5.2). */}
+          {agent.kind === "ephemeral" ? "Spawned by" : "Reports to"}{" "}
           <Link
             to="/agents/$slug"
             params={{ slug: agent.reportsTo }}
@@ -191,7 +193,19 @@ function OrgSegment({ agent }: { agent: AgentSummary }) {
 /** Muted strip under the header (UI design §3.2). Waiting on, the paused/queued detail and the
  *  per-minute timer sit outside the `role="status"` region: the session announcer already reports
  *  status changes, so nothing here is re-announced every minute. */
-export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?: number }) {
+export function AgentStrip({
+  agent,
+  slotsMax,
+  onAgent,
+}: {
+  agent: AgentSummary;
+  slotsMax?: number;
+  /** A fresh summary from a pin/unpin response. */
+  onAgent?: (a: AgentSummary) => void;
+}) {
+  // A terminated agent never restarts (S7): its process is gone for good.
+  const terminated = agent.status === "terminated";
+  const restarts = agent.restartPending && !terminated;
   return (
     <div
       data-agent-strip
@@ -203,16 +217,21 @@ export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?
       <Dot />
       <OrgSegment agent={agent} />
       <Dot />
-      <span>
-        credential <span className="font-mono">{agent.credential}</span>
-      </span>
-      <Dot />
+      {/* A deleted credential (S7: nulled on terminated agents) leaves no empty label. */}
+      {agent.credential !== null && (
+        <>
+          <span>
+            credential <span className="font-mono">{agent.credential}</span>
+          </span>
+          <Dot />
+        </>
+      )}
       <Runtime agent={agent} />
       {/* Mounted before it fills, so the change is announced when a status frame sets it.
           `display: contents` keeps it out of the flex layout: empty, it adds no item (and no
           second gap) before the next segment; filled, its children space like the rest. */}
       <span role="status" className="contents">
-        {agent.restartPending && (
+        {restarts && (
           <>
             <Dot />
             <span className="inline-flex items-center gap-1.5">
@@ -222,9 +241,16 @@ export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?
           </>
         )}
       </span>
-      {agent.restartPending && <Why label="Why does it restart?">{RESTART_WHY}</Why>}
-      <WaitingOnSegment waitingOn={agent.waitingOn} />
-      <DetailSegment agent={agent} slotsMax={slotsMax} />
+      {restarts && <Why label="Why does it restart?">{RESTART_WHY}</Why>}
+      {terminated ? (
+        // Waiting on and the paused/queued detail can't apply to an ended agent.
+        agent.terminatedAt && <TerminatedSegment agent={agent} onAgent={onAgent} />
+      ) : (
+        <>
+          <WaitingOnSegment waitingOn={agent.waitingOn} />
+          <DetailSegment agent={agent} slotsMax={slotsMax} />
+        </>
+      )}
     </div>
   );
 }

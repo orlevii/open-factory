@@ -27,6 +27,7 @@ export const subjectSchema = z.object({
     .union([
       z.object({ reason: z.literal("archived") }),
       z.object({ reason: z.literal("moved"), to: z.string().nullable() }),
+      z.object({ reason: z.literal("terminated"), by: z.string() }),
     ])
     .optional(),
 });

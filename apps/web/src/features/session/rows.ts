@@ -2,6 +2,18 @@ import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
 
 type Ev<T extends AnyEvent["type"]> = Extract<AnyEvent, { type: T }>;
 export type ToolState = "running" | "done" | "failed" | "no_result";
+/** A factory tool call shown as its own block or line, paired with its result by `toolUseId`. */
+type FactoryCall = {
+  seq: number;
+  at: string;
+  call: Ev<"tool_call">;
+  result?: Ev<"tool_result">;
+  /** The call's turn is still open (no result yet means "Sending…"/"Spawning…", else no result). */
+  turnOpen: boolean;
+  /** A `permission_denied` for this call; it shows as the failure. */
+  denial?: Ev<"permission_denied">;
+  key: string;
+};
 export type Row =
   | {
       kind: "message";
@@ -19,18 +31,11 @@ export type Row =
       key: string;
     }
   | { kind: "peer"; seq: number; envelope: Envelope; key: string }
-  | {
-      kind: "outgoing";
-      seq: number;
-      at: string;
-      call: Ev<"tool_call">;
-      result?: Ev<"tool_result">;
-      /** The call's turn is still open (no result yet means "Sending…", else "Not sent"). */
-      turnOpen: boolean;
-      /** A `permission_denied` for this call; it shows in the revealed tool row. */
-      denial?: Ev<"permission_denied">;
-      key: string;
-    }
+  | ({ kind: "outgoing" } & FactoryCall)
+  /** `spawn_agent` (S7 UI design §4.1). */
+  | ({ kind: "spawn" } & FactoryCall)
+  /** `terminate_agent` (S7 UI design §4.2). */
+  | ({ kind: "terminate" } & FactoryCall)
   | { kind: "text"; seq: number; text: string; key: string }
   | {
       kind: "tool";
@@ -63,9 +68,14 @@ const HIDDEN = new Set([
 function silent(e: AnyEvent, prev: Row | undefined): boolean {
   if (e.type === "container") return e.action === "started";
   if (e.type === "cleanup") return !e.container && !e.killedProcesses;
-  // The session_reset row already says a new session started.
+  // The session_reset row already says a new session started; a spawned agent's first start is
+  // the `spawned` line's.
   if (e.type === "process_started")
-    return e.reason === "reset" || (prev?.kind === "quiet" && prev.event.type === "session_reset");
+    return (
+      e.reason === "reset" ||
+      e.reason === "spawned" ||
+      (prev?.kind === "quiet" && prev.event.type === "session_reset")
+    );
   return false;
 }
 
@@ -114,8 +124,25 @@ export function isSendMessageCall(e: Ev<"tool_call">): boolean {
   return !!i && typeof i.to === "string" && typeof i.body === "string";
 }
 
+export const SPAWN_AGENT_TOOL = "mcp__factory__spawn_agent";
+export const TERMINATE_AGENT_TOOL = "mcp__factory__terminate_agent";
+
+const isStr = (v: unknown) => typeof v === "string";
+
+/** Which factory block a call renders as; any other shape falls back to the generic tool row
+ *  (S6 UI design §2.5, S7 UI design §4.1-§4.2). */
+function factoryKind(e: Ev<"tool_call">): "outgoing" | "spawn" | "terminate" | undefined {
+  if (isSendMessageCall(e)) return "outgoing";
+  const i = e.input as Record<string, unknown> | null;
+  if (!i) return undefined;
+  if (e.name === SPAWN_AGENT_TOOL && isStr(i.template) && isStr(i.description) && isStr(i.prompt))
+    return "spawn";
+  if (e.name === TERMINATE_AGENT_TOOL && isStr(i.slug)) return "terminate";
+  return undefined;
+}
+
 type ToolRow = Extract<Row, { kind: "tool" }>;
-type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
+type FactoryRow = Extract<Row, { kind: "outgoing" | "spawn" | "terminate" }>;
 
 /** Consecutive `member_update` envelopes about one agent become one group; peer events and
  *  everything else stand alone (UI design §2.2). */
@@ -138,7 +165,7 @@ function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
 export function buildRows(events: SessionEvent[]): Row[] {
   const { ended, lastExitSeq, lastTurnStartSeq } = endedTurns(events);
   const tools = new Map<string, ToolRow>();
-  const outgoing = new Map<string, OutgoingRow>();
+  const outgoing = new Map<string, FactoryRow>();
   const top: Row[] = [];
   const place = (row: Row, parent?: string) => {
     const p = parent ? tools.get(parent) : undefined;
@@ -159,9 +186,10 @@ export function buildRows(events: SessionEvent[]): Row[] {
           (se.turnId !== null && ended.has(se.turnId)) ||
           lastExitSeq > se.seq ||
           lastTurnStartSeq > se.seq;
-        if (isSendMessageCall(e)) {
-          const out: OutgoingRow = {
-            kind: "outgoing",
+        const kind = factoryKind(e);
+        if (kind) {
+          const out: FactoryRow = {
+            kind,
             seq: se.seq,
             at: se.at,
             call: e,

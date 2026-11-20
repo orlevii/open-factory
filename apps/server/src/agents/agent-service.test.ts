@@ -103,7 +103,7 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
     projects: [],
   });
   expect(b).toMatchObject({ projects: [], grantsOverridden: true, depth: 1 });
-  expect((await svc.list("exclude")).map((x) => x.slug)).toEqual(["lead", "dev-1"]);
+  expect((await svc.list("exclude")).agents.map((x) => x.slug)).toEqual(["lead", "dev-1"]);
 });
 
 test.each([
@@ -161,7 +161,8 @@ test("create: plugin failure removes the folder and inserts no row; existing fol
     }),
   ).rejects.toMatchObject({ code: "plugin_install_failed" });
   expect(existsSync(path.join(home, "agents/plug"))).toBe(false);
-  expect((await svc.list("include")).map((a) => a.slug)).not.toContain("plug");
+  for (const ended of ["exclude", "only"] as const)
+    expect((await svc.list(ended)).agents.map((a) => a.slug)).not.toContain("plug");
   mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
   writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
   await expect(
@@ -421,8 +422,8 @@ test("archive is blocked while active reports exist", async () => {
 
 test("archive hides, refuses re-sync, allows PATCH; unarchive restores", async () => {
   await svc.archive("dev-1");
-  expect((await svc.list("only")).map((a) => a.slug)).toEqual(["dev-1"]);
-  expect((await svc.list("exclude")).map((a) => a.slug)).not.toContain("dev-1");
+  expect((await svc.list("only")).agents.map((a) => a.slug)).toEqual(["dev-1"]);
+  expect((await svc.list("exclude")).agents.map((a) => a.slug)).not.toContain("dev-1");
   await expect(svc.resync("dev-1")).rejects.toMatchObject({ code: "agent_archived" });
   expect((await svc.update("dev-1", { description: "parked" })).description).toBe("parked");
   expect((await svc.unarchive("dev-1")).archivedAt).toBeNull();
@@ -458,4 +459,179 @@ test("create refuses a slug that is a human handle", async () => {
       credential: "work",
     }),
   ).rejects.toMatchObject({ code: "slug_taken" });
+});
+
+async function createSpawner(slug: string) {
+  await svc.create({
+    template: "lead",
+    slug,
+    displayName: slug,
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+  return idOf(slug);
+}
+/** A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). */
+const insertChild = (
+  q: typeof t.sql,
+  spawnerId: string,
+  slug: string,
+  terminated = false,
+) => q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+       select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+              ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
+       from agents where id = ${spawnerId}`;
+
+/**
+ * Resolves once `n` archives are waiting on the row lock `holder` holds: their own `for no key update` query, in a
+ * `Lock` wait, on another backend. Each check is a DB round trip; only the test's own timeout bounds it.
+ */
+async function archivesWaiting(holder: number, n: number) {
+  for (;;) {
+    const [w] = await t.sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and pid <> ${holder} and wait_event_type = 'Lock'
+        and query ilike '%for no key update%'`;
+    if ((w?.n ?? 0) >= n) return;
+  }
+}
+
+/** A transaction holding `id`'s row lock until `release()`, running `then` before it commits. */
+function holdRowLock(id: string, then: (tx: typeof t.sql) => Promise<unknown> = async () => {}) {
+  let release!: () => void;
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  let pid!: (n: number) => void;
+  const holder = new Promise<number>((r) => {
+    pid = r;
+  });
+  const done = t.sql.begin(async (tx) => {
+    const [me] = await tx`select pg_backend_pid() as pid`;
+    await tx`select id from agents where id = ${id} for no key update`;
+    pid(me?.pid as number);
+    await released;
+    await then(tx as unknown as typeof t.sql);
+  });
+  return { holder, release, done };
+}
+
+test("archive takes the spawner's row lock first, then counts live reports in that transaction (spec §5.7)", async () => {
+  const id = await createSpawner("spawner");
+  // A spawn's transaction stand-in: holds the row lock, inserts a live child, commits when released.
+  const lock = holdRowLock(id, (tx) => insertChild(tx, id, "spawner-ab12"));
+  const holder = await lock.holder;
+  const archive = svc.archive("spawner").then(
+    () => "archived",
+    (e: unknown) => e,
+  );
+  await archivesWaiting(holder, 1);
+  lock.release();
+  await lock.done;
+  expect(await archive).toMatchObject({
+    code: "has_reports",
+    message: "@spawner has live spawned agents: @spawner-ab12. Terminate them first.",
+    extra: { reports: ["spawner-ab12"] },
+  });
+  expect((await t.sql`select archived_at from agents where id = ${id}`)[0]?.archived_at).toBeNull();
+});
+
+test("two concurrent archives: the second sees the first's commit under the lock and writes no peer events", async () => {
+  const id = await createSpawner("twice");
+  const lock = holdRowLock(id);
+  const holder = await lock.holder;
+  const both = Promise.all([svc.archive("twice"), svc.archive("twice")]);
+  await archivesWaiting(holder, 2);
+  lock.release();
+  await lock.done;
+  for (const a of await both) expect(a.archivedAt).not.toBeNull();
+  const rows =
+    await t.sql`select to_agent_id from messages where subject_agent_id = ${id} and kind = 'peer_left'`;
+  expect(rows.length).toBeGreaterThan(0);
+  expect(new Set(rows.map((r) => r.to_agent_id)).size).toBe(rows.length);
+});
+
+test("archive counts only live reports: a terminated spawned agent doesn't block it", async () => {
+  const id = await createSpawner("spawner-2");
+  await insertChild(t.sql, id, "spawner-2-cd34", true);
+  expect((await svc.archive("spawner-2")).archivedAt).not.toBeNull();
+});
+
+test("archive names every live spawned agent", async () => {
+  const id = await createSpawner("spawner-3");
+  await insertChild(t.sql, id, "spawner-3-bb22");
+  await insertChild(t.sql, id, "spawner-3-aa11");
+  await expect(svc.archive("spawner-3")).rejects.toMatchObject({
+    code: "has_reports",
+    message:
+      "@spawner-3 has live spawned agents: @spawner-3-aa11, @spawner-3-bb22. Terminate them first.",
+    extra: { reports: ["spawner-3-aa11", "spawner-3-bb22"] },
+  });
+});
+
+test("a spawned agent can't be edited, re-synced, archived or unarchived: 409 ephemeral_agent", async () => {
+  const id = await createSpawner("spawner-4");
+  await insertChild(t.sql, id, "spawner-4-ee11");
+  const refused = {
+    status: 409,
+    code: "ephemeral_agent",
+    message: "Spawned agents can't be edited; terminate it instead.",
+  };
+  await expect(svc.update("spawner-4-ee11", { displayName: "X" })).rejects.toMatchObject(refused);
+  await expect(svc.resync("spawner-4-ee11")).rejects.toMatchObject(refused);
+  await expect(svc.archive("spawner-4-ee11")).rejects.toMatchObject(refused);
+  await expect(svc.unarchive("spawner-4-ee11")).rejects.toMatchObject(refused);
+  const { cookie } = await t.signUpUser();
+  const res = await t.app.inject({
+    method: "PATCH",
+    url: "/api/agents/spawner-4-ee11",
+    headers: { cookie },
+    payload: { displayName: "X" },
+  });
+  expect(res.statusCode).toBe(409);
+  expect(res.json()).toMatchObject({ error: { code: "ephemeral_agent" } });
+  const [r] = await t.sql`select display_name from agents where slug = 'spawner-4-ee11'`;
+  expect(r?.display_name).toBe("Kid");
+});
+
+test("a spawned agent can't be a manager on create or edit", async () => {
+  const id = await createSpawner("spawner-5");
+  await insertChild(t.sql, id, "spawner-5-ff11");
+  const field = {
+    message: "Choose an active agent.",
+    extra: { fields: { reportsTo: "Choose an active agent." } },
+  };
+  await expect(
+    svc.create({
+      template: "lead",
+      slug: "under-kid",
+      displayName: "Under",
+      description: "",
+      reportsTo: "spawner-5-ff11",
+      credential: "work",
+    }),
+  ).rejects.toMatchObject(field);
+  await expect(svc.update("spawner-5", { reportsTo: "spawner-5-ff11" })).rejects.toMatchObject(
+    field,
+  );
+  await createSpawner("spawner-6");
+  await expect(svc.update("spawner-6", { reportsTo: "spawner-5-ff11" })).rejects.toMatchObject(
+    field,
+  );
+});
+
+test("renaming a spawner restarts its live spawned agents, never a terminated one", async () => {
+  const id = await createSpawner("spawner-7");
+  await insertChild(t.sql, id, "spawner-7-aa11");
+  await insertChild(t.sql, id, "spawner-7-dd44", true);
+  const spy = vi.spyOn(runtimes, "requestRestart");
+  try {
+    await svc.update("spawner-7", { displayName: "Seven" });
+    expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(
+      [id, await idOf("spawner-7-aa11")].sort(),
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(await runtimes.get(await idOf("spawner-7-dd44"))).toBeUndefined();
 });

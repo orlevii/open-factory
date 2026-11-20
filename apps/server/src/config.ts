@@ -32,6 +32,8 @@ export interface Config {
   /** `FACTORY_AGENT_HOST`: replaces the default bind list when set. */
   agentHosts: string[] | undefined;
   memberUpdateDebounceMs: number;
+  /** `FACTORY_MAX_SPAWNS_PER_HOUR`: children per spawner created in the last 60 minutes (S7 §5.5). */
+  maxSpawnsPerHour: number;
 }
 
 /** The one gate rule (spec §13): start, validator, live status and Restart all ask this. */
@@ -98,6 +100,11 @@ const envSchema = z.object({
     .min(0)
     .max(86_400, "must be at most 86400 (one day)")
     .default(30),
+  FACTORY_MAX_SPAWNS_PER_HOUR: z.coerce
+    .number({ message: "must be a whole number" })
+    .int()
+    .min(1)
+    .default(20),
 });
 
 function expandHome(p: string): string {
@@ -161,5 +168,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     agentPort,
     agentHosts: agentHosts?.length ? agentHosts : undefined,
     memberUpdateDebounceMs: e.FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS * 1000,
+    maxSpawnsPerHour: e.FACTORY_MAX_SPAWNS_PER_HOUR,
   };
 }

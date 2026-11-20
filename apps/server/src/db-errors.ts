@@ -8,5 +8,9 @@ export function pgCode(e: unknown, code: string): boolean {
 /** `@a, @b`: how API messages name agents. */
 export const tags = (slugs: string[]) => slugs.map((s) => `@${s}`).join(", ");
 
-/** A foreign key blocked the statement: ON DELETE RESTRICT reports 23001, a plain FK 23503. */
-export const fkViolation = (e: unknown) => pgCode(e, "23001") || pgCode(e, "23503");
+/**
+ * A delete was blocked because something still uses the row: ON DELETE RESTRICT reports 23001, a plain FK 23503, and the
+ * credential delete (`ON DELETE SET NULL` against the `agents_live_credential` CHECK) 23514.
+ */
+export const inUseViolation = (e: unknown) =>
+  pgCode(e, "23001") || pgCode(e, "23503") || pgCode(e, "23514");

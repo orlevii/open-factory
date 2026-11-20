@@ -13,6 +13,7 @@ export const agentStatusSchema = z.enum([
   "idle",
   "rate_limited",
   "errored",
+  "terminated",
 ]);
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 
@@ -50,15 +51,21 @@ export const agentSummarySchema = z.object({
   turnOpen: z.boolean(),
   runtime: z.enum(["local", "docker"]),
   lastError: z.string().optional(),
-  kind: z.literal("persistent"),
+  kind: z.enum(["persistent", "ephemeral"]),
   template: z.string(),
   reportsTo: z.string().nullable(),
   reports: z.number().int().nonnegative().default(0),
-  credential: z.string(),
+  credential: z.string().nullable(),
   projects: z.array(z.string()),
   grantsOverridden: z.boolean(),
   depth: z.number().int().nonnegative(),
   archivedAt: z.string().nullable(),
+  terminatedAt: z.string().optional(),
+  terminatedBy: z.string().optional(),
+  workspacePinned: z.boolean().optional(),
+  workspaceGraceEndsAt: z.string().optional(),
+  workspaceDeletedAt: z.string().optional(),
+  stuck: z.literal(true).optional(),
   restartPending: z.boolean(),
   restartWaitingOn: z.number().int().nonnegative(),
   waitingOn: waitingOnSchema.default({ tasks: [], crons: 0 }),
@@ -85,6 +92,8 @@ export type QueueItem = z.infer<typeof queueItemSchema>;
 
 export const agentListSchema = z.object({
   agents: z.array(agentSummarySchema),
+  /** `ended=only` (S7 §14): older ended agents exist beyond the newest 200 shown. */
+  more: z.boolean().default(false),
   running: z.object({ count: z.number().int().nonnegative(), max: z.number().int().positive() }),
 });
 export const agentDetailSchema = z.object({
@@ -126,9 +135,19 @@ export const compactBodySchema = z.object({
 });
 export const queueItemResponseSchema = z.object({ item: queueItemSchema });
 
-export const agentListQuerySchema = z.object({
-  archived: z.enum(["exclude", "include", "only"]).default("exclude"),
+// Strict: `?archived=` was renamed to `?ended=` in S7, and an old caller must get a 400, not a silently changed list.
+export const agentListQuerySchema = z.strictObject({
+  ended: z.enum(["exclude", "only"]).default("exclude"),
 });
+export const SPAWN_SUFFIX_PATTERN = /^[a-z0-9-]+$/;
+export const spawnAgentToolSchema = (templates: [string, ...string[]]) =>
+  z.strictObject({
+    template: z.enum(templates),
+    suffix: z.string().regex(SPAWN_SUFFIX_PATTERN).optional(),
+    description: z.string().describe("What this agent is for (one or two sentences)"),
+    prompt: z.string().describe("The brief; it becomes the agent's first message"),
+  });
+export const terminateAgentToolSchema = z.strictObject({ slug: z.string().min(1).max(64) });
 export const createAgentBodySchema = z.object({
   template: nameSchema,
   slug: slugSchema,

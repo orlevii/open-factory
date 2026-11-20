@@ -1,14 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { type Db, schema } from "@open-factory/db";
 import type { CredentialKind, CredentialSummary } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
-import { fkViolation, pgCode, tags } from "../db-errors.ts";
+import { inUseViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError } from "../errors.ts";
 import type { CredentialVerifier, VerifyResult } from "./verify.ts";
 
 const aad = (id: string) => `credentials:${id}`;
+
+/** Display slugs, deduped: a spawned agent shows as its spawner. */
+const slugs = (list: { slug: string }[]) => [...new Set(list.map((a) => a.slug))];
 
 export class CredentialService {
   constructor(
@@ -27,13 +30,34 @@ export class CredentialService {
         id: schema.agents.id,
         slug: schema.agents.slug,
         archivedAt: schema.agents.archivedAt,
+        kind: schema.agents.kind,
+        reportsTo: schema.agents.reportsTo,
       })
       .from(schema.agents)
-      .where(eq(schema.agents.credentialId, credentialId));
+      .where(and(eq(schema.agents.credentialId, credentialId), isNull(schema.agents.terminatedAt)));
+    // A live spawned agent counts as its spawner: the human fixes the persistent agent's credential.
+    const spawnerIds = [
+      ...new Set(rows.flatMap((r) => (r.kind === "ephemeral" && r.reportsTo ? [r.reportsTo] : []))),
+    ];
+    const spawners = new Map(
+      spawnerIds.length
+        ? (
+            await this.d.db
+              .select({ id: schema.agents.id, slug: schema.agents.slug })
+              .from(schema.agents)
+              .where(inArray(schema.agents.id, spawnerIds))
+          ).map((a) => [a.id, a.slug])
+        : [],
+    );
+    const named = rows.map((r) => ({
+      id: r.id,
+      slug: (r.kind === "ephemeral" && r.reportsTo && spawners.get(r.reportsTo)) || r.slug,
+      archivedAt: r.kind === "ephemeral" ? null : r.archivedAt,
+    }));
     const bySlug = (a: { slug: string }, b: { slug: string }) => a.slug.localeCompare(b.slug);
     return {
-      active: rows.filter((r) => !r.archivedAt).sort(bySlug),
-      archived: rows.filter((r) => r.archivedAt).sort(bySlug),
+      active: named.filter((r) => !r.archivedAt).sort(bySlug),
+      archived: named.filter((r) => r.archivedAt).sort(bySlug),
     };
   }
 
@@ -44,8 +68,8 @@ export class CredentialService {
       kind: row.kind,
       lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.toISOString() : null,
       lastError: row.lastError,
-      usedBy: u.active.map((a) => a.slug),
-      archivedUsedBy: u.archived.map((a) => a.slug),
+      usedBy: slugs(u.active),
+      archivedUsedBy: slugs(u.archived),
     };
   }
 
@@ -65,8 +89,8 @@ export class CredentialService {
   private async inUse(id: string) {
     const u = await this.users(id);
     if (!u.active.length && !u.archived.length) return undefined;
-    const usedBy = u.active.map((a) => a.slug);
-    const archivedUsedBy = u.archived.map((a) => a.slug);
+    const usedBy = slugs(u.active);
+    const archivedUsedBy = slugs(u.archived);
     const message = [
       usedBy.length ? `Used by ${tags(usedBy)}. Change their credential first.` : "",
       archivedUsedBy.length
@@ -183,7 +207,7 @@ export class CredentialService {
       await this.d.db.delete(schema.credentials).where(eq(schema.credentials.id, row.id));
     } catch (err) {
       // An agent took the credential after the check: the FK restricts the delete.
-      if (fkViolation(err)) throw (await this.inUse(row.id)) ?? err;
+      if (inUseViolation(err)) throw (await this.inUse(row.id)) ?? err;
       throw err;
     }
   }

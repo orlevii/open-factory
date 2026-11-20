@@ -235,6 +235,35 @@ export class ContainerManager {
     return true;
   }
 
+  /**
+   * Termination (S7 §8 step 4): stop the agent's container when it runs, then remove it (archive and hibernate only
+   * stop it). Each step is bounded like a stop. A missing container is fine; false when there was none.
+   */
+  async remove(agentId: string, slug: string): Promise<boolean> {
+    const c = await this.ours(agentId, slug);
+    if (!c) return false;
+    if (c.running) await this.boundedStop(c.id);
+    await bounded(
+      this.docker.remove(c.id),
+      STOP_BOUND_MS,
+      `Removing container ${c.id} didn't finish within ${STOP_BOUND_MS / 1000} s.`,
+    );
+    this.log.info({ container: c.id, slug }, "container removed (agent terminated)");
+    return true;
+  }
+
+  /**
+   * Removes a container `listOurs` returned, running or stopped (S7 §8 step 5, §12: a terminated agent's leftover),
+   * by id and with force (Docker kills it first). Bounded like a stop.
+   */
+  async removeListed(id: string): Promise<void> {
+    await bounded(
+      this.docker.remove(id, { force: true }),
+      STOP_BOUND_MS,
+      `Removing container ${id} didn't finish within ${STOP_BOUND_MS / 1000} s.`,
+    );
+  }
+
   async isRunning(agentId: string, slug: string): Promise<boolean> {
     return (await this.ours(agentId, slug))?.running ?? false;
   }

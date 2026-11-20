@@ -165,3 +165,41 @@ test("message_in accepts system notices and the new factory events parse", () =>
 test("factory is a reserved handle", () => {
   expect(handleSchema.safeParse("factory").success).toBe(false);
 });
+
+test("S7 events parse; old rows still parse", () => {
+  const wrap = (event: unknown) => ({
+    seq: 1,
+    agentSlug: "a",
+    turnId: null,
+    at: "2026-01-01T00:00:00Z",
+    event,
+  });
+  const ok = (event: unknown) => sessionEventSchema.safeParse(wrap(event)).success;
+  expect(ok({ type: "spawned", by: "lead", template: "tech-lead" })).toBe(true);
+  expect(ok({ type: "terminated", by: "@factory" })).toBe(true);
+  expect(ok({ type: "background_work_lost", reason: "terminated", tasks: [], crons: [] })).toBe(
+    true,
+  );
+  expect(ok({ type: "process_started", resumed: false, reason: "spawned" })).toBe(true);
+  expect(
+    ok({
+      type: "message_in",
+      messages: [
+        {
+          id: "m",
+          from: "factory",
+          kind: "peer_left",
+          urgent: false,
+          body: "",
+          subject: {
+            slug: "x",
+            displayName: "X",
+            relation: "peer",
+            left: { reason: "terminated", by: "@or" },
+          },
+        },
+      ],
+    }),
+  ).toBe(true);
+  expect(ok({ type: "background_work_lost", reason: "crash", tasks: [], crons: [] })).toBe(true);
+});

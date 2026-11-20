@@ -3,14 +3,14 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import type { ProjectSummary } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
-import { fkViolation, pgCode, tags } from "../db-errors.ts";
+import { inUseViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 
 type ProjectRow = typeof schema.projects.$inferSelect;
-type Holder = { id: string; slug: string };
+type Holder = { id: string; slug: string; spawnedBy?: string };
 interface Grants {
   active: Holder[];
   archived: Holder[];
@@ -32,14 +32,43 @@ export class ProjectService {
         id: schema.agents.id,
         slug: schema.agents.slug,
         archivedAt: schema.agents.archivedAt,
+        kind: schema.agents.kind,
+        reportsTo: schema.agents.reportsTo,
       })
       .from(schema.agentProjectGrants)
       .innerJoin(schema.agents, eq(schema.agents.id, schema.agentProjectGrants.agentId))
-      .where(eq(schema.agentProjectGrants.projectId, projectId));
+      .where(
+        and(
+          eq(schema.agentProjectGrants.projectId, projectId),
+          // A terminated agent's grants are gone anyway; it never blocks a delete.
+          isNull(schema.agents.terminatedAt),
+        ),
+      );
+    const spawnerIds = [
+      ...new Set(rows.flatMap((r) => (r.kind === "ephemeral" && r.reportsTo ? [r.reportsTo] : []))),
+    ];
+    const spawners = new Map(
+      spawnerIds.length
+        ? (
+            await this.d.db
+              .select({ id: schema.agents.id, slug: schema.agents.slug })
+              .from(schema.agents)
+              .where(inArray(schema.agents.id, spawnerIds))
+          ).map((a) => [a.id, a.slug])
+        : [],
+    );
+    const holders: (Holder & { archivedAt: Date | null })[] = rows.map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      archivedAt: r.archivedAt,
+      ...(r.kind === "ephemeral" && r.reportsTo && spawners.get(r.reportsTo)
+        ? { spawnedBy: spawners.get(r.reportsTo) }
+        : {}),
+    }));
     const bySlug = (a: Holder, b: Holder) => a.slug.localeCompare(b.slug);
     return {
-      active: rows.filter((r) => !r.archivedAt).sort(bySlug),
-      archived: rows.filter((r) => r.archivedAt).sort(bySlug),
+      active: holders.filter((r) => !r.archivedAt).sort(bySlug),
+      archived: holders.filter((r) => r.archivedAt).sort(bySlug),
     };
   }
 
@@ -175,8 +204,15 @@ export class ProjectService {
       .sort();
     const grantedTo = g.active.map((a) => a.slug);
     const archivedGrantedTo = g.archived.map((a) => a.slug);
+    const direct = g.active.filter((a) => !a.spawnedBy).map((a) => a.slug);
     const message = [
-      grantedTo.length ? `Granted to ${tags(grantedTo)}. Remove the grant first.` : "",
+      direct.length ? `Granted to ${tags(direct)}. Remove the grant first.` : "",
+      ...g.active
+        .filter((a) => a.spawnedBy)
+        .map(
+          (a) =>
+            `Granted to @${a.slug} (spawned by @${a.spawnedBy}); change @${a.spawnedBy}'s grants or terminate it first.`,
+        ),
       archivedGrantedTo.length
         ? `Archived agents ${tags(archivedGrantedTo)} still hold a grant.`
         : "",
@@ -198,7 +234,7 @@ export class ProjectService {
       await this.d.db.delete(schema.projects).where(eq(schema.projects.id, row.id));
     } catch (err) {
       // A grant appeared after the check: the FK restricts the delete.
-      if (fkViolation(err)) throw (await this.inUse(row.id, row.name)) ?? err;
+      if (inUseViolation(err)) throw (await this.inUse(row.id, row.name)) ?? err;
       throw err;
     }
   }

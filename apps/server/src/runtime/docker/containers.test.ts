@@ -487,3 +487,60 @@ test("forceRemove removes the agent's running container with force; a missing on
   expect(docker.calls.at(-1)).toEqual({ op: "remove", args: [containerId, { force: true }] });
   expect(docker.containers.size).toBe(0);
 });
+
+test("remove (termination) stops a running container, then removes it; a missing one is fine", async () => {
+  expect(await mgr.remove(AGENT, "lead")).toBe(false);
+  const { containerId } = await mgr.ensure({
+    agentId: AGENT,
+    slug: "lead",
+    image: IMAGE,
+    mounts,
+    mountCheck: ctx,
+  });
+  docker.calls = [];
+  expect(await mgr.remove(AGENT, "lead")).toBe(true);
+  expect(docker.calls.filter((c) => c.op !== "findContainer")).toEqual([
+    { op: "stop", args: [containerId, 5] },
+    { op: "remove", args: [containerId, undefined] }, // not forced: it was stopped first
+  ]);
+  expect(docker.containers.size).toBe(0);
+});
+
+test("remove of a stopped container skips the stop; removeListed removes by id with force", async () => {
+  const { containerId } = await mgr.ensure({
+    agentId: AGENT,
+    slug: "lead",
+    image: IMAGE,
+    mounts,
+    mountCheck: ctx,
+  });
+  await mgr.stop(AGENT, "lead");
+  docker.calls = [];
+  await mgr.remove(AGENT, "lead");
+  expect(docker.ops().filter((op) => op !== "findContainer")).toEqual(["remove"]);
+
+  const again = await mgr.ensure({
+    agentId: AGENT,
+    slug: "lead",
+    image: IMAGE,
+    mounts,
+    mountCheck: ctx,
+  });
+  expect(again.containerId).not.toBe(containerId);
+  docker.calls = [];
+  await mgr.removeListed(again.containerId);
+  expect(docker.calls).toEqual([{ op: "remove", args: [again.containerId, { force: true }] }]);
+  expect(docker.containers.size).toBe(0);
+});
+
+test("a removal that never answers is bounded", async () => {
+  await mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx });
+  await mgr.stop(AGENT, "lead");
+  docker.remove = () => new Promise<void>(() => {});
+  fakeClock();
+  const caught = mgr.remove(AGENT, "lead").catch((e: unknown) => e);
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect((await caught) as Error).toMatchObject({
+    message: expect.stringMatching(/^Removing container .* didn't finish within 15 s\.$/),
+  });
+});

@@ -143,6 +143,45 @@ test("an FK violation from a racing grant maps to 409 project_in_use", async () 
   }
 });
 
+test("a terminated grantee does not block removal; a live spawned grantee is named with its spawner", async () => {
+  await svc.create({ name: "kids", hostPath: dir("kids") });
+  await grant("boss", "kids");
+  const proj = (
+    await t.db.select().from(schema.projects).where(eq(schema.projects.name, "kids"))
+  )[0];
+  const [boss] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "boss"));
+  const [cred] = await t.db.select().from(schema.credentials).limit(1);
+  const kid = (slug: string, terminated: boolean) => ({
+    id: `${slug}-id`,
+    slug,
+    displayName: slug,
+    template: "t",
+    config: {} as never,
+    runtime: "local" as const,
+    kind: "ephemeral",
+    reportsTo: boss?.id,
+    credentialId: terminated ? null : (cred?.id ?? null),
+    terminatedAt: terminated ? new Date() : null,
+    terminatedBy: terminated ? "boss" : null,
+  });
+  await t.db.insert(schema.agents).values([kid("tl-ab12", false), kid("tl-dead", true)]);
+  await t.db
+    .insert(schema.agentProjectGrants)
+    .values({ agentId: "tl-ab12-id", projectId: proj?.id ?? "" });
+  await t.db
+    .delete(schema.agentProjectGrants)
+    .where(eq(schema.agentProjectGrants.agentId, boss?.id ?? ""));
+  await expect(svc.remove("kids")).rejects.toMatchObject({
+    status: 409,
+    code: "project_in_use",
+    message: "Granted to @tl-ab12 (spawned by @boss); change @boss's grants or terminate it first.",
+  });
+  await t.db
+    .delete(schema.agentProjectGrants)
+    .where(eq(schema.agentProjectGrants.agentId, "tl-ab12-id"));
+  await svc.remove("kids");
+});
+
 test("remove when unused works; unknown is 404", async () => {
   await svc.create({ name: "spare", hostPath: dir("spare") });
   await svc.remove("spare");

@@ -1,8 +1,10 @@
 import type { TemplateConfig } from "@open-factory/shared";
+import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigserial,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -25,40 +27,67 @@ export type RuntimeJournal = {
 };
 
 /** S3 subset of data-model.md's agents table; later specs add their columns. */
-export const agents = pgTable("agents", {
-  id: text("id").primaryKey(),
-  slug: text("slug").notNull().unique(),
-  displayName: text("display_name").notNull(),
-  description: text("description").notNull().default(""),
-  sessionId: text("session_id"),
-  /** Only 'hibernated' | 'errored' are stored in S3; working/idle are derived in memory. */
-  status: text("status").notNull().default("hibernated"),
-  kind: text("kind").notNull().default("persistent"),
-  template: text("template").notNull(),
-  config: jsonb("config").$type<TemplateConfig>().notNull(),
-  runtime: text("runtime").notNull().$type<"local" | "docker">(),
-  reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, { onDelete: "restrict" }),
-  credentialId: text("credential_id")
-    .notNull()
-    .references(() => credentials.id, { onDelete: "restrict" }),
-  grantsOverridden: boolean("grants_overridden").notNull().default(false),
-  lastError: text("last_error"),
-  errorKind: text("error_kind"),
-  attempting: boolean("attempting").notNull().default(false),
-  /**
-   * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to the manager or the humans). Set once
-   * per episode; cleared with the error. Read at boot so a restart never reports one episode twice.
-   */
-  erroredReported: boolean("errored_reported").notNull().default(false),
-  runtimeJournal: jsonb("runtime_journal").$type<RuntimeJournal>(),
-  rateLimitNoticeOwed: boolean("rate_limit_notice_owed").notNull().default(false),
-  archivedAt: timestamp("archived_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-});
+export const agents = pgTable(
+  "agents",
+  {
+    id: text("id").primaryKey(),
+    slug: text("slug").notNull().unique(),
+    displayName: text("display_name").notNull(),
+    description: text("description").notNull().default(""),
+    sessionId: text("session_id"),
+    /** Only 'hibernated' | 'errored' are stored in S3; working/idle are derived in memory. */
+    status: text("status").notNull().default("hibernated"),
+    kind: text("kind").notNull().default("persistent"),
+    template: text("template").notNull(),
+    config: jsonb("config").$type<TemplateConfig>().notNull(),
+    runtime: text("runtime").notNull().$type<"local" | "docker">(),
+    reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, {
+      onDelete: "restrict",
+    }),
+    credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
+    grantsOverridden: boolean("grants_overridden").notNull().default(false),
+    lastError: text("last_error"),
+    errorKind: text("error_kind"),
+    attempting: boolean("attempting").notNull().default(false),
+    /**
+     * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to the manager or the humans). Set once
+     * per episode; cleared with the error. Read at boot so a restart never reports one episode twice.
+     */
+    erroredReported: boolean("errored_reported").notNull().default(false),
+    runtimeJournal: jsonb("runtime_journal").$type<RuntimeJournal>(),
+    rateLimitNoticeOwed: boolean("rate_limit_notice_owed").notNull().default(false),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    terminatedAt: timestamp("terminated_at", { withTimezone: true }),
+    /** '@handle' (a human), the spawner's bare slug, or '@factory' (the TTL). */
+    terminatedBy: text("terminated_by"),
+    workspacePinned: boolean("workspace_pinned").notNull().default(false),
+    workspaceDeletedAt: timestamp("workspace_deleted_at", { withTimezone: true }),
+    /** S7 §10.2: the last process start, turn end or delivered batch; read by the TTL sweep. */
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    check(
+      "agents_live_credential",
+      sql`${t.credentialId} IS NOT NULL OR ${t.terminatedAt} IS NOT NULL`,
+    ),
+    check("agents_kind", sql`${t.kind} IN ('persistent','ephemeral')`),
+    check(
+      "agents_terminated_ephemeral",
+      sql`${t.kind} = 'ephemeral' OR (${t.terminatedAt} IS NULL AND ${t.terminatedBy} IS NULL)`,
+    ),
+    check("agents_ephemeral_manager", sql`${t.kind} = 'persistent' OR ${t.reportsTo} IS NOT NULL`),
+    index("agents_spawned_idx").on(t.reportsTo, t.createdAt).where(sql`${t.kind} = 'ephemeral'`),
+    // The Ended list (Task 16): newest end first, limit 200.
+    index("agents_ended_idx")
+      .on(sql`coalesce(${t.terminatedAt}, ${t.archivedAt}) desc`)
+      .where(sql`${t.terminatedAt} is not null or ${t.archivedAt} is not null`),
+  ],
+);
 
 export const turns = pgTable(
   "turns",
@@ -95,7 +124,12 @@ export const sessionEvents = pgTable(
     payload: jsonb("payload").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("session_events_agent_seq_unique").on(t.agentId, t.seq)],
+  (t) => [
+    uniqueIndex("session_events_agent_seq_unique").on(t.agentId, t.seq),
+    // S7 §8: an agent's `terminated` event, found without reading its whole log (boot's crash-window query and
+    // `ensureTerminatedEvent`). At most one row per terminated agent.
+    index("session_events_terminated_idx").on(t.agentId).where(sql`${t.type} = 'terminated'`),
+  ],
 );
 
 export const messages = pgTable(

@@ -27,6 +27,8 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
+import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
+import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
@@ -45,6 +47,10 @@ import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
+import { maySpawn } from "./spawning/may-spawn.ts";
+import { Reaper } from "./spawning/reaper.ts";
+import { SpawnService } from "./spawning/spawn-service.ts";
+import { TerminateService } from "./spawning/terminate-service.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
@@ -73,6 +79,9 @@ declare module "fastify" {
     router: Router;
     neighborhood: Neighborhood;
     agentTokens: AgentTokens;
+    spawner: SpawnService;
+    terminator: TerminateService;
+    reaper: Reaper;
     agentListener: { port: number; close(): Promise<void> };
   }
 }
@@ -196,7 +205,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     log: app.log,
     containers,
-    neighborhood,
     router,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
@@ -225,16 +233,44 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("neighborhood", neighborhood);
   app.decorate("router", router);
   app.decorate("agentTokens", tokens);
+  const spawner = new SpawnService({
+    db: deps.db,
+    store,
+    templates,
+    workspace,
+    router,
+    runtimes,
+    config,
+    log: app.log,
+    closing: () => runtimes.supervisor.closing(),
+  });
+  app.decorate("spawner", spawner);
+  const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
+  app.decorate("terminator", terminator);
+  // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.
+  const reaper = new Reaper({
+    store,
+    runtimes,
+    terminator,
+    workspace,
+    containers,
+    log: app.log,
+    now: () => Date.now(),
+  });
+  app.decorate("reaper", reaper);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
+    reaper.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
     // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
     tokens.revokeAll();
     await agentListener?.close();
+    // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
+    await reaper.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -263,6 +299,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
+      spawner,
+      terminator,
       log: app.log,
     });
   } catch (err) {
@@ -286,6 +324,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       log: app.log,
     });
     router.bootDone();
+    void reaper.run();
+    reaper.start();
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.
@@ -310,6 +350,8 @@ async function listenForAgents(
     router: Router;
     neighborhood: Neighborhood;
     runtimes: AgentRuntimes;
+    spawner: SpawnPort;
+    terminator: TerminatePort;
     log: FastifyInstance["log"];
   },
 ) {
@@ -326,9 +368,19 @@ async function listenForAgents(
   const mcp = createFactoryMcp({
     version: FACTORY_VERSION,
     onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
-    tools: [
+    loadCaller: (id) => d.store.agentById(id),
+    tools: (caller) => [
       sendMessageTool(d.router),
       listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+      ...(maySpawn(caller)
+        ? [
+            spawnAgentTool({
+              spawn: d.spawner,
+              templates: caller.config.canSpawn as [string, ...string[]],
+            }),
+            terminateAgentTool({ terminate: d.terminator }),
+          ]
+        : []),
     ],
   });
   const listener = await startAgentListener({
@@ -338,10 +390,10 @@ async function listenForAgents(
     allowedSources: bind.allowedSources,
     version: FACTORY_VERSION,
     tokens: d.tokens,
-    // An unknown agent is treated like an archived one: its token can't act.
-    isArchived: async (agentId) => {
+    // An unknown agent is treated like an ended (archived or terminated) one: its token can't act.
+    isEnded: async (agentId) => {
       const a = await d.store.agentById(agentId);
-      return !a || a.archivedAt !== null;
+      return !a || a.archivedAt !== null || a.terminatedAt !== null;
     },
     mcp,
     log: d.log,

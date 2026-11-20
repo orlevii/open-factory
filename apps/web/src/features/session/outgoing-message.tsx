@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, CircleAlert } from "lucide-react";
+import type { ReactNode } from "react";
 import { z } from "zod";
 import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown, LINK_CLASS, useAgentNames } from "./message-block";
@@ -59,6 +60,93 @@ export function OutgoingMessage({
     : !target.startsWith("@") || (bare !== "humans" && !!names?.has(bare));
   const recipient = `@${bare}`;
   const failed = row.result?.isError === true;
+  return (
+    <CallBlock
+      row={row}
+      label={`Message from @${slug} to ${recipient}`}
+      showCall={showCall}
+      onToggleCall={onToggleCall}
+      rowProps={rowProps}
+      sender={
+        <>
+          <span className="font-mono text-foreground">@{slug}</span>
+          <ArrowRight aria-hidden="true" className="size-3.5 text-muted-foreground" />
+          <span>
+            {toAgent ? (
+              <AgentLink slug={bare} />
+            ) : (
+              <span className="font-mono text-foreground">{recipient}</span>
+            )}
+          </span>
+          {input.urgent === true && (
+            <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
+          )}
+        </>
+      }
+      footer={
+        <>
+          {failed || row.denial ? (
+            <FailedNote row={row} />
+          ) : (
+            <Footer row={row} sent={sent} toAgent={toAgent} bare={bare} />
+          )}
+          {toAgent && sent && (
+            <Link
+              to="/agents/$slug"
+              params={{ slug: sent.to }}
+              search={{ message: sent.id }}
+              aria-label={`View this message in @${sent.to}'s session`}
+              className={`text-foreground ${LINK_CLASS}`}
+            >
+              View in session
+            </Link>
+          )}
+        </>
+      }
+    >
+      <ClampedMarkdown source={input.body} />
+    </CallBlock>
+  );
+}
+
+type BlockRow = Extract<Row, { kind: "outgoing" | "spawn" }>;
+
+/** The failed-tool treatment (S3): a small crimson icon and the tool's sentence (or the denial's) in
+ *  muted text. */
+export function FailedNote({ row }: { row: BlockRow }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        {row.denial ? denialText(row.denial.reason) : row.result?.content}
+      </span>
+    </span>
+  );
+}
+
+/** The outgoing-block shell shared by a send and a spawn (S6 UI design §2.5, S7 §4.1): a 1px rule
+ *  edge and 6px radius, the sender line and its time, the body, a muted footer, and the "Show tool
+ *  call" toggle that reveals the raw call as S3's tool row. */
+export function CallBlock({
+  row,
+  label,
+  sender,
+  footer,
+  children,
+  showCall,
+  onToggleCall,
+  rowProps,
+}: {
+  row: BlockRow;
+  label: string;
+  sender: ReactNode;
+  footer: ReactNode;
+  children: ReactNode;
+  showCall: boolean;
+  onToggleCall(): void;
+  rowProps: Record<string, unknown>;
+}) {
+  const failed = row.result?.isError === true;
   const toolRow: Extract<Row, { kind: "tool" }> = {
     kind: "tool",
     seq: row.seq,
@@ -70,24 +158,9 @@ export function OutgoingMessage({
     key: row.key,
   };
   return (
-    <article
-      {...rowProps}
-      aria-label={`Message from @${slug} to ${recipient}`}
-      className="rounded-lg border border-border px-3 py-2"
-    >
+    <article {...rowProps} aria-label={label} className="rounded-lg border border-border px-3 py-2">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        <span className="font-mono text-foreground">@{slug}</span>
-        <ArrowRight aria-hidden="true" className="size-3.5 text-muted-foreground" />
-        <span>
-          {toAgent ? (
-            <AgentLink slug={bare} />
-          ) : (
-            <span className="font-mono text-foreground">{recipient}</span>
-          )}
-        </span>
-        {input.urgent === true && (
-          <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
-        )}
+        {sender}
         <time
           dateTime={row.at}
           title={new Date(row.at).toLocaleString()}
@@ -96,29 +169,9 @@ export function OutgoingMessage({
           {formatTime(row.at)}
         </time>
       </div>
-      <ClampedMarkdown source={input.body} />
+      {children}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        {failed || row.denial ? (
-          <span className="flex items-center gap-1.5">
-            <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
-            <span className="min-w-0 [overflow-wrap:anywhere]">
-              {row.denial ? denialText(row.denial.reason) : row.result?.content}
-            </span>
-          </span>
-        ) : (
-          <Footer row={row} sent={sent} toAgent={toAgent} bare={bare} />
-        )}
-        {toAgent && sent && (
-          <Link
-            to="/agents/$slug"
-            params={{ slug: sent.to }}
-            search={{ message: sent.id }}
-            aria-label={`View this message in @${sent.to}'s session`}
-            className={`text-foreground ${LINK_CLASS}`}
-          >
-            View in session
-          </Link>
-        )}
+        {footer}
         <button
           type="button"
           aria-expanded={showCall}

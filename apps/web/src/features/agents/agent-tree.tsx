@@ -1,6 +1,7 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { RotateCw } from "lucide-react";
+import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -33,16 +34,54 @@ function agentNote(a: AgentSummary): string | null {
   return null;
 }
 
+/** An ended agent's note (S7 UI design §3): when it ended and what became of its workspace. */
+function endedNote(a: AgentSummary, now: Date): string | null {
+  const day = (iso: string) => formatDay(new Date(iso), now);
+  if (a.terminatedAt) {
+    const ended = `Terminated ${day(a.terminatedAt)}`;
+    if (a.workspaceDeletedAt) return `${ended} · workspace deleted`;
+    if (a.workspacePinned) return `${ended} · workspace pinned`;
+    // Past the grace the sweep deletes it within minutes (a failing deletion is retried): a day in
+    // the past would read as a broken promise.
+    if (a.workspaceGraceEndsAt)
+      return Date.parse(a.workspaceGraceEndsAt) <= now.getTime()
+        ? `${ended} · workspace due for deletion`
+        : `${ended} · workspace kept until ${day(a.workspaceGraceEndsAt)}`;
+    return ended;
+  }
+  return a.archivedAt ? `Archived ${day(a.archivedAt)}` : null;
+}
+
+/** The display name; a spawned agent's " · ab12" tail never truncates (S7 UI design §3), since it is
+ *  what tells siblings apart: the head gives way first. */
+export function AgentName({ agent }: { agent: AgentSummary }) {
+  const i = agent.kind === "ephemeral" ? agent.displayName.lastIndexOf(" · ") : -1;
+  if (i <= 0) return <span className="min-w-0 truncate">{agent.displayName}</span>;
+  return (
+    <span className="flex min-w-0">
+      <span aria-hidden="true" className="min-w-0 truncate">
+        {agent.displayName.slice(0, i)}
+      </span>
+      <span aria-hidden="true" className="shrink-0 whitespace-pre">
+        {" "}
+        {agent.displayName.slice(i + 1)}
+      </span>
+      <span className="sr-only">{agent.displayName}</span>
+    </span>
+  );
+}
+
 /** The org tree: depth-first in server order, one link per agent. Only the name cell indents, so
- *  the other columns stay aligned. */
-export function AgentTree({ agents }: { agents: AgentSummary[] }) {
+ *  the other columns stay aligned. `flat` (the Ended view) keeps server order with no nesting. */
+export function AgentTree({ agents, flat = false }: { agents: AgentSummary[]; flat?: boolean }) {
   const isMobile = useIsMobile();
+  const now = new Date();
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
-  // Depth as drawn: a row whose manager isn't in this list (the archived view) starts a new
-  // root rather than hanging under nothing. Server order is depth-first, so managers come first.
+  // Depth as drawn: a row whose manager isn't in this list starts a new root rather than hanging
+  // under nothing. Server order is depth-first, so managers come first.
   const shown = new Map<string, number>();
   for (const a of agents) {
-    const m = a.reportsTo ? shown.get(a.reportsTo) : undefined;
+    const m = !flat && a.reportsTo ? shown.get(a.reportsTo) : undefined;
     shown.set(a.slug, m === undefined ? 0 : m + 1);
   }
   return (
@@ -51,7 +90,8 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
         const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
         const level = shown.get(a.slug) ?? 0;
         const depth = Math.min(level, isMobile ? MOBILE_DEPTH_CAP : level);
-        const note = a.archivedAt ? null : agentNote(a);
+        const ended = a.archivedAt !== null || a.status === "terminated";
+        const note = ended ? endedNote(a, now) : agentNote(a);
         return (
           <li key={a.slug}>
             <Link
@@ -60,7 +100,7 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
               className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:grid md:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_auto] md:py-0"
             >
               <span className="flex w-28 shrink-0 items-center gap-1.5">
-                {a.archivedAt ? (
+                {a.archivedAt && a.status !== "terminated" ? (
                   <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
                     {/* The empty dot slot keeps the label aligned with the live statuses. */}
                     <span aria-hidden="true" className="size-3" />
@@ -69,7 +109,7 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
                 ) : (
                   <StatusBadge status={a.status} size="short" />
                 )}
-                {a.restartPending && !a.archivedAt && (
+                {a.restartPending && !ended && (
                   <>
                     <RotateCw aria-hidden="true" className="size-3 text-muted-foreground" />
                     <span className="sr-only">restart pending</span>
@@ -89,7 +129,7 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
                       "pl-3.5 before:absolute before:top-0 before:left-0.5 before:h-[0.6875rem] before:w-2 before:border-b before:border-l before:border-border",
                   )}
                 >
-                  <span className="min-w-0 truncate">{a.displayName}</span>
+                  <AgentName agent={a} />
                   {/* Inline, not a second line, so live updates never change the row height. It
                       gives way (truncates) before the name does. */}
                   {note && (

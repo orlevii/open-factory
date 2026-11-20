@@ -1,12 +1,12 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
 import { AGENT_URL_ON_HUMAN_PORT_WARNING, loggerOptions } from "./app.ts";
 import { loadConfig } from "./config.ts";
-import { callTool } from "./mcp/testing/mcp-client.ts";
+import { callTool, mcpCall } from "./mcp/testing/mcp-client.ts";
 import { makeTestApp, signUp } from "./test/helpers.ts";
 
 test("the OAuth token is redacted at every realistic depth", async () => {
@@ -104,6 +104,72 @@ async function startIdle(
   await (await t.app.runtimes.bySlug(slug))?.settled();
   return { proc: p, token: p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string };
 }
+
+test("tools per caller: spawner sees four with the enum, others two (spec §7.1)", async () => {
+  const driver = new FakeDriver();
+  const t = await makeTestApp({ harnessDriver: driver });
+  try {
+    await t.seedAgent({
+      slug: "lead",
+      config: { canSpawn: ["tech-lead", "developer"], maxLiveSpawns: 5 },
+    });
+    await t.seedAgent({ slug: "solo" });
+    await t.seedAgent({ slug: "capped", config: { canSpawn: ["developer"], maxLiveSpawns: 0 } });
+    const url = `http://127.0.0.1:${t.app.agentListener.port}`;
+    const names = async (slug: string) => {
+      const { token } = await startIdle(t, driver, slug);
+      const r = await mcpCall(url, token, "tools/list", {});
+      return r.json.result.tools as {
+        name: string;
+        inputSchema: { properties: Record<string, { enum?: string[] }> };
+      }[];
+    };
+    const lead = await names("lead");
+    expect(lead.map((x) => x.name).sort()).toEqual([
+      "list_peers",
+      "send_message",
+      "spawn_agent",
+      "terminate_agent",
+    ]);
+    expect(
+      lead.find((x) => x.name === "spawn_agent")?.inputSchema.properties.template?.enum,
+    ).toEqual(["tech-lead", "developer"]);
+    expect((await names("solo")).map((x) => x.name).sort()).toEqual(["list_peers", "send_message"]);
+    expect((await names("capped")).map((x) => x.name).sort()).toEqual([
+      "list_peers",
+      "send_message",
+    ]);
+    // A spawned agent never spawns (depth one), even when its template has can_spawn.
+    const tplDir = path.join(t.factoryHome, "templates", "developer");
+    mkdirSync(tplDir, { recursive: true });
+    writeFileSync(
+      path.join(tplDir, "template.yaml"),
+      "name: developer\ndisplay_name: Developer\nruntime: local\ncan_spawn:\n  - developer\n",
+    );
+    writeFileSync(path.join(tplDir, "AGENTS.md"), "# Developer\n");
+    const leadRow = await t.app.store.agentBySlug("lead");
+    const spawned = await t.app.spawner.spawn(
+      leadRow?.id ?? "",
+      { template: "developer", suffix: "e1", description: "Builds it", prompt: "Build it" },
+      null,
+    );
+    expect(spawned).toMatchObject({ ok: true, slug: "developer-e1" });
+    // The brief wakes it: take that process's token once its first turn is over.
+    await vi.waitFor(() =>
+      expect(driver.starts.some((s) => s.spec.slug === "developer-e1")).toBe(true),
+    );
+    const p = driver.starts.filter((s) => s.spec.slug === "developer-e1").at(-1);
+    p?.emit(...ev.fullTurn());
+    await (await t.app.runtimes.bySlug("developer-e1"))?.settled();
+    const r = await mcpCall(url, p?.spec.env.OPEN_FACTORY_AGENT_TOKEN as string, "tools/list", {});
+    expect((r.json.result.tools as { name: string }[]).map((x) => x.name).sort()).toEqual([
+      "list_peers",
+      "send_message",
+    ]);
+  } finally {
+    await t.close();
+  }
+});
 
 test("an agent token never reaches the logs, on the agent listener or the REST API", async () => {
   const lines: string[] = [];

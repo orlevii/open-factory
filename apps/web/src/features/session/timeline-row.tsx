@@ -1,6 +1,6 @@
 import type { AnyEvent } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { CircleAlert, ShieldAlert, TriangleAlert } from "lucide-react";
+import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { CompactionMarker } from "./compaction-marker";
@@ -8,6 +8,7 @@ import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
+import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
@@ -50,7 +51,8 @@ function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): strin
     ...e.tasks.map((t) => `${t.description ?? t.taskId} (background)`),
     ...e.crons.map((c) => `${c.humanSchedule?.toLowerCase() ?? c.cronId} (cron)`),
   ];
-  return `Lost when the process stopped: ${items.join(" · ")}`;
+  const when = e.reason === "terminated" ? "it was terminated" : "the process stopped";
+  return `Lost when ${when}: ${items.join(" · ")}`;
 }
 
 /** Quiet-line copy, S3 UI design §4.1 and S5 UI design §3.3. Never pids, container ids, exit codes or
@@ -68,6 +70,14 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
           longer remembers it.
         </>
       );
+    case "spawned":
+      return (
+        <>
+          Spawned by <Actor by={e.by} /> from template <Mono>{e.template}</Mono>
+        </>
+      );
+    case "terminated":
+      return <>Terminated {terminatedPhrase(e.by)}</>;
     case "control": {
       const by = <Mono>{e.by}</Mono>;
       if (e.cmd === "interrupt") return <>{by} interrupted</>;
@@ -165,6 +175,8 @@ function quietIcon(e: AnyEvent): ReactNode {
   // One crash is red once: the unexpected exit, never a separate crimson error row.
   if (e.type === "exited" && !e.expected)
     return <CircleAlert aria-hidden="true" className="text-destructive" />;
+  if (e.type === "spawned") return <GitFork aria-hidden="true" />;
+  if (e.type === "terminated") return <CircleX aria-hidden="true" />;
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
@@ -172,10 +184,15 @@ function quietIcon(e: AnyEvent): ReactNode {
 function FixLink({
   fix,
   slug,
+  spawned,
 }: {
   fix: NonNullable<Extract<AnyEvent, { type: "error" }>["fix"]>;
   slug: string;
+  spawned?: boolean;
 }) {
+  // A spawned agent can't be edited or re-synced (the server drops these fixes for it, spec §8):
+  // never link to an edit page that can only refuse.
+  if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
   const cls =
     "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
   if (fix === "edit_agent")
@@ -207,6 +224,8 @@ function FixLink({
 
 export interface TimelineRowProps {
   slug: string;
+  /** The session's agent is a spawned one (no edit page). */
+  spawned?: boolean;
   row: Row;
   expanded: Set<string>;
   toggle(key: string): void;
@@ -246,6 +265,18 @@ export function TimelineRow(props: TimelineRowProps) {
           rowProps={rp}
         />
       );
+    case "spawn":
+      return (
+        <SpawnBlock
+          slug={props.slug}
+          row={row}
+          showCall={expanded.has(row.key)}
+          onToggleCall={() => toggle(row.key)}
+          rowProps={rp}
+        />
+      );
+    case "terminate":
+      return <TerminateLine row={row} rowProps={rp} />;
     case "text":
       return (
         <div {...rp}>
@@ -278,7 +309,7 @@ export function TimelineRow(props: TimelineRowProps) {
           </p>
           {row.event.fix && (
             <p>
-              <FixLink fix={row.event.fix} slug={props.slug} />
+              <FixLink fix={row.event.fix} slug={props.slug} spawned={props.spawned} />
             </p>
           )}
           {row.event.detail && (

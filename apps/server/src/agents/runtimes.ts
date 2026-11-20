@@ -7,9 +7,10 @@ import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
+import type { WakeReason } from "../supervisor/slots.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
-import { AgentArchivedError, AgentStartError } from "./errors.ts";
+import { AgentArchivedError, AgentStartError, AgentTerminatedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow } from "./event-store.ts";
 import type { PrepareStart } from "./start.ts";
@@ -42,7 +43,10 @@ export interface RuntimesDeps {
    * Claude path and the default image.
    */
   docker?: {
-    containers: Pick<ContainerManager, "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove">;
+    containers: Pick<
+      ContainerManager,
+      "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove" | "remove"
+    >;
     claudeBin: string;
     defaultImage: string;
   };
@@ -105,6 +109,24 @@ function senderLabel(row: PendingRow): string {
   throw new Error(`message ${row.id} has no sender`);
 }
 
+/**
+ * S7 §8 step 5, from what is known without asking Docker: a terminated agent with no stop under way (a loaded
+ * runtime's; an unloaded one has none) whose stop failed, whose journal still names processes, or whose container the
+ * sweep's last list still showed. A termination still stopping is never stuck.
+ */
+function terminationStuck(
+  row: { errorKind?: string | null; runtimeJournal?: AgentRow["runtimeJournal"] },
+  rt: AgentRuntime | undefined,
+): boolean {
+  if (rt?.terminationSettling()) return false;
+  const j = row.runtimeJournal;
+  return (
+    row.errorKind === "stop_failed" ||
+    Boolean(j?.claude || j?.descendants?.length) ||
+    Boolean(rt?.containerLeftListed())
+  );
+}
+
 export type LiveFields = ReturnType<AgentRuntime["live"]>;
 
 export class AgentRuntimes {
@@ -120,6 +142,8 @@ export class AgentRuntimes {
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,
+      // "" names no credential: an unloaded runtime, or a terminated one whose credential was deleted (the only rows
+      // with a null credential_id), is never paused by, nor counted under, any real credential's rate limit.
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: d.store,
       load: (slug) => this.bySlug(slug),
@@ -211,11 +235,17 @@ export class AgentRuntimes {
    * S6 §7.3: hands a committed `message` row to its recipient. A human's send awaits the job (S3's synchronous
    * `503 agent_start_failed` and `409 agent_archived`); an agent's only enqueues it: a slow start never blocks the
    * sender's tool call, and a failure leaves the row pending (or `rejected` when archived), logged, never thrown.
+   * `reason` overrides an agent sender's `agent_message` wake (S7 §5.6: a spawned agent's brief wakes it `spawned`).
    */
-  async deliver(row: PendingRow, sender: "human" | "agent"): Promise<QueueItem | undefined> {
+  async deliver(
+    row: PendingRow,
+    sender: "human" | "agent",
+    reason?: WakeReason,
+  ): Promise<QueueItem | undefined> {
+    const o = { sender, fromLabel: senderLabel(row), ...(reason ? { reason } : {}) };
     if (sender === "human") {
       const rt = await this.recipientOf(row);
-      return rt.deliver(row, { sender, fromLabel: senderLabel(row) });
+      return rt.deliver(row, o);
     }
     // An agent's send already committed its row: a recipient that can't be loaded (a failed init) leaves it pending
     // for the next hand-off or boot, logged; it never reaches the sender, whose retry would duplicate the message.
@@ -229,8 +259,12 @@ export class AgentRuntimes {
       );
       return undefined;
     }
-    void rt.deliver(row, { sender, fromLabel: senderLabel(row) }).catch((err: unknown) => {
-      if (err instanceof AgentArchivedError || err instanceof AgentStartError)
+    void rt.deliver(row, o).catch((err: unknown) => {
+      if (
+        err instanceof AgentArchivedError ||
+        err instanceof AgentTerminatedError ||
+        err instanceof AgentStartError
+      )
         this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
       else
         this.d.log.error(
@@ -307,14 +341,23 @@ export class AgentRuntimes {
    */
   async liveFields(
     agentId: string,
-    row: { status: string; lastError?: string | null; errorKind?: string | null; runtime?: string },
-  ): Promise<LiveFields> {
+    row: {
+      status: string;
+      lastError?: string | null;
+      errorKind?: string | null;
+      runtime?: string;
+      terminatedAt?: Date | null;
+      runtimeJournal?: AgentRow["runtimeJournal"];
+    },
+  ): Promise<LiveFields & { stuck?: true }> {
     const rt = await this.get(agentId);
-    if (rt) return rt.live();
+    const stuck = row.terminatedAt && terminationStuck(row, rt) ? { stuck: true as const } : {};
+    if (rt) return { ...rt.live(), ...stuck };
     const errored = row.status === "errored";
     const kind = errorKindSchema.safeParse(row.errorKind);
     return {
-      status: errored ? "errored" : "hibernated",
+      // An unloaded terminated agent: nothing runs for it, so it shows as what it is.
+      status: row.terminatedAt ? "terminated" : errored ? "errored" : "hibernated",
       ...(errored && row.lastError ? { lastError: row.lastError } : {}),
       ...(errored && kind.success ? { errorKind: kind.data } : {}),
       ...(row.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
@@ -324,6 +367,7 @@ export class AgentRuntimes {
       restartPending: false,
       restartWaitingOn: 0,
       waitingOn: { tasks: [], crons: 0 },
+      ...stuck,
     };
   }
 

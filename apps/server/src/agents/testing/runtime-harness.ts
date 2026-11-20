@@ -6,6 +6,7 @@ import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
 import { EventBus } from "../event-bus.ts";
 import { EventStore, type PendingRow } from "../event-store.ts";
+import type { PreparedSpec } from "../start.ts";
 import { FakeDriver } from "./fake-driver.ts";
 import { insertAgent } from "./rows.ts";
 import { unlimitedSlots } from "./unlimited-slots.ts";
@@ -120,6 +121,10 @@ export class RuntimeHarness {
       cleanup?: RuntimeDeps["cleanup"];
       journal?: RuntimeDeps["journal"];
       memberUpdateDebounceMs?: number;
+      /** The Docker launcher; pair it with `spec` returning a Docker spec. */
+      docker?: RuntimeDeps["docker"];
+      /** What `prepareStart` returns (default: `okSpec`, a local spec). */
+      spec?: (a: { id: string; slug: string }) => PreparedSpec;
       /** Runs after the agent row exists and before `init()` (rows a boot would find pending). */
       seed?: (agentId: string) => Promise<void>;
     } = {},
@@ -175,7 +180,7 @@ export class RuntimeHarness {
         this.lastAgentToken = extra.agentToken;
         if (this.prepareGate) await this.prepareGate;
         if (this.startError) throw this.startError;
-        return okSpec(a);
+        return opts.spec ? opts.spec(a) : okSpec(a);
       },
       log: silentLog,
       forward: async (f) => {
@@ -186,6 +191,7 @@ export class RuntimeHarness {
       slots: opts.slots ?? unlimitedSlots,
       ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),
       ...(opts.journal ? { journal: opts.journal } : {}),
+      ...(opts.docker ? { docker: opts.docker } : {}),
       ...(opts.memberUpdateDebounceMs !== undefined
         ? { memberUpdateDebounceMs: opts.memberUpdateDebounceMs }
         : {}),

@@ -169,8 +169,17 @@ async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[
   }
   throw new Error(`${slug}: turn timed out`);
 }
+/** What the agent said: its text, and what it sent through send_message (since S6 a reply is usually a message). */
 const textOf = (es: AnyEvent[]) =>
-  es.flatMap((e) => (e.type === "assistant_text" ? [e.text] : [])).join("\n");
+  es
+    .flatMap((e) =>
+      e.type === "assistant_text"
+        ? [e.text]
+        : e.type === "tool_call" && e.name.endsWith("send_message")
+          ? [JSON.stringify(e.input)]
+          : [],
+    )
+    .join("\n");
 /** Plugins that aren't Claude Code's own built-ins (`path: "builtin"`), i.e. ones from a config dir. */
 const hostPlugins = (i: Init | undefined) =>
   (i?.plugins ?? []).filter((p) => (p as { path?: unknown })?.path !== "builtin");

@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { agentSummary } from "@/test/session-fixtures";
+
+const agentRow = (slug: string) => agentSummary({ slug, displayName: slug });
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -388,6 +391,33 @@ test("projects: a middle-truncated path, grant wording, and Remove disabled with
     "aria-disabled",
     "true",
   );
+});
+
+test("projects: a live spawned grantee is named through its spawner in Remove's reason", async () => {
+  world({
+    projects: [project({ name: "app", grantedTo: ["tech-lead-ab12"] })],
+    extra: {
+      "GET /api/agents?ended=exclude": () =>
+        json({
+          agents: [
+            { ...agentRow("lead"), kind: "persistent", reportsTo: null },
+            { ...agentRow("tech-lead-ab12"), kind: "ephemeral", reportsTo: "lead" },
+          ],
+          running: { count: 0, max: 8 },
+        }),
+    },
+  });
+  renderApp("/settings", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  await userEvent.click(
+    within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Remove (granted to @tech-lead-ab12, spawned by @lead)",
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
 });
 
 test("removing an unused project offers Undo, notes its templates, and Undo re-adds it", async () => {

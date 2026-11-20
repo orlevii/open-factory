@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { AgentRuntime } from "../agents/agent-runtime.ts";
 import { EventBus } from "../agents/event-bus.ts";
 import { EventStore } from "../agents/event-store.ts";
+import { liveCredentialId } from "../agents/live-credential.ts";
 import { notices } from "../agents/notices.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
@@ -195,7 +196,7 @@ test("a rejected event pauses only that credential", async () => {
   });
   expect(status(a)).toBe("working");
   expect(b.live().rateLimitedUntil).toBeUndefined();
-  const row = await credRow(a.agent.credentialId);
+  const row = await credRow(liveCredentialId(a.agent));
   expect(row?.until?.getTime()).toBe(resetsAt * 1000);
   expect(row?.exact).toBe(true);
   expect(await events(a)).toContainEqual({
@@ -216,13 +217,13 @@ test("missing resetsAt uses a 30-minute inexact window", async () => {
   expect(w.warns).toContain(
     "rate limit reached but no reset time was reported; retrying in 30 minutes",
   );
-  const row = await credRow(a.agent.credentialId);
+  const row = await credRow(liveCredentialId(a.agent));
   expect(row?.exact).toBe(false);
   expect(row?.until?.getTime()).toBe(t0 + 30 * 60_000);
   expect(a.live()).toMatchObject({ rateLimitExact: false });
   // A reset time in the past is as good as none.
   await emitRejected(a, { resetsAt: nowSec() - 60 });
-  expect((await credRow(a.agent.credentialId))?.until?.getTime()).toBe(t0 + 30 * 60_000);
+  expect((await credRow(liveCredentialId(a.agent)))?.until?.getTime()).toBe(t0 + 30 * 60_000);
 
   await send(c, "hi");
   expect(status(c)).toBe("rate_limited");
@@ -231,7 +232,7 @@ test("missing resetsAt uses a 30-minute inexact window", async () => {
   expect(started(c)).toBe(false);
   await vi.advanceTimersByTimeAsync(60_000);
   await w.until(() => started(c));
-  const cleared = await credRow(a.agent.credentialId);
+  const cleared = await credRow(liveCredentialId(a.agent));
   expect(cleared).toMatchObject({ until: null, exact: true });
   expect(c.live().rateLimitedUntil).toBeUndefined();
   expect(sentBodies(c)).toEqual([["hi"]]);
@@ -291,7 +292,7 @@ test("the cut-off agent gets exactly one notice at reset, batched first with pen
 
   await vi.advanceTimersByTimeAsync(600_000);
   await w.until(() => w.proc(a).sent.length === 2);
-  const name = (await credRow(a.agent.credentialId))?.name ?? "";
+  const name = (await credRow(liveCredentialId(a.agent)))?.name ?? "";
   const batch = w.proc(a).sent[1] ?? [];
   expect(batch.map((m) => [m.from, m.kind, m.body])).toEqual([
     [
@@ -325,7 +326,7 @@ test("an owed agent that hibernated is woken at reset with its notice", async ()
 
   await vi.advanceTimersByTimeAsync(30 * 60_000);
   await w.until(() => w.starts(a).length === 2);
-  const name = (await credRow(a.agent.credentialId))?.name ?? "";
+  const name = (await credRow(liveCredentialId(a.agent)))?.name ?? "";
   expect(sentBodies(a)).toEqual([[notices.rateLimitReset({ credential: name })]]);
   expect(notices.rateLimitReset({ credential: name })).not.toContain(" at ");
   expect((await events(a)).at(-2)).toMatchObject({
@@ -365,7 +366,7 @@ test("a later event extends the window, never shortens it", async () => {
   const t0 = nowSec();
   await emitRejected(a, { resetsAt: t0 + 600 });
   await emitRejected(a, { resetsAt: t0 + 300 });
-  expect((await credRow(a.agent.credentialId))?.until?.getTime()).toBe((t0 + 600) * 1000);
+  expect((await credRow(liveCredentialId(a.agent)))?.until?.getTime()).toBe((t0 + 600) * 1000);
   const paused = (await events(a)).filter((e) => e.type === "rate_limit_paused");
   expect(paused.map((e) => e.type === "rate_limit_paused" && e.until)).toEqual([
     new Date((t0 + 600) * 1000).toISOString(),
@@ -377,7 +378,7 @@ test("a later event extends the window, never shortens it", async () => {
   await vi.advanceTimersByTimeAsync(700_000);
   await w.settleAll();
   expect(started(c)).toBe(false);
-  expect((await credRow(a.agent.credentialId))?.until?.getTime()).toBe((t0 + 1200) * 1000);
+  expect((await credRow(liveCredentialId(a.agent)))?.until?.getTime()).toBe((t0 + 1200) * 1000);
   await vi.advanceTimersByTimeAsync(500_000);
   await w.until(() => started(c));
 });
@@ -391,14 +392,14 @@ test("an inline start that a pause overtakes during prepare goes back to the que
   });
   const sending = send(a, "hi");
   await new Promise((r) => setImmediate(r));
-  w.sup.pause(a.agent.credentialId, new Date(Date.now() + 600_000), true);
+  w.sup.pause(liveCredentialId(a.agent), new Date(Date.now() + 600_000), true);
   open();
   await sending; // accepted (202), not a start failure
   expect(started(a)).toBe(false);
   expect(w.sup.running().count).toBe(0);
   expect(w.sup.isQueued(a.agent.id)).toBe(true);
   expect(status(a)).toBe("rate_limited");
-  w.sup.onCredentialReset(a.agent.credentialId);
+  w.sup.onCredentialReset(liveCredentialId(a.agent));
   await w.until(() => started(a));
 });
 
@@ -440,7 +441,7 @@ test("a window extended during the reset keeps the flag, and its own reset write
   expect(a.queueItems()).toEqual([]);
   await vi.advanceTimersByTimeAsync(600_000);
   await w.until(() => w.proc(a).sent.length === 2);
-  const name = (await credRow(a.agent.credentialId)).name;
+  const name = (await credRow(liveCredentialId(a.agent))).name;
   expect(sentBodies(a)[1]).toEqual([
     notices.rateLimitReset({ credential: name, at: new Date(later * 1000) }),
   ]);

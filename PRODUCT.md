@@ -46,6 +46,7 @@ Positioned against the "everything is a ticket" model of agent orchestration (Pa
 ## Capabilities and Constraints
 
 - Core concepts and their terms (use them consistently): agent template, persistent agent, ephemeral agent, reporting line (`reports_to`), session, message, task, schedule, project, credential. Defined in `docs/product/concepts/`.
+- In UI and agent-facing copy, an ephemeral agent is called a 'spawned agent'.
 - v0.1 non-goals: multi-tenancy, roles and permissions, budgets, approvals, channels, teams, non-Claude harnesses, taking over a live session.
 - Stack: TypeScript pnpm monorepo. Fastify and Postgres (Drizzle, pg-boss) on the server, React + Vite with shadcn/Radix and Tailwind v4 on the web, and Zod schemas shared across packages.
 - Open product questions: onboarding beyond "sign up → dashboard", and whether there are starter templates. The factory starts blank, with no templates or agents.

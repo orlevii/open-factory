@@ -25,7 +25,7 @@ const world = (over: Partial<AgentSummary> = {}, queue: QueueItem[] = []) => {
   api = mockApi({
     "GET /api/agents/dev": () => json(detail(over, queue)),
     "GET /api/agents/dev/events?": () => json(conversation()),
-    "GET /api/agents?archived=exclude": () =>
+    "GET /api/agents?ended=exclude": () =>
       json({ agents: [detail(over).agent], running: { count: 8, max: 8 } }),
   });
 };

@@ -99,3 +99,26 @@ test("projects: create 201, list, patch, conflicts, delete 204 or 409", async ()
   await t.db.delete(schema.agentProjectGrants);
   expect((await call("DELETE", "/api/projects/app")).statusCode).toBe(204);
 });
+
+test("projects: a project granted only to a terminated spawned agent can be removed", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "of-rp-t-"));
+  expect((await call("POST", "/api/projects", { name: "term", hostPath: dir })).statusCode).toBe(
+    201,
+  );
+  const lead = await t.seedAgent({ slug: "lead-t" });
+  await t.db.insert(schema.agents).values({
+    id: "kid-term",
+    slug: "kid-term-ab12",
+    displayName: "kid",
+    template: "t",
+    config: lead.config,
+    runtime: "local",
+    kind: "ephemeral",
+    reportsTo: lead.id,
+    credentialId: null,
+    terminatedAt: new Date(),
+    terminatedBy: "lead-t",
+  });
+  // Termination deletes the grant rows, so a terminated agent holds none.
+  expect((await call("DELETE", "/api/projects/term")).statusCode).toBe(204);
+});

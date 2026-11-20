@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
+import { type AgentRow, type Db, type RuntimeJournal, schema } from "@open-factory/db";
 import {
   type AnyEvent,
   anyEventSchema,
@@ -18,6 +18,7 @@ import {
   lt,
   lte,
   notInArray,
+  or,
   type SQL,
   sql,
 } from "drizzle-orm";
@@ -38,7 +39,16 @@ function isCursorInstant(at: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === at.slice(0, 19);
 }
 
-const { agents, credentials, sessionEvents, turns, messages, inboxItems, users } = schema;
+const {
+  agents,
+  agentProjectGrants,
+  credentials,
+  sessionEvents,
+  turns,
+  messages,
+  inboxItems,
+  users,
+} = schema;
 type MessageRow = typeof messages.$inferSelect;
 /** The one joined row shape the queue and the runtime use (spec §7.3): the row plus who sent it and what it is about. */
 export type PendingRow = MessageRow & {
@@ -68,7 +78,8 @@ export interface InboxEntry {
   link: { agentSlug: string; seq?: number };
 }
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-type Exec = Db | Tx;
+/** The pool or a caller's transaction. */
+export type Exec = Db | Tx;
 
 export interface TurnClose {
   isError: boolean;
@@ -99,8 +110,9 @@ export class EventStore {
   async agentBySlug(slug: string) {
     return (await this.db.select().from(agents).where(eq(agents.slug, slug)))[0];
   }
-  async agentById(id: string) {
-    return (await this.db.select().from(agents).where(eq(agents.id, id)))[0];
+  /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
+  async agentById(id: string, tx: Exec = this.db) {
+    return (await tx.select().from(agents).where(eq(agents.id, id)))[0];
   }
   async setSessionId(agentId: string, sessionId: string | null) {
     await this.db.update(agents).set({ sessionId }).where(eq(agents.id, agentId));
@@ -135,6 +147,126 @@ export class EventStore {
   async setAttempting(agentId: string, attempting: boolean) {
     await this.db.update(agents).set({ attempting }).where(eq(agents.id, agentId));
   }
+  /**
+   * S7 §8 step 2, inside the termination's transaction (the agent rows are locked first): terminated, `attempting`
+   * cleared, its grants deleted (projects keep their RESTRICT FKs), and every pending row addressed to it rejected.
+   */
+  async terminateRows(tx: Tx, agentId: string, by: string) {
+    await tx
+      .update(agents)
+      .set({ terminatedAt: new Date(), terminatedBy: by, attempting: false })
+      .where(eq(agents.id, agentId));
+    await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
+    await this.rejectPending(agentId, tx);
+  }
+  /** Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). */
+  async rejectPending(agentId: string, tx: Exec = this.db) {
+    await tx
+      .update(messages)
+      .set({ state: "rejected" })
+      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")));
+  }
+  /**
+   * Whether the agent has its `terminated` event. The type is a literal, not a parameter, so even a generic plan
+   * matches the partial index `session_events_terminated_idx` (never a read of the agent's whole log).
+   */
+  async hasTerminatedEvent(agentId: string): Promise<boolean> {
+    const [r] = await this.db
+      .select({ id: sessionEvents.id })
+      .from(sessionEvents)
+      .where(and(eq(sessionEvents.agentId, agentId), sql`${sessionEvents.type} = 'terminated'`))
+      .limit(1);
+    return Boolean(r);
+  }
+  /**
+   * S7 §10.3 step 2: which of `ids` (agents with a container still listed) are terminated. Bounded by the listed
+   * containers, so the sweep never reads every terminated agent.
+   */
+  async terminatedAmong(ids: string[]): Promise<AgentRow[]> {
+    if (!ids.length) return [];
+    return this.db
+      .select()
+      .from(agents)
+      .where(and(inArray(agents.id, ids), isNotNull(agents.terminatedAt)))
+      .orderBy(asc(agents.terminatedAt), asc(agents.id));
+  }
+  /**
+   * S7 §10.2: the agent's last activity, as its own statement (never inside a batch's transaction, which holds message
+   * rows: an agents-row update after them would invert the lock order). `greatest` keeps a late write from moving it
+   * backwards.
+   */
+  async setLastActivity(agentId: string, at: Date) {
+    await this.db
+      .update(agents)
+      .set({
+        lastActivityAt: sql`greatest(${agents.lastActivityAt}, ${at.toISOString()}::timestamptz)`,
+      })
+      .where(eq(agents.id, agentId));
+  }
+  /**
+   * S7 §10.3 step 1: live spawned agents idle since before `cutoff`, except those owed a continue notice and those
+   * whose credential is paused at `now` (a rate-limit pause is waiting, not idleness). The runtime re-checks each.
+   */
+  async ttlCandidates(cutoff: Date, now: Date): Promise<AgentRow[]> {
+    const rows = await this.db
+      .select({ agent: agents })
+      .from(agents)
+      .leftJoin(credentials, eq(credentials.id, agents.credentialId))
+      .where(
+        and(
+          eq(agents.kind, "ephemeral"),
+          isNull(agents.terminatedAt),
+          isNull(agents.archivedAt),
+          lt(agents.lastActivityAt, cutoff),
+          eq(agents.rateLimitNoticeOwed, false),
+          or(isNull(credentials.rateLimitedUntil), lte(credentials.rateLimitedUntil, now)),
+        ),
+      )
+      .orderBy(asc(agents.lastActivityAt), asc(agents.id));
+    return rows.map((r) => r.agent);
+  }
+  /**
+   * S7 §10.3 step 2, bounded (never every terminated agent): a failed stop or removal (`stop_failed`, which every
+   * failed container removal sets), a journal still kept, or a termination recent enough that its stop may still be
+   * in flight (`terminated_at > recentCutoff`).
+   */
+  async stuckCandidates(recentCutoff: Date): Promise<AgentRow[]> {
+    return this.db
+      .select()
+      .from(agents)
+      .where(
+        and(
+          isNotNull(agents.terminatedAt),
+          or(
+            eq(agents.errorKind, "stop_failed"),
+            isNotNull(agents.runtimeJournal),
+            gt(agents.terminatedAt, recentCutoff),
+          ),
+        ),
+      )
+      .orderBy(asc(agents.terminatedAt), asc(agents.id));
+  }
+  /** S7 §10.3 step 3: terminated before `cutoff`, its workspace neither pinned nor deleted yet. */
+  async workspaceCandidates(cutoff: Date): Promise<AgentRow[]> {
+    return this.db
+      .select()
+      .from(agents)
+      .where(
+        and(
+          lt(agents.terminatedAt, cutoff),
+          eq(agents.workspacePinned, false),
+          isNull(agents.workspaceDeletedAt),
+        ),
+      )
+      .orderBy(asc(agents.terminatedAt), asc(agents.id));
+  }
+  /** S7 §10.4: under the workspace lock, so a deletion that re-reads it under the same lock sees the pin. */
+  async setWorkspacePinned(agentId: string, pinned: boolean) {
+    await this.db.update(agents).set({ workspacePinned: pinned }).where(eq(agents.id, agentId));
+  }
+  async setWorkspaceDeleted(agentId: string, at: Date) {
+    await this.db.update(agents).set({ workspaceDeletedAt: at }).where(eq(agents.id, agentId));
+  }
   /** Replaces the whole journal (spec §12); null clears it. */
   async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {
     await this.db.update(agents).set({ runtimeJournal }).where(eq(agents.id, agentId));
@@ -152,12 +284,12 @@ export class EventStore {
         errorKind: sql`coalesce(${agents.errorKind}, 'crash')`,
         attempting: false,
       })
-      .where(eq(agents.attempting, true))
+      .where(and(eq(agents.attempting, true), isNull(agents.terminatedAt)))
       .returning({ id: agents.id });
     return rows.map((r) => r.id);
   }
   /**
-   * Boot (spec §5.7 step 6, §8): the non-archived, non-errored agents with deliverable pending items, by their oldest
+   * Boot (spec §5.7 step 6, §8): the live (not archived, not terminated), non-errored agents with deliverable pending items, by their oldest
    * such item (FIFO across the restart). Deliverable: a message or a notice, or a member update older than the
    * debounce (a young one waits for its timer; peer rows never wake anyone). `resume` when a factory-restarted notice
    * is among them.
@@ -175,7 +307,13 @@ export class EventStore {
         messages,
         and(eq(messages.toAgentId, agents.id), eq(messages.state, "pending"), deliverable),
       )
-      .where(and(isNull(agents.archivedAt), sql`${agents.status} <> 'errored'`))
+      .where(
+        and(
+          isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
+          sql`${agents.status} <> 'errored'`,
+        ),
+      )
       .groupBy(agents.id, agents.slug)
       .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
     return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
@@ -184,7 +322,7 @@ export class EventStore {
     const cutoff = new Date(Date.now() - debounceMs);
     return sql`(${messages.kind} in ('message', 'system') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
-  /** Non-archived, non-errored agents with at least one pending member update still inside the debounce window. */
+  /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
     const cutoff = new Date(Date.now() - debounceMs);
     const rows = await this.db
@@ -197,10 +335,53 @@ export class EventStore {
           eq(messages.state, "pending"),
           sql`${messages.createdAt} > ${cutoff.toISOString()}::timestamptz`,
           isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
           sql`${agents.status} <> 'errored'`,
         ),
       );
     return rows.flatMap((r) => (r.id ? [r.id] : []));
+  }
+  /**
+   * Boot (S7 §8, §12): rows still pending to a terminated agent (one that raced in during the crash window, after the
+   * termination's transaction rejected the rest) become `rejected`, as `terminateRows` makes them.
+   */
+  async rejectPendingToTerminated() {
+    await this.db
+      .update(messages)
+      .set({ state: "rejected" })
+      .where(
+        and(
+          eq(messages.state, "pending"),
+          inArray(
+            messages.toAgentId,
+            this.db.select({ id: agents.id }).from(agents).where(isNotNull(agents.terminatedAt)),
+          ),
+        ),
+      );
+  }
+  /**
+   * Boot (S7 §8 crash safety): terminated agents with no `terminated` event (the server died between the termination's
+   * commit and its stop job). Each `NOT EXISTS` is one probe of the partial index `session_events_terminated_idx`;
+   * only the rare crash-window agents come back.
+   */
+  async terminatedWithoutEvent(): Promise<
+    { id: string; slug: string; runtime: string; terminatedBy: string | null }[]
+  > {
+    return this.db
+      .select({
+        id: agents.id,
+        slug: agents.slug,
+        runtime: agents.runtime,
+        terminatedBy: agents.terminatedBy,
+      })
+      .from(agents)
+      .where(
+        and(
+          isNotNull(agents.terminatedAt),
+          sql`not exists (select 1 from ${sessionEvents} e where e.agent_id = ${agents.id} and e.type = 'terminated')`,
+        ),
+      )
+      .orderBy(asc(agents.id));
   }
   /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
   async clearRuntimeJournals(keep: string[] = []) {
@@ -218,7 +399,7 @@ export class EventStore {
   async setNoticeOwed(agentId: string, owed: boolean) {
     await this.db.update(agents).set({ rateLimitNoticeOwed: owed }).where(eq(agents.id, agentId));
   }
-  /** The non-archived agents on the credential that are owed a continue notice. */
+  /** The live (not archived, not terminated) agents on the credential that are owed a continue notice. */
   async owedAgents(credentialId: string): Promise<{ id: string; slug: string }[]> {
     return this.db
       .select({ id: agents.id, slug: agents.slug })
@@ -228,6 +409,7 @@ export class EventStore {
           eq(agents.credentialId, credentialId),
           eq(agents.rateLimitNoticeOwed, true),
           isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
         ),
       )
       .orderBy(asc(agents.slug));

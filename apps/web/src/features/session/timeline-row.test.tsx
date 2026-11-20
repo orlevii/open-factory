@@ -15,7 +15,7 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 /** Renders the rows the events produce; returns each top-level row's text. */
-function lines(events: AnyEvent[]) {
+function lines(events: AnyEvent[], spawned = false) {
   const rows = buildRows(events.map((e) => se(e, null)));
   const { container } = render(
     <div>
@@ -23,6 +23,7 @@ function lines(events: AnyEvent[]) {
         <div key={row.key} data-row>
           <TimelineRow
             slug="dev"
+            spawned={spawned}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -147,6 +148,18 @@ test("timeline: a runtime error has no fix link (the strip explains it)", () => 
   expect((els[0] as HTMLElement).querySelector("a")).toBeNull();
 });
 
+test("timeline: a spawned agent's error never links to the edit page (it can't be edited)", () => {
+  const err = (fix: "edit_agent" | "resync"): AnyEvent => ({
+    type: "error",
+    source: "spawn",
+    message: `failed (${fix})`,
+    fix,
+  });
+  const { els } = lines([err("edit_agent"), err("resync")], true);
+  expect(els).toHaveLength(2);
+  for (const el of els) expect(el.querySelector("a")).toBeNull();
+});
+
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {
   const { texts, els } = lines([{ type: "mcp_unavailable", status: "failed" }]);
   expect(texts).toEqual([
@@ -157,4 +170,64 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
   expect(el.querySelector("pre")?.textContent).toBe("failed");
   expect(el.querySelector("svg")).not.toBeNull();
   expect(el.querySelector("svg")).not.toHaveClass("text-destructive");
+});
+
+test("timeline: spawned-agent lifecycle lines without an agent link (human and TTL `by`)", () => {
+  const { texts, els } = lines([
+    { type: "process_started", resumed: false, reason: "spawned" },
+    { type: "terminated", by: "@or" },
+    { type: "terminated", by: "@factory" },
+    {
+      type: "background_work_lost",
+      reason: "terminated",
+      tasks: [{ taskId: "t1", description: "pnpm test" }],
+      crons: [],
+    },
+    {
+      type: "message_in",
+      messages: [
+        {
+          id: "p1",
+          from: "@factory",
+          kind: "peer_left",
+          urgent: false,
+          about: "tech-lead-ab12",
+          body: "IGNORED",
+          subject: {
+            slug: "tech-lead-ab12",
+            displayName: "Tech Lead · ab12",
+            relation: "peer",
+            left: { reason: "terminated", by: "@or" },
+          },
+        },
+        {
+          id: "p2",
+          from: "@factory",
+          kind: "peer_left",
+          urgent: false,
+          about: "dev-cd34",
+          body: "IGNORED",
+          subject: {
+            slug: "dev-cd34",
+            displayName: "Dev · cd34",
+            relation: "peer",
+            left: { reason: "terminated", by: "@factory" },
+          },
+        },
+      ],
+    },
+  ]);
+  expect(texts).toEqual([
+    "Terminated by @or",
+    "Terminated after 3 days without activity",
+    "Lost when it was terminated: pnpm test (background)",
+    "@tech-lead-ab12 · Tech Lead · ab12 left: terminated by @or",
+    "@dev-cd34 · Dev · cd34 left: terminated after 3 days without activity",
+  ]);
+  expect(within(els[0] as HTMLElement).getByText("@or")).toHaveClass("font-mono");
+  expect(within(els[3] as HTMLElement).getByText("@or")).toHaveClass("font-mono");
+  // The CircleX icon marks every "Terminated" line.
+  expect(els[0]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
+  expect(els[1]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
+  expect(texts.join()).not.toContain("@factory");
 });

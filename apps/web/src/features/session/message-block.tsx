@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Clock, Factory } from "lucide-react";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
-import { agentsQueryOptions } from "./api";
+import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
@@ -18,13 +18,45 @@ export function useAgentNames(): Map<string, string> | undefined {
   return useQuery({ ...agentsQueryOptions, select: toNames }).data;
 }
 
-/** An agent slug in mono, as a link to its session. An archived or unknown agent (once the list has
- *  loaded) is the plain slug, with no link and no display name. `name` adds " · Display name". */
-export function AgentLink({ slug, name = false }: { slug: string; name?: boolean }) {
+/** Slug -> an ended agent's display name, or null when it was archived (it stays unlinked). */
+const toEnded = (agents: { slug: string; displayName: string; terminatedAt?: string }[]) =>
+  new Map(agents.map((a) => [a.slug, a.terminatedAt ? a.displayName : null]));
+
+/**
+ * How to show a slug (S7 UI design §4.4): from the active list, else from the ended list (fetched
+ * only when a slug isn't active). A terminated agent keeps its link and name (its read-only session
+ * is worth opening); an archived or unknown one is the plain slug. A slug in neither list while
+ * older ended agents exist beyond the newest 200 may be an old terminated one: it keeps the link
+ * (the session route resolves any slug), without a name. `link` until the lists have loaded.
+ */
+const ENDED_LOOKUP_STALE_MS = 30_000;
+function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
   const names = useAgentNames();
-  const display = names?.get(slug);
-  if (names && display === undefined)
-    return <span className="font-mono text-foreground">@{slug}</span>;
+  const active = names?.get(slug);
+  const needEnded = names !== undefined && active === undefined;
+  // Many links share this lookup as a timeline fills: one fetch serves them for a while, and a
+  // terminated frame invalidates it anyway (useAgentStatusFrames).
+  const ended = useQuery({
+    ...agentsListQueryOptions("only"),
+    select: toEnded,
+    enabled: needEnded,
+    staleTime: ENDED_LOOKUP_STALE_MS,
+    refetchOnWindowFocus: false,
+  });
+  const { data: more } = useQuery(endedMoreQueryOptions);
+  if (!needEnded) return { link: true, display: active };
+  // A failed lookup falls back to S6's plain slug for anything not active.
+  if (!ended.data) return { link: !ended.isError };
+  const display = ended.data.get(slug);
+  if (display) return { link: true, display };
+  return { link: display === undefined && more === true };
+}
+
+/** An agent slug in mono, as a link to its session (resolved by `useAgentLinkTarget`). `name` adds
+ *  " · Display name" when it is known. */
+export function AgentLink({ slug, name = false }: { slug: string; name?: boolean }) {
+  const { link, display } = useAgentLinkTarget(slug);
+  if (!link) return <span className="font-mono text-foreground">@{slug}</span>;
   return (
     <>
       <Link

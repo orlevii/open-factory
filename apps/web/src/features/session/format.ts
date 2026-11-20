@@ -43,3 +43,23 @@ export function formatInboxTime(at: Date, now: Date): string {
     ? `${date} ${hhmm}`
     : `${date} ${at.getFullYear()} ${hhmm}`;
 }
+
+/** A local calendar day for a row note (S7 UI design §3): `19 Nov`, or `31 Dec 2025` in another year.
+ *  Past or future alike: the note names the day, never the time. */
+export function formatDay(at: Date, now: Date): string {
+  const date = `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+  return at.getFullYear() === now.getFullYear() ? date : `${date} ${at.getFullYear()}`;
+}
+
+/** A moment in a sentence (S7 UI design §1), local time with the preposition its output needs:
+ *  "today at 14:32", "yesterday at 14:32", "on 19 Nov at 14:32", "on Sun at 14:32". Past moments
+ *  use `formatInboxTime`, future ones `formatResetTime`. */
+export function atPhrase(at: Date, now: Date): string {
+  const text = at.getTime() <= now.getTime() ? formatInboxTime(at, now) : formatResetTime(at, now);
+  const i = text.lastIndexOf(" ");
+  const day = i < 0 ? "" : text.slice(0, i);
+  const time = text.slice(i + 1);
+  if (day === "") return `today at ${time}`;
+  if (day === "Yesterday") return `yesterday at ${time}`;
+  return `on ${day} at ${time}`;
+}

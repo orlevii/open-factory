@@ -1,5 +1,5 @@
 import type { AgentRow } from "@open-factory/db";
-import type { RuntimeLog } from "../agents/agent-runtime.ts";
+import { type RuntimeLog, stopFailedMessage } from "../agents/agent-runtime.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import { notices } from "../agents/notices.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
@@ -20,10 +20,13 @@ export interface ReconcileDeps {
     | "pausedCredentials"
     | "bootWakes"
     | "agentsWithYoungUpdates"
+    | "setErrored"
+    | "rejectPendingToTerminated"
+    | "terminatedWithoutEvent"
   >;
   journal: Pick<ProcessJournal, "reap">;
   /** Absent when the factory has no Docker runtime; step 2 is then skipped. */
-  containers?: Pick<ContainerManager, "listOurs" | "stopListed">;
+  containers?: Pick<ContainerManager, "listOurs" | "stopListed" | "removeListed">;
   supervisor: Pick<Supervisor, "pause">;
   runtimes: Pick<AgentRuntimes, "bySlug" | "load">;
   /** A member update younger than this is not yet deliverable (spec §8). */
@@ -46,7 +49,8 @@ const hasProcess = (j: AgentRow["runtimeJournal"]) =>
  * Boot reconciliation (spec §5.7), in `buildApp` after the migrations and before the server listens, before any runtime
  * is constructed. Nothing from the previous run is left running, interrupted work gets its notice, and the wake queue
  * is rebuilt from the database. Never two processes for one session: every leftover is reaped or stopped before any
- * wake is requested.
+ * wake is requested. A terminated agent (S7 §12) gets steps 1 and 2 only (its leftovers reaped and removed, silently)
+ * and its missing `terminated` event; it is never noticed, forwarded, errored or woken.
  */
 export async function reconcile(d: ReconcileDeps): Promise<void> {
   const rows = await d.store.listAgents();
@@ -75,12 +79,24 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   );
 
   // 2. Docker leftovers: our agents' running containers are stopped (a Claude whose exec lost its client keeps
-  // draining background work inside); containers of agents this database doesn't know are left alone.
-  const stopped = rows.length ? await stopLeftoverContainers(d, rows) : new Set<string>();
+  // draining background work inside), a terminated agent's are removed, running or stopped; containers of agents this
+  // database doesn't know are left alone.
+  const { stopped, listed } = rows.length
+    ? await stopLeftoverContainers(d, rows)
+    : { stopped: new Set<string>(), listed: true };
 
   // 3. Dangling state: open turns closed, then per affected agent `reconciled` and the lost work its journal recorded.
   const dangling = new Set(await d.store.closeDanglingTurns());
+  // S7 §8 crash safety: a termination committed just before the server died has no `terminated` event yet. No runtime
+  // exists at boot, so this direct append is the agent's only writer; the sweep's `ensureTerminatedEvent` then finds it.
+  for (const a of await d.store.terminatedWithoutEvent()) {
+    await d.store.append(a.id, null, { type: "terminated", by: a.terminatedBy ?? "@factory" });
+    // Its stop never ran, so a container may be left. Docker couldn't be listed: `stop_failed` keeps it a stuck
+    // candidate and its workspace undeleted until a sweep has listed the containers and removed any (§10.3).
+    if (!listed && d.containers && a.runtime === "docker") await markStopFailed(d, a);
+  }
   for (const a of rows) {
+    if (a.terminatedAt) continue;
     const j = a.runtimeJournal;
     const lost = { tasks: j?.tasks ?? [], crons: j?.crons ?? [] };
     const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
@@ -120,7 +136,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
 
   // 5. Interrupted work (R2): the factory-restarted notice, so the wake below resumes it (its single attempt).
   for (const a of rows) {
-    if (a.archivedAt || a.status === "errored" || cutShort.has(a.id)) continue;
+    if (a.archivedAt || a.terminatedAt || a.status === "errored" || cutShort.has(a.id)) continue;
     const tasks = a.runtimeJournal?.tasks ?? [];
     if (!dangling.has(a.id) && !tasks.length) continue;
     await d.store.createNotice({
@@ -133,6 +149,8 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   // 7, ahead of 6: every journal was read and acted on. Cleared before any wake, so a process started below never
   // has its own fresh journal wiped.
   await d.store.clearRuntimeJournals([...reapFailed]);
+  // S7 §8: a row that raced in during the crash window, after the termination rejected the rest, is rejected too.
+  await d.store.rejectPendingToTerminated();
 
   // 6. Reset timers first (a wake on a paused credential must wait, not start a process that can't write its first
   // line); a window that already passed resets at once, creating the owed continue notices.
@@ -167,7 +185,7 @@ async function forward(
   fact: "work_lost" | "errored",
   detail: Parameters<typeof factFor>[2],
 ): Promise<void> {
-  if (a.archivedAt) return;
+  if (a.archivedAt || a.terminatedAt) return;
   try {
     await d.forward({ agentId: a.id, fact, body: factFor(fact, a.slug, detail) });
   } catch (err) {
@@ -177,12 +195,28 @@ async function forward(
 }
 
 /**
- * Step 2. Unreachable Docker is a warn (an info when no agent uses Docker) and the step is skipped: every Docker start
- * stops a running container before it prepares anyway (spec §10), so a missed leftover never runs beside a new process.
+ * S7 §8 step 5: a terminated agent whose leftovers boot couldn't clear; the sweep retries (§10.3). A failure to record
+ * it is logged.
  */
-async function stopLeftoverContainers(d: ReconcileDeps, rows: AgentRow[]): Promise<Set<string>> {
+async function markStopFailed(d: ReconcileDeps, a: { id: string; slug: string }): Promise<void> {
+  await d.store
+    .setErrored(a.id, stopFailedMessage(undefined), "stop_failed")
+    .catch((err: unknown) => d.log.error({ err, agent: a.slug }, "recording stop_failed failed"));
+}
+
+/**
+ * Step 2. A terminated agent's containers are removed, running or stopped (S7 §12); a failed removal makes it
+ * `stop_failed`, so the sweep's stuck pass retries it (§10.3). Unreachable Docker is a warn (an info when no agent
+ * uses Docker) and the step is skipped (`listed: false`): every Docker start stops a running container before it
+ * prepares anyway (spec §10), so a missed leftover never runs beside a new process, and the sweep lists the containers
+ * again on each run.
+ */
+async function stopLeftoverContainers(
+  d: ReconcileDeps,
+  rows: AgentRow[],
+): Promise<{ stopped: Set<string>; listed: boolean }> {
   const stopped = new Set<string>();
-  if (!d.containers) return stopped;
+  if (!d.containers) return { stopped, listed: true };
   const containers = d.containers;
   let listed: Awaited<ReturnType<ContainerManager["listOurs"]>>;
   try {
@@ -191,7 +225,7 @@ async function stopLeftoverContainers(d: ReconcileDeps, rows: AgentRow[]): Promi
     const msg = "Docker isn't reachable; leftover containers were not checked";
     if (rows.some((a) => a.runtime === "docker")) d.log.warn({ err }, msg);
     else d.log.info({ err }, msg);
-    return stopped;
+    return { stopped, listed: false };
   }
   const ours = new Map(rows.map((a) => [a.id, a]));
   const foreign = listed.filter((c) => !ours.has(c.agentId)).map((c) => c.id);
@@ -200,9 +234,34 @@ async function stopLeftoverContainers(d: ReconcileDeps, rows: AgentRow[]): Promi
       { containers: foreign },
       "containers of another factory or a deleted agent were left alone",
     );
+  // A terminated agent's containers, grouped by agent: one `stop_failed` per agent whose removal failed.
+  const leftovers = new Map<AgentRow, string[]>();
+  for (const c of listed) {
+    const a = ours.get(c.agentId);
+    if (a?.terminatedAt) leftovers.set(a, [...(leftovers.get(a) ?? []), c.id]);
+  }
+  await Promise.all(
+    [...leftovers].map(async ([a, ids]) => {
+      const failed = await Promise.all(
+        ids.map((id) =>
+          containers.removeListed(id).then(
+            () => false,
+            (err: unknown) => {
+              d.log.error(
+                { err, agent: a.slug, container: id },
+                "removing a terminated agent's leftover container failed; the sweep retries",
+              );
+              return true;
+            },
+          ),
+        ),
+      );
+      if (failed.some(Boolean)) await markStopFailed(d, a);
+    }),
+  );
   await Promise.all(
     listed
-      .filter((c) => c.running && ours.has(c.agentId))
+      .filter((c) => c.running && ours.has(c.agentId) && !ours.get(c.agentId)?.terminatedAt)
       .map(async (c) => {
         const slug = ours.get(c.agentId)?.slug;
         try {
@@ -217,5 +276,5 @@ async function stopLeftoverContainers(d: ReconcileDeps, rows: AgentRow[]): Promi
         }
       }),
   );
-  return stopped;
+  return { stopped, listed: true };
 }

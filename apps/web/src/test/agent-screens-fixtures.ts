@@ -74,8 +74,8 @@ export interface World {
 export function mockWorld(w: World = {}): MockApi {
   const agents = w.agents ?? [];
   const routes: Record<string, Handler> = {
-    "GET /api/agents?archived=exclude": () => json({ agents, running: { count: 0, max: 8 } }),
-    "GET /api/agents?archived=only": () =>
+    "GET /api/agents?ended=exclude": () => json({ agents, running: { count: 0, max: 8 } }),
+    "GET /api/agents?ended=only": () =>
       json({ agents: w.archived ?? [], running: { count: 0, max: 8 } }),
     "GET /api/credentials": () => json({ credentials: w.credentials ?? [credential()] }),
     "GET /api/templates": () =>

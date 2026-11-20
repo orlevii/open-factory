@@ -1,6 +1,6 @@
 import { ApiError } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { AgentActions } from "@/features/agents/agent-actions";
@@ -41,7 +41,25 @@ function EditAgent() {
             Couldn't load this agent.
           </p>
         )}
-        {agent && (
+        {agent?.kind === "ephemeral" && (
+          // The server refuses every edit to a spawned agent (`409 ephemeral_agent`, decision Q5):
+          // say so instead of a form whose save can't succeed.
+          <div className="grid gap-2 text-sm">
+            <p className="text-muted-foreground">
+              Spawned agents can't be edited; terminate it instead.
+            </p>
+            <p>
+              <Link
+                to="/agents/$slug"
+                params={{ slug }}
+                className="underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
+              >
+                Open <span className="font-mono">@{slug}</span>'s session
+              </Link>
+            </p>
+          </div>
+        )}
+        {agent && agent.kind !== "ephemeral" && (
           <div className="grid gap-6">
             {agent.archivedAt && (
               <p className="text-sm text-muted-foreground">This agent is archived.</p>

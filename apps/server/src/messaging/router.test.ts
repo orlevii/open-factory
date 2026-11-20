@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
@@ -538,4 +541,160 @@ test("errored_reported clears with the error, so the next episode is reported", 
   expect((await h.sql`select errored_reported from agents where id = ${lead.id}`)[0]).toEqual({
     errored_reported: false,
   });
+});
+
+test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
+  const ada = await h.app.store.agentBySlug("ada");
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'bob'`;
+  const toGone = await h.app.router.send({ agentId: ada?.id ?? "" }, "bob", "x", false);
+  expect(toGone).toEqual({
+    ok: false,
+    code: "terminated",
+    message: "@bob was terminated and can't receive messages.",
+  });
+  await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where slug = 'bob'`;
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'ada'`;
+  const fromEnded = await h.app.router.send({ agentId: ada?.id ?? "" }, "bob", "x", false);
+  expect(fromEnded).toEqual({
+    ok: false,
+    code: "ended",
+    message: "You can't send messages: you were terminated.",
+  });
+  expect(await pendingOf("bob")).toEqual([]);
+  expect(await h.sql`select id from inbox_items`).toEqual([]);
+  const toHumans = await h.app.router.send({ agentId: ada?.id ?? "" }, "@humans", "x", false);
+  expect(toHumans).toMatchObject({ ok: false, code: "ended" });
+});
+
+/** A spawned child of `lead` inserted inside `tx` (it shares lead's credential). */
+async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {}) {
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("no lead");
+  const [row] = await tx
+    .insert(schema.agents)
+    .values({
+      id: randomUUID(),
+      slug,
+      displayName: "Kid",
+      description: "",
+      template: lead.template,
+      config: lead.config,
+      runtime: "local",
+      credentialId: lead.credentialId,
+      kind: "ephemeral",
+      reportsTo: lead.id,
+      ...(o.terminated ? { terminatedAt: new Date(), terminatedBy: "@factory" } : {}),
+    })
+    .returning();
+  if (!row) throw new Error("insert failed");
+  return row;
+}
+const heldRows = () =>
+  h.sql`select a.slug as "to", m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_agent_id
+        where m.kind in ('peer_joined','peer_left') order by a.slug`;
+const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
+
+test("persistPeerEvents runs in the caller's transaction: it sees a child inserted there, and its rows roll back with it", async () => {
+  const rollback = new Error("rollback");
+  let seen: { to: string | null; kind: string; notice: string | null; body: string }[] = [];
+  await expect(
+    h.db.transaction(async (tx) => {
+      const kid = await insertKid(tx, "kid-ab12");
+      const rows = await h.app.router.persistPeerEvents(
+        tx,
+        kid.id,
+        { kind: "spawned" },
+        { managerId: null, peerIds: [] },
+      );
+      seen = rows.map((r) => ({ to: r.toAgentId, kind: r.kind, notice: r.notice, body: r.body }));
+      throw rollback;
+    }),
+  ).rejects.toBe(rollback);
+  const [ada, bob, lead] = [await idOf("ada"), await idOf("bob"), await idOf("lead")];
+  expect(seen).toEqual([
+    { to: ada, kind: "peer_joined", notice: "peer", body: "@kid-ab12 (Kid) joined as your peer." },
+    { to: bob, kind: "peer_joined", notice: "peer", body: "@kid-ab12 (Kid) joined as your peer." },
+    {
+      to: lead,
+      kind: "peer_joined",
+      notice: "report",
+      body: "@kid-ab12 (Kid) joined as your report.",
+    },
+  ]);
+  expect(await heldRows()).toEqual([]);
+  expect(await h.app.store.agentBySlug("kid-ab12")).toBeUndefined();
+});
+
+test("persistPeerEvents: excludeManager skips the spawner; the rows commit with the caller and are handed off after", async () => {
+  const deliverHeld = vi.spyOn(h.app.runtimes, "deliverHeld");
+  const rows = await h.db.transaction(async (tx) => {
+    const kid = await insertKid(tx, "kid-ab12");
+    return h.app.router.persistPeerEvents(
+      tx,
+      kid.id,
+      { kind: "spawned" },
+      { managerId: null, peerIds: [] },
+      { excludeManager: true },
+    );
+  });
+  expect(deliverHeld).not.toHaveBeenCalled();
+  expect((await heldRows()).map((r) => r.to)).toEqual(["ada", "bob"]);
+  h.app.router.handOffHeldRows(rows);
+  await vi.waitFor(() => expect(deliverHeld).toHaveBeenCalledTimes(2));
+});
+
+test("persistPeerEvents: archived and terminated recipients get nothing; the terminated body names who", async () => {
+  await h.db.transaction((tx) => insertKid(tx, "gone-ab12", { terminated: true }));
+  await h.sql`update agents set archived_at = now() where slug = 'bob'`;
+  const [ada, bob, gone, lead] = [
+    await idOf("ada"),
+    await idOf("bob"),
+    await idOf("gone-ab12"),
+    await idOf("lead"),
+  ];
+  await h.db.transaction((tx) =>
+    h.app.router.persistPeerEvents(
+      tx,
+      ada,
+      { kind: "left", reason: "terminated", by: "@or" },
+      { managerId: lead, peerIds: [bob, gone] },
+    ),
+  );
+  expect(await heldRows()).toEqual([
+    {
+      to: "lead",
+      kind: "peer_left",
+      notice: "report",
+      body: "@ada (Test agent) left: terminated by @or.",
+    },
+  ]);
+});
+
+test("Router.snapshot is S6's snapshot, read in the given transaction or the db", async () => {
+  const [ada, bob, lead] = [await idOf("ada"), await idOf("bob"), await idOf("lead")];
+  expect(await h.app.router.snapshot(h.db, ada)).toEqual({ managerId: lead, peerIds: [bob] });
+  expect(await h.app.router.snapshot(h.db, lead)).toEqual({ managerId: null, peerIds: [] });
+  const inTx = await h.db.transaction(async (tx) => {
+    const kid = await insertKid(tx, "kid-ab12");
+    return { snap: await h.app.router.snapshot(tx, ada), kid: kid.id };
+  });
+  expect(inTx.snap.managerId).toBe(lead);
+  expect([...inTx.snap.peerIds].sort()).toEqual([bob, inTx.kid].sort());
+});
+
+test("deliver with a reason wakes with it: a spawned agent's first wake records process_started.reason spawned", async () => {
+  const [ada, bob] = [await idOf("ada"), await idOf("bob")];
+  const row = await h.app.store.createMessage({
+    from: { agentId: ada },
+    toAgentId: bob,
+    body: "your brief",
+    urgent: false,
+  });
+  await h.app.runtimes.deliver(row, "agent", "spawned");
+  await settle("bob");
+  const started = (await h.app.store.after(bob, 0, 100)).map((e) => e.event);
+  expect(started).toContainEqual(
+    expect.objectContaining({ type: "process_started", reason: "spawned" }),
+  );
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "ada", body: "your brief" });
 });

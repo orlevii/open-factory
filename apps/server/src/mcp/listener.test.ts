@@ -33,7 +33,7 @@ async function start(over: Partial<Parameters<typeof startAgentListener>[0]> = {
     allowedSources: ["127.0.0.0/8", "::1/128"],
     version: "9.9.9",
     tokens,
-    isArchived: async () => false,
+    isEnded: async () => false,
     mcp: async (_r, id) => {
       seen.push(id);
       return new Response("{}", { status: 200 });
@@ -96,8 +96,8 @@ test("Origin → 403, GET/DELETE /mcp → 405, status has no DB and no auth", as
   ).toBe(405);
   expect(await (await fetch(`${url}/api/status`)).json()).toEqual({ version: "9.9.9" });
 });
-test("an archived agent's token is refused", async () => {
-  const { url, tokens } = await start({ isArchived: async () => true });
+test("an ended (archived or terminated) agent's token is refused", async () => {
+  const { url, tokens } = await start({ isEnded: async () => true });
   const { token } = tokens.mint("ag1");
   expect(
     (
@@ -259,7 +259,7 @@ test("close() resolves while an SSE stream is open, and the stream is cancelled"
     allowedSources: ["127.0.0.0/8"],
     version: "9.9.9",
     tokens,
-    isArchived: async () => false,
+    isEnded: async () => false,
     mcp: h.mcp,
     log,
   });
@@ -321,7 +321,7 @@ test("an optional host that is not a local address warns once; the listener stay
     allowedSources: ["127.0.0.0/8"],
     version: "9.9.9",
     tokens: new AgentTokens(),
-    isArchived: async () => false,
+    isEnded: async () => false,
     mcp: async () => new Response("{}"),
     log: capture,
   });
@@ -338,7 +338,7 @@ test("a required host that can't be bound fails the start", async () => {
       allowedSources: ["127.0.0.0/8"],
       version: "9.9.9",
       tokens: new AgentTokens(),
-      isArchived: async () => false,
+      isEnded: async () => false,
       mcp: async () => new Response("{}"),
       log,
     }),

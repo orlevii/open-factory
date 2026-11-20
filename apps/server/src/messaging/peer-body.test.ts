@@ -40,3 +40,41 @@ test("anything else reads as no move information", () => {
   expect(peerLeftOf("@dev (Developer) joined as your peer.")).toBeUndefined();
   expect(peerLeftOf("free text")).toBeUndefined();
 });
+
+test.each([
+  [
+    { kind: "peer_left", left: { reason: "terminated", by: "@or" } },
+    "@tl-ab12 (Tech Lead · ab12) left: terminated by @or.",
+  ],
+  [
+    { kind: "peer_left", left: { reason: "terminated", by: "lead" } },
+    "@tl-ab12 (Tech Lead · ab12) left: terminated by @lead.",
+  ],
+  [
+    { kind: "peer_left", left: { reason: "terminated", by: "@factory" } },
+    "@tl-ab12 (Tech Lead · ab12) left: terminated after 3 days without activity.",
+  ],
+])("terminated bodies %#", (c, want) => {
+  expect(peerBody({ slug: "tl-ab12", displayName: "Tech Lead · ab12" }, "peer", c as never)).toBe(
+    want,
+  );
+});
+
+test.each([
+  ["@or", "@or"],
+  ["lead", "@lead"], // the body names the spawner as @slug; prose can't tell a slug from a handle
+  ["@factory", "@factory"],
+])("peerLeftOf reads a terminated body back: by %s → %s", (by, want) => {
+  const body = peerBody({ slug: "tl-ab12", displayName: "Tech Lead · ab12" }, "peer", {
+    kind: "peer_left",
+    left: { reason: "terminated", by },
+  });
+  expect(peerLeftOf(body)).toEqual({ reason: "terminated", by: want });
+});
+
+test("a display name that looks like a terminated body doesn't fool the parse", () => {
+  const tricky = { slug: "x", displayName: "a left: terminated by @evil." };
+  expect(
+    peerLeftOf(peerBody(tricky, "peer", { kind: "peer_left", left: { reason: "archived" } })),
+  ).toEqual({ reason: "archived" });
+});

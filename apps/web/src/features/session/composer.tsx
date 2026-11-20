@@ -30,15 +30,78 @@ export function focusComposer() {
   document.querySelector<HTMLTextAreaElement>("#composer textarea")?.focus();
 }
 
+/** After a termination (S7 UI design §5.2, §5.3): Pin workspace when asked for and there is a
+ *  workspace to pin, else the read-only line. */
+export function focusReadOnly(preferPin: boolean) {
+  const pin = preferPin ? document.querySelector<HTMLElement>("[data-pin-toggle]") : null;
+  (pin ?? document.querySelector<HTMLElement>("[data-readonly-line]"))?.focus();
+}
+
+export const terminatedNotSent = (slug: string) => `@${slug} was terminated, so this wasn't sent.`;
+
+/**
+ * A terminated agent's composer (S7 UI design §5.3): one muted, focusable line. An unsent draft can
+ * be copied out (then it is cleared); `notice` is a send that raced the termination.
+ */
+export function TerminatedComposer({ slug, notice }: { slug: string; notice?: string }) {
+  const [draft, setDraft] = useState(() => (readDraft(slug).trim() ? readDraft(slug) : ""));
+  const [copyFailed, setCopyFailed] = useState(false);
+  const lineRef = useRef<HTMLParagraphElement>(null);
+  async function copy() {
+    setCopyFailed(false);
+    try {
+      const write = navigator.clipboard?.writeText(draft);
+      if (!write) throw new Error("no clipboard");
+      await write;
+      writeDraft(slug, "");
+      setDraft("");
+      lineRef.current?.focus(); // the button is gone
+    } catch {
+      setCopyFailed(true);
+    }
+  }
+  return (
+    <div id="composer" className="shrink-0 border-t border-border px-4 py-3 md:px-6">
+      <div className="flex max-w-[52rem] flex-wrap items-center gap-x-3 gap-y-1">
+        <p
+          ref={lineRef}
+          data-readonly-line
+          tabIndex={-1}
+          className="text-sm text-muted-foreground outline-none"
+        >
+          This agent was terminated. Its session is read-only.
+        </p>
+        {draft && (
+          <Button type="button" variant="ghost" size="sm" onClick={() => void copy()}>
+            Copy unsent message
+          </Button>
+        )}
+      </div>
+      {(notice || copyFailed) && (
+        <p
+          role="alert"
+          className="mt-2 flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
+        >
+          <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+          {copyFailed ? "Couldn't copy the message." : notice}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function Composer({
   slug,
   agent,
   onQueued,
+  onTerminated,
 }: {
   slug: string;
   agent: AgentSummary;
   /** Called with the 202 queue item (the session inserts it locally while disconnected). */
   onQueued?: (item: QueueItem) => void;
+  /** A send that raced a termination (`409 agent_terminated`), with the sentence that says so. */
+  onTerminated?: (notice: string) => void;
 }) {
   const [text, setText] = useState(() => readDraft(slug));
   const [urgent, setUrgent] = useState(false);
@@ -73,7 +136,11 @@ export function Composer({
     } catch (e) {
       // 503: queued server-side; the queued row shows "Not delivered yet: <reason>".
       if (e instanceof ApiError && e.code === "agent_start_failed") accepted();
-      else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      else if (e instanceof ApiError && e.code === "agent_terminated") {
+        // The draft stays: the read-only line that replaces the composer offers to copy it.
+        setError(terminatedNotSent(slug));
+        onTerminated?.(terminatedNotSent(slug));
+      } else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
     } finally {
       setSending(false);
       boxRef.current?.focus(); // focus stays in the composer after sending (UI §7)

@@ -28,6 +28,14 @@ test.each([
   expect(container.querySelector(".of-tooth")).toBeNull();
 });
 
+test("terminated renders its label in the empty 12px slot: no dot, no tooth (an end state)", () => {
+  const { container } = render(<StatusBadge status="terminated" size="long" />);
+  expect(screen.getByText("Terminated")).toBeInTheDocument();
+  expect(container.querySelector("[data-status-dot]")).toBeNull();
+  expect(container.querySelector(".of-tooth")).toBeNull();
+  expect(container.querySelector('[aria-hidden="true"]')).toHaveClass("size-3");
+});
+
 test.each([
   [true, "Rate-limited until 14:30"],
   [false, "Rate-limited, retrying at 14:30"],
@@ -63,6 +71,9 @@ describe("announcements", () => {
     expect(statusAnnouncement("Team Lead", "idle")).toBe("Team Lead is idle");
     expect(statusAnnouncement("Team Lead", "errored")).toBe("Team Lead is errored");
     expect(statusAnnouncement("Team Lead", "hibernated")).toBe("Team Lead is hibernated");
+    expect(statusAnnouncement("Tech Lead · ab12", "terminated")).toBe(
+      "Tech Lead · ab12 was terminated",
+    );
     expect(statusAnnouncement("Team Lead", "rate_limited", reset(true))).toBe(
       "Team Lead is rate-limited until 14:30",
     );

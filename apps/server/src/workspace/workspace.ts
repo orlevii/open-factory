@@ -69,6 +69,8 @@ export interface PrepareInput {
   spawner: { slug: string } | null;
   /** Set for an agent that holds the spawn tools (S7 §11.3). */
   spawning: { maxLive: number; perHour: number } | null;
+  /** Set for a persistent agent (S9 §10.5); absent means none. */
+  scheduling?: { zone: string; maxSchedules: number; minGapMinutes: number } | null;
   /** A spawned agent's deny rules inherited from its spawner at this start (S7 §6.3). */
   inheritedDeny?: DenyRules;
   /** The secrets this start actually passes (a spawned agent's are intersected with its spawner's). */
@@ -78,7 +80,15 @@ export interface PrepareInput {
 /** What `materialize` checks: the prepare input minus what only a start knows. */
 export type MaterializeCheck = Omit<
   PrepareInput,
-  "mcpUrl" | "peers" | "reports" | "kind" | "spawner" | "spawning" | "inheritedDeny" | "secretNames"
+  | "mcpUrl"
+  | "peers"
+  | "reports"
+  | "kind"
+  | "spawner"
+  | "spawning"
+  | "scheduling"
+  | "inheritedDeny"
+  | "secretNames"
 >;
 
 export interface TemplateSource {
@@ -331,6 +341,7 @@ export class Workspace {
         kind: i.kind,
         spawner: i.spawner,
         spawning: i.spawning,
+        scheduling: i.scheduling ?? null,
       }),
     );
     // Spec §11.4: mounts come only from factory-owned inputs (`tpl` is the copy under state/).

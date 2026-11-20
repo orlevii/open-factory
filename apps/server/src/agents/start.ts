@@ -8,6 +8,7 @@ import { type Vault, VaultError } from "../crypto/vault.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
+import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
 import { type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -276,6 +277,14 @@ export function createPrepareStart(d: {
           spawning: maySpawn(agent)
             ? { maxLive: config.maxLiveSpawns, perHour: d.config.maxSpawnsPerHour }
             : null,
+          // S9 §10.5: only persistent agents hold the schedule tools.
+          scheduling: spawned
+            ? null
+            : {
+                zone: d.config.factoryTimezone,
+                maxSchedules: MAX_AGENT_SCHEDULES,
+                minGapMinutes: MIN_AGENT_GAP_MINUTES,
+              },
           secretNames,
           ...(spawned ? { inheritedDeny: spawned.inherited.deny } : {}),
           mcpUrl:

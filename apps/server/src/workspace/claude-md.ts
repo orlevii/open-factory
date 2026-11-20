@@ -61,6 +61,11 @@ export interface ClaudeMdInput {
   spawner: { slug: string } | null;
   /** Set only for an agent that holds the spawn tools (S7 §11.3); N and M come from config. */
   spawning: { maxLive: number; perHour: number } | null;
+  /**
+   * S9 §10.5: set for a persistent agent (it holds the schedule tools); the zone (`FACTORY_TIMEZONE`) and the limits
+   * come from config and constants, so the file stays deterministic. A spawned agent has none.
+   */
+  scheduling: { zone: string; maxSchedules: number; minGapMinutes: number } | null;
 }
 
 function orgSection(i: ClaudeMdInput): string[] {
@@ -117,6 +122,20 @@ function messagingSection(i: ClaudeMdInput): string[] {
   ];
 }
 
+function schedulingSection(s: ClaudeMdInput["scheduling"]): string[] {
+  return [
+    "## Scheduling",
+    "- For a short loop inside this session (checking a build every few minutes), use `CronCreate` (or `/loop`); it keeps you awake while it runs and stops when your process stops (a restart or a human can stop it). Never pass `durable: true`.",
+    ...(s
+      ? [
+          `- For anything that must survive restarts or happen later (a daily review, a reminder next week), use \`mcp__factory__schedule_message\` with a 5-field \`cron\` or an \`at\` time; it wakes the target. Schedules use ${s.zone} unless you pass \`timezone\`.`,
+          `- Your schedules can't fire more often than every ${s.minGapMinutes} minutes, and you can have at most ${s.maxSchedules}; \`list_schedules\` and \`cancel_schedule\` manage them. Cancel schedules you no longer need: each run costs a turn.`,
+        ]
+      : []),
+    "",
+  ];
+}
+
 function tasksSection(): string[] {
   return [
     "## Tasks",
@@ -154,13 +173,14 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     "",
     ...(spawner ? lifecycleSection(spawner.slug) : []),
     "## How messages reach you",
-    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is an agent\'s slug, a human\'s `@handle`, or `@factory`. An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment` and `task_update`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes).',
+    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is an agent\'s slug, a human\'s `@handle`, or `@factory`. An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes). `@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (the factory was down).',
     "",
     "Your whole session is visible to the humans who run this factory, so work in the open: say what you are doing and why.",
     "",
     ...orgSection(i),
     ...messagingSection(i),
     ...tasksSection(),
+    ...schedulingSection(i.scheduling),
     ...(i.spawning && !spawner ? spawningSection(i.spawning) : []),
     "## Your workspace",
     `- Your working directory is ${i.workdir}. It is yours; files you create there persist. Keep notes you want to carry forward in AGENTS.md: a CLAUDE.md you create in the working directory is not loaded.`,

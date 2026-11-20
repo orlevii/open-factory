@@ -40,6 +40,8 @@ export type SessionAction =
   | { type: "frame"; message: ServerMessage }
   /** A 202 queue item inserted locally while the socket is down; the next `queue` frame replaces it. */
   | { type: "queued"; item: QueueItem }
+  /** A fresh summary from a response or a refetch (S7: terminate, pin, the termination fields). */
+  | { type: "agent"; agent: AgentSummary }
   | { type: "reset" };
 
 const withEvents = (map: Map<number, SessionEvent>, evs: SessionEvent[]) => {
@@ -72,6 +74,8 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     case "queued":
       if (s.queue.some((q) => q.id === a.item.id)) return s;
       return { ...s, queue: [...s.queue, a.item] };
+    case "agent":
+      return s.agent && a.agent.slug === s.slug ? { ...s, agent: a.agent } : s;
     case "frame": {
       const m = a.message;
       if (!("agent" in m) || m.agent !== s.slug) return s;

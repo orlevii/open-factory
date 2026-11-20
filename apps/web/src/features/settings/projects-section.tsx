@@ -1,4 +1,4 @@
-import { ApiError, nameSchema, type ProjectSummary } from "@open-factory/shared";
+import { type AgentSummary, ApiError, nameSchema, type ProjectSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { agentsQueryOptions } from "@/features/session/api";
 import {
   createProject,
   deleteProject,
@@ -37,6 +38,15 @@ type Outcome = {
   undo?: () => void;
 };
 
+const NO_SPAWNERS = new Map<string, string>();
+/** Spawned agent -> the agent that spawned it, from the active list. */
+const toSpawners = (agents: AgentSummary[]) =>
+  new Map(
+    agents.flatMap((a) =>
+      a.kind === "ephemeral" && a.reportsTo ? [[a.slug, a.reportsTo]] : [],
+    ) as [string, string][],
+  );
+
 const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
 const checkPath = (p: string) =>
   p.trim() === ""
@@ -45,9 +55,15 @@ const checkPath = (p: string) =>
       ? undefined
       : "Enter an absolute path.";
 
-function removeBlocker(p: ProjectSummary): string | undefined {
+/** Why Remove is disabled. A live spawned grantee is named through its spawner (S7 UI design §7):
+ *  "granted to @tech-lead-ab12, spawned by @lead". `spawners` maps a spawned agent to its spawner. */
+function removeBlocker(p: ProjectSummary, spawners: Map<string, string>): string | undefined {
   const list = (s: string[]) => s.map((x) => `@${x}`).join(", ");
-  if (p.grantedTo.length) return `granted to ${list(p.grantedTo)}`;
+  const grantee = (x: string) => {
+    const by = spawners.get(x);
+    return by ? `@${x}, spawned by @${by}` : `@${x}`;
+  };
+  if (p.grantedTo.length) return `granted to ${p.grantedTo.map(grantee).join(", ")}`;
   if (p.archivedGrantedTo.length) {
     const many = p.archivedGrantedTo.length > 1;
     return `archived ${list(p.archivedGrantedTo)} still ${many ? "hold grants" : "holds a grant"}`;
@@ -254,6 +270,12 @@ function ChangePathForm({
 export function ProjectsSection() {
   const qc = useQueryClient();
   const { data } = useQuery(projectsQueryOptions);
+  // Only needed to name a spawned grantee's spawner; a failed list leaves the plain slugs.
+  const { data: spawners } = useQuery({
+    ...agentsQueryOptions,
+    select: toSpawners,
+    enabled: (data ?? []).some((p) => p.grantedTo.length > 0),
+  });
   const focusLater = useFocusLater();
   const [adding, setAdding] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>();
@@ -352,7 +374,7 @@ export function ProjectsSection() {
         ) : (
           <SettingsList>
             {projects.map((p) => {
-              const blocker = removeBlocker(p);
+              const blocker = removeBlocker(p, spawners ?? NO_SPAWNERS);
               return (
                 <li
                   key={p.name}

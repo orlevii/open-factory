@@ -1,4 +1,10 @@
-import { ApiError, type EventsPage, type QueueItem } from "@open-factory/shared";
+import {
+  type AgentDetail,
+  type AgentSummary,
+  ApiError,
+  type EventsPage,
+  type QueueItem,
+} from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useWs } from "@/lib/ws-context";
@@ -131,6 +137,33 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
 
   const retry = useCallback(() => load(eventSeq), [load, eventSeq]);
 
+  /** A summary from a terminate or pin response: the view and the cached detail both take it. */
+  const setAgent = useCallback(
+    (agent: AgentSummary) => {
+      dispatch({ type: "agent", agent });
+      qc.setQueryData<AgentDetail>(["agent", agent.slug], (d) => (d ? { ...d, agent } : d));
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+    [qc],
+  );
+
+  // A status frame says `terminated` but carries no termination fields (who, when, the workspace):
+  // fetch them once. A failure leaves the strip without its sentence; the next load fills it.
+  /** Refetches the summary only (not the events): after a send raced a termination. */
+  const refreshAgent = useCallback(
+    () =>
+      qc.fetchQuery({ ...agentDetailQueryOptions(slug), staleTime: 0 }).then(
+        (d) => dispatch({ type: "agent", agent: d.agent }),
+        () => {},
+      ),
+    [qc, slug],
+  );
+  const needsTermination =
+    state.agent?.status === "terminated" && state.agent.terminatedAt === undefined;
+  useEffect(() => {
+    if (needsTermination) void refreshAgent();
+  }, [needsTermination, refreshAgent]);
+
   /** While the socket is down no `queue` frame will come, so show the accepted item at once
    *  (UI design §4.4); when connected the frame is authoritative. */
   const onQueued = useCallback((item: QueueItem) => {
@@ -146,6 +179,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     earlierError,
     retry,
     onQueued,
+    setAgent,
+    refreshAgent,
     missingEvent,
     messageSeq,
     messageNotice,

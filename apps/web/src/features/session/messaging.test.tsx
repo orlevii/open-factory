@@ -441,6 +441,34 @@ test("?message= for a rejected message names who it wasn't delivered to", async 
   expect(within(notice).getByText("@b")).toHaveClass("font-mono");
 });
 
+test("?message= for a message rejected by a terminated recipient says it was terminated", async () => {
+  const api = lookupWorld(() =>
+    json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),
+  );
+  api.on("GET /api/agents?ended=only", () =>
+    json({
+      agents: [
+        agentSummary({
+          slug: "b",
+          displayName: "Builder",
+          kind: "ephemeral",
+          status: "terminated",
+          terminatedAt: AT,
+          terminatedBy: "dev",
+        }),
+      ],
+      more: false,
+      running: { count: 1, max: 8 },
+    }),
+  );
+  renderApp("/agents/dev?message=mid", alice);
+  const notice = await screen.findByText(
+    (_, el) =>
+      el?.tagName === "P" && el.textContent === "This message wasn't delivered: @b was terminated.",
+  );
+  expect(within(notice).getByText("@b")).toHaveClass("font-mono");
+});
+
 test("the announcer says '<name> messaged you' for a send to this human or @humans, not to agents", async () => {
   await open([{ type: "assistant_text", text: "history" }], "history");
   const push = (event: AnyEvent) =>

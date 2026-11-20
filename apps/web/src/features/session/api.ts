@@ -1,12 +1,15 @@
 import {
+  type AgentDetail,
+  type AgentSummary,
   agentDetailSchema,
   agentListSchema,
+  agentResponseSchema,
   apiFetch,
   eventsPageSchema,
   messageLookupSchema,
   queueItemResponseSchema,
 } from "@open-factory/shared";
-import { queryOptions, skipToken } from "@tanstack/react-query";
+import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
 
 type Running = { count: number; max: number };
@@ -97,3 +100,25 @@ const postEmpty = (slug: string, action: "restart" | "reset-session") =>
   }).then(() => undefined);
 export const postRestart = (slug: string) => postEmpty(slug, "restart");
 export const postResetSession = (slug: string) => postEmpty(slug, "reset-session");
+
+/** S7: terminate a spawned agent (idempotent: one already terminated comes back as it is). */
+export const postTerminate = (slug: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/terminate`, {
+    method: "POST",
+    body: {},
+    schema: agentResponseSchema,
+  }).then((r) => r.agent);
+
+/** S7: pin (PUT) or unpin (DELETE) a terminated agent's workspace. */
+export const setWorkspacePin = (slug: string, pinned: boolean) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/workspace-pin`, {
+    method: pinned ? "PUT" : "DELETE",
+    schema: agentResponseSchema,
+  }).then((r) => r.agent);
+
+/** Puts a response's summary into the cached detail (keeping its queue and cursor), and refreshes
+ *  the lists, where a terminated agent moves from Active to Ended. */
+export function applyAgentSummary(qc: QueryClient, agent: AgentSummary) {
+  qc.setQueryData<AgentDetail>(["agent", agent.slug], (d) => (d ? { ...d, agent } : d));
+  void qc.invalidateQueries({ queryKey: ["agents"] });
+}

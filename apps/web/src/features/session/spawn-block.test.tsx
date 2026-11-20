@@ -84,7 +84,10 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   await open([{ type: "turn_started" }, spawn(), result(ok())], "Writes the S8 spec");
   const block = screen.getByRole("article", { name: "@lead spawned @tech-lead-ab12" });
   const sender = block.firstElementChild as HTMLElement;
-  expect(senderOf(block)).toBe("@lead spawned @tech-lead-ab12 · Tech Lead · ab12");
+  // The display name comes from the agents list, a separate query from the events.
+  await vi.waitFor(() =>
+    expect(senderOf(block)).toBe("@lead spawned @tech-lead-ab12 · Tech Lead · ab12"),
+  );
   expect(sender.querySelector("svg.lucide-git-fork")).toHaveAttribute("aria-hidden", "true");
   expect(within(sender).getByText("@lead")).toHaveClass("font-mono");
   expect(

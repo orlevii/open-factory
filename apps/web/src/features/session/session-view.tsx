@@ -7,17 +7,19 @@ import { PageHeader } from "@/components/page-header";
 import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentName } from "@/features/agents/agent-tree";
 import { sessionQueryOptions } from "@/lib/session";
 import { AgentStrip } from "./agent-strip";
-import { runningQueryOptions } from "./api";
+import { agentsListQueryOptions, runningQueryOptions } from "./api";
 import { CompactPopover } from "./compact-popover";
-import { Composer } from "./composer";
+import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
+import { TerminateButton } from "./terminate-button";
 import { Timeline } from "./timeline";
 import { useAgentStatusFrames } from "./use-agent-status";
 import { useSession } from "./use-session";
@@ -38,6 +40,20 @@ export function SessionView({
   const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
+  // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
+  const [raceNotice, setRaceNotice] = useState<string>();
+  // Terminated while viewing (S7 UI design §5.3): by the spawner, another human or the TTL, never
+  // by this human's own confirmed Terminate (that focuses Pin workspace when the dialog closes).
+  // Open popovers and dialogs close as their controls unmount; focus goes to the read-only line.
+  const selfTerminating = useRef(false);
+  const status = agent?.status;
+  const prevStatus = useRef(status);
+  useEffect(() => {
+    const was = prevStatus.current;
+    prevStatus.current = status;
+    if (status !== "terminated" || was === undefined || was === "terminated") return;
+    if (!selfTerminating.current) focusReadOnly(false);
+  }, [status]);
   if (s.error?.code === "agent_not_found") return <NotFound />;
   if (!agent) {
     if (!s.error) return null; // the route's pending component covers the first load
@@ -50,9 +66,10 @@ export function SessionView({
   }
   const working = agent.status === "working";
   const archived = agent.archivedAt !== null;
+  const terminated = agent.status === "terminated";
   return (
     <div className="flex h-svh min-h-0 flex-col">
-      {!archived && (
+      {!archived && !terminated && (
         <a
           href="#composer"
           className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-10 focus:rounded-md focus:bg-popover focus:px-3 focus:py-2 focus:text-sm"
@@ -62,6 +79,7 @@ export function SessionView({
       )}
       <PageHeader
         title={agent.displayName}
+        heading={<AgentName agent={agent} />}
         documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
         meta={
           <>
@@ -78,9 +96,21 @@ export function SessionView({
             </span>
           </>
         }
-        actions={<SessionActions agent={agent} archived={archived} />}
+        actions={
+          <SessionActions
+            agent={agent}
+            archived={archived}
+            onTerminateStart={() => {
+              selfTerminating.current = true;
+            }}
+            onTerminated={(a, ok) => {
+              selfTerminating.current = ok;
+              if (ok) s.setAgent(a);
+            }}
+          />
+        }
       />
-      <AgentStrip agent={agent} slotsMax={running.data?.max} />
+      <AgentStrip agent={agent} slotsMax={running.data?.max} onAgent={s.setAgent} />
       {s.missingEvent !== undefined && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
           Event {s.missingEvent} isn't in this session. Showing the latest.
@@ -89,10 +119,7 @@ export function SessionView({
       {s.messageNotice && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
           {s.messageNotice.kind === "rejected" ? (
-            <>
-              This message wasn't delivered:{" "}
-              <span className="font-mono">@{s.messageNotice.to}</span> was archived.
-            </>
+            <RejectedReason to={s.messageNotice.to} viewed={agent} />
           ) : (
             "Message not found. Showing the latest."
           )}
@@ -158,8 +185,18 @@ export function SessionView({
           </Link>{" "}
           to send messages.
         </p>
+      ) : terminated ? (
+        <TerminatedComposer slug={slug} notice={raceNotice} />
       ) : (
-        <Composer slug={slug} agent={agent} onQueued={s.onQueued} />
+        <Composer
+          slug={slug}
+          agent={agent}
+          onQueued={s.onQueued}
+          onTerminated={(notice) => {
+            setRaceNotice(notice);
+            void s.refreshAgent();
+          }}
+        />
       )}
     </div>
   );
@@ -243,30 +280,74 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
   return msg;
 }
 
-function SessionActions({ agent, archived }: { agent: AgentSummary; archived: boolean }) {
-  const slug = agent.slug;
+/** "This message wasn't delivered: @dev was terminated." or "…was archived." (S7 UI design §5.3), from
+ *  the recipient's state: the viewed agent itself, else the ended list. Nothing until it is known. */
+function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
+  const self = to === viewed.slug ? viewed : undefined;
+  const ended = useQuery({
+    ...agentsListQueryOptions("only"),
+    enabled: !self,
+    staleTime: 30_000,
+  });
+  if (!self && ended.isPending) return null;
+  const recipient = self ?? ended.data?.find((a) => a.slug === to);
+  const why =
+    recipient?.terminatedAt || recipient?.status === "terminated" ? "terminated" : "archived";
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="ghost" asChild>
-            <Link to="/agents/$slug/edit" params={{ slug }}>
-              <Pencil aria-hidden="true" />
-              <span className="max-md:sr-only">Edit</span>
-            </Link>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent className="md:hidden">Edit</TooltipContent>
-      </Tooltip>
+      This message wasn't delivered: <span className="font-mono">@{to}</span> was {why}.
+    </>
+  );
+}
+
+function SessionActions({
+  agent,
+  archived,
+  onTerminateStart,
+  onTerminated,
+}: {
+  agent: AgentSummary;
+  archived: boolean;
+  onTerminateStart(): void;
+  onTerminated(a: AgentSummary, ok: boolean): void;
+}) {
+  const slug = agent.slug;
+  // A spawned agent has no Edit (its settings are inherited, S7 UI design §5.2) but has Terminate.
+  const spawned = agent.kind === "ephemeral";
+  // A terminated agent's session is read-only for good: no actions at all (§5.3).
+  const live = !archived && agent.status !== "terminated";
+  return (
+    <>
+      {!spawned && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" asChild>
+              <Link to="/agents/$slug/edit" params={{ slug }}>
+                <Pencil aria-hidden="true" />
+                <span className="max-md:sr-only">Edit</span>
+              </Link>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="md:hidden">Edit</TooltipContent>
+        </Tooltip>
+      )}
       {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). While
           errored, the recovery actions replace them, so the header never holds more than two. */}
-      {!archived && agent.status !== "errored" && (
+      {live && agent.status !== "errored" && (
         <>
           <CompactPopover slug={slug} />
           <InterruptButton slug={slug} turnOpen={agent.turnOpen} />
         </>
       )}
-      {!archived && <RecoveryActions agent={agent} />}
+      {live && <RecoveryActions agent={agent} />}
+      {/* A 1px rule (16px tall) keeps Terminate apart from Interrupt's Square; the row's gap is the
+          8px margin. */}
+      {spawned && live && (
+        <span data-action-divider aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
+      )}
+      {spawned && (
+        <TerminateButton agent={agent} onStart={onTerminateStart} onTerminated={onTerminated} />
+      )}
     </>
   );
 }

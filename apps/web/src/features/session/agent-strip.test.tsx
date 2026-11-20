@@ -200,3 +200,9 @@ test("strip: a terminated agent shows no queued, paused or restart segment (S7: 
   expect(el.textContent).not.toMatch(/Queued|Paused|Restarts when idle/);
   expect(el.textContent).toContain("No manager");
 });
+
+test("strip: a spawned agent says 'Spawned by @lead'; a deleted credential's segment is omitted", () => {
+  const el = strip({ kind: "ephemeral", reportsTo: "lead", reports: 1, credential: null });
+  expect(el.querySelector("[data-strip-org]")?.textContent).toBe("Spawned by @lead · 1 report");
+  expect(el.textContent).not.toContain("credential");
+});

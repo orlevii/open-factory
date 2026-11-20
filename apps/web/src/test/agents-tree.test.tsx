@@ -307,6 +307,20 @@ describe("the Ended view (S7 UI design §3)", () => {
     expect(screen.queryByText(/of 8 running/)).toBeNull();
   });
 
+  test("a workspace past its grace but not deleted yet is due for deletion, never 'kept until' a past day", async () => {
+    endedWorld([
+      spawned({
+        slug: "tech-lead-gh78",
+        displayName: "Tech Lead · gh78",
+        terminatedAt: at(16),
+        workspaceGraceEndsAt: at(19),
+      }),
+    ]);
+    renderApp("/agents?ended=only", alice);
+    const [a] = (await rows()) as [HTMLElement];
+    expect(note(a)).toBe("Terminated 16 Nov · workspace due for deletion");
+  });
+
   test("empty: 'No ended agents.'", async () => {
     endedWorld([]);
     renderApp("/agents?ended=only", alice);

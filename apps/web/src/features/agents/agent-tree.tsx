@@ -41,8 +41,12 @@ function endedNote(a: AgentSummary, now: Date): string | null {
     const ended = `Terminated ${day(a.terminatedAt)}`;
     if (a.workspaceDeletedAt) return `${ended} · workspace deleted`;
     if (a.workspacePinned) return `${ended} · workspace pinned`;
+    // Past the grace the sweep deletes it within minutes (a failing deletion is retried): a day in
+    // the past would read as a broken promise.
     if (a.workspaceGraceEndsAt)
-      return `${ended} · workspace kept until ${day(a.workspaceGraceEndsAt)}`;
+      return Date.parse(a.workspaceGraceEndsAt) <= now.getTime()
+        ? `${ended} · workspace due for deletion`
+        : `${ended} · workspace kept until ${day(a.workspaceGraceEndsAt)}`;
     return ended;
   }
   return a.archivedAt ? `Archived ${day(a.archivedAt)}` : null;
@@ -50,7 +54,7 @@ function endedNote(a: AgentSummary, now: Date): string | null {
 
 /** The display name; a spawned agent's " · ab12" tail never truncates (S7 UI design §3), since it is
  *  what tells siblings apart: the head gives way first. */
-function AgentName({ agent }: { agent: AgentSummary }) {
+export function AgentName({ agent }: { agent: AgentSummary }) {
   const i = agent.kind === "ephemeral" ? agent.displayName.lastIndexOf(" · ") : -1;
   if (i <= 0) return <span className="min-w-0 truncate">{agent.displayName}</span>;
   return (

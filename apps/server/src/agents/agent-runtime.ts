@@ -2297,17 +2297,20 @@ export class AgentRuntime {
         this.turnKinds = [];
         await this.append(turnId, e);
         if (turnId) {
-          await this.d.store.closeTurn(turnId, {
+          const close = {
             isError: e.isError,
             terminalReason: e.terminalReason,
             originKind: e.originKind,
             usage: this.lastUsage,
-          });
-          if (!e.originKind && this.awaiting.length) {
-            await this.d.store.setDeliveredTurn(this.awaiting.flat(), turnId);
+          };
+          // S10 §5.2 (F1): a message-started turn stamps its starting batch before the close, in the close's
+          // transaction, so `attributeTask` sees it. A self-started turn (cron, task notification) never consumes
+          // `awaiting` and isn't attributed.
+          if (!e.originKind) {
+            await this.d.store.closeTurnWith(turnId, close, this.awaiting.flat(), true);
             this.awaiting = [];
             this.awaitingKinds = [];
-          }
+          } else await this.d.store.closeTurnWith(turnId, close, [], false);
         }
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)

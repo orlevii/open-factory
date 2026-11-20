@@ -680,6 +680,33 @@ export class EventStore {
   }
 
   /**
+   * S10 §5.2: the turn's task when every delivered non-system message carries that one task (a lower bound): any
+   * message without it (a human's, an agent's, a schedule's) or of another task leaves the turn unattributed.
+   */
+  async attributeTask(turnId: string, tx: Exec): Promise<void> {
+    await tx.execute(sql`
+      update turns set task_id = (
+        select min(task_id) from messages
+        where delivered_turn_id = ${turnId} and kind <> 'system'
+        having count(*) > 0 and count(*) = count(task_id) and count(distinct task_id) = 1
+      )
+      where id = ${turnId}`);
+  }
+  /** One transaction: stamp `stampIds` with the turn (when given), close it, and attribute it when `attribute` is true. */
+  async closeTurnWith(
+    turnId: string,
+    d: TurnClose,
+    stampIds: string[],
+    attribute: boolean,
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await this.setDeliveredTurn(stampIds, turnId, tx);
+      await this.closeTurn(turnId, d, tx);
+      if (attribute) await this.attributeTask(turnId, tx);
+    });
+  }
+
+  /**
    * Boot (spec §5.7 step 3): turns still open when the server stopped are closed as `factory_restarted`, errors.
    * Returns the ids of the agents that had one.
    */

@@ -9,6 +9,8 @@ export function AuthCard(props: {
   submitLabel: string;
   pendingLabel: string;
   submitting: boolean;
+  /** Hides the submit button (states with no form to submit). */
+  hideSubmit?: boolean;
   formError?: string;
   onSubmit(form: HTMLFormElement): void;
   footer: ReactNode;
@@ -39,10 +41,12 @@ export function AuthCard(props: {
               {props.formError}
             </p>
           )}
-          <Button type="submit" className="h-9 w-full" disabled={props.submitting}>
-            {props.submitting && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
-            {props.submitting ? props.pendingLabel : props.submitLabel}
-          </Button>
+          {!props.hideSubmit && (
+            <Button type="submit" className="h-9 w-full" disabled={props.submitting}>
+              {props.submitting && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
+              {props.submitting ? props.pendingLabel : props.submitLabel}
+            </Button>
+          )}
         </form>
         <div className="mt-6 text-[0.8125rem] text-muted-foreground">{props.footer}</div>
       </div>

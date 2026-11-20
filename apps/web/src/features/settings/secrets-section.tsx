@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Plus } from "lucide-react";
 import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -227,7 +228,8 @@ function deleteBody(users: string[]) {
 
 export function SecretsSection({ addSecret }: { addSecret?: string }) {
   const qc = useQueryClient();
-  const { data } = useQuery(secretsQueryOptions);
+  const query = useQuery(secretsQueryOptions);
+  const { data } = query;
   const focusLater = useFocusLater();
   const [adding, setAdding] = useState(Boolean(addSecret));
   const [prefill, setPrefill] = useState((addSecret ?? "").toUpperCase());
@@ -277,6 +279,9 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
       title="Secrets"
       description="Environment variables agents receive when their template lists them. Values can't be viewed after saving."
     >
+      {!data && query.isError && (
+        <ErrorLine text="Couldn't load secrets." onRetry={() => void query.refetch()} />
+      )}
       {data &&
         (secrets.length === 0 ? (
           <p className="text-sm text-muted-foreground">No secrets yet.</p>

@@ -54,7 +54,7 @@ test("page: newest, before, around, missing around", async () => {
 });
 
 test("turns and messages", async () => {
-  const turnId = await store.openTurn("a1");
+  const turnId = await store.openTurn("a1", null);
   await store.closeTurn(turnId, {
     isError: false,
     terminalReason: "completed",

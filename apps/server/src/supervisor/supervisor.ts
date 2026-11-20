@@ -1,6 +1,8 @@
 import type { AgentRuntime, RuntimeLog } from "../agents/agent-runtime.ts";
+import { AgentStartError, type StartFix } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
+import { USER_TAG_PREFIX } from "../images/resolve.ts";
 import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
 
 /**
@@ -16,7 +18,8 @@ type Pause = { until: number; exact: boolean; timer?: ReturnType<typeof setTimeo
 const MAX_TIMER_MS = 2_147_483_647;
 
 export interface SupervisorDeps {
-  max: number;
+  /** The cap, read live (S10 §8.2: the `max_running_agents` factory setting); `capChanged()` follows a change. */
+  max: () => number;
   /** The loaded runtimes. `all()` is for the closing latch and credential re-checks. */
   runtimes: { get(id: string): AgentRuntime | undefined; all(): Iterable<AgentRuntime> };
   bus: EventBus;
@@ -83,7 +86,7 @@ export class Supervisor implements SlotPort {
       return "queued";
     }
     if (at !== -1 && this.queue[at]?.pulling) return "queued";
-    if (!this.pausedFor(agentId) && this.holders.size < this.d.max) {
+    if (!this.pausedFor(agentId) && this.holders.size < this.d.max()) {
       const entry = at === -1 ? this.entry(agentId, reason) : this.queue.splice(at, 1)[0];
       if (!entry) return "dropped";
       if (inline) {
@@ -158,7 +161,7 @@ export class Supervisor implements SlotPort {
   }
 
   running(): { count: number; max: number } {
-    return { count: this.holders.size, max: this.d.max };
+    return { count: this.holders.size, max: this.d.max() };
   }
 
   /**
@@ -175,8 +178,10 @@ export class Supervisor implements SlotPort {
     return false;
   }
 
+  /** A user image (S10 §10.1) is only checked, never pulled, so its wait isn't shown as pulling. */
   isPulling(agentId: string): boolean {
-    return Boolean(this.queue.find((e) => e.agentId === agentId)?.pulling);
+    const ref = this.queue.find((e) => e.agentId === agentId)?.pulling;
+    return ref !== undefined && !ref.startsWith(USER_TAG_PREFIX);
   }
 
   /** `ensure` found the image gone (removed after it was seen): the next wake checks and pulls again. */
@@ -213,6 +218,17 @@ export class Supervisor implements SlotPort {
     this.pauses.set(credentialId, p);
     this.armReset(credentialId, p);
     for (const rt of this.onCredential(credentialId)) rt.recheck();
+  }
+
+  /**
+   * The cap changed (S10 §8.2): a raise grants queued wakes at once (FIFO); a lower stops no one, but while wakes
+   * are queued, idle hibernatable holders may hibernate early (`freed_slot`). Then the new max is published.
+   */
+  capChanged(): void {
+    if (this.closed) return;
+    this.pump();
+    this.evict();
+    this.publish();
   }
 
   /** Grants what became eligible outside a slot change (an agent moved off a paused credential, spec §5.2). */
@@ -295,7 +311,7 @@ export class Supervisor implements SlotPort {
     if (this.pulls.has(ref)) return;
     const images = this.d.images;
     if (!images) return;
-    const done = (failure?: string) => {
+    const done = (failure?: { message: string; fix?: StartFix }) => {
       this.pulls.delete(ref);
       if (this.closed) return; // aborted by the closing latch: the entries are already dropped
       if (failure === undefined) this.presentImages.add(ref);
@@ -305,7 +321,7 @@ export class Supervisor implements SlotPort {
         else {
           this.queue.splice(this.queue.indexOf(e), 1);
           void rt
-            ?.imagePullFailed(failure)
+            ?.imagePullFailed(failure.message, failure.fix)
             .catch((err) =>
               this.d.log.error({ err, agent: rt.agent.slug }, "recording a failed pull failed"),
             );
@@ -319,7 +335,10 @@ export class Supervisor implements SlotPort {
       () => done(),
       (err: unknown) => {
         if (!this.closed) this.d.log.warn({ err, image: ref }, "image pull failed");
-        done(err instanceof Error ? err.message : String(err));
+        done({
+          message: err instanceof Error ? err.message : String(err),
+          ...(err instanceof AgentStartError && err.fix ? { fix: err.fix } : {}),
+        });
       },
     );
     this.pulls.set(ref, p);
@@ -377,7 +396,7 @@ export class Supervisor implements SlotPort {
   /** Grants free slots to the first eligible entries, in FIFO order; then evicts for what is still waiting. */
   private pump() {
     if (this.closed) return;
-    while (this.holders.size < this.d.max) {
+    while (this.holders.size < this.d.max()) {
       const next = this.firstEligible();
       if (!next) break;
       const rt = this.d.runtimes.get(next.agentId);
@@ -409,7 +428,7 @@ export class Supervisor implements SlotPort {
   private evict() {
     if (this.closed) return;
     const eligible = this.queue.filter((e) => this.eligibility(e) === "yes").length;
-    const free = Math.max(0, this.d.max - this.holders.size);
+    const free = Math.max(0, this.d.max() - this.holders.size);
     let stopping = 0;
     for (const id of this.holders)
       if (!this.pendingEvictions.has(id) && this.d.runtimes.get(id)?.isStopping()) stopping += 1;
@@ -451,6 +470,6 @@ export class Supervisor implements SlotPort {
   }
 
   private publish() {
-    this.d.bus.publishAll({ type: "supervisor", running: this.holders.size, max: this.d.max });
+    this.d.bus.publishAll({ type: "supervisor", running: this.holders.size, max: this.d.max() });
   }
 }

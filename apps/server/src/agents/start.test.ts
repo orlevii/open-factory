@@ -154,6 +154,7 @@ beforeEach(seedStartFixture);
 test("assembles the spec: env has the decrypted credential and secret; files prepared", async () => {
   const spec = await prepareStart(agent, { agentToken: "tok" });
   expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-1");
+  expect(spec.credentialId).toBe("c1");
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.cwd).toBe(path.join(home, "agents", agent.slug));
   expect(spec.runtime).toBe("local");
@@ -450,6 +451,7 @@ test("a child's start uses its spawner's current credential, even when its own r
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-2");
   expect(Object.values(spec.env)).not.toContain("tok-1");
+  expect(spec.credentialId).toBe("c2"); // the runtime records turns and rate limits on it (S10 §5.2)
 });
 
 test("the spawner's current deny rules reach the child at its next start (no snapshot)", async () => {

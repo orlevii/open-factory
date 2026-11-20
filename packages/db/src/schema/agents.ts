@@ -109,8 +109,15 @@ export const turns = pgTable(
     costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }),
     isError: boolean("is_error"),
     terminalReason: text("terminal_reason"),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
   },
-  (t) => [index("turns_agent_started_idx").on(t.agentId, t.startedAt)],
+  (t) => [
+    index("turns_agent_started_idx").on(t.agentId, t.startedAt),
+    index("turns_task_idx").on(t.taskId).where(sql`${t.taskId} is not null`),
+    index("turns_credential_started_idx").on(t.credentialId, t.startedAt),
+    index("turns_started_idx").on(t.startedAt),
+  ],
 );
 
 export const sessionEvents = pgTable(
@@ -168,6 +175,10 @@ export const messages = pgTable(
   (t) => [
     index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt),
     index("messages_from_agent_idx").on(t.fromAgentId, t.createdAt),
+    // S10: turn attribution reads a closing turn's delivered messages.
+    index("messages_delivered_turn_idx")
+      .on(t.deliveredTurnId)
+      .where(sql`${t.deliveredTurnId} is not null`),
   ],
 );
 

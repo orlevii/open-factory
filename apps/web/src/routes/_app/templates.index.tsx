@@ -6,6 +6,7 @@ import { InlineOutcome } from "@/components/inline-outcome";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { clearedState, deletedTemplateFrom, templatesQueryOptions } from "@/features/templates/api";
+import { ImagesSection } from "@/features/templates/images-section";
 import { TemplateList } from "@/features/templates/template-list";
 
 export const Route = createFileRoute("/_app/templates/")({ component: TemplatesPage });
@@ -28,12 +29,19 @@ function TemplatesPage() {
       <PageHeader
         title="Templates"
         actions={
-          <Button variant="ghost" asChild>
-            <Link to="/templates/new">
-              <Plus aria-hidden="true" data-icon="inline-start" />
-              New template
-            </Link>
-          </Button>
+          <>
+            <Button variant="ghost" asChild>
+              <Link to="/templates" hash="images">
+                Images
+              </Link>
+            </Button>
+            <Button variant="ghost" asChild>
+              <Link to="/templates/new">
+                <Plus aria-hidden="true" data-icon="inline-start" />
+                New template
+              </Link>
+            </Button>
+          </>
         }
       />
       <PageBody>
@@ -47,6 +55,7 @@ function TemplatesPage() {
             </p>
           )}
           {data && <TemplateList dir={data.dir} templates={data.templates} />}
+          <ImagesSection />
         </div>
       </PageBody>
     </>

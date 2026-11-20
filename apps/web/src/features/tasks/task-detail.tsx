@@ -6,7 +6,7 @@ import {
 } from "@open-factory/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
 import { AgentLink, LINK_CLASS } from "@/features/session/message-block";
+import { formatCostEst } from "@/features/usage/format";
 import { sessionQueryOptions } from "@/lib/session";
 import {
   type PatchTaskBody,
@@ -38,6 +39,23 @@ const sentenceOf = (e: unknown, fallback: string) => (e instanceof ApiError ? e.
 /** An editor's failure: a field error (400) is the server's sentence, anything else the fixed line (the text stays). */
 const saveFailure = (e: unknown) =>
   e instanceof ApiError && e.status === 400 ? e.message : "Couldn't save. Try again.";
+
+/**
+ * Moves focus back to an editor's Edit button once the closed editor has rendered. A frame callback
+ * could run before React commits that render (the button isn't mounted while editing), so the focus
+ * waits for the commit instead.
+ */
+function useReturnFocus(editing: boolean, target: RefObject<HTMLButtonElement | null>) {
+  const pending = useRef(false);
+  useEffect(() => {
+    if (editing || !pending.current) return;
+    pending.current = false;
+    target.current?.focus();
+  }, [editing, target]);
+  return () => {
+    pending.current = true;
+  };
+}
 
 function SideSection({
   label,
@@ -258,11 +276,12 @@ function TitleBlock({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
+  const returnFocus = useReturnFocus(editing, edit);
   const input = useRef<HTMLInputElement>(null);
   const close = () => {
     setEditing(false);
     setError(undefined);
-    requestAnimationFrame(() => edit.current?.focus());
+    returnFocus();
   };
   useEffect(() => {
     if (editing) input.current?.focus();
@@ -348,6 +367,7 @@ function BodyBlock({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
+  const returnFocus = useReturnFocus(editing, edit);
   const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (editing) area.current?.focus();
@@ -355,7 +375,7 @@ function BodyBlock({
   const close = () => {
     setEditing(false);
     setError(undefined);
-    requestAnimationFrame(() => edit.current?.focus());
+    returnFocus();
   };
   async function commit() {
     const parsed = taskBodySchema.safeParse(text);
@@ -523,6 +543,18 @@ function SideRest({ task, save }: { task: Detail; save: Save }) {
         )}
       </SideSection>
       <LinksSection task={task} save={save} />
+      {task.usage && (
+        <section className="grid gap-1 border-b border-border py-3">
+          <p className="text-[0.8125rem] leading-[1.125rem] tabular-nums">
+            Usage: {formatCostEst(task.usage.costUsd, task.usage.turns)} · {task.usage.turns}{" "}
+            {task.usage.turns === 1 ? "turn" : "turns"}
+          </p>
+          <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+            Counts only turns that handled this task's messages and nothing else. Real usage can be
+            higher.
+          </p>
+        </section>
+      )}
       <SideSection label="Created by">
         <p className="text-[0.8125rem] leading-[1.125rem]">
           {task.createdBy.kind === "agent" ? (
@@ -554,11 +586,12 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
+  const returnFocus = useReturnFocus(editing, edit);
   const close = () => {
     setEditing(false);
     setError(undefined);
     setFailed(undefined);
-    requestAnimationFrame(() => edit.current?.focus());
+    returnFocus();
   };
   async function check() {
     const r = await checkDependencies(text, task.key).catch(() => undefined);
@@ -648,6 +681,7 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
+  const returnFocus = useReturnFocus(editing, edit);
   const active = useQuery(agentsListQueryOptions("exclude"));
   const ended = useQuery(agentsListQueryOptions("only"));
   const known = useMemo(
@@ -660,7 +694,7 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
   const close = () => {
     setEditing(false);
     setFailed(undefined);
-    requestAnimationFrame(() => edit.current?.focus());
+    returnFocus();
   };
   const check = (all = rows) => {
     const next: Record<string, string | undefined> = {};

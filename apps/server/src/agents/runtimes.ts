@@ -2,6 +2,7 @@ import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import { type AgentStatus, errorKindSchema, type QueueItem } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -23,14 +24,19 @@ export interface RuntimesDeps {
   tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
-  /** `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` in ms (S6 §8.2); the runtime's 30 s default when unset. */
-  memberUpdateDebounceMs?: number;
+  /**
+   * The member update debounce in ms (S6 §8.2), read live (the `member_update_debounce_seconds` factory setting, S10
+   * §8.2); the runtime's 30 s default when unset.
+   */
+  memberUpdateDebounceMs?: () => number;
+  /** The factory default warm window in minutes, read live (S10 §8.2); the runtime's 70 when unset. */
+  defaultWarmWindowMinutes?: () => number;
   /** S6 §9.1: every runtime's forwarding port (the Router's `forward`). */
   forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
-  maxRunningAgents?: number;
+  /** The cap, read live (the `max_running_agents` factory setting); defaults to `DEFAULT_MAX_RUNNING_AGENTS`. */
+  maxRunningAgents?: () => number;
   /**
    * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake
    * process's pid is not ours, and must never be journaled or signalled.
@@ -45,7 +51,7 @@ export interface RuntimesDeps {
   docker?: {
     containers: Pick<
       ContainerManager,
-      "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove" | "remove"
+      "ensure" | "ensureImage" | "hasImage" | "stopIfRunning" | "forceRemove" | "remove"
     >;
     claudeBin: string;
     defaultImage: string;
@@ -141,7 +147,7 @@ export class AgentRuntimes {
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
     this.supervisor = new Supervisor({
-      max: d.maxRunningAgents ?? DEFAULT_MAX_RUNNING_AGENTS,
+      max: d.maxRunningAgents ?? (() => DEFAULT_MAX_RUNNING_AGENTS),
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,
@@ -160,10 +166,21 @@ export class AgentRuntimes {
       refOf: (id: string) => {
         const agent = this.loaded.get(id)?.agent;
         if (agent?.runtime !== "docker") return undefined;
-        return agent.config.image ?? docker.defaultImage;
+        return resolveImage(agent.config.image, docker.defaultImage).tag;
       },
       ensure: async (ref: string, signal: AbortSignal) => {
         try {
+          if (ref.startsWith(USER_TAG_PREFIX)) {
+            // Spec §10.1: a user image is built by the factory, never pulled. This keys on the tag prefix, so a
+            // registry template that literally names `open-factory-user/<x>:latest` is never pulled either; that
+            // namespace is the factory's own local one, so nothing is lost.
+            if (!(await docker.containers.hasImage(ref)))
+              throw new AgentStartError(
+                `Image \`${userNameOfTag(ref)}\` isn't built. Build it in Templates \u2192 Images, or run \`open-factory images build ${userNameOfTag(ref)}\`.`,
+                "image",
+              );
+            return;
+          }
           await docker.containers.ensureImage(ref, signal);
         } catch (err) {
           // The registry's error stays verbatim (spec §11.2); only an unreachable daemon is named as such.
@@ -198,8 +215,11 @@ export class AgentRuntimes {
         tokens: this.d.tokens,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
-        ...(this.d.memberUpdateDebounceMs !== undefined
+        ...(this.d.memberUpdateDebounceMs
           ? { memberUpdateDebounceMs: this.d.memberUpdateDebounceMs }
+          : {}),
+        ...(this.d.defaultWarmWindowMinutes
+          ? { defaultWarmWindowMinutes: this.d.defaultWarmWindowMinutes }
           : {}),
         forward: this.d.forward,
         slots: this.supervisor,
@@ -330,6 +350,25 @@ export class AgentRuntimes {
     if (!rt) return;
     await rt.reload();
     this.supervisor.recheckQueue();
+  }
+
+  /**
+   * S10 §8.2: the default warm window or the member-update debounce changed. Every loaded runtime re-arms its warm and
+   * held-update timers in its own job queue; a failure is logged, never thrown.
+   */
+  async settingsChanged(): Promise<void> {
+    await Promise.all(
+      [...this.loaded.values()].map((rt) =>
+        rt
+          .settingsChanged()
+          .catch((err) =>
+            this.d.log.error(
+              { err, agent: rt.agent.slug },
+              "re-arming after a settings change failed",
+            ),
+          ),
+      ),
+    );
   }
 
   /** Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. */

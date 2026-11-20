@@ -41,7 +41,7 @@ class World {
   constructor(max: number) {
     this.bus.subscribeAll((m) => this.frames.push(m));
     this.sup = new Supervisor({
-      max,
+      max: () => max,
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: this.bus,
       log: silentLog,
@@ -556,6 +556,14 @@ test("running counts are published as supervisor frames", async () => {
     { type: "supervisor", running: 1, max: 2 },
     { type: "supervisor", running: 0, max: 2 },
   ]);
+});
+
+test("capChanged after close publishes nothing", async () => {
+  w = new World(2);
+  w.sup.close();
+  const before = w.frames.length;
+  w.sup.capChanged();
+  expect(w.frames).toHaveLength(before);
 });
 
 test("a restart wake takes over a queued entry whose reason no longer wakes the agent", async () => {

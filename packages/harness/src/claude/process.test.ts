@@ -70,6 +70,7 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
     "session_started",
     "turn_started",
     "assistant_text",
+    "rate_limit_status",
     "usage",
     "turn_end",
   ]);

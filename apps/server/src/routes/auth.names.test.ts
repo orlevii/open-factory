@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { makeTestApp, signUp, TEST_ORIGIN, testInvite } from "../test/helpers.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 beforeAll(async () => {
@@ -8,12 +8,13 @@ beforeAll(async () => {
 });
 afterAll(() => h.close());
 
-const rawSignUp = (handle: string) =>
+const rawSignUp = async (handle: string) =>
   h.app.inject({
     method: "POST",
     url: "/api/auth/sign-up/email",
     headers: { origin: TEST_ORIGIN },
     payload: {
+      invite: await testInvite(h.app),
       name: "X",
       handle,
       email: `${handle}-${Date.now()}@example.com`,

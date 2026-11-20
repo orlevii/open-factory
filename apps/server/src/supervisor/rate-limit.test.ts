@@ -43,7 +43,7 @@ class World {
   constructor(max: number) {
     const log = this.log;
     this.sup = new Supervisor({
-      max,
+      max: () => max,
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: this.bus,
       log,

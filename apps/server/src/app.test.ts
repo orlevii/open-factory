@@ -85,6 +85,40 @@ test("a FACTORY_AGENT_URL on the human port logs the upgrade warning", async () 
   expect(quiet.join("")).not.toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
 });
 
+test("boot warns when a removed env var is still set, and nothing reads it (S10 Q6)", async () => {
+  vi.stubEnv("FACTORY_MAX_RUNNING_AGENTS", "2");
+  const lines: string[] = [];
+  try {
+    const t = await makeTestApp({
+      harnessDriver: new FakeDriver(),
+      logStream: { write: (l) => void lines.push(l) },
+    });
+    try {
+      expect(lines.join("")).toContain(
+        "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
+      );
+      expect(lines.join("")).not.toContain("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS");
+      expect(t.app.runtimes.supervisor.running().max).toBe(8);
+    } finally {
+      await t.close();
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("the max running agents setting reaches the supervisor", async () => {
+  const t = await makeTestApp({
+    harnessDriver: new FakeDriver(),
+    factorySettings: { maxRunningAgents: 3 },
+  });
+  try {
+    expect(t.app.runtimes.supervisor.running().max).toBe(3);
+  } finally {
+    await t.close();
+  }
+});
+
 /** Starts `slug` with a human message and an idle first turn; returns its live token. */
 async function startIdle(
   t: Awaited<ReturnType<typeof makeTestApp>>,
@@ -214,11 +248,11 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
   }
 });
 
-test("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS reaches the runtimes: 0 writes a member update at once", async () => {
+test("the member update debounce setting reaches the runtimes: 0 writes a member update at once", async () => {
   const driver = new FakeDriver();
   const t = await makeTestApp({
     harnessDriver: driver,
-    env: { FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0" },
+    factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   try {
     const lead = await t.seedAgent({ slug: "lead" });

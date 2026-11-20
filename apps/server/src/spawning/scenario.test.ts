@@ -37,7 +37,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   t = await makeTestApp({
     harnessDriver: driver,
     // Held updates are due at once, so a batch of them is written without waiting on a clock.
-    env: { FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0" },
+    factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   const h = t;
   const url = `http://127.0.0.1:${h.app.agentListener.port}`;

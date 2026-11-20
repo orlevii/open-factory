@@ -102,7 +102,7 @@ test("@humans fans out one inbox item per existing user, delivered at once", asy
 
 test("inboxPage pages newest first with a cursor and links the sender's tool call", async () => {
   await t.sql`delete from messages where to_all_humans or to_user_id is not null`;
-  const turn = await store.openTurn("a1");
+  const turn = await store.openTurn("a1", null);
   const ev = await store.append("a1", turn, {
     type: "tool_call",
     toolUseId: "tu1",

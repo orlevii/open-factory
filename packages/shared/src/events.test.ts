@@ -203,3 +203,19 @@ test("S7 events parse; old rows still parse", () => {
   ).toBe(true);
   expect(ok({ type: "background_work_lost", reason: "crash", tasks: [], crons: [] })).toBe(true);
 });
+
+test("S10 harness events", () => {
+  expect(
+    anyEventSchema.safeParse({
+      type: "rate_limit_status",
+      status: "allowed_warning",
+      rateLimitType: "five_hour",
+      utilization: 0.9,
+      resetsAt: 1,
+    }).success,
+  ).toBe(true);
+  expect(
+    anyEventSchema.safeParse({ type: "error", source: "spawn", message: "m", fix: "image" })
+      .success,
+  ).toBe(true);
+});

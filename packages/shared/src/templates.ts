@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { imageStatusSchema } from "./images.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -20,13 +21,25 @@ const pathPart = "[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*";
 const IMAGE_REF = new RegExp(
   `^(?:${domainPart}(?:\\.${domainPart})*(?::[0-9]+)?/)?${pathPart}(?:/${pathPart})*` +
     "(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?" +
-    "(?:@[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,})?$",
+    // Only the digest Docker accepts: a malformed one is a validation error, not a Docker 400.
+    "(?:@sha256:[0-9a-f]{64})?$",
 );
-/** An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded. */
+const USER_TAG_PREFIX = "open-factory-user/";
+/**
+ * An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded.
+ * A built user image is named by its bare folder name, never by its `open-factory-user/` tag (spec §10.1),
+ * so the tag can't bypass the no-pull rule.
+ */
 export const imageRefSchema = z
   .string()
   .max(255)
-  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.");
+  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.")
+  .refine((v) => !v.startsWith(USER_TAG_PREFIX), {
+    error: (iss) => {
+      const name = String(iss.input).slice(USER_TAG_PREFIX.length).split(/[:@]/)[0];
+      return `Use the bare name ${name} for a user image.`;
+    },
+  });
 
 export const templateConfigSchema = z.object({
   name: nameSchema,
@@ -44,7 +57,7 @@ export const templateConfigSchema = z.object({
   secrets: z.array(secretNameSchema),
   canSpawn: z.array(nameSchema),
   maxLiveSpawns: z.number().int().min(0).max(50),
-  warmWindowMinutes: z.number().int().min(1).max(1440),
+  warmWindowMinutes: z.number().int().min(1).max(1440).optional(),
 });
 export type TemplateConfig = z.infer<typeof templateConfigSchema>;
 
@@ -66,7 +79,7 @@ export const templateYamlSchema = z
     secrets: z.array(secretNameSchema).default([]),
     can_spawn: z.array(nameSchema).default([]),
     max_live_spawns: z.number().int().min(0).max(50).default(5),
-    warm_window_minutes: z.number().int().min(1).max(1440).default(70),
+    warm_window_minutes: z.number().int().min(1).max(1440).optional(),
   })
   .transform(
     (y): TemplateConfig => ({
@@ -85,7 +98,7 @@ export const templateYamlSchema = z
       secrets: y.secrets,
       canSpawn: y.can_spawn,
       maxLiveSpawns: y.max_live_spawns,
-      warmWindowMinutes: y.warm_window_minutes,
+      ...(y.warm_window_minutes !== undefined ? { warmWindowMinutes: y.warm_window_minutes } : {}),
     }),
   );
 
@@ -107,6 +120,7 @@ export const templateSummarySchema = z.object({
   errors: z.number().int(),
   warnings: z.number().int(),
   agentCount: z.number().int(),
+  imageStatus: imageStatusSchema.optional(),
 });
 export const templatesListSchema = z.object({
   dir: z.string(),
@@ -124,6 +138,7 @@ export const templateDetailSchema = z.object({
   files: z.array(templateFileStateSchema),
   issues: z.array(templateIssueSchema),
   agents: z.array(z.string()),
+  imageStatus: imageStatusSchema.optional(),
 });
 export type TemplateDetail = z.infer<typeof templateDetailSchema>;
 export const templateDetailResponseSchema = z.object({ template: templateDetailSchema });

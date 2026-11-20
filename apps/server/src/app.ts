@@ -16,11 +16,12 @@ import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
-import { type Config, localRuntimeAllowed } from "./config.ts";
+import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
+import { ImageBuilder } from "./images/builder.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
@@ -37,16 +38,20 @@ import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
+import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { schedulesRoutes } from "./routes/schedules.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
+import { settingsRoutes } from "./routes/settings.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
-import { dockerodeClient } from "./runtime/docker/client.ts";
+import { usageRoutes } from "./routes/usage.ts";
+import { signUpStateRoutes, usersRoutes } from "./routes/users.ts";
+import { type DockerClient, dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
@@ -54,6 +59,7 @@ import { ScheduleService } from "./scheduling/schedule-service.ts";
 import { ScheduleStore } from "./scheduling/schedule-store.ts";
 import { Scheduler } from "./scheduling/scheduler.ts";
 import { SecretService } from "./secrets/secret-service.ts";
+import { FactorySettings } from "./settings/factory-settings.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
 import { Reaper } from "./spawning/reaper.ts";
 import { SpawnService } from "./spawning/spawn-service.ts";
@@ -63,6 +69,9 @@ import { reconcile } from "./supervisor/reconcile.ts";
 import { TaskService } from "./tasks/task-service.ts";
 import { TaskStore } from "./tasks/task-store.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
+import { UsageService } from "./usage/usage-service.ts";
+import { InviteService } from "./users/invites.ts";
+import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
 import { migrateWorkdirState } from "./workspace/state-migration.ts";
@@ -91,6 +100,11 @@ declare module "fastify" {
     spawner: SpawnService;
     terminator: TerminateService;
     tasks: TaskService;
+    usage: UsageService;
+    images: ImageBuilder;
+    invites: InviteService;
+    userAdmin: UserAdminService;
+    factorySettings: FactorySettings;
     reaper: Reaper;
     schedules: ScheduleService;
     scheduler: Scheduler;
@@ -108,6 +122,8 @@ export interface AppDeps {
   webRoot?: string;
   logger?: boolean | object;
   harnessDriver?: HarnessDriver;
+  /** The Docker client; the real (lazily connecting) dockerode client unless a test injects a fake. */
+  docker?: DockerClient;
   /** The clock of the scheduling timer and service; real time unless a test injects one. */
   clock?: () => Date;
   /** The scheduler's timer functions; the real ones unless a test injects them. */
@@ -115,6 +131,8 @@ export interface AppDeps {
     setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
     clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   };
+  /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function loggerOptions(config: Config) {
@@ -158,12 +176,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   config.factoryHome = await realpath(config.factoryHome);
   await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
+  await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
   await migrateWorkdirState(
     config.factoryHome,
     (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
     app.log,
   );
+  // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
+  const settings = await FactorySettings.load(deps.db, app.log);
+  app.decorate("factorySettings", settings);
+  for (const w of removedEnvWarnings(deps.env ?? process.env)) app.log.warn(w);
 
   const store = new EventStore(deps.db);
   const bus = new EventBus();
@@ -178,7 +201,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
   });
   // dockerode connects lazily: constructing these makes no Docker call.
-  const docker = dockerodeClient();
+  const docker = deps.docker ?? dockerodeClient();
   const containers = new ContainerManager({ docker, log: app.log });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
@@ -198,10 +221,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     prepareStart,
     tokens,
     log: app.log,
-    memberUpdateDebounceMs: config.memberUpdateDebounceMs,
+    // S10 §8.2: read live; `settingsChanged()` below re-arms the runtimes' timers on a change.
+    memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
+    defaultWarmWindowMinutes: settings.defaultWarmWindowMinutes,
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
-    maxRunningAgents: config.maxRunningAgents,
+    // S10 §8.2: the cap is read live; `capChanged()` below grants and publishes on a change.
+    maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
     docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
@@ -213,6 +239,14 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
         log: app.log,
         transports: { local: localTransport, docker: dockerTransport({ docker, containers }) },
       }),
+  });
+  settings.onChange((prev, next) => {
+    if (prev.maxRunningAgents !== next.maxRunningAgents) runtimes.supervisor.capChanged();
+    if (
+      prev.defaultWarmWindowMinutes !== next.defaultWarmWindowMinutes ||
+      prev.memberUpdateDebounceSeconds !== next.memberUpdateDebounceSeconds
+    )
+      void runtimes.settingsChanged();
   });
   const templates = new TemplateIndex({ db: deps.db, config });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
@@ -264,9 +298,29 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     vault,
     verifier,
     runtimes,
+    now: clock,
     log: app.log,
   });
   app.decorate("credentials", credentials);
+  app.decorate(
+    "usage",
+    new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
+  );
+  app.decorate(
+    "images",
+    new ImageBuilder({
+      docker,
+      imagesRoot: path.join(config.factoryHome, "images"),
+      bus,
+      now: clock,
+      log: app.log,
+    }),
+  );
+  app.decorate(
+    "invites",
+    new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
+  );
+  app.decorate("userAdmin", new UserAdminService({ db: deps.db, now: clock, bus }));
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
@@ -338,14 +392,19 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   }
 
   await app.register(statusRoutes, { sql: deps.sql });
-  await app.register(authRoutes);
+  await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
+  await app.register(usageRoutes);
+  await app.register(signUpStateRoutes, { db: deps.db });
+  await app.register(usersRoutes);
+  await app.register(settingsRoutes, { db: deps.db });
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
-  await app.register(templatesRoutes);
+  await app.register(templatesRoutes, { docker });
+  await app.register(imagesRoutes, { docker });
   await app.register(inboxRoutes);
   await app.register(tasksRoutes);
   await app.register(schedulesRoutes);
@@ -383,7 +442,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       containers,
       supervisor: runtimes.supervisor,
       runtimes,
-      memberUpdateDebounceMs: config.memberUpdateDebounceMs,
+      memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
       forward: (f) => router.forward(f),
       log: app.log,
     });

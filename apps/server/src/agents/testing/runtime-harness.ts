@@ -1,4 +1,3 @@
-import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import type { Forward } from "../../messaging/forwarder.ts";
 import type { SlotPort } from "../../supervisor/slots.ts";
@@ -54,7 +53,13 @@ export const noopTokens = {
   revoke: () => {},
 };
 
-export const okSpec = (a: { id: string; slug: string }): AgentRuntimeSpec => ({
+/** A local spec on the agent's own credential (`cred-<id>`, as `insertAgent` names it, when the row has none). */
+export const okSpec = (a: {
+  id: string;
+  slug: string;
+  credentialId?: string | null;
+}): PreparedSpec => ({
+  credentialId: a.credentialId ?? `cred-${a.id}`,
   agentId: a.id,
   slug: a.slug,
   cwd: "/w",
@@ -69,6 +74,8 @@ export const okSpec = (a: { id: string; slug: string }): AgentRuntimeSpec => ({
  * One test DB and a fresh runtime per `makeRuntime()` call, over the fake driver. Call `setup()` in `beforeAll`
  * and `close()` in `afterAll`. `startError`, when set, is thrown by `prepareStart` at the next start.
  */
+const getter = (v: number | (() => number)) => (typeof v === "number" ? () => v : v);
+
 export class RuntimeHarness {
   t!: Awaited<ReturnType<typeof createTestDb>>;
   store!: EventStore;
@@ -117,10 +124,14 @@ export class RuntimeHarness {
       sessionId?: string;
       status?: string;
       slots?: SlotPort;
+      /** Pins the warm window in the agent's config snapshot; omitted (the factory default) by default. */
       warmWindowMinutes?: number;
       cleanup?: RuntimeDeps["cleanup"];
       journal?: RuntimeDeps["journal"];
-      memberUpdateDebounceMs?: number;
+      /** The member-update debounce: a fixed value, or a getter a test changes (then calls `settingsChanged()`). */
+      memberUpdateDebounceMs?: number | (() => number);
+      /** The factory default warm window, read live (the runtime's 70 when absent). */
+      defaultWarmWindowMinutes?: () => number;
       /** The Docker launcher; pair it with `spec` returning a Docker spec. */
       docker?: RuntimeDeps["docker"];
       /** What `prepareStart` returns (default: `okSpec`, a local spec). */
@@ -145,7 +156,9 @@ export class RuntimeHarness {
       ...(opts.errorKind ? { errorKind: opts.errorKind } : {}),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),
-      ...(opts.warmWindowMinutes ? { warmWindowMinutes: opts.warmWindowMinutes } : {}),
+      ...(opts.warmWindowMinutes !== undefined
+        ? { warmWindowMinutes: opts.warmWindowMinutes }
+        : {}),
     });
     this.driver = new FakeDriver();
     this.bus = new EventBus();
@@ -193,7 +206,10 @@ export class RuntimeHarness {
       ...(opts.journal ? { journal: opts.journal } : {}),
       ...(opts.docker ? { docker: opts.docker } : {}),
       ...(opts.memberUpdateDebounceMs !== undefined
-        ? { memberUpdateDebounceMs: opts.memberUpdateDebounceMs }
+        ? { memberUpdateDebounceMs: getter(opts.memberUpdateDebounceMs) }
+        : {}),
+      ...(opts.defaultWarmWindowMinutes
+        ? { defaultWarmWindowMinutes: opts.defaultWarmWindowMinutes }
         : {}),
     });
     await opts.seed?.(this.agentId);

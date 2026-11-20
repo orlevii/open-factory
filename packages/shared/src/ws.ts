@@ -44,5 +44,15 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tasks_changed"), keys: z.array(z.string()) }),
   /** S9: after any schedule commit; the Schedules page, an open edit page and the strip's count refetch. */
   z.object({ type: z.literal("schedules_changed") }),
+  /** S10: factory settings, users and invites, and the images list changed. */
+  z.object({ type: z.literal("settings_changed") }),
+  z.object({ type: z.literal("users_changed") }),
+  z.object({ type: z.literal("images_changed") }),
+  z.object({
+    type: z.literal("image_build"),
+    name: z.string(),
+    state: z.enum(["building", "succeeded", "failed"]),
+    lines: z.array(z.string()).optional(),
+  }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

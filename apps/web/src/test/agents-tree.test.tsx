@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -368,4 +368,145 @@ test("on mobile, a spawned agent's name keeps its ' · ab12' tail; the head trun
   expect(tail).not.toHaveClass("truncate");
   // Spawned agents nest under their spawner in the Active view.
   expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("20px");
+});
+
+describe("usage in the tree (S10 §12.1)", () => {
+  const t = (costUsd: number, turns: number) => ({
+    costUsd,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    turns,
+  });
+  const usageRow = (
+    slug: string,
+    kind: "persistent" | "ephemeral",
+    own: ReturnType<typeof t>,
+    spawned?: ReturnType<typeof t>,
+    total = own,
+  ) => ({
+    slug,
+    displayName: slug,
+    kind,
+    archived: false,
+    terminated: false,
+    own,
+    ...(spawned ? { spawned } : {}),
+    total,
+  });
+  const usageWorld = () =>
+    mockWorld({
+      agents: [
+        agentSummary({ slug: "lead", displayName: "Team Lead" }),
+        agentSummary({ slug: "dev-1", displayName: "Developer", reportsTo: "lead", depth: 1 }),
+        agentSummary({ slug: "idle", displayName: "Idle one" }),
+      ],
+      extra: {
+        "GET /api/usage/agents?window=rolling": () =>
+          json({
+            agents: [
+              usageRow("lead", "persistent", t(1.2, 3), t(3.4, 5), t(4.6, 8)),
+              usageRow("dev-1", "ephemeral", t(0.5, 2)),
+              usageRow("idle", "persistent", t(0, 0)),
+            ],
+          }),
+      },
+    });
+
+  test("a persistent row shows the total with the spelled-out sr-only text; a spawned row its own; no turns is a dash", async () => {
+    usageWorld();
+    renderApp("/agents", alice);
+    const [lead, dev, idle] = (await rows()) as [HTMLElement, HTMLElement, HTMLElement];
+    expect(await within(lead).findByText("$4.60")).toBeInTheDocument();
+    expect(
+      within(lead).getByText("Estimated cost, last 7 days: $4.60 (own $1.20, spawned $3.40)"),
+    ).toHaveClass("sr-only");
+    expect(within(dev).getByText("$0.50").parentElement).toHaveClass("tabular-nums");
+    expect(within(dev).getByText("Estimated cost, last 7 days: $0.50")).toHaveClass("sr-only");
+    expect(within(idle).getByText("—")).toBeInTheDocument();
+    expect(within(idle).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
+    // Hidden below md; no tooltip trigger or title inside a row link.
+    expect(within(lead).getByText("$4.60").parentElement).toHaveClass("hidden", "md:block");
+    expect(lead.querySelector("[title], [data-slot=tooltip-trigger]")).toBeNull();
+  });
+
+  test("the name keeps a minimum width: two lines from md, full columns only on a wide tree", async () => {
+    usageWorld();
+    renderApp("/agents", alice);
+    const list = await screen.findByRole("list", { name: "Agents" });
+    const [lead] = (await rows()) as [HTMLElement];
+    // The full columns key on the tree's own width (a container query), not the window's: with the
+    // sidebar open a 1024px window leaves the name track about 40px.
+    expect(list).toHaveClass("@container");
+    expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
+    expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
+    expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
+      "md:col-start-3",
+      "md:row-start-1",
+      "@min-[54rem]:col-start-6",
+    );
+  });
+
+  test("the muted line above the Active tree explains the column", async () => {
+    usageWorld();
+    renderApp("/agents", alice);
+    await screen.findByRole("list", { name: "Agents" });
+    const line = screen.getByText(
+      "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
+    );
+    // Only where the cost cells are: they are hidden below md.
+    expect(line).toHaveClass("hidden", "md:block");
+  });
+
+  test("an agent with no row in the loaded usage shows a dash; nothing while usage hasn't loaded", async () => {
+    mockWorld({
+      agents: [
+        agentSummary({ slug: "lead", displayName: "Team Lead" }),
+        agentSummary({ slug: "solo", displayName: "Solo" }),
+      ],
+      extra: {
+        "GET /api/usage/agents?window=rolling": () =>
+          json({ agents: [usageRow("lead", "persistent", t(1.2, 3), t(0, 0), t(1.2, 3))] }),
+      },
+    });
+    renderApp("/agents", alice);
+    const [lead, solo] = (await rows()) as [HTMLElement, HTMLElement];
+    // Own turns but no spawned turns: no "(own …, spawned —)" parenthesis.
+    expect(await within(lead).findByText("Estimated cost, last 7 days: $1.20")).toBeInTheDocument();
+    expect(within(solo).getByText("—")).toBeInTheDocument();
+    expect(within(solo).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
+  });
+
+  test("the cost cell stays empty while usage fails to load", async () => {
+    mockWorld({
+      agents: [agentSummary({ slug: "solo", displayName: "Solo" })],
+      extra: {
+        "GET /api/usage/agents?window=rolling": () => json({ error: { code: "x" } }, 500),
+      },
+    });
+    renderApp("/agents", alice);
+    const [solo] = (await rows()) as [HTMLElement];
+    expect(within(solo).queryByText("—")).toBeNull();
+    expect(within(solo).queryByText(/Estimated cost/)).toBeNull();
+  });
+
+  test("the explanation line also shows above the Ended list", async () => {
+    mockWorld({
+      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
+      extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
+    });
+    renderApp("/agents?ended=only", alice);
+    await screen.findByRole("list", { name: "Agents" });
+    expect(screen.getByText(/^Costs are estimates for the last 7 days\./)).toBeInTheDocument();
+  });
+
+  test("the tree asks for the rolling window", async () => {
+    const api = usageWorld();
+    renderApp("/agents", alice);
+    await screen.findByRole("list", { name: "Agents" });
+    await waitFor(() =>
+      expect(api.calls.some((c) => c.url === "/api/usage/agents?window=rolling")).toBe(true),
+    );
+  });
 });

@@ -11,6 +11,7 @@ export const credential = (name = "work", kind: "oauth_token" | "api_key" = "oau
   lastError: null,
   usedBy: [],
   archivedUsedBy: [],
+  rateLimit: null,
 });
 
 export const project = (name: string, hostPath = `/src/${name}`) => ({
@@ -44,7 +45,6 @@ export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConf
   secrets: [],
   canSpawn: [],
   maxLiveSpawns: 5,
-  warmWindowMinutes: 70,
   ...over,
 });
 

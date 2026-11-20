@@ -37,9 +37,9 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["hour", 3_600],
   ["minute", 60],
 ];
-/** "2 hours ago", "yesterday", "just now". */
+/** "2 hours ago", "yesterday", "just now". A time ahead of this clock (skew) reads "just now". */
 export function ago(iso: string, now = Date.now()): string {
-  const s = Math.round((new Date(iso).getTime() - now) / 1000);
+  const s = Math.min(Math.round((new Date(iso).getTime() - now) / 1000), 0);
   if (Math.abs(s) < 45) return "just now";
   for (const [unit, size] of UNITS) {
     if (Math.abs(s) >= size || unit === "minute") return rtf.format(Math.round(s / size), unit);
@@ -132,7 +132,7 @@ export function Usage({
   );
 }
 
-/** One settings section: the panel-heading h2, a muted line, then its list and forms. */
+/** One settings section: the panel-heading h2, an optional muted line, then its content. */
 export function SettingsSection({
   id,
   title,
@@ -141,8 +141,8 @@ export function SettingsSection({
 }: {
   id: string;
   title: string;
-  description: ReactNode;
-  children: ReactNode;
+  description?: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section
@@ -154,7 +154,7 @@ export function SettingsSection({
         <h2 id={`${id}-title`} tabIndex={-1} className="text-[0.8125rem] font-medium outline-none">
           {title}
         </h2>
-        <p className={`${smallClass} text-muted-foreground`}>{description}</p>
+        {description && <p className={`${smallClass} text-muted-foreground`}>{description}</p>}
       </div>
       {children}
     </section>

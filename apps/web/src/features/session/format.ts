@@ -1,6 +1,9 @@
 export function formatTokens(n: number): string {
   if (n < 1000) return String(n);
-  if (n >= 100_000) return `${Math.round(n / 1000)}k`;
+  // The thresholds compare the rounded figure, so 999,999 reads "1.0M" and 99,950 "100k"
+  // (not "1000k" or "100.0k").
+  if (Math.round(n / 1000) >= 1000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.round(n / 100) >= 1000) return `${Math.round(n / 1000)}k`;
   return `${(n / 1000).toFixed(1)}k`;
 }
 export function formatBytes(n: number): string {

@@ -511,7 +511,7 @@ test("strip: slug, template, manager, credential and runtime, identifiers in mon
   await screen.findByText("Two entries.");
   const strip = document.querySelector("[data-agent-strip]") as HTMLElement;
   expect(strip.textContent).toBe(
-    "dev·tech-lead·Reports to @cto·credential work·Unsandboxed: runs directly on this machine",
+    "dev·tech-lead·Reports to @cto·Usage·credential work·Unsandboxed: runs directly on this machine",
   );
   for (const id of ["dev", "tech-lead", "@cto", "work"])
     expect(within(strip).getByText(id)).toHaveClass("font-mono");
@@ -675,6 +675,21 @@ test("an error with fix credentials or projects links to that section", async ()
   expect(screen.getByRole("link", { name: "Open Settings → Projects" })).toHaveAttribute(
     "href",
     "/settings#projects",
+  );
+});
+
+test("an error with fix image links to Templates → Images", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message:
+      "Image `playwright` isn't built. Build it in Templates → Images, or run `open-factory images build playwright`.",
+    fix: "image",
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Open Templates → Images" })).toHaveAttribute(
+    "href",
+    "/templates#images",
   );
 });
 

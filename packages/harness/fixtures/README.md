@@ -113,4 +113,66 @@ Live gate V1/V2 (Claude Code 2.1.327, haiku, `--permission-mode auto`, `CLAUDE_C
 - **V1 (harness crons map as S0 recorded): confirmed.** The real mapper turns each trace into `cron_created` (`recurring` true or false), a `turn_end` with `originKind: "cron"` for the firing, and `cron_deleted` for the recurring cron after `CronDelete`; the one-shot gets no deletion event. `CronCreate`'s `tool_use_result` is `{id, humanSchedule, recurring, durable, nextFireAt}` (`nextFireAt` in epoch milliseconds, a float for the recurring one).
 - **V2 (does a `durable: true` cron survive a resume): negative.** The model passed `durable: true` in the `CronCreate` input (checked in the `tool_use` block), but the tool's result reported `durable: false`, no `.claude/scheduled_tasks.json` (nor a `.claude` directory) was written in the working directory, and after stopping the process and resuming the session with `--resume` across the job's fire time (waited 200 s) no `DURABLEFIRED` turn, no `command_lifecycle` and no cron turn appeared. In this headless stream-json mode the flag is ignored, so no cron outlives its process and the durable-cron cleanup (spec §10.4's fallback) is not needed.
 
-Live check `pnpm smoke:scheduling` (Docker agents on `open-factory-base:dev`, haiku, Claude Code 2.1.327), run in phases, all passing: the first slice (the three schedule tools listed by `system/init`, a human one-shot waking hibernated ceo with a `scheduled` envelope `schedule="S-1" by="@or"`, ceo acting on the body with `schedule_message` twice and no recreation of the fired one-shot, a spawned agent listing none of the three); phase a (a human `* * * * *` schedule, the 15-minute sentence for an agent's `*/5`, `cancel_schedule`); phase b (the server down more than a minute past a one-shot's time: one envelope with `late="true"`); phase c (`FACTORY_MAX_RUNNING_AGENTS=1`: dev stays queued while its schedule fires twice, one pending row with `firings=2`); phase d (`CronCreate` keeps ceo up past its 1-minute warm window, Stop crons hibernates it with `crons_stopped` by `@or`, the next batch starts with the passive notice). Two live details worth keeping: Claude Code refuses a standalone `sleep 170` (use a loop of short sleeps to keep an agent busy), and `CronCreate`'s result text says "Session-only (not written to disk, dies when Claude exits)".
+Live check `pnpm smoke:scheduling` (Docker agents on `open-factory-base:dev`, haiku, Claude Code 2.1.327), run in phases, all passing: the first slice (the three schedule tools listed by `system/init`, a human one-shot waking hibernated ceo with a `scheduled` envelope `schedule="S-1" by="@or"`, ceo acting on the body with `schedule_message` twice and no recreation of the fired one-shot, a spawned agent listing none of the three); phase a (a human `* * * * *` schedule, the 15-minute sentence for an agent's `*/5`, `cancel_schedule`); phase b (the server down more than a minute past a one-shot's time: one envelope with `late="true"`); phase c (`FACTORY_MAX_RUNNING_AGENTS=1`, since replaced by the max running agents factory setting; re-run in S10 with the setting and passing: dev stays queued while its schedule fires twice, one pending row with `firings=2`); phase d (`CronCreate` keeps ceo up past its 1-minute warm window, Stop crons hibernates it with `crons_stopped` by `@or`, the next batch starts with the passive notice). Two live details worth keeping: Claude Code refuses a standalone `sleep 170` (use a loop of short sleeps to keep an agent busy), and `CronCreate`'s result text says "Session-only (not written to disk, dies when Claude exits)".
+
+### Verified in S10 implementation
+
+Live gates V1, V2, V3 and V5 (Claude Code 2.1.327, Docker 29.9.3, dockerode 5.0.1, better-auth 1.7.25, haiku, `CLAUDE_CODE_OAUTH_TOKEN` read at run time).
+
+- **V1 (dockerode `buildImage` with tar, `labels`, `pull`): confirmed, with one parser rule.** (a) `FROM ghcr.io/orlevii/open-factory/base:latest` + `RUN true`: stream ends `Successfully tagged of-gate:1`, and `.Config.Labels` carries `"io.open-factory.context-hash":"x"`. (b) `RUN false`: the failure arrives **in the stream** as `{"error":"The command '/bin/bash -o pipefail -c false' returned a non-zero code: 1","errorDetail":{"code":1,"message":"..."}}`; `modem.followProgress`'s completion callback got `err = null` and the promise resolved, so the parser must scan events for `error`/`errorDetail`. (c) `FROM open-factory-base:dev` with `pull: true`: stream event `{"error":"pull access denied for open-factory-base, repository does not exist or may require 'docker login'","errorDetail":{"message":"pull access denied for ..."}}` (also `err = null`); match on `pull access denied` for the `--no-pull` hint. (d) same with `pull: false`: succeeds, label present.
+- **V2 (better-auth hooks and `additionalFields`): confirmed.** `user.create.before` throwing `APIError("FORBIDDEN", {code:"invite_required"})` returns 403 `{"code":"invite_required","message":"Invite required"}`. `session.create.before` throwing `APIError("FORBIDDEN", {code:"USER_DISABLED", message:"This account is disabled."})` returns 403 `{"code":"USER_DISABLED","message":"This account is disabled."}` on sign-in. A sign-up body containing `disabledAt` (`input: false`) is rejected: 400 `{"message":"disabledAt is not allowed to be set","code":"FIELD_NOT_ALLOWED"}`, nothing stored. `getSession` returns `user.disabledAt` (ISO string) once set; the key is absent while unset. A session created before the user was disabled stays valid (`getSession` 200), so disabling must also delete the user's sessions.
+- **V3 (AsyncLocalStorage visible in `user.create.before`): confirmed.** Sign-up outside the store: 403 `invite_required`; inside `als.run({allowed:true}, ...)`: 200; two concurrent sign-ups, one inside and one outside: 200 and 403.
+- **V5 (live `rate_limit_event`): differs in shape.** One event arrived on a haiku turn (`status: "allowed"`). `utilization` is **not** top-level on `rate_limit_info`; it is inside `unifiedWindows.<window>.utilization`. Keys: `status`, `resetsAt` (epoch seconds), `rateLimitType` (`five_hour`), `overageStatus`, `overageDisabledReason`, `isUsingOverage`, `unifiedWindows` (`five_hour` and `seven_day`, each `{utilization, resetsAt, status}`). Redacted line saved as `rate-limit-event-live-allowed.ndjson`:
+
+```json
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795209600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.01,"resetsAt":1795209600,"status":"allowed"},"seven_day":{"utilization":0.26,"resetsAt":1795590000,"status":"allowed"}}},"uuid":"REDACTED","session_id":"REDACTED"}
+```
+
+Live check `pnpm smoke:images` (Docker 29.9.3, Claude Code 2.1.327 in `open-factory-base:dev`, haiku, Docker agent on a user image, a throwaway database and `FACTORY_HOME`, only real routes over a real socket and the built CLI with a real bearer token), all passing. Redacted output (the evidence lines shortened):
+
+```text
+PASS 0. setup: prerequisites (CLI bundle, agent CLI bundle, local base image)
+PASS 1. first user @or signs up without an invite (bootstrap) → 200
+PASS 1. POST /api/credentials smoke (oauth_token, verified live) → 201
+    imageStatus: {"kind":"user","name":"smoke","status":"not_built"}
+PASS 1. template smoke-tpl (runtime docker, image smoke, haiku) is valid, image not_built
+PASS 1. POST /api/agents smoke (template smoke-tpl) → 201
+PASS 2. message smoke before the build → 202
+PASS 2. the start fails: error event (source spawn)
+PASS 2. the error has fix "image" and the exact "isn't built" message
+    fix=image; message=Image `smoke` isn't built. Build it in Templates → Images, or run `open-factory images build smoke`.
+PASS 2. no pull ran (no `pulling image` server log line)
+PASS 3. @or signs in; bearer from the set-auth-token header
+PASS 3. `open-factory images build smoke` (built CLI, bearer) exits 0
+PASS 3. the build log streamed to stdout
+    21 lines; first: Step 1/4 : FROM ghcr.io/orlevii/open-factory/base:latest; last 3: Successfully tagged open-factory-user/smoke:latest | Base image ghcr.io/orlevii/open-factory/base:latest: ghcr.io/orlevii/open-factory/base@sha256:d47a2f37… | Built smoke
+PASS 3. docker image inspect open-factory-user/smoke:latest has io.open-factory.context-hash
+PASS 3. GET /api/images → smoke built
+PASS 4. POST /api/agents/smoke/restart → 202
+PASS 4. message smoke after the build → 202
+PASS 4. smoke's turn for that message ends
+PASS 4. smoke answers
+    answer: PELICAN
+PASS 4. the container label io.open-factory.image = open-factory-user/smoke:latest
+PASS 4. GET /api/agents/smoke/usage?days=7 → turns ≥ 1
+    status 200; total {"costUsd":0.001877,"inputTokens":2,"outputTokens":7,"cacheWriteTokens":8787,"cacheReadTokens":11586,"turns":1}
+PASS 4. the turn row has credential_id set (credential smoke)
+PASS 4. GET /api/usage/credentials?days=7 shows smoke with a rateLimit (V5 in situ)
+    rateLimit {"status":"allowed","type":"five_hour","utilization":0.01,"resetsAt":"2026-11-20T21:20:00.000Z","observedAt":"2026-11-20T20:13:59.853Z"}
+PASS 5. touch images/smoke/new.txt → GET /api/images → out_of_date
+PASS 6. `images build local --no-pull` (FROM open-factory-base:dev) exits 0
+PASS 6. `images build local` without --no-pull exits 1 with the "couldn't be pulled" sentence
+    exit 1; stderr: Build of local failed: Base image open-factory-base:dev couldn't be pulled. If it's local-only, run `open-factory images build local --no-pull`.
+PASS 7. POST /api/invites → 201 with a link
+PASS 7. sign-up without an invite → 403 invite_required
+PASS 7. sign-up @sam with the invite → 200
+PASS 7. reusing the invite → 403 invite_invalid
+PASS 7. @sam signs in (bearer)
+PASS 7. @sam's bearer works before disable (GET /api/me → 200)
+PASS 7. @or disables @sam → 200
+PASS 7. @sam's bearer after disable → 401
+
+Smoke passed.
+```
+
+V5 in situ: the mapper's `utilization` (0.01) is the five-hour window's, matching the live `rate_limit_event`. Two live details worth keeping: a message sent while the image isn't built stays queued through the failed start and is delivered with the next message after the build and Restart (one batch, one turn), and the "no pull" check reads the server's `pulling image` log line (the Supervisor still marks the wake `pulling` for the moment the local image check takes).

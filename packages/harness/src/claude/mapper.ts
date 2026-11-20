@@ -428,14 +428,30 @@ export function mapLine(line: unknown, s: MapperState): HarnessEvent[] {
       out.push(...result(e, s));
       break;
     case "rate_limit_event": {
+      // Every rate_limit_event reports status; only `rejected` pauses (S5).
       const i = e.rate_limit_info ?? {};
+      if (i.status !== "allowed" && i.status !== "allowed_warning" && i.status !== "rejected")
+        break;
+      // Absent stays absent on the status (stored as NULL), never an invented value.
+      const rateLimitType = typeof i.rateLimitType === "string" ? i.rateLimitType : undefined;
+      // The CLI reports utilization and resetsAt per window; top-level values win when present.
+      const win = rateLimitType ? i.unifiedWindows?.[rateLimitType] : undefined;
+      const utilization = typeof i.utilization === "number" ? i.utilization : win?.utilization;
+      const resetsAt = i.resetsAt ?? win?.resetsAt;
+      out.push({
+        type: "rate_limit_status",
+        status: i.status,
+        ...(rateLimitType ? { rateLimitType } : {}),
+        ...(typeof utilization === "number" ? { utilization } : {}),
+        ...(typeof resetsAt === "number" ? { resetsAt } : {}),
+      });
       if (i.status === "rejected")
         out.push({
           type: "rate_limited",
           status: "rejected",
-          resetsAt: Number(i.resetsAt ?? 0),
-          rateLimitType: String(i.rateLimitType ?? "unknown"),
-          ...(typeof i.utilization === "number" ? { utilization: i.utilization } : {}),
+          resetsAt: Number(resetsAt ?? 0),
+          rateLimitType: rateLimitType ?? "unknown",
+          ...(typeof utilization === "number" ? { utilization } : {}),
         });
       break;
     }

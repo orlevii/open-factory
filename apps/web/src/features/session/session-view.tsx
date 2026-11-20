@@ -8,6 +8,7 @@ import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentName } from "@/features/agents/agent-tree";
+import { agentsUsageQuery } from "@/features/usage/api";
 import { sessionQueryOptions } from "@/lib/session";
 import { AgentStrip } from "./agent-strip";
 import { agentsListQueryOptions, runningQueryOptions } from "./api";
@@ -40,6 +41,7 @@ export function SessionView({
   const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
+  const usageRows = useQuery(agentsUsageQuery("rolling7"));
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
   const [raceNotice, setRaceNotice] = useState<string>();
   // Terminated while viewing (S7 UI design §5.3): by the spawner, another human or the TTL, never
@@ -110,7 +112,16 @@ export function SessionView({
           />
         }
       />
-      <AgentStrip agent={agent} slotsMax={running.data?.max} onAgent={s.setAgent} />
+      <AgentStrip
+        agent={agent}
+        slotsMax={running.data?.max}
+        usage={
+          usageRows.data
+            ? (usageRows.data.agents.find((r) => r.slug === agent.slug) ?? null)
+            : undefined
+        }
+        onAgent={s.setAgent}
+      />
       {s.missingEvent !== undefined && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
           Event {s.missingEvent} isn't in this session. Showing the latest.

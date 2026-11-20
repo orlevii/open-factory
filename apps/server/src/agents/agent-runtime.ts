@@ -49,6 +49,7 @@ import {
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
+  type StartFix,
   StopCronsError,
 } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -96,8 +97,16 @@ export interface RuntimeDeps {
   localRuntimeAllowed?: () => boolean;
   /** The Docker launcher (spec §10 step 4, §11): the one ContainerManager and the in-container Claude path. */
   docker?: DockerDeps;
-  /** S6 §8.1: how long the oldest pending member update waits while no turn is open (default 30 s; 0 = at once). */
-  memberUpdateDebounceMs?: number;
+  /**
+   * S6 §8.1: how long the oldest pending member update waits while no turn is open (default 30 s; 0 = at once). Read
+   * live (S10 §8.2, the `member_update_debounce_seconds` factory setting); `settingsChanged()` re-arms on a change.
+   */
+  memberUpdateDebounceMs?: () => number;
+  /**
+   * S10 §8.2: the factory default warm window in minutes, read live, for a snapshot that omits `warmWindowMinutes`
+   * (70 when absent); `settingsChanged()` re-arms an armed warm timer on a change.
+   */
+  defaultWarmWindowMinutes?: () => number;
   /**
    * S6 §9.1: persists one forwarded item (the Router: a held `member_update` to the manager, the `errored` fact to the
    * humans for a top-level agent, otherwise dropped). Awaited inside the report's job: a failed insert is a failed event
@@ -356,6 +365,8 @@ export class AgentRuntime {
   private started = false; // session_started seen for this process
   private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
+  /** The credential the live process was launched with (`reload()` may move the agent since); cleared on exit. */
+  private procCredentialId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
   private queue: Entry[] = [];
   // S6 §8.1: pending member updates and peer events, in (created_at, id) order; never written while a turn is open.
@@ -429,6 +440,7 @@ export class AgentRuntime {
   private owedNotifications = 0;
   private owedTimer: ReturnType<typeof setTimeout> | undefined;
   private warmTimer: ReturnType<typeof setTimeout> | undefined;
+  private warmArmedAt: number | undefined; // when the armed warm timer's window began (S10 §8.2)
   private cronExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   private cronExpiryAt: number | undefined;
   private wasHibernatable = false;
@@ -1249,10 +1261,11 @@ export class AgentRuntime {
   private heldDueAt(): number | undefined {
     const oldest = this.held.find(isUpdate);
     if (!oldest) return undefined;
-    return (
-      oldest.row.createdAt.getTime() +
-      (this.d.memberUpdateDebounceMs ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS)
-    );
+    return oldest.row.createdAt.getTime() + this.debounceMs();
+  }
+
+  private debounceMs(): number {
+    return this.d.memberUpdateDebounceMs?.() ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS;
   }
 
   /** S6 §8.1: due at the turn boundary (unless that turn was update-only) or once the window has passed. */
@@ -1260,7 +1273,7 @@ export class AgentRuntime {
     const at = this.heldDueAt();
     if (at === undefined) return false;
     // 0 means due at once, even for a row stamped a millisecond ahead (the store's stamps are strictly increasing).
-    return this.dueAtTurnEnd || this.d.memberUpdateDebounceMs === 0 || Date.now() >= at;
+    return this.dueAtTurnEnd || this.debounceMs() === 0 || Date.now() >= at;
   }
 
   /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
@@ -1328,10 +1341,10 @@ export class AgentRuntime {
    * The Supervisor's pull of this agent's image failed (spec §11.2): its wake was dropped, so the start fails here,
    * with the registry's error verbatim. An attempt waiting on that wake ends with it.
    */
-  imagePullFailed(message: string): Promise<void> {
+  imagePullFailed(message: string, fix?: StartFix): Promise<void> {
     return this.run(async () => {
       if (this.proc || this.starting || this.terminated) return; // started meanwhile, or terminated: nothing failed
-      await this.append(null, { type: "error", source: "spawn", message });
+      await this.append(null, { type: "error", source: "spawn", message, ...(fix ? { fix } : {}) });
       await this.setErrored(message, "start");
       this.publishStatus();
     });
@@ -1953,7 +1966,7 @@ export class AgentRuntime {
       if (this.terminated) throw new AgentStartError(TERMINATED_START);
       return this.failStart(err, "prepareStart failed");
     }
-    const { launch: dockerLaunch, ...prepSpec } = prepared;
+    const { launch: dockerLaunch, credentialId, ...prepSpec } = prepared;
     let spec: AgentRuntimeSpec = prepSpec;
     if (!this.firstStartDone) {
       this.firstStartDone = true;
@@ -1988,6 +2001,7 @@ export class AgentRuntime {
     this.tokenGens.set(proc, generation);
     onLaunched();
     this.proc = proc;
+    this.procCredentialId = credentialId; // what prepareStart launched on, not the row (a spawned agent's differs)
     this.procRuntime = spec.runtime;
     this.imageRequeued = false;
     this.started = false;
@@ -2275,7 +2289,7 @@ export class AgentRuntime {
       }
       case "turn_started":
         this.clearOwedBound(); // the bound only runs while no turn is open
-        this.openTurnId = await this.d.store.openTurn(this.agent.id);
+        this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.turnKinds = [];
         await this.append(this.openTurnId, e);
@@ -2294,17 +2308,20 @@ export class AgentRuntime {
         this.turnKinds = [];
         await this.append(turnId, e);
         if (turnId) {
-          await this.d.store.closeTurn(turnId, {
+          const close = {
             isError: e.isError,
             terminalReason: e.terminalReason,
             originKind: e.originKind,
             usage: this.lastUsage,
-          });
-          if (!e.originKind && this.awaiting.length) {
-            await this.d.store.setDeliveredTurn(this.awaiting.flat(), turnId);
+          };
+          // S10 §5.2 (F1): a message-started turn stamps its starting batch before the close, in the close's
+          // transaction, so `attributeTask` sees it. A self-started turn (cron, task notification) never consumes
+          // `awaiting` and isn't attributed.
+          if (!e.originKind) {
+            await this.d.store.closeTurnWith(turnId, close, this.awaiting.flat(), true);
             this.awaiting = [];
             this.awaitingKinds = [];
-          }
+          } else await this.d.store.closeTurnWith(turnId, close, [], false);
         }
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
@@ -2343,6 +2360,19 @@ export class AgentRuntime {
         this.maybeRestart();
         break;
       }
+      case "rate_limit_status":
+        // Not a timeline event; a status write must never fail the turn.
+        try {
+          // The launch credential: the status is about the one the process runs on, even after an edit.
+          if (this.procCredentialId)
+            await this.d.store.recordRateLimit(this.procCredentialId, e, new Date());
+        } catch (err) {
+          this.d.log.error(
+            { err, agent: this.agent.slug },
+            "could not record the rate-limit status",
+          );
+        }
+        break;
       case "rate_limited":
         await this.append(this.openTurnId, e);
         this.rateLimitedTurn = true;
@@ -2455,12 +2485,30 @@ export class AgentRuntime {
     this.awaiting = [];
     this.awaitingKinds = [];
     this.turnKinds = [];
-    if (this.proc === proc) this.proc = undefined;
+    if (this.proc === proc) {
+      this.proc = undefined;
+      this.procCredentialId = undefined;
+    }
     this.started = false;
     const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
+      // S10 §11: close the turn before the cleanup, which can take seconds (a Docker stop). A status frame published
+      // meanwhile already says turnOpen false, so the row must be closed by then. A failed close must not skip the
+      // cleanup: it is rethrown where the close used to be.
+      const closeFailure = openTurnId
+        ? await this.d.store
+            .closeTurn(openTurnId, {
+              isError: !e.expected,
+              terminalReason: e.expected ? "process_stopped" : "process_exited",
+              usage,
+            })
+            .then(
+              () => undefined,
+              (err: unknown) => ({ err }),
+            )
+        : undefined;
       // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
       if (terminating) keepSlot = !(await this.terminationCleanup());
       else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
@@ -2478,12 +2526,7 @@ export class AgentRuntime {
             : "the agent process exited before the session started",
         });
       }
-      if (openTurnId)
-        await this.d.store.closeTurn(openTurnId, {
-          isError: !e.expected,
-          terminalReason: e.expected ? "process_stopped" : "process_exited",
-          usage,
-        });
+      if (closeFailure) throw closeFailure.err;
       await this.append(null, e);
       if (terminating) await this.reportLostWork("terminated", lost);
       else if (intent?.kind === "hibernate") {
@@ -2921,19 +2964,53 @@ export class AgentRuntime {
       clearTimeout(this.warmTimer);
       this.warmTimer = undefined;
     } else if (h && !this.warmTimer) {
-      const minutes = this.agent.config.warmWindowMinutes ?? DEFAULT_WARM_WINDOW_MINUTES;
-      const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      this.warmArmedAt = Date.now();
+      this.armWarmTimer(this.warmWindowMs());
+    }
+    if (h && !this.wasHibernatable) this.slots.becameHibernatable(this.agent.id);
+    this.wasHibernatable = h;
+    this.updateCronExpiry();
+  }
+
+  /** The snapshot's warm window, else the factory default read live (S10 §8.2, Q8). */
+  private warmWindowMs(): number {
+    const minutes =
+      this.agent.config.warmWindowMinutes ??
+      this.d.defaultWarmWindowMinutes?.() ??
+      DEFAULT_WARM_WINDOW_MINUTES;
+    return minutes * 60_000;
+  }
+
+  /** Arms the warm timer to fire in `delayMs` (at once when ≤ 0). */
+  private armWarmTimer(delayMs: number) {
+    const timer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
         void this.run(async () => {
           if (this.warmTimer !== timer) return; // cancelled, or a newer window began
           this.warmTimer = undefined;
           if (this.beginHibernate("warm_window")) this.publishStatus(); // re-checks hibernatable
         });
-      }, minutes * 60_000);
-      this.warmTimer = timer;
-    }
-    if (h && !this.wasHibernatable) this.slots.becameHibernatable(this.agent.id);
-    this.wasHibernatable = h;
-    this.updateCronExpiry();
+      },
+      Math.max(0, delayMs), // at most a day (the window is capped at 1440 minutes)
+    );
+    this.warmTimer = timer;
+  }
+
+  /**
+   * S10 §8.2: the default warm window or the member-update debounce changed. A snapshot that omits the window re-arms
+   * its armed warm timer from when it was armed (firing at once when that is past); a snapshot that holds a window
+   * keeps it. The held-update timer re-arms from the recomputed due time (and again at the end of the job).
+   */
+  async settingsChanged(): Promise<void> {
+    await this.run(async () => {
+      if (this.agent.config.warmWindowMinutes === undefined && this.warmTimer) {
+        clearTimeout(this.warmTimer);
+        this.warmTimer = undefined;
+        const armedAt = this.warmArmedAt ?? Date.now();
+        this.armWarmTimer(armedAt + this.warmWindowMs() - Date.now());
+      }
+      this.updateHeldTimer();
+    });
   }
 
   /** One timer at the earliest cron expiry, so a pin can't outlive Claude's own 7-day expiry. */

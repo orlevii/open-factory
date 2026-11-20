@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { mapAuthError, mapAuthFailure, NETWORK_MESSAGE } from "./auth-error";
+import {
+  authErrorCode,
+  INVITE_INVALID_MESSAGE,
+  mapAuthError,
+  mapAuthFailure,
+  NETWORK_MESSAGE,
+} from "./auth-error";
 
 describe("mapAuthError", () => {
   test.each([
@@ -59,5 +65,18 @@ describe("mapAuthFailure", () => {
     expect(mapAuthFailure({ error: { status: 500, message: "Internal" } })).toEqual({
       message: "Internal",
     });
+  });
+
+  test("the sign-up gate's ApiError envelope (nested under error) maps by its code", () => {
+    // better-fetch spreads the parsed body `{ error: { code, message } }` next to the status.
+    const error = {
+      error: { code: "invite_invalid", message: "Invite invalid" },
+      status: 403,
+      statusText: "Forbidden",
+    };
+    expect(mapAuthFailure({ error })).toEqual({ message: INVITE_INVALID_MESSAGE });
+    expect(authErrorCode(error)).toBe("invite_invalid");
+    expect(authErrorCode({ code: "USER_DISABLED", status: 403 })).toBe("USER_DISABLED");
+    expect(authErrorCode({ status: 500 })).toBeUndefined();
   });
 });

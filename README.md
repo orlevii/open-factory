@@ -18,7 +18,7 @@ cp .env.example .env   # set FACTORY_SECRET_KEY: openssl rand -base64 32
 pnpm install && pnpm build && npm start
 ```
 
-Then open http://localhost:3000 and sign up. `npm start` never builds. Run `pnpm build` again after pulling.
+Then open http://localhost:3000 and sign up: the first person to sign up needs no invite and bootstraps the factory (see "Users and invites"). `npm start` never builds. Run `pnpm build` again after pulling.
 
 ## Configuration
 
@@ -37,7 +37,6 @@ Environment variables (`npm start` loads `.env` if present):
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
 | `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
 | `FACTORY_HOST_SKILLS_DIR` | no | `~/.claude/skills` | where host skills named in a template's `skills:` list are read from; a leading `~` is expanded |
-| `FACTORY_MAX_RUNNING_AGENTS` | no | `8` | most agent processes running at once, minimum 1; see "Running agents and the cap" |
 | `FACTORY_ALLOW_LOCAL_RUNTIME` | no | `false` | `true` lets agents with `runtime: local` start; see "Local runtime" |
 | `FACTORY_DEFAULT_IMAGE` | no | `ghcr.io/orlevii/open-factory/base:latest` | container image for Docker agents whose template names none |
 | `FACTORY_DOCKER_CLAUDE_BIN` | no | `claude` | path to Claude Code inside the container image |
@@ -45,31 +44,40 @@ Environment variables (`npm start` loads `.env` if present):
 | `FACTORY_AGENT_PORT` | no | `PORT + 1` | port of the agent listener, the separate surface agents call (see "Agent listener") |
 | `FACTORY_AGENT_HOST` | no | loopback, plus the Docker bridge gateway on Linux | comma-separated IP addresses the agent listener binds; replaces the default list. The only way to bind `0.0.0.0` or `::` |
 | `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${FACTORY_AGENT_PORT}` | how containers reach the agent listener (`OPEN_FACTORY_URL` in the container). Local agents always use `http://127.0.0.1:${FACTORY_AGENT_PORT}` |
-| `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` | no | `30` | how long a report's updates wait for an idle manager before waking it (`0` = at once) |
 | `FACTORY_MAX_SPAWNS_PER_HOUR` | no | `20` | most agents one agent may spawn in a rolling hour, terminated ones included, minimum 1; see "Spawning" |
+
+The max running agents, the default warm window and the member update debounce are set in the app under Settings → Factory, not in the environment. `FACTORY_MAX_RUNNING_AGENTS` and `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` are no longer read; the server logs a warning at boot when either is still set.
 
 ## Run an agent
 
-1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up. Docker must be running on the machine that runs the server.
+1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up (the first sign-up bootstraps the factory; later ones need an invite). Docker must be running on the machine that runs the server.
 2. In **Settings**, add a credential: run `claude setup-token` and paste the token. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
 3. Optional: register a project (a git repo on this machine) so agents can be granted access to it.
 4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` (see "Templates"). `runtime` defaults to `docker`.
 5. Create an agent from the template, pick its credential, and send it a message.
 
-An agent that is idle is hibernated: its process is stopped (a Docker agent's container is stopped, not removed), and the next message wakes it with the same session. An agent stays warm for its template's warm window (`warm_window_minutes`, 70 by default) after it becomes idle, and it never hibernates while it is mid-turn, has a background task running or has a cron of its own scheduled.
+An agent that is idle is hibernated: its process is stopped (a Docker agent's container is stopped, not removed), and the next message wakes it with the same session. An agent stays warm for its template's warm window (`warm_window_minutes`; a template that omits it uses the factory default warm window, Settings → Factory, 70 unless changed) after it becomes idle, and it never hibernates while it is mid-turn, has a background task running or has a cron of its own scheduled.
 
 ## Docker runtime
 
 Docker is the default runtime for new templates. Each agent gets one container, created on its first wake, stopped when it hibernates and started again on the next wake. Claude Code runs inside it as a non-root `agent` user, with only the agent's working directory, the projects it was granted and its skills and plugins mounted. Files the agent writes in a granted repo are owned by your host user.
 
-- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
-- **Pulls are explicit.** The factory pulls an image only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image...").
-- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, build your own image `FROM` the base image and set it as the template's `image:`.
+- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). A bare name such as `image: playwright` is a user image (below); anything with a registry, a path or a tag (`ghcr.io/you/img:1`, `node:24-slim`) is a registry image. For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
+- **Pulls are explicit.** For a registry image, the factory pulls only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image..."). A user image is never pulled: an agent whose user image isn't built fails to start and says how to build it.
+- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, add a user image `FROM` the base image and set its name as the template's `image:`.
 - **Re-creation wipes `/home/agent`.** The container is removed and re-created on a wake when its grants (mounts) or its image changed. Shell history, `gh` login state, `known_hosts` and caches in `/home/agent` are lost. Keep credentials in secrets, and the working directory is never affected.
 - **Reaching the factory.** Containers call the factory's agent listener at `FACTORY_AGENT_URL` (`http://host.docker.internal:<agent port>` by default). See "Agent listener" for Linux, compose, rootless Docker and firewalls.
 - **CLI bundle.** The bundled CLI is mounted into containers, so run `pnpm build` first; a Docker agent will not start without it.
 
 `pnpm smoke:docker` is a live check, not part of `pnpm test`: it runs a real Claude in a real container (build the image as `open-factory-base:dev` first) and needs an OAuth token in `~/.open-factory-spike/oauth-token`.
+
+### User images
+
+A user image is a folder `${FACTORY_HOME}/images/<name>/` with a `Dockerfile` (and anything it copies; `.dockerignore` is honoured). A template with `image: <name>` uses `open-factory-user/<name>:latest`, which the factory builds and never pulls. Build it in **Templates → Images** or with `open-factory images build <name>`; builds pull a newer base image by default (`--no-pull` skips that, CLI only). Agents use a rebuilt image from their next start. Status comes from the image's Docker labels: "Out of date" once a file in the folder has changed since the build.
+
+**Upgrading from an earlier version.** A bare name used to mean a Docker Hub image. A template with `image: ubuntu` (or any other bare name) is now invalid unless `${FACTORY_HOME}/images/ubuntu/` exists, and an agent created from it fails to start with an image error. Write the Docker Hub name in full instead: `image: docker.io/library/ubuntu`.
+
+`pnpm smoke:images` is a live check, not part of `pnpm test`: it builds a user image through the API and the CLI, starts a Docker agent on it with a real Claude (haiku), and checks the image was never pulled. It needs Postgres, Docker, a real `claude` on the PATH, an OAuth token in `~/.open-factory-spike/oauth-token`, `pnpm build` (the CLI bundle) and `open-factory-base:dev` for its local-base step, and uses a throwaway database and `FACTORY_HOME`.
 
 ## Agent listener
 
@@ -95,7 +103,7 @@ Agents don't use the human API. They message each other and the humans through t
 
 ## Running agents and the cap
 
-`FACTORY_MAX_RUNNING_AGENTS` (default 8) limits how many agent processes run at once, warm idle ones included. An agent that wakes while every slot is taken waits in a first-in, first-out queue and shows as queued. To free a slot sooner, the factory hibernates the least recently active idle agent early, before its warm window ends. Agents that are mid-turn, have background tasks or have crons are never chosen.
+The max running agents setting (Settings → Factory, default 8) limits how many agent processes run at once, warm idle ones included. An agent that wakes while every slot is taken waits in a first-in, first-out queue and shows as queued. To free a slot sooner, the factory hibernates the least recently active idle agent early, before its warm window ends. Agents that are mid-turn, have background tasks or have crons are never chosen.
 
 **Rate limits.** When Claude reports that a credential's limit is rejected, the factory pauses that credential until the reported reset time (30 minutes if none is reported). Agents on it keep their messages queued, and idle ones hibernate. At the reset, an agent that was cut off mid-turn gets a notice from `@factory` that the limit reset, ahead of any pending messages.
 
@@ -135,7 +143,11 @@ An agent can spawn a fresh agent for one piece of work with `spawn_agent` (templ
 
 ## Running on a server
 
-Set `HOST=0.0.0.0` **and** `PUBLIC_URL=https://your.host`, put TLS in front, and open the app at exactly `PUBLIC_URL` (`localhost` is not `127.0.0.1`). Also set `NODE_ENV=production`: development logging uses `pino-pretty` (a devDependency), and `NODE_ENV` also gates trust of `DEV_WEB_ORIGIN`. Sign-up is open in this version (see #1).
+Set `HOST=0.0.0.0` **and** `PUBLIC_URL=https://your.host`, put TLS in front, and open the app at exactly `PUBLIC_URL` (`localhost` is not `127.0.0.1`). Also set `NODE_ENV=production`: development logging uses `pino-pretty` (a devDependency), and `NODE_ENV` also gates trust of `DEV_WEB_ORIGIN`.
+
+### Users and invites
+
+The first person to sign up needs no invite; after that, sign-up needs an invite link from Settings → Users (7-day, single use). Disable a user in Settings → Users to sign them out everywhere.
 
 Behind a reverse proxy, login rate limiting and session IP addresses see the proxy's IP, not the client's: the server uses the socket address and ignores any `X-Forwarded-For` the client sends. All clients behind the proxy then share one rate-limit bucket. This stays the case until a trust-proxy setting exists.
 
@@ -155,7 +167,11 @@ Behind a reverse proxy, login rate limiting and session IP addresses see the pro
 
 ```
 node apps/cli/dist/open-factory.js login|status|logout|help
+node apps/cli/dist/open-factory.js images
+node apps/cli/dist/open-factory.js images build (<name>|--all) [--no-pull]
 ```
+
+`images` lists the user images with their status; `images build` builds one, or with `--all` every image that isn't up to date (folders without a `Dockerfile` are skipped). See "User images".
 
 Config lives at `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json` (mode 0600). `OPEN_FACTORY_URL` and `OPEN_FACTORY_TOKEN` override the file.
 

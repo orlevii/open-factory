@@ -40,10 +40,20 @@ export async function wsRoutes(app: FastifyInstance) {
     let closed = false;
     const offAll = app.bus.subscribeAll(send); // agent_status and supervisor frames go to every socket
     const offUser = app.bus.subscribeUser(userId, send); // S8: a user's read changes go to their own sockets only
+    // S10 §9.4: disabling the user closes this socket; close() moves readyState off OPEN, so `send` stops at once.
+    const offClose = app.bus.onUserClose(userId, () => socket.close(1008, "user disabled"));
+    // A disable that committed between the upgrade's getUser and the line above missed this socket.
+    void app.userAdmin
+      .isDisabled(userId)
+      .then((disabled) => {
+        if (disabled && socket.readyState === socket.OPEN) socket.close(1008, "user disabled");
+      })
+      .catch((err) => request.log.error({ err }, "disabled re-check failed"));
     socket.on("close", () => {
       closed = true;
       offAll();
       offUser();
+      offClose();
       for (const u of unsubs.values()) u();
       unsubs.clear();
     });

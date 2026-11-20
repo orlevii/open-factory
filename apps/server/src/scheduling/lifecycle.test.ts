@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { makeTestApp, signUp, type TestAppOptions } from "../test/helpers.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -9,14 +9,14 @@ let userId: string;
 const timers = { setTimer: () => ({}) as never, clearTimer: () => {} };
 const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin" };
 
-async function boot(env: Record<string, string> = {}) {
+async function boot(factorySettings: TestAppOptions["factorySettings"] = {}) {
   clock = new Date("2026-11-20T10:00:00Z");
   driver = new FakeDriver();
   h = await makeTestApp({
     harnessDriver: driver,
     clock: () => clock,
     schedulerTimers: timers,
-    env,
+    factorySettings,
   });
   userId = (await signUp(h.app, { handle: "or" })).user.id;
 }
@@ -130,7 +130,7 @@ test("a mid-turn target gets the row written at once", async () => {
 });
 
 test("hibernated and queued at a cap of 1: the row waits and a second firing replaces it; it is delivered once with both firings", async () => {
-  await boot({ FACTORY_MAX_RUNNING_AGENTS: "1" });
+  await boot({ maxRunningAgents: 1 });
   await h.seedAgent({ slug: "busy" });
   await h.seedAgent({ slug: "ceo" });
   const b = await h.app.store.createMessage({

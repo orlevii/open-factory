@@ -1,12 +1,17 @@
 import {
   apiFetch,
   type CredentialKind,
+  createInviteResponseSchema,
   credentialResponseSchema,
   credentialsListSchema,
+  factorySettingsSchema,
+  inviteItemSchema,
+  type PatchFactorySettings,
   projectResponseSchema,
   projectsListSchema,
   secretSummarySchema,
   secretsListSchema,
+  usersAdminListSchema,
 } from "@open-factory/shared";
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
@@ -67,3 +72,37 @@ export const updateProject = (name: string, hostPath: string) =>
   }).then((r) => r.project);
 export const deleteProject = (name: string) =>
   apiFetch(`/api/projects/${enc(name)}`, { method: "DELETE", schema: none });
+
+export const factorySettingsQueryOptions = queryOptions({
+  queryKey: ["factory-settings"],
+  queryFn: () => apiFetch("/api/settings/factory", { schema: factorySettingsSchema }),
+});
+export const patchFactorySettings = (body: PatchFactorySettings) =>
+  apiFetch("/api/settings/factory", { method: "PATCH", body, schema: factorySettingsSchema });
+
+export const usersQueryOptions = queryOptions({
+  queryKey: ["users"],
+  queryFn: () => apiFetch("/api/users", { schema: usersAdminListSchema }).then((r) => r.users),
+});
+export const disableUser = (id: string) =>
+  apiFetch(`/api/users/${enc(id)}/disable`, {
+    method: "POST",
+    body: {},
+    schema: z.object({ revokedInvites: z.number().int() }),
+  });
+export const enableUser = (id: string) =>
+  apiFetch(`/api/users/${enc(id)}/enable`, { method: "POST", body: {}, schema: none });
+
+export const invitesQueryOptions = queryOptions({
+  queryKey: ["invites"],
+  queryFn: () =>
+    apiFetch("/api/invites", { schema: z.object({ invites: z.array(inviteItemSchema) }) }).then(
+      (r) => r.invites,
+    ),
+});
+export const createInvite = () =>
+  apiFetch("/api/invites", { method: "POST", body: {}, schema: createInviteResponseSchema });
+export const revokeInvite = (id: string) =>
+  apiFetch(`/api/invites/${enc(id)}/revoke`, { method: "POST", body: {}, schema: none });
+export const restoreInvite = (id: string) =>
+  apiFetch(`/api/invites/${enc(id)}/restore`, { method: "POST", body: {}, schema: none });

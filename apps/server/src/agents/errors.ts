@@ -1,6 +1,13 @@
 import { ApiError } from "../errors.ts";
 
-export type StartFix = "credentials" | "secrets" | "projects" | "edit_agent" | "resync" | "runtime";
+export type StartFix =
+  | "credentials"
+  | "secrets"
+  | "projects"
+  | "edit_agent"
+  | "resync"
+  | "runtime"
+  | "image";
 
 export class AgentStartError extends Error {
   /** The message without its advice (what is wrong, not what to do): a spawned agent's variant ends differently. */

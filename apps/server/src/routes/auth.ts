@@ -1,7 +1,9 @@
+import type { Db } from "@open-factory/db";
 import { fromNodeHeaders } from "better-auth/node";
 import type { FastifyInstance } from "fastify";
+import { handleSignUp } from "../users/sign-up-gate.ts";
 
-export async function authRoutes(app: FastifyInstance) {
+export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
   app.route({
     method: ["GET", "POST"],
     url: "/api/auth/*",
@@ -19,7 +21,16 @@ export async function authRoutes(app: FastifyInstance) {
         headers,
         body: hasBody ? JSON.stringify(request.body) : undefined,
       });
-      const res = await app.auth.handler(req);
+      // The normalized path, exactly what better-auth matches (S10 §9.3, F2): dot-segment and %2e variants
+      // land here too. The user.create.before backstop covers whatever this match misses.
+      const res =
+        request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
+          ? await handleSignUp(
+              { db, invites: app.invites, auth: app.auth, bus: app.bus, log: request.log },
+              req,
+              request.body,
+            )
+          : await app.auth.handler(req);
       reply.status(res.status);
       const cookies = res.headers.getSetCookie();
       res.headers.forEach((value, key) => {

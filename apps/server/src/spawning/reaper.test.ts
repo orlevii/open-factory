@@ -49,7 +49,7 @@ async function setup(o: { maxRunning?: number } = {}) {
   const driver = new FakeDriver();
   t = await makeTestApp({
     harnessDriver: driver,
-    env: { FACTORY_MAX_RUNNING_AGENTS: String(o.maxRunning ?? 1) },
+    factorySettings: { maxRunningAgents: o.maxRunning ?? 1 },
   });
   const app = t;
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");

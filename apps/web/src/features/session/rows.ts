@@ -62,6 +62,7 @@ const HIDDEN = new Set([
   "usage",
   "background_tasks",
   "rate_limited",
+  "rate_limit_status",
 ]);
 
 /** Events with no line of their own in context (S5 UI design §3.3). */

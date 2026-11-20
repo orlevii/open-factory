@@ -3,6 +3,7 @@ import {
   agentListQuerySchema,
   agentListSchema,
   agentResponseSchema,
+  agentUsageSchema,
   compactBodySchema,
   createAgentBodySchema,
   eventsPageSchema,
@@ -26,6 +27,7 @@ import {
 } from "../agents/errors.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { localRuntimeAllowed } from "../config.ts";
+import { parseDays } from "./usage.ts";
 
 const slugParams = z.object({ slug: slugSchema });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
@@ -47,6 +49,16 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       ...(await app.agents.list(req.query.ended)),
       running: app.runtimes.supervisor.running(),
     }),
+  );
+
+  app.get(
+    "/api/agents/:slug/usage",
+    { schema: { params: slugParams, response: { 200: agentUsageSchema } } },
+    async (req, reply) => {
+      const u = await app.usage.agent(req.params.slug, parseDays(req.query));
+      if (!u) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      return u;
+    },
   );
 
   app.post(

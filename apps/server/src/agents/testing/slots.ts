@@ -29,7 +29,7 @@ export class RecordingSlots implements SlotPort {
   isPulling() {
     return false;
   }
-  pause() {}
+  pause(_credentialId: string, _until: Date, _exact: boolean) {}
   pauseOf(_agentId?: string): CredentialPause | undefined {
     return undefined;
   }

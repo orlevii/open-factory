@@ -488,6 +488,35 @@ export class EventStore {
     if (!row?.until) throw new Error(`credential ${id} not found`);
     return { name: row.name, until: row.until, exact: row.exact };
   }
+  /** Latest rate-limit status the CLI reported for a credential; an older observation never overwrites a newer one. */
+  async recordRateLimit(
+    credentialId: string,
+    s: {
+      status: "allowed" | "allowed_warning" | "rejected";
+      rateLimitType?: string;
+      utilization?: number;
+      resetsAt?: number;
+    },
+    at: Date,
+  ): Promise<void> {
+    await this.db
+      .update(credentials)
+      .set({
+        rlStatus: s.status,
+        rlType: s.rateLimitType ?? null,
+        rlUtilization: s.utilization ?? null,
+        rlResetsAt: s.resetsAt === undefined ? null : new Date(s.resetsAt * 1000),
+        rlObservedAt: at,
+        // Set explicitly so `$onUpdate` doesn't bump it: updated_at means the credential was edited.
+        updatedAt: sql`${credentials.updatedAt}`,
+      })
+      .where(
+        and(
+          eq(credentials.id, credentialId),
+          or(isNull(credentials.rlObservedAt), lte(credentials.rlObservedAt, at)),
+        ),
+      );
+  }
   /** Clears the pause; with `until`, only a window that ends by then (a later one landed meanwhile: keep it). */
   async clearCredentialPause(id: string, until?: Date) {
     await this.db
@@ -620,9 +649,13 @@ export class EventStore {
   }
 
   // turns
-  async openTurn(agentId: string, tx: Exec = this.db): Promise<string> {
+  async openTurn(
+    agentId: string,
+    credentialId: string | null,
+    tx: Exec = this.db,
+  ): Promise<string> {
     const id = randomUUID();
-    await tx.insert(turns).values({ id, agentId, startedAt: new Date() });
+    await tx.insert(turns).values({ id, agentId, credentialId, startedAt: new Date() });
     return id;
   }
   async closeTurn(turnId: string, d: TurnClose, tx: Exec = this.db) {
@@ -646,6 +679,33 @@ export class EventStore {
           : {}),
       })
       .where(eq(turns.id, turnId));
+  }
+
+  /**
+   * S10 §5.2: the turn's task when every delivered non-system message carries that one task (a lower bound): any
+   * message without it (a human's, an agent's, a schedule's) or of another task leaves the turn unattributed.
+   */
+  async attributeTask(turnId: string, tx: Exec): Promise<void> {
+    await tx.execute(sql`
+      update turns set task_id = (
+        select min(task_id) from messages
+        where delivered_turn_id = ${turnId} and kind <> 'system'
+        having count(*) > 0 and count(*) = count(task_id) and count(distinct task_id) = 1
+      )
+      where id = ${turnId}`);
+  }
+  /** One transaction: stamp `stampIds` with the turn (when given), close it, and attribute it when `attribute` is true. */
+  async closeTurnWith(
+    turnId: string,
+    d: TurnClose,
+    stampIds: string[],
+    attribute: boolean,
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await this.setDeliveredTurn(stampIds, turnId, tx);
+      await this.closeTurn(turnId, d, tx);
+      if (attribute) await this.attributeTask(turnId, tx);
+    });
   }
 
   /**

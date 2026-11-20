@@ -5,7 +5,7 @@
 // (FACTORY_ALLOW_LOCAL_RUNTIME=true for this run only). The token is read from that file at run time into a factory
 // credential and is never printed: everything this script prints goes through `redact`.
 // Uses a throwaway database and a temp FACTORY_HOME; the human server and the agent listener listen on loopback.
-// Model: haiku. FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS=10 so the spawner hears from its child quickly.
+// Model: haiku. A member update debounce of 10 s (factory settings) so the spawner hears from its child quickly.
 // Org: `lead` (top, can_spawn: [helper, tech-lead, proxy-reviewer, developer], max_live_spawns: 3, granted the temp
 // git repo `app`).
 // Part 1 (Task 10): one spawn (`helper-one`), the brief, the child's text as a member_update, one terminate.
@@ -400,6 +400,18 @@ async function signUp(handle: string, name: string) {
   return { cookie, userId: me.id };
 }
 
+/** S10: the cap and the debounce are factory settings, set through the API after sign-up (no longer env vars). */
+async function patchFactorySettings(cookie: string, body: Record<string, number>) {
+  const res = await app.inject({
+    method: "PATCH",
+    url: "/api/settings/factory",
+    headers: { cookie },
+    payload: body,
+  });
+  if (res.statusCode !== 200)
+    throw new Error(`PATCH /api/settings/factory failed ${res.statusCode}: ${brief(res.body)}`);
+}
+
 const childRow = () => agentRow(CHILD);
 
 try {
@@ -416,7 +428,6 @@ try {
     FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
-    FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "10",
     HOST: "127.0.0.1",
     PORT: String(port),
     FACTORY_AGENT_PORT: String(agentPort),
@@ -452,6 +463,9 @@ try {
 
   const or = await step("0. user @or signed up through the app", () => signUp("or", "Or"));
   orUser = { userId: or.userId, handle: "or" };
+  await step("0. factory settings: member update debounce 10 s", () =>
+    patchFactorySettings(or.cookie, { memberUpdateDebounceSeconds: 10 }),
+  );
   await step("0. credential created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
   );

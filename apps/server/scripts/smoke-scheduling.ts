@@ -1,6 +1,6 @@
 // Live scheduling check for S9 (spec §17.5). Not part of `pnpm test`. Phases: early (the first slice below), a (human
 // every-minute schedule, agent limits and cancel), b (restart with a one-shot due during the downtime: fires once, late),
-// c (replacement through a real path: FACTORY_MAX_RUNNING_AGENTS=1), d (CronCreate pins, Stop crons, the passive
+// c (replacement through a real path: a cap of 1 running agent), d (CronCreate pins, Stop crons, the passive
 // notice); `--phase=a,c` picks some, `--early` is the first slice only (schedule tool
 // listing, a human-created one-shot waking a hibernated agent with the scheduled envelope, the agent's own
 // schedule_message / list_schedules calls, and a spawned agent that lists none of the three tools); without it the whole
@@ -341,12 +341,26 @@ function writeTemplate(name: string, files: Record<string, string>) {
   }
 }
 
-async function signUp(handle: string, name: string) {
+/** S10 §9.3: sign-up is invite-only once a user exists, so a later user signs up with an invite the inviter creates. */
+async function signUp(handle: string, name: string, inviter?: { cookie: string }) {
+  let invite: string | undefined;
+  if (inviter) {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/invites",
+      headers: { cookie: inviter.cookie, origin: app.config.publicOrigin },
+    });
+    if (created.statusCode !== 201)
+      throw new Error(`invite for ${handle} failed ${created.statusCode}: ${brief(created.body)}`);
+    invite =
+      new URL((created.json() as { link: string }).link).searchParams.get("invite") ?? undefined;
+  }
   const res = await app.inject({
     method: "POST",
     url: "/api/auth/sign-up/email",
     headers: { origin: app.config.publicOrigin },
     payload: {
+      invite,
       name,
       handle,
       email: `${handle}-${WORD.toLowerCase()}@example.invalid`,
@@ -363,6 +377,18 @@ async function signUp(handle: string, name: string) {
     id: string;
   };
   return { cookie, userId: me.id };
+}
+
+/** S10: the cap and the debounce are factory settings, set through the API after sign-up (no longer env vars). */
+async function patchFactorySettings(cookie: string, body: Record<string, number>) {
+  const res = await app.inject({
+    method: "PATCH",
+    url: "/api/settings/factory",
+    headers: { cookie },
+    payload: body,
+  });
+  if (res.statusCode !== 200)
+    throw new Error(`PATCH /api/settings/factory failed ${res.statusCode}: ${brief(res.body)}`);
 }
 
 /** The three schedule tools a persistent agent gets (spec §9). */
@@ -396,8 +422,8 @@ async function finalChecks() {
 
 const hasFiring = (m: Envelope) => m.kind === "scheduled";
 
-/** Config for the run's (fixed) ports; `maxRunning` is FACTORY_MAX_RUNNING_AGENTS. */
-function makeConfig(ports: { port: number; agentPort: number }, maxRunning: number) {
+/** Config for the run's (fixed) ports; the cap and the debounce are factory settings (patched after sign-up). */
+function makeConfig(ports: { port: number; agentPort: number }) {
   if (!tdb) throw new Error("no database");
   return loadConfig({
     ...process.env,
@@ -407,8 +433,6 @@ function makeConfig(ports: { port: number; agentPort: number }, maxRunning: numb
     FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
-    FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "180",
-    FACTORY_MAX_RUNNING_AGENTS: String(maxRunning),
     FACTORY_TIMEZONE: "Europe/Berlin",
     HOST: "127.0.0.1",
     PORT: String(ports.port),
@@ -434,7 +458,7 @@ try {
   const ports = { port: await freePort(), agentPort: await freePort() };
   tdb = await createTestDatabase();
   await migrate(tdb.url, MIGRATIONS_DIR);
-  const config = makeConfig(ports, MAX_RUNNING);
+  const config = makeConfig(ports);
   say(
     `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku; phases ${[...PHASES].join(",")}; max running agents ${MAX_RUNNING}`,
   );
@@ -451,11 +475,19 @@ try {
   say(
     `  human server http://${config.host}:${config.port}; agent listener port ${app.agentListener.port}`,
   );
-  const users = await step("1. users @or and @sam signed up through the app", async () => ({
-    or: await signUp("or", "Or"),
-    sam: await signUp("sam", "Sam"),
-  }));
+  const users = await step("1. users @or and @sam signed up through the app", async () => {
+    const or = await signUp("or", "Or");
+    return { or, sam: await signUp("sam", "Sam", or) };
+  });
   orCookie = users.or.cookie;
+  await step(
+    `1. factory settings: max running agents ${MAX_RUNNING}, member update debounce 180 s`,
+    () =>
+      patchFactorySettings(users.or.cookie, {
+        maxRunningAgents: MAX_RUNNING,
+        memberUpdateDebounceSeconds: 180,
+      }),
+  );
   await step("1. credential created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
   );
@@ -760,7 +792,7 @@ try {
       },
     );
     await step("5. the server starts again on the same database", () =>
-      startApp(makeConfig(ports, MAX_RUNNING)),
+      startApp(makeConfig(ports)),
     );
     const env = await step("5. ceo receives the scheduled envelope", () =>
       scheduledEnv(from, 240_000),

@@ -6,6 +6,7 @@ import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import { inUseViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError } from "../errors.ts";
+import { toRateLimitState } from "./rate-limit-state.ts";
 import type { CredentialVerifier, VerifyResult } from "./verify.ts";
 
 const aad = (id: string) => `credentials:${id}`;
@@ -20,6 +21,7 @@ export class CredentialService {
       vault: Vault;
       verifier: CredentialVerifier;
       runtimes: AgentRuntimes;
+      now: () => Date;
       log?: { warn: (obj: object, msg: string) => void };
     },
   ) {}
@@ -70,6 +72,7 @@ export class CredentialService {
       lastError: row.lastError,
       usedBy: slugs(u.active),
       archivedUsedBy: slugs(u.archived),
+      ...toRateLimitState(row, this.d.now()),
     };
   }
 

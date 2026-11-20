@@ -46,7 +46,7 @@ const keyParams = z.object({ key: z.string().min(1).max(20) });
 type Detail = Awaited<ReturnType<TaskReads["detail"]>>;
 
 /** The human detail view: comments and history interleaved, oldest first. */
-function toDetail(d: Detail): TaskDetail {
+function toDetail(d: Detail, usage: TaskDetail["usage"]): TaskDetail {
   const activity: TaskActivity[] = [
     ...d.comments.map((c) => ({
       type: "comment" as const,
@@ -79,6 +79,7 @@ function toDetail(d: Detail): TaskDetail {
     blocks: d.blocks,
     links: d.links,
     activity,
+    usage,
   };
 }
 
@@ -92,8 +93,10 @@ export const tasksRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!req.user) throw new Error("requireUser did not set request.user");
     return { kind: "user", userId: req.user.id, handle: req.user.handle };
   };
-  const detail = async (key: string) =>
-    toDetail(await app.tasks.detail(key, { comments: "all", events: true }));
+  const detail = async (key: string) => {
+    const d = await app.tasks.detail(key, { comments: "all", events: true });
+    return toDetail(d, await app.usage.task(d.id));
+  };
 
   app.get(
     "/api/tasks",

@@ -1,8 +1,47 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import type { ContainerCreateOptions, ContainerInfo, DockerClient, ExecStream } from "../client.ts";
+import { buildProgress } from "../build-progress.ts";
+import type {
+  BuildImageResult,
+  ContainerCreateOptions,
+  ContainerInfo,
+  DockerClient,
+  ExecStream,
+} from "../client.ts";
 import { CLAUDE_PID_FILE } from "../exec-transport.ts";
 
 export type Call = { op: string; args: unknown[] };
+
+/** Docker build stream events recorded by live gate V1 (packages/harness/fixtures/README.md). */
+export const BUILD_EVENTS = {
+  ok: (tag: string): object[] => [
+    { stream: "Step 1/2 : FROM ghcr.io/orlevii/open-factory/base:latest\n" },
+    { stream: " ---> 5d0da3dc9764\n" },
+    { stream: "Step 2/2 : RUN true\n" },
+    { stream: `Successfully tagged ${tag}\n` },
+  ],
+  /** V1 (b): `RUN false`. */
+  runFalse: (): object[] => {
+    const msg = "The command '/bin/bash -o pipefail -c false' returned a non-zero code: 1";
+    return [
+      { stream: "Step 2/2 : RUN false\n" },
+      { error: msg, errorDetail: { code: 1, message: msg } },
+    ];
+  },
+  /** V1 (c): `FROM open-factory-base:dev` with `pull: true`. */
+  pullDenied: (): object[] => {
+    const msg =
+      "pull access denied for open-factory-base, repository does not exist or may require 'docker login'";
+    return [{ error: msg, errorDetail: { message: msg } }];
+  },
+};
+
+/** One scripted build: its stream events, then (when set) a gate it waits on before finishing. */
+export interface FakeBuild {
+  events?: object[];
+  gate?: Promise<void>;
+  /** Called once every scripted event has reached `onLine`. */
+  emitted?: () => void;
+}
 
 export interface FakeContainer {
   id: string;
@@ -20,7 +59,14 @@ export interface FakeContainer {
  */
 export class FakeDockerClient implements DockerClient {
   calls: Call[] = [];
-  images = new Map<string, { id: string; labels: Record<string, string> }>();
+  images = new Map<
+    string,
+    { id: string; labels: Record<string, string>; repoDigests?: string[] }
+  >();
+  /** Scripted builds, consumed in order; when empty a build succeeds with V1 (a)'s lines. */
+  builds: FakeBuild[] = [];
+  /** The tar bytes each build received. */
+  readonly buildContexts: Buffer[] = [];
   containers = new Map<string, FakeContainer>();
   pullError: Error | undefined;
   /** The signal of every pull, in order. */
@@ -84,6 +130,30 @@ export class FakeDockerClient implements DockerClient {
   async imageId(ref: string) {
     this.rec("imageId", ref);
     return this.images.get(ref)?.id;
+  }
+  async imageInspect(ref: string) {
+    this.rec("imageInspect", ref);
+    const img = this.images.get(ref);
+    return img && { id: img.id, labels: { ...img.labels }, repoDigests: img.repoDigests ?? [] };
+  }
+  async buildImage(
+    context: NodeJS.ReadableStream,
+    o: { tag: string; pull: boolean; labels: Record<string, string> },
+    onLine: (line: string) => void,
+  ): Promise<BuildImageResult> {
+    this.rec("buildImage", o);
+    const chunks: Buffer[] = [];
+    for await (const c of context as AsyncIterable<Buffer>) chunks.push(Buffer.from(c));
+    this.buildContexts.push(Buffer.concat(chunks));
+    const script = this.builds.shift() ?? {};
+    const progress = buildProgress(onLine);
+    for (const e of script.events ?? BUILD_EVENTS.ok(o.tag)) progress.push(e);
+    script.emitted?.();
+    if (script.gate) await script.gate;
+    const result = progress.end(null);
+    if (result.ok)
+      this.images.set(o.tag, { id: `sha256:built${++this.seq}`, labels: { ...o.labels } });
+    return result;
   }
   async pull(ref: string, _signal: AbortSignal) {
     this.rec("pull", ref);

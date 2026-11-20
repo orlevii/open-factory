@@ -1,7 +1,13 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { ConfigError, loadConfig, localRuntimeAllowed, PLACEHOLDER_SECRET } from "./config.ts";
+import {
+  ConfigError,
+  loadConfig,
+  localRuntimeAllowed,
+  PLACEHOLDER_SECRET,
+  removedEnvWarnings,
+} from "./config.ts";
 
 const ok = { DATABASE_URL: "postgres://u:p@localhost:5432/db", FACTORY_SECRET_KEY: "x".repeat(32) };
 
@@ -26,7 +32,6 @@ describe("loadConfig", () => {
   });
   test("S5 defaults", () => {
     const c = loadConfig(ok);
-    expect(c.maxRunningAgents).toBe(8);
     expect(c.allowLocalRuntime).toBe(false);
     expect(c.defaultImage).toBe("ghcr.io/orlevii/open-factory/base:latest");
     expect(c.dockerClaudeBin).toBe("claude");
@@ -46,7 +51,6 @@ describe("loadConfig", () => {
     const c = loadConfig({ ...ok, PORT: "4000" });
     expect(c.agentPort).toBe(4001);
     expect(c.agentHosts).toBeUndefined();
-    expect(c.memberUpdateDebounceMs).toBe(30_000);
     const o = loadConfig({
       ...ok,
       FACTORY_AGENT_PORT: "0",
@@ -56,20 +60,15 @@ describe("loadConfig", () => {
     expect(o.agentPort).toBe(0);
     expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
     expect(o.agentUrl).toBe("http://factory:9000");
-    expect(
-      loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0" }).memberUpdateDebounceMs,
-    ).toBe(0);
-    expect(() => loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "-1" })).toThrow(
-      ConfigError,
-    );
   });
-  test("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is at most a day (a longer timer overflows setTimeout)", () => {
-    expect(
-      loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "86400" }).memberUpdateDebounceMs,
-    ).toBe(86_400_000);
-    expect(() => loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "86401" })).toThrow(
-      /FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS must be at most 86400 \(one day\)/,
-    );
+  test("the cap and the debounce are no longer config (S10 Q6): set values are not read", () => {
+    const c = loadConfig({
+      ...ok,
+      FACTORY_MAX_RUNNING_AGENTS: "0",
+      FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "-1",
+    });
+    expect("maxRunningAgents" in c).toBe(false);
+    expect("memberUpdateDebounceMs" in c).toBe(false);
   });
   test("FACTORY_MAX_SPAWNS_PER_HOUR defaults to 20 and is at least 1", () => {
     expect(loadConfig(ok).maxSpawnsPerHour).toBe(20);
@@ -86,7 +85,6 @@ describe("loadConfig", () => {
   test("FACTORY_ALLOW_LOCAL_RUNTIME only accepts true/false", () => {
     expect(loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "true" }).allowLocalRuntime).toBe(true);
     expect(() => loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "yes" })).toThrow(ConfigError);
-    expect(() => loadConfig({ ...ok, FACTORY_MAX_RUNNING_AGENTS: "0" })).toThrow(ConfigError);
   });
   test("localRuntimeAllowed follows allowLocalRuntime", () => {
     expect(localRuntimeAllowed({ allowLocalRuntime: true })).toBe(true);
@@ -152,6 +150,27 @@ describe("loadConfig", () => {
       }).hostSkillsDir,
     ).toBe(path.join(os.homedir(), "s"));
     expect("claudeToken" in c).toBe(false);
+  });
+});
+
+describe("removedEnvWarnings", () => {
+  test("names each removed variable that is still set", () => {
+    expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "4" })).toEqual([
+      "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
+    ]);
+    expect(
+      removedEnvWarnings({
+        FACTORY_MAX_RUNNING_AGENTS: "4",
+        FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0",
+      }),
+    ).toEqual([
+      "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
+      "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is no longer read; set it in Settings → Factory.",
+    ]);
+  });
+  test("unset or empty: no warning", () => {
+    expect(removedEnvWarnings(ok)).toEqual([]);
+    expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "" })).toEqual([]);
   });
 });
 

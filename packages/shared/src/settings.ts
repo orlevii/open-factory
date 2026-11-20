@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nameSchema, secretNameSchema } from "./names.ts";
+import { rateLimitStateSchema } from "./usage.ts";
 
 export const credentialKindSchema = z.enum(["oauth_token", "api_key"]);
 export type CredentialKind = z.infer<typeof credentialKindSchema>;
@@ -12,6 +13,9 @@ export const credentialSummarySchema = z.object({
   lastError: z.string().nullable(),
   usedBy: z.array(z.string()),
   archivedUsedBy: z.array(z.string()),
+  rateLimit: rateLimitStateSchema.nullable(),
+  pausedUntil: z.string().optional(),
+  pauseExact: z.boolean().optional(),
 });
 export type CredentialSummary = z.infer<typeof credentialSummarySchema>;
 export const credentialsListSchema = z.object({ credentials: z.array(credentialSummarySchema) });
@@ -53,3 +57,32 @@ export const createProjectBodySchema = z.object({
 });
 export const patchProjectBodySchema = z.object({ hostPath: z.string().trim().min(1) });
 export const projectResponseSchema = z.object({ project: projectSummarySchema });
+
+export const FACTORY_BOUNDS = {
+  maxRunningAgents: [1, 64],
+  defaultWarmWindowMinutes: [1, 1440],
+  memberUpdateDebounceSeconds: [0, 86_400],
+} as const;
+
+export const factorySettingsSchema = z.object({
+  maxRunningAgents: z.number().int(),
+  defaultWarmWindowMinutes: z.number().int(),
+  memberUpdateDebounceSeconds: z.number().int(),
+  allowLocalRuntime: z.boolean(),
+  updatedAt: z.string().nullable(),
+  /** The @handle of the last editor. */
+  updatedBy: z.string().nullable(),
+});
+export type FactorySettingsDto = z.infer<typeof factorySettingsSchema>;
+
+const bounded = ([lo, hi]: readonly [number, number]) => {
+  const msg = `Enter a whole number from ${lo} to ${hi}.`;
+  // The type error too (a string, null): every rejection of the field is the §12.10 sentence.
+  return z.number({ error: msg }).int(msg).min(lo, msg).max(hi, msg).optional();
+};
+export const patchFactorySettingsSchema = z.strictObject({
+  maxRunningAgents: bounded(FACTORY_BOUNDS.maxRunningAgents),
+  defaultWarmWindowMinutes: bounded(FACTORY_BOUNDS.defaultWarmWindowMinutes),
+  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds),
+});
+export type PatchFactorySettings = z.infer<typeof patchFactorySettingsSchema>;

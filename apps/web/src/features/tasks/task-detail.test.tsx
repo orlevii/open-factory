@@ -73,6 +73,7 @@ const detail = (o: Over = {}) => ({
       at: at(9, 15),
     },
   ],
+  usage: null,
   ...o,
 });
 const agents = () =>
@@ -191,6 +192,26 @@ test("title edit: focus goes into the input, Enter saves, Escape cancels, focus 
     expect(screen.getByRole("heading", { level: 2, name: "New title" })).toBeInTheDocument(),
   );
   expect(patches(api)[0]?.body).toEqual({ title: "New title" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit title" })).toHaveFocus());
+});
+
+test("title edit: focus returns to Edit title even when a frame fires before React renders it", async () => {
+  // Under a loaded full run a frame can run before React commits the closed editor; focusing then
+  // found no Edit title button. Firing frames on the next microtask makes that ordering certain.
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    queueMicrotask(() => cb(0));
+    return 0;
+  });
+  const api = world();
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "New title" }) }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit title" })).toHaveFocus());
+  await userEvent.click(screen.getByRole("button", { name: "Edit title" }));
+  await userEvent.clear(screen.getByLabelText("Title"));
+  await userEvent.type(screen.getByLabelText("Title"), "New title{Enter}");
+  await screen.findByRole("heading", { level: 2, name: "New title" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Edit title" })).toHaveFocus());
 });
 
@@ -431,4 +452,22 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
   expect(container.querySelector("h2 b")).toBeNull();
   for (const a of container.querySelectorAll("a"))
     expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
+});
+
+test("the usage line and its lower-bound hint show when the task has usage, and are absent when null", async () => {
+  world(() => detail({ usage: { costUsd: 1.23, turns: 14 } }));
+  renderApp("/tasks/T-42", alice);
+  expect(await screen.findByText("Usage: $1.23 est. · 14 turns")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Counts only turns that handled this task's messages and nothing else. Real usage can be higher.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("no usage line when the task has no attributed usage", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await screen.findByText("Plan the billing migration");
+  expect(screen.queryByText(/^Usage:/)).toBeNull();
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -22,20 +22,29 @@ import type { FastifyInstance } from "fastify";
 import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
 import { type Config, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
+import type { FactorySettingsValues } from "../settings/factory-settings.ts";
+import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
+/** Each test app's database, so `signUp(app)` can mint an invite without changing its call sites. */
+const appDbs = new WeakMap<FastifyInstance, Db>();
+
 export interface TestAppOptions {
   webRoot?: string;
   env?: Record<string, string>;
   harnessDriver?: HarnessDriver;
+  /** A fake Docker client for the whole app (images, containers); the real one when absent. */
+  docker?: AppDeps["docker"];
   /** The scheduling clock and timer functions (S9); real ones when absent. */
   clock?: AppDeps["clock"];
   schedulerTimers?: AppDeps["schedulerTimers"];
   /** Capture the app's real log output (production redact config, no transport) at info level. */
   logStream?: { write(s: string): void };
+  /** Written to the `factory_settings` row before the first boot only, not on `reopen()` (S10 §8.1: no longer env vars). */
+  factorySettings?: Partial<FactorySettingsValues>;
 }
 
 export async function makeTestApp(opts: TestAppOptions = {}) {
@@ -57,6 +66,9 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);
+    if (o.factorySettings && Object.keys(o.factorySettings).length > 0) {
+      await db.update(schema.factorySettings).set(o.factorySettings);
+    }
     const app = await buildApp(config, {
       db,
       sql,
@@ -70,9 +82,11 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
           })()
         : false,
       harnessDriver: o.harnessDriver,
+      ...(o.docker ? { docker: o.docker } : {}),
       ...(o.clock ? { clock: o.clock } : {}),
       ...(o.schedulerTimers ? { schedulerTimers: o.schedulerTimers } : {}),
     });
+    appDbs.set(app, db);
     return { app, config, db, sql, closeDb };
   };
   const first = await build(opts);
@@ -92,7 +106,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       ),
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
     /** A second app on the same DB and FACTORY_HOME (the first should be closed first). */
-    async reopen(o: TestAppOptions = opts) {
+    /** Reopens over the same database; `factorySettings` is not re-applied (a PATCH before the restart persists). */
+    async reopen(o: TestAppOptions = { ...opts, factorySettings: undefined }) {
       const next = await build(o);
       opened.push(next);
       return next;
@@ -140,7 +155,6 @@ export async function seedTestAgent(
     secrets: [],
     canSpawn: [],
     maxLiveSpawns: 5,
-    warmWindowMinutes: 70,
     ...opts.config,
   });
   const [row] = await app.db
@@ -169,6 +183,25 @@ export async function seedTestAgent(
   return row;
 }
 
+/**
+ * An invite token for the next sign-up when the factory already has users (S10 §9.3), inserted directly
+ * (hashed, created by any user, far-future expiry so fake clocks don't expire it); undefined with zero users.
+ */
+export async function testInvite(app: FastifyInstance): Promise<string | undefined> {
+  const db = appDbs.get(app);
+  if (!db) throw new Error("testInvite: app was not built by makeTestApp");
+  const [creator] = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
+  if (!creator) return undefined;
+  const token = randomBytes(32).toString("base64url");
+  await db.insert(schema.invites).values({
+    id: randomUUID(),
+    tokenHash: hashToken(token),
+    createdBy: creator.id,
+    expiresAt: new Date("9999-01-01T00:00:00Z"),
+  });
+  return token;
+}
+
 let n = 0;
 export async function signUp(app: FastifyInstance, input: Partial<SignUpInput> = {}) {
   n += 1;
@@ -179,11 +212,12 @@ export async function signUp(app: FastifyInstance, input: Partial<SignUpInput> =
     password: "password123",
     ...input,
   };
+  const invite = await testInvite(app);
   const res = await app.inject({
     method: "POST",
     url: "/api/auth/sign-up/email",
     headers: { origin: TEST_ORIGIN },
-    payload: body,
+    payload: invite ? { ...body, invite } : body,
   });
   if (res.statusCode !== 200) throw new Error(`sign-up failed ${res.statusCode}: ${res.body}`);
   const setCookie = res.headers["set-cookie"];

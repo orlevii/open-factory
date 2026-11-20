@@ -57,7 +57,7 @@ class Boot {
       driver: this.driver,
       prepareStart: async (a) => okSpec(a),
       log: silentLog,
-      maxRunningAgents: max,
+      maxRunningAgents: () => max,
       ...(o.dockerRuntime
         ? { docker: { containers: this.containers, claudeBin: "claude", defaultImage: "img" } }
         : {}),
@@ -71,7 +71,7 @@ class Boot {
       containers: this.containers,
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
-      memberUpdateDebounceMs: 30_000,
+      memberUpdateDebounceMs: () => 30_000,
       forward: async (f) => {
         this.forwarded.push(f);
       },
@@ -129,7 +129,7 @@ async function agent(o: { status?: string } = {}): Promise<string> {
 }
 const pending = (id: string, body: string) =>
   store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
-const openTurn = (id: string) => store.openTurn(id);
+const openTurn = (id: string) => store.openTurn(id, null);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });
 const events = async (id: string): Promise<AnyEvent[]> =>

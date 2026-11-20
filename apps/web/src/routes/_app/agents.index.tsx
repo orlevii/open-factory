@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { agentsListQueryOptions } from "@/features/agents/api";
 import { PrerequisiteLine, usePrerequisites } from "@/features/agents/prerequisites";
 import { endedMoreQueryOptions, runningQueryOptions } from "@/features/session/api";
 import { useAgentStatusFrames } from "@/features/session/use-agent-status";
+import { agentsUsageQuery } from "@/features/usage/api";
 
 export const Route = createFileRoute("/_app/agents/")({
   // Unknown values fall back to the default view rather than an error page.
@@ -36,6 +37,12 @@ function AgentsPage() {
   const { ended, justArchived } = Route.useSearch();
   const filter = ended ?? "exclude";
   const { data: agents, isError } = useQuery(agentsListQueryOptions(filter));
+  // The tree's 7-day cost column; a failure just leaves the cells empty.
+  const usageData = useQuery(agentsUsageQuery("rolling7")).data;
+  const usage = useMemo(
+    () => (usageData ? new Map(usageData.agents.map((r) => [r.slug, r])) : undefined),
+    [usageData],
+  );
   const navigate = useNavigate();
   // The Undo line is for an agent that is archived right now: a reload or a revisited URL after
   // an Undo must not offer to restore an active agent.
@@ -97,7 +104,12 @@ function AgentsPage() {
             // "more" line, so the line sits right under the list. min-w-0: a grid item otherwise grows
             // to its content, and a long ended note pushes the page wider than a phone instead of truncating.
             <div className="min-w-0">
-              <AgentTree agents={agents} flat={filter === "only"} />
+              {/* Shown wherever the tree's cost cells are (§6: where cost first appears), so not below md. */}
+              <p className="mb-2 hidden text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:block">
+                Costs are estimates for the last 7 days. A persistent agent's figure includes the
+                agents it spawned.
+              </p>
+              <AgentTree agents={agents} flat={filter === "only"} usage={usage} />
               {filter === "only" && <EndedMoreLine />}
             </div>
           )}

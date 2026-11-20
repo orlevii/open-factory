@@ -1,5 +1,6 @@
 import { PassThrough, type Readable, type Writable } from "node:stream";
 import Docker, { type ContainerCreateOptions } from "dockerode";
+import { buildProgress } from "./build-progress.ts";
 
 // The only dockerode import outside tests (spec §4): everything else talks to Docker through `DockerClient`.
 export type { ContainerCreateOptions };
@@ -22,9 +23,28 @@ export interface ExecStream {
   readonly exit: Promise<number | null>;
 }
 
+export type BuildImageResult = { ok: true } | { ok: false; error: string };
+
+export interface ImageInspect {
+  id: string;
+  labels: Record<string, string>;
+  repoDigests: string[];
+}
+
 export interface DockerClient {
   /** The local image id, undefined when the image isn't present. */
   imageId(ref: string): Promise<string | undefined>;
+  /** The local image, undefined when it isn't present. */
+  imageInspect(ref: string): Promise<ImageInspect | undefined>;
+  /**
+   * Builds a tar context (spec §10.3): no build args, no registry auth, no push. Each output line goes to `onLine`;
+   * a failure reported in the stream (live gate V1) resolves `{ok: false}`. Rejects only when Docker can't be asked.
+   */
+  buildImage(
+    context: NodeJS.ReadableStream,
+    o: { tag: string; pull: boolean; labels: Record<string, string> },
+    onLine: (line: string) => void,
+  ): Promise<BuildImageResult>;
   /** Rejects with the registry's error verbatim. */
   pull(ref: string, signal: AbortSignal): Promise<void>;
   imageLabel(ref: string, label: string): Promise<string | undefined>;
@@ -89,6 +109,39 @@ export function dockerodeClient(): DockerClient {
   };
 
   return {
+    async imageInspect(ref) {
+      try {
+        const info = await docker.getImage(ref).inspect();
+        return {
+          id: info.Id,
+          labels: info.Config?.Labels ?? {},
+          repoDigests: info.RepoDigests ?? [],
+        };
+      } catch (err) {
+        if (statusOf(err) === 404) return undefined;
+        throw err;
+      }
+    },
+
+    async buildImage(context, o, onLine) {
+      // No buildargs, no registry auth, no push (spec §10.3, R8).
+      const stream: NodeJS.ReadableStream = await docker.buildImage(context, {
+        t: o.tag,
+        pull: o.pull,
+        labels: o.labels,
+        rm: true,
+        forcerm: true,
+      });
+      const progress = buildProgress(onLine);
+      return new Promise((resolve) => {
+        docker.modem.followProgress(
+          stream,
+          (err: Error | null) => resolve(progress.end(err)),
+          (ev: object) => progress.push(ev),
+        );
+      });
+    },
+
     async imageId(ref) {
       try {
         return (await docker.getImage(ref).inspect()).Id;

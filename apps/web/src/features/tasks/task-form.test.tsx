@@ -34,6 +34,7 @@ const detail = (n: number) => ({
   blocks: [],
   links: [],
   activity: [],
+  usage: null,
 });
 const base = {
   "GET /api/agents?": agents,
@@ -51,7 +52,12 @@ test("validates on leave, not while typing; typing clears the error", async () =
   expect(screen.queryByText("Enter a title.")).toBeNull();
   await userEvent.clear(title);
   expect(screen.queryByText("Enter a title.")).toBeNull();
-  await userEvent.type(title, "a".repeat(201));
+  // 200 characters pasted and the 201st typed: typing 201 keystrokes one by one takes about a second
+  // alone and over 5 s in a loaded full run, and a timed-out test keeps typing and tabbing into the next.
+  await userEvent.click(title);
+  await userEvent.paste("a".repeat(200));
+  await userEvent.type(title, "a");
+  expect(title).toHaveValue("a".repeat(201));
   expect(screen.queryByText("Keep the title to 200 characters or fewer.")).toBeNull();
   await userEvent.tab();
   expect(await screen.findByText("Keep the title to 200 characters or fewer.")).toBeInTheDocument();

@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { anyEventSchema, type HarnessEvent } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
-import { fixtureNames, readFixture } from "../test-fixtures.ts";
+import { FIXTURES_DIR, fixtureNames, readFixture } from "../test-fixtures.ts";
 import { createMapperState, flushMapper, mapLine } from "./mapper.ts";
 
 /** Maps a whole fixture. `manualCompactAt` lists 1-based line numbers before which the driver would
@@ -17,7 +18,9 @@ function mapFixture(name: string, opts: { resumed?: boolean; manualCompactAt?: n
     events.push(...mapLine(line, state));
   });
   events.push(...flushMapper(state));
-  return { events, unmapped, types: events.map((e) => e.type) };
+  // `rate_limit_status` is not a timeline event and shows up wherever the CLI interleaves one: sequences ignore it.
+  const types = events.map((e) => e.type).filter((t) => t !== "rate_limit_status");
+  return { events, unmapped, types };
 }
 const ofType = <T extends HarnessEvent["type"]>(evs: HarnessEvent[], t: T) =>
   evs.filter((e): e is Extract<HarnessEvent, { type: T }> => e.type === t);
@@ -37,8 +40,9 @@ describe("every fixture", () => {
   });
 });
 
-test("rate-limit-event-allowed: one plain turn; allowed rate limit dropped", () => {
+test("rate-limit-event-allowed: one plain turn; the allowed rate limit is a status, not a timeline event", () => {
   const { events, types } = mapFixture("rate-limit-event-allowed");
+  expect(ofType(events, "rate_limit_status")).toHaveLength(1);
   expect(types).toEqual(["session_started", "turn_started", "assistant_text", "usage", "turn_end"]);
   expect(events[0]).toEqual({
     type: "session_started",
@@ -253,21 +257,29 @@ test("usage is per turn even though result totals are cumulative", () => {
   expect(costs.reduce((a, b) => a + b, 0)).toBeCloseTo(0.776, 2);
 });
 
-test("rate limits map only when rejected; allowed_warning and overageStatus are ignored", () => {
+test("every rate limit event maps to rate_limit_status; only rejected also emits rate_limited", () => {
   const s = createMapperState({ resumed: false });
-  const rl = (status: string) => ({
+  const rl = (status: string, utilization = 0.97) => ({
     type: "rate_limit_event",
     rate_limit_info: {
       status,
       resetsAt: 1795027800,
       rateLimitType: "five_hour",
       overageStatus: "rejected",
-      utilization: 0.97,
+      utilization,
     },
   });
-  expect(mapLine(rl("allowed"), s)).toEqual([]);
-  expect(mapLine(rl("allowed_warning"), s)).toEqual([]);
+  const status = (st: string, utilization: number) => ({
+    type: "rate_limit_status",
+    status: st,
+    rateLimitType: "five_hour",
+    resetsAt: 1795027800,
+    utilization,
+  });
+  expect(mapLine(rl("allowed", 0.1), s)).toEqual([status("allowed", 0.1)]);
+  expect(mapLine(rl("allowed_warning", 0.82), s)).toEqual([status("allowed_warning", 0.82)]);
   expect(mapLine(rl("rejected"), s)).toEqual([
+    status("rejected", 0.97),
     {
       type: "rate_limited",
       status: "rejected",
@@ -276,6 +288,72 @@ test("rate limits map only when rejected; allowed_warning and overageStatus are 
       utilization: 0.97,
     },
   ]);
+});
+
+test("a real rate_limit_event carries utilization only inside unifiedWindows", () => {
+  const lines = readFileSync(`${FIXTURES_DIR}rate-limit-event-live-allowed.ndjson`, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l));
+  const s = createMapperState({ resumed: false });
+  const out = lines.flatMap((l) => mapLine(l, s));
+  expect(out).toEqual([
+    {
+      type: "rate_limit_status",
+      status: "allowed",
+      rateLimitType: "five_hour",
+      resetsAt: 1795209600,
+      utilization: 0.01,
+    },
+  ]);
+});
+
+test("a real-shape rejected event: rate_limited carries the window's utilization and reset too", () => {
+  const s = createMapperState({ resumed: false });
+  const out = mapLine(
+    {
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "rejected",
+        rateLimitType: "five_hour",
+        unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1795209600, status: "rejected" } },
+      },
+    },
+    s,
+  );
+  expect(out).toEqual([
+    {
+      type: "rate_limit_status",
+      status: "rejected",
+      rateLimitType: "five_hour",
+      utilization: 1,
+      resetsAt: 1795209600,
+    },
+    {
+      type: "rate_limited",
+      status: "rejected",
+      rateLimitType: "five_hour",
+      utilization: 1,
+      resetsAt: 1795209600,
+    },
+  ]);
+});
+
+test("a rate_limit_event without rateLimitType: the status has no type rather than an invented one", () => {
+  const s = createMapperState({ resumed: false });
+  expect(
+    mapLine(
+      { type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1795209600 } },
+      s,
+    ),
+  ).toEqual([{ type: "rate_limit_status", status: "allowed", resetsAt: 1795209600 }]);
+});
+
+test("rate_limit_status without a known status is not invented", () => {
+  const s = createMapperState({ resumed: false });
+  expect(mapLine({ type: "rate_limit_event", rate_limit_info: { status: "weird" } }, s)).toEqual(
+    [],
+  );
 });
 
 test("unknown types are reported once and yield nothing", () => {
@@ -460,14 +538,6 @@ const dropped: [string, unknown][] = [
         stop_reason: null,
       },
       parent_tool_use_id: null,
-      ...SID,
-    },
-  ],
-  [
-    "rate_limit_event allowed",
-    {
-      type: "rate_limit_event",
-      rate_limit_info: { status: "allowed", resetsAt: 1, rateLimitType: "five_hour" },
       ...SID,
     },
   ],

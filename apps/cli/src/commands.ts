@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { help } from "./commands/help.ts";
+import { images } from "./commands/images.ts";
 import { login } from "./commands/login.ts";
 import { logout } from "./commands/logout.ts";
 import { status } from "./commands/status.ts";
@@ -39,6 +40,12 @@ export const COMMANDS: Command[] = [
   },
   { name: "logout", summary: "Log out and forget the stored token", run: logout },
   { name: "status", summary: "Show server, version and login state", run: status },
+  {
+    name: "images",
+    summary:
+      "List user images or build one: open-factory images | open-factory images build (<name>|--all) [--no-pull]",
+    run: images,
+  },
   { name: "help", summary: "Show this help", run: async (_a, io) => help(io) },
 ];
 

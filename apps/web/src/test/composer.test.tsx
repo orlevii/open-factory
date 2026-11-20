@@ -171,6 +171,8 @@ const status = (turnOpen: boolean) =>
       agent: "dev",
       status: turnOpen ? "working" : "idle",
       turnOpen,
+      restartPending: false,
+      restartWaitingOn: 0,
     }),
   );
 const interrupt = () => screen.getByRole("button", { name: "Interrupt" });

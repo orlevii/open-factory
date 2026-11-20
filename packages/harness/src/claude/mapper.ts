@@ -28,6 +28,10 @@ export interface MapperState {
   prevCost: number;
   prevModelUsage: Record<string, ModelUsage>;
   reported: Set<string>;
+  /** tool_use id to tool name, per process, never reset. */
+  toolNames: Map<string, string>;
+  /** tool_use ids already reported as denied, per process, never reset. */
+  deniedIds: Set<string>;
 }
 
 export function createMapperState(opts: {
@@ -49,6 +53,8 @@ export function createMapperState(opts: {
     prevCost: 0,
     prevModelUsage: {},
     reported: new Set(),
+    toolNames: new Map(),
+    deniedIds: new Set(),
   };
 }
 
@@ -59,6 +65,7 @@ const DROPPED_SYSTEM = new Set([
   "task_updated",
   "task_progress",
   "informational",
+  "api_retry",
 ]);
 /** Spec §6.2 drops every `hook_*` subtype, not just the ones seen so far. */
 const isDroppedSystem = (subtype: unknown) =>
@@ -95,10 +102,13 @@ function errorOnce(
   source: "api" | "refusal",
   message: string,
   detail?: string,
+  code?: string,
 ): HarnessEvent[] {
   if (s.errorThisTurn) return [];
   s.errorThisTurn = true;
-  return [{ type: "error", source, message, ...(detail ? { detail } : {}) }];
+  return [
+    { type: "error", source, message, ...(detail ? { detail } : {}), ...(code ? { code } : {}) },
+  ];
 }
 
 function system(e: Json, s: MapperState): HarnessEvent[] {
@@ -142,6 +152,7 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
       return [];
     }
     case "permission_denied":
+      s.deniedIds.add(String(e.tool_use_id ?? ""));
       return [
         {
           type: "permission_denied",
@@ -220,6 +231,8 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
         s,
         msg.stop_reason === "refusal" ? "refusal" : "api",
         textOf(msg.content) || String(e.error),
+        undefined,
+        typeof e.error === "string" ? e.error : undefined,
       );
     return [];
   }
@@ -228,6 +241,7 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
     if (b.type === "text" && b.text)
       out.push({ type: "assistant_text", text: String(b.text), ...parentOf(e) });
     else if (b.type === "tool_use") {
+      s.toolNames.set(String(b.id), String(b.name));
       out.push({
         type: "tool_call",
         toolUseId: String(b.id),
@@ -246,6 +260,8 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
   return out;
 }
 
+const stripToolUseError = (t: string) => t.replace(/<\/?tool_use_error>/g, "").trim();
+
 function user(e: Json, s: MapperState): HarnessEvent[] {
   if (e.isReplay) return [];
   const content = e.message?.content;
@@ -253,6 +269,20 @@ function user(e: Json, s: MapperState): HarnessEvent[] {
   const out: HarnessEvent[] = [];
   for (const b of content) {
     if (b.type !== "tool_result") continue; // plain user text (interrupt notes, synthetic text) is dropped
+    const meta = Array.isArray(e.tool_result_meta)
+      ? e.tool_result_meta.find((m: Json) => String(m?.id) === String(b.tool_use_id))
+      : undefined;
+    const id = String(b.tool_use_id);
+    if (meta?.permission_decision?.decision === "reject" && !s.deniedIds.has(id)) {
+      s.deniedIds.add(id);
+      out.push({
+        type: "permission_denied",
+        toolName: s.toolNames.get(id) ?? "",
+        toolUseId: id,
+        reasonType: String(meta.permission_decision.reason_type ?? "rule"),
+        reason: stripToolUseError(textOf(b.content)) || "Denied by a permission rule",
+      });
+    }
     out.push({
       type: "tool_result",
       toolUseId: String(b.tool_use_id),
@@ -323,6 +353,18 @@ function result(e: Json, s: MapperState): HarnessEvent[] {
     return [{ type: "error", source: s.resumed ? "resume" : "spawn", message }];
   }
   const out: HarnessEvent[] = [];
+  for (const d of Array.isArray(e.permission_denials) ? e.permission_denials : []) {
+    const id = String(d?.tool_use_id ?? "");
+    if (!id || s.deniedIds.has(id)) continue;
+    s.deniedIds.add(id);
+    out.push({
+      type: "permission_denied",
+      toolName: String(d.tool_name ?? s.toolNames.get(id) ?? ""),
+      toolUseId: id,
+      reasonType: "rule",
+      reason: "Denied by a permission rule",
+    });
+  }
   if (e.is_error === true && e.terminal_reason === "api_error")
     out.push(
       ...errorOnce(s, "api", typeof e.result === "string" && e.result ? e.result : "API error"),
@@ -341,6 +383,7 @@ function result(e: Json, s: MapperState): HarnessEvent[] {
     ...(e.terminal_reason ? { terminalReason: String(e.terminal_reason) } : {}),
     ...(originKind ? { originKind } : {}),
     ...(e.local_command ? { command: String(e.local_command) } : {}),
+    ...(typeof e.api_error_status === "number" ? { apiErrorStatus: e.api_error_status } : {}),
     numTurns: Number(e.num_turns ?? 0),
   });
   s.cronWakeupPending = false;

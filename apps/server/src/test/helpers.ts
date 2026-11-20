@@ -1,14 +1,29 @@
-import { mkdtempSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
+import {
+  type AgentRow,
+  createDb,
+  type Db,
+  MIGRATIONS_DIR,
+  migrate,
+  schema,
+} from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
-import type { Me, SignUpInput } from "@open-factory/shared";
+import {
+  type Me,
+  type SignUpInput,
+  type TemplateConfig,
+  templateConfigSchema,
+} from "@open-factory/shared";
 import type { FastifyInstance } from "fastify";
-import { seedDevAgent } from "../agents/seed-dev.ts";
-import { buildApp } from "../app.ts";
-import { loadConfig } from "../config.ts";
+import { buildApp, loggerOptions } from "../app.ts";
+import { type Config, loadConfig } from "../config.ts";
+import type { Vault } from "../crypto/vault.ts";
+import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
+import type { Workspace } from "../workspace/workspace.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -16,12 +31,15 @@ export interface TestAppOptions {
   webRoot?: string;
   env?: Record<string, string>;
   harnessDriver?: HarnessDriver;
+  /** Capture the app's real log output (production redact config, no transport) at info level. */
+  logStream?: { write(s: string): void };
 }
 
 export async function makeTestApp(opts: TestAppOptions = {}) {
   const tdb = await createTestDatabase();
   await migrate(tdb.url, MIGRATIONS_DIR);
   const factoryHome = mkdtempSync(path.join(tmpdir(), "of-home-"));
+  const hostSkillsDir = mkdtempSync(path.join(tmpdir(), "of-skills-"));
   const build = async (o: TestAppOptions) => {
     const config = loadConfig({
       DATABASE_URL: tdb.url,
@@ -29,7 +47,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       PORT: "3000",
       LOG_LEVEL: "silent",
       FACTORY_HOME: factoryHome,
-      CLAUDE_CODE_OAUTH_TOKEN: "test-token",
+      FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);
@@ -37,7 +55,14 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       db,
       sql,
       webRoot: o.webRoot,
-      logger: false,
+      logger: o.logStream
+        ? (() => {
+            const { transport: _t, ...rest } = loggerOptions(config) as ReturnType<
+              typeof loggerOptions
+            > & { transport?: unknown };
+            return { ...rest, level: "info", stream: o.logStream };
+          })()
+        : false,
       harnessDriver: o.harnessDriver,
     });
     return { app, config, db, sql, closeDb };
@@ -47,7 +72,16 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
   return {
     ...first,
     factoryHome,
-    seed: () => seedDevAgent(first.db, first.config),
+    seedAgent: (o?: SeedAgentOptions) =>
+      seedTestAgent(
+        {
+          db: first.db,
+          config: first.config,
+          vault: first.app.vault,
+          workspace: first.app.workspace,
+        },
+        o,
+      ),
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
     /** A second app on the same DB and FACTORY_HOME (the first should be closed first). */
     async reopen(o: TestAppOptions = opts) {
@@ -64,6 +98,64 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       await tdb.drop();
     },
   };
+}
+
+export interface SeedAgentOptions {
+  slug?: string;
+  config?: Partial<TemplateConfig>;
+  credentialValue?: string;
+}
+
+/** A persistent agent with a credential and a minimal workdir, as if created from a template. */
+export async function seedTestAgent(
+  app: { db: Db; config: Config; vault: Vault; workspace: Workspace },
+  opts: SeedAgentOptions = {},
+): Promise<AgentRow> {
+  const slug = opts.slug ?? "dev";
+  const credentialId = randomUUID();
+  await app.db.insert(schema.credentials).values({
+    id: credentialId,
+    name: `test-cred-${credentialId.slice(0, 8)}`,
+    kind: "oauth_token",
+    valueEnc: app.vault.seal(opts.credentialValue ?? "test-token", `credentials:${credentialId}`),
+  });
+  const config = templateConfigSchema.parse({
+    name: "test",
+    displayName: "Test agent",
+    description: "",
+    runtime: "local",
+    permissionMode: "auto",
+    projects: [],
+    skills: [],
+    localSkills: true,
+    plugins: [],
+    secrets: [],
+    canSpawn: [],
+    maxLiveSpawns: 5,
+    warmWindowMinutes: 70,
+    ...opts.config,
+  });
+  const [row] = await app.db
+    .insert(schema.agents)
+    .values({
+      id: randomUUID(),
+      slug,
+      displayName: "Test agent",
+      description: "",
+      template: "test",
+      config,
+      runtime: "local",
+      credentialId,
+    })
+    .returning();
+  if (!row) throw new Error("seed failed");
+  const workdir = agentWorkdir(app.config.factoryHome, slug);
+  mkdirSync(agentConfigDir(workdir), { recursive: true });
+  mkdirSync(templateCopyDir(workdir), { recursive: true });
+  writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
+  writeFileSync(path.join(templateCopyDir(workdir), "settings.json"), "{}");
+  writeFileSync(path.join(templateCopyDir(workdir), "mcp.json"), '{"mcpServers":{}}');
+  return row;
 }
 
 let n = 0;

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
 import { EventStore } from "./event-store.ts";
+import { insertAgent } from "./testing/rows.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -8,7 +9,8 @@ beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
-  await t.sql`insert into agents (id, slug, display_name) values ('a1', 'dev', 'Dev agent'), ('a2', 'b', 'B')`;
+  await insertAgent(t.sql, { id: "a1", slug: "dev" });
+  await insertAgent(t.sql, { id: "a2", slug: "b" });
 });
 afterAll(() => t.close());
 

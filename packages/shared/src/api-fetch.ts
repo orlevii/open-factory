@@ -5,6 +5,8 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    /** The whole parsed `error` object: extra fields such as `fields`, `currentHash`, `usedBy`, `output`. */
+    public readonly body: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -39,11 +41,15 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions<T>): Promi
   }
   if (!res.ok) {
     const d = data as
-      | { error?: { code?: string; message?: string }; code?: string; message?: string }
+      | {
+          error?: { code?: string; message?: string } & Record<string, unknown>;
+          code?: string;
+          message?: string;
+        }
       | undefined;
     const code = d?.error?.code ?? d?.code ?? `http_${res.status}`;
     const message = d?.error?.message ?? d?.message ?? (res.statusText || `HTTP ${res.status}`);
-    throw new ApiError(res.status, code, message);
+    throw new ApiError(res.status, code, message, d?.error ?? {});
   }
   return opts.schema.parse(data);
 }

@@ -1,4 +1,4 @@
-import { ChevronRight, CircleAlert } from "lucide-react";
+import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatBytes } from "./format";
 import { CodePlate } from "./quiet-line";
@@ -14,6 +14,14 @@ export const toolSummary = (name: string, input: unknown): string => {
   }
   const first = Object.values(i).find((v) => typeof v === "string");
   return typeof first === "string" ? first : "";
+};
+
+const RULE_DENIAL = "Denied by a permission rule";
+
+/** The line under a denied call's summary: the reason when there is one (UI design §4.4). */
+export const denialText = (reason: string) => {
+  const r = reason.trim();
+  return r && r !== RULE_DENIAL ? `Denied: ${r}` : RULE_DENIAL;
 };
 
 const STATE_LABEL = {
@@ -37,7 +45,7 @@ export function ToolCallRow({
   children?: ReactNode;
 }) {
   const summary = toolSummary(row.call.name, row.call.input);
-  const state = STATE_LABEL[row.state];
+  const state = row.denial ? "Denied" : STATE_LABEL[row.state];
   // capPayload records the capped path (input.command, input.new_string, result.content, …).
   const truncatedNote = (prefix: "input." | "result.") => {
     const capped = Object.entries(row.truncated ?? {}).filter(([k]) => k.startsWith(prefix));
@@ -66,13 +74,23 @@ export function ToolCallRow({
         </span>
         {state && (
           <span className="flex shrink-0 items-center gap-1 text-[0.8125rem] text-muted-foreground">
-            {row.state === "failed" && (
-              <CircleAlert aria-hidden="true" className="size-3.5 text-destructive" />
+            {row.denial ? (
+              <TriangleAlert aria-hidden="true" className="size-3.5 text-warning" />
+            ) : (
+              row.state === "failed" && (
+                <CircleAlert aria-hidden="true" className="size-3.5 text-destructive" />
+              )
             )}
             {state}
           </span>
         )}
       </button>
+      {row.denial && (
+        <p className="flex items-start gap-1.5 pl-7 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+          <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{denialText(row.denial.reason)}</span>
+        </p>
+      )}
       {expanded && (
         <div className="mt-1 space-y-2 pl-6">
           <CodePlate>

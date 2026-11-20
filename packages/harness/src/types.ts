@@ -1,5 +1,11 @@
 import type { HarnessEvent } from "@open-factory/shared";
 
+export interface Mount {
+  source: string;
+  target: string;
+  readOnly: boolean;
+}
+
 export interface AgentRuntimeSpec {
   agentId: string;
   slug: string;
@@ -7,9 +13,11 @@ export interface AgentRuntimeSpec {
   /** The complete child env. Nothing from process.env is merged in. */
   env: Record<string, string>;
   claudeBin: string;
+  runtime: "local" | "docker";
   model?: string;
   effort?: string;
-  permissionMode: "auto";
+  permissionMode: "auto" | "bypass";
+  mounts: Mount[];
 }
 
 export interface FactoryMessage {

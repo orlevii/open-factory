@@ -48,3 +48,11 @@ test("non-json errors get code http_<status>", async () => {
   const err = await apiFetch("/api/x", { schema: z.any(), fetchImpl }).catch((e) => e);
   expect(err).toMatchObject({ status: 502, code: "http_502" });
 });
+
+test("ApiError keeps the whole error object as body", async () => {
+  const fetchImpl = vi.fn(async () =>
+    json(409, { error: { code: "changed_on_disk", message: "Changed", currentHash: "abc" } }),
+  );
+  const err = await apiFetch("/api/x", { schema: z.any(), fetchImpl }).catch((e) => e);
+  expect(err.body).toMatchObject({ code: "changed_on_disk", currentHash: "abc" });
+});

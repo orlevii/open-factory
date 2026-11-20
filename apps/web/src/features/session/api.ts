@@ -8,10 +8,16 @@ import {
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-export const agentsQueryOptions = queryOptions({
-  queryKey: ["agents"],
-  queryFn: () => apiFetch("/api/agents", { schema: agentListSchema }).then((r) => r.agents),
-});
+/** Key prefix ["agents"] covers every list variant, so one invalidation refreshes them all. */
+export const agentsListQueryOptions = (archived: "exclude" | "only" = "exclude") =>
+  queryOptions({
+    queryKey: ["agents", archived],
+    queryFn: () =>
+      apiFetch(`/api/agents?archived=${archived}`, { schema: agentListSchema }).then(
+        (r) => r.agents,
+      ),
+  });
+export const agentsQueryOptions = agentsListQueryOptions("exclude");
 
 export const agentDetailQueryOptions = (slug: string) =>
   queryOptions({

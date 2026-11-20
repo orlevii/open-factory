@@ -1,4 +1,6 @@
+import type { TemplateConfig } from "@open-factory/shared";
 import {
+  type AnyPgColumn,
   bigserial,
   boolean,
   index,
@@ -11,6 +13,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
+import { credentials } from "./factory.ts";
 
 /** S3 subset of data-model.md's agents table; later specs add their columns. */
 export const agents = pgTable("agents", {
@@ -21,6 +24,16 @@ export const agents = pgTable("agents", {
   sessionId: text("session_id"),
   /** Only 'hibernated' | 'errored' are stored in S3; working/idle are derived in memory. */
   status: text("status").notNull().default("hibernated"),
+  kind: text("kind").notNull().default("persistent"),
+  template: text("template").notNull(),
+  config: jsonb("config").$type<TemplateConfig>().notNull(),
+  runtime: text("runtime").notNull().$type<"local" | "docker">(),
+  reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, { onDelete: "restrict" }),
+  credentialId: text("credential_id")
+    .notNull()
+    .references(() => credentials.id, { onDelete: "restrict" }),
+  grantsOverridden: boolean("grants_overridden").notNull().default(false),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

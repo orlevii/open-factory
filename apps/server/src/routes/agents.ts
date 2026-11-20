@@ -1,19 +1,25 @@
 import {
   agentDetailSchema,
+  agentListQuerySchema,
   agentListSchema,
+  agentResponseSchema,
   compactBodySchema,
+  createAgentBodySchema,
   eventsPageSchema,
   eventsQuerySchema,
+  patchAgentBodySchema,
   queueItemResponseSchema,
+  resyncResponseSchema,
   sendMessageBodySchema,
+  slugSchema,
 } from "@open-factory/shared";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AgentStartError, NoOpenTurnError } from "../agents/errors.ts";
+import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "../agents/errors.ts";
 import { requireUser } from "../auth/require-user.ts";
 
-const slugParams = z.object({ slug: z.string() });
+const slugParams = z.object({ slug: slugSchema });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
 
@@ -26,19 +32,57 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     return req.user;
   };
 
-  app.get("/api/agents", { schema: { response: { 200: agentListSchema } } }, async () => ({
-    agents: await app.runtimes.list(),
-  }));
+  app.get(
+    "/api/agents",
+    { schema: { querystring: agentListQuerySchema, response: { 200: agentListSchema } } },
+    async (req) => ({ agents: await app.agents.list(req.query.archived) }),
+  );
+
+  app.post(
+    "/api/agents",
+    { schema: { body: createAgentBodySchema, response: { 201: agentResponseSchema } } },
+    async (req, reply) => reply.code(201).send({ agent: await app.agents.create(req.body) }),
+  );
 
   app.get("/api/agents/:slug", { schema: { params: slugParams } }, async (req, reply) => {
     const rt = await app.runtimes.bySlug(req.params.slug);
     if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
     return agentDetailSchema.parse({
-      agent: rt.summary(),
+      agent: await app.agents.summary(req.params.slug),
       queue: rt.queueItems(),
       lastSeq: await app.store.lastSeq(rt.agent.id),
     });
   });
+
+  app.patch(
+    "/api/agents/:slug",
+    {
+      schema: {
+        params: slugParams,
+        body: patchAgentBodySchema,
+        response: { 200: agentResponseSchema },
+      },
+    },
+    async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
+  );
+
+  app.post(
+    "/api/agents/:slug/resync",
+    { schema: { params: slugParams, response: { 200: resyncResponseSchema } } },
+    async (req) => app.agents.resync(req.params.slug),
+  );
+
+  app.post(
+    "/api/agents/:slug/archive",
+    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
+    async (req) => ({ agent: await app.agents.archive(req.params.slug) }),
+  );
+
+  app.post(
+    "/api/agents/:slug/unarchive",
+    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
+    async (req) => ({ agent: await app.agents.unarchive(req.params.slug) }),
+  );
 
   app.get(
     "/api/agents/:slug/events",
@@ -79,6 +123,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
+        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
         throw e;
       }
@@ -98,6 +143,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
+        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
         throw e;
       }
@@ -114,6 +160,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         await rt.interrupt({ byHandle: user(req).handle });
         return reply.code(202).send({});
       } catch (e) {
+        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof NoOpenTurnError)
           return err(reply, 409, "no_open_turn", "Nothing to interrupt");
         throw e;

@@ -41,6 +41,8 @@ const SCENARIOS = fileURLToPath(new URL("./scenarios/", import.meta.url));
 export function createFakeClaude(opts: {
   scenario: string | FakeScenario;
   dir?: string;
+  /** Extra env the wrapper exports (the child env is an allowlist, so tests can't pass it directly). */
+  env?: Record<string, string>;
 }): FakeClaude {
   const dir = opts.dir ?? mkdtempSync(path.join(tmpdir(), "fake-claude-"));
   const stateDir = path.join(dir, "sessions");
@@ -53,9 +55,12 @@ export function createFakeClaude(opts: {
     writeFileSync(scenarioPath, JSON.stringify(opts.scenario));
   }
   const bin = path.join(dir, "claude");
+  const extraEnv = Object.entries(opts.env ?? {})
+    .map(([k, v]) => `export ${k}='${v.replaceAll("'", "'\\''")}'\n`)
+    .join("");
   writeFileSync(
     bin,
-    `#!/bin/sh\nFAKE_CLAUDE_SCENARIO='${scenarioPath}' FAKE_CLAUDE_DIR='${dir}' exec '${process.execPath}' '${FAKE}' "$@"\n`,
+    `#!/bin/sh\n${extraEnv}FAKE_CLAUDE_SCENARIO='${scenarioPath}' FAKE_CLAUDE_DIR='${dir}' exec '${process.execPath}' '${FAKE}' "$@"\n`,
   );
   chmodSync(bin, 0o755);
   return {

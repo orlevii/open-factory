@@ -120,7 +120,7 @@ describe("agent subscriptions", () => {
   const driver = new FakeDriver();
   beforeAll(async () => {
     a = await makeTestApp({ harnessDriver: driver });
-    await a.seed();
+    await a.seedAgent();
     s = await signUp(a.app);
     await a.app.listen({ port: 0, host: "127.0.0.1" });
     wsUrl = `ws://127.0.0.1:${(a.app.server.address() as AddressInfo).port}/api/ws`;

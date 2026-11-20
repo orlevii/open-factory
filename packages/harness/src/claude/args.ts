@@ -11,9 +11,9 @@ export function buildClaudeArgs(
     "--output-format",
     "stream-json",
     "--verbose",
-    "--permission-mode",
-    spec.permissionMode,
   ];
+  if (spec.permissionMode === "bypass") args.push("--dangerously-skip-permissions");
+  else args.push("--permission-mode", "auto");
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
   if (spec.model) args.push("--model", spec.model);
   if (spec.effort) args.push("--effort", spec.effort);

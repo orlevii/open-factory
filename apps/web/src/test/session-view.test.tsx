@@ -101,7 +101,14 @@ test("working status shows the working line; a status frame removes it", async (
   await screen.findByText("Two entries.");
   expect(document.querySelector("[data-working-line]")).toBeInTheDocument();
   act(() =>
-    ws.onMessage?.({ type: "agent_status", agent: "dev", status: "idle", turnOpen: false }),
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "idle",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
   );
   await vi.waitFor(() =>
     expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument(),
@@ -464,4 +471,209 @@ test("connected: the queue frame is authoritative, so no local row is added", as
   );
   const log = screen.getByRole("log", { name: "Session" });
   expect(within(log).queryByText("online hello")).not.toBeInTheDocument();
+});
+
+// --- S4 additions (UI design §4.4) ---
+
+test("strip: slug, template, manager, credential and runtime, identifiers in mono", async () => {
+  routes["/api/agents/dev"] = () =>
+    json(detail({ slug: "dev", template: "tech-lead", reportsTo: "cto", credential: "work" }));
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const strip = document.querySelector("[data-agent-strip]") as HTMLElement;
+  expect(strip.textContent).toBe(
+    "dev·tech-lead·reports to @cto·credential work·Unsandboxed: runs directly on this machine",
+  );
+  for (const id of ["dev", "tech-lead", "@cto", "work"])
+    expect(within(strip).getByText(id)).toHaveClass("font-mono");
+});
+
+test("strip: No manager for a root; Docker for docker agents", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ reportsTo: null, runtime: "docker" }));
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const strip = document.querySelector("[data-agent-strip]") as HTMLElement;
+  expect(within(strip).getByText("No manager")).toBeInTheDocument();
+  expect(within(strip).getByText("Docker")).toBeInTheDocument();
+  expect(strip.textContent).not.toMatch(/Unsandboxed/);
+});
+
+test("restart pending: the strip says so with the waiting count; Why? explains in a popover", async () => {
+  routes["/api/agents/dev"] = () =>
+    json(detail({ restartPending: true, restartWaitingOn: 1, status: "working", turnOpen: true }));
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(
+    screen.getByText("Restarts when idle to apply changes (waiting on 1 background task)"),
+  ).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Why?" }));
+  expect(
+    await screen.findByText(
+      "The agent finishes its current work, then restarts with the new settings. Its session is kept. Reminders it scheduled in this session are lost.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("restart pending arrives by frame, plural waiting count; a frame clears it", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument();
+  const frame = (restartPending: boolean, restartWaitingOn: number) =>
+    act(() =>
+      ws.onMessage?.({
+        type: "agent_status",
+        agent: "dev",
+        status: "working",
+        turnOpen: true,
+        restartPending,
+        restartWaitingOn,
+      }),
+    );
+  frame(true, 2);
+  expect(
+    await screen.findByText("Restarts when idle to apply changes (waiting on 2 background tasks)"),
+  ).toBeInTheDocument();
+  frame(true, 0);
+  expect(await screen.findByText("Restarts when idle to apply changes")).toBeInTheDocument();
+  frame(false, 0);
+  await vi.waitFor(() => expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument());
+});
+
+test("header: an Edit link to the edit page", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute("href", "/agents/dev/edit");
+});
+
+test("archived: the composer is replaced by a line linking the edit page; no Compact or Interrupt", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(screen.getByText(/This agent is archived\./).textContent).toBe(
+    "This agent is archived. Restore it to send messages.",
+  );
+  expect(screen.getByRole("link", { name: "Restore it" })).toHaveAttribute(
+    "href",
+    "/agents/dev/edit",
+  );
+  expect(screen.queryByRole("textbox", { name: /Message to/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
+  expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Edit" })).toBeInTheDocument();
+});
+
+test("archived with no events: the empty line doesn't point at a composer", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  routes["/api/agents/dev/events?"] = () => page([]);
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByText("No messages yet.")).toBeInTheDocument();
+  expect(screen.queryByText(/Send the first one below/)).not.toBeInTheDocument();
+});
+
+test("a paired denial shows inside its call: Denied state and the reason line; no standalone row", async () => {
+  routes["/api/agents/dev/events?"] = () => {
+    resetSeq();
+    return page([
+      se({ type: "turn_started" }),
+      se({ type: "tool_call", toolUseId: "tu1", name: "Read", input: { file_path: "/etc/x" } }),
+      se({
+        type: "permission_denied",
+        toolName: "Read",
+        toolUseId: "tu1",
+        reasonType: "rule",
+        reason: "Permission to read /etc/x has been denied.",
+      }),
+      se({ type: "tool_result", toolUseId: "tu1", content: "denied", isError: true }),
+      se({ type: "tool_call", toolUseId: "tu2", name: "Bash", input: { command: "rm -rf x" } }),
+      se({
+        type: "permission_denied",
+        toolName: "Bash",
+        toolUseId: "tu2",
+        reasonType: "subcommandResults",
+        reason: "",
+      }),
+      se({ type: "turn_end", isError: false, numTurns: 1 }),
+    ]);
+  };
+  routes["/api/agents/dev"] = () => json(detail({}, [], 7));
+  renderApp("/agents/dev", alice);
+  const read = await screen.findByRole("button", { name: /Read/ });
+  expect(within(read).getByText("Denied")).toBeInTheDocument();
+  expect(within(read).queryByText("Failed")).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Denied: Permission to read /etc/x has been denied."),
+  ).toBeInTheDocument();
+  const bash = screen.getByRole("button", { name: /Bash/ });
+  expect(within(bash).getByText("Denied")).toBeInTheDocument();
+  expect(screen.getByText("Denied by a permission rule")).toBeInTheDocument();
+  expect(screen.queryByText(/^Denied: Read$/)).not.toBeInTheDocument();
+});
+
+const errorPage = (event: Parameters<typeof se>[0]) => () => {
+  resetSeq();
+  return page([se(event, null)]);
+};
+
+test("an error with fix secrets links to Settings → Secrets", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message: "The secret GH_TOKEN isn't set. Add it in Settings → Secrets.",
+    code: "secret_missing",
+    fix: "secrets",
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Open Settings → Secrets" })).toHaveAttribute(
+    "href",
+    "/settings#secrets",
+  );
+});
+
+test("an error with fix credentials or projects links to that section", async () => {
+  routes["/api/agents/dev/events?"] = () => {
+    resetSeq();
+    return page([
+      se({ type: "error", source: "spawn", message: "a", fix: "credentials" }, null),
+      se({ type: "error", source: "spawn", message: "b", fix: "projects" }, null),
+    ]);
+  };
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Open Settings → Credentials" })).toHaveAttribute(
+    "href",
+    "/settings#credentials",
+  );
+  expect(screen.getByRole("link", { name: "Open Settings → Projects" })).toHaveAttribute(
+    "href",
+    "/settings#projects",
+  );
+});
+
+test("an error with fix edit_agent links to the edit page", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message: "The host skill x is missing.",
+    fix: "edit_agent",
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Edit the agent" })).toHaveAttribute(
+    "href",
+    "/agents/dev/edit",
+  );
+});
+
+test("a resume error names pnpm agent:reset-session with the slug", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "resume",
+    message: "No conversation found",
+  });
+  renderApp("/agents/dev", alice);
+  const hint = await screen.findByText(/To start a new session/);
+  expect(hint.textContent).toBe(
+    "To start a new session: stop the server, run pnpm agent:reset-session dev, then start it again.",
+  );
+  expect(within(hint).getByText("pnpm agent:reset-session dev").tagName).toBe("CODE");
+  expect(document.body.textContent).not.toMatch(/seed:dev-agent/);
 });

@@ -1,8 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
 afterEach(() => cleanup());
+
+// The first render in a file loads the whole route tree; on a slow CI runner that can pass the 1 s default.
+configure({ asyncUtilTimeout: 5000 });
 
 // jsdom has no matchMedia; the shadcn sidebar's useIsMobile needs it.
 if (!window.matchMedia) {
@@ -29,4 +32,9 @@ if (!window.ResizeObserver) {
     unobserve() {}
     disconnect() {}
   };
+}
+
+// jsdom does not implement scrollIntoView; the settings hash handling and the template editor call it.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
 }

@@ -1,4 +1,5 @@
 import type { AnyEvent } from "@open-factory/shared";
+import { Link } from "@tanstack/react-router";
 import { CircleAlert, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Markdown } from "@/components/markdown/markdown";
@@ -74,7 +75,32 @@ function quietDetail(e: AnyEvent): string | undefined {
 
 const WARN = new Set(["delivery_failed", "compact_failed", "rate_limited"]);
 
+/** Where an error's `fix` points (spec §15, UI design §4.4). */
+function FixLink({
+  fix,
+  slug,
+}: {
+  fix: NonNullable<Extract<AnyEvent, { type: "error" }>["fix"]>;
+  slug: string;
+}) {
+  const cls =
+    "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+  if (fix === "edit_agent")
+    return (
+      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
+        Edit the agent
+      </Link>
+    );
+  const label = { credentials: "Credentials", secrets: "Secrets", projects: "Projects" }[fix];
+  return (
+    <Link to="/settings" hash={fix} className={cls}>
+      Open Settings → {label}
+    </Link>
+  );
+}
+
 export interface TimelineRowProps {
+  slug: string;
   row: Row;
   expanded: Set<string>;
   toggle(key: string): void;
@@ -132,8 +158,13 @@ export function TimelineRow(props: TimelineRowProps) {
           {row.event.source === "resume" && (
             <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
               To start a new session: stop the server, run{" "}
-              <code className="font-mono">pnpm seed:dev-agent --reset-session</code>, then start it
-              again.
+              <code className="font-mono">pnpm agent:reset-session {props.slug}</code>, then start
+              it again.
+            </p>
+          )}
+          {row.event.fix && (
+            <p>
+              <FixLink fix={row.event.fix} slug={props.slug} />
             </p>
           )}
           {row.event.detail && (

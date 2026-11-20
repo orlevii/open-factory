@@ -51,13 +51,30 @@ export class FakeProcess implements HarnessProcess {
     if (this.done || this.failWrites) throw new ProcessNotRunningError();
     this.writes.push({ kind: "control", cmd, ...(arg ? { arg } : {}) });
   }
+  /** Set by the first `stop()` call. */
+  stopped = false;
+  /** When true, `stop()` waits for `releaseStop()` before it emits `exited` (a stop grace in progress). */
+  holdStop = false;
+  /** Overrides what `stop()` resolves with (e.g. `{ timedOut: true }`). */
+  stopResult: ExitInfo | undefined;
+  /** When false, `stop()` never emits `exited` (a process that didn't stop). */
+  emitExitOnStop = true;
+  private release: (() => void) | undefined;
+  private readonly released = new Promise<void>((r) => {
+    this.release = r;
+  });
+  releaseStop() {
+    this.release?.();
+  }
   async stop(): Promise<ExitInfo> {
-    if (!this.done) {
+    this.stopped = true;
+    if (this.holdStop) await this.released;
+    if (!this.done && this.emitExitOnStop) {
       this.done = true;
       this.events.push({ type: "exited", code: 0, signal: null, stderrTail: "", expected: true });
       this.events.end();
     }
-    return { code: 0, signal: null };
+    return this.stopResult ?? { code: 0, signal: null };
   }
 }
 
@@ -103,5 +120,22 @@ export const ev = {
     terminalReason: "completed",
     numTurns: 1,
     ...over,
+  }),
+  /** A whole first turn: session_started, turn_started, usage, turn_end. */
+  fullTurn: (sessionId = "sess-1"): HarnessEvent[] => [
+    ev.session(sessionId),
+    ev.turn(),
+    ev.usage(),
+    ev.end(),
+  ],
+  background: (tasks: { taskId: string; ambient?: boolean }[]): HarnessEvent => ({
+    type: "background_tasks",
+    tasks: tasks.map((t) => ({ taskType: "local_bash", ...t })),
+  }),
+  taskFinished: (taskId: string): HarnessEvent => ({
+    type: "background_task_finished",
+    taskId,
+    status: "completed",
+    summary: "",
   }),
 };

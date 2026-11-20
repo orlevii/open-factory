@@ -1,65 +1,31 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { loadConfig } from "../config.ts";
-import { createTestDb } from "../test/helpers.ts";
+import { KeyedMutex } from "../workspace/lock.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
-import { AgentStartError, NoOpenTurnError } from "./errors.ts";
-import { EventBus } from "./event-bus.ts";
-import { EventStore } from "./event-store.ts";
-import { ev, FakeDriver } from "./testing/fake-driver.ts";
+import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
+import type { EventBus } from "./event-bus.ts";
+import type { EventStore } from "./event-store.ts";
+import { ev, type FakeDriver } from "./testing/fake-driver.ts";
+import { okSpec, RuntimeHarness, silentLog } from "./testing/runtime-harness.ts";
 
-let t: Awaited<ReturnType<typeof createTestDb>>;
+const h = new RuntimeHarness();
+let t: RuntimeHarness["t"];
 let store: EventStore;
-let n = 0;
 beforeAll(async () => {
-  t = await createTestDb();
-  store = new EventStore(t.db);
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await h.setup();
+  ({ t, store } = h);
 });
-afterAll(() => t.close());
+afterAll(() => h.close());
 
-const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 let driver: FakeDriver;
 let bus: EventBus;
 let frames: ServerMessage[];
 let rt: AgentRuntime;
 let agentId: string;
-let lastEnv: Record<string, string>;
 
-async function makeRuntime(
-  opts: { token?: string | null; sessionId?: string; status?: string } = {},
-) {
-  n += 1;
-  agentId = `a${n}`;
-  await t.sql`insert into agents (id, slug, display_name, session_id, status)
-              values (${agentId}, ${`dev${n}`}, 'Dev agent', ${opts.sessionId ?? null}, ${opts.status ?? "hibernated"})`;
-  const env: Record<string, string> = {
-    DATABASE_URL: t.url,
-    FACTORY_SECRET_KEY: "k".repeat(40),
-    FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-")),
-  };
-  if (opts.token !== null) env.CLAUDE_CODE_OAUTH_TOKEN = opts.token ?? "tok";
-  lastEnv = env;
-  driver = new FakeDriver();
-  bus = new EventBus();
-  frames = [];
-  bus.subscribeAll((m) => frames.push(m));
-  const agent = await store.agentById(agentId);
-  if (!agent) throw new Error("no agent");
-  bus.subscribe(agent.slug, (m) => frames.push(m));
-  rt = new AgentRuntime({
-    agent,
-    store,
-    bus,
-    driver,
-    config: loadConfig(env),
-    log: silentLog,
-    holdTimeoutMs: 200,
-  });
-  await rt.init();
+async function makeRuntime(opts: { startError?: Error; sessionId?: string; status?: string } = {}) {
+  await h.makeRuntime(opts);
+  ({ driver, bus, frames, rt, agentId } = h);
   return rt;
 }
 const send = (body: string, urgent = false) =>
@@ -83,15 +49,15 @@ afterEach(() => {
 });
 
 test("starts on demand, writes one envelope turn, and persists everything in seq order", async () => {
-  expect(rt.summary().status).toBe("hibernated");
+  expect(rt.live().status).toBe("hibernated");
   await send("hello");
   const p = driver.last;
   expect(p.opts).toEqual({});
-  expect(p.spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+  expect(p.spec.env).toEqual({ TOKEN_SEEN: "yes" });
   expect(p.sent).toEqual([
     [{ id: expect.any(String), from: "@or", kind: "message", urgent: false, body: "hello" }],
   ]);
-  expect(rt.summary().status).toBe("working");
+  expect(rt.live().status).toBe("working");
   p.emit(ev.session(), ev.turn(), ev.text("hi"), ev.usage(), ev.end());
   await rt.settled();
   expect(await types()).toEqual([
@@ -103,7 +69,7 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
     "usage",
     "turn_end",
   ]);
-  expect(rt.summary()).toMatchObject({ status: "idle", turnOpen: false });
+  expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   const [agent] = await t.sql`select session_id from agents where id = ${agentId}`;
   expect(agent?.session_id).toBe("sess-1");
   const [m] = await msgRows();
@@ -143,7 +109,7 @@ test("first batch is tentative: an exit before session_started rolls it back", a
   const [after] = await msgRows();
   expect(after?.state).toBe("pending");
   expect(rt.queueItems().map((q) => q.body)).toEqual(["hello"]);
-  expect(rt.summary()).toMatchObject({
+  expect(rt.live()).toMatchObject({
     status: "errored",
     lastError: "No conversation found with session ID: x",
   });
@@ -153,12 +119,12 @@ test("first batch is tentative: an exit before session_started rolls it back", a
 
 test("resumes with the stored session id; a successful start clears errored", async () => {
   await makeRuntime({ sessionId: "sess-9", status: "errored" });
-  expect(rt.summary().status).toBe("errored");
+  expect(rt.live().status).toBe("errored");
   await send("again");
   expect(driver.last.opts).toEqual({ resumeSessionId: "sess-9" });
   driver.last.emit(ev.session("sess-9"), ev.turn());
   await rt.settled();
-  expect(rt.summary().status).toBe("working");
+  expect(rt.live().status).toBe("working");
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
   expect(a?.status).toBe("hibernated");
   expect((await events()).find((e) => e.type === "process_started")?.event).toEqual({
@@ -167,16 +133,90 @@ test("resumes with the stored session id; a successful start clears errored", as
   });
 });
 
-test("missing token fails before spawn: errored, 503-able error, message stays pending", async () => {
-  await makeRuntime({ token: null });
-  await expect(send("hello")).rejects.toBeInstanceOf(AgentStartError);
-  expect(driver.starts).toHaveLength(0);
-  expect(rt.summary()).toMatchObject({
-    status: "errored",
-    lastError: "Set CLAUDE_CODE_OAUTH_TOKEN to run agents",
+test("a prepareStart failure is an error event with its fix, errored, 503-style AgentStartError, message pending", async () => {
+  await makeRuntime({
+    startError: new AgentStartError(
+      "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.",
+      "secrets",
+    ),
   });
-  expect(rt.queueItems().map((q) => q.body)).toEqual(["hello"]);
-  expect(await types()).toEqual(["error"]);
+  await expect(send("hi")).rejects.toBeInstanceOf(AgentStartError);
+  expect(driver.starts).toHaveLength(0);
+  const evs = await store.after(agentId, 0, 100);
+  expect(evs.at(-1)?.event).toEqual({
+    type: "error",
+    source: "spawn",
+    message: "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.",
+    fix: "secrets",
+  });
+  expect(rt.live().status).toBe("errored");
+  expect(rt.queueItems()).toHaveLength(1);
+});
+
+test("an unexpected prepareStart failure is a generic AgentStartError, logged, never leaking its text", async () => {
+  await makeRuntime({ startError: new Error("EACCES /secret/path") });
+  await expect(send("hi")).rejects.toMatchObject({
+    name: "AgentStartError",
+    message: "The agent couldn't be prepared to start.",
+  });
+  expect((await store.after(agentId, 0, 100)).at(-1)?.event).toEqual({
+    type: "error",
+    source: "spawn",
+    message: "The agent couldn't be prepared to start.",
+  });
+});
+
+test("archived: send, compact and interrupt refuse inside the job; a refused message is not stored", async () => {
+  await makeRuntime();
+  rt.markArchived();
+  await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+  expect(
+    await t.sql`select count(*)::int as n from messages where to_agent_id = ${agentId}`,
+  ).toEqual([{ n: 0 }]);
+});
+
+test("prepareStart reporting an archived agent marks the runtime archived", async () => {
+  await makeRuntime({ startError: new AgentArchivedError("dev") });
+  await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
+  expect(rt.live().status).not.toBe("errored");
+  await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+});
+
+test("reload picks up a renamed agent for summaries", async () => {
+  await makeRuntime();
+  await t.sql`update agents set display_name = 'Renamed' where id = ${agentId}`;
+  await rt.reload();
+  expect(rt.agent.displayName).toBe("Renamed");
+});
+
+test("reload picks up archiving", async () => {
+  await makeRuntime();
+  await t.sql`update agents set archived_at = now() where id = ${agentId}`;
+  await rt.reload();
+  await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
+});
+
+test("the runtime does not hold the slug lock around prepareStart (the real one takes it; KeyedMutex isn't re-entrant)", async () => {
+  await makeRuntime();
+  const lock = new KeyedMutex();
+  const agent = await store.agentById(agentId);
+  if (!agent) throw new Error("no agent");
+  rt = new AgentRuntime({
+    agent,
+    store,
+    bus,
+    driver,
+    log: silentLog,
+    prepareStart: (a) => lock.run(a.slug, async () => okSpec(a)),
+  });
+  await rt.init();
+  const outcome = await Promise.race([
+    send("hi").then(() => "sent"),
+    new Promise((r) => setTimeout(() => r("deadlock"), 2000)),
+  ]);
+  expect(outcome).toBe("sent");
 });
 
 test("orphan-report turn after resume never takes the message", async () => {
@@ -235,7 +275,7 @@ test("background events after the last result don't open a turn; exited closes a
   const [stopped] = await t.sql`select count(*)::int as n from turns
     where agent_id = ${agentId} and terminal_reason = 'process_stopped' and is_error = false`;
   expect(stopped?.n).toBe(1);
-  expect(rt.summary().status).toBe("hibernated");
+  expect(rt.live().status).toBe("hibernated");
 });
 
 test("unexpected exit: errored, open turn closed as process_exited; next send restarts with --resume", async () => {
@@ -244,7 +284,7 @@ test("unexpected exit: errored, open turn closed as process_exited; next send re
   await rt.settled();
   driver.last.exit(1, "boom");
   await rt.settled();
-  expect(rt.summary().status).toBe("errored");
+  expect(rt.live().status).toBe("errored");
   const [last] =
     await t.sql`select is_error, terminal_reason from turns where agent_id = ${agentId}`;
   expect(last).toEqual({ is_error: true, terminal_reason: "process_exited" });
@@ -259,7 +299,7 @@ test("interrupt: 409 while hibernated or starting; allowed with an open turn", a
   await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError); // starting, no turn
   driver.last.emit(ev.session(), ev.turn());
   await rt.settled();
-  expect(rt.summary().turnOpen).toBe(true);
+  expect(rt.live().turnOpen).toBe(true);
   await rt.interrupt({ byHandle: "or" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
   expect((await events()).at(-1)?.event).toEqual({ type: "control", cmd: "interrupt", by: "@or" });
@@ -281,7 +321,7 @@ test("a failing DB write stops the process and marks errored", async () => {
   vi.spyOn(store, "append").mockRejectedValueOnce(new Error("db down"));
   p.emit(ev.session());
   await rt.settled();
-  expect(rt.summary().status).toBe("errored");
+  expect(rt.live().status).toBe("errored");
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
   expect(a?.status).toBe("errored");
 });
@@ -300,9 +340,9 @@ test("several unconfirmed batches roll back to the head in their original order"
 });
 
 test("pending after a failed start, then delivered as one turn on the next start", async () => {
-  await makeRuntime({ token: null });
+  await makeRuntime({ startError: new AgentStartError("Secret X isn't set.", "secrets") });
   await expect(send("hello")).rejects.toBeInstanceOf(AgentStartError);
-  // the token is fixed and the server restarted: a fresh runtime for the same agent
+  // the secret is set and the server restarted: a fresh runtime for the same agent
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
@@ -310,7 +350,7 @@ test("pending after a failed start, then delivered as one turn on the next start
     store,
     bus,
     driver,
-    config: loadConfig({ ...lastEnv, CLAUDE_CODE_OAUTH_TOKEN: "tok" }),
+    prepareStart: async (a) => okSpec(a),
     log: silentLog,
   });
   await rt.init();
@@ -325,25 +365,25 @@ test("pending after a failed start, then delivered as one turn on the next start
   expect(rows.map((r) => r.state)).toEqual(["delivered", "delivered"]);
   expect(new Set(rows.map((r) => r.delivered_turn_id)).size).toBe(1);
   expect(rows[0]?.delivered_turn_id).not.toBeNull();
-  expect(rt.summary().status).toBe("idle");
+  expect(rt.live().status).toBe("idle");
 });
 
 test("status: working while a batch awaits its turn, through an origin-tagged turn, then idle", async () => {
   await send("boot");
   driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
   await rt.settled();
-  expect(rt.summary()).toMatchObject({ status: "idle", turnOpen: false });
+  expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   await send("x"); // written with no open turn: awaiting
-  expect(rt.summary()).toMatchObject({ status: "working", turnOpen: false });
+  expect(rt.live()).toMatchObject({ status: "working", turnOpen: false });
   driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
   await rt.settled();
-  expect(rt.summary()).toMatchObject({ status: "working", turnOpen: false });
+  expect(rt.live()).toMatchObject({ status: "working", turnOpen: false });
   driver.last.emit(ev.turn());
   await rt.settled();
-  expect(rt.summary()).toMatchObject({ status: "working", turnOpen: true });
+  expect(rt.live()).toMatchObject({ status: "working", turnOpen: true });
   driver.last.emit(ev.usage(), ev.end());
   await rt.settled();
-  expect(rt.summary()).toMatchObject({ status: "idle", turnOpen: false });
+  expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   const statuses = frames.filter((f) => f.type === "agent_status").map((f) => f.status);
   expect(statuses.at(-1)).toBe("idle");
 });
@@ -356,7 +396,7 @@ test("a DB failure after a stdin write in a send job stops the process and marks
   await expect(send("x")).rejects.toThrow("db down");
   await rt.settled();
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("x"); // the write itself happened
-  expect(rt.summary().status).toBe("errored");
+  expect(rt.live().status).toBe("errored");
   expect((await events()).at(-1)?.event).toMatchObject({ type: "exited" }); // the process was stopped
   expect(rt.queueItems().map((q) => q.body)).toEqual(["x"]); // not lost: re-sent on the next start
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
@@ -373,7 +413,7 @@ test("a DB failure recording process_started stops the new process instead of or
   });
   await expect(send("x")).rejects.toThrow("db down");
   await rt.settled();
-  expect(rt.summary().status).toBe("errored");
+  expect(rt.live().status).toBe("errored");
   expect((await types()).at(-1)).toBe("exited"); // the pump ran and recorded the stop
   vi.restoreAllMocks();
   await send("y");
@@ -390,7 +430,7 @@ test("an exit while the DB is failing still resets the runtime so a later send r
   vi.spyOn(store, "closeTurn").mockRejectedValue(new Error("db down"));
   driver.last.exit(1, "boom");
   await rt.settled();
-  expect(rt.summary()).toMatchObject({ status: "errored", turnOpen: false });
+  expect(rt.live()).toMatchObject({ status: "errored", turnOpen: false });
   vi.restoreAllMocks();
   await send("z");
   expect(driver.starts).toHaveLength(2);

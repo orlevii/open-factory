@@ -1,9 +1,10 @@
-import { useNavigate } from "@tanstack/react-router";
-import { CircleAlert } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { CircleAlert, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentStrip } from "./agent-strip";
 import { CompactPopover } from "./compact-popover";
 import { Composer } from "./composer";
@@ -39,21 +40,24 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
     );
   }
   const working = agent.status === "working";
+  const archived = agent.archivedAt !== null;
   return (
     <div className="flex h-svh min-h-0 flex-col">
-      <a
-        href="#composer"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-10 focus:rounded-md focus:bg-popover focus:px-3 focus:py-2 focus:text-sm"
-      >
-        Skip to composer
-      </a>
+      {!archived && (
+        <a
+          href="#composer"
+          className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-10 focus:rounded-md focus:bg-popover focus:px-3 focus:py-2 focus:text-sm"
+        >
+          Skip to composer
+        </a>
+      )}
       <PageHeader
         title={agent.displayName}
         documentTitle={`${STATUS_LABEL[agent.status]} · ${agent.displayName}`}
         meta={<StatusBadge status={agent.status} />}
-        actions={<SessionActions slug={slug} turnOpen={agent.turnOpen} />}
+        actions={<SessionActions slug={slug} turnOpen={agent.turnOpen} archived={archived} />}
       />
-      <AgentStrip slug={slug} />
+      <AgentStrip agent={agent} />
       {s.missingEvent !== undefined && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
           Event {s.missingEvent} isn't in this session. Showing the latest.
@@ -73,7 +77,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
           <>
             {s.rows.length === 0 && s.state.queue.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No messages yet. Send the first one below.
+                {archived ? "No messages yet." : "No messages yet. Send the first one below."}
               </p>
             )}
             <QueueItems items={s.state.queue} lastError={agent.lastError} />
@@ -106,7 +110,21 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
       <div role="status" aria-live="polite" className="sr-only">
         {announce}
       </div>
-      <Composer slug={slug} agent={agent} onQueued={s.onQueued} />
+      {archived ? (
+        <p className="shrink-0 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-6">
+          This agent is archived.{" "}
+          <Link
+            to="/agents/$slug/edit"
+            params={{ slug }}
+            className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
+          >
+            Restore it
+          </Link>{" "}
+          to send messages.
+        </p>
+      ) : (
+        <Composer slug={slug} agent={agent} onQueued={s.onQueued} />
+      )}
     </div>
   );
 }
@@ -148,11 +166,35 @@ function useAnnouncer(name: string, status: string | undefined, rows: Row[], loa
   return msg;
 }
 
-function SessionActions({ slug, turnOpen }: { slug: string; turnOpen: boolean }) {
+function SessionActions({
+  slug,
+  turnOpen,
+  archived,
+}: {
+  slug: string;
+  turnOpen: boolean;
+  archived: boolean;
+}) {
   return (
     <>
-      <CompactPopover slug={slug} />
-      <InterruptButton slug={slug} turnOpen={turnOpen} />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" asChild>
+            <Link to="/agents/$slug/edit" params={{ slug }}>
+              <Pencil aria-hidden="true" />
+              <span className="max-md:sr-only">Edit</span>
+            </Link>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className="md:hidden">Edit</TooltipContent>
+      </Tooltip>
+      {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). */}
+      {!archived && (
+        <>
+          <CompactPopover slug={slug} />
+          <InterruptButton slug={slug} turnOpen={turnOpen} />
+        </>
+      )}
     </>
   );
 }

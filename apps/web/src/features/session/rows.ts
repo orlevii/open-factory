@@ -18,6 +18,8 @@ export type Row =
       result?: Ev<"tool_result">;
       truncated?: Record<string, number>;
       state: ToolState;
+      /** A `permission_denied` for this call (UI design §4.4): it renders inside the call's row. */
+      denial?: Ev<"permission_denied">;
       children: Row[];
       key: string;
     }
@@ -132,9 +134,12 @@ export function buildRows(events: SessionEvent[]): Row[] {
       case "error":
         top.push({ kind: "error", seq: se.seq, event: e, key: `${se.seq}` });
         break;
-      case "permission_denied":
-        top.push({ kind: "denied", seq: se.seq, event: e, key: `${se.seq}` });
+      case "permission_denied": {
+        const call = tools.get(e.toolUseId);
+        if (call) call.denial = e;
+        else top.push({ kind: "denied", seq: se.seq, event: e, key: `${se.seq}` });
         break;
+      }
       case "turn_end":
         if (e.isError) top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
         break;

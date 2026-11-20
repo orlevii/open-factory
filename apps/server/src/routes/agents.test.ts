@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { schema } from "@open-factory/db";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -7,7 +11,7 @@ let cookie: string;
 const driver = new FakeDriver();
 beforeAll(async () => {
   t = await makeTestApp({ harnessDriver: driver });
-  await t.seed();
+  await t.seedAgent();
   cookie = (await t.signUpUser({ handle: "or" })).cookie;
 });
 afterAll(() => t.close());
@@ -112,13 +116,10 @@ test("compact is accepted and queued; validation errors are 400", async () => {
   ).toBe(400);
 });
 
-test("start failure is 503 and the message stays queued", async () => {
-  const t2 = await makeTestApp({
-    harnessDriver: new FakeDriver(),
-    env: { CLAUDE_CODE_OAUTH_TOKEN: "" },
-  });
+test("start failure is 503 with the fix text and the message stays queued", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
-    await t2.seed();
+    await t2.seedAgent({ config: { secrets: ["GH_TOKEN"] } });
     const c2 = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({
       method: "POST",
@@ -126,18 +127,122 @@ test("start failure is 503 and the message stays queued", async () => {
       headers: { cookie: c2 },
       payload: { body: "hi", urgent: false },
     });
+    const message = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toEqual({
-      error: { code: "agent_start_failed", message: "Set CLAUDE_CODE_OAUTH_TOKEN to run agents" },
-    });
+    expect(res.json()).toEqual({ error: { code: "agent_start_failed", message } });
     const detail = (
       await t2.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c2 } })
     ).json();
     expect(detail.queue.map((q: { body: string }) => q.body)).toEqual(["hi"]);
-    expect(detail.agent).toMatchObject({
-      status: "errored",
-      lastError: "Set CLAUDE_CODE_OAUTH_TOKEN to run agents",
+    expect(detail.agent).toMatchObject({ status: "errored", lastError: message });
+  } finally {
+    await t2.close();
+  }
+});
+
+test("an archived agent refuses messages, compact and interrupt with 409 agent_archived", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
+  try {
+    await t2.seedAgent();
+    await t2.sql`update agents set archived_at = now() where slug = 'dev'`;
+    const c2 = (await t2.signUpUser({ handle: "or3" })).cookie;
+    for (const [url, payload] of [
+      ["/api/agents/dev/messages", { body: "hi", urgent: false }],
+      ["/api/agents/dev/compact", {}],
+      ["/api/agents/dev/interrupt", undefined],
+    ] as const) {
+      const res = await t2.app.inject({
+        method: "POST",
+        url,
+        headers: { cookie: c2 },
+        ...(payload ? { payload } : {}),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe("agent_archived");
+    }
+    const stored = await t2.sql`select count(*)::int as n from messages`;
+    expect(stored[0]?.n).toBe(0);
+  } finally {
+    await t2.close();
+  }
+});
+
+test("agent management routes: create, patch, resync, archive, unarchive, list filter, bad slugs", async () => {
+  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
+  try {
+    const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
+    const call = (method: "GET" | "POST" | "PATCH", url: string, payload?: object) =>
+      t2.app.inject({ method, url, headers: { cookie: c2 }, ...(payload ? { payload } : {}) });
+    const tdir = path.join(t2.factoryHome, "templates/lead");
+    mkdirSync(tdir, { recursive: true });
+    writeFileSync(
+      path.join(tdir, "template.yaml"),
+      "name: lead\ndisplay_name: Lead\nruntime: local\n",
+    );
+    writeFileSync(path.join(tdir, "AGENTS.md"), "# Lead\n");
+    const credId = randomUUID();
+    await t2.db.insert(schema.credentials).values({
+      id: credId,
+      name: "work",
+      kind: "oauth_token",
+      valueEnc: t2.app.vault.seal("tok", `credentials:${credId}`),
     });
+    const body = {
+      template: "lead",
+      slug: "boss",
+      displayName: "Boss",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+    };
+
+    const created = await call("POST", "/api/agents", body);
+    expect(created.statusCode).toBe(201);
+    expect(created.json().agent).toMatchObject({ slug: "boss", credential: "work" });
+    const bad = await call("POST", "/api/agents", { ...body, slug: "Bad Slug" });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.fields).toHaveProperty("slug");
+    expect((await call("POST", "/api/agents", body)).json().error.code).toBe("slug_taken");
+
+    const patched = await call("PATCH", "/api/agents/boss", { description: "the boss" });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json().agent.description).toBe("the boss");
+    for (const extra of [{ template: "lead" }, { slug: "other" }]) {
+      const rejected = await call("PATCH", "/api/agents/boss", { description: "x", ...extra });
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json().error.code).toBe("validation_error");
+    }
+    const rs = await call("POST", "/api/agents/boss/resync");
+    expect(rs.statusCode).toBe(200);
+    expect(rs.json().agent.slug).toBe("boss");
+
+    expect((await call("POST", "/api/agents/boss/archive")).statusCode).toBe(200);
+    expect((await call("POST", "/api/agents/boss/resync")).json().error.code).toBe(
+      "agent_archived",
+    );
+    expect(
+      (await call("GET", "/api/agents?archived=only"))
+        .json()
+        .agents.map((a: { slug: string }) => a.slug),
+    ).toEqual(["boss"]);
+    expect((await call("GET", "/api/agents")).json().agents).toEqual([]);
+    expect((await call("POST", "/api/agents/boss/unarchive")).json().agent.archivedAt).toBeNull();
+
+    for (const [m, url] of [
+      ["GET", "/api/agents/..%2F..%2Fetc"],
+      ["GET", "/api/agents/..%2F..%2Fetc/events"],
+      ["PATCH", "/api/agents/..%2F..%2Fetc"],
+      ["POST", "/api/agents/..%2F..%2Fetc/resync"],
+      ["POST", "/api/agents/..%2F..%2Fetc/archive"],
+      ["POST", "/api/agents/..%2F..%2Fetc/unarchive"],
+      ["POST", "/api/agents/..%2F..%2Fetc/messages"],
+      ["POST", "/api/agents/..%2F..%2Fetc/compact"],
+      ["POST", "/api/agents/..%2F..%2Fetc/interrupt"],
+    ] as const) {
+      const res = await call(m, url, m === "GET" ? undefined : { body: "x", description: "x" });
+      expect(res.statusCode, `${m} ${url}`).toBe(400);
+      expect(res.json().error.code).toBe("validation_error");
+    }
   } finally {
     await t2.close();
   }

@@ -101,6 +101,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     costUsd: z.number(),
     durationMs: z.number(),
     numTurns: z.number(),
+    apiErrorStatus: z.number().int().optional(),
   }),
   z.object({
     type: z.literal("rate_limited"),
@@ -115,6 +116,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     terminalReason: z.string().optional(),
     originKind: z.string().optional(),
     command: z.string().optional(),
+    apiErrorStatus: z.number().optional(),
     numTurns: z.number(),
   }),
   z.object({
@@ -122,6 +124,8 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     source: z.enum(["api", "refusal", "spawn", "resume"]),
     message: z.string(),
     detail: z.string().optional(),
+    code: z.string().optional(),
+    fix: z.enum(["credentials", "secrets", "projects", "edit_agent"]).optional(),
   }),
   z.object({
     type: z.literal("exited"),

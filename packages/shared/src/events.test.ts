@@ -105,3 +105,25 @@ describe("sendMessageBodySchema", () => {
     expect(sendMessageBodySchema.safeParse({ body: tooBig, urgent: false }).success).toBe(false);
   });
 });
+
+test("S4 additions: error code/fix and turn_end apiErrorStatus", () => {
+  expect(
+    anyEventSchema.safeParse({
+      type: "error",
+      source: "api",
+      message: "x",
+      code: "authentication_failed",
+    }).success,
+  ).toBe(true);
+  expect(
+    anyEventSchema.safeParse({ type: "error", source: "spawn", message: "x", fix: "secrets" })
+      .success,
+  ).toBe(true);
+  expect(
+    anyEventSchema.safeParse({ type: "error", source: "spawn", message: "x", fix: "nope" }).success,
+  ).toBe(false);
+  expect(
+    anyEventSchema.safeParse({ type: "turn_end", isError: true, numTurns: 1, apiErrorStatus: 401 })
+      .success,
+  ).toBe(true);
+});

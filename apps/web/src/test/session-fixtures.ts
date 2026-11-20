@@ -1,4 +1,10 @@
-import type { AgentDetail, AnyEvent, EventsPage, SessionEvent } from "@open-factory/shared";
+import type {
+  AgentDetail,
+  AgentSummary,
+  AnyEvent,
+  EventsPage,
+  SessionEvent,
+} from "@open-factory/shared";
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
@@ -13,23 +19,32 @@ export const resetSeq = () => {
   seq = 0;
 };
 
+/** A complete AgentSummary: a root, local, active agent from the `dev` template. */
+export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
+  slug: "dev",
+  displayName: "Dev agent",
+  description: "",
+  status: "idle",
+  turnOpen: false,
+  runtime: "local",
+  kind: "persistent",
+  template: "dev",
+  reportsTo: null,
+  credential: "work",
+  projects: [],
+  grantsOverridden: false,
+  depth: 0,
+  archivedAt: null,
+  restartPending: false,
+  restartWaitingOn: 0,
+  ...over,
+});
+
 export const detail = (
-  over: Partial<AgentDetail["agent"]> = {},
+  over: Partial<AgentSummary> = {},
   queue: AgentDetail["queue"] = [],
   lastSeq = 10,
-): AgentDetail => ({
-  agent: {
-    slug: "dev",
-    displayName: "Dev agent",
-    description: "",
-    status: "idle",
-    turnOpen: false,
-    runtime: "local",
-    ...over,
-  },
-  queue,
-  lastSeq,
-});
+): AgentDetail => ({ agent: agentSummary(over), queue, lastSeq });
 
 export function conversation(): EventsPage {
   resetSeq();

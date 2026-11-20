@@ -1,4 +1,7 @@
-// Live scheduling check for S9 (spec §17.5). Not part of `pnpm test`. `--early` runs the first slice only (schedule tool
+// Live scheduling check for S9 (spec §17.5). Not part of `pnpm test`. Phases: early (the first slice below), a (human
+// every-minute schedule, agent limits and cancel), b (restart with a one-shot due during the downtime: fires once, late),
+// c (replacement through a real path: FACTORY_MAX_RUNNING_AGENTS=1), d (CronCreate pins, Stop crons, the passive
+// notice); `--phase=a,c` picks some, `--early` is the first slice only (schedule tool
 // listing, a human-created one-shot waking a hibernated agent with the scheduled envelope, the agent's own
 // schedule_message / list_schedules calls, and a spawned agent that lists none of the three tools); without it the whole
 // script runs.
@@ -34,6 +37,11 @@ import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
 
 const LOCAL = process.argv.includes("--local");
 const EARLY = process.argv.includes("--early");
+/** `--phase=a,b` runs only those phases (each does its own setup, so each fits a tool call); none runs them all. */
+const PHASE_ARG = process.argv.find((a) => a.startsWith("--phase="))?.slice(8);
+const PHASES = new Set(
+  PHASE_ARG ? PHASE_ARG.split(",") : EARLY ? ["early"] : ["early", "a", "b", "c", "d"],
+);
 const IMAGE = "open-factory-base:dev";
 const SLUGS = ["ceo", "dev"] as const;
 type Slug = (typeof SLUGS)[number];
@@ -388,13 +396,10 @@ async function finalChecks() {
 
 const hasFiring = (m: Envelope) => m.kind === "scheduled";
 
-try {
-  // 0. Setup (inside the try so a failure here still cleans up).
-  const port = await freePort();
-  const agentPort = await freePort();
-  tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
-  const config = loadConfig({
+/** Config for the run's (fixed) ports; `maxRunning` is FACTORY_MAX_RUNNING_AGENTS. */
+function makeConfig(ports: { port: number; agentPort: number }, maxRunning: number) {
+  if (!tdb) throw new Error("no database");
+  return loadConfig({
     ...process.env,
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
@@ -403,14 +408,35 @@ try {
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
     FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "180",
+    FACTORY_MAX_RUNNING_AGENTS: String(maxRunning),
     FACTORY_TIMEZONE: "Europe/Berlin",
     HOST: "127.0.0.1",
-    PORT: String(port),
-    FACTORY_AGENT_PORT: String(agentPort),
+    PORT: String(ports.port),
+    FACTORY_AGENT_PORT: String(ports.agentPort),
     NODE_ENV: "development",
   });
+}
+let conn!: ReturnType<typeof createDb>;
+async function startApp(config: ReturnType<typeof loadConfig>) {
+  app = await buildApp(config, {
+    db: conn.db,
+    sql: conn.sql,
+    logger: { level: "debug", stream: logStream },
+  });
+  appBuilt = true;
+  await app.listen({ host: config.host, port: config.port });
+}
+/** The phases that need the cap of one run with it from the start. */
+const MAX_RUNNING = PHASES.has("c") || PHASES.has("d") ? 1 : 8;
+
+try {
+  // 0. Setup (inside the try so a failure here still cleans up).
+  const ports = { port: await freePort(), agentPort: await freePort() };
+  tdb = await createTestDatabase();
+  await migrate(tdb.url, MIGRATIONS_DIR);
+  const config = makeConfig(ports, MAX_RUNNING);
   say(
-    `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku${EARLY ? "; early slice" : ""}`,
+    `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku; phases ${[...PHASES].join(",")}; max running agents ${MAX_RUNNING}`,
   );
   await step("0. setup: prerequisites", async () => {
     mkdirSync(hostSkillsDir, { recursive: true });
@@ -419,15 +445,9 @@ try {
       throw new Error(`no CLI bundle at ${config.cliBundle}: run pnpm build first`);
     await dk.getImage(IMAGE).inspect();
   });
-  const conn = createDb(tdb.url);
+  conn = createDb(tdb.url);
   closeDb = conn.close;
-  app = await buildApp(config, {
-    db: conn.db,
-    sql: conn.sql,
-    logger: { level: "debug", stream: logStream },
-  });
-  appBuilt = true;
-  await app.listen({ host: config.host, port: config.port });
+  await startApp(config);
   say(
     `  human server http://${config.host}:${config.port}; agent listener port ${app.agentListener.port}`,
   );
@@ -498,131 +518,409 @@ try {
     );
   }
 
-  // 1. A human creates a one-shot at now + 90 s to hibernated ceo through POST /api/schedules.
-  const ceoFrom = await lastSeq("ceo");
-  const ceoBefore = (await app.runtimes.bySlug("ceo"))?.live().status;
-  const at = new Date(Date.now() + 90_000).toISOString();
-  const created = await step(
-    "2. @or creates a one-shot at now + 90 s for ceo (POST /api/schedules)",
-    async () => {
-      const r = await api("POST", "/api/schedules", {
-        target: "ceo",
-        at,
-        timezone: "UTC",
-        body: `Do these two things with the factory tools, in order. 1) Call mcp__factory__list_schedules. 2) Call mcp__factory__schedule_message twice, to yourself: once with cron "0 9 * * 1-5" and body "weekly ${WORD}", once with at ${new Date(Date.now() + 40 * 60_000).toISOString().slice(0, 16)} (UTC; timezone "UTC") and body "once ${WORD}". Then say DONE.`,
-      });
-      if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-      return (r.json() as { schedule: { key: string; nextRunAt: string } }).schedule;
-    },
-  );
-  check(
-    "2. the schedule is S-1 with nextRunAt = the one-shot time",
-    created.key === "S-1" && created.nextRunAt === at,
-    JSON.stringify(created),
-  );
-  const firedId = await until(
-    "the scheduled row's message_in on ceo",
-    async () => {
-      const m = envelopes(await since("ceo", ceoFrom))
-        .flatMap((x) => x.envs)
-        .find(hasFiring);
-      return m?.id;
-    },
-    240_000,
-    1000,
-  );
-  const turn = await step("2. ceo's turn for the scheduled message ends", () =>
-    turnOf("ceo", firedId, ceoFrom),
-  );
-  const start = (await since("ceo", ceoFrom)).find((e) => e.event.type === "process_started");
-  check(
-    "2. ceo was hibernated and woke with process_started.reason = scheduled",
-    ceoBefore === "hibernated" &&
-      start?.event.type === "process_started" &&
-      start.event.reason === "scheduled",
-    `ceo before: ${ceoBefore}; ${brief(JSON.stringify(start?.event))}`,
-  );
-  const tools = inits.find((i) => i.slug === "ceo")?.tools ?? [];
-  check(
-    "2. V3: system/init lists the three schedule tools",
-    SCHEDULE_TOOLS.every((t) => tools.includes(t)),
-    `missing: ${SCHEDULE_TOOLS.filter((t) => !tools.includes(t)).join(", ") || "none"}`,
-  );
-  const env = envelopes(await since("ceo", ceoFrom))
-    .flatMap((x) => x.envs)
-    .find(hasFiring);
-  check(
-    "2. the first batch holds a scheduled envelope from @scheduler, schedule S-1, by @or",
-    env?.from === "@scheduler" && env.scheduleKey === "S-1" && env.by === "@or" && Boolean(env.due),
-    env ? `${envBrief(env)} schedule=${env.scheduleKey} by=${env.by} due=${env.due}` : "none",
-  );
-  say(`    ceo: ${toolTrace(turn)}`);
-  check(
-    "2. V4: ceo acted on the body: list_schedules once, schedule_message twice (one cron, one at), all with results",
-    okCalls(turn, "mcp__factory__list_schedules").length >= 1 &&
-      okCalls(turn, "mcp__factory__schedule_message").length === 2 &&
-      okCalls(turn, "mcp__factory__schedule_message").some(
-        (c) => (c.event.input as { cron?: string }).cron === "0 9 * * 1-5",
-      ) &&
-      okCalls(turn, "mcp__factory__schedule_message").some((c) =>
-        Boolean((c.event.input as { at?: string }).at),
-      ),
-    toolTrace(turn),
-  );
-  check(
-    "2. V4: ceo did not try to recreate the fired one-shot (no third schedule_message)",
-    calls(turn, "mcp__factory__schedule_message").length === 2,
-    `schedule_message calls: ${calls(turn, "mcp__factory__schedule_message").length}`,
-  );
-  const listed = (await api("GET", "/api/schedules?target=ceo")).json() as {
-    schedules: {
-      key: string;
-      createdBy: { kind: string; slug?: string };
-      cron?: string;
-      at?: string;
-    }[];
-  };
-  const mine = listed.schedules.filter(
-    (s) => s.createdBy.kind === "agent" && s.createdBy.slug === "ceo",
-  );
-  check(
-    "2. GET /api/schedules?target=ceo shows the two schedules created by ceo",
-    mine.length === 2 && mine.some((s) => s.cron) && mine.some((s) => s.at),
-    brief(JSON.stringify(mine)),
-  );
-
-  // 5 (early). ceo spawns a kid; the kid lists none of the three tools.
-  const ceoFrom2 = await lastSeq("ceo");
-  const spawnArgs = `{"template": "kid", "suffix": "one", "description": "says hello", "prompt": "Reply with the word pineapple and nothing else."}`;
-  const ask = await step(
-    "2. @or asks ceo to spawn a kid (POST /api/agents/ceo/messages)",
-    async () => {
-      const r = await api("POST", "/api/agents/ceo/messages", {
-        body: `You must call mcp__factory__spawn_agent now, exactly once, with ${spawnArgs}. No other tool.`,
-        urgent: false,
-      });
-      if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-      return (r.json() as { item: { id: string } }).item.id;
-    },
-  );
-  await step("2. ceo's turn for the spawn request ends", () => turnOf("ceo", ask, ceoFrom2));
-  const kid = await step("2. the kid's process initialises", () =>
-    until(
-      "the kid's system/init",
-      async () => inits.find((i) => i.slug !== "ceo" && i.slug !== "dev"),
+  if (PHASES.has("early")) {
+    // 1. A human creates a one-shot at now + 90 s to hibernated ceo through POST /api/schedules.
+    const ceoFrom = await lastSeq("ceo");
+    const ceoBefore = (await app.runtimes.bySlug("ceo"))?.live().status;
+    const at = new Date(Date.now() + 90_000).toISOString();
+    const created = await step(
+      "2. @or creates a one-shot at now + 90 s for ceo (POST /api/schedules)",
+      async () => {
+        const r = await api("POST", "/api/schedules", {
+          target: "ceo",
+          at,
+          timezone: "UTC",
+          body: `Do these two things with the factory tools, in order. 1) Call mcp__factory__list_schedules. 2) Call mcp__factory__schedule_message twice, to yourself: once with cron "0 9 * * 1-5" and body "weekly ${WORD}", once with at ${new Date(Date.now() + 40 * 60_000).toISOString().slice(0, 16)} (UTC; timezone "UTC") and body "once ${WORD}". Then say DONE.`,
+        });
+        if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+        return (r.json() as { schedule: { key: string; nextRunAt: string } }).schedule;
+      },
+    );
+    check(
+      "2. the schedule is S-1 with nextRunAt = the one-shot time",
+      created.key === "S-1" && created.nextRunAt === at,
+      JSON.stringify(created),
+    );
+    const firedId = await until(
+      "the scheduled row's message_in on ceo",
+      async () => {
+        const m = envelopes(await since("ceo", ceoFrom))
+          .flatMap((x) => x.envs)
+          .find(hasFiring);
+        return m?.id;
+      },
       240_000,
       1000,
-    ),
-  );
-  check(
-    "2. the spawned kid lists none of the three schedule tools",
-    SCHEDULE_TOOLS.every((t) => !kid.tools.includes(t)) &&
-      kid.tools.some((t) => t.includes("mcp__factory__")),
-    `kid ${kid.slug} tools with the factory prefix: ${kid.tools.filter((t) => t.includes("mcp__factory__")).join(", ")}`,
-  );
-  await step("2. ceo and the kid go quiet", async () => {
-    await quiet(["ceo"]);
-  });
+    );
+    const turn = await step("2. ceo's turn for the scheduled message ends", () =>
+      turnOf("ceo", firedId, ceoFrom),
+    );
+    const start = (await since("ceo", ceoFrom)).find((e) => e.event.type === "process_started");
+    check(
+      "2. ceo was hibernated and woke with process_started.reason = scheduled",
+      ceoBefore === "hibernated" &&
+        start?.event.type === "process_started" &&
+        start.event.reason === "scheduled",
+      `ceo before: ${ceoBefore}; ${brief(JSON.stringify(start?.event))}`,
+    );
+    const tools = inits.find((i) => i.slug === "ceo")?.tools ?? [];
+    check(
+      "2. V3: system/init lists the three schedule tools",
+      SCHEDULE_TOOLS.every((t) => tools.includes(t)),
+      `missing: ${SCHEDULE_TOOLS.filter((t) => !tools.includes(t)).join(", ") || "none"}`,
+    );
+    const env = envelopes(await since("ceo", ceoFrom))
+      .flatMap((x) => x.envs)
+      .find(hasFiring);
+    check(
+      "2. the first batch holds a scheduled envelope from @scheduler, schedule S-1, by @or",
+      env?.from === "@scheduler" &&
+        env.scheduleKey === "S-1" &&
+        env.by === "@or" &&
+        Boolean(env.due),
+      env ? `${envBrief(env)} schedule=${env.scheduleKey} by=${env.by} due=${env.due}` : "none",
+    );
+    say(`    ceo: ${toolTrace(turn)}`);
+    check(
+      "2. V4: ceo acted on the body: list_schedules once, schedule_message twice (one cron, one at), all with results",
+      okCalls(turn, "mcp__factory__list_schedules").length >= 1 &&
+        okCalls(turn, "mcp__factory__schedule_message").length === 2 &&
+        okCalls(turn, "mcp__factory__schedule_message").some(
+          (c) => (c.event.input as { cron?: string }).cron === "0 9 * * 1-5",
+        ) &&
+        okCalls(turn, "mcp__factory__schedule_message").some((c) =>
+          Boolean((c.event.input as { at?: string }).at),
+        ),
+      toolTrace(turn),
+    );
+    check(
+      "2. V4: ceo did not try to recreate the fired one-shot (no third schedule_message)",
+      calls(turn, "mcp__factory__schedule_message").length === 2,
+      `schedule_message calls: ${calls(turn, "mcp__factory__schedule_message").length}`,
+    );
+    const listed = (await api("GET", "/api/schedules?target=ceo")).json() as {
+      schedules: {
+        key: string;
+        createdBy: { kind: string; slug?: string };
+        cron?: string;
+        at?: string;
+      }[];
+    };
+    const mine = listed.schedules.filter(
+      (s) => s.createdBy.kind === "agent" && s.createdBy.slug === "ceo",
+    );
+    check(
+      "2. GET /api/schedules?target=ceo shows the two schedules created by ceo",
+      mine.length === 2 && mine.some((s) => s.cron) && mine.some((s) => s.at),
+      brief(JSON.stringify(mine)),
+    );
+
+    // 5 (early). ceo spawns a kid; the kid lists none of the three tools.
+    const ceoFrom2 = await lastSeq("ceo");
+    const spawnArgs = `{"template": "kid", "suffix": "one", "description": "says hello", "prompt": "Reply with the word pineapple and nothing else."}`;
+    const ask = await step(
+      "2. @or asks ceo to spawn a kid (POST /api/agents/ceo/messages)",
+      async () => {
+        const r = await api("POST", "/api/agents/ceo/messages", {
+          body: `You must call mcp__factory__spawn_agent now, exactly once, with ${spawnArgs}. No other tool.`,
+          urgent: false,
+        });
+        if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+        return (r.json() as { item: { id: string } }).item.id;
+      },
+    );
+    await step("2. ceo's turn for the spawn request ends", () => turnOf("ceo", ask, ceoFrom2));
+    const kid = await step("2. the kid's process initialises", () =>
+      until(
+        "the kid's system/init",
+        async () => inits.find((i) => i.slug !== "ceo" && i.slug !== "dev"),
+        240_000,
+        1000,
+      ),
+    );
+    check(
+      "2. the spawned kid lists none of the three schedule tools",
+      SCHEDULE_TOOLS.every((t) => !kid.tools.includes(t)) &&
+        kid.tools.some((t) => t.includes("mcp__factory__")),
+      `kid ${kid.slug} tools with the factory prefix: ${kid.tools.filter((t) => t.includes("mcp__factory__")).join(", ")}`,
+    );
+    await step("2. ceo and the kid go quiet", async () => {
+      await quiet(["ceo"]);
+    });
+  }
+
+  const scheduledEnv = async (from: number, ms = 240_000) =>
+    until(
+      "a scheduled envelope on ceo",
+      async () =>
+        envelopes(await since("ceo", from))
+          .flatMap((x) => x.envs)
+          .find(hasFiring),
+      ms,
+      1000,
+    );
+  const tell = async (slug: Slug, body: string) => {
+    const r = await api("POST", `/api/agents/${slug}/messages`, { body, urgent: false });
+    if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+    return (r.json() as { item: { id: string } }).item.id;
+  };
+  const resultOf = (es: SessionEvent[], c: { event: { toolUseId: string } }) => {
+    const r = es.find(
+      (e) => e.event.type === "tool_result" && e.event.toolUseId === c.event.toolUseId,
+    );
+    return r?.event.type === "tool_result" ? r.event : undefined;
+  };
+
+  if (PHASES.has("a")) {
+    // 3. A human's every-minute schedule (humans have no floor) wakes hibernated ceo within a minute or two.
+    const from = await lastSeq("ceo");
+    const s1 = await step("3. @or creates '* * * * *' for ceo (POST /api/schedules)", async () => {
+      const r = await api("POST", "/api/schedules", {
+        target: "ceo",
+        cron: "* * * * *",
+        timezone: "UTC",
+        body: `Reply with the single word TICK-${WORD}. Use no tools.`,
+      });
+      if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+      return (r.json() as { schedule: { key: string } }).schedule;
+    });
+    const env1 = await step("3. ceo receives the scheduled envelope", () =>
+      scheduledEnv(from, 180_000),
+    );
+    check(
+      "3. the envelope is from @scheduler for the schedule, by @or",
+      env1.from === "@scheduler" && env1.scheduleKey === s1.key && env1.by === "@or",
+      envBrief(env1),
+    );
+    await step("3. ceo's turn for it ends", () => turnOf("ceo", env1.id, from));
+    await step("3. the every-minute schedule is deleted (DELETE /api/schedules)", async () => {
+      const r = await api("DELETE", `/api/schedules/${s1.key}`);
+      if (r.statusCode !== 200) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+    });
+    await step("3. ceo goes quiet", () => quiet(["ceo"]));
+
+    // 4. Agent limits and cancel, through the real MCP.
+    const from2 = await lastSeq("ceo");
+    const later = new Date(Date.now() + 30 * 60_000).toISOString().slice(0, 16);
+    const id2 = await step(
+      "4. @or asks ceo for an at schedule, a */5 one, and to cancel the first",
+      () =>
+        tell(
+          "ceo",
+          `Do these in order. 1) Call mcp__factory__schedule_message with {"body": "later ${WORD}", "at": "${later}", "timezone": "UTC"}. 2) Call mcp__factory__schedule_message with {"body": "too often", "cron": "*/5 * * * *"}. 3) Call mcp__factory__cancel_schedule with the id returned by step 1. Then say DONE.`,
+        ),
+    );
+    const t2 = await step("4. ceo's turn ends", () => turnOf("ceo", id2, from2));
+    say(`    ceo: ${toolTrace(t2)}`);
+    const sm = calls(t2, "mcp__factory__schedule_message");
+    const floor = sm.find((c) => (c.event.input as { cron?: string }).cron === "*/5 * * * *");
+    const floorRes = floor ? resultOf(t2, floor) : undefined;
+    check(
+      "4. the */5 call got the 15-minute sentence as a tool error",
+      floorRes?.isError === true &&
+        floorRes.content.includes("Schedules can't fire more often than every 15 minutes"),
+      brief(floorRes?.content ?? "no result"),
+    );
+    check(
+      "4. cancel_schedule succeeded",
+      okCalls(t2, "mcp__factory__cancel_schedule").length === 1,
+      toolTrace(t2),
+    );
+    const after = (await api("GET", "/api/schedules?target=ceo")).json() as {
+      schedules: { createdBy: { kind: string } }[];
+    };
+    check(
+      "4. GET /api/schedules shows no schedule created by ceo (the at schedule was cancelled)",
+      after.schedules.every((x) => x.createdBy.kind !== "agent"),
+      brief(JSON.stringify(after.schedules.map((x) => x.createdBy))),
+    );
+    await step("4. ceo goes quiet", () => quiet(["ceo"]));
+  }
+
+  if (PHASES.has("b")) {
+    // 5. Restart: a one-shot due while the server is down fires once at boot with late="true".
+    const from = await lastSeq("ceo");
+    const dueAt = new Date(Date.now() + 25_000);
+    const s1 = await step("5. @or creates a one-shot at now + 25 s for ceo", async () => {
+      const r = await api("POST", "/api/schedules", {
+        target: "ceo",
+        at: dueAt.toISOString(),
+        timezone: "UTC",
+        body: `Reply with the single word LATE-${WORD}. Use no tools.`,
+      });
+      if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+      return (r.json() as { schedule: { key: string } }).schedule;
+    });
+    await step(
+      "5. the server stops at once and stays down more than a minute past the due time",
+      async () => {
+        await app.close();
+        appBuilt = false;
+        await sleep(Math.max(0, dueAt.getTime() + 70_000 - Date.now()));
+      },
+    );
+    await step("5. the server starts again on the same database", () =>
+      startApp(makeConfig(ports, MAX_RUNNING)),
+    );
+    const env = await step("5. ceo receives the scheduled envelope", () =>
+      scheduledEnv(from, 240_000),
+    );
+    check(
+      "5. it fired once, late (late=true, schedule S-1)",
+      env.late === true &&
+        env.scheduleKey === s1.key &&
+        (env.firings === undefined || env.firings === 1),
+      `${envBrief(env)} late=${env.late} due=${env.due} firings=${env.firings}`,
+    );
+    await step("5. ceo's turn ends", () => turnOf("ceo", env.id, from));
+    const rows = await conn.sql`select count(*)::int as n from messages where kind = 'scheduled'`;
+    check("5. exactly one scheduled row exists", rows[0]?.n === 1, JSON.stringify(rows[0]));
+    const got = (await api("GET", `/api/schedules/${s1.key}`)).json() as {
+      schedule: { state: string };
+    };
+    check(
+      "5. the one-shot is done",
+      got.schedule.state === "done",
+      JSON.stringify(got.schedule.state),
+    );
+  }
+
+  if (PHASES.has("c")) {
+    // 6. Replacement through a real path: ceo holds the only slot, so dev stays queued while its schedule fires twice.
+    const from = await lastSeq("ceo");
+    const busy = await step("6. @or keeps ceo busy (a 170 s loop in the foreground)", () =>
+      tell(
+        "ceo",
+        "Run exactly this command in the foreground with the Bash tool, with timeout 200000: for i in $(seq 1 85); do sleep 2; done . Then say DONE. Use no other tool.",
+      ),
+    );
+    await step("6. ceo's turn is open", () =>
+      until(
+        "ceo's open turn",
+        async () => (await app.runtimes.bySlug("ceo"))?.live().turnOpen,
+        120_000,
+        1000,
+      ),
+    );
+    const s1 = await step("6. @or creates '* * * * *' for dev", async () => {
+      const r = await api("POST", "/api/schedules", {
+        target: "dev",
+        cron: "* * * * *",
+        timezone: "UTC",
+        body: `Reply with the single word REPLACED-${WORD}. Use no tools.`,
+      });
+      if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+      return (r.json() as { schedule: { key: string } }).schedule;
+    });
+    const dump = async () => {
+      const r =
+        await conn.sql`select state, firings, late, created_at from messages where kind = 'scheduled' order by created_at`;
+      say(`    diagnostics: scheduled rows ${JSON.stringify(r)}`);
+      say(`    ceo: ${toolTrace(await since("ceo", from))}`);
+      say(
+        `    ceo status ${(await app.runtimes.bySlug("ceo"))?.live().status}; dev status ${(await app.runtimes.bySlug("dev"))?.live().status}`,
+      );
+    };
+    const row = await step("6. dev's pending row covers two firings", () =>
+      until(
+        "one pending scheduled row with firings = 2",
+        async () => {
+          const r =
+            await conn.sql`select id, firings from messages where kind = 'scheduled' and state = 'pending'`;
+          return r.length === 1 && r[0]?.firings === 2 ? r[0] : undefined;
+        },
+        200_000,
+        2000,
+      ).catch(async (e) => {
+        await dump();
+        throw e;
+      }),
+    );
+    const detail = (await api("GET", "/api/agents/dev")).json() as {
+      agent: { status: string };
+      queue: { scheduleKey?: string; firings?: number }[];
+    };
+    check(
+      "6. dev is queued (not started) and its queue item names the schedule with firings 2",
+      detail.agent.status === "queued" &&
+        detail.queue.some((q) => q.scheduleKey === s1.key && q.firings === 2),
+      JSON.stringify({
+        status: detail.agent.status,
+        queue: detail.queue.map((q) => ({ k: q.scheduleKey, f: q.firings })),
+      }),
+    );
+    check("6. still one pending row for the schedule", row !== undefined, JSON.stringify(row));
+    await step("6. the schedule is deleted", async () => {
+      const r = await api("DELETE", `/api/schedules/${s1.key}`);
+      if (r.statusCode !== 200) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+    });
+    await step("6. ceo's turn ends", () => turnOf("ceo", busy, from, 300_000));
+  }
+
+  if (PHASES.has("d")) {
+    // 7. Crons: CronCreate pins ceo past its 1-minute warm window; Stop crons hibernates it; the next wake carries the notice.
+    const from = await lastSeq("ceo");
+    const ask = await step("7. @or asks ceo to create a */2 cron", () =>
+      tell(
+        "ceo",
+        `Call CronCreate with {"cron": "*/2 * * * *", "prompt": "Say PING-${WORD}", "recurring": true}. Then say DONE.`,
+      ),
+    );
+    const t = await step("7. ceo's turn ends", () => turnOf("ceo", ask, from));
+    say(`    ceo: ${toolTrace(t)}`);
+    const live = (await api("GET", "/api/agents/ceo")).json() as {
+      agent: { crons: { recurring: boolean; humanSchedule: string }[] };
+    };
+    check(
+      "7. GET /api/agents/ceo lists one recurring cron",
+      live.agent.crons.length === 1 && live.agent.crons[0]?.recurring === true,
+      JSON.stringify(live.agent.crons),
+    );
+    await step("7. ceo stays up past its 1-minute warm window", async () => {
+      await sleep(90_000);
+      const st = (await app.runtimes.bySlug("ceo"))?.live().status;
+      if (st === "hibernated") throw new Error("ceo hibernated while a cron was live");
+    });
+    const before = await lastSeq("ceo");
+    const stopped = await step(
+      "7. @or stops the crons (POST /api/agents/ceo/stop-crons)",
+      async () => {
+        const r = await api("POST", "/api/agents/ceo/stop-crons");
+        if (r.statusCode !== 200) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+        return (r.json() as { status: string }).status;
+      },
+    );
+    say(`    stop-crons answered ${stopped}`);
+    const hib = await step("7. ceo hibernates with reason crons_stopped by @or", () =>
+      until(
+        "the hibernated event",
+        async () =>
+          (await since("ceo", before)).find(
+            (e) => e.event.type === "hibernated" && e.event.reason === "crons_stopped",
+          ),
+        240_000,
+        1000,
+      ),
+    );
+    check(
+      "7. the hibernated event carries by @or",
+      hib.event.type === "hibernated" && hib.event.by === "@or",
+      JSON.stringify(hib.event),
+    );
+    const from3 = await lastSeq("ceo");
+    const ask3 = await step("7. @or sends a message to hibernated ceo", () =>
+      tell("ceo", "Reply with the word OK. Use no tools."),
+    );
+    await step("7. ceo's turn ends", () => turnOf("ceo", ask3, from3));
+    const first = envelopes(await since("ceo", from3))[0];
+    check(
+      "7. the first batch starts with the crons_stopped notice from @factory, then @or's message",
+      first?.envs[0]?.kind === "system" &&
+        first.envs[0].body.includes("stopped your crons") &&
+        first.envs[1]?.id === ask3,
+      first?.envs.map(envBrief).join(" ; "),
+    );
+  }
 } catch (err) {
   if (!(err instanceof StopRun))
     fail(

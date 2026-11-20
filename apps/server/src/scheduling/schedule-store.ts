@@ -189,4 +189,38 @@ export class ScheduleStore {
   async recordById(tx: Exec, id: string): Promise<ScheduleRecord | undefined> {
     return (await this.records(tx, eq(schedules.id, id)))[0];
   }
+  async recordByNumber(tx: Exec, n: number): Promise<ScheduleRecord | undefined> {
+    return (await this.records(tx, eq(schedules.number, n)))[0];
+  }
+
+  /** The schedule row `FOR NO KEY UPDATE` (§12.1 step 3), whatever its state. */
+  async lockByNumber(tx: Exec, n: number): Promise<ScheduleRow | undefined> {
+    return (
+      await tx.select().from(schedules).where(eq(schedules.number, n)).for("no key update")
+    )[0];
+  }
+
+  /** Bumps `updated_at` (the caller passes the service clock's instant). */
+  async update(tx: Exec, id: string, set: Partial<ScheduleRow>): Promise<void> {
+    await tx.update(schedules).set(set).where(eq(schedules.id, id));
+  }
+
+  /** Schedules targeting `agentId` that are neither deleted nor done: what the strip's link counts. */
+  async countFor(tx: Exec, agentId: string): Promise<number> {
+    const [r] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schedules)
+      .where(and(eq(schedules.targetAgentId, agentId), this.live(), sql`not ${doneSql}`));
+    return r?.n ?? 0;
+  }
+
+  /** Every schedule targeting `agentId` and not deleted, by row (for unarchive's recompute). */
+  async idsTargeting(tx: Exec, agentId: string): Promise<string[]> {
+    const rows = await tx
+      .select({ id: schedules.id })
+      .from(schedules)
+      .where(and(eq(schedules.targetAgentId, agentId), this.live()))
+      .orderBy(asc(schedules.number));
+    return rows.map((r) => r.id);
+  }
 }

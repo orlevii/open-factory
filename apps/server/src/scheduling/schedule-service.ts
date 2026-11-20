@@ -1,14 +1,17 @@
-import type { Db } from "@open-factory/db";
+import { type Db, type ScheduleRow, schema } from "@open-factory/db";
 import {
   formatKey,
+  formatOffsetIso,
   isValidZone,
   minGapMinutes,
   nextRun,
   parseAt,
+  parseKey,
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
-import type { EventStore } from "../agents/event-store.ts";
+import { and, eq, or } from "drizzle-orm";
+import type { EventStore, Exec } from "../agents/event-store.ts";
 import { resolveName } from "../messaging/principals.ts";
 import { withDeadlockRetry } from "../tasks/task-service.ts";
 import { ScheduleError } from "./errors.ts";
@@ -22,7 +25,9 @@ import {
   type ScheduleStore,
 } from "./schedule-store.ts";
 
+const { schedules } = schema;
 const BODY_MAX = 64 * 1024;
+const TOOL_BODY_CAP = 2000;
 
 export type { Actor };
 export type ScheduleInput = {
@@ -32,8 +37,27 @@ export type ScheduleInput = {
   timezone: string;
   body: string;
 };
+export type PatchInput = Partial<Omit<ScheduleInput, "timezone">> & { timezone?: string };
 export type CreateResult = { item: ScheduleItem; note?: string };
+/** What `list_schedules` returns for one schedule (spec §9). */
+export type AgentScheduleView = {
+  id: string;
+  to: string;
+  created_by: string;
+  by: string;
+  cron?: string;
+  at?: string;
+  timezone: string;
+  next_run: string | null;
+  paused: boolean;
+  yours: boolean;
+  body: string;
+  truncated?: true;
+};
 
+/** A principal as prose or the `by` attribute writes it: `@handle` for a human, the bare slug for an agent. */
+const label = (a: ScheduleRecord["createdBy"], at = false) =>
+  a.kind === "user" ? `@${a.handle}` : at ? `@${a.slug}` : a.slug;
 const isAgent = (a: Actor): a is { agentId: string } => "agentId" in a;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
@@ -229,6 +253,312 @@ export class ScheduleService {
         note: "You will be woken at each run; cancel it with cancel_schedule when it is no longer needed.",
       };
     return {};
+  }
+
+  // ---------- reads ----------
+
+  /** One schedule by key; a deleted one only with `includeDeleted` (the edit page's badge link offers Restore). */
+  async get(key: string, o: { includeDeleted?: boolean } = {}): Promise<ScheduleItem | undefined> {
+    const n = parseKey("S", key);
+    if (n === null) return undefined;
+    const r = await this.d.schedules.recordByNumber(this.d.db, n);
+    if (!r || (r.deletedAt && !o.includeDeleted)) return undefined;
+    return this.toItem(r);
+  }
+
+  /** Humans' list (spec §11): active by next run, then paused, then done newest first, then key; at most 500. */
+  async list(
+    f: { target?: string; done?: boolean } = {},
+  ): Promise<{ items: ScheduleItem[]; more: boolean }> {
+    const rows = await this.d.schedules.records(this.d.db, this.d.schedules.live());
+    const rank = (r: ScheduleRecord) => (isDone(r) ? 2 : r.pausedAt ? 1 : 0);
+    const at = (r: ScheduleRecord) => r.nextRunAt?.getTime() ?? Number.POSITIVE_INFINITY;
+    const doneAt = (r: ScheduleRecord) => (r.lastFiredAt ?? r.runAt)?.getTime() ?? 0;
+    const shown = rows
+      .filter((r) => (f.target ? r.target.slug === f.target : true))
+      .filter((r) => (f.done ? true : !isDone(r)))
+      .sort(
+        (a, b) =>
+          rank(a) - rank(b) ||
+          (rank(a) === 2 ? doneAt(b) - doneAt(a) : at(a) - at(b)) ||
+          a.number - b.number,
+      );
+    return { items: shown.slice(0, 500).map((r) => this.toItem(r)), more: shown.length > 500 };
+  }
+
+  /** `list_schedules`: what the agent created or what targets it; not deleted, not done; newest first, at most 100. */
+  async listForAgent(agentId: string): Promise<AgentScheduleView[]> {
+    const rows = await this.d.schedules.records(
+      this.d.db,
+      and(
+        this.d.schedules.live(),
+        or(eq(schedules.createdByAgentId, agentId), eq(schedules.targetAgentId, agentId)),
+      ),
+    );
+    return rows
+      .filter((r) => !isDone(r))
+      .sort((a, b) => b.number - a.number)
+      .slice(0, 100)
+      .map((r) => {
+        const long = r.body.length > TOOL_BODY_CAP;
+        return {
+          id: formatKey("S", r.number),
+          to: r.target.slug,
+          created_by: label(r.createdBy),
+          by: label(r.bodyAuthor),
+          ...(r.cron ? { cron: r.cron } : {}),
+          ...(r.runAt ? { at: formatOffsetIso(r.runAt, r.timezone) } : {}),
+          timezone: r.timezone,
+          next_run: r.nextRunAt ? formatOffsetIso(r.nextRunAt, r.timezone) : null,
+          paused: r.pausedAt !== null,
+          yours: r.createdByAgentId === agentId,
+          body: long ? r.body.slice(0, TOOL_BODY_CAP) : r.body,
+          ...(long ? { truncated: true as const } : {}),
+        };
+      });
+  }
+
+  async scheduleCountFor(agentId: string): Promise<number> {
+    return this.d.schedules.countFor(this.d.db, agentId);
+  }
+
+  // ---------- changes ----------
+
+  /** The one helper behind resume, restore, unarchive and timing edits: "no catch-up" lives here (spec §6.3). */
+  async recomputeFromNow(tx: Exec, id: string): Promise<void> {
+    const [row] = await tx.select().from(schedules).where(eq(schedules.id, id));
+    if (!row) return;
+    const now = this.d.now();
+    const next = row.cron
+      ? nextRun(row.cron, row.timezone, now)
+      : row.runAt && row.runAt.getTime() > now.getTime()
+        ? row.runAt
+        : null;
+    await this.d.schedules.update(tx, id, {
+      nextRunAt: next,
+      failCount: 0,
+      retryAt: null,
+      updatedAt: now,
+    });
+  }
+
+  /**
+   * Human edit (spec §6.3, Q18): only the fields present are validated and changed. Timing changes recompute
+   * `next_run_at` from now; a body change makes the editor the author; a pending firing is never touched.
+   */
+  async edit(actor: { userId: string }, key: string, patch: PatchInput): Promise<ScheduleItem> {
+    const n = this.keyOrThrow(key);
+    const now = this.d.now();
+    if (patch.cron !== undefined && patch.at !== undefined)
+      throw new ScheduleError("invalid_schedule", "Pass either cron or at.", 400, "cron");
+    if (patch.body !== undefined) this.checkBody(patch.body);
+    if (patch.timezone !== undefined && !isValidZone(patch.timezone))
+      throw new ScheduleError(
+        "invalid_schedule",
+        `Unknown time zone '${patch.timezone}'; use an IANA name such as Europe/Berlin.`,
+        400,
+        "timezone",
+      );
+    const target =
+      patch.target !== undefined ? await this.resolveTarget(actor, patch.target) : undefined;
+    const rec = await withDeadlockRetry(() =>
+      this.d.db.transaction(async (tx) => {
+        if (target) {
+          const locked = await this.d.schedules.lockAgents(tx, [{ id: target.id, mode: "share" }]);
+          const t = locked[0];
+          if (!t) throw notFound(target.slug);
+          this.requireLive(t);
+        }
+        const row = await this.d.schedules.lockByNumber(tx, n);
+        if (!row || row.deletedAt) throw this.gone();
+        const set: Partial<ScheduleRow> = { updatedAt: now };
+        if (target) set.targetAgentId = target.id;
+        if (patch.body !== undefined && patch.body !== row.body) {
+          set.body = patch.body;
+          set.bodyAuthorUserId = actor.userId;
+          set.bodyAuthorAgentId = null;
+        } else if (patch.body !== undefined) {
+          // Unchanged text: the editor is not its author.
+        }
+        const timing =
+          patch.cron !== undefined || patch.at !== undefined || patch.timezone !== undefined;
+        if (timing) {
+          const zone = patch.timezone ?? row.timezone;
+          set.timezone = zone;
+          if (patch.cron !== undefined || (patch.at === undefined && row.cron)) {
+            const cron = (patch.cron ?? row.cron) as string;
+            if (patch.cron !== undefined) {
+              const bad = validateCron(cron);
+              if (bad) throw new ScheduleError("invalid_schedule", bad, 400, "cron");
+            }
+            const next = nextRun(cron, zone, now);
+            if (!next)
+              throw new ScheduleError("invalid_schedule", "This pattern never runs.", 400, "cron");
+            set.cron = cron.trim();
+            set.runAt = null;
+            set.nextRunAt = next;
+          } else {
+            let runAt = row.runAt;
+            if (patch.at !== undefined) {
+              runAt = parseAt(patch.at, zone);
+              if (!runAt)
+                throw new ScheduleError(
+                  "invalid_schedule",
+                  "Use an ISO 8601 date and time, such as 2026-11-23T09:00.",
+                  400,
+                  "at",
+                );
+              if (runAt.getTime() <= now.getTime())
+                throw new ScheduleError("invalid_schedule", "That time has passed.", 400, "at");
+            }
+            set.cron = null;
+            set.runAt = runAt;
+            set.nextRunAt = runAt && runAt.getTime() > now.getTime() ? runAt : null;
+          }
+        }
+        // Every human edit clears the firing backoff (body and target included).
+        set.failCount = 0;
+        set.retryAt = null;
+        await this.d.schedules.update(tx, row.id, set);
+        return (await this.d.schedules.recordById(tx, row.id)) as ScheduleRecord;
+      }),
+    );
+    this.d.onChanged();
+    return this.toItem(rec);
+  }
+
+  async pause(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+    return this.mutate(key, (row, now) => {
+      if (isDone(row))
+        throw new ScheduleError(
+          "schedule_done",
+          `${formatKey("S", row.number)} is done; it has nothing left to pause.`,
+          409,
+        );
+      if (row.pausedAt)
+        throw new ScheduleError(
+          "already_paused",
+          `${formatKey("S", row.number)} is already paused.`,
+          409,
+        );
+      return { pausedAt: now, updatedAt: now };
+    });
+  }
+
+  async resume(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+    return this.mutate(
+      key,
+      (row, now) => {
+        if (isDone(row))
+          throw new ScheduleError(
+            "schedule_done",
+            `${formatKey("S", row.number)} is done; it has nothing left to resume.`,
+            409,
+          );
+        if (!row.pausedAt)
+          throw new ScheduleError("not_paused", `${formatKey("S", row.number)} isn't paused.`, 409);
+        return { pausedAt: null, updatedAt: now };
+      },
+      true,
+    );
+  }
+
+  /** Soft delete (Q17): `deleted_at` set, `next_run_at` null. Agents reach it through `cancelForAgent`. */
+  async remove(_actor: Actor, key: string): Promise<ScheduleItem> {
+    return this.mutate(key, (_row, now) => ({ deletedAt: now, nextRunAt: null, updatedAt: now }));
+  }
+
+  /** Undo of a delete: humans only; refused when the target ended (R2); recomputes from now. */
+  async restore(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+    const n = this.keyOrThrow(key);
+    const probe = await this.d.schedules.recordByNumber(this.d.db, n);
+    if (!probe) throw this.gone();
+    const rec = await withDeadlockRetry(() =>
+      this.d.db.transaction(async (tx) => {
+        const locked = await this.d.schedules.lockAgents(tx, [
+          { id: probe.targetAgentId, mode: "share" },
+        ]);
+        const t = locked[0];
+        if (t?.terminatedAt)
+          throw new ScheduleError("target_ended", `@${t.slug} was terminated.`, 409);
+        if (t?.archivedAt) throw new ScheduleError("target_ended", `@${t.slug} is archived.`, 409);
+        const row = await this.d.schedules.lockByNumber(tx, n);
+        if (!row) throw this.gone();
+        if (row.deletedAt) {
+          await this.d.schedules.update(tx, row.id, { deletedAt: null, updatedAt: this.d.now() });
+          await this.recomputeFromNow(tx, row.id);
+        }
+        return (await this.d.schedules.recordById(tx, row.id)) as ScheduleRecord;
+      }),
+    );
+    this.d.onChanged();
+    return this.toItem(rec);
+  }
+
+  /** `cancel_schedule`: only what the caller created (spec §9); a pending firing is still delivered. */
+  async cancelForAgent(agentId: string, key: string): Promise<{ id: string; status: "cancelled" }> {
+    const n = parseKey("S", key);
+    const rec = n === null ? undefined : await this.d.schedules.recordByNumber(this.d.db, n);
+    const id = n === null ? key : formatKey("S", n);
+    if (!rec || rec.deletedAt)
+      throw new ScheduleError("schedule_not_found", `There is no schedule ${id}.`, 404);
+    if (rec.createdByAgentId !== agentId)
+      throw new ScheduleError(
+        "forbidden",
+        `${id} was created by ${label(rec.createdBy, true)}; only its creator or a human can cancel it.`,
+        403,
+      );
+    await this.mutate(key, (row, now) => {
+      if (row.createdByAgentId !== agentId)
+        throw new ScheduleError(
+          "forbidden",
+          `${id} was created by someone else; only its creator or a human can cancel it.`,
+          403,
+        );
+      return { deletedAt: now, nextRunAt: null, updatedAt: now };
+    });
+    return { id, status: "cancelled" };
+  }
+
+  /** Locks the schedule, applies `fn`'s change, optionally recomputes from now, commits, publishes. */
+  private async mutate(
+    key: string,
+    fn: (row: ScheduleRow, now: Date) => Partial<ScheduleRow>,
+    recompute = false,
+  ): Promise<ScheduleItem> {
+    const n = this.keyOrThrow(key);
+    const rec = await withDeadlockRetry(() =>
+      this.d.db.transaction(async (tx) => {
+        const row = await this.d.schedules.lockByNumber(tx, n);
+        if (!row || row.deletedAt) throw this.gone();
+        const set = fn(row, this.d.now());
+        await this.d.schedules.update(tx, row.id, set);
+        if (recompute) await this.recomputeFromNow(tx, row.id);
+        return (await this.d.schedules.recordById(tx, row.id)) as ScheduleRecord;
+      }),
+    );
+    this.d.onChanged();
+    return this.toItem(rec);
+  }
+
+  private keyOrThrow(key: string): number {
+    const n = parseKey("S", key);
+    if (n === null) throw this.gone();
+    return n;
+  }
+  private gone() {
+    return new ScheduleError("schedule_not_found", "There is no such schedule.", 404);
+  }
+  private checkBody(body: string) {
+    if (bytes(body) < 1)
+      throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
+    if (bytes(body) > BODY_MAX)
+      throw new ScheduleError(
+        "invalid_schedule",
+        "The message is too long (64 KB at most).",
+        400,
+        "body",
+      );
   }
 
   /** The item the API returns: derived state, names, no status column (Q15). */

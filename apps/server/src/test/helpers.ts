@@ -36,6 +36,8 @@ export interface TestAppOptions {
   webRoot?: string;
   env?: Record<string, string>;
   harnessDriver?: HarnessDriver;
+  /** A fake Docker client for the whole app (images, containers); the real one when absent. */
+  docker?: AppDeps["docker"];
   /** The scheduling clock and timer functions (S9); real ones when absent. */
   clock?: AppDeps["clock"];
   schedulerTimers?: AppDeps["schedulerTimers"];
@@ -80,6 +82,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
           })()
         : false,
       harnessDriver: o.harnessDriver,
+      ...(o.docker ? { docker: o.docker } : {}),
       ...(o.clock ? { clock: o.clock } : {}),
       ...(o.schedulerTimers ? { schedulerTimers: o.schedulerTimers } : {}),
     });

@@ -21,6 +21,7 @@ import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
+import { ImageBuilder } from "./images/builder.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
@@ -37,6 +38,7 @@ import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
+import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
@@ -49,7 +51,7 @@ import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
 import { usageRoutes } from "./routes/usage.ts";
 import { signUpStateRoutes, usersRoutes } from "./routes/users.ts";
-import { dockerodeClient } from "./runtime/docker/client.ts";
+import { type DockerClient, dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
@@ -99,6 +101,7 @@ declare module "fastify" {
     terminator: TerminateService;
     tasks: TaskService;
     usage: UsageService;
+    images: ImageBuilder;
     invites: InviteService;
     userAdmin: UserAdminService;
     factorySettings: FactorySettings;
@@ -119,6 +122,8 @@ export interface AppDeps {
   webRoot?: string;
   logger?: boolean | object;
   harnessDriver?: HarnessDriver;
+  /** The Docker client; the real (lazily connecting) dockerode client unless a test injects a fake. */
+  docker?: DockerClient;
   /** The clock of the scheduling timer and service; real time unless a test injects one. */
   clock?: () => Date;
   /** The scheduler's timer functions; the real ones unless a test injects them. */
@@ -196,7 +201,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
   });
   // dockerode connects lazily: constructing these makes no Docker call.
-  const docker = dockerodeClient();
+  const docker = deps.docker ?? dockerodeClient();
   const containers = new ContainerManager({ docker, log: app.log });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
@@ -302,6 +307,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
   );
   app.decorate(
+    "images",
+    new ImageBuilder({
+      docker,
+      imagesRoot: path.join(config.factoryHome, "images"),
+      bus,
+      now: clock,
+      log: app.log,
+    }),
+  );
+  app.decorate(
     "invites",
     new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
   );
@@ -388,7 +403,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(settingsRoutes, { db: deps.db });
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
-  await app.register(templatesRoutes);
+  await app.register(templatesRoutes, { docker });
+  await app.register(imagesRoutes, { docker });
   await app.register(inboxRoutes);
   await app.register(tasksRoutes);
   await app.register(schedulesRoutes);

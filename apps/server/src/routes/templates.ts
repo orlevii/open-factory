@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   createTemplateBodySchema,
   issuesResponseSchema,
@@ -12,11 +13,21 @@ import {
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
+import { templateImageStatus } from "../images/status.ts";
+import type { DockerClient } from "../runtime/docker/client.ts";
 
 const params = z.object({ name: nameSchema });
 const fileParams = z.object({ name: nameSchema, file: templateFileSchema });
 
-export const templatesRoutes: FastifyPluginAsyncZod = async (app) => {
+export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = async (
+  app,
+  { docker },
+) => {
+  const imageDeps = () => ({
+    docker,
+    builder: app.images,
+    imagesRoot: path.join(app.config.factoryHome, "images"),
+  });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
 
@@ -25,26 +36,44 @@ export const templatesRoutes: FastifyPluginAsyncZod = async (app) => {
     const byTemplate = await app.templates.agentCounts();
     return {
       dir: app.templates.dir,
-      templates: rows.map((r) => ({
-        name: r.name,
-        ...(r.config
-          ? {
-              displayName: r.config.displayName,
-              description: r.config.description,
-              runtime: r.config.runtime,
-            }
-          : {}),
-        errors: r.issues.filter((i) => i.severity === "error").length,
-        warnings: r.issues.filter((i) => i.severity === "warning").length,
-        agentCount: byTemplate.get(r.name) ?? 0,
-      })),
+      templates: await Promise.all(
+        rows.map(async (r) => {
+          const imageStatus = await templateImageStatus(
+            imageDeps(),
+            r.config ?? undefined,
+            app.config.defaultImage,
+          );
+          return {
+            name: r.name,
+            ...(r.config
+              ? {
+                  displayName: r.config.displayName,
+                  description: r.config.description,
+                  runtime: r.config.runtime,
+                }
+              : {}),
+            errors: r.issues.filter((i) => i.severity === "error").length,
+            warnings: r.issues.filter((i) => i.severity === "warning").length,
+            agentCount: byTemplate.get(r.name) ?? 0,
+            ...(imageStatus ? { imageStatus } : {}),
+          };
+        }),
+      ),
     };
   });
 
   app.get(
     "/api/templates/:name",
     { schema: { params, response: { 200: templateDetailResponseSchema } } },
-    async (req) => ({ template: await app.templates.detail(req.params.name) }),
+    async (req) => {
+      const template = await app.templates.detail(req.params.name);
+      const imageStatus = await templateImageStatus(
+        imageDeps(),
+        template.config ?? undefined,
+        app.config.defaultImage,
+      );
+      return { template: { ...template, ...(imageStatus ? { imageStatus } : {}) } };
+    },
   );
 
   app.post(

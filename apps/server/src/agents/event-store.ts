@@ -272,12 +272,12 @@ export class EventStore {
         errorKind: sql`coalesce(${agents.errorKind}, 'crash')`,
         attempting: false,
       })
-      .where(eq(agents.attempting, true))
+      .where(and(eq(agents.attempting, true), isNull(agents.terminatedAt)))
       .returning({ id: agents.id });
     return rows.map((r) => r.id);
   }
   /**
-   * Boot (spec §5.7 step 6, §8): the non-archived, non-errored agents with deliverable pending items, by their oldest
+   * Boot (spec §5.7 step 6, §8): the live (not archived, not terminated), non-errored agents with deliverable pending items, by their oldest
    * such item (FIFO across the restart). Deliverable: a message or a notice, or a member update older than the
    * debounce (a young one waits for its timer; peer rows never wake anyone). `resume` when a factory-restarted notice
    * is among them.
@@ -295,7 +295,13 @@ export class EventStore {
         messages,
         and(eq(messages.toAgentId, agents.id), eq(messages.state, "pending"), deliverable),
       )
-      .where(and(isNull(agents.archivedAt), sql`${agents.status} <> 'errored'`))
+      .where(
+        and(
+          isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
+          sql`${agents.status} <> 'errored'`,
+        ),
+      )
       .groupBy(agents.id, agents.slug)
       .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
     return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
@@ -304,7 +310,7 @@ export class EventStore {
     const cutoff = new Date(Date.now() - debounceMs);
     return sql`(${messages.kind} in ('message', 'system') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
-  /** Non-archived, non-errored agents with at least one pending member update still inside the debounce window. */
+  /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
     const cutoff = new Date(Date.now() - debounceMs);
     const rows = await this.db
@@ -317,10 +323,45 @@ export class EventStore {
           eq(messages.state, "pending"),
           sql`${messages.createdAt} > ${cutoff.toISOString()}::timestamptz`,
           isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
           sql`${agents.status} <> 'errored'`,
         ),
       );
     return rows.flatMap((r) => (r.id ? [r.id] : []));
+  }
+  /**
+   * Boot (S7 §8, §12): rows still pending to a terminated agent (one that raced in during the crash window, after the
+   * termination's transaction rejected the rest) become `rejected`, as `terminateRows` makes them.
+   */
+  async rejectPendingToTerminated() {
+    await this.db
+      .update(messages)
+      .set({ state: "rejected" })
+      .where(
+        and(
+          eq(messages.state, "pending"),
+          inArray(
+            messages.toAgentId,
+            this.db.select({ id: agents.id }).from(agents).where(isNotNull(agents.terminatedAt)),
+          ),
+        ),
+      );
+  }
+  /**
+   * Boot (S7 §8 crash safety): terminated agents with no `terminated` event (the server died between the termination's
+   * commit and its stop job). Each `NOT EXISTS` rides `(agent_id, seq)`; only the rare crash-window agents come back.
+   */
+  async terminatedWithoutEvent(): Promise<{ id: string; terminatedBy: string | null }[]> {
+    return this.db
+      .select({ id: agents.id, terminatedBy: agents.terminatedBy })
+      .from(agents)
+      .where(
+        and(
+          isNotNull(agents.terminatedAt),
+          sql`not exists (select 1 from ${sessionEvents} e where e.agent_id = ${agents.id} and e.type = 'terminated')`,
+        ),
+      )
+      .orderBy(asc(agents.id));
   }
   /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
   async clearRuntimeJournals(keep: string[] = []) {

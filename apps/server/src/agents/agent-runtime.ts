@@ -253,7 +253,7 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
 const ESCALATION_EXIT_MS = 5_000;
 /** Spec §9.6's text; the pid, when known, is in the detail (the status line is just "Errored"). */
-const stopFailedMessage = (pid: number | undefined) =>
+export const stopFailedMessage = (pid: number | undefined) =>
   `The agent's process can't be stopped. Check the host${pid ? ` (pid ${pid})` : ""} or Docker, then restart again.`;
 /** A local start found the previous process's journal and couldn't reap it (spec §9.6, §12). */
 const previousProcessMessage = (pid: number | undefined) =>
@@ -394,6 +394,13 @@ export class AgentRuntime {
     // The row may have been terminated since it was read for the constructor.
     const r = await this.d.store.agentById(this.agent.id);
     if (r?.terminatedAt && !this.terminationCommitted) this.markTerminated({ committed: true });
+    if (this.terminationCommitted) {
+      // S7 §8: a terminated agent receives nothing. A row still pending to it (one that raced in during a crash window)
+      // is rejected, never queued.
+      await this.d.store.rejectPending(this.agent.id);
+      this.updateHeldTimer();
+      return;
+    }
     const pending = (await this.d.store.pendingQueue(this.agent.id)).map(entryOf);
     for (const e of pending) this.seen.add(e.row.id);
     this.queue = pending.filter((e) => !isHeld(e));

@@ -13,6 +13,7 @@ import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
+import { Reaper } from "../spawning/reaper.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
@@ -478,6 +479,136 @@ test("a reap that fails keeps the agent's journal and doesn't wake it", async ()
     level: "error",
     msg: "reaping the previous run's processes failed; the agent isn't woken",
   });
+});
+
+/** A spawned agent (reporting to a fresh manager) whose termination by `@lead` committed before the server stopped. */
+async function terminatedAgent(): Promise<string> {
+  const lead = await agent();
+  n += 1;
+  const id = `r${n}`;
+  await insertAgent(t.sql, { id, slug: `rec${n}`, reportsTo: lead, terminatedAt: new Date() });
+  await t.sql`update agents set terminated_by = '@lead' where id = ${id}`;
+  return id;
+}
+const putContainer = (b: Boot, name: string, agentId: string, running: boolean) =>
+  b.docker.containers.set(name, {
+    id: name,
+    name,
+    running,
+    labels: { [LABEL_AGENT_ID]: agentId },
+    opts: {},
+  });
+
+test("S7 §12: a terminated agent's leftovers are removed and reaped; it is never woken, noticed or forwarded", async () => {
+  const live = await agent();
+  const id = await terminatedAgent();
+  const claude = sleeper();
+  // Everything a crash (or a shutdown racing the termination) can leave behind.
+  await setJournal(id, {
+    claude,
+    tasks: [{ taskId: "t1", description: "pnpm test" }],
+    crons: [],
+  });
+  await openTurn(id);
+  await t.sql`update agents set attempting = true, rate_limit_notice_owed = true where id = ${id}`;
+  await store.pauseCredential(`cred-${id}`, new Date(Date.now() - 60_000), false);
+  // Rows that raced in during the crash window: a message and a young member update.
+  await pending(id, "raced in");
+  await store.createHeld({ kind: "member_update", toAgentId: id, fromAgentId: live, body: "b" });
+  boot = new Boot();
+  putContainer(boot, "term-running", id, true);
+  putContainer(boot, "term-stopped", id, false);
+  putContainer(boot, "live-running", live, true);
+  await boot.run();
+  await exited(children[0] as ChildProcess);
+
+  // Step 2: both of its containers removed (not stopped); a live agent's still only stopped.
+  const ops = boot.docker.calls.filter((c) => c.op === "remove" || c.op === "stop");
+  expect(ops.filter((c) => c.op === "remove").map((c) => c.args[0])).toEqual(
+    expect.arrayContaining(["term-running", "term-stopped"]),
+  );
+  expect(ops.filter((c) => c.op === "remove")).toHaveLength(2);
+  expect(ops.filter((c) => c.op === "stop").map((c) => c.args[0])).toEqual(["live-running"]);
+  expect(boot.docker.containers.has("term-running")).toBe(false);
+  expect(boot.docker.containers.has("term-stopped")).toBe(false);
+  // Step 1: its local Claude reaped, without a `reconciled` event; the journal is cleared.
+  expect(alive(claude.pid)).toBe(false);
+  expect((await row(id)).runtimeJournal).toBeNull();
+  // The missing `terminated` event, by whoever terminated it, and nothing else.
+  expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
+  // Steps 3–6 skip it: not errored, no notice, no continue notice, nothing forwarded, never loaded or woken.
+  expect((await row(id)).status).not.toBe("errored");
+  expect((await row(id)).errorKind).toBeNull();
+  expect(boot.forwarded).toEqual([]);
+  await vi.waitFor(async () => {
+    const [c] = await t.sql`select rate_limited_until from credentials where id = ${`cred-${id}`}`;
+    expect(c?.rate_limited_until).toBeNull();
+  });
+  expect(await notices(id)).toEqual([]);
+  // The rows that raced in are rejected, not left pending.
+  expect(
+    await t.sql`select kind, state from messages where to_agent_id = ${id} order by created_at`,
+  ).toEqual([
+    { kind: "message", state: "rejected" },
+    { kind: "member_update", state: "rejected" },
+  ]);
+  expect(await boot.runtimes.get(id)).toBeUndefined();
+  expect(boot.starts(id)).toHaveLength(0);
+});
+
+test("S7 §8: a failed removal of a terminated agent's container makes it stop_failed for the sweep", async () => {
+  const id = await terminatedAgent();
+  boot = new Boot();
+  putContainer(boot, "term", id, false);
+  boot.docker.removeError = new Error("device busy");
+  await boot.run();
+  expect((await row(id)).errorKind).toBe("stop_failed");
+  expect(boot.logs).toContainEqual({
+    level: "error",
+    msg: "removing a terminated agent's leftover container failed; the sweep retries",
+  });
+  expect(boot.forwarded).toEqual([]);
+});
+
+test("S7 §8: a terminated event lost in the crash window is appended once: not again by a second boot or the sweep", async () => {
+  const id = await terminatedAgent();
+  const recorded = await terminatedAgent();
+  await store.append(recorded, null, { type: "terminated", by: "@lead" });
+  boot = new Boot();
+  await boot.run();
+  expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(await events(recorded)).toEqual([{ type: "terminated", by: "@lead" }]);
+  await boot.runtimes.close();
+
+  boot = new Boot();
+  await boot.run();
+  // The sweep run at the end of boot (spec §10.3) also ensures the event: still exactly one.
+  const reaper = new Reaper({
+    store,
+    runtimes: boot.runtimes,
+    terminator: { terminate: async () => ({ status: "terminated" }) },
+    workspace: { deleteWorkspace: async () => false },
+    log: silentLog,
+    now: () => Date.now(),
+  });
+  await reaper.run();
+  expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(await events(recorded)).toEqual([{ type: "terminated", by: "@lead" }]);
+});
+
+test("S7 §8: a runtime loaded for a terminated agent rejects rows still pending to it and never queues them", async () => {
+  const id = await terminatedAgent();
+  boot = new Boot();
+  await boot.run();
+  // A row that got past the boot's rejection (committed after it).
+  await pending(id, "late");
+  const rt = await boot.runtimes.load(id);
+  expect(rt?.queueItems()).toEqual([]);
+  expect(await t.sql`select state from messages where to_agent_id = ${id}`).toEqual([
+    { state: "rejected" },
+  ]);
+  await rt?.settled();
+  expect(boot.starts(id)).toHaveLength(0);
 });
 
 test("S6 §17.2: boot wakes only for due member updates and loads agents with young ones, whose timer wakes them", async () => {

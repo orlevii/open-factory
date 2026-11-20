@@ -5,14 +5,17 @@ import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import {
   credentialsQueryOptions,
+  invitesQueryOptions,
   projectsQueryOptions,
   secretsQueryOptions,
+  usersQueryOptions,
 } from "@/features/settings/api";
 import { CredentialsSection } from "@/features/settings/credentials-section";
 import { ProjectsSection } from "@/features/settings/projects-section";
 import { SecretsSection } from "@/features/settings/secrets-section";
 import { SettingsSection } from "@/features/settings/shared";
 import { UsageSection } from "@/features/settings/usage-section";
+import { UsersSection } from "@/features/settings/users-section";
 import { agentsUsageQuery, credentialsUsageQuery, dailyUsageQuery } from "@/features/usage/api";
 
 const SECTIONS = [
@@ -48,6 +51,8 @@ export const Route = createFileRoute("/_app/settings")({
       qc.ensureQueryData(credentialsQueryOptions),
       qc.ensureQueryData(secretsQueryOptions),
       qc.ensureQueryData(projectsQueryOptions),
+      qc.ensureQueryData(usersQueryOptions),
+      qc.ensureQueryData(invitesQueryOptions),
     ]);
   },
   component: SettingsPage,
@@ -110,8 +115,8 @@ function SettingsPage() {
           <CredentialsSection />
           <SecretsSection addSecret={addSecret} />
           <ProjectsSection />
-          {/* Filled by the Users and Factory work; the anchors exist so the list above is whole. */}
-          <SettingsSection id="users" title="Users" />
+          <UsersSection />
+          {/* Filled by the Factory work; the anchor exists so the list above is whole. */}
           <SettingsSection id="factory" title="Factory" />
         </div>
       </PageBody>

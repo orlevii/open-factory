@@ -47,6 +47,7 @@ function AppLayout() {
         if (m.type === "inbox_changed") {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
           void qc.invalidateQueries({ queryKey: ["inbox-unread"] });
+          void qc.invalidateQueries({ queryKey: ["inbox-home"] });
         }
         // S8: the list, an open detail page and the agents' open-task counts refetch (only mounted ones fetch).
         if (m.type === "tasks_changed") {

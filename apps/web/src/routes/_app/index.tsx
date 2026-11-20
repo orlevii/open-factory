@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { HomeInbox } from "@/features/inbox/home-inbox";
 
 export const Route = createFileRoute("/_app/")({
   component: Dashboard,
@@ -16,7 +17,7 @@ function Dashboard() {
       <PageBody>
         <div className="grid items-start gap-4 md:grid-cols-2">
           <Panel id="panel-inbox" title="Inbox" to="/inbox" linkLabel="Open inbox">
-            <EmptyState text="Nothing in your inbox." />
+            <HomeInbox />
           </Panel>
           <Panel id="panel-agents" title="Agents" to="/agents" linkLabel="Open agents">
             <EmptyState text="No agents yet." />

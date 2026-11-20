@@ -23,8 +23,12 @@ test.each([
 });
 
 test("the dashboard shows the Inbox and Agents panels, each empty", async () => {
+  mockApi({
+    "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
+    "GET /api/inbox/unread-count": () => json({ count: 0 }),
+  });
   renderApp("/", alice);
-  expect(await screen.findByText("Nothing in your inbox.")).toBeInTheDocument();
+  expect(await screen.findByText("Nothing unread.")).toBeInTheDocument();
   expect(screen.getByText("No agents yet.")).toBeInTheDocument();
 });
 

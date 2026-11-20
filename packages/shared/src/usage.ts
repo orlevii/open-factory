@@ -70,7 +70,8 @@ export const agentUsageSchema = z.object({
   total: totalsSchema,
   own: totalsSchema,
   daily: z.array(dayUsageSchema),
-  byModel: z.array(totalsSchema.extend({ model: z.string() })),
+  /** `model` is null for turns that never reported one; the UI labels it. */
+  byModel: z.array(totalsSchema.extend({ model: z.string().nullable() })),
   byTask: z.array(totalsSchema.extend({ key: z.string(), title: z.string() })),
   spawned: z.array(
     totalsSchema.extend({ slug: z.string(), displayName: z.string(), terminated: z.boolean() }),

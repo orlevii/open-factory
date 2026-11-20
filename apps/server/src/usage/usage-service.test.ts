@@ -14,6 +14,8 @@ const START: Record<UsageDays, Date> = {
   90: new Date("2026-08-23T04:00:00Z"),
 };
 const ROLLING_START = new Date(NOW.getTime() - 7 * 86_400_000);
+/** Local midnight that ends today: every calendar window ends here (F4: a later turn has no bar). */
+const END = new Date("2026-11-21T05:00:00Z");
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let usage: UsageService;
@@ -62,6 +64,7 @@ const AGENTS: AgentFixture[] = [
   { id: "a-idle", slug: "idle", displayName: "Idle", kind: "persistent" },
   { id: "a-gone", slug: "gone", displayName: "Gone", kind: "persistent", archived: true },
   { id: "a-old", slug: "old", displayName: "Old", kind: "persistent", archived: true },
+  { id: "a-late", slug: "late", displayName: "Late", kind: "persistent" },
 ];
 const TASKS = [
   { id: "task1", title: "Ship it" },
@@ -127,6 +130,9 @@ turn("a-w3", "2026-11-17T12:00:00Z", 800_000);
 turn("a-w4", "2026-11-17T12:00:00Z", 1_100_000);
 turn("a-gone", "2026-11-16T12:00:00Z", 1_000_000, { cred: "c-b" });
 turn("a-old", "2026-08-01T12:00:00Z", 1_000_000);
+// late: the last ms of today (local) and the first ms of tomorrow, a turn only clock skew could write
+turn("a-late", "2026-11-21T04:59:59.999Z", 20_000);
+turn("a-late", "2026-11-21T05:00:00.000Z", 40_000);
 
 const zero = (): Totals => ({
   costUsd: 0,
@@ -177,7 +183,7 @@ const localDay = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 const dayOf = (d: Date) => localDay.format(d);
-const inCal = (days: UsageDays) => (s: Seed) => s.startedAt >= START[days];
+const inCal = (days: UsageDays) => (s: Seed) => s.startedAt >= START[days] && s.startedAt < END;
 const inRolling = (s: Seed) => s.startedAt >= ROLLING_START;
 /** The calendar days of a window, oldest first, as `YYYY-MM-DD`. */
 function windowDays(days: UsageDays): string[] {
@@ -212,6 +218,9 @@ beforeAll(async () => {
               values ('c-b', 'beta', 'api_key', ${Buffer.from("x")}, '2026-11-20T16:00:00Z', false)`;
   // a pause that has already passed is not reported
   await t.sql`update credentials set rate_limited_until = '2026-11-20T14:00:00Z' where id = 'cred-a-w2'`;
+  // an observation without a status (the writer never does this) reads as allowed, as on the credential list
+  await t.sql`insert into credentials (id, name, kind, value_enc, rl_observed_at)
+              values ('c-z', 'zeta', 'oauth_token', ${Buffer.from("x")}, '2026-11-20T14:45:00Z')`;
   for (const k of TASKS) {
     const [row] = await t.sql<{ number: number }[]>`
       insert into tasks (id, title, created_by_user_id) values (${k.id}, ${k.title}, 'u1') returning number`;
@@ -381,6 +390,28 @@ test("credentials(30): totals, top 5 agents by cost, rate-limit state and unattr
   expect(w2cred?.agents).toEqual([]);
   expect(w2cred?.pausedUntil).toBeUndefined();
   expect(w2cred?.pauseExact).toBeUndefined();
+
+  expect(r.credentials.find((c) => c.name === "zeta")?.rateLimit).toEqual({
+    status: "allowed",
+    type: null,
+    utilization: null,
+    resetsAt: null,
+    observedAt: "2026-11-20T14:45:00.000Z",
+  });
+});
+
+test("a calendar window ends at local midnight tonight, so its totals equal the sum of its bars (F4)", async () => {
+  const late = (await usage.agents({ kind: "calendar", days: 7 })).agents.find(
+    (a) => a.slug === "late",
+  );
+  expect(late?.own).toMatchObject({ turns: 1, costUsd: 0.02 });
+  const page = await usage.agent("late", 7);
+  expect(page?.total).toMatchObject({ turns: 1, costUsd: 0.02 });
+  expect(sumOf(page?.daily.map(strip) ?? [])).toEqual(page?.total);
+  const alpha = (await usage.credentials(7)).credentials.find((c) => c.name === "alpha");
+  const daily = await usage.daily(7, { agentIds: AGENTS.map((a) => a.id) });
+  expect(alpha?.totals).toEqual(reference((s) => inCal(7)(s) && s.credentialId === "c-a"));
+  expect(sumOf(daily.days.map(strip))).toEqual(reference(inCal(7)));
 });
 
 test("agent(lead, 30): spawner scope, by model, by task, spawned", async () => {
@@ -397,13 +428,19 @@ test("agent(lead, 30): spawner scope, by model, by task, spawned", async () => {
   const models = [...new Set(turns.filter((s) => scope.includes(s.agentId)).map((s) => s.model))];
   const byModel = models
     .map((m) => ({
-      model: m ?? "unknown",
+      model: m,
       ...reference((s) => pred(s) && scope.includes(s.agentId) && s.model === m),
     }))
     .filter((x) => x.turns > 0)
-    .sort((x, y) => y.costUsd - x.costUsd || x.model.localeCompare(y.model));
+    // ties by model name, a NULL model last (Postgres's ascending order)
+    .sort(
+      (x, y) =>
+        y.costUsd - x.costUsd ||
+        (x.model === null ? 1 : y.model === null ? -1 : x.model.localeCompare(y.model)),
+    );
   expect(r?.byModel).toEqual(byModel);
-  expect(r?.byModel.find((m) => m.model === "unknown")).toMatchObject({ turns: 1, costUsd: 0 });
+  // a turn without a model is reported as null: the UI owns its label
+  expect(r?.byModel.find((m) => m.model === null)).toMatchObject({ turns: 1, costUsd: 0 });
 
   const byTask = ["task1", "task2"]
     .map((id) => ({

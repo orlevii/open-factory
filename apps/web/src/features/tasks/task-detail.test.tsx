@@ -73,6 +73,7 @@ const detail = (o: Over = {}) => ({
       at: at(9, 15),
     },
   ],
+  usage: null,
   ...o,
 });
 const agents = () =>

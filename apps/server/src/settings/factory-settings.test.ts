@@ -56,3 +56,24 @@ test("update persists, swaps the copy and tells the listeners", async () => {
     await t.close();
   }
 });
+
+test("a listener that throws is logged; the update still completes and later listeners still run", async () => {
+  const t = await makeTestApp();
+  try {
+    const { user } = await t.signUpUser({ handle: "or" });
+    const errors: unknown[] = [];
+    const s = await FactorySettings.load(t.db, { error: (obj) => errors.push(obj) });
+    const boom = new Error("boom");
+    const seen: number[] = [];
+    s.onChange(() => {
+      throw boom;
+    });
+    s.onChange((_prev, next) => seen.push(next.maxRunningAgents));
+    await s.update({ maxRunningAgents: 3 }, user.id);
+    expect(s.maxRunningAgents()).toBe(3);
+    expect(seen).toEqual([3]);
+    expect(errors).toEqual([{ err: boom }]);
+  } finally {
+    await t.close();
+  }
+});

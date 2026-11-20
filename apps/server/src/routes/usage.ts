@@ -8,6 +8,7 @@ import {
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { requireUser } from "../auth/require-user.ts";
 import { ApiError } from "../errors.ts";
+import type { UsageWindow } from "../usage/usage-service.ts";
 
 /** `?days=` is 7, 30 or 90 (default 30); anything else is `400 invalid_days`. Parsed here, not by a route schema. */
 export function parseDays(query: unknown): UsageDays {
@@ -16,6 +17,22 @@ export function parseDays(query: unknown): UsageDays {
   const r = usageDaysSchema.safeParse(raw);
   if (!r.success) throw new ApiError(400, "invalid_days", "days must be 7, 30 or 90.");
   return r.data;
+}
+
+/**
+ * `?window=` on `/api/usage/agents`: absent is the calendar window of `days`; `rolling` is the tree's rolling 7 days
+ * (`days` omitted or 7). Any other value, or `rolling` with another `days`, is `400 invalid_window`.
+ */
+export function parseWindow(query: unknown): UsageWindow {
+  const q = query as { window?: unknown; days?: unknown } | undefined;
+  if (q?.window === undefined) return { kind: "calendar", days: parseDays(query) };
+  if (q.window !== "rolling") {
+    throw new ApiError(400, "invalid_window", "window must be rolling or left out.");
+  }
+  if (q.days !== undefined && parseDays(query) !== 7) {
+    throw new ApiError(400, "invalid_window", "window=rolling covers 7 days only.");
+  }
+  return { kind: "rolling", days: 7 };
 }
 
 /** S10 spec §7: rollups over `turns`, human session only. */
@@ -27,15 +44,9 @@ export const usageRoutes: FastifyPluginAsyncZod = async (app) => {
     app.usage.daily(parseDays(req.query)),
   );
 
-  // `window=rolling` (with days=7) is the tree's rolling 7 days; the default is the calendar window.
-  app.get(
-    "/api/usage/agents",
-    { schema: { response: { 200: agentsUsageSchema } } },
-    async (req) => {
-      const days = parseDays(req.query);
-      const rolling = (req.query as { window?: unknown }).window === "rolling" && days === 7;
-      return app.usage.agents(rolling ? { kind: "rolling", days: 7 } : { kind: "calendar", days });
-    },
+  // `window=rolling` is the tree's rolling 7 days; the default is the calendar window.
+  app.get("/api/usage/agents", { schema: { response: { 200: agentsUsageSchema } } }, async (req) =>
+    app.usage.agents(parseWindow(req.query)),
   );
 
   app.get(

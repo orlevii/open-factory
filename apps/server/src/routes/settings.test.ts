@@ -70,6 +70,30 @@ test("PATCH out of bounds is 400 with the field message", async () => {
   expect(h.app.factorySettings.maxRunningAgents()).toBe(8);
 });
 
+test.each([["2"], [null], [2.5]])(
+  "PATCH with a wrong-type value (%j) is 400 with the field message",
+  async (value) => {
+    const r = await call("PATCH", { maxRunningAgents: value });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatchObject({
+      code: "invalid_settings",
+      fields: { maxRunningAgents: "Enter a whole number from 1 to 64." },
+    });
+  },
+);
+
+test("an empty PATCH returns the settings without writing or publishing", async () => {
+  const frames: ServerMessage[] = [];
+  h.app.bus.subscribeAll((m) => frames.push(m));
+  for (const payload of [{}, undefined]) {
+    const r = await call("PATCH", payload);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ maxRunningAgents: 8, updatedAt: null, updatedBy: null });
+  }
+  expect(frames).not.toContainEqual({ type: "settings_changed" });
+  expect(h.app.factorySettings.get().updatedAt).toBeNull();
+});
+
 test.each([
   ["GET", undefined],
   ["PATCH", { maxRunningAgents: 2 }],

@@ -48,6 +48,8 @@ export const settingsRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { d
       const patch = Object.fromEntries(
         Object.entries(r.data).filter(([, v]) => v !== undefined),
       ) as typeof r.data;
+      // An empty patch changes nothing: no write, no editor stamp, no frame.
+      if (Object.keys(patch).length === 0) return dto(app, db);
       if (!req.user) throw new Error("requireUser did not set request.user");
       await app.factorySettings.update(patch, req.user.id);
       app.bus.publishAll({ type: "settings_changed" });

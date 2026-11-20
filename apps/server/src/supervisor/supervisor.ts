@@ -221,6 +221,7 @@ export class Supervisor implements SlotPort {
    * are queued, idle hibernatable holders may hibernate early (`freed_slot`). Then the new max is published.
    */
   capChanged(): void {
+    if (this.closed) return;
     this.pump();
     this.evict();
     this.publish();

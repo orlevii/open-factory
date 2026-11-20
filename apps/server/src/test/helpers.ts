@@ -37,7 +37,7 @@ export interface TestAppOptions {
   schedulerTimers?: AppDeps["schedulerTimers"];
   /** Capture the app's real log output (production redact config, no transport) at info level. */
   logStream?: { write(s: string): void };
-  /** Written to the `factory_settings` row before the app boots (S10 §8.1: these are no longer env vars). */
+  /** Written to the `factory_settings` row before the first boot only, not on `reopen()` (S10 §8.1: no longer env vars). */
   factorySettings?: Partial<FactorySettingsValues>;
 }
 
@@ -98,7 +98,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       ),
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
     /** A second app on the same DB and FACTORY_HOME (the first should be closed first). */
-    async reopen(o: TestAppOptions = opts) {
+    /** Reopens over the same database; `factorySettings` is not re-applied (a PATCH before the restart persists). */
+    async reopen(o: TestAppOptions = { ...opts, factorySettings: undefined }) {
       const next = await build(o);
       opened.push(next);
       return next;

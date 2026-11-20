@@ -8,6 +8,7 @@ export type FactorySettingsValues = {
 };
 type Current = FactorySettingsValues & { updatedAt: Date | null; updatedBy: string | null };
 type Listener = (prev: FactorySettingsValues, next: FactorySettingsValues) => void;
+type Log = { error: (obj: object, msg: string) => void };
 
 const ROW_ID = 1;
 const values = (c: Current): FactorySettingsValues => ({
@@ -31,15 +32,16 @@ export class FactorySettings {
   private constructor(
     private readonly db: Db,
     private current: Current,
+    private readonly log: Log,
   ) {}
 
-  static async load(db: Db): Promise<FactorySettings> {
+  static async load(db: Db, log: Log = console): Promise<FactorySettings> {
     const [row] = await db
       .select()
       .from(schema.factorySettings)
       .where(eq(schema.factorySettings.id, ROW_ID));
     if (!row) throw new Error("factory_settings has no row; run the migrations");
-    return new FactorySettings(db, fromRow(row));
+    return new FactorySettings(db, fromRow(row), log);
   }
 
   get(): Current {
@@ -51,7 +53,10 @@ export class FactorySettings {
   /** The setting is stored in seconds; every consumer reads milliseconds. */
   readonly memberUpdateDebounceMs = (): number => this.current.memberUpdateDebounceSeconds * 1000;
 
-  /** Writes the row, then swaps the copy (from what the row now holds), then calls the listeners. */
+  /**
+   * Writes the row, then swaps the copy (from what the row now holds), then calls the listeners. A listener that
+   * throws is logged and never fails the update: the row and the copy have already changed.
+   */
   async update(patch: Partial<FactorySettingsValues>, userId: string): Promise<void> {
     const [row] = await this.db
       .update(schema.factorySettings)
@@ -62,7 +67,13 @@ export class FactorySettings {
     const prev = values(this.current);
     this.current = fromRow(row);
     const next = values(this.current);
-    for (const fn of this.listeners) fn(prev, next);
+    for (const fn of this.listeners) {
+      try {
+        fn(prev, next);
+      } catch (err) {
+        this.log.error({ err }, "a factory settings listener failed");
+      }
+    }
   }
 
   onChange(fn: Listener): void {

@@ -558,6 +558,14 @@ test("running counts are published as supervisor frames", async () => {
   ]);
 });
 
+test("capChanged after close publishes nothing", async () => {
+  w = new World(2);
+  w.sup.close();
+  const before = w.frames.length;
+  w.sup.capChanged();
+  expect(w.frames).toHaveLength(before);
+});
+
 test("a restart wake takes over a queued entry whose reason no longer wakes the agent", async () => {
   w = new World(1);
   const a = await w.agent();

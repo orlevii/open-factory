@@ -101,6 +101,62 @@ test("GET /api/usage/agents?window=rolling is the tree's rolling 7 days", async 
   expect(roll.agents.find((a) => a.slug === "lead")?.total.costUsd).toBe(2);
 });
 
+test("window=rolling with days omitted is the rolling 7 days", async () => {
+  await insertTurn(h.sql, {
+    id: "r1",
+    agentId: leadId,
+    startedAt: new Date("2026-11-13T11:00:00Z"),
+    costUsd: 2,
+  });
+  // in the default 30 calendar days, not in the rolling 7
+  await insertTurn(h.sql, {
+    id: "r2",
+    agentId: leadId,
+    startedAt: new Date("2026-11-01T11:00:00Z"),
+    costUsd: 4,
+  });
+  const r = await get("/api/usage/agents?window=rolling");
+  expect(r.statusCode).toBe(200);
+  expect((r.json() as AgentsUsage).agents.find((a) => a.slug === "lead")?.total.costUsd).toBe(2);
+});
+
+test.each([
+  "/api/usage/agents?window=bogus",
+  "/api/usage/agents?window=rolling&days=30",
+  "/api/usage/agents?window=rolling&days=90",
+])("%s is 400 invalid_window", async (url) => {
+  const r = await get(url);
+  expect(r.statusCode).toBe(400);
+  expect(r.json().error.code).toBe("invalid_window");
+});
+
+test("the days follow FACTORY_TIMEZONE, not UTC", async () => {
+  await seedTurns();
+  // 05:00 on Nov 20 in Tokyo, still Nov 19 in UTC
+  await insertTurn(h.sql, {
+    id: "tz1",
+    agentId: leadId,
+    startedAt: new Date("2026-11-19T20:00:00Z"),
+    costUsd: 0.5,
+  });
+  await h.app.close();
+  const tokyo = await h.reopen({
+    harnessDriver: new FakeDriver(),
+    clock: () => clock,
+    env: { FACTORY_TIMEZONE: "Asia/Tokyo" },
+  });
+  const body = (
+    await tokyo.app.inject({
+      method: "GET",
+      url: "/api/usage/daily?days=7",
+      headers: { cookie: or.cookie },
+    })
+  ).json() as DailyUsage;
+  expect(body.timezone).toBe("Asia/Tokyo");
+  expect(body.days.at(-1)).toMatchObject({ date: "2026-11-20", costUsd: 2, turns: 2 });
+  expect(body.days.find((d) => d.date === "2026-11-19")).toMatchObject({ costUsd: 0, turns: 0 });
+});
+
 test("GET /api/usage/credentials returns totals, top agents and a null rate limit", async () => {
   await seedTurns();
   const [cred] = await h.db.select().from(schema.credentials);

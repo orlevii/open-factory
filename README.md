@@ -56,7 +56,7 @@ The max running agents, the default warm window and the member update debounce a
 4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` (see "Templates"). `runtime` defaults to `docker`.
 5. Create an agent from the template, pick its credential, and send it a message.
 
-An agent that is idle is hibernated: its process is stopped (a Docker agent's container is stopped, not removed), and the next message wakes it with the same session. An agent stays warm for its template's warm window (`warm_window_minutes`, 70 by default) after it becomes idle, and it never hibernates while it is mid-turn, has a background task running or has a cron of its own scheduled.
+An agent that is idle is hibernated: its process is stopped (a Docker agent's container is stopped, not removed), and the next message wakes it with the same session. An agent stays warm for its template's warm window (`warm_window_minutes`; a template that omits it uses the factory default warm window, Settings → Factory, 70 unless changed) after it becomes idle, and it never hibernates while it is mid-turn, has a background task running or has a cron of its own scheduled.
 
 ## Docker runtime
 

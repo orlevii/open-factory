@@ -4,7 +4,8 @@
  * `started_at`; NULL cost and tokens count as 0.
  *
  * - Calendar window: the last `days` local days including today,
- *   `started_at >= ((($now AT TIME ZONE $tz)::date - (days-1))::timestamp AT TIME ZONE $tz)`.
+ *   `started_at >= ((($now AT TIME ZONE $tz)::date - (days-1))::timestamp AT TIME ZONE $tz)` and before local midnight
+ *   tonight, so a turn stamped later (clock skew) is in no total and no bar: totals always equal the bars (F4).
  * - Rolling window (the tree): `started_at >= $now - interval '7 days'`.
  * - Spawner scope of a persistent agent X: X plus every agent with `kind = 'ephemeral' AND reports_to = X` (one level,
  *   S7), terminated ones included; never the reporting line.
@@ -21,8 +22,9 @@ import type {
   UsageDays,
 } from "@open-factory/shared";
 import { type SQL, sql } from "drizzle-orm";
+import { toRateLimitState } from "../credentials/rate-limit-state.ts";
 
-type Window = { kind: "rolling"; days: 7 } | { kind: "calendar"; days: UsageDays };
+export type UsageWindow = { kind: "rolling"; days: 7 } | { kind: "calendar"; days: UsageDays };
 type Params = { now: string; tz: string };
 type Raw = Record<string, unknown>;
 
@@ -103,6 +105,11 @@ export class UsageService {
     return { now: this.d.now().toISOString(), tz: this.d.timezone() };
   }
 
+  /** An ISO timestamp column from a raw row, as a Date. */
+  private static date(v: unknown): Date | null {
+    return v == null ? null : new Date(String(v));
+  }
+
   private async rows(q: SQL): Promise<Raw[]> {
     return (await this.d.db.execute(q)) as unknown as Raw[];
   }
@@ -113,14 +120,18 @@ export class UsageService {
   }
 
   /** The first instant of a window. */
-  private start(p: Params, w: Window) {
+  private start(p: Params, w: UsageWindow) {
     if (w.kind === "rolling") return sql`(${p.now}::timestamptz - interval '7 days')`;
     return sql`((${this.today(p)} - ${w.days - 1}::int)::timestamp at time zone ${p.tz}::text)`;
   }
 
-  /** The predicate of the turns a window counts. */
-  private counted(p: Params, w: Window) {
-    return sql`ended_at is not null and started_at >= ${this.start(p, w)}`;
+  /** The predicate of the turns a window counts; a calendar window ends at local midnight tonight. */
+  private counted(p: Params, w: UsageWindow) {
+    const end =
+      w.kind === "calendar"
+        ? sql` and started_at < ((${this.today(p)} + 1)::timestamp at time zone ${p.tz}::text)`
+        : sql``;
+    return sql`ended_at is not null and started_at >= ${this.start(p, w)}${end}`;
   }
 
   /** One row per local day from the window's first day to today (zero-filled), over the turns in CTE `t`. */
@@ -151,7 +162,7 @@ export class UsageService {
   }
 
   /** Every agent with turns in the window (own or spawned) plus every live persistent agent, by total cost. */
-  async agents(window: Window): Promise<AgentsUsage> {
+  async agents(window: UsageWindow): Promise<AgentsUsage> {
     const p = this.params();
     const r = await this.rows(
       sql`with w as (select agent_id, ${SUMS} from turns where ${this.counted(p, window)} group by agent_id)
@@ -197,9 +208,7 @@ export class UsageService {
                      where ${this.counted(p, { kind: "calendar", days })} group by credential_id, agent_id),
         cr as (
           select id, name, kind, rl_status, rl_type, rl_utilization, ${iso("rl_resets_at")} as rl_resets_at,
-                 ${iso("rl_observed_at")} as rl_observed_at,
-                 case when rate_limited_until > ${p.now}::timestamptz then ${iso("rate_limited_until")} end
-                   as paused_until,
+                 ${iso("rl_observed_at")} as rl_observed_at, ${iso("rate_limited_until")} as rate_limited_until,
                  rate_limit_exact, false as unattributed
           from credentials
           union all
@@ -226,18 +235,18 @@ export class UsageService {
           kind: c.kind === "api_key" ? "api_key" : "oauth_token",
           totals: totals(c),
           agents: arr(c.agents).map((a) => ({ slug: String(a.slug), costUsd: Number(a.costUsd) })),
-          rateLimit: c.rl_observed_at
-            ? {
-                status: c.rl_status as "allowed" | "allowed_warning" | "rejected",
-                type: c.rl_type == null ? null : String(c.rl_type),
-                utilization: c.rl_utilization == null ? null : Number(c.rl_utilization),
-                resetsAt: c.rl_resets_at == null ? null : String(c.rl_resets_at),
-                observedAt: String(c.rl_observed_at),
-              }
-            : null,
-          ...(c.paused_until
-            ? { pausedUntil: String(c.paused_until), pauseExact: Boolean(c.rate_limit_exact) }
-            : {}),
+          ...toRateLimitState(
+            {
+              rlStatus: (c.rl_status ?? null) as "allowed" | "allowed_warning" | "rejected" | null,
+              rlType: c.rl_type == null ? null : String(c.rl_type),
+              rlUtilization: c.rl_utilization == null ? null : Number(c.rl_utilization),
+              rlResetsAt: UsageService.date(c.rl_resets_at),
+              rlObservedAt: UsageService.date(c.rl_observed_at),
+              rateLimitedUntil: UsageService.date(c.rate_limited_until),
+              rateLimitExact: Boolean(c.rate_limit_exact),
+            },
+            new Date(p.now),
+          ),
         })),
       unattributed: totals(unattributed),
     };
@@ -262,7 +271,7 @@ export class UsageService {
           ${totalsJson(sql`t where t.agent_id = (select id from a)`)} as own,
           (select coalesce(json_agg(row_to_json(dd)), '[]'::json) from (${this.dailySeries(p, days)}) dd) as daily,
           (select coalesce(json_agg(row_to_json(m) order by m."costUsd" desc, m.model), '[]'::json) from (
-             select coalesce(model, 'unknown') as model, ${SUMS} from t group by 1) m) as by_model,
+             select model, ${SUMS} from t group by 1) m) as by_model,
           (select coalesce(json_agg(row_to_json(k) order by k."costUsd" desc, k.number), '[]'::json) from (
              select 'T-' || tk.number as key, tk.title, tk.number, ${SUMS}
              from t join tasks tk on tk.id = t.task_id
@@ -286,7 +295,11 @@ export class UsageService {
       total: totals(r.total as Raw),
       own: totals(r.own as Raw),
       daily: arr(r.daily).map(day),
-      byModel: arr(r.by_model).map((m) => ({ model: String(m.model), ...totals(m) })),
+      // A turn without a model stays null: the UI owns its label.
+      byModel: arr(r.by_model).map((m) => ({
+        model: m.model == null ? null : String(m.model),
+        ...totals(m),
+      })),
       byTask: arr(r.by_task).map((k) => ({
         key: String(k.key),
         title: String(k.title),

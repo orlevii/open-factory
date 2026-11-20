@@ -34,6 +34,7 @@ const detail = (n: number) => ({
   blocks: [],
   links: [],
   activity: [],
+  usage: null,
 });
 const base = {
   "GET /api/agents?": agents,

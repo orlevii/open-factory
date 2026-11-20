@@ -173,7 +173,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     app.log,
   );
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
-  const settings = await FactorySettings.load(deps.db);
+  const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);
   for (const w of removedEnvWarnings(deps.env ?? process.env)) app.log.warn(w);
 

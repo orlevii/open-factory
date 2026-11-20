@@ -75,13 +75,11 @@ export const factorySettingsSchema = z.object({
 });
 export type FactorySettingsDto = z.infer<typeof factorySettingsSchema>;
 
-const bounded = ([lo, hi]: readonly [number, number]) =>
-  z
-    .number()
-    .int(`Enter a whole number from ${lo} to ${hi}.`)
-    .min(lo, `Enter a whole number from ${lo} to ${hi}.`)
-    .max(hi, `Enter a whole number from ${lo} to ${hi}.`)
-    .optional();
+const bounded = ([lo, hi]: readonly [number, number]) => {
+  const msg = `Enter a whole number from ${lo} to ${hi}.`;
+  // The type error too (a string, null): every rejection of the field is the §12.10 sentence.
+  return z.number({ error: msg }).int(msg).min(lo, msg).max(hi, msg).optional();
+};
 export const patchFactorySettingsSchema = z.strictObject({
   maxRunningAgents: bounded(FACTORY_BOUNDS.maxRunningAgents),
   defaultWarmWindowMinutes: bounded(FACTORY_BOUNDS.defaultWarmWindowMinutes),

@@ -6,6 +6,7 @@ import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import { inUseViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError } from "../errors.ts";
+import { toRateLimitState } from "./rate-limit-state.ts";
 import type { CredentialVerifier, VerifyResult } from "./verify.ts";
 
 const aad = (id: string) => `credentials:${id}`;
@@ -71,18 +72,7 @@ export class CredentialService {
       lastError: row.lastError,
       usedBy: slugs(u.active),
       archivedUsedBy: slugs(u.archived),
-      rateLimit: row.rlObservedAt
-        ? {
-            status: row.rlStatus ?? "allowed",
-            type: row.rlType,
-            utilization: row.rlUtilization,
-            resetsAt: row.rlResetsAt ? row.rlResetsAt.toISOString() : null,
-            observedAt: row.rlObservedAt.toISOString(),
-          }
-        : null,
-      ...(row.rateLimitedUntil && row.rateLimitedUntil > this.d.now()
-        ? { pausedUntil: row.rateLimitedUntil.toISOString(), pauseExact: row.rateLimitExact }
-        : {}),
+      ...toRateLimitState(row, this.d.now()),
     };
   }
 

@@ -122,7 +122,7 @@ function EmptyAgents() {
 /** Under the Ended list when older ended agents exist beyond the newest 200 (S7 UI design §3). */
 function EndedMoreLine() {
   // Filled by the ended list's fetch: no fetch of its own.
-  const { data: more } = useQuery({ ...endedMoreQueryOptions, enabled: false });
+  const { data: more } = useQuery(endedMoreQueryOptions);
   if (!more) return null;
   return (
     <p className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">

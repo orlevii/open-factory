@@ -88,3 +88,15 @@ test("updates every cached list variant (archived filter)", () => {
     restartWaitingOn: 2,
   });
 });
+
+test("terminated invalidates the lists only on the transition, not on a repeated frame", () => {
+  const { qc, push } = setup();
+  qc.setQueryData(["agents", "exclude"], [summary]);
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  const listInvalidations = () =>
+    spy.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === '["agents"]').length;
+  push({ ...frame, status: "terminated" });
+  expect(listInvalidations()).toBe(1);
+  push({ ...frame, status: "terminated" });
+  expect(listInvalidations()).toBe(1);
+});

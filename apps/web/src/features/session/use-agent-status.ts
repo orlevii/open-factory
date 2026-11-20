@@ -34,12 +34,15 @@ export function useAgentStatusFrames() {
         };
         // Lists are keyed by the archived filter (["agents", "exclude"] ...): patch every variant.
         const cached = qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] });
-        if (cached.some(([, l]) => l?.some((a) => a.slug === m.agent))) {
+        const rows = cached.flatMap(([, l]) => l?.filter((a) => a.slug === m.agent) ?? []);
+        if (rows.length > 0) {
+          const enters = m.status === "terminated" && rows.some((a) => a.status !== "terminated");
           qc.setQueriesData<AgentSummary[]>({ queryKey: ["agents"] }, (l) =>
             l?.map((a) => (a.slug === m.agent ? { ...a, ...patch } : a)),
           );
-          // Terminated moves it from the Active list to the Ended one (S7): refetch both.
-          if (m.status === "terminated") void qc.invalidateQueries({ queryKey: ["agents"] });
+          // Entering terminated moves it from the Active list to the Ended one (S7): refetch both,
+          // once; a repeated terminated frame changes nothing.
+          if (enters) void qc.invalidateQueries({ queryKey: ["agents"] });
         } else {
           // Not cached yet (frame beat the fetch, or a new agent): refetch rather than lose it.
           void qc.invalidateQueries({ queryKey: ["agents"] });

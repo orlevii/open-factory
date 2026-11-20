@@ -6,7 +6,7 @@ import {
   messageLookupSchema,
   queueItemResponseSchema,
 } from "@open-factory/shared";
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
 
 type Running = { count: number; max: number };
@@ -29,10 +29,10 @@ export const agentsListQueryOptions = (ended: "exclude" | "only" = "exclude") =>
 
 /** Outside the ["agents"] prefix: every value under it is an agent array (useAgentStatusFrames). */
 export const endedMoreQueryKey = ["ended-more"] as const;
-/** Filled by the ended list's fetch only: read it with `enabled: false`. */
-export const endedMoreQueryOptions = queryOptions({
+/** Filled by the ended list's fetch only (`skipToken`: it never fetches on its own). */
+export const endedMoreQueryOptions = queryOptions<boolean>({
   queryKey: endedMoreQueryKey,
-  queryFn: () => fetchList("only").then((r) => r.more),
+  queryFn: skipToken,
   staleTime: Number.POSITIVE_INFINITY,
 });
 

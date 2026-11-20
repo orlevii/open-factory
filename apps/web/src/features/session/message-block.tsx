@@ -29,16 +29,21 @@ const toEnded = (agents: { slug: string; displayName: string; terminatedAt?: str
  * older ended agents exist beyond the newest 200 may be an old terminated one: it keeps the link
  * (the session route resolves any slug), without a name. `link` until the lists have loaded.
  */
+const ENDED_LOOKUP_STALE_MS = 30_000;
 function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
   const names = useAgentNames();
   const active = names?.get(slug);
   const needEnded = names !== undefined && active === undefined;
+  // Many links share this lookup as a timeline fills: one fetch serves them for a while, and a
+  // terminated frame invalidates it anyway (useAgentStatusFrames).
   const ended = useQuery({
     ...agentsListQueryOptions("only"),
     select: toEnded,
     enabled: needEnded,
+    staleTime: ENDED_LOOKUP_STALE_MS,
+    refetchOnWindowFocus: false,
   });
-  const { data: more } = useQuery({ ...endedMoreQueryOptions, enabled: false });
+  const { data: more } = useQuery(endedMoreQueryOptions);
   if (!needEnded) return { link: true, display: active };
   // A failed lookup falls back to S6's plain slug for anything not active.
   if (!ended.data) return { link: !ended.isError };

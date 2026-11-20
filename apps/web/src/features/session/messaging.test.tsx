@@ -135,6 +135,34 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
   expect(link.parentElement?.textContent).toBe("@gone-ab12");
 });
 
+test("AgentLink: links mounted over time share one ended-list fetch within its stale time", async () => {
+  const msg = (id: string, body: string) =>
+    ({
+      type: "message_in",
+      messages: [env({ id, from: "gone-ab12", kind: "message", body })],
+    }) as AnyEvent;
+  const api = await open([msg("m1", "first from gone")], "first from gone", {
+    "GET /api/agents?ended=only": () =>
+      json({ agents: [], more: true, running: { count: 1, max: 8 } }),
+  });
+  const endedFetches = () => api.calls.filter((c) => c.url === "/api/agents?ended=only").length;
+  await vi.waitFor(() => expect(endedFetches()).toBe(1));
+  // New AgentLinks mount as messages arrive, and the window regains focus: no refetch.
+  vi.setSystemTime(new Date(2026, 10, 19, 15, 0, 20));
+  for (let i = 2; i <= 4; i++)
+    act(() =>
+      ws.onMessage?.({
+        type: "session_event",
+        agent: "dev",
+        event: se(msg(`m${i}`, `more from gone ${i}`)),
+      }),
+    );
+  act(() => window.dispatchEvent(new Event("focus")));
+  await screen.findByText("more from gone 4");
+  expect(screen.getAllByRole("link", { name: "Open @gone-ab12's session" })).toHaveLength(4);
+  expect(endedFetches()).toBe(1);
+});
+
 test("AgentLink: an unknown slug is plain once both lists have loaded and nothing older exists", async () => {
   await open(
     [

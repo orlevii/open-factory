@@ -756,3 +756,139 @@ test("the announcer announces a send whose call was on screen at load and whose 
   );
   await vi.waitFor(() => expect(status()).toHaveTextContent("@dev messaged you"));
 });
+
+// ---- S8: task messages in the timeline and the queue ----
+test("a task_assigned envelope is a Factory message block with a badge linking to the task", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "t1",
+            from: "@factory",
+            kind: "task_assigned",
+            taskKey: "T-1",
+            taskTitle: "Plan the migration",
+            body: "@or assigned you T-1\nThe task, written by @or:\n> Read this",
+          }),
+        ],
+      },
+    ],
+    /assigned you T-1/,
+  );
+  const block = document.querySelector("[data-message-block]") as HTMLElement;
+  expect(within(block).getByText("Factory")).toBeInTheDocument();
+  const badge = within(block).getByRole("link", { name: "Task T-1: Plan the migration" });
+  expect(badge).toHaveAttribute("href", "/tasks/T-1");
+  expect(within(block).getByRole("blockquote")).toHaveTextContent("Read this");
+});
+
+test("a task_comment from a human shows the handle and a badge that opens that comment", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "t2",
+            from: "@or",
+            kind: "task_comment",
+            taskKey: "T-1",
+            taskTitle: "Plan",
+            commentId: "c1",
+            body: "yes, go ahead",
+          }),
+        ],
+      },
+    ],
+    "yes, go ahead",
+  );
+  const block = document.querySelector("[data-message-block]") as HTMLElement;
+  expect(within(block).getByText("@or")).toHaveClass("font-mono");
+  expect(within(block).getByRole("link", { name: "Task T-1: Plan" })).toHaveAttribute(
+    "href",
+    "/tasks/T-1?comment=c1",
+  );
+});
+
+test("a task_update renders as a message block from the factory, by kind, not by prose", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "t3",
+            from: "@factory",
+            kind: "task_update",
+            fact: "unblocked",
+            taskKey: "T-2",
+            taskTitle: "Second",
+            body: "anything at all",
+          }),
+        ],
+      },
+    ],
+    "anything at all",
+  );
+  const block = document.querySelector("[data-message-block]") as HTMLElement;
+  expect(within(block).getByText("Factory")).toBeInTheDocument();
+  expect(within(block).getByRole("link", { name: "Task T-2: Second" })).toHaveAttribute(
+    "href",
+    "/tasks/T-2",
+  );
+});
+
+test("a pending task message shows its badge in the dashed block", async () => {
+  mockApi({
+    "GET /api/agents/dev": () =>
+      json(
+        detail({}, [
+          {
+            id: "q1",
+            kind: "message",
+            from: "@factory",
+            body: "Pending brief",
+            taskKey: "T-9",
+            taskTitle: "Queued task",
+            createdAt: AT,
+          },
+        ]),
+      ),
+    "GET /api/agents/dev/events?": () =>
+      json({
+        hasMore: { before: false, after: false },
+        events: [se({ type: "assistant_text", text: "x" })],
+      }),
+    "GET /api/agents?ended=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev", alice);
+  const text = await screen.findByText("Pending brief");
+  const block = text.closest("[data-message-block]") as HTMLElement;
+  expect(block.className).toContain("border-dashed");
+  expect(within(block).getByText("Factory")).toBeInTheDocument();
+  expect(within(block).getByRole("link", { name: "Task T-9: Queued task" })).toHaveAttribute(
+    "href",
+    "/tasks/T-9",
+  );
+});
+
+test("the strip's open tasks link goes to that agent's tasks", async () => {
+  mockApi({
+    "GET /api/agents/dev": () => json(detail({ openTasks: 3 })),
+    "GET /api/agents/dev/events?": () =>
+      json({
+        hasMore: { before: false, after: false },
+        events: [se({ type: "assistant_text", text: "x" })],
+      }),
+    "GET /api/agents?ended=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "3 open tasks" })).toHaveAttribute(
+    "href",
+    "/tasks?assignee=dev",
+  );
+});

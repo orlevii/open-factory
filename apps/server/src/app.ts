@@ -53,6 +53,8 @@ import { SpawnService } from "./spawning/spawn-service.ts";
 import { TerminateService } from "./spawning/terminate-service.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
+import { TaskService } from "./tasks/task-service.ts";
+import { TaskStore } from "./tasks/task-store.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
@@ -81,6 +83,7 @@ declare module "fastify" {
     agentTokens: AgentTokens;
     spawner: SpawnService;
     terminator: TerminateService;
+    tasks: TaskService;
     reaper: Reaper;
     agentListener: { port: number; close(): Promise<void> };
   }
@@ -247,6 +250,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("spawner", spawner);
   const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
   app.decorate("terminator", terminator);
+  const taskStore = new TaskStore({ db: deps.db, clock: () => store.clock() });
+  const tasks = new TaskService({
+    db: deps.db,
+    store,
+    tasks: taskStore,
+    router,
+    runtimes,
+    bus,
+    log: app.log,
+  });
+  app.decorate("tasks", tasks);
   // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.
   const reaper = new Reaper({
     store,

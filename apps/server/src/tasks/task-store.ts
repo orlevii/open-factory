@@ -25,7 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { type Db, schema, type TaskCommentRow, type TaskRow } from "@open-factory/db";
 import type { TaskStatus } from "@open-factory/shared";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
 
 const { tasks, taskDependencies, taskLinks, taskComments, taskEvents, agents } = schema;
@@ -308,6 +308,18 @@ export class TaskStore {
         at: this.d.clock(),
       })),
     );
+  }
+
+  /** Who wrote the task's current body: the actor of its last `body` event, else of its `created` event. */
+  async bodyAuthor(tx: Exec, taskId: string): Promise<Principal | undefined> {
+    const [e] = await tx
+      .select({ agentId: taskEvents.actorAgentId, userId: taskEvents.actorUserId })
+      .from(taskEvents)
+      .where(and(eq(taskEvents.taskId, taskId), inArray(taskEvents.type, ["created", "body"])))
+      .orderBy(desc(taskEvents.at), desc(taskEvents.id))
+      .limit(1);
+    if (!e) return undefined;
+    return e.agentId ? { agentId: e.agentId } : { userId: e.userId as string };
   }
 
   /** The managers above an agent, nearest first (the transitive `reports_to` chain, in the caller's transaction). */

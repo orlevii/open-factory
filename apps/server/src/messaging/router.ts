@@ -453,6 +453,15 @@ export class Router {
     );
   }
 
+  /** The agent's status after its runtime is loaded; never throws (a failed init is logged and read from the row). */
+  async statusOfAgent(agentId: string): Promise<AgentStatus> {
+    return this.statusOf(agentId).catch(async (err: unknown) => {
+      this.d.log.error({ err, agentId }, "loading the recipient failed; its row says its status");
+      const agent = await this.d.store.agentById(agentId);
+      return agent ? this.d.runtimes.statusOf(agent) : "hibernated";
+    });
+  }
+
   private async statusOf(agentId: string): Promise<AgentStatus> {
     return (await this.d.runtimes.load(agentId))?.statusFrame().status ?? "hibernated";
   }

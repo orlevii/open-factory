@@ -14,6 +14,7 @@ import {
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
+  isUserImageRef,
   NAME_PATTERN,
   TEMPLATE_FILES,
   type TemplateConfig,
@@ -106,16 +107,37 @@ export class TemplateIndex {
     return out.sort();
   }
 
+  /** Names of `<factoryHome>/images/<name>/` folders that hold a Dockerfile (a directory listing and a stat each). */
+  private async userImages(): Promise<string[]> {
+    const root = path.join(this.config.factoryHome, "images");
+    let entries: Dirent[];
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const out: string[] = [];
+    for (const e of entries) {
+      if (!isUserImageRef(e.name)) continue;
+      try {
+        if ((await stat(path.join(root, e.name, "Dockerfile"))).isFile()) out.push(e.name);
+      } catch {}
+    }
+    return out;
+  }
+
   async context(): Promise<ValidationContext> {
-    const [projects, secrets, templates] = await Promise.all([
+    const [projects, secrets, templates, userImages] = await Promise.all([
       this.db.select({ name: schema.projects.name }).from(schema.projects),
       this.db.select({ name: schema.secrets.name }).from(schema.secrets),
       this.names(),
+      this.userImages(),
     ]);
     return {
       projects: new Set(projects.map((p) => p.name)),
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
+      userImages: new Set(userImages),
       hostSkillsDir: this.config.hostSkillsDir,
       localRuntimeAllowed: localRuntimeAllowed(this.config),
     };

@@ -49,6 +49,7 @@ import {
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
+  type StartFix,
   StopCronsError,
 } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -1340,10 +1341,10 @@ export class AgentRuntime {
    * The Supervisor's pull of this agent's image failed (spec §11.2): its wake was dropped, so the start fails here,
    * with the registry's error verbatim. An attempt waiting on that wake ends with it.
    */
-  imagePullFailed(message: string): Promise<void> {
+  imagePullFailed(message: string, fix?: StartFix): Promise<void> {
     return this.run(async () => {
       if (this.proc || this.starting || this.terminated) return; // started meanwhile, or terminated: nothing failed
-      await this.append(null, { type: "error", source: "spawn", message });
+      await this.append(null, { type: "error", source: "spawn", message, ...(fix ? { fix } : {}) });
       await this.setErrored(message, "start");
       this.publishStatus();
     });

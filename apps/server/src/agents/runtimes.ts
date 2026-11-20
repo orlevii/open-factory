@@ -2,6 +2,7 @@ import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import { type AgentStatus, errorKindSchema, type QueueItem } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -50,7 +51,7 @@ export interface RuntimesDeps {
   docker?: {
     containers: Pick<
       ContainerManager,
-      "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove" | "remove"
+      "ensure" | "ensureImage" | "hasImage" | "stopIfRunning" | "forceRemove" | "remove"
     >;
     claudeBin: string;
     defaultImage: string;
@@ -165,10 +166,19 @@ export class AgentRuntimes {
       refOf: (id: string) => {
         const agent = this.loaded.get(id)?.agent;
         if (agent?.runtime !== "docker") return undefined;
-        return agent.config.image ?? docker.defaultImage;
+        return resolveImage(agent.config.image, docker.defaultImage).tag;
       },
       ensure: async (ref: string, signal: AbortSignal) => {
         try {
+          if (ref.startsWith(USER_TAG_PREFIX)) {
+            // Spec §10.1: a user image is built by the factory, never pulled.
+            if (!(await docker.containers.hasImage(ref)))
+              throw new AgentStartError(
+                `Image \`${userNameOfTag(ref)}\` isn't built. Build it in Templates \u2192 Images, or run \`open-factory images build ${userNameOfTag(ref)}\`.`,
+                "image",
+              );
+            return;
+          }
           await docker.containers.ensureImage(ref, signal);
         } catch (err) {
           // The registry's error stays verbatim (spec §11.2); only an unreachable daemon is named as such.

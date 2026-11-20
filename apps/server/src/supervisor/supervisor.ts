@@ -1,4 +1,5 @@
 import type { AgentRuntime, RuntimeLog } from "../agents/agent-runtime.ts";
+import { AgentStartError, type StartFix } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
@@ -307,7 +308,7 @@ export class Supervisor implements SlotPort {
     if (this.pulls.has(ref)) return;
     const images = this.d.images;
     if (!images) return;
-    const done = (failure?: string) => {
+    const done = (failure?: { message: string; fix?: StartFix }) => {
       this.pulls.delete(ref);
       if (this.closed) return; // aborted by the closing latch: the entries are already dropped
       if (failure === undefined) this.presentImages.add(ref);
@@ -317,7 +318,7 @@ export class Supervisor implements SlotPort {
         else {
           this.queue.splice(this.queue.indexOf(e), 1);
           void rt
-            ?.imagePullFailed(failure)
+            ?.imagePullFailed(failure.message, failure.fix)
             .catch((err) =>
               this.d.log.error({ err, agent: rt.agent.slug }, "recording a failed pull failed"),
             );
@@ -331,7 +332,10 @@ export class Supervisor implements SlotPort {
       () => done(),
       (err: unknown) => {
         if (!this.closed) this.d.log.warn({ err, image: ref }, "image pull failed");
-        done(err instanceof Error ? err.message : String(err));
+        done({
+          message: err instanceof Error ? err.message : String(err),
+          ...(err instanceof AgentStartError && err.fix ? { fix: err.fix } : {}),
+        });
       },
     );
     this.pulls.set(ref, p);

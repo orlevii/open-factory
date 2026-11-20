@@ -171,6 +171,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   config.factoryHome = await realpath(config.factoryHome);
   await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
+  await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
   await migrateWorkdirState(
     config.factoryHome,

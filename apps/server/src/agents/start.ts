@@ -5,6 +5,7 @@ import { type TemplateConfig, templateConfigSchema } from "@open-factory/shared"
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
+import { resolveImage } from "../images/resolve.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
@@ -331,7 +332,7 @@ export function createPrepareStart(d: {
             ...spec,
             credentialId,
             launch: {
-              image: config.image ?? d.config.defaultImage,
+              image: resolveImage(config.image, d.config.defaultImage).tag,
               mountCheck: prepared.mountCheck,
             },
           }

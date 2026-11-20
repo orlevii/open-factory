@@ -91,7 +91,7 @@ afterEach(async () => {
   world = undefined;
 });
 
-async function setup(scenario: string | FakeScenario = "reply"): Promise<World> {
+async function setup(scenario: string | FakeScenario = "reply", image?: string): Promise<World> {
   seq += 1;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
@@ -104,6 +104,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
     name: "dock",
     display_name: "Dock",
     runtime: "docker",
+    ...(image ? { image } : {}),
     skills: [],
     plugins: [],
   });
@@ -683,4 +684,26 @@ test("a good pid file: terminate SIGTERMs Claude in the container, no escalation
   expect(w.fakeLog()).toContainEqual({ kind: "exit", code: 143 });
   expect((await events(w)).map((e) => e.type)).not.toContain("stop_escalated");
   await until(() => expect(container(w)).toMatchObject({ running: false })); // the exit stops the container
+});
+
+test("a user image that isn't built fails the start with fix image, and is never pulled", async () => {
+  const w = await setup("reply", "smoke");
+  await send(w);
+  await until(() => expect(w.rt.live().status).toBe("errored"));
+  const message =
+    "Image `smoke` isn't built. Build it in Templates \u2192 Images, or run `open-factory images build smoke`.";
+  expect(w.rt.live().lastError).toBe(message);
+  expect(await events(w)).toContainEqual(
+    expect.objectContaining({ type: "error", source: "spawn", message, fix: "image" }),
+  );
+  expect(w.docker.ops()).not.toContain("pull");
+});
+
+test("a user image that is built starts from its local tag without a pull", async () => {
+  const w = await setup("reply", "smoke");
+  w.docker.images.set("open-factory-user/smoke:latest", { id: "sha256:smoke", labels: {} });
+  await send(w);
+  await until(() => expect(w.rt.live().status).toBe("idle"));
+  expect(w.rt.live().image).toBe("open-factory-user/smoke:latest");
+  expect(w.docker.ops()).not.toContain("pull");
 });

@@ -48,6 +48,9 @@ import { dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
+import { ScheduleService } from "./scheduling/schedule-service.ts";
+import { ScheduleStore } from "./scheduling/schedule-store.ts";
+import { Scheduler } from "./scheduling/scheduler.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
 import { Reaper } from "./spawning/reaper.ts";
@@ -87,6 +90,8 @@ declare module "fastify" {
     terminator: TerminateService;
     tasks: TaskService;
     reaper: Reaper;
+    schedules: ScheduleService;
+    scheduler: Scheduler;
     agentListener: { port: number; close(): Promise<void> };
   }
 }
@@ -101,6 +106,13 @@ export interface AppDeps {
   webRoot?: string;
   logger?: boolean | object;
   harnessDriver?: HarnessDriver;
+  /** The clock of the scheduling timer and service; real time unless a test injects one. */
+  clock?: () => Date;
+  /** The scheduler's timer functions; the real ones unless a test injects them. */
+  schedulerTimers?: {
+    setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+    clearTimer: (t: ReturnType<typeof setTimeout>) => void;
+  };
 }
 
 export function loggerOptions(config: Config) {
@@ -274,12 +286,40 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     now: () => Date.now(),
   });
   app.decorate("reaper", reaper);
+  // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
+  const clock = deps.clock ?? (() => new Date());
+  const scheduleStore = new ScheduleStore({ db: deps.db });
+  const scheduler: Scheduler = new Scheduler({
+    db: deps.db,
+    store,
+    schedules: scheduleStore,
+    runtimes,
+    bus,
+    log: app.log,
+    now: clock,
+    ...deps.schedulerTimers,
+  });
+  const schedules = new ScheduleService({
+    db: deps.db,
+    store,
+    schedules: scheduleStore,
+    now: clock,
+    factoryZone: config.factoryTimezone,
+    onChanged: () => {
+      scheduler.rearm();
+      bus.publishAll({ type: "schedules_changed" });
+    },
+    statusOf: (a) => runtimes.statusOf(a as Parameters<typeof runtimes.statusOf>[0]),
+  });
+  app.decorate("schedules", schedules);
+  app.decorate("scheduler", scheduler);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
     reaper.stop();
+    scheduler.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
     // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
@@ -287,6 +327,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     await agentListener?.close();
     // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
     await reaper.idle();
+    await scheduler.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -344,6 +385,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     router.bootDone();
     void reaper.run();
     reaper.start();
+    scheduler.start();
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.

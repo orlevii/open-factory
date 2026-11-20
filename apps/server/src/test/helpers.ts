@@ -19,7 +19,7 @@ import {
   templateConfigSchema,
 } from "@open-factory/shared";
 import type { FastifyInstance } from "fastify";
-import { buildApp, loggerOptions } from "../app.ts";
+import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
 import { type Config, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
 import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
@@ -31,6 +31,9 @@ export interface TestAppOptions {
   webRoot?: string;
   env?: Record<string, string>;
   harnessDriver?: HarnessDriver;
+  /** The scheduling clock and timer functions (S9); real ones when absent. */
+  clock?: AppDeps["clock"];
+  schedulerTimers?: AppDeps["schedulerTimers"];
   /** Capture the app's real log output (production redact config, no transport) at info level. */
   logStream?: { write(s: string): void };
 }
@@ -67,6 +70,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
           })()
         : false,
       harnessDriver: o.harnessDriver,
+      ...(o.clock ? { clock: o.clock } : {}),
+      ...(o.schedulerTimers ? { schedulerTimers: o.schedulerTimers } : {}),
     });
     return { app, config, db, sql, closeDb };
   };

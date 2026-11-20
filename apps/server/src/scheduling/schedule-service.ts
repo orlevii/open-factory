@@ -84,7 +84,7 @@ export class ScheduleService {
       /** After a commit: re-arm the timer and publish `schedules_changed`. */
       onChanged: () => void;
       /** The target's runtime status, read outside any transaction (for the `pending_errored` state). */
-      statusOf?: (agentId: string) => string | undefined;
+      statusOf?: (agent: { id: string; status: string }) => string | undefined;
     },
   ) {}
 
@@ -246,7 +246,7 @@ export class ScheduleService {
   /** A note for an agent's tool result (spec §9). */
   private noteFor(actor: Actor, target: LockedAgent, rec: ScheduleRecord): { note?: string } {
     if (!isAgent(actor)) return {};
-    if (this.d.statusOf?.(target.id) === "errored")
+    if (this.d.statusOf?.({ id: target.id, status: target.status }) === "errored")
       return { note: `@${target.slug} is errored; it will see this when a human restarts it.` };
     if (target.id === actor.agentId && rec.cron)
       return {
@@ -565,7 +565,8 @@ export class ScheduleService {
   toItem(r: ScheduleRecord): ScheduleItem {
     const done = isDone(r);
     const paused = r.pausedAt !== null;
-    const targetErrored = this.d.statusOf?.(r.targetAgentId) === "errored";
+    const targetErrored =
+      this.d.statusOf?.({ id: r.targetAgentId, status: r.target.status }) === "errored";
     const state: ScheduleItem["state"] = done
       ? "done"
       : paused

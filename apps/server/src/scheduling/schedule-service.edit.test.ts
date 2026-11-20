@@ -40,7 +40,7 @@ beforeEach(async () => {
     onChanged: () => {
       changed += 1;
     },
-    statusOf: (id) => statuses[id],
+    statusOf: (a) => statuses[a.id],
   });
 });
 

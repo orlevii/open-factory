@@ -24,7 +24,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { type Db, type ScheduleRow, schema } from "@open-factory/db";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Exec } from "../agents/event-store.ts";
 
@@ -37,13 +37,20 @@ export type LockedAgent = {
   slug: string;
   displayName: string;
   kind: string;
+  status: string;
   archivedAt: Date | null;
   terminatedAt: Date | null;
 };
 
 /** A schedule with the names the item needs. */
 export type ScheduleRecord = ScheduleRow & {
-  target: { slug: string; displayName: string; archivedAt: Date | null; terminatedAt: Date | null };
+  target: {
+    slug: string;
+    displayName: string;
+    status: string;
+    archivedAt: Date | null;
+    terminatedAt: Date | null;
+  };
   createdBy:
     | { kind: "agent"; slug: string; archivedAt: Date | null; terminatedAt: Date | null }
     | { kind: "user"; handle: string };
@@ -91,7 +98,7 @@ export class ScheduleStore {
     for (const { id } of order) {
       const lock = mode.get(id) === "update" ? sql`for no key update` : sql`for share`;
       const rows = await tx.execute(sql`
-        select id, slug, display_name as "displayName", kind, archived_at as "archivedAt",
+        select id, slug, display_name as "displayName", kind, status, archived_at as "archivedAt",
                terminated_at as "terminatedAt" from agents where id = ${id} ${lock}`);
       if (rows[0]) out.push(rows[0] as unknown as LockedAgent);
     }
@@ -156,6 +163,7 @@ export class ScheduleStore {
         ta: {
           slug: ta.slug,
           displayName: ta.displayName,
+          status: ta.status,
           archivedAt: ta.archivedAt,
           terminatedAt: ta.terminatedAt,
         },
@@ -222,5 +230,83 @@ export class ScheduleStore {
       .where(and(eq(schedules.targetAgentId, agentId), this.live()))
       .orderBy(asc(schedules.number));
     return rows.map((r) => r.id);
+  }
+
+  // ---------- the firing (spec §8.1) ----------
+
+  /** Due ids with their targets, read without locks, oldest first (§8.1 step 1). `now` is a parameter, never `now()`. */
+  async dueIds(
+    tx: Exec,
+    now: Date,
+    limit: number,
+  ): Promise<{ id: string; targetAgentId: string }[]> {
+    return tx
+      .select({ id: schedules.id, targetAgentId: schedules.targetAgentId })
+      .from(schedules)
+      .where(
+        and(
+          this.live(),
+          isNull(schedules.pausedAt),
+          lte(schedules.nextRunAt, now),
+          or(isNull(schedules.retryAt), lte(schedules.retryAt, now)),
+        ),
+      )
+      .orderBy(asc(schedules.nextRunAt), asc(schedules.number))
+      .limit(limit);
+  }
+
+  /** The earliest moment anything can fire: `min(coalesce(retry_at, next_run_at))` over active schedules. */
+  async earliest(tx: Exec): Promise<Date | null> {
+    const [r] = await tx
+      .select({
+        at: sql<string | null>`min(coalesce(${schedules.retryAt}, ${schedules.nextRunAt}))`,
+      })
+      .from(schedules)
+      .where(and(this.live(), isNull(schedules.pausedAt), sql`${schedules.nextRunAt} is not null`));
+    return r?.at ? new Date(r.at) : null;
+  }
+
+  /** The firing's schedule lock: `FOR NO KEY UPDATE SKIP LOCKED` (never `FOR UPDATE`). None: gone or being edited. */
+  async lockForFiring(tx: Exec, id: string): Promise<ScheduleRow | undefined> {
+    return (
+      await tx
+        .select()
+        .from(schedules)
+        .where(eq(schedules.id, id))
+        .for("no key update", { skipLocked: true })
+    )[0];
+  }
+
+  /**
+   * Writes the firing's pending `scheduled` row. Returns the row id to hand over, or undefined when nothing was written.
+   * Task 11 adds the replace and write-nothing cases; this is the insert.
+   */
+  async upsertFiring(
+    tx: Exec,
+    f: { schedule: ScheduleRow; due: Date; missed: number; late: boolean; now: Date },
+  ): Promise<string | undefined> {
+    const id = randomUUID();
+    await tx.insert(messages).values({
+      id,
+      kind: "scheduled",
+      toAgentId: f.schedule.targetAgentId,
+      scheduleId: f.schedule.id,
+      authorAgentId: f.schedule.bodyAuthorAgentId,
+      authorUserId: f.schedule.bodyAuthorUserId,
+      dueAt: f.due,
+      firings: f.missed,
+      late: f.late,
+      body: f.schedule.body,
+      createdAt: f.now,
+    });
+    return id;
+  }
+
+  /** In its own statement after a failed firing transaction (§8.1 step 4): backoff computed in TypeScript. */
+  async recordFailure(tx: Exec, id: string, failCount: number, retryAt: Date): Promise<void> {
+    await tx
+      .update(schedules)
+      .set({ failCount: failCount + 1, retryAt })
+      .where(eq(schedules.id, id));
   }
 }

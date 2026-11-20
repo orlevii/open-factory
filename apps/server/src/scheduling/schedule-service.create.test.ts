@@ -83,7 +83,7 @@ test("a note for an agent: recurring to itself, and an errored target", async ()
     now: () => clock,
     factoryZone: "UTC",
     onChanged: () => {},
-    statusOf: (id) => (id === "ceo" ? "errored" : undefined),
+    statusOf: (a) => (a.id === "ceo" ? "errored" : undefined),
   });
   const other = await errSvc.create(agent("dev"), { target: "ceo", ...weekday });
   expect(other.note).toBe("@ceo is errored; it will see this when a human restarts it.");

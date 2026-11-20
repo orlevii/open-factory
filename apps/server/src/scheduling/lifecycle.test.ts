@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 

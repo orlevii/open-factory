@@ -94,7 +94,7 @@ test("two schedulers firing one schedule: one fires, the other skips it (SKIP LO
     new Scheduler({
       db: h.db,
       store: h.app.store,
-      schedules: new ScheduleStore({ db: h.db }),
+      schedules: new ScheduleStore(),
       runtimes: h.app.runtimes,
       bus: h.app.bus,
       log: { debug() {}, info() {}, warn() {}, error() {} },

@@ -23,7 +23,7 @@
  * `statusOf`, `deliver`).
  */
 import { randomUUID } from "node:crypto";
-import { type Db, type ScheduleRow, schema } from "@open-factory/db";
+import { type ScheduleRow, schema } from "@open-factory/db";
 import { and, asc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Exec } from "../agents/event-store.ts";
@@ -68,8 +68,7 @@ export const isDone = (s: Pick<ScheduleRow, "runAt" | "nextRunAt" | "deletedAt">
 const doneSql = sql`(${schedules.runAt} is not null and ${schedules.nextRunAt} is null)`;
 
 export class ScheduleStore {
-  constructor(private readonly d: { db: Db }) {}
-
+  // Stateless: every method takes the executor (`tx` or the pool) it runs on.
   /** `deleted_at IS NULL`, written once (Q17). */
   live() {
     return isNull(schedules.deletedAt);

@@ -34,7 +34,7 @@ beforeEach(async () => {
   svc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
-    schedules: new ScheduleStore({ db: t.db }),
+    schedules: new ScheduleStore(),
     now: () => clock,
     factoryZone: "Europe/Berlin",
     onChanged: () => {

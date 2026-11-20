@@ -757,7 +757,7 @@ test("boot clears write marks left on pending rows, so a firing replaces the row
   });
   await t.sql`update messages set delivered_event_seq = 9 where id = 'dm'`;
   boot = new Boot();
-  const schedules = new ScheduleStore({ db: t.db });
+  const schedules = new ScheduleStore();
   const [before] = await t.sql`select delivered_event_seq from messages where id = 'pm'`;
   expect(before?.delivered_event_seq).toBe(4);
   await boot.run();

@@ -31,7 +31,7 @@ beforeEach(async () => {
   svc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
-    schedules: new ScheduleStore({ db: t.db }),
+    schedules: new ScheduleStore(),
     now: () => clock,
     factoryZone: "Europe/Berlin",
     onChanged: () => {
@@ -79,7 +79,7 @@ test("a note for an agent: recurring to itself, and an errored target", async ()
   const errSvc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
-    schedules: new ScheduleStore({ db: t.db }),
+    schedules: new ScheduleStore(),
     now: () => clock,
     factoryZone: "UTC",
     onChanged: () => {},

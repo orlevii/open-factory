@@ -38,7 +38,7 @@ beforeEach(async () => {
   await t.sql`delete from credentials`;
   await insertAgent(t.sql, { id: "ceo", slug: "ceo" });
   await insertAgent(t.sql, { id: "dev", slug: "dev" });
-  store = new ScheduleStore({ db: t.db });
+  store = new ScheduleStore();
   sched = new Scheduler({
     db: t.db,
     store: new EventStore(t.db),
@@ -133,7 +133,7 @@ test("fires at the time: one row, next run advanced, last fired set, handed over
   ];
   expect([row.kind, row.scheduleKey, sender, reason]).toEqual([
     "scheduled",
-    "S-" + (await t.sql`select number from schedules where id = 's1'`)[0]?.number,
+    `S-${(await t.sql`select number from schedules where id = 's1'`)[0]?.number}`,
     "agent",
     "scheduled",
   ]);

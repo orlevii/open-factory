@@ -218,7 +218,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());
-  const scheduleStore = new ScheduleStore({ db: deps.db });
+  const scheduleStore = new ScheduleStore();
   const scheduler: Scheduler = new Scheduler({
     db: deps.db,
     store,

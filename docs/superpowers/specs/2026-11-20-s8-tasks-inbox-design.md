@@ -1,7 +1,7 @@
 # S8 Tasks and inbox: Technical Design
 
 - **Date:** 2026-11-20
-- **Status:** approved by owner-proxy (owner-s8); pending the spec self-review and the impeccable UI review; pending Or's review of the low-certainty items (§22)
+- **Status:** approved by owner-proxy (owner-s8), revised after the spec self-review and the impeccable UI review (round 1); pending Or's review of the low-certainty items (§22)
 - **Roadmap spec:** `docs/product/roadmap/v0.1/s08-tasks-inbox.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-20-s8-tasks-inbox-ui-design.md`](../designs/2026-11-20-s8-tasks-inbox-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/task.md`, `message.md`, `user.md`, `agent.md`, `reporting-line.md`; `docs/product/behavior/tasks.md`, `inbox.md`, `agents-and-sessions.md`; `docs/product/architecture/factory-mcp.md`, `data-model.md`, `context-assembly.md`, `usage-tracking.md`; ADRs 0002, 0004, 0012, 0015, 0019; `docs/product/open-questions.md` (S0 and S4–S7 findings).
@@ -86,28 +86,31 @@ tasks              id text pk, number integer not null unique default nextval('t
                    index (status, updated_at desc, id), (assignee_agent_id, status), (created_by_agent_id), (created_by_user_id)
 task_dependencies  task_id → tasks(id), depends_on_task_id → tasks(id), pk (task_id, depends_on_task_id),
                    CHECK (task_id <> depends_on_task_id), index (depends_on_task_id)
-task_links         id, task_id → tasks(id), position integer not null,
-                   kind text CHECK (kind IN ('url','pr','file','agent')), target text null, agent_id text null → agents(id),
+task_links         id, task_id not null → tasks(id), position integer not null,
+                   kind text not null CHECK (kind IN ('url','pr','file','agent')), target text null, agent_id text null → agents(id),
                    title text null, CHECK ((kind = 'agent') = (agent_id IS NOT NULL AND target IS NULL)),
                    CHECK (kind = 'agent' OR target IS NOT NULL), index (task_id, position)
-task_comments      id, task_id → tasks(id), author_agent_id null → agents(id), author_user_id null → users(id),
-                   CHECK (num_nonnulls(author_agent_id, author_user_id) = 1), body text not null, created_at,
-                   index (task_id, created_at, id)
-task_events        id, task_id → tasks(id), actor_agent_id null → agents(id), actor_user_id null → users(id),
+task_comments      id, task_id not null → tasks(id), author_agent_id null → agents(id), author_user_id null → users(id),
+                   CHECK (num_nonnulls(author_agent_id, author_user_id) = 1), body text not null, created_at not null,
+                   unique (task_id, id) (the target of messages' composite FK), index (task_id, created_at, id)
+task_events        id, task_id not null → tasks(id), actor_agent_id null → agents(id), actor_user_id null → users(id),
                    CHECK (num_nonnulls(actor_agent_id, actor_user_id) = 1),
-                   type text CHECK (type IN ('created','status','assignee','title','body','depends_on','links')),
-                   from_value jsonb null, to_value jsonb null, at, index (task_id, at, id)
-messages           + task_id text null → tasks(id), + comment_id text null → task_comments(id)
+                   type text not null CHECK (type IN ('created','status','assignee','title','body','depends_on','links')),
+                   from_value jsonb null, to_value jsonb null, at not null, index (task_id, at, id)
+messages           + task_id text null → tasks(id), + comment_id text null,
+                   FOREIGN KEY (task_id, comment_id) → task_comments(task_id, id) (MATCH SIMPLE: checked only when both
+                   are set, so a message's comment always belongs to its task)
                    kind ∈ … | task_assigned | task_comment | task_update; sender CHECK gains:
                      OR (kind = 'task_assigned' AND from_user_id IS NULL AND from_agent_id IS NULL AND notice IS NULL
                          AND subject_agent_id IS NULL AND task_id IS NOT NULL AND comment_id IS NULL AND to_agent_id IS NOT NULL)
                      OR (kind = 'task_comment'  AND num_nonnulls(from_user_id, from_agent_id) = 1 AND notice IS NULL
                          AND subject_agent_id IS NULL AND task_id IS NOT NULL AND comment_id IS NOT NULL)
-                     OR (kind = 'task_update'   AND from_user_id IS NULL AND from_agent_id IS NULL AND notice IS NOT NULL
-                         AND subject_agent_id IS NULL AND task_id IS NOT NULL AND comment_id IS NULL)
+                     OR (kind = 'task_update'   AND from_user_id IS NULL AND from_agent_id IS NULL
+                         AND notice IN ('done','cancelled','unblocked','unassigned','status_changed','edited')
+                         AND subject_agent_id IS NULL AND task_id IS NOT NULL AND comment_id IS NULL AND to_all_humans = false)
                    and every pre-S8 kind gains `task_id IS NULL AND comment_id IS NULL`.
                    + index (task_id) where task_id is not null (S10's per-task join)
-inbox_items        kind CHECK (kind IN ('message','mention','task_event'))
+inbox_items        kind CHECK (kind IN ('message','mention','task_event')); + index (user_id) where read_at is null (unread count)
 ```
 
 - **Keys.** `key = 'T-' || number`; a sequence, so a rolled-back create leaves a gap (accepted). `parseTaskKey` accepts `T-42`, `t-42` and `42` and nothing else ("No task T-42." for an unknown one).
@@ -122,12 +125,13 @@ inbox_items        kind CHECK (kind IN ('message','mention','task_event'))
 
 | Field | Rule |
 |---|---|
-| `title` | trimmed, 1–200 characters, one line (no line breaks) |
+| `title` | trimmed, 1–200 characters, one line (no line breaks); plain text everywhere, never markdown |
 | `body` | markdown, up to 64 KB UTF-8 (S6's body rule; may be empty) |
 | `status` | `open` \| `in_progress` \| `done` \| `cancelled` |
-| `assignee` | resolved through S6's one namespace (`@` optional): must be a **live** agent. A user: "Tasks can only be assigned to agents; @or is a human." Archived/terminated: S6/S7's sentences ("@x was terminated and can't be assigned tasks."). Unknown/ambiguous/reserved: S6's sentences. `null` (update only) unassigns. |
-| `depends_on` | up to 50 existing task keys, not the task itself, no duplicates (deduped silently), no cycle (§6.4) |
-| `links` | up to 50 `{kind, target, title?}`: `url` and `pr` must parse as `http:`/`https:` URLs (anything else: "Links must be http(s) URLs."); `agent` must name an existing agent (live or ended), stored by id; `file` is free text, 1–500 characters, one line. `title` optional, 1–200 characters, one line. |
+| `assignee` | resolved through S6's one namespace (`@` optional): must be a **live** agent; `"me"` is the calling agent (MCP only). A user: "Tasks can only be assigned to agents; @or is a human." Archived/terminated: "@x was archived and can't be assigned tasks." / "@x was terminated and can't be assigned tasks." Unknown/ambiguous/reserved: S6's sentences. `null` (update only) unassigns. |
+| `depends_on` | up to 50 existing task keys ("A task can depend on at most 50 tasks."), not the task itself ("A task can't depend on itself."), no duplicates (deduped silently), no cycle (§6.4) |
+| `links` | up to 50 `{kind, target, title?}`: `url` and `pr` must parse as `http:`/`https:` URLs of at most 2,000 characters (anything else: "Links must be http(s) URLs."); `agent` must name an existing agent (live or ended), stored by id; `file` is free text, 1–500 characters, one line. `title` optional, 1–200 characters, one line, plain text. |
+| comment body | as `body`, non-empty; at most 50 distinct mentions are resolved, the rest are `not_reached` with reason `too_many` |
 
 `update_task`/`PATCH` replace `depends_on` and `links` as whole lists (decision Q9); a field left out is unchanged; a field equal to its current value is not a change (no history row, no message).
 
@@ -139,7 +143,7 @@ inbox_items        kind CHECK (kind IN ('message','mention','task_event'))
 
 ### 6.3 Who may change a task (decision Q3)
 
-`canChange(actor, task)`, in `permission.ts`, called by `TaskService` for every change (REST and MCP both go through it; nothing else decides):
+`canChange(actor, task)`, in `permission.ts`, called by `TaskService` for every change, **on the task as re-read under its lock** (§13.1 step 4; REST and MCP both go through it; nothing else decides):
 - a **human**: always (all users are equal admins);
 - an **agent**: when it is the task's creator, its current assignee, or a manager above either in the reporting line (the transitive `reports_to` chain, read in the transaction with a recursive query; a spawner is its children's manager since `reports_to` is the spawner, S7).
 
@@ -147,7 +151,7 @@ Anyone may **read** and **comment** on any task, and any agent may **create** a 
 
 ### 6.4 Dependencies and cycles
 
-A change to `depends_on` (create or update) runs in the task transaction after `pg_advisory_xact_lock(<fixed key>)` (§13): with the lock held, a recursive query from each new dependency over `task_dependencies` checks whether it reaches the task. A hit refuses the whole change: "T-41 already depends on T-42 (through T-43); that would make a cycle." (the shortest path found, at most 5 keys shown). One global lock is enough: dependency edits are rare, and two concurrent edits that each pass the check could otherwise form a cycle together.
+A change to `depends_on` (create or update) runs in the task transaction after `pg_advisory_xact_lock(<fixed key>)` (§13): with the lock held, a recursive query (`UNION`, not `UNION ALL`, so it terminates on any graph) from each new dependency over `task_dependencies` checks whether it reaches the task. A hit refuses the whole change: "T-41 already depends on T-42 (through T-43); that would make a cycle." (the shortest path found, at most 5 keys shown). One global lock is enough: dependency edits are rare, and two concurrent edits that each pass the check could otherwise form a cycle together.
 
 ### 6.5 History (decision Q10)
 
@@ -168,7 +172,7 @@ S8 writes no `turns.task_id`. Every task message carries `task_id`, and S3's `me
 `Notifier.plan({actor, before, after, comment?, mentions?, unblocked})` returns the rows. Rules applied to every action:
 - **Never to the actor** (nobody is told about their own action).
 - **Never to an ended agent** (archived or terminated, the S7 live predicate, read in the transaction); a recipient skipped this way is reported in the tool result's `not_reached` where the tool has one.
-- **At most one row per recipient per action** (an update that changes status, body and assignee sends the assignee one message listing all of it).
+- **At most one row per recipient per task per action** (an update that changes status, body and assignee sends the assignee one message listing all of it; marking T-1 done can send one agent a `done` about T-1 and an `unblocked` about T-2, two rows, each with its own `task_id` and `task="…"`).
 
 | Event | Recipient | Kind, notice |
 |---|---|---|
@@ -180,9 +184,9 @@ S8 writes no `turns.task_id`. Every task message carries `task_id`, and S3's `me
 | A comment | the assignee (unless the author) and every live agent mentioned in it (§8), deduped, never the author | `task_comment` from the author |
 | A comment mentioning humans | each mentioned user (or every user for `@humans`), never the author | `task_comment` from the author, to the user (or `to_all_humans`), inbox kind `mention` |
 
-When one recipient qualifies for several rows in one action, it gets one: `task_assigned` wins over everything (the new assignee reads the current task), then the precedence `unassigned`, `done`, `cancelled`, `unblocked`, `status_changed`, `edited` decides the row's `notice`, and its body lists every change that concerns that recipient. Humans get nothing except their done/cancelled as creator and their mentions (humans can't be assignees).
+When one recipient qualifies for several rows about the same task in one action, it gets one: `task_assigned` wins over everything (the new assignee reads the current task), then the precedence `unassigned`, `done`, `cancelled`, `unblocked`, `status_changed`, `edited` decides the row's `notice`, and its body lists every change that concerns that recipient. Humans get nothing except their done/cancelled as creator and their mentions (humans can't be assignees).
 
-**Unblocked detection** happens in the transaction, under the lock of each affected dependent (§13), so two dependencies finishing at the same time can't both see the other still open and lose the notification: the second transaction waits on the dependent's row and then reads the first one's committed status.
+**Unblocked detection** happens in the transaction, under the lock of each affected dependent (§13), so two dependencies finishing at the same time can't both see the other still open and lose the notification: the second transaction waits on the dependent's row and then reads the first one's committed status. A dependency edge added at the moment its dependency finishes can't lose one either: in every committed order the dependent is never blocked by that edge.
 
 ### 7.2 Codes
 
@@ -203,8 +207,8 @@ The task, written by @lead:
 </factory-message>
 ```
 
-- Agents as `@slug`, humans as `@handle` (S6 R6). The title and link titles are inlined with S7's one-line sanitising (angle brackets stripped, double quotes replaced by single ones) inside double quotes; file names likewise in backticks.
-- The body is quoted with every line prefixed `> ` (S6's `quoteReported` pattern) under the 64 KB message cap instead of S6's 2,000-character cap: a body over 60,000 characters is cut with "[truncated; call get_task for the rest]". An empty body says "The task has no description."
+- Agents as `@slug`, humans as `@handle` (S6 R6). The title, link titles and file names are inlined with S7's one-line sanitising (angle brackets stripped, double quotes replaced by single ones) inside double quotes (no code spans: a backtick in a name would break one).
+- The body is quoted with every line prefixed `> ` (S6's `quoteReported` pattern). The **rendered envelope body** is capped at 64 KB of UTF-8 (S6's `capText`-style byte cap, since quoting can double a body of short lines): the quoted part is cut at a line boundary to fit, with "[truncated; call get_task for the rest]". An empty body says "The task has no description."
 - Lines left out when empty (no dependencies, no links).
 - `task_update` bodies, one line per change, then the quoted body for `edited`: "@dev marked T-42 done." · "@or cancelled T-42." · "T-42 is no longer blocked: T-41 is done." (or "…T-41 was cancelled." / "…T-41 was removed from its dependencies.") · "@lead reassigned T-42 to @dev; it's no longer yours." · "@lead unassigned T-42; it's no longer yours." · "@or moved T-42 to in progress." · "@or edited T-42's description:" + quote · "@or renamed T-42 to "…"." The task title follows the key in the first line when the line names the task ("T-42 "Plan the billing migration"").
 - Every body passes through `groupEnvelopes`' escaping like every envelope body, so no text can close the envelope or forge one.
@@ -212,18 +216,27 @@ The task, written by @lead:
 ### 7.4 Delivery (decision Q8)
 
 - Task rows are **direct messages**: S6's `queue`, not the held list. They wake a hibernated agent, go through the cap, FIFO and the image pull, wait out rate-limit pauses (S5 §7.2), are written mid-turn like any message, and are never urgent. Batch order: notices, then direct messages and task messages together in created order, then update groups, then peer events (`envelope.ts` `ORDER`: the three kinds join `message` at 1).
-- **Recovery follows the truthful sender.** A `task_comment` written by a human is a human message: it is handed over as `deliver(row, "human")`, wakes with S5's `message` reason (in `ERRORED_WAKES`) and starts an errored agent's recovery attempt exactly like a message typed in the session. `task_assigned` and `task_update` (from `@factory`) and an agent's `task_comment` wake with a new reason **`task`**, not in `ERRORED_WAKES`: to an errored agent they stay pending and never start an attempt (S6's rule for agent messages). Results say so with S6's note: "@dev is errored; it will see this when a human restarts it."
-- Rows are committed in the task transaction and handed over after the commit through `Router.handOffTaskRows(rows)` (after `bootDone`, unless shutdown has begun, never awaited, the REST routes included: the change succeeded, and a start failure shows on the agent, not on the task form). Human-addressed rows are written `delivered` with their inbox items by the store's `createHumanMessage` in the same transaction, then one `inbox_changed` frame (§11.4).
-- Runtime changes (each with a test): `entryOf` renders `task_assigned`/`task_update` as `@factory` (no sender columns) and `task_comment` from its author; `BatchRow` and `FactoryMessage` carry `taskKey` (the envelope already renders `task="…"` from it); `pendingQueue` and `pendingRow` join `tasks.number`; `EventStore.bootWakes` counts the three kinds as deliverable (today `kind in ('message','system')`); the queue frame's item for a pending task row is `kind: "message"` with `taskKey`; `message_in.messages[]` gains `taskKey`, `taskTitle` (at delivery, for the badge), `commentId` and `fact` (the notice) for the UI, which never parses prose.
-- **Ended recipients** are skipped at write time (§7.1); a row racing a termination is rejected by S7's machinery (the termination transaction rejects pending rows, and a committed latch rejects later hand-offs).
+- **Recovery follows the truthful sender.** A `task_comment` written by a human is a human message: it is handed over as `deliver(row, "human")`, wakes with S5's `message` reason (in `ERRORED_WAKES`) and starts an errored agent's recovery attempt exactly like a message typed in the session. `task_assigned` and `task_update` (from `@factory`) and an agent's `task_comment` wake with a new reason **`task_message`**, not in `ERRORED_WAKES`: to an errored agent they stay pending and never start an attempt (S6's rule for agent messages). (Named `task_message`, not `task`, to stay clear of Claude Code's background tasks and `waitingOn.tasks`.) Results say so with a note: "@dev is errored; it will see this when a human restarts it." (S6's router sentence, with "your message will be delivered" replaced by "it will see this", since the row isn't the caller's message.) "Start a new session" (a human action, S5) still starts an attempt when only task rows are queued: its `humans` check counts every queued message row; that is accepted (the human asked for a new session).
+- Rows are committed in the task transaction and handed over after the commit through `Router.handOffTaskRows(rows)` (after `bootDone`, unless shutdown has begun, never awaited, the REST routes included: the change succeeded, and a start failure shows on the agent, not on the task form). **Every hand-off is `.catch`ed and logged**: `runtimes.deliver` can reject (`AgentStartError`, `AgentArchivedError` on the human path), and the server has no `unhandledRejection` handler, so an uncaught rejection would end the process; the row stays pending and is delivered at the next wake or boot. Human-addressed rows are written `delivered` with their inbox items by the store's `createHumanMessage` in the same transaction, then one `inbox_changed` frame (§11.4). Errored notes for results are computed **after** the commit (as `Router.send` does), never inside the transaction: the task transaction never awaits a runtime call (§13.2).
+- **Runtime, store and schema changes** (each with a test; the list the plan works from):
+  - `runtimes.ts` `senderLabel` renders a row without sender columns as `@factory` (today it throws "has no sender", which would reject every `task_assigned`/`task_update` hand-off); `entryOf` already maps sender-less non-`message` rows to `@factory` and a `task_comment` from its author.
+  - `toBatchRow` copies `taskKey`, `taskTitle`, `commentId`, and `fact` from a `task_update`'s notice (today `fact` only for factory `member_update`s); `BatchRow`, `FactoryMessage` and `envelopeSchema` gain `taskTitle` and `commentId`; `envelope.ts` `single()` and `merge()` copy `taskKey` (today `single()` drops it, so `task="…"` would never render).
+  - `joined()` (hence `pendingQueue`, `pendingRow`) joins `tasks.number` and `tasks.title`.
+  - `EventStore.bootWakes` counts the three kinds as deliverable (today `kind in ('message','system')`).
+  - `queueItemSchema` gains `taskKey`, `taskTitle`, `commentId` (pending blocks show the badge).
+  - `MESSAGE_KINDS` (shared), `MessageLookup.kind`, `WakeReason` and the `process_started.reason` enum (`shared/events.ts`) gain the new values.
+  - `createHumanMessage` accepts `fromUserId` (a human's mention), the task kinds, `taskId`/`commentId`, the inbox item kind and `exceptUserId`, and writes nothing when the author is the only human addressed.
+  - `inboxPage` labels by kind and sender columns, not by `!fromSlug` (today a human-authored mention would show as Factory), and returns §11.3's fields.
+  - Already right, kept by tests: `isNotice`/`isHeld`, the update-only turn check, `hasDeliverable`/`statusOf`, the queue `itemOf`, `rejectPending`, `rejectPendingToTerminated`, `deletePendingNotices`, and the web `rows.ts`/`queue-items.tsx`.
+- **Ended recipients:** every agent the action writes a row to is locked `FOR SHARE` and re-checked live in the transaction (§13.1), so no task row is ever written to an agent that is archived or terminated at commit time (AC 6). A termination or archive that starts after our commit handles the row as it handles any pending message: S7's transaction rejects it, and S6's hand-off marks it rejected for an archived recipient.
 
 ## 8. Mentions (decision Q12)
 
 - **Only in comments.** Task titles and bodies never notify (a body is a brief, and re-notifying on every edit would be noise).
-- **Parsing:** `extractMentions(markdown)` parses with `mdast-util-from-markdown` and the GFM extension (`micromark-extension-gfm`, `mdast-util-gfm`), the same micromark parser `react-markdown` + `remark-gfm` use in the UI, and walks the AST's **text nodes only**: `inlineCode` and `code` (fenced or indented) nodes are skipped, and so are link URLs and autolinks' targets (a link's visible text is a text node and counts). Inside a text node, a mention is `@` followed by a name in the slug/handle character set (`[a-z0-9][a-z0-9-]*`, trailing hyphens dropped since neither `HANDLE_PATTERN` nor `SLUG_PATTERN` allows one), where the `@` is at the start of the node or follows a character that is not a word character, `/`, `.` or `@` (so `x@or.io`, `path/@or` and `@@or` don't match), and the name doesn't continue with a word character. Case: names are lowercase; `@Or` is not a mention. Deduped, in order of first appearance.
-- The three packages become direct dependencies of `packages/shared`, pinned to the exact versions already resolved in the lockfile for `react-markdown`/`remark-gfm` (a new direct runtime dependency for the server; `minimumReleaseAge` and every other supply-chain setting stay as they are; the PR says so).
+- **Parsing:** `extractMentions(markdown)` parses with `mdast-util-from-markdown` and the GFM extension (`micromark-extension-gfm`, `mdast-util-gfm`), the same micromark parser `react-markdown` + `remark-gfm` use in the UI, and walks the AST's **text nodes only**: `inlineCode` and `code` (fenced or indented) nodes are skipped, and so is the text of any `link` whose text is its own URL (GFM autolinks, `<https://…>` and bare URLs such as `https://x.io/?q=@or`: verified to parse as links whose single text child equals the URL); a link with its own visible text keeps that text. A `@` escaped in the source (`\@or`: the escape disappears from the AST, so the check reads the source character before the node offset) is not a mention. Inside a text node, a mention is `@` followed by a name in the slug/handle character set (`[a-z0-9][a-z0-9-]*`, trailing hyphens dropped since neither `HANDLE_PATTERN` nor `SLUG_PATTERN` allows one), where the `@` is at the start of the node or follows a character that is not a letter, digit or `_` (Unicode: `\p{L}\p{N}_`), `/`, `.` or `@` (so `x@or.io`, `path/@or` and `@@or` don't match), and the name isn't followed by a letter, digit or `_` (so `@oré` is not `@or`). Case: names are lowercase; `@Or` is not a mention. Deduped, in order of first appearance.
+- The three packages (`mdast-util-from-markdown` 2.1.0, `micromark-extension-gfm` 3.0.0, `mdast-util-gfm` 3.1.0: exactly the versions `react-markdown` 10 / `remark-gfm` 4.0.1 already resolve in the lockfile) become direct dependencies of `packages/shared`, pinned exactly. It is a new direct runtime dependency of the server, and the PR says so; no supply-chain setting is loosened (none is added either: the repo sets no `minimumReleaseAge` today). `extractMentions` is exported from a subpath, `@open-factory/shared/mentions`, not the barrel, so the CLI (which imports the barrel) doesn't bundle micromark.
 - **Resolution** through S6's `resolveName` in the transaction: `humans` → every user existing now; a user → that user; a live agent → a `task_comment` to it (§7.1); the author, reserved names, unknown, ambiguous and ended names → not reached. A user mentioned alongside `@humans` gets one item (one `to_all_humans` row; individual rows only without `@humans`), and the author never gets an item for their own comment (`createHumanMessage` gains `exceptUserId`).
-- `comment_task`'s result says who it reached (§9): `delivered_to` (agent slugs, the assignee included), `mentioned_humans` (`@handle`s, or `["@humans"]`), `not_reached: [{name, reason: "unknown" | "ambiguous" | "archived" | "terminated" | "reserved"}]`. The REST response carries the same.
+- `comment_task`'s result says who it reached (§9): `delivered_to` (agent slugs, the assignee included), `mentioned_humans` (`@handle`s, or `["@humans"]`), `not_reached: [{name, reason: "unknown" | "ambiguous" | "archived" | "terminated" | "reserved" | "too_many"}]` (the assignee appears there too when it has ended). The REST response carries the same.
 - The UI shows comment text exactly as written; mentions are not restyled in S8.
 
 ## 9. The MCP tools (decisions Q22, Q24)
@@ -234,15 +247,15 @@ All five are registered for **every** agent (persistent and spawned) by S7's per
 |---|---|---|
 | `create_task` | `title`, `body?`, `assignee?`, `depends_on?: string[]`, `links?: Link[]` | `{key, status, assignee?, blocked_by, note?}` |
 | `update_task` | `id`, `title?`, `body?`, `status?`, `assignee?: string \| null`, `depends_on?`, `links?` | `{key, status, assignee?, blocked_by, changed: string[], note?}` (`changed: []` for a no-op) |
-| `list_tasks` | `status?: Status[]` (default `["open","in_progress"]`), `assignee?: slug \| "me" \| "none"`, `created_by?: slug \| "@handle" \| "me"`, `limit?` (default 50, max 200) | `{tasks: [{key, title, status, assignee?, assignee_ended?, blocked_by, created_by, updated_at}], more: boolean}`, newest updated first; when cut, `more: true` and a `note`: "Showing the 50 most recently updated; pass a larger limit (max 200) or narrow the filter." |
-| `get_task` | `id`, `comments_before?: string` (a comment id) | `{key, title, body, status, assignee?, assignee_ended?, created_by, created_at, updated_at, blocked_by, depends_on: [{key, title, status}], blocks: [{key, title, status, assignee?}], links: [{kind, target \| agent, title?, ended?}], comments: [{id, author, body, created_at}], earlier_comments: number, note?}`: the newest 50 comments (before `comments_before` when given), oldest first; when `earlier_comments > 0`, `note`: "N earlier comments; call get_task with comments_before=<first id> for them." No history (the agent sees changes as messages). |
+| `list_tasks` | `status?: Status[]` (default `["open","in_progress"]`), `assignee?: slug \| "me"`, `unassigned?: true` (instead of `assignee`; `none` would be a valid slug), `created_by?: slug \| "@handle" \| "me"`, `limit?` (default 50, max 200) | `{tasks: [{key, title, status, assignee?, assignee_ended?: "archived" \| "terminated", blocked_by, created_by, updated_at}], more: boolean}`, newest updated first; when cut, `more: true` and a `note`: "Showing the 50 most recently updated; pass a larger limit (max 200) or narrow the filter." |
+| `get_task` | `id`, `comments_before?: string` (a comment id) | `{key, title, body, status, assignee?, assignee_ended?: "archived" \| "terminated", created_by, created_at, updated_at, blocked_by, depends_on: [{key, title, status}], blocks: [{key, title, status, assignee?}], links: [{kind, target \| agent, title?, ended?: "archived" \| "terminated"}], comments: [{id, author, body, created_at}], earlier_comments: number, note?}`: the newest 50 comments (before `comments_before` when given), oldest first; when `earlier_comments > 0`, `note`: "N earlier comments; call get_task with comments_before=<first id> for them." No history (the agent sees changes as messages). |
 | `comment_task` | `id`, `body` | `{id, delivered_to, mentioned_humans, not_reached, note?}` |
 
-`note` carries S6-style facts: an errored recipient (§7.4); an assignee that ended (`assignee_ended: true`). `assignee: "me"` in `create_task` assigns the caller (no message). A disallowed change is an error (§6.3), not a partial apply: every input is validated and permission-checked before anything is written.
+`note` carries S6-style facts: an errored recipient (§7.4); an assignee that ended (`assignee_ended`). `assignee: "me"` in `create_task` and `update_task` assigns the caller (no message to itself). A disallowed change is an error (§6.3), not a partial apply: every input is validated and permission-checked before anything is written.
 
 ## 10. Context: the generated CLAUDE.md (decision Q23)
 
-`buildClaudeMd` stays pure and deterministic. "How messages reach you" lists the kinds `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update`, and says a task envelope's `task` names the task. A new `## Tasks` section after Messaging, each rule once with its reason, no example keys:
+`buildClaudeMd` stays pure and deterministic. "How messages reach you" lists the kinds `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update`, says a task envelope's `task` names the task, and its `@factory` parenthetical ("restarts, recoveries, rate limits, changes to your neighborhood") gains "and task changes". A new `## Tasks` section after Messaging, each rule once with its reason, no example keys:
 - Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.
 - When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.
 - Your text output is not a reply to a comment: answer with `comment_task` (or `send_message`), or nobody sees it.
@@ -267,14 +280,14 @@ Fan-out is S6's: one inbox row per user existing when the row is written; users 
 
 ### 11.2 Read state
 
-- An item becomes read when its row is clicked (the client calls `POST /api/inbox/:id/read` before navigating; idempotent, never un-reads); never by scrolling past it or by reaching the target another way.
-- **Mark all read:** `POST /api/inbox/read-all` sets `read_at = <one server timestamp>` on every unread item of the caller and returns `{readAt, count}`. **Undo:** `POST /api/inbox/read-all/undo {readAt}` clears `read_at` on the caller's items whose `read_at` equals exactly that timestamp, so it restores exactly the items the action marked (an item clicked at the same microsecond would be restored too; accepted).
-- `GET /api/inbox/unread-count` → `{count}` for the sidebar.
+- An item becomes read when its row is activated (click, middle-click or keyboard): the client marks it read in its query cache and decrements the count **optimistically**, fires `POST /api/inbox/:id/read` without awaiting it and navigates; a failed call rolls both back. The route is idempotent and never un-reads. Never by scrolling past an item or by reaching its target another way.
+- **Mark all read:** `POST /api/inbox/read-all {upTo}` (`upTo` = the `createdAt` of the newest item the client has loaded) sets `read_at` on every unread item of the caller created at or before `upTo`, so items arriving meanwhile stay unread, and returns `{readAt, count}`. **Undo:** `POST /api/inbox/read-all/undo {readAt}` clears `read_at` on the caller's items whose `read_at` equals exactly that value. Every `read_at` (single and bulk) is written from the store's `stamp()`, which is strictly increasing and stored and returned at full precision, so no two actions share a value and Undo restores exactly the items its action marked.
+- `GET /api/inbox/unread-count` → `{count}` for the sidebar (served by the partial index of §5).
 - Read state is per user (one row per user per item, S6).
 
 ### 11.3 API changes
 
-`GET /api/inbox` items gain `kind`, `read: boolean`, `task?: {key, title}` (the current title), and `from.kind` widens to `agent | human | factory`; `link` becomes a union: `{kind: "session", agentSlug, seq?}` (S6's) or `{kind: "task", key, commentId?}`. `GET /api/messages/:id` widens its `kind` enum. All inbox routes keep `requireUser` (an agent token gets `401`).
+`GET /api/inbox` gains `?unread=true` (Home's panel: `?unread=true&limit=5`); items gain `kind`, `read: boolean`, `task?: {key, title}` (the current title), `fact?: "done" | "cancelled"` (a `task_event`'s notice, so the UI never parses the preview), and `from.kind` widens to `agent | human | factory`; `link` becomes a union: `{kind: "session", agentSlug, seq?}` (S6's) or `{kind: "task", key, commentId?}`. `GET /api/messages/:id` widens its `kind` enum. All inbox routes keep `requireUser` (an agent token gets `401`).
 
 ### 11.4 Frames
 
@@ -283,7 +296,7 @@ Fan-out is S6's: one inbox row per user existing when the row is written; users 
 
 ### 11.5 Browser notifications
 
-Opt-in per browser (UI doc §7): when on and the tab is hidden, each new unread inbox item seen by a refetch shows one `Notification` with plain text only (sender and a 120-character preview, no markup, never a URL taken from agent text), `tag` = the item id so several open tabs collapse into one; clicking it focuses the tab, marks the item read and opens its deep link. Separable: it is the plan's last task, and the first to move to a follow-up if the PR runs large (decision Q17).
+Opt-in per browser (UI doc §10): when on and the tab is hidden, each new unread inbox item seen by a refetch shows one `Notification` with plain text only (sender and a 120-character preview, no markup, never a URL taken from agent text), `tag` = the item id so several open tabs collapse into one; clicking it focuses the tab, marks the item read and opens its deep link. Separable: it is the plan's last task, and the first to move to a follow-up if the PR runs large (decision Q17).
 
 ## 12. Human REST API
 
@@ -291,39 +304,42 @@ All under `requireUser` on the existing server (no new listener or port); bodies
 
 | Route | Does |
 |---|---|
-| `GET /api/tasks?status=&assignee=&creator=&before=&limit=` | Page of tasks, newest updated first (`updated_at desc, id`), cursor like the inbox's; `status` repeatable or `all` (default open and in progress); `assignee` a slug or `none`; `creator` a slug or `@handle`. Each item: key, title, status, assignee (slug, display name, ended), `blockedBy`, creator, updatedAt. |
-| `POST /api/tasks` | Create (`201 {task}`); the human is the creator. |
-| `GET /api/tasks/:key` | Detail: fields, `dependsOn` and `blocks` (key, title, status, blocked), links, and the whole activity (comments and history, oldest first; S8 doesn't page it, accepted in §20). `404 task_not_found`. |
-| `PATCH /api/tasks/:key` | Any subset of title, body, status, assignee (`null` unassigns), dependsOn, links. `409 assignee_ended`, `400` field errors (cycle on `dependsOn`). |
+| `GET /api/tasks?status=&assignee=&unassigned=&creator=&keys=&before=&limit=` | Page of tasks, newest updated first (`updated_at desc, id`), cursor like the inbox's; `status` repeatable or `all` (default open and in progress); `assignee` a slug; `unassigned=true`; `creator` a slug, `@handle` or `me` (the session's user); `keys=T-41,T-44` returns just those (the dependency editor's lookup). Each item: key, title, status, assignee (slug, display name, `ended?: "archived" \| "terminated"`), `blockedBy`, creator, updatedAt. |
+| `POST /api/tasks` | Create (`201 {task, note?}`); the human is the creator. |
+| `GET /api/tasks/:key` | Detail: fields, `dependsOn` and `blocks` (key, title, status, blocked), links (with `ended?` on agent links), and the whole activity (comments and history, oldest first; S8 doesn't page it, accepted in §19). `404 task_not_found`. |
+| `PATCH /api/tasks/:key` | Any subset of title, body, status, assignee (`null` unassigns), dependsOn, links → `{task, note?}`. `409 assignee_ended`, `400` field errors (cycle on `dependsOn`). |
 | `POST /api/tasks/:key/comments` | `201 {comment, deliveredTo, mentionedHumans, notReached}`. |
 | `POST /api/inbox/:id/read`, `POST /api/inbox/read-all`, `POST /api/inbox/read-all/undo`, `GET /api/inbox/unread-count` | §11.2 |
 
-The agents API gains `openTasks: number` on `AgentSummary` (open and in-progress tasks assigned to it) for the strip link.
+The agents API gains `openTasks: number` on `AgentSummary` (open and in-progress tasks assigned to it) for the strip link; the web refetches it on `tasks_changed`.
 
 ## 13. Locking and concurrency (decision Q15)
 
 ### 13.1 The one order
 
-Written once, in the header of `task-store.ts` and here; every transaction that touches tasks follows it:
+Written once, in the header of `task-store.ts` and here; every transaction that changes or comments on a task follows it:
 
-1. **Agent rows**, `FOR SHARE`: the agents this action makes recipients of a new relation (the new assignee; the agents mentioned in a comment and the assignee for a comment), **persistent before spawned, then by id**, which matches S7's spawner-then-child order (S7 §5.7). `FOR SHARE` conflicts with a termination's or archive's `FOR NO KEY UPDATE`, so the two serialize; it doesn't conflict with message inserts' `KEY SHARE`.
+1. **Read without locks** the acted-on task and the dependents whose blocked state the action may change (§7.1), to learn which rows and agents are involved.
 2. The **advisory lock** `pg_advisory_xact_lock(<fixed key>)`, only when `depends_on` changes (§6.4).
-3. **Task rows**, `FOR NO KEY UPDATE`: the acted-on task, then the dependents whose blocked state the action may change, sorted by id (§7.1). Dependencies form a DAG and dependency edits are serialized by step 2, so this order can't cycle.
-4. **Message rows** (inserts; S7's general rule "agent rows before message rows").
+3. **Task rows**, `FOR NO KEY UPDATE`, all of them in **one statement** ordered by id (`WHERE id = ANY($1) ORDER BY id FOR NO KEY UPDATE`). Locking the acted-on task first and its dependents after can deadlock (Y1 depends on X and Y2, Y2 on X: marking X done and marking Y2 done at once; reproduced on Postgres 18 during review), one sorted statement can't. Then re-read the dependents: if new ones appeared meanwhile (an edge added concurrently), lock those too in a second sorted statement; the rare deadlock this can cause is detected by Postgres (`40P01`) and the whole transaction is retried once.
+4. **Re-read** the task under its lock and compute everything from that: `canChange` (§6.3), the recipients (§7.1), the dependents' blocked states.
+5. **Agent rows**, `FOR SHARE`, in one statement: the calling agent (re-checked live: "You can't change tasks: you were terminated.") and **every agent the action writes a row to or assigns** (new assignee, old and current assignee, an agent creator, mentioned agents, dependents' assignees), ordered **persistent before spawned, then by id**, which matches S7's spawner-then-child order (S7 §5.7; spawners are always persistent). Then re-check each is live; an ended one is skipped as a recipient, or refused as an assignee.
+6. **Message rows** (inserts) and inbox items.
 
-Every store, router and resolver call inside takes `tx` (S7 §5.7: a call on its own connection would wait forever on our uncommitted rows). `canChange`'s manager walk and the live checks read in `tx`.
+Every store, router and resolver call inside takes `tx` (S7 §5.7: a call on its own connection would wait forever on our uncommitted rows). `canChange`'s manager walk reads in `tx`. **The transaction never awaits a runtime call** (no `runtimes.load`, `statusOf` or `deliver` inside it): runtime jobs update `agents` rows and a forward from a runtime job waits on agent locks, so a transaction holding locks while awaiting a runtime could stall that runtime's queue.
 
 ### 13.2 Interaction with S6/S7 paths
 
-- S6 `send_message` and the forwarder lock nothing new; task transactions never lock an agent `FOR NO KEY UPDATE`, so no S6/S7 transaction waits on us except a termination or archive of an agent we hold `FOR SHARE`.
-- S7's termination locks the spawner then the child `FOR NO KEY UPDATE`; we lock only the agents in step 1, in the same relative order, so no cycle.
+- Agent locks after task locks are deadlock-free: no S6/S7 transaction ever locks or waits on a task row, so a transaction holding an agent row `FOR NO KEY UPDATE` (a termination, archive, spawn, `syncChildren`, a forward, a runtime's `UPDATE agents`) can make us wait but never waits on us for a task row; it can wait on our `FOR SHARE`, which we hold only until our commit, never across an await of anything it controls.
+- Among agent rows, our single sorted statement follows S7's spawner-before-child order, so it can't cycle with a termination (spawner, then child) or a spawn.
+- `FOR SHARE` conflicts with `FOR NO KEY UPDATE` and with a plain `UPDATE`, not with message inserts' `KEY SHARE`.
 
 ### 13.3 Termination racing an assignment (AC 6)
 
 - The termination commits first: our `FOR SHARE` waits, then reads `terminated_at` and refuses the assignment ("@x was terminated and can't be assigned tasks.").
-- Our transaction commits first: the termination waits on our `FOR SHARE`, then rejects the pending `task_assigned` row in its own transaction (S7 §8 step 2), and the task keeps the (now ended) assignee (decision Q11).
+- Our transaction commits first: the termination waits on our `FOR SHARE`, then (its next statement runs with a fresh snapshot) rejects the pending `task_assigned` row in its own transaction (S7 §8 step 2), and the task keeps the (now ended) assignee (decision Q11).
 
-Both are asserted by one race test with an interleaving barrier (no timeouts).
+Both are asserted by one race test without timeouts and without test hooks in the server: the test opens the termination's transaction itself up to its lock, then starts the assignment and polls `pg_stat_activity` until the assignment's backend shows `wait_event_type = 'Lock'`, then commits (and the reverse order the same way).
 
 ## 14. Lifecycle interactions
 
@@ -331,8 +347,9 @@ Listed explicitly because the S5–S7 reviews found most bugs here.
 
 | Interaction | Rule |
 |---|---|
-| Assignee or creator archived or terminated | Nothing changes on the task (decision Q11); tools return `assignee_ended: true`, the UI marks it and offers reassign; no task message is written to an ended agent; nothing is forwarded or announced. |
-| Unarchive | Nothing retroactive. |
+| Assignee or creator archived or terminated | Nothing changes on the task (decision Q11); tools return `assignee_ended: "archived" \| "terminated"`, the UI marks it and offers reassign; no task message is written to an ended agent (§13.1 step 5); nothing is forwarded or announced. |
+| Unarchive | Nothing retroactive: no rows were written while it was archived. A row committed just before the archive and whose hand-off was skipped by a shutdown stays pending and is delivered after unarchive, exactly as an S6 message in that window is (archive doesn't reject pending rows; accepted, as in S6). |
+| "Start a new session" with only task rows queued | Starts an attempt (S5's reset counts every queued message row as a reason to start); accepted: a human asked for it. |
 | Assignee errored | `task_assigned`/`task_update`/an agent's comment stay pending (no attempt); a human's comment starts the attempt (§7.4); results carry the errored note. |
 | Assignee hibernated or warm | Wakes / delivered like any direct message. |
 | Credential rate-limited | Rows wait like any message (S5 §7.2); the agent's status says rate-limited. |
@@ -352,11 +369,11 @@ Listed explicitly because the S5–S7 reviews found most bugs here.
 
 ## 15. Security
 
-- **Agent text is untrusted.** Titles render as plain text; bodies, comments and link titles render through the one `Markdown` component (GFM, no raw HTML, react-markdown's default URL sanitising, which drops `javascript:`); link `href`s for task links come only from validated `http(s)` targets (agent links point at our own `/agents/<slug>`; file links are not links).
+- **Agent text is untrusted.** Titles and link titles render as plain text; bodies and comments render through the one `Markdown` component (GFM, no raw HTML, react-markdown's default URL sanitising, which drops `javascript:`); link `href`s for task links come only from validated `http(s)` targets (agent links point at our own `/agents/<slug>`; file links are not links).
 - **Envelopes:** every task body passes through `groupEnvelopes`' escaping; author text inside factory text is attributed and quoted (§7.3); the CLAUDE.md rule says it is the author's, weighed by who wrote it.
 - **Permissions:** one `canChange` in `TaskService` (§6.3); the MCP layer and the REST layer only translate. Identity comes from the token or the session, never from input.
 - **Agent tokens never authenticate REST:** `/api/tasks*` and `/api/inbox*` use `requireUser`; a test sends a live, valid agent token to each and gets `401`.
-- **Bounds:** title 200, body and comment 64 KB, 50 dependencies, 50 links, list limit 200, get_task 50 comments per call. No count or rate cap on tasks or comments (decision; accepted risk next to #47).
+- **Bounds:** title 200, body and comment 64 KB, 50 dependencies, 50 links, URLs 2,000 characters, 50 resolved mentions per comment, list limit 200, get_task 50 comments per call. No count or rate cap on tasks or comments (decision; accepted risk next to #47).
 - **Browser notifications** carry plain text and only our own deep link (§11.5).
 
 ## 16. Failures
@@ -375,14 +392,15 @@ Listed explicitly because the S5–S7 reviews found most bugs here.
 No automated test calls a live model. Timing-sensitive tests await real events and drain the runtime job queues (the S6/S7 harness helpers); none raise a timeout.
 
 ### 17.1 Unit
-`parseTaskKey`; the input schemas (every rule of §6.1); `canChange` (creator, assignee, managers above either, transitive, spawner, unrelated agent, human); blocked computation (open/in_progress only, cancelled dependencies); cycle detection (direct, transitive, the path in the sentence); `Notifier.plan` as a table (every row of §7.1, the actor excluded, ended recipients excluded, one row per recipient, precedence, unblocked only when fully unblocked); `taskBodies` (every body, sanitising, quoting, truncation, determinism, a forged `</factory-message>` stays inside); `extractMentions` (start, punctuation, email, path, `@@`, uppercase, inline code, fenced and indented code, link URL vs link text, dedupe, `@humans`); `buildClaudeMd` (Tasks section, kinds line, determinism).
+`parseTaskKey`; the input schemas (every rule of §6.1); `canChange` (creator, assignee, managers above either, transitive, spawner, unrelated agent, human); blocked computation (open/in_progress only, cancelled dependencies); cycle detection (direct, transitive, the path in the sentence); `Notifier.plan` as a table (every row of §7.1, the actor excluded, ended recipients excluded, one row per recipient per task, precedence within a task, a `done` and an `unblocked` to one agent as two rows, unblocked only when fully unblocked); `taskBodies` (every body, sanitising, quoting, the 64 KB byte cap on a body of short lines, determinism, a forged `</factory-message>` stays inside); `extractMentions` (start, punctuation, email, path, `@@`, `\@`, `@oré`, uppercase, trailing hyphen, inline code, fenced and indented code, autolinks and bare URLs vs link text, dedupe, `@humans`, the 50 cap); `buildClaudeMd` (Tasks section, kinds line, determinism).
 
 ### 17.2 Server (fake driver, fake timers, real Postgres)
 - **Tools over HTTP** (real `fetch`, port-0 agent listener, real tokens): every agent lists the five tools (+2 for spawners); each tool acts as the token's agent; an unrelated agent's `update_task` is refused and `comment_task` allowed; results as §9, including `more`, `earlier_comments` with `comments_before`, `not_reached`.
-- **Notifications end to end:** AC 1 (assignment wakes a hibernated agent with `task`; the envelope bytes); AC 3 (done → dependent's assignee `unblocked`, creator `done`; a human creator gets an inbox `task_event`); reassignment (`unassigned` to the old, `task_assigned` to the new); an update changing three fields sends one row; nothing to the actor; a human comment to an errored agent starts an attempt, a factory row and an agent comment don't; urgent never set; batch order with notices, messages, task rows, updates and peer events in one batch.
+- **Hand-off:** a `task_assigned` and a `task_update` row hand off without throwing (`senderLabel` → `@factory`); a hand-off whose `deliver` rejects is logged and the row stays pending (no unhandled rejection).
+- **Notifications end to end:** AC 1 (assignment wakes a hibernated agent with `task_message`; the envelope bytes, `task="T-1"` present); AC 3 (done → dependent's assignee `unblocked`, creator `done`; a human creator gets an inbox `task_event`); reassignment (`unassigned` to the old, `task_assigned` to the new); an update changing three fields sends one row; nothing to the actor; a human comment to an errored agent starts an attempt, a factory row and an agent comment don't; urgent never set; batch order with notices, messages, task rows, updates and peer events in one batch.
 - **Mentions:** AC 2 with the fake driver (mention → inbox item; human comment with the prefilled mention → `task_comment` to the agent); `@humans` fan-out to existing users only and never the author; code excluded; ended and unknown names in `not_reached`.
-- **Ended and lifecycle:** assigning to an archived and to a terminated agent refused; no rows to ended creators, assignees or mentioned agents; **the termination-versus-assignment race** in both orders (§13.3) with a barrier; two dependencies of one task finishing concurrently notify its assignee exactly once; concurrent dependency edits that would form a cycle: one refused; shutdown between commit and hand-off → boot delivers once; boot wakes an agent whose only pending row is a task row; a terminated caller's in-flight request refused.
-- **Inbox:** read on click scoped per user; read-all and its exact undo; unread count; `inbox_changed` to the user's own sockets for read changes and to all for new items; links per kind; paging unchanged.
+- **Ended and lifecycle:** assigning to an archived and to a terminated agent refused; no rows to ended creators, assignees or mentioned agents; **the termination-versus-assignment race** in both orders (§13.3, `pg_stat_activity` lock-wait polling); two dependencies of one task finishing concurrently notify its assignee exactly once; the review's deadlock shape (Y1 depends on X and Y2, Y2 on X; X and Y2 marked done concurrently) completes without `40P01`; a comment racing a reassignment goes to the assignee read under the lock; an assignee's `update_task` racing its reassignment is re-checked under the lock and refused; concurrent dependency edits that would form a cycle: one refused; shutdown between commit and hand-off → boot delivers once; boot wakes an agent whose only pending row is a task row; a terminated caller's in-flight request refused.
+- **Inbox:** read on click scoped per user (another user's item id → 404); read-all up to `upTo` (a newer item stays unread) and its exact undo; `?unread=true`; `fact` on task events; a human-authored mention labelled as that human; unread count; `inbox_changed` to the user's own sockets for read changes and to all for new items; links per kind; paging unchanged.
 - **REST auth:** a live agent token on every `/api/tasks*` and `/api/inbox*` route gets `401`.
 - S3–S7 tests keep passing (the `messages` CHECK rewrite, `bootWakes`, `entryOf`).
 
@@ -395,33 +413,36 @@ The UI doc's states (list filters as URL params, create validation, detail edits
 ### 17.5 Live check (`pnpm smoke:tasks`, not part of `pnpm test`)
 Real `claude` on haiku, the token file read into the environment at run time (never printed), a throwaway database and `FACTORY_HOME`, Docker agents on `open-factory-base:dev`, two seeded users. It drives **only real routes and the real MCP endpoint** (no test hooks, no auth or permission bypass). Steps, each asserted and printed: `system/init` lists the five task tools (+2 for a spawner); a human creates T-1 assigned to hibernated `dev` through `POST /api/tasks`; `dev` wakes with the `task_assigned` envelope (`task="T-1"`), calls `get_task`, and `comment_task` mentioning `@or`; Or's inbox has the mention; Or comments back through REST with `@dev` and `dev` receives it and calls `update_task` to done; Or's inbox gets the `task_event`; T-2 (depending on T-1, assigned to `qa`) makes `qa` receive `unblocked`. **The plan runs its first slice (tool listing, create with assignment, `get_task`, `comment_task` with a mention) as an early task, right after the first tools exist**, and the whole script at the end; the PR records both outputs.
 
+Before that, **plan task 1** checks V1 alone, as S7 did: a probe registration of the five tools with their real Zod schemas and stub handlers on the S6 listener, live on haiku, so the schema shapes are proven before any task code exists.
+
 ## 18. To verify first
 
 | # | Claim | How | If wrong |
 |---|---|---|---|
-| V1 | Claude lists and calls five more factory tools from the per-caller server and handles their array/object inputs (`depends_on`, `links`) and nullable `assignee`. | The early slice of the live check | Flatten the inputs (comma-separated keys; links as strings) |
+| V1 | Claude lists and calls five more factory tools from the per-caller server and handles their array/object inputs (`depends_on`, `links`) and nullable `assignee`. | Plan task 1: a probe with the real schemas and stub handlers, live on haiku | Flatten the inputs (comma-separated keys; links as strings) |
 | V2 | A haiku agent reading a `task_assigned` envelope acts on the quoted brief and replies with `comment_task`, not plain text. | The early slice | Sharpen the CLAUDE.md Tasks section; never script phrasings |
-| V3 | The extended `messages` CHECK (task kinds, `task_id`/`comment_id` null for old kinds) accepts every existing row shape and rejects the wrong ones. | A migration test on Postgres 18 with rows of every S3–S7 kind | Fix the CHECK before anything else |
-| V4 | `mdast-util-from-markdown` + GFM classify inline code, fences and autolinks the way the UI renders them. | Unit tests comparing with `react-markdown`'s output on the same fixtures | Keep the server and web on one shared parse function |
+| V3 | The extended `messages` CHECK (task kinds, `task_id`/`comment_id` null for old kinds) accepts every existing row shape and rejects the wrong ones. **Verified during the spec review** on Postgres 18 (every S3–S7 shape and the three new ones accepted, 12 bad shapes rejected); the migration test keeps it. | A migration test on Postgres 18 with rows of every S3–S7 kind | — |
+| V4 | `mdast-util-from-markdown` + GFM classify inline code, fences and autolinks the way the UI renders them. **Verified during the spec review** with the lockfile's versions (autolinks and bare URLs parse as links whose text equals the URL, hence §8's rule). | Unit tests on the same fixtures | — |
+| V5 | The dependents lock order of §13.1 can't deadlock in the reviewed shape. The earlier "acted-on, then dependents" order **deadlocked** on Postgres 18 during review. | The server test of §17.2 | — |
 
 ## 19. Accepted risks and non-goals
 
 - **Ping-pong through comments:** two agents can comment on each other's tasks indefinitely, like messages (#47 stays open, with a note). No task or comment cap in v0.1 (ADR 0019; usage is visible per agent; per-call bounds exist).
 - **`@humans` spam:** an agent can mention `@humans` in every comment, as it can `send_message` them (same fan-out, #47 note).
 - **Activity unpaged** on the task detail page (tasks are expected to hold tens of comments); revisit only if measured slow (like #22).
-- **Mark-all-read undo** restores an item clicked in the same microsecond too.
 - **Lost lists under concurrent edits:** replacing `depends_on`/`links` is last write wins; history shows both writes.
 - **Non-goals:** see §3 Out.
 
 ## 20. Product doc wording (for the lead; not edited here)
 
 - `concepts/message.md` → Kinds: `task_assigned` is from `@factory` with `task=`, its body the task with its body quoted as written by its author; `task_comment` is from its author (to the assignee, mentioned agents, or humans via the inbox); new `task_update` from `@factory` with codes `done`, `cancelled`, `unblocked`, `unassigned`, `status_changed`, `edited`; nobody is notified of their own action; a human's comment starts an errored agent's recovery, factory task facts and agents' comments don't; task messages are direct messages, never held.
-- `concepts/task.md`: blocked is advisory and cancelled dependencies don't block; any status can move to any other; who may change a task (creator, assignee, managers above either; anyone comments); comments go to the assignee and mentioned agents; reassignment and edits by others notify the assignee (edits carry the new body); tasks are never deleted and comments never edited; nothing changes when an assignee ends.
+- `concepts/task.md`: the title is one plain-text line (only the body and comments are markdown); blocked is advisory and cancelled dependencies don't block; any status can move to any other; who may change a task (creator, assignee, managers above either; anyone comments); comments go to the assignee and mentioned agents; reassignment and edits by others notify the assignee (edits carry the new body); tasks are never deleted and comments never edited; nothing changes when an assignee ends.
 - `behavior/tasks.md`: drop the project filter; filters are status, assignee, creator; history includes title, body, dependency and link changes; the composer's mention prefill and Reply.
 - `behavior/inbox.md`: item kinds; read on click; mark all read with undo; unread count; browser notifications opt-in per browser, only while the tab is hidden.
 - `architecture/factory-mcp.md`: `update_task(id, title?, body?, status?, assignee?, depends_on?, links?)` replaces lists; `get_task(id, comments_before?)`; `list_tasks` filters and `more`; `comment_task` returns who it reached; all five tools for every agent.
 - `architecture/data-model.md`: `tasks.number` (sequence) instead of a `key` column; `task_events`; `task_links.agent_id`; `messages.task_id`, `comment_id`; `inbox_items.kind` values; `turns.task_id` not written in S8 (S10 decides).
-- `architecture/context-assembly.md` → Protocol: the Tasks section.
+- `architecture/context-assembly.md` → Protocol: the Tasks section; `@factory` notes include task changes.
+- `DESIGN.md` (repo, the lead's): Colors → Semantic gains "Task status: Done uses `success`, the Blocked marker uses `warning`; both always with a label."
 - `roadmap/v0.1/s08-tasks-inbox.md`: "link the task to its turns" is met by `messages.task_id` + `delivered_turn_id`.
 
 ## 21. Issues consumed and follow-ups

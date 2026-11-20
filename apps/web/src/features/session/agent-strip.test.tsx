@@ -254,9 +254,14 @@ test("strip: the usage segment shows the figure and spells it out in its aria-la
   expect(link).toHaveClass("max-md:hidden");
 });
 
-test("strip: no turns, or no data yet, reads just Usage", () => {
+test("strip: no turns reads Usage and says so in its aria-label; no data yet is just Usage", () => {
+  const noTurns = "Usage: no turns in the last 7 days";
   render(<AgentStrip agent={agentSummary({ slug: "lead" })} usage={usageRow(0, 0)} />);
-  expect(screen.getByRole("link", { name: "Usage" })).toHaveTextContent(/^Usage$/);
+  expect(screen.getByRole("link", { name: noTurns })).toHaveTextContent(/^Usage$/);
+  cleanup();
+  // Loaded, but the agent has no row: no turns either.
+  render(<AgentStrip agent={agentSummary({ slug: "lead" })} usage={null} />);
+  expect(screen.getByRole("link", { name: noTurns })).toHaveTextContent(/^Usage$/);
   cleanup();
   render(<AgentStrip agent={agentSummary({ slug: "lead" })} />);
   expect(screen.getByRole("link", { name: "Usage" })).toBeInTheDocument();

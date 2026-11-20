@@ -46,6 +46,11 @@ test("days are parsed and shown without a zone shift", () => {
   expect(formatDayShort("2026-11-20")).toBe(`${wd} 20 Nov`);
 });
 
+test("every month is three letters (en-GB ICU writes September as Sept)", () => {
+  expect(formatDayShort("2026-09-11")).toMatch(/^\w{3} 11 Sep$/);
+  expect(formatDayShort("2026-06-01")).toMatch(/^\w{3} 1 Jun$/);
+});
+
 test("niceMax rounds up to 1/2/5 x 10^n", () => {
   expect(niceMax(3.21)).toBe(5);
   expect(niceMax(12)).toBe(20);

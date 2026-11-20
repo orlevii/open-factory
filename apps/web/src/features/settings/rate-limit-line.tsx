@@ -4,6 +4,10 @@ import { resetPhrase } from "@/features/session/status-badge";
 import { RATE_LIMIT_WINDOW } from "@/features/usage/format";
 import { ago, smallClass } from "./shared";
 
+/** Rate-limit lines go stale on their own (a pause ends, a reading ages) and no frame says so: views
+ *  that show them refetch on this interval while mounted. */
+export const RATE_LIMIT_REFETCH_MS = 60_000;
+
 export type RateLimitInput = {
   rateLimit: RateLimitState | null;
   pausedUntil?: string;

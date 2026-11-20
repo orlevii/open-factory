@@ -43,7 +43,7 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
-import { RateLimitLine } from "./rate-limit-line";
+import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
@@ -372,7 +372,7 @@ function VerificationState({ c }: { c: CredentialSummary }) {
 
 export function CredentialsSection() {
   const qc = useQueryClient();
-  const query = useQuery(credentialsQueryOptions);
+  const query = useQuery({ ...credentialsQueryOptions, refetchInterval: RATE_LIMIT_REFETCH_MS });
   const { data } = query;
   const focusLater = useFocusLater();
   const [adding, setAdding] = useState(false);

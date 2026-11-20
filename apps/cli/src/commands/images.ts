@@ -10,7 +10,7 @@ import { guardedFetch } from "../client.ts";
 import type { Io } from "../commands.ts";
 import { readConfig, resolveTarget } from "../config-store.ts";
 
-const USAGE = "Usage: open-factory images [build <name>|--all] [--no-pull]";
+const USAGE = "Usage: open-factory images | open-factory images build (<name>|--all) [--no-pull]";
 
 function table(items: ImageItem[]): string[] {
   const rows = [

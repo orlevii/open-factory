@@ -25,12 +25,17 @@ export type ContextEntry = {
   ino?: number;
 };
 
-/** Spec §10.2: the name matches the grammar and its real path is a direct child of the real images root. */
+/**
+ * Spec §10.2: the name matches the grammar and its real path is a direct child of the real images root. The
+ * folder itself must not be a link (even to a sibling), so validation agrees with listImages, which keeps only
+ * real directories.
+ */
 export async function imageDir(imagesRoot: string, name: string): Promise<string> {
   const invalid = () => new ImageNameError(`Invalid image name ${JSON.stringify(name)}.`);
   if (!isUserImageRef(name)) throw invalid();
   try {
     const realRoot = await realpath(imagesRoot);
+    if (!(await lstat(join(realRoot, name))).isDirectory()) throw new Error("not a real folder");
     const real = await realpath(join(realRoot, name));
     if (dirname(real) !== realRoot) throw new Error("not a direct child");
     return real;

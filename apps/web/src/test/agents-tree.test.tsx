@@ -431,15 +431,32 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(lead.querySelector("[title], [data-slot=tooltip-trigger]")).toBeNull();
   });
 
+  test("the name keeps a minimum width: two lines from md, full columns only on a wide tree", async () => {
+    usageWorld();
+    renderApp("/agents", alice);
+    const list = await screen.findByRole("list", { name: "Agents" });
+    const [lead] = (await rows()) as [HTMLElement];
+    // The full columns key on the tree's own width (a container query), not the window's: with the
+    // sidebar open a 1024px window leaves the name track about 40px.
+    expect(list).toHaveClass("@container");
+    expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
+    expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
+    expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
+      "md:col-start-3",
+      "md:row-start-1",
+      "@min-[54rem]:col-start-6",
+    );
+  });
+
   test("the muted line above the Active tree explains the column", async () => {
     usageWorld();
     renderApp("/agents", alice);
     await screen.findByRole("list", { name: "Agents" });
-    expect(
-      screen.getByText(
-        "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
-      ),
-    ).toBeInTheDocument();
+    const line = screen.getByText(
+      "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
+    );
+    // Only where the cost cells are: they are hidden below md.
+    expect(line).toHaveClass("hidden", "md:block");
   });
 
   test("an agent with no row in the loaded usage shows a dash; nothing while usage hasn't loaded", async () => {

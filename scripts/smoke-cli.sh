@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Starts the built server (production mode), then drives the built `open-factory` CLI against it:
 # status (version line), sign-up via curl, non-interactive login, status, logout.
-# Note: each run leaves one smoke user in the database.
+# The server runs on a throwaway database created next to DATABASE_URL's (and dropped at the end), so the
+# sign-up is always the first one, which needs no invite (S10), whatever DATABASE_URL already holds.
 set -euo pipefail
+
+: "${DATABASE_URL:?set DATABASE_URL to a Postgres server; the smoke creates and drops its own database there}"
 
 PORT="${PORT:-3000}"
 BASE="http://localhost:${PORT}" # PUBLIC_URL is set to this explicitly below
@@ -12,13 +15,34 @@ expected="$(node -p "require('./package.json').version")"
 log="$(mktemp)"
 cfg="$(mktemp -d)"
 pid=""
+db_created=""
 suffix="$(date +%s)$$"
+smoke_db="smoke_cli_${suffix}"
 handle="smoke-${suffix}"
 email="smoke-${suffix}@example.com"
 password="smoke-password-123"
 
+# Runs one SQL statement on DATABASE_URL's database (the `postgres` client is a dependency of packages/db).
+pg_admin() {
+  (cd packages/db && SQL="$1" node --input-type=module -e '
+import postgres from "postgres";
+const sql = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
+try {
+  await sql.unsafe(process.env.SQL);
+} finally {
+  await sql.end();
+}')
+}
+
 cleanup() {
-  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  if [ -n "$pid" ]; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+  if [ -n "$db_created" ]; then
+    pg_admin "drop database if exists \"${smoke_db}\" with (force)" ||
+      echo "cleanup: dropping the throwaway database ${smoke_db} failed" >&2
+  fi
   rm -rf "$cfg" "$log"
 }
 trap cleanup EXIT
@@ -33,7 +57,12 @@ if curl -sf "${BASE}/api/status" > /dev/null 2>&1; then
   fail "something is already listening on port ${PORT}"
 fi
 
-NODE_ENV=production PORT="$PORT" PUBLIC_URL="$BASE" node apps/server/dist/index.js > "$log" 2>&1 &
+pg_admin "create database \"${smoke_db}\"" || fail "could not create the throwaway database ${smoke_db}"
+db_created=1
+smoke_url="$(node -e 'const u = new URL(process.env.DATABASE_URL); u.pathname = `/${process.argv[1]}`; console.log(u.toString())' "$smoke_db")"
+
+DATABASE_URL="$smoke_url" FACTORY_HOME="${cfg}/home" NODE_ENV=production PORT="$PORT" PUBLIC_URL="$BASE" \
+  node apps/server/dist/index.js > "$log" 2>&1 &
 pid=$!
 
 ready=""

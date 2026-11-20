@@ -113,7 +113,7 @@ export function AgentTree({
     shown.set(a.slug, m === undefined ? 0 : m + 1);
   }
   return (
-    <ul aria-label="Agents" className="divide-y divide-border border-y border-border">
+    <ul aria-label="Agents" className="@container divide-y divide-border border-y border-border">
       {agents.map((a) => {
         const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
         const level = shown.get(a.slug) ?? 0;
@@ -127,7 +127,14 @@ export function AgentTree({
             <Link
               to="/agents/$slug"
               params={{ slug: a.slug }}
-              className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:grid md:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_auto_4rem] md:py-0"
+              className={cn(
+                "flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+                // md: two lines (status, name, cost; then slug, template, runtime under the name), so the
+                // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
+                // window with the sidebar open doesn't give, so they key on the tree's width, not the window.
+                "md:grid md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]",
+                "@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem] @min-[54rem]:py-0",
+              )}
             >
               <span className="flex w-28 shrink-0 items-center gap-1.5">
                 {a.archivedAt && a.status !== "terminated" ? (
@@ -180,8 +187,8 @@ export function AgentTree({
                   </span>
                 )}
               </span>
-              {/* Below md these wrap onto a second line; from md they are grid cells. */}
-              <span className="flex basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:contents">
+              {/* A second line below md and in the two-line grid; grid cells in the full one. */}
+              <span className="flex basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 md:min-w-0 @min-[54rem]:contents">
                 <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
                   {a.slug}
                 </span>
@@ -193,7 +200,7 @@ export function AgentTree({
                 </span>
               </span>
               {cost && (
-                <span className="hidden text-right text-[0.8125rem] text-muted-foreground tabular-nums md:block">
+                <span className="hidden text-right text-[0.8125rem] text-muted-foreground tabular-nums md:col-start-3 md:row-start-1 md:block @min-[54rem]:col-start-6">
                   <span aria-hidden="true">{cost.text}</span>
                   <span className="sr-only">{cost.sr}</span>
                 </span>

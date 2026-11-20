@@ -171,7 +171,9 @@ export class AgentRuntimes {
       ensure: async (ref: string, signal: AbortSignal) => {
         try {
           if (ref.startsWith(USER_TAG_PREFIX)) {
-            // Spec §10.1: a user image is built by the factory, never pulled.
+            // Spec §10.1: a user image is built by the factory, never pulled. This keys on the tag prefix, so a
+            // registry template that literally names `open-factory-user/<x>:latest` is never pulled either; that
+            // namespace is the factory's own local one, so nothing is lost.
             if (!(await docker.containers.hasImage(ref)))
               throw new AgentStartError(
                 `Image \`${userNameOfTag(ref)}\` isn't built. Build it in Templates \u2192 Images, or run \`open-factory images build ${userNameOfTag(ref)}\`.`,

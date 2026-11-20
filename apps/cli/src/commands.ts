@@ -42,7 +42,8 @@ export const COMMANDS: Command[] = [
   { name: "status", summary: "Show server, version and login state", run: status },
   {
     name: "images",
-    summary: "List user images or build one: open-factory images [build <name>|--all] [--no-pull]",
+    summary:
+      "List user images or build one: open-factory images | open-factory images build (<name>|--all) [--no-pull]",
     run: images,
   },
   { name: "help", summary: "Show this help", run: async (_a, io) => help(io) },

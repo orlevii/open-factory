@@ -277,9 +277,9 @@ When `settings_changed` arrives while the form is dirty: a notice with Reload.
 
 A line in the task's metadata, "Usage: $1.23 est. · 14 turns", with a muted hint under it; hidden when `usage` is null.
 
-### 12.6 The chart (`components/usage-chart.tsx`, hand-rolled SVG, Q17)
+### 12.6 The chart (`features/usage/usage-chart.tsx`, hand-rolled SVG, Q17)
 
-- **Colour (F5, Pilot Light Rule):** bars in `--chart-2`; `--signal` only on the selected (hovered or focused) bar; today's partial bar in `--chart-5`, its tooltip ending "today so far". DESIGN.md → Colors → Semantic gains: "Chart series start at `--chart-2`; `--chart-1` (signal) marks only the focused datum."
+- **Colour (F5, Pilot Light Rule):** bars in `--chart-2`; `--signal` only on the selected (hovered or focused) bar; today's partial bar in `--chart-5` with a 1px `--chart-2` outline (the fill alone is about 2:1 on both grounds; the outline gives the 3:1 of WCAG 1.4.11), its tooltip ending "today so far". DESIGN.md → Colors → Semantic gains: "Chart series start at `--chart-2`; `--chart-1` (signal) marks only the focused datum."
 - **Scale:** y from 0 to a nice maximum (1/2/5 × 10ⁿ), 3 gridlines with `$` labels; a non-zero bar is at least 1px tall. X labels (`ink-muted`, 12px): every day for 7 days, every 7th day for 30, every 14th day for 90.
 - **Keyboard and screen readers:** the wrapper is the single tab stop (`tabIndex=0`, `role="group"`, `aria-label` "Daily estimated cost, last {days} days. Arrow keys move between days."). ←/→ move the selection, Home/End jump, Escape clears. The selected day's tooltip text is mirrored into a polite live region. The SVG is `aria-hidden` and contains nothing focusable; a visually hidden `<table>` carries every day.
 - **Pointer and touch:** the hit area is the full column; hover selects, tap selects.
@@ -308,7 +308,7 @@ From §7's derived state: a live pause → "Rate-limited until 14:30" (through t
 | Estimate line | Estimated at API prices. A subscription is billed by plan, not per token. |
 | Tree, line above Active | Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned. |
 | Tree cell, sr-only | Estimated cost, last 7 days: $4.60 (own $1.20, spawned $3.40) |
-| Strip segment / aria-label | $4.12 est. · 7d · Usage / Usage: $4.12 estimated, last 7 days |
+| Strip segment / aria-label | $4.12 est. · 7d · Usage / Usage: $4.12 estimated, last 7 days · Usage: no turns in the last 7 days |
 | Chart caption | 30 days to today, in Europe/Berlin. |
 | Chart tooltip | Thu 20 Nov · $3.21 est. · 41 turns (today: … · today so far) |
 | Usage empty | No usage in the last 30 days. |

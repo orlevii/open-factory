@@ -1,5 +1,5 @@
 import type { DayUsage } from "@open-factory/shared";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { UsageChart } from "./usage-chart";
 
@@ -69,10 +69,16 @@ test("one bar per day: chart-2, today chart-5, the selected one signal", () => {
     Array(6).fill("var(--chart-2)"),
   );
   expect(all[6]).toHaveAttribute("fill", "var(--chart-5)");
+  // chart-5 alone is about 2:1 on the grounds; the chart-2 outline carries WCAG 1.4.11's 3:1.
+  expect(all[6]).toHaveAttribute("stroke", "var(--chart-2)");
+  expect(all[0]).not.toHaveAttribute("stroke");
 
   fireEvent.keyDown(group(), { key: "Home" });
   expect(bars(container)[0]).toHaveAttribute("fill", "var(--signal)");
   expect(bars(container)[1]).toHaveAttribute("fill", "var(--chart-2)");
+  fireEvent.keyDown(group(), { key: "End" });
+  expect(bars(container)[6]).toHaveAttribute("fill", "var(--signal)");
+  expect(bars(container)[6]).not.toHaveAttribute("stroke");
 });
 
 test("a non-zero tiny value is at least 1 tall; zero is flat", () => {
@@ -177,4 +183,33 @@ test("sub-cent maxima keep distinct y labels", () => {
     (t) => t.textContent,
   );
   expect(ticks).toEqual(["$0.00", "$0.01", "$0.02"]);
+});
+
+test("the chart follows its container down as well as up and never props it open", () => {
+  let report: (width: number) => void = () => {};
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(cb: (e: { contentRect: { width: number } }[]) => void) {
+        report = (width) => cb([{ contentRect: { width } }]);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const { container } = renderChart(series(30), 30);
+  const svg = container.querySelector("svg") as SVGSVGElement;
+  // The SVG takes its layout width from the container, so a wide first paint can't hold the page open.
+  expect(svg).toHaveAttribute("width", "100%");
+  expect(group()).toHaveClass("min-w-0");
+  expect(container.querySelector("figure")).toHaveClass("min-w-0");
+  act(() => report(1000));
+  expect(svg).toHaveAttribute("viewBox", "0 0 1000 160");
+  act(() => report(358));
+  expect(svg).toHaveAttribute("viewBox", "0 0 358 160");
+  const lastBar = bars(container).at(-1) as SVGRectElement;
+  expect(Number(lastBar.getAttribute("x")) + Number(lastBar.getAttribute("width"))).toBeLessThan(
+    358,
+  );
 });

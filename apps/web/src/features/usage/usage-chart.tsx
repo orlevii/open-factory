@@ -103,7 +103,7 @@ export function UsageChart({
     tipX < width * 0.25 ? "" : tipX > width * 0.75 ? "-translate-x-full" : "-translate-x-1/2";
 
   return (
-    <figure className="m-0 flex flex-col gap-2">
+    <figure className="m-0 flex min-w-0 flex-col gap-2">
       {/* biome-ignore lint/a11y/useSemanticElements: a chart, not a form; role="group" names it as one tab stop (spec §12.6). */}
       <div
         ref={ref}
@@ -118,12 +118,14 @@ export function UsageChart({
           if (e.pointerType === "mouse") setSelected(null);
         }}
         onBlur={() => setSelected(null)}
-        className="relative w-full rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="relative w-full min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         style={{ minHeight: HEIGHT }}
       >
+        {/* The layout width is the container's ("100%"), never the measured one, so the chart can shrink:
+            an intrinsic width would hold its flex/grid ancestors open and the observer would read it back. */}
         <svg
           aria-hidden="true"
-          width={width}
+          width="100%"
           height={HEIGHT}
           viewBox={`0 0 ${width} ${HEIGHT}`}
           className="block tabular-nums"
@@ -152,21 +154,22 @@ export function UsageChart({
           ))}
           {days.map((d, i) => {
             const h = d.costUsd > 0 ? Math.max((d.costUsd / max) * plotH, 1) : 0;
+            const isToday = i !== selected && d.date === today;
             const fill =
-              i === selected
-                ? "var(--signal)"
-                : d.date === today
-                  ? "var(--chart-5)"
-                  : "var(--chart-2)";
+              i === selected ? "var(--signal)" : isToday ? "var(--chart-5)" : "var(--chart-2)";
+            // Today's partial bar: chart-5 alone is about 2:1 on the grounds, so a 1px chart-2 outline
+            // (drawn inside the bar's box) gives it WCAG 1.4.11's 3:1.
+            const inset = isToday && h > 2 && barW > 2 ? 0.5 : 0;
             return (
               <rect
                 key={d.date}
                 data-bar=""
-                x={PAD.left + i * colW + (colW - barW) / 2}
-                y={PAD.top + plotH - h}
-                width={barW}
-                height={h}
+                x={PAD.left + i * colW + (colW - barW) / 2 + inset}
+                y={PAD.top + plotH - h + inset}
+                width={barW - 2 * inset}
+                height={h - 2 * inset}
                 fill={fill}
+                {...(isToday ? { stroke: "var(--chart-2)", strokeWidth: 1 } : {})}
               />
             );
           })}

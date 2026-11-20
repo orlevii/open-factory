@@ -699,6 +699,26 @@ test("a user image that isn't built fails the start with fix image, and is never
   expect(w.docker.ops()).not.toContain("pull");
 });
 
+test("a user image's presence check never shows the wake as pulling", async () => {
+  const w = await setup("reply", "smoke");
+  w.docker.images.set("open-factory-user/smoke:latest", { id: "sha256:smoke", labels: {} });
+  const real = w.docker.imageId.bind(w.docker);
+  let release = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  vi.spyOn(w.docker, "imageId").mockImplementation(async (ref) => {
+    await gate;
+    return real(ref);
+  });
+  await send(w);
+  expect(w.rt.live().status).toBe("queued");
+  expect(w.rt.live().pulling).toBeUndefined();
+  release();
+  await until(() => expect(w.rt.live().status).toBe("idle"));
+  expect(w.docker.ops()).not.toContain("pull");
+});
+
 test("a user image that is built starts from its local tag without a pull", async () => {
   const w = await setup("reply", "smoke");
   w.docker.images.set("open-factory-user/smoke:latest", { id: "sha256:smoke", labels: {} });

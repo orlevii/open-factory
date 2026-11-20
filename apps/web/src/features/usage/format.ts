@@ -24,16 +24,17 @@ export function parseDay(date: string): { y: number; m: number; d: number } {
 const dayFormat = new Intl.DateTimeFormat("en-GB", {
   weekday: "short",
   day: "numeric",
-  month: "short",
   timeZone: "UTC",
 });
+/** Fixed, so every month is three letters (en-GB ICU writes September as "Sept"). */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** `Thu 20 Nov`. */
 export function formatDayShort(date: string): string {
   const { y, m, d } = parseDay(date);
   const parts = Object.fromEntries(
     dayFormat.formatToParts(Date.UTC(y, m - 1, d)).map((p) => [p.type, p.value]),
   );
-  return `${parts.weekday} ${parts.day} ${parts.month}`;
+  return `${parts.weekday} ${parts.day} ${MONTHS[m - 1]}`;
 }
 
 /** The smallest 1, 2 or 5 x 10^n that is at least `v` (1 for zero). */

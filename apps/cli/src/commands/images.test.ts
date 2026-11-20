@@ -136,7 +136,9 @@ test("not logged in", async () => {
 test("unknown subcommand prints usage and exits 2", async () => {
   const h = harness();
   expect(await run(["images", "frob"], h.io)).toBe(2);
-  expect(h.err.join("\n")).toMatch(/Usage: open-factory images/);
+  expect(h.err).toContain(
+    "Usage: open-factory images | open-factory images build (<name>|--all) [--no-pull]",
+  );
   expect(await run(["images", "build"], h.io)).toBe(2);
   expect(h.calls).toEqual([]);
 });

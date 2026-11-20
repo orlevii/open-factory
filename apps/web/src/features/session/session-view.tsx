@@ -115,7 +115,11 @@ export function SessionView({
       <AgentStrip
         agent={agent}
         slotsMax={running.data?.max}
-        usage={usageRows.data?.agents.find((r) => r.slug === agent.slug)}
+        usage={
+          usageRows.data
+            ? (usageRows.data.agents.find((r) => r.slug === agent.slug) ?? null)
+            : undefined
+        }
         onAgent={s.setAgent}
       />
       {s.missingEvent !== undefined && (

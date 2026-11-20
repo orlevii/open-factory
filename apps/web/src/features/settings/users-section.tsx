@@ -101,6 +101,7 @@ function InviteRow({
   creator: string;
   onRevoke(): void;
 }) {
+  const expires = expiresIn(invite.expiresAt);
   return (
     <li data-name={invite.id} className="px-2 py-1.5">
       <RowLine
@@ -110,6 +111,8 @@ function InviteRow({
             type="button"
             variant="ghost"
             size="sm"
+            // Several identical "Revoke" buttons: the name says which invite each one ends.
+            aria-label={`Revoke the invite from ${creator}, expires ${expires}`}
             onClick={onRevoke}
           >
             Revoke
@@ -117,7 +120,7 @@ function InviteRow({
         }
       >
         <span className={`${smallClass} text-muted-foreground tabular-nums`}>
-          Created by {creator} · expires {expiresIn(invite.expiresAt)}
+          Created by {creator} · expires {expires}
         </span>
       </RowLine>
     </li>

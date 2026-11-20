@@ -195,6 +195,26 @@ test("title edit: focus goes into the input, Enter saves, Escape cancels, focus 
   await waitFor(() => expect(screen.getByRole("button", { name: "Edit title" })).toHaveFocus());
 });
 
+test("title edit: focus returns to Edit title even when a frame fires before React renders it", async () => {
+  // Under a loaded full run a frame can run before React commits the closed editor; focusing then
+  // found no Edit title button. Firing frames on the next microtask makes that ordering certain.
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    queueMicrotask(() => cb(0));
+    return 0;
+  });
+  const api = world();
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "New title" }) }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit title" })).toHaveFocus());
+  await userEvent.click(screen.getByRole("button", { name: "Edit title" }));
+  await userEvent.clear(screen.getByLabelText("Title"));
+  await userEvent.type(screen.getByLabelText("Title"), "New title{Enter}");
+  await screen.findByRole("heading", { level: 2, name: "New title" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit title" })).toHaveFocus());
+});
+
 test("description edit: Escape does not cancel; a failure keeps the text; Save then Cancel return focus to Edit description", async () => {
   const api = world();
   let fail = true;

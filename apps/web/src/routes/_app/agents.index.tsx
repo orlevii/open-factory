@@ -104,8 +104,8 @@ function AgentsPage() {
             // "more" line, so the line sits right under the list. min-w-0: a grid item otherwise grows
             // to its content, and a long ended note pushes the page wider than a phone instead of truncating.
             <div className="min-w-0">
-              {/* Shown wherever the tree's cost cells are (§6: where cost first appears). */}
-              <p className="mb-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+              {/* Shown wherever the tree's cost cells are (§6: where cost first appears), so not below md. */}
+              <p className="mb-2 hidden text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:block">
                 Costs are estimates for the last 7 days. A persistent agent's figure includes the
                 agents it spawned.
               </p>

@@ -238,7 +238,10 @@ test("pending invites: creator and expiry; Revoke is immediate with Undo; Undo r
     await within(region).findByRole("heading", { level: 3, name: "Pending invites" }),
   ).toBeInTheDocument();
   expect(await within(region).findByText("Created by @or · expires in 6 days")).toBeInTheDocument();
-  await userEvent.click(within(region).getByRole("button", { name: "Revoke" }));
+  // Each Revoke names its invite, so a list of them reads apart.
+  await userEvent.click(
+    within(region).getByRole("button", { name: "Revoke the invite from @or, expires in 6 days" }),
+  );
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   expect(await within(region).findByText("Revoked the invite from @or.")).toBeInTheDocument();
   await waitFor(() =>
@@ -270,7 +273,7 @@ test("an Undo that fails says why", async () => {
   });
   renderApp("/settings", me);
   const region = await usersSection();
-  await userEvent.click(await within(region).findByRole("button", { name: "Revoke" }));
+  await userEvent.click(await within(region).findByRole("button", { name: /^Revoke / }));
   await userEvent.click(await within(region).findByRole("button", { name: "Undo" }));
   const line = await within(region).findByText("Couldn't restore the invite: it has expired.");
   expect(line.closest("[role=alert]")).not.toBeNull();

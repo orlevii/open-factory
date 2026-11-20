@@ -42,6 +42,14 @@ test("imageDir accepts a plain child and refuses bad names and escaping links", 
   await expect(imageDir(join(root, "images"), "missing")).rejects.toBeInstanceOf(ImageNameError);
 });
 
+test("imageDir refuses a top-level link even when it points to a sibling image folder", async () => {
+  await mk("real");
+  await symlink(join(root, "images", "real"), join(root, "images", "alias"));
+  await expect(imageDir(join(root, "images"), "alias")).rejects.toBeInstanceOf(ImageNameError);
+  await symlink("real", join(root, "images", "relalias"));
+  await expect(imageDir(join(root, "images"), "relalias")).rejects.toBeInstanceOf(ImageNameError);
+});
+
 test(".dockerignore excludes node_modules and honours a negation", async () => {
   const dir = await mk();
   await mkdir(join(dir, "node_modules"));

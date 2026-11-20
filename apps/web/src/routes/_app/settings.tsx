@@ -86,6 +86,19 @@ function SettingsPage() {
     document.getElementById(id)?.scrollIntoView?.({ block: "start" });
     document.getElementById(`${id}-title`)?.focus();
   };
+  // A fragment typed in the address bar, or back/forward between fragments, doesn't reach the
+  // router's location: follow the browser's hashchange too.
+  useEffect(() => {
+    const onHashChange = () => {
+      const id = decodeURIComponent(window.location.hash.slice(1));
+      if (!IDS.includes(id)) return;
+      handled.current = id;
+      document.getElementById(id)?.scrollIntoView?.({ block: "start" });
+      document.getElementById(`${id}-title`)?.focus();
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   return (
     <>

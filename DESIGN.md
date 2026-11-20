@@ -152,7 +152,7 @@ The strategy is **restrained**: cool neutrals do almost all the work, plus one a
 
 Task status: Done uses `success`, the Blocked marker uses `warning`; both always with a label.
 
-Chart series start at `--chart-2`; `--signal` marks only the focused datum.
+Chart series start at `--chart-2`; `--signal` marks only the focused datum. A partial datum (today's bar) is `--chart-5` with a 1px `--chart-2` outline: `--chart-5` alone is about 2:1 on both grounds, below the 3:1 a graphical object needs.
 
 ### Named Rules
 

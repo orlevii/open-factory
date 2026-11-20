@@ -69,6 +69,19 @@ test("markUsed twice: the second returns false", async () => {
   expect(await h.app.invites.markUsed(invite.id, userId)).toBe(false);
 });
 
+test("the used_by unique backstop rejects a forced double use by one user", async () => {
+  const a = await h.app.invites.create(userId);
+  const b = await h.app.invites.create(userId);
+  expect(await h.app.invites.markUsed(a.invite.id, userId)).toBe(true);
+  // The guarded UPDATE passes for b (still unused); only the DB constraint stops one user using two invites.
+  const err = await h.app.invites.markUsed(b.invite.id, userId).catch((e: unknown) => e);
+  const pg = (err as { cause?: { code?: string; constraint_name?: string } }).cause;
+  expect(pg?.code).toBe("23505");
+  expect(pg?.constraint_name).toMatch(/used_by/);
+  const [row] = await h.db.select().from(schema.invites).where(eq(schema.invites.id, b.invite.id));
+  expect(row?.usedAt).toBeNull();
+});
+
 test("listPending leaves out used, revoked and expired", async () => {
   const keep = await h.app.invites.create(userId);
   const used = await h.app.invites.create(userId);

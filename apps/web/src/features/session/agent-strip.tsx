@@ -194,16 +194,22 @@ function OrgSegment({ agent }: { agent: AgentSummary }) {
 
 /** "$4.12 est. · 7d" (the agent's tree figure) linking to its usage page; plain "Usage" with no
  *  turns or no data yet. From md up. */
-function UsageSegment({ agent, usage }: { agent: AgentSummary; usage?: AgentUsageRow }) {
+function UsageSegment({ agent, usage }: { agent: AgentSummary; usage?: AgentUsageRow | null }) {
   const t = usage && (usage.kind === "ephemeral" ? usage.own : usage.total);
   const cost = t && t.turns > 0 ? formatCost(t.costUsd, t.turns) : null;
+  // Spelled out once usage has loaded (null: loaded, no row); while loading it is just "Usage".
+  const label = cost
+    ? `Usage: ${cost} estimated, last 7 days`
+    : usage !== undefined
+      ? "Usage: no turns in the last 7 days"
+      : undefined;
   return (
     <>
       <Link
         to="/agents/$slug/usage"
         params={{ slug: agent.slug }}
         search={{}}
-        aria-label={cost ? `Usage: ${cost} estimated, last 7 days` : undefined}
+        aria-label={label}
         className={`max-md:hidden text-muted-foreground tabular-nums ${LINK_CLASS}`}
       >
         {cost ? `${cost} est. · 7d` : "Usage"}
@@ -226,8 +232,8 @@ export function AgentStrip({
 }: {
   agent: AgentSummary;
   slotsMax?: number;
-  /** The agent's 7-day usage row. */
-  usage?: AgentUsageRow;
+  /** The agent's 7-day usage row; null once loaded without a row for it, undefined while loading. */
+  usage?: AgentUsageRow | null;
   /** A fresh summary from a pin/unpin response. */
   onAgent?: (a: AgentSummary) => void;
 }) {

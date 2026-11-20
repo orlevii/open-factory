@@ -13,10 +13,10 @@ import { RangeFilter } from "@/features/usage/range-filter";
 import { UsageChart } from "@/features/usage/usage-chart";
 import { linkClass, td, tdNum, th, thNum } from "@/features/usage/usage-tables";
 import { KIND_LABEL } from "./credentials-section";
-import { RateLimitLine } from "./rate-limit-line";
+import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 import { SettingsSection, smallClass } from "./shared";
 
-/** Below `md` the Agents table keeps only the agent and total columns. */
+/** Below `md` the Agents table keeps only the agent and total columns, Credentials only name and cost. */
 const wide = "hidden md:table-cell";
 const cost = (t: Totals | undefined) => (t ? formatCost(t.costUsd, t.turns) : "");
 const byTotal = (a: AgentUsageRow, b: AgentUsageRow) =>
@@ -25,7 +25,18 @@ const byTotal = (a: AgentUsageRow, b: AgentUsageRow) =>
   a.slug.localeCompare(b.slug);
 
 /** An h3 and its real `<table>`, named by the heading. Wide tables scroll inside themselves. */
-function Table({ title, head, children }: { title: string; head: ReactNode; children: ReactNode }) {
+function Table({
+  title,
+  regionLabel,
+  head,
+  children,
+}: {
+  title: string;
+  /** Names the scroll region when the heading alone would repeat another landmark's name. */
+  regionLabel?: string;
+  head: ReactNode;
+  children: ReactNode;
+}) {
   const id = useId();
   return (
     <div className="grid min-w-0 gap-2">
@@ -34,7 +45,7 @@ function Table({ title, head, children }: { title: string; head: ReactNode; chil
       </h3>
       {/* A named region with a tab stop, so a keyboard can scroll a table wider than the screen. */}
       <section
-        aria-labelledby={id}
+        {...(regionLabel ? { "aria-label": regionLabel } : { "aria-labelledby": id })}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs a tab stop.
         tabIndex={0}
         className="overflow-x-auto rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
@@ -190,46 +201,56 @@ function CredentialsTable({ data }: { data: CredentialsUsage }) {
   return (
     <Table
       title="Credentials"
+      regionLabel="Credential usage"
       head={
         <>
           <th className={th}>Name</th>
-          <th className={th}>Kind</th>
+          <th className={`${th} ${wide}`}>Kind</th>
           <th className={thNum}>Cost (est.)</th>
-          <th className={th}>Top agents</th>
-          <th className={th}>Rate limit</th>
+          <th className={`${th} ${wide}`}>Top agents</th>
+          <th className={`${th} ${wide}`}>Rate limit</th>
         </>
       }
     >
-      {credentials.map((c) => (
-        <tr key={c.name}>
-          <td className={`${td} font-mono text-[0.8125rem]`}>{c.name}</td>
-          <td className={`${td} whitespace-nowrap text-[0.8125rem]`}>{KIND_LABEL[c.kind]}</td>
-          <td className={tdNum}>{cost(c.totals)}</td>
-          <td className={td}>
-            {c.agents.map((a, i) => (
-              <Fragment key={a.slug}>
-                {i > 0 && ", "}
-                <AgentLink slug={a.slug} />
-              </Fragment>
-            ))}
-          </td>
-          <td className={td}>
-            <RateLimitLine
-              rateLimit={c.rateLimit}
-              pausedUntil={c.pausedUntil}
-              pauseExact={c.pauseExact}
-            />
-          </td>
-        </tr>
-      ))}
+      {credentials.map((c) => {
+        const rateLimit = (
+          <RateLimitLine
+            rateLimit={c.rateLimit}
+            pausedUntil={c.pausedUntil}
+            pauseExact={c.pauseExact}
+          />
+        );
+        return (
+          <tr key={c.name}>
+            <td className={td}>
+              <span className="font-mono text-[0.8125rem]">{c.name}</span>
+              {/* Below md the rate-limit column is hidden; its line stacks under the name. */}
+              <div className="mt-0.5 md:hidden">{rateLimit}</div>
+            </td>
+            <td className={`${td} ${wide} whitespace-nowrap text-[0.8125rem]`}>
+              {KIND_LABEL[c.kind]}
+            </td>
+            <td className={tdNum}>{cost(c.totals)}</td>
+            <td className={`${td} ${wide}`}>
+              {c.agents.map((a, i) => (
+                <Fragment key={a.slug}>
+                  {i > 0 && ", "}
+                  <AgentLink slug={a.slug} />
+                </Fragment>
+              ))}
+            </td>
+            <td className={`${td} ${wide}`}>{rateLimit}</td>
+          </tr>
+        );
+      })}
       {/* Pre-S10 turns and turns of deleted credentials. */}
       {unattributed.turns > 0 && (
         <tr>
           <td className={`${td} text-muted-foreground`}>Unattributed</td>
-          <td className={td} />
+          <td className={`${td} ${wide}`} />
           <td className={tdNum}>{cost(unattributed)}</td>
-          <td className={td} />
-          <td className={td} />
+          <td className={`${td} ${wide}`} />
+          <td className={`${td} ${wide}`} />
         </tr>
       )}
     </Table>
@@ -250,6 +271,8 @@ export function UsageSection({
   const credentials = useQuery({
     ...credentialsUsageQuery(days),
     placeholderData: keepPreviousData,
+    // No frame announces a rate-limit reset, so the lines poll while shown.
+    refetchInterval: RATE_LIMIT_REFETCH_MS,
   });
   const failed = [daily, agents, credentials].filter((q) => q.isError && !q.data);
   const d = daily.data;

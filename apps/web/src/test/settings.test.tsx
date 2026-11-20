@@ -719,6 +719,18 @@ test("clicking the anchor of the current hash again still moves focus to its hea
   await waitFor(() => expect(heading).toHaveFocus());
 });
 
+test("a same-document fragment change (address bar, back/forward) also focuses its heading", async () => {
+  world();
+  renderApp("/settings#credentials", alice);
+  const credentials = await screen.findByRole("heading", { level: 2, name: "Credentials" });
+  await waitFor(() => expect(credentials).toHaveFocus());
+  // A browser-initiated fragment navigation the router doesn't see: only hashchange fires.
+  window.history.replaceState(window.history.state, "", "/settings#factory");
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  const factory = screen.getByRole("heading", { level: 2, name: "Factory" });
+  await waitFor(() => expect(factory).toHaveFocus());
+});
+
 const leadFamily = (): AgentUsageRow[] => [
   usageRow({
     slug: "writer",
@@ -832,12 +844,35 @@ test("Usage: the Credentials table with cost, top agents and the rate-limit line
   renderApp("/settings", alice);
   const region = await section("Usage");
   const table = await within(region).findByRole("table", { name: "Credentials" });
-  expect(
-    within(table)
-      .getAllByRole("columnheader")
-      .map((h) => h.textContent),
-  ).toEqual(["Name", "Kind", "Cost (est.)", "Top agents", "Rate limit"]);
+  // The scroll region has its own name, apart from the Credentials section's landmark.
+  expect(within(region).getByRole("region", { name: "Credential usage" })).toContainElement(table);
+  const headers = within(table).getAllByRole("columnheader");
+  expect(headers.map((h) => h.textContent)).toEqual([
+    "Name",
+    "Kind",
+    "Cost (est.)",
+    "Top agents",
+    "Rate limit",
+  ]);
+  // Below md: Name (with the rate-limit line under it) and Cost only.
+  expect(headers.map((h) => h.classList.contains("hidden"))).toEqual([
+    false,
+    true,
+    false,
+    true,
+    true,
+  ]);
   const r = within(table).getAllByRole("row")[1] as HTMLElement;
+  const cells = within(r).getAllByRole("cell");
+  expect(cells.map((c) => c.classList.contains("hidden"))).toEqual([
+    false,
+    true,
+    false,
+    true,
+    true,
+  ]);
+  const narrow = cells[0]?.querySelector(".md\\:hidden") as HTMLElement;
+  expect(narrow).toHaveTextContent("82% of the 5-hour limit used");
   expect(r).toHaveTextContent("work");
   expect(r).toHaveTextContent("OAuth token");
   expect(r).toHaveTextContent("$4.12");
@@ -845,7 +880,24 @@ test("Usage: the Credentials table with cost, top agents and the rate-limit line
     "href",
     "/agents/lead/usage",
   );
-  expect(r).toHaveTextContent("82% of the 5-hour limit used");
+  expect(cells[4]).toHaveTextContent("82% of the 5-hour limit used");
+});
+
+test("rate-limit lines refetch every minute while Settings is open", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  try {
+    const { api } = world({ usage: { daily: daily(30), credentials: [credUsage()] } });
+    renderApp("/settings", alice);
+    await within(await section("Usage")).findByRole("table", { name: "Credentials" });
+    const count = (url: string) => api.calls.filter((c) => c.url === url).length;
+    const creds = count("/api/credentials");
+    const usage = count("/api/usage/credentials?days=30");
+    vi.advanceTimersByTime(60_000);
+    await waitFor(() => expect(count("/api/credentials")).toBe(creds + 1));
+    await waitFor(() => expect(count("/api/usage/credentials?days=30")).toBe(usage + 1));
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("Usage: all-zero days show the empty line instead of the chart; credentials stay", async () => {

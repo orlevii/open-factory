@@ -2,6 +2,7 @@ import type { AgentRuntime, RuntimeLog } from "../agents/agent-runtime.ts";
 import { AgentStartError, type StartFix } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
+import { USER_TAG_PREFIX } from "../images/resolve.ts";
 import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
 
 /**
@@ -177,8 +178,10 @@ export class Supervisor implements SlotPort {
     return false;
   }
 
+  /** A user image (S10 §10.1) is only checked, never pulled, so its wait isn't shown as pulling. */
   isPulling(agentId: string): boolean {
-    return Boolean(this.queue.find((e) => e.agentId === agentId)?.pulling);
+    const ref = this.queue.find((e) => e.agentId === agentId)?.pulling;
+    return ref !== undefined && !ref.startsWith(USER_TAG_PREFIX);
   }
 
   /** `ensure` found the image gone (removed after it was seen): the next wake checks and pulls again. */

@@ -101,12 +101,12 @@ function holdTermination(app: T, during: () => Promise<void> = async () => {}) {
   return { entered, release };
 }
 
-/** Resolves once another backend waits on a row lock in a `for no key update` query. */
-async function lockWaiter(app: T) {
+/** Resolves once another backend waits on a row lock in a query containing `like` (a `for no key update` one by default). */
+async function lockWaiter(app: T, like = "for no key update") {
   for (;;) {
     const [w] = await app.sql`select count(*)::int as n from pg_stat_activity
       where datname = current_database() and wait_event_type = 'Lock'
-        and query ilike '%for no key update%'`;
+        and query ilike ${`%${like}%`}`;
     if ((w?.n ?? 0) >= 1) return;
   }
 }
@@ -323,4 +323,52 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
     message: `@${child.slug} couldn't be terminated; try again.`,
   });
   expect(child.rt.isTerminated()).toBe(false);
+});
+
+test("a termination during app.close(): no factory-restarted notice for it, and the reopened app adds nothing", async () => {
+  const { t, driver, lead } = await setup();
+  const child = await spawnIdle(t, driver, lead, "sd");
+  // Mid-turn with live background work: a plain shutdown would leave it a factory-restarted notice.
+  child.proc.emit(ev.turn(), ev.background([{ taskId: "t1", description: "build" }]));
+  await child.rt.settled();
+  const hold = holdTermination(t);
+  const terminating = t.app.terminator.terminate(child.id, "@or");
+  await hold.entered;
+  // Shutdown inside the provisional window: its hibernate("shutdown") wins the stop, and the exit takes the terminate
+  // path (the latch, not the recorded intent, chooses it). The exit's writes to the child's row wait for the commit.
+  const closing = t.app.close();
+  await lockWaiter(t, "update");
+  expect(child.proc.stopped).toBe(true);
+  hold.release();
+  await terminating;
+  await closing;
+  await child.rt.settled();
+  const notices = () =>
+    t.db
+      .select()
+      .from(schema.messages)
+      .where(
+        and(
+          eq(schema.messages.toAgentId, child.id),
+          eq(schema.messages.notice, "factory_restarted"),
+        ),
+      );
+  expect(await notices()).toEqual([]);
+  const terminatedEvents = async () =>
+    (await t.app.store.after(child.id, 0, 1000)).filter((e) => e.event.type === "terminated");
+  expect(await terminatedEvents()).toHaveLength(1);
+  const lost = (await t.app.store.after(child.id, 0, 1000)).map((e) => e.event);
+  expect(lost).toContainEqual(
+    expect.objectContaining({ type: "background_work_lost", reason: "terminated" }),
+  );
+  expect(lost).not.toContainEqual(expect.objectContaining({ type: "hibernated" }));
+
+  // The next boot neither wakes nor notifies it, and records nothing twice.
+  const startsBefore = driver.starts.filter((p) => p.spec.agentId === child.id).length;
+  const next = await t.reopen();
+  expect(driver.starts.filter((p) => p.spec.agentId === child.id)).toHaveLength(startsBefore);
+  expect(await notices()).toEqual([]);
+  const after = (await next.app.store.after(child.id, 0, 1000)).map((e) => e.event.type);
+  expect(after.filter((type) => type === "terminated")).toHaveLength(1);
+  expect(after).not.toContain("reconciled");
 });

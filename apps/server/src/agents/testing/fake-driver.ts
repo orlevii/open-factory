@@ -18,6 +18,10 @@ export class FakeProcess implements HarnessProcess {
   readonly writes: Write[] = [];
   failWrites = false;
   private done = false;
+  /** Its `exited` was emitted: the process is gone. */
+  get exited() {
+    return this.done;
+  }
   readonly pid = 4242;
   constructor(
     readonly spec: AgentRuntimeSpec,

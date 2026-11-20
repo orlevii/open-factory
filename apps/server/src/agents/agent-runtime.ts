@@ -96,8 +96,16 @@ export interface RuntimeDeps {
   localRuntimeAllowed?: () => boolean;
   /** The Docker launcher (spec §10 step 4, §11): the one ContainerManager and the in-container Claude path. */
   docker?: DockerDeps;
-  /** S6 §8.1: how long the oldest pending member update waits while no turn is open (default 30 s; 0 = at once). */
-  memberUpdateDebounceMs?: number;
+  /**
+   * S6 §8.1: how long the oldest pending member update waits while no turn is open (default 30 s; 0 = at once). Read
+   * live (S10 §8.2, the `member_update_debounce_seconds` factory setting); `settingsChanged()` re-arms on a change.
+   */
+  memberUpdateDebounceMs?: () => number;
+  /**
+   * S10 §8.2: the factory default warm window in minutes, read live, for a snapshot that omits `warmWindowMinutes`
+   * (70 when absent); `settingsChanged()` re-arms an armed warm timer on a change.
+   */
+  defaultWarmWindowMinutes?: () => number;
   /**
    * S6 §9.1: persists one forwarded item (the Router: a held `member_update` to the manager, the `errored` fact to the
    * humans for a top-level agent, otherwise dropped). Awaited inside the report's job: a failed insert is a failed event
@@ -431,6 +439,7 @@ export class AgentRuntime {
   private owedNotifications = 0;
   private owedTimer: ReturnType<typeof setTimeout> | undefined;
   private warmTimer: ReturnType<typeof setTimeout> | undefined;
+  private warmArmedAt: number | undefined; // when the armed warm timer's window began (S10 §8.2)
   private cronExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   private cronExpiryAt: number | undefined;
   private wasHibernatable = false;
@@ -1251,10 +1260,11 @@ export class AgentRuntime {
   private heldDueAt(): number | undefined {
     const oldest = this.held.find(isUpdate);
     if (!oldest) return undefined;
-    return (
-      oldest.row.createdAt.getTime() +
-      (this.d.memberUpdateDebounceMs ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS)
-    );
+    return oldest.row.createdAt.getTime() + this.debounceMs();
+  }
+
+  private debounceMs(): number {
+    return this.d.memberUpdateDebounceMs?.() ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS;
   }
 
   /** S6 §8.1: due at the turn boundary (unless that turn was update-only) or once the window has passed. */
@@ -1262,7 +1272,7 @@ export class AgentRuntime {
     const at = this.heldDueAt();
     if (at === undefined) return false;
     // 0 means due at once, even for a row stamped a millisecond ahead (the store's stamps are strictly increasing).
-    return this.dueAtTurnEnd || this.d.memberUpdateDebounceMs === 0 || Date.now() >= at;
+    return this.dueAtTurnEnd || this.debounceMs() === 0 || Date.now() >= at;
   }
 
   /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
@@ -2953,19 +2963,53 @@ export class AgentRuntime {
       clearTimeout(this.warmTimer);
       this.warmTimer = undefined;
     } else if (h && !this.warmTimer) {
-      const minutes = this.agent.config.warmWindowMinutes ?? DEFAULT_WARM_WINDOW_MINUTES;
-      const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      this.warmArmedAt = Date.now();
+      this.armWarmTimer(this.warmWindowMs());
+    }
+    if (h && !this.wasHibernatable) this.slots.becameHibernatable(this.agent.id);
+    this.wasHibernatable = h;
+    this.updateCronExpiry();
+  }
+
+  /** The snapshot's warm window, else the factory default read live (S10 §8.2, Q8). */
+  private warmWindowMs(): number {
+    const minutes =
+      this.agent.config.warmWindowMinutes ??
+      this.d.defaultWarmWindowMinutes?.() ??
+      DEFAULT_WARM_WINDOW_MINUTES;
+    return minutes * 60_000;
+  }
+
+  /** Arms the warm timer to fire in `delayMs` (at once when ≤ 0). */
+  private armWarmTimer(delayMs: number) {
+    const timer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
         void this.run(async () => {
           if (this.warmTimer !== timer) return; // cancelled, or a newer window began
           this.warmTimer = undefined;
           if (this.beginHibernate("warm_window")) this.publishStatus(); // re-checks hibernatable
         });
-      }, minutes * 60_000);
-      this.warmTimer = timer;
-    }
-    if (h && !this.wasHibernatable) this.slots.becameHibernatable(this.agent.id);
-    this.wasHibernatable = h;
-    this.updateCronExpiry();
+      },
+      Math.max(0, delayMs), // at most a day (the window is capped at 1440 minutes)
+    );
+    this.warmTimer = timer;
+  }
+
+  /**
+   * S10 §8.2: the default warm window or the member-update debounce changed. A snapshot that omits the window re-arms
+   * its armed warm timer from when it was armed (firing at once when that is past); a snapshot that holds a window
+   * keeps it. The held-update timer re-arms from the recomputed due time (and again at the end of the job).
+   */
+  async settingsChanged(): Promise<void> {
+    await this.run(async () => {
+      if (this.agent.config.warmWindowMinutes === undefined && this.warmTimer) {
+        clearTimeout(this.warmTimer);
+        this.warmTimer = undefined;
+        const armedAt = this.warmArmedAt ?? Date.now();
+        this.armWarmTimer(armedAt + this.warmWindowMs() - Date.now());
+      }
+      this.updateHeldTimer();
+    });
   }
 
   /** One timer at the earliest cron expiry, so a pin can't outlive Claude's own 7-day expiry. */

@@ -71,7 +71,7 @@ class Boot {
       containers: this.containers,
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
-      memberUpdateDebounceMs: 30_000,
+      memberUpdateDebounceMs: () => 30_000,
       forward: async (f) => {
         this.forwarded.push(f);
       },

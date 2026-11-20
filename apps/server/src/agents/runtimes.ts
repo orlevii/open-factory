@@ -23,8 +23,13 @@ export interface RuntimesDeps {
   tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
-  /** The member update debounce in ms (S6 §8.2, a factory setting since S10); the runtime's 30 s default when unset. */
-  memberUpdateDebounceMs?: number;
+  /**
+   * The member update debounce in ms (S6 §8.2), read live (the `member_update_debounce_seconds` factory setting, S10
+   * §8.2); the runtime's 30 s default when unset.
+   */
+  memberUpdateDebounceMs?: () => number;
+  /** The factory default warm window in minutes, read live (S10 §8.2); the runtime's 70 when unset. */
+  defaultWarmWindowMinutes?: () => number;
   /** S6 §9.1: every runtime's forwarding port (the Router's `forward`). */
   forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
@@ -198,8 +203,11 @@ export class AgentRuntimes {
         tokens: this.d.tokens,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
-        ...(this.d.memberUpdateDebounceMs !== undefined
+        ...(this.d.memberUpdateDebounceMs
           ? { memberUpdateDebounceMs: this.d.memberUpdateDebounceMs }
+          : {}),
+        ...(this.d.defaultWarmWindowMinutes
+          ? { defaultWarmWindowMinutes: this.d.defaultWarmWindowMinutes }
           : {}),
         forward: this.d.forward,
         slots: this.supervisor,
@@ -330,6 +338,25 @@ export class AgentRuntimes {
     if (!rt) return;
     await rt.reload();
     this.supervisor.recheckQueue();
+  }
+
+  /**
+   * S10 §8.2: the default warm window or the member-update debounce changed. Every loaded runtime re-arms its warm and
+   * held-update timers in its own job queue; a failure is logged, never thrown.
+   */
+  async settingsChanged(): Promise<void> {
+    await Promise.all(
+      [...this.loaded.values()].map((rt) =>
+        rt
+          .settingsChanged()
+          .catch((err) =>
+            this.d.log.error(
+              { err, agent: rt.agent.slug },
+              "re-arming after a settings change failed",
+            ),
+          ),
+      ),
+    );
   }
 
   /** Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. */

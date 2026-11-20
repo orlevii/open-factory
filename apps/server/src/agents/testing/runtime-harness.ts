@@ -74,6 +74,8 @@ export const okSpec = (a: {
  * One test DB and a fresh runtime per `makeRuntime()` call, over the fake driver. Call `setup()` in `beforeAll`
  * and `close()` in `afterAll`. `startError`, when set, is thrown by `prepareStart` at the next start.
  */
+const getter = (v: number | (() => number)) => (typeof v === "number" ? () => v : v);
+
 export class RuntimeHarness {
   t!: Awaited<ReturnType<typeof createTestDb>>;
   store!: EventStore;
@@ -126,7 +128,10 @@ export class RuntimeHarness {
       warmWindowMinutes?: number;
       cleanup?: RuntimeDeps["cleanup"];
       journal?: RuntimeDeps["journal"];
-      memberUpdateDebounceMs?: number;
+      /** The member-update debounce: a fixed value, or a getter a test changes (then calls `settingsChanged()`). */
+      memberUpdateDebounceMs?: number | (() => number);
+      /** The factory default warm window, read live (the runtime's 70 when absent). */
+      defaultWarmWindowMinutes?: () => number;
       /** The Docker launcher; pair it with `spec` returning a Docker spec. */
       docker?: RuntimeDeps["docker"];
       /** What `prepareStart` returns (default: `okSpec`, a local spec). */
@@ -201,7 +206,10 @@ export class RuntimeHarness {
       ...(opts.journal ? { journal: opts.journal } : {}),
       ...(opts.docker ? { docker: opts.docker } : {}),
       ...(opts.memberUpdateDebounceMs !== undefined
-        ? { memberUpdateDebounceMs: opts.memberUpdateDebounceMs }
+        ? { memberUpdateDebounceMs: getter(opts.memberUpdateDebounceMs) }
+        : {}),
+      ...(opts.defaultWarmWindowMinutes
+        ? { defaultWarmWindowMinutes: opts.defaultWarmWindowMinutes }
         : {}),
     });
     await opts.seed?.(this.agentId);

@@ -35,6 +35,7 @@ const IMAGE = "open-factory-base:dev";
 const TOKEN_FILE = path.join(homedir(), ".open-factory-spike", "oauth-token");
 const SPAWN = "mcp__factory__spawn_agent";
 const TERMINATE = "mcp__factory__terminate_agent";
+const SEND = "mcp__factory__send_message";
 const CHILD = "helper-one";
 
 let token = "";
@@ -131,6 +132,15 @@ const containersOf = (id: string) =>
 
 function cleanup(): Promise<void> {
   cleaned ??= (async () => {
+    // Every agent row of this run, spawned ones included, even when the run stopped before recording them.
+    // Read before anything closes; the containers are removed through Docker directly, so after app.close() too.
+    try {
+      if (sql)
+        for (const r of await sql<{ id: string; slug: string }[]>`select id, slug from agents`)
+          ids.set(r.slug, r.id);
+    } catch (e) {
+      console.error(redact(`cleanup: listing this run's agents failed: ${e}`));
+    }
     if (appBuilt) {
       let closeErr = "";
       await app.close().catch((e) => {
@@ -150,17 +160,17 @@ function cleanup(): Promise<void> {
     try {
       await closeDb?.();
     } catch (e) {
-      console.error(`cleanup: closing the db pool failed: ${e}`);
+      console.error(redact(`cleanup: closing the db pool failed: ${e}`));
     }
     try {
       await tdb?.drop();
     } catch (e) {
-      console.error(`cleanup: dropping the throwaway database failed: ${e}`);
+      console.error(redact(`cleanup: dropping the throwaway database failed: ${e}`));
     }
     try {
       rmSync(root, { recursive: true, force: true });
     } catch (e) {
-      console.error(`cleanup: removing ${root} failed: ${e}`);
+      console.error(redact(`cleanup: removing ${root} failed: ${e}`));
     }
   })();
   return cleaned;
@@ -521,8 +531,10 @@ try {
     until(`${CHILD}'s system/init`, async () => inits.find((i) => i.slug === CHILD), 120_000),
   );
   check(
-    `4. ${CHILD}'s system/init lists neither ${SPAWN} nor ${TERMINATE}`,
-    !childInit.tools.includes(SPAWN) && !childInit.tools.includes(TERMINATE),
+    `4. ${CHILD}'s system/init lists ${SEND} but neither ${SPAWN} nor ${TERMINATE}`,
+    childInit.tools.includes(SEND) &&
+      !childInit.tools.includes(SPAWN) &&
+      !childInit.tools.includes(TERMINATE),
     `factory tools: ${factoryTools(childInit.tools).join(", ") || "none"}`,
   );
 
@@ -596,7 +608,11 @@ try {
       30_000,
     ),
   );
-  say(`    ${brief(JSON.stringify(ended.event))} at ${ended.at}`);
+  check(
+    `7. ${CHILD}'s terminated event is by lead`,
+    ended.event.type === "terminated" && ended.event.by === "lead",
+    `${brief(JSON.stringify(ended.event))} at ${ended.at}`,
+  );
   if (!LOCAL) {
     const gone = await until(
       `${CHILD}'s container to be removed`,

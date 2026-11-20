@@ -20,6 +20,7 @@ export function ConfirmDialog({
   body,
   detail,
   confirmLabel,
+  pendingLabel,
   onConfirm,
   onCloseAutoFocus,
 }: {
@@ -30,6 +31,8 @@ export function ConfirmDialog({
   /** A muted line under the body, outside the description (e.g. the error that led here). */
   detail?: ReactNode;
   confirmLabel: string;
+  /** The action button's text while the request is out ("Stopping…"); the label stays when absent. */
+  pendingLabel?: string;
   onConfirm(): Promise<void> | void;
   /** Where focus goes on close, when there is no trigger to return to (opened from a menu). */
   onCloseAutoFocus?: (e: Event) => void;
@@ -85,7 +88,7 @@ export function ConfirmDialog({
             onClick={confirm}
           >
             {pending && <Loader2 aria-hidden="true" className="animate-spin" />}
-            {confirmLabel}
+            {pending && pendingLabel ? pendingLabel : confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

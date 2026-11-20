@@ -353,25 +353,26 @@ Spec §5.2 (F1 and round 2), AC2, §11 V4. **Read the turn_end (~2286–2320) an
 **Interfaces — Produces:**
 ```ts
 // event-store.ts
-/** Spec §5.2: the turn's task when its delivered messages carry task messages of exactly one task. */
-async attributeTask(turnId: string, tx: Exec): Promise<void>; // UPDATE turns SET task_id = (SELECT min(task_id) … HAVING count(DISTINCT task_id) = 1) WHERE id = $turn
-/** One transaction: stamp `stampIds` with the turn (when given), close it, attribute it. */
-async closeTurnWith(turnId: string, d: TurnClose, stampIds: string[]): Promise<void>;
+/** Spec §5.2: the turn's task when every delivered non-system message carries that one task (a lower bound). */
+async attributeTask(turnId: string, tx: Exec): Promise<void>; // UPDATE turns SET task_id = (SELECT min(task_id) FROM messages WHERE delivered_turn_id = $turn AND kind <> 'system' HAVING count(*) > 0 AND count(*) = count(task_id) AND count(DISTINCT task_id) = 1) WHERE id = $turn
+/** One transaction: stamp `stampIds` with the turn (when given), close it, and attribute it when `attribute` is true. */
+async closeTurnWith(turnId: string, d: TurnClose, stampIds: string[], attribute: boolean): Promise<void>;
 ```
 
 - [ ] **Step 1: Failing tests** (fake driver; task messages created through `TaskService` or by the `rows.ts` helpers with `task_id`):
   - a single task message starts a turn → `turns.task_id` = that task;
   - one batch with messages of two tasks → NULL;
-  - a non-task human message plus a task message → the task;
+  - a non-task human message plus a task message → NULL (any non-system message without the task disqualifies);
+  - a task message plus a `system` notice → the task;
   - a mid-turn absorbed task message of the same task → the task (and `messages.delivered_turn_id` set for both batches);
   - **a cron turn ends while a batch is awaiting** (fake driver emits `turn_started`, then `turn_end{originKind:"cron"}` with `awaiting` non-empty) → `awaiting` stays unstamped and the cron turn's `task_id` is NULL. The batch's own later turn gets the task, and S6's update-only computation is unchanged (assert `dueAtTurnEnd` via the existing held tests still passing);
-  - process exit with an open turn and an awaiting task batch → that turn's `task_id` = the task;
+  - process exit with an open turn and an awaiting task batch → NULL (S6's exit path unchanged; awaiting not stamped);
   - `closeDanglingTurns` at boot → `task_id` NULL;
   - **V4:** on the exit path, the last `agent_status` frame with `turnOpen: false` arrives after the turn row has `ended_at` (subscribe to the bus with `subscribeAll`, then read the row in the listener).
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/agents/agent-runtime.task-attribution.test.ts` → FAIL.
 - [ ] **Step 3: Implement.**
-  - **turn_end:** when `!e.originKind && this.awaiting.length`, call `closeTurnWith(turnId, close, this.awaiting.flat())`, then clear `awaiting`/`awaitingKinds`. Otherwise call `closeTurnWith(turnId, close, [])`. Keep `ran` and `updateOnly` computed **before**, exactly as today.
-  - **exit:** snapshot `const awaitingIds = this.awaiting.flat()` next to `const openTurnId = this.openTurnId` (~2443), before `this.awaiting = []` (~2455). Replace the `closeTurn(openTurnId, …)` call with `closeTurnWith(openTurnId, …, awaitingIds)`.
+  - **turn_end:** when `!e.originKind`, call `closeTurnWith(turnId, close, this.awaiting.flat(), true)`, then clear `awaiting`/`awaitingKinds` as S6 does today. With an `originKind`, call `closeTurnWith(turnId, close, [], false)`. Keep `ran` and `updateOnly` computed **before**, exactly as today.
+  - **exit:** unchanged S6 behaviour (no stamping, no attribution).
   - Leave `closeDanglingTurns` unchanged.
   - If V4 fails, move the exit path's `publishStatus()` after the close.
 - [ ] **Step 4: Run** the file plus `pnpm vitest run apps/server/src/agents apps/server/src/messaging` (S6 held, forward and delivery tests unchanged) → PASS; `pnpm typecheck`; `pnpm lint`.
@@ -1020,7 +1021,7 @@ Spec §12.4 Factory (U14).
   - Save sends only the changed fields and shows "Saved."; a server 400 maps to its field;
   - the read-only "Local runtime: Not allowed" row with its sentence;
   - a `settings_changed` frame while the form is dirty shows "These settings were changed elsewhere." with Reload;
-  - the warm-window hint adds "Agents created before this change keep 70 min until re-synced." (shown always: the spec's "while any live agent's snapshot holds a window" would need a server field; the plan simplifies and the PR says so).
+  - the warm-window hint adds "Agents created before this change keep 70 min until re-synced." (shown always, as the spec says).
 - [ ] **Step 2: Run** → FAIL.
 - [ ] **Step 3: Implement** using `FormField`/`FieldShell` and the blur-validation pattern of `schedules/` forms.
 - [ ] **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
@@ -1133,7 +1134,7 @@ pnpm build
     - user images built from `~/open-factory/images/` with status and the CLI.
   - **Why:** the S10 roadmap item. Link the spec, this plan and the decision issue #68. Closes #1 and #62.
   - **Approach** (one bullet per decision, in the form "X, rather than Y, because Z"):
-    - store `turns.task_id` at close, rather than derive per query, because it freezes the attribution and is cheap to read; it is labelled approximate;
+    - store `turns.task_id` at close, rather than derive per query, because it freezes the attribution and is cheap to read; it is a lower bound (only turns that handled that task's messages and nothing else);
     - plain SQL rollups, rather than materialized views or a rollup table, because the numbers then equal the stored turns by construction;
     - estimated cost as the headline, rather than tokens, because it compares across models (labelled est. with a visible line);
     - a `factory_settings` row, rather than env plus override layers, because one source of truth needs no precedence UI;

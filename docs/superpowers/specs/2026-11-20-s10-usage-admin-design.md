@@ -22,7 +22,7 @@ Visibility into cost and load, and complete administration:
 From the roadmap, made testable. All run in default CI (fake driver, real Postgres, fake Docker client) unless marked live.
 
 1. **Usage matches stored turns.** For a seeded set of turns across agents, spawned children, tasks, credentials, days and a DST boundary in `FACTORY_TIMEZONE`, every REST rollup (§7) equals a reference sum computed in the test directly from `turns` rows. The tree column, the per-agent page and Settings → Usage render those numbers.
-2. **Per-task attribution (#62).** A turn whose delivered messages carry task messages of exactly one task gets `turns.task_id`; a turn with messages of two tasks, or none, gets `NULL`; a single task message that starts a turn attributes it (the starting batch is stamped before the close); a turn that absorbs a mid-turn batch of the same task stays attributed; a turn that ends by process exit is attributed by the same rule after its awaiting batch is stamped; a dangling turn closed at boot stays `NULL` (§5.2).
+2. **Per-task attribution (#62).** A turn that ends normally, has no `originKind`, and whose every delivered non-system message carries task T gets `turns.task_id = T`: a single task message that starts a turn attributes it (the starting batch is stamped before the close), and a mid-turn absorbed batch of the same task keeps it attributed. A turn with messages of two tasks, a task message plus any non-task message (human, agent, scheduled), no messages, an `originKind` (cron, task notification), a process exit, or a boot close gets `NULL` (§5.2).
 3. **Concurrency cap live.** With cap 1 and two agents wanting to run, `PATCH /api/settings/factory {maxRunningAgents: 2}` grants the queued wake without a restart, and the `supervisor` frame reports `max: 2`. Lowering it to 1 with both busy stops neither; a queued wake is granted only once running < 1 (idle holders may hibernate early under S5's `evict()`, §8.2).
 4. **Default warm window and debounce live.** An agent whose template omits `warm_window_minutes` hibernates after the factory default; changing the default re-arms an idle agent's armed timer to `armedAt + new window` (firing at once when past). A changed debounce re-arms held member updates at `createdAt + new debounce`.
 5. **Invite-only sign-up.** With zero users, sign-up works without an invite. With one user, sign-up without a valid invite gets `403 invite_required`; with a valid one it succeeds once (a second use, an expired, revoked or unknown token all give the same `403 invite_invalid`). Two concurrent sign-ups on one invite: exactly one user is created. Two concurrent first sign-ups with zero users: exactly one succeeds without an invite.
@@ -83,13 +83,14 @@ New server modules: `usage/` (service, routes), `settings/` (factory settings st
 ### 5.2 Writing (Q1, R1, R2)
 
 - **Credential at turn open.** `openTurn(agentId, credentialId)` writes the credential the running process was started with. Today the runtime only has `this.agent.credentialId`, which `reload()` replaces (`agent-runtime.ts` ~656), so the runtime captures `procCredentialId` when it spawns the process and uses that. For a spawned agent it is the spawner's credential, already on its row since S7.
-- **Task at turn close.** One function, `attributeTask(turnId, tx)`, sets
-  `task_id = (SELECT min(task_id) FROM messages WHERE delivered_turn_id = $turn AND task_id IS NOT NULL HAVING count(DISTINCT task_id) = 1)`.
+- **Task at turn close** (Q1, tightened after round 2 to keep a true lower bound). One function, `attributeTask(turnId, tx)`, runs only on a `turn_end` without `originKind` and sets
+  `task_id = (SELECT min(task_id) FROM messages WHERE delivered_turn_id = $turn AND kind <> 'system' HAVING count(*) > 0 AND count(*) = count(task_id) AND count(DISTINCT task_id) = 1)`:
+  every delivered non-system message of the turn carries the same task; any message from a human, another agent or a schedule without that task leaves the turn unattributed.
   It runs at close, not at delivery, because a turn absorbs mid-turn batches (S6) whose rows are stamped with `delivered_turn_id` when written (`agent-runtime.ts` ~3302). The batch that **starts** a turn waits in `awaiting` and today is stamped only after `closeTurn` (turn_end: `closeTurn` ~2297, then `setDeliveredTurn` ~2304), and on process exit it is cleared unstamped (~2454). So the close paths change order (F1):
-  - **turn_end:** only when the turn_end has no `originKind` (the unchanged S6 condition, ~2303: a cron or task-notification turn never consumes `awaiting`, and the batch's own later turn computes S6 §8.1's `ran`/update-only from it), in one transaction `setDeliveredTurn(awaiting, turnId)`, then `closeTurn`, then `attributeTask`. A turn_end with an `originKind` just runs `closeTurn` + `attributeTask` (absorbed rows only).
-  - **process exit with an open turn:** snapshot the `awaiting` ids together with `openTurnId` (~2443) before S6 clears `awaiting` (~2455); in one transaction, stamp them to the open turn, then `closeTurn`, then `attributeTask` (an open cron or self-started turn takes the batch's rows; that is what the turn was running). The rest of S6's exit bookkeeping for those rows is unchanged.
-  - **boot's `closeDanglingTurns`:** the starting batch was never stamped, so these turns stay unattributed (`NULL`); S6's stamp timing is not changed for this edge.
-  Non-task messages in the turn don't disqualify it. Per-task usage is therefore **approximate**, not a lower bound: work continued after an unrelated wake and turns closed at boot are missed, while a turn started by something else that absorbed one task's message is charged to that task in full. The UI says so (§12.10). Invariant relied on: while a turn is open, `awaiting` rows are already `delivered` (`session_started` empties `inFlight` before `turn_started`), so stamping them can't conflict with S6's re-queue on exit.
+  - **turn_end without `originKind`** (the unchanged S6 condition, ~2303): in one transaction `setDeliveredTurn(awaiting, turnId)`, then `closeTurn`, then `attributeTask`.
+  - **turn_end with an `originKind`** (cron, task notification): `closeTurn` only; S6 still never lets such a turn consume `awaiting` (the batch's own later turn computes S6 §8.1's `ran`/update-only from it). Not attributed: the turn wasn't started by a message.
+  - **process exit with an open turn** and **boot's `closeDanglingTurns`**: unchanged S6 behaviour, not attributed. The open turn's origin isn't known at exit, so attributing it could charge a cron turn to a task; a crashed turn is undercounted instead (the R1 wish to attribute crashed turns gives way to the lower bound).
+  Per-task usage is therefore a **lower bound**: every attributed turn handled only that task's messages, and work continued after other messages, mixed turns, self-started turns and crashed turns are missed. The UI says so (§12.10).
 - **Usage deltas** are unchanged (S3 mapper: `model_usage_since_last_result`, or cumulative differences).
 
 ### 5.3 Rate-limit status (Q5, R3)
@@ -248,7 +249,7 @@ A segment linking to `/agents/:slug/usage`, always shown (from `md` up): "$4.12 
 - **Totals** as a `<dl>`: labels 13px muted, values 14px tabular; only "Estimated cost" is enlarged (Geist 16/20, 600; not Archivo). Then "Turns", and one tokens line. For a persistent agent with spawned usage: "Own $1.20 · spawned $3.40" under the cost. The estimate line (§6) follows. No KPI tiles.
 - **Daily** chart (§12.6), with its caption.
 - **By model** table (model mono, turns, tokens, Cost (est.)).
-- **By task** table (key link, title, turns, Cost (est.)) with the approximation note above it.
+- **By task** table (key link, title, turns, Cost (est.)) with the lower-bound note above it.
 - **Spawned agents** (persistent only): slug link to its usage page, ended label, turns, Cost (est.).
 - States: loading keeps a 160px chart placeholder; empty "No usage in the last {days} days."; error "Couldn't load usage for @lead." with Retry.
 
@@ -265,7 +266,7 @@ A segment linking to `/agents/:slug/usage`, always shown (from `md` up): "$4.12 
 
 **Factory** (`#factory`): one form, validated on blur and on Save, server field errors mapped to fields, inline outcome "Saved.":
 - "Concurrency cap" (number) with a live "3 of 8 running" from the `supervisor` frame;
-- "Default warm window" (number, suffix "min"); its hint adds "Agents created before this change keep 70 min until re-synced." while any live agent's snapshot holds a window;
+- "Default warm window" (number, suffix "min"); its hint always adds "Agents created before this change keep 70 min until re-synced." (no server field to make it conditional);
 - "Member-update debounce" (number, suffix "s");
 - a read-only row "Local runtime: Not allowed" / "Allowed" with how to change it.
 When `settings_changed` arrives while the form is dirty: a notice with Reload.
@@ -311,8 +312,8 @@ From §7's derived state: a live pause → "Rate-limited until 14:30" (through t
 | Usage empty | No usage in the last 30 days. |
 | Usage errors | Couldn't load usage. · Couldn't load usage for @lead. · Couldn't load users. · Couldn't load factory settings. · Couldn't load images. · Couldn't load credentials. · Couldn't load secrets. · Couldn't load projects. |
 | Totals tokens line | Tokens: 1.2M in · 340k out · 2.1M cache write · 18M cache read |
-| By-task note | Counts turns that handled this task's messages and no other task's. Work can be missed, or include other work done in the same turn. |
-| Task detail | Usage: $1.23 est. · 14 turns / hint: Approximate: counts turns that handled this task's messages and no other task's. |
+| By-task note | Counts only turns that handled this task's messages and nothing else. Real usage can be higher. |
+| Task detail | Usage: $1.23 est. · 14 turns / hint: Counts only turns that handled this task's messages and nothing else. Real usage can be higher. |
 | Invite button / reveal | Create invite link · Copy this link now. It isn't shown again. It works for one sign-up within 7 days. · Copied. · Done |
 | Invite failure | Couldn't create an invite. Try again. |
 | Pending invite row | Created by @or · expires in 6 days |
@@ -359,7 +360,7 @@ Usage formatting (`<$0.01`, `—`, token abbreviations); `attributeTask` SQL cas
 
 ### 15.2 Server (fake driver, real Postgres)
 - **AC 1:** seeded turns; every route equals the reference sum; window edges (`started_at` exactly at the boundary), zero-filled days, a DST day in `America/New_York`, open turns excluded, spawner totals exclude persistent reports, unattributed credential bucket.
-- **AC 2:** every case of §5.2 through the runtime: a single task message starts the turn (stamped before close); two tasks; non-task plus task; mid-turn absorb; exit close (awaiting stamped, then attributed); boot close (`NULL`).
+- **AC 2:** every case of §5.2 through the runtime: a single task message starts the turn (stamped before close); task plus a system notice (attributed); two tasks; non-task plus task (`NULL`); mid-turn absorb of the same task; a cron turn_end with a batch awaiting (batch unstamped, `NULL`); exit close and boot close (`NULL`).
 - **Credential:** `turns.credential_id` for a persistent and a spawned agent; a credential delete leaves turns with `NULL`.
 - **Rate limits:** `allowed_warning` updates `rl_*` and pauses nothing; `rejected` still pauses (S5 tests kept); an older event never overwrites a newer one.
 - **AC 3, AC 4** with fake timers.
@@ -396,7 +397,7 @@ The output goes in the PR.
 
 ## 17. Accepted risks and non-goals
 
-- **Per-task usage is approximate** (Q1): turns that continue a task after unrelated wakes and boot-closed turns are missed; a turn that absorbed one task's message is charged to it in full; the UI says so.
+- **Per-task usage is a lower bound** (Q1): mixed turns, work continued after other messages, self-started, crashed and boot-closed turns are missed; the UI says so.
 - **Cost is notional on subscriptions** (Q3); labelled "est." everywhere.
 - **Old turns are unattributed** for credential and task (no backfill).
 - **A failed build's log is lost on restart** (Q13); the status then truthfully reads from Docker.
@@ -407,7 +408,7 @@ The output goes in the PR.
 
 ## 18. Product doc wording (for the lead; not edited here)
 
-- `architecture/usage-tracking.md`: turns store `task_id` (attributed at close when the turn's delivered messages carry exactly one task; approximate) and `credential_id`; rollups are plain queries; cost labelled as an estimate; the latest rate-limit status per credential, including `allowed_warning`; rolling 7-day tree column; days in `FACTORY_TIMEZONE`.
+- `architecture/usage-tracking.md`: turns store `task_id` (attributed at a normal close when every delivered non-system message carries the same task; a lower bound) and `credential_id`; rollups are plain queries; cost labelled as an estimate; the latest rate-limit status per credential, including `allowed_warning`; rolling 7-day tree column; days in `FACTORY_TIMEZONE`.
 - `architecture/data-model.md`: `turns.task_id`, `turns.credential_id`; `credentials.rl_*`; `factory_settings`; `invites`; `users.disabled_at`.
 - `behavior/administration.md` → Settings: section order and anchors; Users (invites, disable/enable, pending invites with Undo); Factory config (three editable fields; local runtime read-only, set by `FACTORY_ALLOW_LOCAL_RUNTIME`; the debounce env var is gone); Usage (chart, per-agent grouped by spawner, credentials with rate-limit state). Templates: the Image column and the Images section.
 - `architecture/base-image.md` → User images: a bare `image:` name means `images/<name>/`, tagged `open-factory-user/<name>:latest`, never pulled, built manually (UI or CLI) with `pull: true`; status derived from Docker labels; agents use a rebuild from their next start.
@@ -417,17 +418,17 @@ The output goes in the PR.
 
 ## 19. Issues consumed and follow-ups
 
-Consumed: **#62** (resolved by Q1: stored at close, exactly-one-task rule, approximate), **#1** (sign-up closed: invites, bootstrap, disable). Notes: **#47** (S10 makes agent ping-pong visible in usage; no guard added), **#43** (the `allowed`/`allowed_warning` shapes, V5), **#2** (still no password reset; a disabled user can be re-enabled, a forgotten password still can't be reset).
+Consumed: **#62** (resolved by Q1: stored at close, only-this-task rule, lower bound), **#1** (sign-up closed: invites, bootstrap, disable). Notes: **#47** (S10 makes agent ping-pong visible in usage; no guard added), **#43** (the `allowed`/`allowed_warning` shapes, V5), **#2** (still no password reset; a disabled user can be re-enabled, a forgotten password still can't be reset).
 
 Follow-ups: user deletion (#69); an agent-facing usage tool (#70); persisted image build history (#71); usage export as CSV (#72); a rate-limit history per credential (#73).
 
 ## 20. Decision summary
 
-Q1 store `turns.task_id`, exactly-one-task rule, approximate; stamped before close, boot-closed turns unattributed (F1) (3) · Q2 plain SQL (5) · Q3 cost headline labelled est. (3) · Q4 FACTORY_TIMEZONE days, 7/30/90 default 30, page totals = the chart's calendar days (F4) (4); tree rolling 7d (3) · Q5 `turns.credential_id`, latest rate-limit status on credentials (4) · Q6 `factory_settings` only, env vars removed (3) · Q7 local runtime env-only (5) · Q8 optional template warm window, live factory default (3) · Q9 live semantics (4) · Q10 invites, bootstrap, no hatch; checked in the catch-all on the normalized path with an ALS-flag backstop (F2) (4); disable user in S10 (2) · Q11 bare names are user images, missing Dockerfile is an error naming the `docker.io/library/` escape (F6) (4) · Q12 manual builds (4) · Q13 server builds, `pull: true` with CLI-only `--no-pull` (F3), labels not a table (3) · Q14 status per template plus an Images section on Templates (4) · Q15 `/agents/:slug/usage` and Settings → Usage (4) · Q16 spawner total in the tree (3) · Q17 hand-rolled SVG chart, `--chart-2` bars, single tab stop (F5) (3) · Q18 REST/UI only (4) · Q19 reuse `agent_status` turnOpen edge (3) · Q20 users/invites UI, revoke with Undo, disable confirmed (4) · R1–R10 as in the log (4).
+Q1 store `turns.task_id`; attributed only when every delivered non-system message carries the task, normal non-self-started turns only; lower bound (F1, round 2) (3) · Q2 plain SQL (5) · Q3 cost headline labelled est. (3) · Q4 FACTORY_TIMEZONE days, 7/30/90 default 30, page totals = the chart's calendar days (F4) (4); tree rolling 7d (3) · Q5 `turns.credential_id`, latest rate-limit status on credentials (4) · Q6 `factory_settings` only, env vars removed (3) · Q7 local runtime env-only (5) · Q8 optional template warm window, live factory default (3) · Q9 live semantics (4) · Q10 invites, bootstrap, no hatch; checked in the catch-all on the normalized path with an ALS-flag backstop (F2) (4); disable user in S10 (2) · Q11 bare names are user images, missing Dockerfile is an error naming the `docker.io/library/` escape (F6) (4) · Q12 manual builds (4) · Q13 server builds, `pull: true` with CLI-only `--no-pull` (F3), labels not a table (3) · Q14 status per template plus an Images section on Templates (4) · Q15 `/agents/:slug/usage` and Settings → Usage (4) · Q16 spawner total in the tree (3) · Q17 hand-rolled SVG chart, `--chart-2` bars, single tab stop (F5) (3) · Q18 REST/UI only (4) · Q19 reuse `agent_status` turnOpen edge (3) · Q20 users/invites UI, revoke with Undo, disable confirmed (4) · R1–R10 as in the log (4).
 
 ## 21. Decisions needing Or's call (owner-proxy certainty ≤ 3/5)
 
-- **Q1** store `turns.task_id` rather than derive at query time (both use the same rule; derive-before-store is Or's default).
+- **Q1** store `turns.task_id` rather than derive at query time (derive-before-store is Or's default); and the strict only-this-task rule (a true lower bound, less coverage) rather than the looser exactly-one-task rule (more coverage, wrong in both directions).
 - **Q3** cost (USD, "est.") as the headline even on subscriptions, rather than tokens.
 - **Q4** the tree column is a rolling 7 days rather than "today".
 - **Q6** the two env vars are removed outright (DB only), rather than kept as first-boot defaults.

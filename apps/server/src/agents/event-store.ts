@@ -4,6 +4,7 @@ import {
   type AnyEvent,
   anyEventSchema,
   type ErrorKind,
+  formatKey,
   type MessageKind,
   type SessionEvent,
   type TaskNotice,
@@ -52,6 +53,7 @@ const {
   messages,
   inboxItems,
   tasks,
+  schedules,
   users,
 } = schema;
 type MessageRow = typeof messages.$inferSelect;
@@ -64,6 +66,10 @@ export type PendingRow = MessageRow & {
   /** S8: the task a task message is about (`T-<number>`, its current title). */
   taskNumber: number | null;
   taskTitle: string | null;
+  /** S9: a `scheduled` row's schedule (`S-<number>`), its zone, and its author (`@handle` or slug). */
+  scheduleKey: string | null;
+  scheduleZone: string | null;
+  authorLabel: string | null;
 };
 export interface MessageLookup {
   id: string;
@@ -73,6 +79,10 @@ export interface MessageLookup {
   state: "pending" | "delivered" | "rejected";
   recipientEvent?: { agentSlug: string; seq: number };
   senderEvent?: { agentSlug: string; seq: number };
+  scheduleKey?: string;
+  firings?: number;
+  late?: boolean;
+  dueAt?: string;
 }
 export interface InboxEntry {
   id: string;
@@ -337,7 +347,7 @@ export class EventStore {
   }
   private deliverableWhere(debounceMs: number) {
     const cutoff = new Date(Date.now() - debounceMs);
-    return sql`(${messages.kind} in ('message', 'system', 'task_assigned', 'task_comment', 'task_update') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+    return sql`(${messages.kind} in ('message', 'system', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
   /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
@@ -803,6 +813,8 @@ export class EventStore {
   private joined(tx: Exec) {
     const fa = alias(agents, "fa");
     const sa = alias(agents, "sa");
+    const aa = alias(agents, "aa");
+    const au = alias(users, "au");
     const q = tx
       .select({
         m: messages,
@@ -812,16 +824,28 @@ export class EventStore {
         subjectDisplayName: sa.displayName,
         taskNumber: tasks.number,
         taskTitle: tasks.title,
+        scheduleNumber: schedules.number,
+        scheduleZone: schedules.timezone,
+        authorSlug: aa.slug,
+        authorHandle: au.handle,
       })
       .from(messages)
       .leftJoin(users, eq(users.id, messages.fromUserId))
       .leftJoin(fa, eq(fa.id, messages.fromAgentId))
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
-      .leftJoin(tasks, eq(tasks.id, messages.taskId));
+      .leftJoin(tasks, eq(tasks.id, messages.taskId))
+      .leftJoin(schedules, eq(schedules.id, messages.scheduleId))
+      .leftJoin(aa, eq(aa.id, messages.authorAgentId))
+      .leftJoin(au, eq(au.id, messages.authorUserId));
     return {
       where: async (w: SQL | undefined, order: SQL[] = []): Promise<PendingRow[]> => {
         const rows = await q.where(w).orderBy(...order);
-        return rows.map(({ m, ...rest }) => ({ ...m, ...rest }));
+        return rows.map(({ m, scheduleNumber, authorSlug, authorHandle, ...rest }) => ({
+          ...m,
+          ...rest,
+          scheduleKey: scheduleNumber === null ? null : formatKey("S", scheduleNumber),
+          authorLabel: authorHandle ? `@${authorHandle}` : authorSlug,
+        }));
       },
     };
   }
@@ -937,22 +961,33 @@ export class EventStore {
         fromHandle: fu.handle,
         toSlug: ta.slug,
         toHandle: tu.handle,
+        scheduleNumber: schedules.number,
       })
       .from(messages)
       .leftJoin(fa, eq(fa.id, messages.fromAgentId))
       .leftJoin(fu, eq(fu.id, messages.fromUserId))
       .leftJoin(ta, eq(ta.id, messages.toAgentId))
       .leftJoin(tu, eq(tu.id, messages.toUserId))
+      .leftJoin(schedules, eq(schedules.id, messages.scheduleId))
       .where(eq(messages.id, id));
     if (!r) return undefined;
     const { m } = r;
     const out: MessageLookup = {
       id: m.id,
       kind: m.kind as MessageLookup["kind"],
-      from: r.fromSlug ?? (r.fromHandle ? `@${r.fromHandle}` : "@factory"),
+      from:
+        m.kind === "scheduled"
+          ? "@scheduler"
+          : (r.fromSlug ?? (r.fromHandle ? `@${r.fromHandle}` : "@factory")),
       to: m.toAllHumans ? "@humans" : (r.toSlug ?? `@${r.toHandle ?? ""}`),
       state: m.state as MessageLookup["state"],
     };
+    if (r.scheduleNumber !== null) {
+      out.scheduleKey = formatKey("S", r.scheduleNumber);
+      if (m.firings) out.firings = m.firings;
+      if (m.late) out.late = true;
+      if (m.dueAt) out.dueAt = m.dueAt.toISOString();
+    }
     if (m.state === "delivered" && m.deliveredEventSeq !== null && r.toSlug)
       out.recipientEvent = { agentSlug: r.toSlug, seq: m.deliveredEventSeq };
     const sender = await this.senderEvent(m);

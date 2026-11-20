@@ -42,3 +42,56 @@ export async function insertAgent(
                     'test', ${JSON.stringify({ ...CONFIG, ...(a.warmWindowMinutes ? { warmWindowMinutes: a.warmWindowMinutes } : {}) })}::jsonb, 'local', ${credId},
                     ${a.reportsTo ?? null}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${a.terminatedAt ? "ephemeral" : "persistent"}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
 }
+
+const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
+
+/** A schedule row (number from the sequence) for tests that don't go through the service. The creator and author are user `u1` unless given. */
+export async function insertSchedule(
+  sql: postgres.Sql,
+  s: {
+    id: string;
+    targetAgentId: string;
+    cron?: string;
+    runAt?: Date;
+    timezone?: string;
+    body?: string;
+    createdByUserId?: string | null;
+    createdByAgentId?: string | null;
+    nextRunAt?: Date | null;
+    pausedAt?: Date | null;
+    deletedAt?: Date | null;
+  },
+): Promise<void> {
+  const byAgent = s.createdByAgentId ?? null;
+  const byUser = byAgent ? null : (s.createdByUserId ?? "u1");
+  await sql`insert into schedules (id, target_agent_id, cron, run_at, timezone, body, created_by_agent_id, created_by_user_id,
+                                   body_author_agent_id, body_author_user_id, next_run_at, paused_at, deleted_at)
+            values (${s.id}, ${s.targetAgentId}, ${s.cron ?? (s.runAt ? null : "0 9 * * *")}, ${iso(s.runAt)},
+                    ${s.timezone ?? "UTC"}, ${s.body ?? "Review"}, ${byAgent}, ${byUser}, ${byAgent}, ${byUser},
+                    ${iso(s.nextRunAt)}, ${iso(s.pausedAt)}, ${iso(s.deletedAt)})`;
+}
+
+/** A pending `scheduled` message row, as the scheduler writes it. */
+export async function insertScheduledMessage(
+  sql: postgres.Sql,
+  m: {
+    id: string;
+    toAgentId: string;
+    scheduleId: string;
+    body?: string;
+    authorUserId?: string | null;
+    authorAgentId?: string | null;
+    dueAt?: Date;
+    firings?: number;
+    late?: boolean;
+    state?: string;
+    createdAt?: Date;
+  },
+): Promise<void> {
+  const byAgent = m.authorAgentId ?? null;
+  const byUser = byAgent ? null : (m.authorUserId ?? "u1");
+  await sql`insert into messages (id, kind, to_agent_id, schedule_id, author_agent_id, author_user_id, due_at, firings, late, body, state, created_at)
+            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${byAgent}, ${byUser},
+                    ${iso(m.dueAt ?? new Date("2026-11-23T08:00:00Z"))}, ${m.firings ?? 1}, ${m.late ?? false},
+                    ${m.body ?? "Review"}, ${m.state ?? "pending"}, ${iso(m.createdAt ?? new Date())})`;
+}

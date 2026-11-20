@@ -18,6 +18,7 @@ import {
   type ErrorKind,
   errorKindSchema,
   type FactCode,
+  formatOffsetIso,
   type HarnessEvent,
   HELD_KINDS,
   type MessageKind,
@@ -211,6 +212,8 @@ function entryOf(r: PendingRow): MessageEntry {
   const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
   let from: string;
   if (row.kind === "system") from = "@factory";
+  // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
+  else if (row.kind === "scheduled") from = "@scheduler";
   else if (fromHandle) from = `@${fromHandle}`;
   else if (fromSlug) from = fromSlug;
   else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
@@ -243,6 +246,34 @@ const taskFieldsOf = (
   ...(row.commentId ? { commentId: row.commentId } : {}),
 });
 
+/** S9: a `scheduled` row's envelope attributes; `due` carries the schedule zone's offset at that instant. */
+const scheduleFieldsOf = (
+  row: MessageRow & {
+    scheduleKey?: string | null;
+    scheduleZone?: string | null;
+    authorLabel?: string | null;
+  },
+) =>
+  row.kind === "scheduled" && row.scheduleKey
+    ? {
+        scheduleKey: row.scheduleKey,
+        ...(row.authorLabel ? { by: row.authorLabel } : {}),
+        ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
+        ...(row.firings ? { firings: row.firings } : {}),
+        ...(row.late ? { late: true } : {}),
+      }
+    : {};
+
+const queueScheduleOf = (row: MessageRow & { scheduleKey?: string | null }) =>
+  row.kind === "scheduled" && row.scheduleKey
+    ? {
+        scheduleKey: row.scheduleKey,
+        ...(row.firings ? { firings: row.firings } : {}),
+        ...(row.late ? { late: true } : {}),
+        ...(row.dueAt ? { dueAt: row.dueAt.toISOString() } : {}),
+      }
+    : {};
+
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
@@ -259,6 +290,7 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   ...(e.subject ? { subject: e.subject } : {}),
   // S8: a task message names its task; a `task_update`'s notice is its fact code (the UI keys on it, never on prose).
   ...taskFieldsOf(e.row),
+  ...scheduleFieldsOf(e.row),
   ...(e.row.kind === "task_update" && e.row.notice ? { fact: e.row.notice } : {}),
 });
 
@@ -1444,6 +1476,7 @@ export class AgentRuntime {
           from: e.from,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
+          ...queueScheduleOf(e.row),
         }
       : {
           id: e.id,

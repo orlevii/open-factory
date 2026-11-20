@@ -40,6 +40,21 @@ const update = async () =>
     toAgentId: (await dev()).id,
     body: "@or marked T-1 done.",
   });
+/** Hands the row over and waits for the hand-off itself (it is fire-and-forget behind the boot gate), then for the runtime. */
+async function handOff(
+  row: Parameters<Router["handOffTaskRows"]>[0][number]["row"],
+  wake: "human" | "task_message",
+) {
+  const deliver = vi.spyOn(h.app.runtimes, "deliver");
+  try {
+    h.app.router.handOffTaskRows([{ row, wake }]);
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
+    await deliver.mock.results[0]?.value;
+    await (await h.app.runtimes.bySlug("dev"))?.settled();
+  } finally {
+    deliver.mockRestore();
+  }
+}
 async function startedReasons() {
   const a = await dev();
   return (await h.app.store.after(a.id, 0, 100))
@@ -51,8 +66,7 @@ async function startedReasons() {
 test("a task_assigned row hands off without throwing, wakes a hibernated agent with task_message and carries its task", async () => {
   const row = await assigned();
   expect(row.taskNumber).toBe(1);
-  h.app.router.handOffTaskRows([{ row, wake: "task_message" }]);
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await handOff(row, "task_message");
   expect(proc("dev")?.sent[0]?.[0]).toMatchObject({
     from: "@factory",
     kind: "task_assigned",
@@ -64,8 +78,7 @@ test("a task_assigned row hands off without throwing, wakes a hibernated agent w
 
 test("a task_update hands off the same way and its notice is the envelope's fact", async () => {
   const row = await update();
-  h.app.router.handOffTaskRows([{ row, wake: "task_message" }]);
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await handOff(row, "task_message");
   expect(proc("dev")?.sent[0]?.[0]).toMatchObject({
     kind: "task_update",
     fact: "done",
@@ -81,8 +94,7 @@ async function makeErrored() {
 test("to an errored agent a task_message stays pending and starts no attempt", async () => {
   await makeErrored();
   const row = await update();
-  h.app.router.handOffTaskRows([{ row, wake: "task_message" }]);
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await handOff(row, "task_message");
   const [a] = await h.sql`select status, attempting from agents where slug = 'dev'`;
   expect(a).toEqual({ status: "errored", attempting: false });
   expect(driver.starts.filter((p) => p.spec.slug === "dev")).toHaveLength(0);
@@ -102,8 +114,7 @@ test("a human's task comment to an errored agent starts an attempt with the mess
     toAgentId: a.id,
     body: "@dev look",
   });
-  h.app.router.handOffTaskRows([{ row, wake: "human" }]);
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await handOff(row, "human");
   expect(proc("dev")).toBeDefined();
   expect(await startedReasons()).toContain("message");
   proc("dev")?.emit(...ev.fullTurn("sess-dev"));

@@ -26,7 +26,10 @@ function InboxPage() {
       <PageHeader title="Inbox" actions={<MarkAllReadButton state={state} buttonRef={button} />} />
       <PageBody>
         <div className="grid gap-4">
-          <MarkAllReadOutcome state={state} lastReadAt={lastReadAt} />
+          {/* One grid item: the line's two live regions shouldn't each take a gap. */}
+          <div>
+            <MarkAllReadOutcome state={state} lastReadAt={lastReadAt} />
+          </div>
           <InboxList />
         </div>
       </PageBody>

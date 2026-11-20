@@ -39,9 +39,18 @@ const sentenceOf = (e: unknown, fallback: string) => (e instanceof ApiError ? e.
 const saveFailure = (e: unknown) =>
   e instanceof ApiError && e.status === 400 ? e.message : "Couldn't save. Try again.";
 
-function SideSection({ label, children }: { label: string; children: ReactNode }) {
+function SideSection({
+  label,
+  children,
+  flush,
+}: {
+  label: string;
+  children: ReactNode;
+  /** The first section of the panel starts at the top edge. */
+  flush?: boolean;
+}) {
   return (
-    <section className="grid gap-1.5 border-b border-border py-3 first:pt-0">
+    <section className={`grid gap-1.5 border-b border-border py-3 ${flush ? "pt-0" : ""}`}>
       <h3 className="text-[0.8125rem] font-normal text-muted-foreground">{label}</h3>
       {children}
     </section>
@@ -449,7 +458,7 @@ function StatusAndAssignee({
         : { slug: optimistic.assignee, displayName: optimistic.assignee };
   return (
     <>
-      <SideSection label="Status">
+      <SideSection label="Status" flush>
         <StatusMenu
           value={status}
           disabled={pending}

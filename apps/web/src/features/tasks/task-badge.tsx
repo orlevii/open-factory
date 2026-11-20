@@ -22,8 +22,8 @@ export function TaskBadge({
       <span className="shrink-0 font-mono text-foreground">{taskKey}</span>
       {title ? (
         <>
-          <span aria-hidden="true" className="shrink-0 text-muted-foreground">
-            {" · "}
+          <span aria-hidden="true" className="mx-1 shrink-0 text-muted-foreground">
+            ·
           </span>
           <span className="min-w-0 truncate text-foreground">{title}</span>
         </>

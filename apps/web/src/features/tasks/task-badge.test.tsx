@@ -8,7 +8,7 @@ test("a linked badge: mono key, muted separator, title; its name is 'Task T-42: 
   renderInRouter(<TaskBadge taskKey="T-42" title="Plan the billing migration" link />);
   const link = await screen.findByRole("link", { name: "Task T-42: Plan the billing migration" });
   expect(link).toHaveAttribute("href", "/tasks/T-42");
-  expect(link).toHaveTextContent("T-42 · Plan the billing migration");
+  expect(link).toHaveTextContent("T-42·Plan the billing migration");
   expect(screen.getByText("T-42")).toHaveClass("font-mono");
   expect(screen.getByText("Plan the billing migration")).toHaveClass("truncate");
 });

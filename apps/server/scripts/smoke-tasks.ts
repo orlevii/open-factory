@@ -495,7 +495,7 @@ try {
   const created = await step("2. @or creates T-1 assigned to dev (POST /api/tasks)", async () => {
     const r = await api("POST", "/api/tasks", {
       title: "Smoke one",
-      body: `Read this task with get_task, then comment on it with comment_task mentioning @or and asking one short question. Include the word ${WORD}.`,
+      body: `Read this task with get_task, then comment on it with comment_task mentioning @or and asking one short question. Include the word ${WORD}. Do not change the task's status yet: a human will tell you when to finish it.`,
       assignee: "dev",
     });
     if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);

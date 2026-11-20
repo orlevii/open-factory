@@ -50,6 +50,13 @@
       "when": 1795127995669,
       "tag": "0006_gifted_sentinels",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795138582026,
+      "tag": "0007_strange_lady_mastermind",
+      "breakpoints": true
     }
   ]
 }

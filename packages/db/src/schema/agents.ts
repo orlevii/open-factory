@@ -124,7 +124,12 @@ export const sessionEvents = pgTable(
     payload: jsonb("payload").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("session_events_agent_seq_unique").on(t.agentId, t.seq)],
+  (t) => [
+    uniqueIndex("session_events_agent_seq_unique").on(t.agentId, t.seq),
+    // S7 §8: an agent's `terminated` event, found without reading its whole log (boot's crash-window query and
+    // `ensureTerminatedEvent`). At most one row per terminated agent.
+    index("session_events_terminated_idx").on(t.agentId).where(sql`${t.type} = 'terminated'`),
+  ],
 );
 
 export const messages = pgTable(

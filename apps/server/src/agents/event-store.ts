@@ -167,16 +167,28 @@ export class EventStore {
       .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")));
   }
   /**
-   * Whether the agent has an event of `type`. Rides `session_events_agent_seq_unique (agent_id, seq)` on its
-   * `agent_id` prefix (one agent's events only); called only on termination paths.
+   * Whether the agent has its `terminated` event. The type is a literal, not a parameter, so even a generic plan
+   * matches the partial index `session_events_terminated_idx` (never a read of the agent's whole log).
    */
-  async hasEvent(agentId: string, type: string): Promise<boolean> {
+  async hasTerminatedEvent(agentId: string): Promise<boolean> {
     const [r] = await this.db
       .select({ id: sessionEvents.id })
       .from(sessionEvents)
-      .where(and(eq(sessionEvents.agentId, agentId), eq(sessionEvents.type, type)))
+      .where(and(eq(sessionEvents.agentId, agentId), sql`${sessionEvents.type} = 'terminated'`))
       .limit(1);
     return Boolean(r);
+  }
+  /**
+   * S7 §10.3 step 2: which of `ids` (agents with a container still listed) are terminated. Bounded by the listed
+   * containers, so the sweep never reads every terminated agent.
+   */
+  async terminatedAmong(ids: string[]): Promise<AgentRow[]> {
+    if (!ids.length) return [];
+    return this.db
+      .select()
+      .from(agents)
+      .where(and(inArray(agents.id, ids), isNotNull(agents.terminatedAt)))
+      .orderBy(asc(agents.terminatedAt), asc(agents.id));
   }
   /**
    * S7 §10.2: the agent's last activity, as its own statement (never inside a batch's transaction, which holds message
@@ -349,11 +361,19 @@ export class EventStore {
   }
   /**
    * Boot (S7 §8 crash safety): terminated agents with no `terminated` event (the server died between the termination's
-   * commit and its stop job). Each `NOT EXISTS` rides `(agent_id, seq)`; only the rare crash-window agents come back.
+   * commit and its stop job). Each `NOT EXISTS` is one probe of the partial index `session_events_terminated_idx`;
+   * only the rare crash-window agents come back.
    */
-  async terminatedWithoutEvent(): Promise<{ id: string; terminatedBy: string | null }[]> {
+  async terminatedWithoutEvent(): Promise<
+    { id: string; slug: string; runtime: string; terminatedBy: string | null }[]
+  > {
     return this.db
-      .select({ id: agents.id, terminatedBy: agents.terminatedBy })
+      .select({
+        id: agents.id,
+        slug: agents.slug,
+        runtime: agents.runtime,
+        terminatedBy: agents.terminatedBy,
+      })
       .from(agents)
       .where(
         and(

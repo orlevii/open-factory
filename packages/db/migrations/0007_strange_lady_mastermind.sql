@@ -1,0 +1,1 @@
+CREATE INDEX "session_events_terminated_idx" ON "session_events" USING btree ("agent_id") WHERE "session_events"."type" = 'terminated';

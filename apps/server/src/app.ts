@@ -253,6 +253,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     terminator,
     workspace,
+    containers,
     log: app.log,
     now: () => Date.now(),
   });

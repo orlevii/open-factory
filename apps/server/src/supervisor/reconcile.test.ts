@@ -10,7 +10,7 @@ import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.
 import { insertAgent } from "../agents/testing/rows.ts";
 import { noForward, noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
 import type { Forward } from "../messaging/forwarder.ts";
-import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
+import { ContainerManager, containerName, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
 import { Reaper } from "../spawning/reaper.ts";
@@ -30,6 +30,13 @@ afterAll(() => t.close());
 class Boot {
   readonly driver = new FakeDriver();
   readonly docker = new FakeDockerClient();
+  /** The one ContainerManager, as in buildApp: boot, the runtimes and the sweep share it. */
+  readonly containers = new ContainerManager({
+    docker: this.docker,
+    log: silentLog,
+    uid: 501,
+    gid: 20,
+  });
   readonly runtimes: AgentRuntimes;
   readonly logs: { level: string; msg: string }[] = [];
   readonly forwarded: Forward[] = [];
@@ -39,7 +46,8 @@ class Boot {
     warn: (_: object, msg: string) => this.logs.push({ level: "warn", msg }),
     error: (_: object, msg: string) => this.logs.push({ level: "error", msg }),
   };
-  constructor(max = 8) {
+  /** `dockerRuntime`: the runtimes get the Docker deps (a terminated Docker agent's removal goes through them). */
+  constructor(max = 8, o: { dockerRuntime?: boolean } = {}) {
     this.runtimes = new AgentRuntimes({
       tokens: noopTokens,
       forward: noForward,
@@ -49,6 +57,9 @@ class Boot {
       prepareStart: async (a) => okSpec(a),
       log: silentLog,
       maxRunningAgents: max,
+      ...(o.dockerRuntime
+        ? { docker: { containers: this.containers, claudeBin: "claude", defaultImage: "img" } }
+        : {}),
     });
   }
 
@@ -56,7 +67,7 @@ class Boot {
     return reconcile({
       store,
       journal,
-      containers: new ContainerManager({ docker: this.docker, log: silentLog, uid: 501, gid: 20 }),
+      containers: this.containers,
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
       memberUpdateDebounceMs: 30_000,
@@ -64,6 +75,19 @@ class Boot {
         this.forwarded.push(f);
       },
       log: this.log,
+    });
+  }
+
+  /** The spawned-agent sweep (spec §10.3) over this boot's runtimes and Docker; its other steps find nothing. */
+  reaper(now = Date.now()) {
+    return new Reaper({
+      store,
+      runtimes: this.runtimes,
+      terminator: { terminate: async () => ({ status: "terminated" }) },
+      workspace: { deleteWorkspace: async () => false },
+      containers: this.containers,
+      log: this.log,
+      now: () => now,
     });
   }
 
@@ -554,6 +578,13 @@ test("S7 §12: a terminated agent's leftovers are removed and reaped; it is neve
   ]);
   expect(await boot.runtimes.get(id)).toBeUndefined();
   expect(boot.starts(id)).toHaveLength(0);
+  // The stale `attempting` on its row is inert: no attempt was cut short, nothing errored, and loading it starts
+  // nothing.
+  expect(await row(id)).toMatchObject({ attempting: true, status: "hibernated", lastError: null });
+  const rt = await boot.runtimes.load(id);
+  await rt?.settled();
+  expect(boot.starts(id)).toHaveLength(0);
+  expect(rt?.live().status).toBe("terminated");
 });
 
 test("S7 §8: a failed removal of a terminated agent's container makes it stop_failed for the sweep", async () => {
@@ -570,6 +601,83 @@ test("S7 §8: a failed removal of a terminated agent's container makes it stop_f
   expect(boot.forwarded).toEqual([]);
 });
 
+/** A terminated Docker agent's leftover container, under the name the runtime's removal looks it up by. */
+async function dockerLeftover(b: Boot, id: string, running: boolean): Promise<string> {
+  await t.sql`update agents set runtime = 'docker' where id = ${id}`;
+  const name = containerName((await row(id)).slug, id);
+  putContainer(b, name, id, running);
+  return name;
+}
+
+test("S7 §8: Docker unreachable at boot: the crash-window agent is stop_failed; the next sweep that lists Docker removes every leftover", async () => {
+  // Crashed between the commit and the stop job (no event), and between the event and the removal.
+  const noEvent = await terminatedAgent();
+  const evented = await terminatedAgent();
+  await store.append(evented, null, { type: "terminated", by: "@lead" });
+  // Long ago: past the stuck query's recent window, so only the container list can find it.
+  await t.sql`update agents set terminated_at = now() - interval '30 days' where id = ${evented}`;
+  boot = new Boot(8, { dockerRuntime: true });
+  const a = await dockerLeftover(boot, noEvent, true);
+  const b = await dockerLeftover(boot, evented, false);
+  boot.docker.down = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+  await boot.run();
+  expect(await row(noEvent)).toMatchObject({ errorKind: "stop_failed", status: "errored" });
+  expect((await row(evented)).errorKind).toBeNull(); // not in the crash window: the sweep's list finds it
+  expect(await events(noEvent)).toEqual([{ type: "terminated", by: "@lead" }]);
+
+  // A sweep while Docker is still down: nothing is removed, and the stop_failed agent stays stuck.
+  await boot.reaper().run();
+  expect(boot.docker.containers.has(a)).toBe(true);
+  expect((await row(noEvent)).errorKind).toBe("stop_failed");
+
+  boot.docker.down = undefined;
+  await boot.reaper().run();
+  expect(boot.docker.containers.has(a)).toBe(false);
+  expect(boot.docker.containers.has(b)).toBe(false);
+  for (const id of [noEvent, evented]) {
+    expect(await row(id)).toMatchObject({ errorKind: null, status: "hibernated" });
+    expect(await events(id)).toEqual([
+      { type: "terminated", by: "@lead" },
+      { type: "cleanup", container: "removed" },
+    ]);
+  }
+  expect(boot.runtimes.supervisor.running().count).toBe(0);
+  expect(boot.forwarded).toEqual([]);
+});
+
+test("S7 §10.3: the sweep finds a long-terminated agent's leftover container without loading other long-terminated agents", async () => {
+  const leaky = await terminatedAgent();
+  const clean = await terminatedAgent();
+  for (const id of [leaky, clean])
+    await store.append(id, null, { type: "terminated", by: "@lead" });
+  await t.sql`update agents set terminated_at = now() - interval '30 days' where id in (${leaky}, ${clean})`;
+  boot = new Boot(8, { dockerRuntime: true });
+  const name = await dockerLeftover(boot, leaky, false);
+  await boot.reaper().run();
+  expect(boot.docker.containers.has(name)).toBe(false);
+  expect(await boot.runtimes.get(leaky)).toBeDefined();
+  expect(await boot.runtimes.get(clean)).toBeUndefined();
+});
+
+test("S7 §8: the terminated-event lookups use the partial index, not the agent's whole log", async () => {
+  const id = await terminatedAgent();
+  // A long log with no `terminated` event: reading it would be the cost the index avoids.
+  await t.sql`insert into session_events (agent_id, seq, type, payload)
+              select ${id}, g, 'text', '{}'::jsonb from generate_series(1, 5000) g`;
+  await t.sql`analyze session_events`;
+  const plan = async (q: string) =>
+    (await t.sql.unsafe(`explain ${q}`)).map((r) => String(r["QUERY PLAN"])).join("\n");
+  // The statements `terminatedWithoutEvent` and `hasTerminatedEvent` send.
+  const boot = await plan(
+    `select id from agents where terminated_at is not null and not exists (select 1 from session_events e where e.agent_id = agents.id and e.type = 'terminated')`,
+  );
+  const one = await plan(
+    `select id from session_events where agent_id = '${id}' and type = 'terminated' limit 1`,
+  );
+  expect(boot).toContain("session_events_terminated_idx");
+  expect(one).toContain("session_events_terminated_idx");
+});
+
 test("S7 §8: a terminated event lost in the crash window is appended once: not again by a second boot or the sweep", async () => {
   const id = await terminatedAgent();
   const recorded = await terminatedAgent();
@@ -583,15 +691,7 @@ test("S7 §8: a terminated event lost in the crash window is appended once: not 
   boot = new Boot();
   await boot.run();
   // The sweep run at the end of boot (spec §10.3) also ensures the event: still exactly one.
-  const reaper = new Reaper({
-    store,
-    runtimes: boot.runtimes,
-    terminator: { terminate: async () => ({ status: "terminated" }) },
-    workspace: { deleteWorkspace: async () => false },
-    log: silentLog,
-    now: () => Date.now(),
-  });
-  await reaper.run();
+  await boot.reaper().run();
   expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
   expect(await events(recorded)).toEqual([{ type: "terminated", by: "@lead" }]);
 });

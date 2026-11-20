@@ -1,6 +1,7 @@
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 import { EPHEMERAL_TTL_MS, SWEEP_INTERVAL_MS, WORKSPACE_GRACE_MS } from "./lifecycle.ts";
 import type { TerminateService } from "./terminate-service.ts";
@@ -10,6 +11,7 @@ export interface ReaperDeps {
     EventStore,
     | "ttlCandidates"
     | "stuckCandidates"
+    | "terminatedAmong"
     | "workspaceCandidates"
     | "agentById"
     | "setWorkspaceDeleted"
@@ -17,6 +19,11 @@ export interface ReaperDeps {
   runtimes: Pick<AgentRuntimes, "load">;
   terminator: Pick<TerminateService, "terminate">;
   workspace: Pick<Workspace, "deleteWorkspace">;
+  /**
+   * Absent when the factory has no Docker runtime. Listed once per run, so a terminated agent's leftover container is
+   * found however long ago it was terminated (S7 §8 step 5: a container still listed for it is stuck).
+   */
+  containers?: Pick<ContainerManager, "listOurs">;
   log: RuntimeLog;
   /** Wall-clock time (spec §10.3, decision R9: downtime counts). Tests inject it. */
   now: () => number;
@@ -66,8 +73,8 @@ export class Reaper {
   private async sweep(): Promise<void> {
     const now = this.d.now();
     await this.ttl(now);
-    const stillStuck = await this.stuck(now);
-    await this.workspaces(now, stillStuck);
+    const { still, dockerUnchecked } = await this.stuck(now);
+    await this.workspaces(now, still, dockerUnchecked);
   }
 
   /** Step 1: idle spawned agents past the TTL, each re-checked and latched inside its own job. */
@@ -95,30 +102,53 @@ export class Reaper {
     }
   }
 
-  /** Step 2: stuck terminations (bounded candidates). Returns the ids still stuck or still stopping. */
-  private async stuck(now: number): Promise<Set<string>> {
+  /**
+   * Step 2: stuck terminations. The candidates are bounded: the store's (`stop_failed`, a kept journal, a recent
+   * termination) plus the terminated agents among this run's listed containers. Returns the ids still stuck or still
+   * stopping, and whether Docker couldn't be listed (a leftover container may then mount a workspace).
+   */
+  private async stuck(now: number): Promise<{ still: Set<string>; dockerUnchecked: boolean }> {
     const still = new Set<string>();
-    for (const a of await this.d.store.stuckCandidates(new Date(now - 2 * SWEEP_INTERVAL_MS))) {
+    const listed = new Set<string>();
+    let dockerUnchecked = false;
+    if (this.d.containers)
+      try {
+        for (const c of await this.d.containers.listOurs()) listed.add(c.agentId);
+      } catch (err) {
+        dockerUnchecked = true;
+        this.d.log.info({ err }, "Docker isn't reachable; leftover containers were not checked");
+      }
+    const candidates = await this.d.store.stuckCandidates(new Date(now - 2 * SWEEP_INTERVAL_MS));
+    const known = new Set(candidates.map((a) => a.id));
+    candidates.push(
+      ...(await this.d.store.terminatedAmong([...listed].filter((id) => !known.has(id)))),
+    );
+    for (const a of candidates) {
       if (this.stopped) {
         still.add(a.id);
         continue;
       }
       try {
         const rt = await this.d.runtimes.load(a.id);
-        if (!rt || (await rt.sweepStuck()) === "still") still.add(a.id);
+        if (!rt || (await rt.sweepStuck({ containerListed: listed.has(a.id) })) === "still")
+          still.add(a.id);
       } catch (err) {
         still.add(a.id);
         this.d.log.error({ err, agent: a.slug }, "cleaning up a stuck termination failed");
       }
     }
-    return still;
+    return { still, dockerUnchecked };
   }
 
-  /** Step 3: workspaces past the grace, unless pinned or the agent is still stuck (a container may mount it). */
-  private async workspaces(now: number, stillStuck: Set<string>) {
+  /**
+   * Step 3: workspaces past the grace, unless pinned or the agent is still stuck (a container may mount it). A Docker
+   * agent's waits for a run that could list the containers.
+   */
+  private async workspaces(now: number, stillStuck: Set<string>, dockerUnchecked: boolean) {
     for (const a of await this.d.store.workspaceCandidates(new Date(now - WORKSPACE_GRACE_MS))) {
       if (this.stopped) return;
       if (stillStuck.has(a.id) || a.errorKind === "stop_failed" || a.runtimeJournal) continue;
+      if (dockerUnchecked && a.runtime === "docker") continue;
       try {
         await this.d.workspace.deleteWorkspace(
           a.slug,

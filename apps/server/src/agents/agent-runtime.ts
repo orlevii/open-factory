@@ -801,7 +801,7 @@ export class AgentRuntime {
 
   /** Inside a job (or at boot, before any job): appends `terminated{by}` unless the agent already has one. */
   async ensureTerminatedEvent(by: string): Promise<void> {
-    if (await this.d.store.hasEvent(this.agent.id, "terminated")) return;
+    if (await this.d.store.hasTerminatedEvent(this.agent.id)) return;
     await this.append(null, { type: "terminated", by });
   }
 
@@ -860,9 +860,10 @@ export class AgentRuntime {
    * stuck: "still", nothing done. A process a failed stop left gets one more escalation (its exit cleans up). With no
    * process, a `stop_failed` agent, a journal that names processes, or (Docker) a container still listed for it gets
    * the cleanup again: the journal reap or the container removal; on success the slot goes back. "none": nothing was
-   * left.
+   * left. `containerListed`: the sweep's Docker list shows a container labelled for this agent, so it is removed
+   * whatever runtime the agent last ran (a re-sync may have moved it to local since).
    */
-  sweepStuck(): Promise<"none" | "cleared" | "still"> {
+  sweepStuck(o: { containerListed?: boolean } = {}): Promise<"none" | "cleared" | "still"> {
     return this.run(async () => {
       const row = await this.d.store.agentById(this.agent.id);
       if (!row?.terminatedAt) return "none";
@@ -882,12 +883,13 @@ export class AgentRuntime {
       }
       const j = row.runtimeJournal;
       const stuck =
+        Boolean(o.containerListed) ||
         this.stopFailed() ||
         row.errorKind === "stop_failed" ||
         Boolean(j?.claude || j?.descendants?.length);
       if (!stuck && this.cleanupTarget().runtime !== "docker") return "none";
       // Docker: the removal finds a container still listed for it (running or stopped), or none.
-      const r = await this.terminationCleanup();
+      const r = await this.terminationCleanup({ container: o.containerListed });
       if (!r) return "still";
       if (!stuck && !r.done) return "none";
       this.slots.release(this.agent.id);
@@ -910,18 +912,22 @@ export class AgentRuntime {
   /**
    * S7 §8 step 4's cleanup: Docker removes the container (stop, then remove); local reaps whatever the journal names.
    * On success the journal is cleared. False when it failed: `stop_failed`, keeping the slot (S5 §9.6), logged; no
-   * `errored` fact (forwarding is latched off). The sweep retries.
+   * `errored` fact (forwarding is latched off). The sweep retries. `container`: a listed container is removed too, even
+   * when the agent's last runtime was local.
    */
-  private async terminationCleanup(): Promise<false | { done: CleanupResult | undefined }> {
+  private async terminationCleanup(
+    o: { container?: boolean } = {},
+  ): Promise<false | { done: CleanupResult | undefined }> {
     const target = this.cleanupTarget();
     let done: CleanupResult | undefined;
     try {
-      if (target.runtime === "docker") {
+      if (target.runtime !== "docker") done = await this.d.cleanup?.(target);
+      if (target.runtime === "docker" || o.container) {
         // Never counted as removed: the container may still run, so the sweep must retry (stop_failed keeps the slot).
         if (!this.d.docker) throw new Error("the Docker runtime isn't configured");
         const removed = await this.d.docker.containers.remove(this.agent.id, this.agent.slug);
-        done = removed ? { container: "removed" } : undefined;
-      } else done = await this.d.cleanup?.(target);
+        if (removed) done = { ...done, container: "removed" };
+      }
     } catch (err) {
       this.d.log.error(
         { err, agent: this.agent.slug, runtime: target.runtime },

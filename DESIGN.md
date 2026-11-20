@@ -152,6 +152,8 @@ The strategy is **restrained**: cool neutrals do almost all the work, plus one a
 
 Task status: Done uses `success`, the Blocked marker uses `warning`; both always with a label.
 
+Chart series start at `--chart-2`; `--chart-1` (signal) marks only the focused datum.
+
 ### Named Rules
 
 - **The Pilot Light Rule.** Orange means "live, on, focused". If an element is not one of those, it is not orange. That rules out orange buttons, headings, backgrounds and illustrations.

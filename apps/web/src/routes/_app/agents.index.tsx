@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
@@ -9,22 +9,32 @@ import { UndoArchiveLine } from "@/features/agents/agent-actions";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { PrerequisiteLine, usePrerequisites } from "@/features/agents/prerequisites";
-import { runningQueryOptions } from "@/features/session/api";
+import { endedMoreQueryOptions, runningQueryOptions } from "@/features/session/api";
 import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 
 export const Route = createFileRoute("/_app/agents/")({
   // Unknown values fall back to the default view rather than an error page.
   validateSearch: z.object({
+    ended: z.literal("only").optional().catch(undefined),
+    /** S4's bookmark: redirected to `ended=only` (S7 UI design §3). */
     archived: z.literal("only").optional().catch(undefined),
     justArchived: z.string().min(1).optional().catch(undefined),
   }),
+  beforeLoad: ({ search }) => {
+    if (search.archived)
+      throw redirect({
+        to: "/agents",
+        search: { ended: "only", justArchived: search.justArchived },
+        replace: true,
+      });
+  },
   component: AgentsPage,
 });
 
 function AgentsPage() {
   useAgentStatusFrames();
-  const { archived, justArchived } = Route.useSearch();
-  const filter = archived ?? "exclude";
+  const { ended, justArchived } = Route.useSearch();
+  const filter = ended ?? "exclude";
   const { data: agents, isError } = useQuery(agentsListQueryOptions(filter));
   const navigate = useNavigate();
   // The Undo line is for an agent that is archived right now: a reload or a revisited URL after
@@ -42,7 +52,7 @@ function AgentsPage() {
         meta={
           <>
             {filter === "exclude" && <RunningCount />}
-            <ArchivedFilter value={filter} />
+            <EndedFilter value={filter} />
           </>
         }
         actions={
@@ -80,9 +90,16 @@ function AgentsPage() {
           )}
           {agents && agents.length === 0 && filter === "exclude" && <EmptyAgents />}
           {agents && agents.length === 0 && filter === "only" && (
-            <p className="text-sm text-muted-foreground">No archived agents.</p>
+            <p className="text-sm text-muted-foreground">No ended agents.</p>
           )}
-          {agents && agents.length > 0 && <AgentTree agents={agents} />}
+          {agents && agents.length > 0 && (
+            // The Ended view is flat, newest end first (S7 UI design §3): one grid item with its
+            // "more" line, so the line sits right under the list.
+            <div>
+              <AgentTree agents={agents} flat={filter === "only"} />
+              {filter === "only" && <EndedMoreLine />}
+            </div>
+          )}
         </div>
       </PageBody>
     </>
@@ -102,7 +119,19 @@ function EmptyAgents() {
   );
 }
 
-/** "3 of 8 running", live from the `supervisor` frame; hidden on Archived and below md. */
+/** Under the Ended list when older ended agents exist beyond the newest 200 (S7 UI design §3). */
+function EndedMoreLine() {
+  // Filled by the ended list's fetch: no fetch of its own.
+  const { data: more } = useQuery({ ...endedMoreQueryOptions, enabled: false });
+  if (!more) return null;
+  return (
+    <p className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+      Showing the latest 200 ended agents.
+    </p>
+  );
+}
+
+/** "3 of 8 running", live from the `supervisor` frame; hidden on Ended and below md. */
 function RunningCount() {
   // Filled by the list fetch on this page and by supervisor frames: no fetch of its own.
   const { data } = useQuery({ ...runningQueryOptions, enabled: false });
@@ -114,12 +143,12 @@ function RunningCount() {
   );
 }
 
-/** Active / Archived as a native radio pair (arrow keys move between them), kept in the URL. */
-function ArchivedFilter({ value }: { value: "exclude" | "only" }) {
+/** Active / Ended as a native radio pair (arrow keys move between them), kept in the URL. */
+function EndedFilter({ value }: { value: "exclude" | "only" }) {
   const navigate = useNavigate();
   const options = [
     { value: "exclude", label: "Active" },
-    { value: "only", label: "Archived" },
+    { value: "only", label: "Ended" },
   ] as const;
   return (
     <fieldset className="ml-2 flex items-center gap-0.5 rounded-md border border-border p-0.5">
@@ -131,13 +160,13 @@ function ArchivedFilter({ value }: { value: "exclude" | "only" }) {
         >
           <input
             type="radio"
-            name="archived-filter"
+            name="ended-filter"
             value={o.value}
             checked={value === o.value}
             onChange={() =>
               void navigate({
                 to: "/agents",
-                search: o.value === "only" ? { archived: "only" } : {},
+                search: o.value === "only" ? { ended: "only" } : {},
               })
             }
             className="sr-only"

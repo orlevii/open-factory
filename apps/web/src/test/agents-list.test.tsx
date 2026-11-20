@@ -90,7 +90,7 @@ const listWith = (agents: ReturnType<typeof agentSummary>[], running = { count: 
     extra: { "GET /api/agents?ended=exclude": () => json({ agents, running }) },
   });
 
-test("Agents list: inline note priority, '3 of 8 running' before the radio pair, hidden on Archived", async () => {
+test("Agents list: inline note priority, '3 of 8 running' before the radio pair, hidden on Ended", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 10, 19, 10, 0));
   const until = new Date(2026, 10, 19, 14, 30).toISOString();
@@ -153,8 +153,46 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   act(() => pushFrame({ type: "supervisor", running: 4, max: 8 }));
   expect(await screen.findByText("4 of 8 running")).toBeInTheDocument();
 
-  await act(() => router.navigate({ to: "/agents", search: { archived: "only" } }));
-  await screen.findByText("No archived agents.");
+  await act(() => router.navigate({ to: "/agents", search: { ended: "only" } }));
+  await screen.findByText("No ended agents.");
   expect(screen.queryByText(/of 8 running/)).not.toBeInTheDocument();
   vi.useRealTimers();
+});
+
+test("a terminated frame shows Terminated (no dot) at once, then the list refetches without it", async () => {
+  // The refetch waits until released, so the patched row can be seen first.
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      if (calls++ > 0) await held;
+      return json({
+        agents: calls > 1 ? [] : [agentSummary({ slug: "x-ab12", displayName: "X · ab12" })],
+        running: { count: 0, max: 8 },
+      });
+    }),
+  );
+  renderApp("/agents", alice);
+  const row = await screen.findByRole("link", { name: /X · ab12/ });
+  act(() =>
+    pushFrame({
+      type: "agent_status",
+      agent: "x-ab12",
+      status: "terminated",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  expect(await within(row).findByText("Terminated")).toBeInTheDocument();
+  expect(row.querySelector("[data-status-dot]")).toBeNull();
+  release();
+  // It moves to the Ended view: the list is refetched rather than kept with an end state in it.
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("link", { name: /X · ab12/ })).not.toBeInTheDocument(),
+  );
 });

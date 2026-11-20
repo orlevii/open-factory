@@ -38,6 +38,8 @@ export function useAgentStatusFrames() {
           qc.setQueriesData<AgentSummary[]>({ queryKey: ["agents"] }, (l) =>
             l?.map((a) => (a.slug === m.agent ? { ...a, ...patch } : a)),
           );
+          // Terminated moves it from the Active list to the Ended one (S7): refetch both.
+          if (m.status === "terminated") void qc.invalidateQueries({ queryKey: ["agents"] });
         } else {
           // Not cached yet (frame beat the fetch, or a new agent): refetch rather than lose it.
           void qc.invalidateQueries({ queryKey: ["agents"] });

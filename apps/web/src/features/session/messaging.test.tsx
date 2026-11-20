@@ -31,8 +31,13 @@ afterEach(() => {
 
 const env = (o: Record<string, unknown>) => ({ urgent: false, ...o }) as never;
 /** Opens /agents/dev with these events as its only page; `@b` is a known agent. */
-async function open(events: AnyEvent[], firstText: string | RegExp) {
-  mockApi({
+async function open(
+  events: AnyEvent[],
+  firstText: string | RegExp,
+  extra: Record<string, () => Response> = {},
+) {
+  const api = mockApi({
+    ...extra,
     "GET /api/agents/dev": () => json(detail()),
     "GET /api/agents/dev/events?": () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
@@ -48,6 +53,7 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
   });
   renderApp("/agents/dev", alice);
   await screen.findByText(firstText);
+  return api;
 }
 
 test("an agent sender is a link with @slug and its display name; humans stay plain", async () => {
@@ -68,6 +74,83 @@ test("an agent sender is a link with @slug and its display name; humans stay pla
   expect(link).toHaveTextContent("@b");
   expect(await screen.findByText(/· Builder/)).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
+});
+
+test("AgentLink resolves an ended agent: terminated keeps its link and name, archived stays plain", async () => {
+  const msg = (id: string, from: string, body: string) => env({ id, from, kind: "message", body });
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          msg("m1", "tech-lead-ab12", "from the terminated one"),
+          msg("m2", "old", "from the archived one"),
+        ],
+      },
+    ],
+    "from the terminated one",
+    {
+      "GET /api/agents?ended=only": () =>
+        json({
+          agents: [
+            agentSummary({
+              slug: "tech-lead-ab12",
+              displayName: "Tech Lead · ab12",
+              kind: "ephemeral",
+              status: "terminated",
+              terminatedAt: AT,
+              terminatedBy: "lead",
+            }),
+            agentSummary({ slug: "old", displayName: "Old one", archivedAt: AT }),
+          ],
+          more: false,
+          running: { count: 1, max: 8 },
+        }),
+    },
+  );
+  const link = await screen.findByRole("link", { name: "Open @tech-lead-ab12's session" });
+  expect(link).toHaveAttribute("href", "/agents/tech-lead-ab12");
+  expect(await screen.findByText("· Tech Lead · ab12")).toBeInTheDocument();
+  await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@old/ })).toBeNull());
+  expect(screen.getByText("@old")).toHaveClass("font-mono");
+  expect(screen.queryByText(/Old one/)).toBeNull();
+});
+
+test("AgentLink: a slug in neither list is a link without a name when older ended agents exist, else plain", async () => {
+  const events: AnyEvent[] = [
+    {
+      type: "message_in",
+      messages: [env({ id: "m1", from: "gone-ab12", kind: "message", body: "from long ago" })],
+    },
+  ];
+  const endedList = (more: boolean) => () =>
+    json({ agents: [], more, running: { count: 1, max: 8 } });
+  const api = await open(events, "from long ago", {
+    "GET /api/agents?ended=only": endedList(true),
+  });
+  await vi.waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true),
+  );
+  const link = await screen.findByRole("link", { name: "Open @gone-ab12's session" });
+  expect(link.parentElement?.textContent).toBe("@gone-ab12");
+});
+
+test("AgentLink: an unknown slug is plain once both lists have loaded and nothing older exists", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [env({ id: "m1", from: "nobody", kind: "message", body: "from nobody" })],
+      },
+    ],
+    "from nobody",
+    {
+      "GET /api/agents?ended=only": () =>
+        json({ agents: [], more: false, running: { count: 1, max: 8 } }),
+    },
+  );
+  await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@nobody/ })).toBeNull());
+  expect(screen.getByText("@nobody")).toHaveClass("font-mono");
 });
 
 test("an update group: heading always shown, the latest part visible, 'Show all (3 updates)' expands", async () => {

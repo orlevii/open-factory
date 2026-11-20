@@ -192,6 +192,8 @@ function OrgSegment({ agent }: { agent: AgentSummary }) {
  *  per-minute timer sit outside the `role="status"` region: the session announcer already reports
  *  status changes, so nothing here is re-announced every minute. */
 export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?: number }) {
+  // A terminated agent never restarts (S7): its process is gone for good.
+  const restarts = agent.restartPending && agent.status !== "terminated";
   return (
     <div
       data-agent-strip
@@ -212,7 +214,7 @@ export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?
           `display: contents` keeps it out of the flex layout: empty, it adds no item (and no
           second gap) before the next segment; filled, its children space like the rest. */}
       <span role="status" className="contents">
-        {agent.restartPending && (
+        {restarts && (
           <>
             <Dot />
             <span className="inline-flex items-center gap-1.5">
@@ -222,7 +224,7 @@ export function AgentStrip({ agent, slotsMax }: { agent: AgentSummary; slotsMax?
           </>
         )}
       </span>
-      {agent.restartPending && <Why label="Why does it restart?">{RESTART_WHY}</Why>}
+      {restarts && <Why label="Why does it restart?">{RESTART_WHY}</Why>}
       <WaitingOnSegment waitingOn={agent.waitingOn} />
       <DetailSegment agent={agent} slotsMax={slotsMax} />
     </div>

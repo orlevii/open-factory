@@ -189,3 +189,14 @@ test.each([
   expect(el.querySelector("[data-strip-org]")?.textContent).toBe(text);
   expect(el.querySelector("[role=status] [data-strip-org]")).toBeNull(); // outside the live region
 });
+
+test("strip: a terminated agent shows no queued, paused or restart segment (S7: an end state)", () => {
+  const el = strip({
+    status: "terminated",
+    restartPending: true,
+    restartWaitingOn: 1,
+    rateLimitedUntil: todayAt(14, 30),
+  });
+  expect(el.textContent).not.toMatch(/Queued|Paused|Restarts when idle/);
+  expect(el.textContent).toContain("No manager");
+});

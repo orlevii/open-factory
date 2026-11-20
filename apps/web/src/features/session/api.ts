@@ -14,16 +14,27 @@ const fetchList = (ended: "exclude" | "only") =>
   apiFetch(`/api/agents?ended=${ended}`, { schema: agentListSchema });
 
 /** Key prefix ["agents"] covers every list variant, so one invalidation refreshes them all. Each
- *  fetch also refreshes the factory-wide running count (UI design §4). */
+ *  fetch also refreshes the factory-wide running count (UI design §4), and the ended list whether
+ *  older ended agents exist beyond the newest 200 it holds (S7 UI design §3). */
 export const agentsListQueryOptions = (ended: "exclude" | "only" = "exclude") =>
   queryOptions({
     queryKey: ["agents", ended],
     queryFn: async ({ client }) => {
       const r = await fetchList(ended);
       client.setQueryData<Running>(runningQueryKey, r.running);
+      if (ended === "only") client.setQueryData<boolean>(endedMoreQueryKey, r.more);
       return r.agents;
     },
   });
+
+/** Outside the ["agents"] prefix: every value under it is an agent array (useAgentStatusFrames). */
+export const endedMoreQueryKey = ["ended-more"] as const;
+/** Filled by the ended list's fetch only: read it with `enabled: false`. */
+export const endedMoreQueryOptions = queryOptions({
+  queryKey: endedMoreQueryKey,
+  queryFn: () => fetchList("only").then((r) => r.more),
+  staleTime: Number.POSITIVE_INFINITY,
+});
 
 /** Running agents and the cap, live from the `supervisor` frame (folded in by useAgentStatusFrames). */
 export const runningQueryKey = ["supervisor"] as const;

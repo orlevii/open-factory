@@ -11,13 +11,13 @@ const SHORT: Record<AgentStatus, string> = {
   terminated: "Terminated",
 };
 
-const TOKEN: Record<Exclude<AgentStatus, "working">, string> = {
+/** `working` is the tooth and `terminated` an end state with no dot (S7 UI design §2), like Archived. */
+const TOKEN: Record<Exclude<AgentStatus, "working" | "terminated">, string> = {
   hibernated: "hibernated",
   queued: "queued",
   idle: "idle",
   rate_limited: "rate-limited",
   errored: "errored",
-  terminated: "terminated",
 };
 
 type ResetInput = { rateLimitedUntil?: string | Date; rateLimitExact?: boolean };
@@ -58,10 +58,12 @@ export function statusAnnouncement(
 ): string {
   if (status === "rate_limited")
     return `${name} is rate-limited${resetPhrase(reset)?.joined ?? ""}`;
+  if (status === "terminated") return `${name} was terminated`;
   return `${name} is ${status}`;
 }
 
-/** Shape + label, never colour alone. `working` is the tooth and never a dot (DESIGN.md → The pitch). */
+/** Shape + label, never colour alone. `working` is the tooth and never a dot (DESIGN.md → The pitch);
+ *  `terminated` keeps the empty 12px slot, so its label lines up with the live statuses. */
 export function StatusBadge({
   status,
   rateLimitedUntil,
@@ -73,7 +75,7 @@ export function StatusBadge({
       <span aria-hidden="true" className="inline-flex size-3 items-center justify-center">
         {status === "working" ? (
           <span className="of-tooth" />
-        ) : (
+        ) : status === "terminated" ? null : (
           <span
             data-status-dot
             className="size-1.5 rounded-full"

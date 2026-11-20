@@ -43,3 +43,10 @@ export function formatInboxTime(at: Date, now: Date): string {
     ? `${date} ${hhmm}`
     : `${date} ${at.getFullYear()} ${hhmm}`;
 }
+
+/** A local calendar day for a row note (S7 UI design §3): `19 Nov`, or `31 Dec 2025` in another year.
+ *  Past or future alike: the note names the day, never the time. */
+export function formatDay(at: Date, now: Date): string {
+  const date = `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+  return at.getFullYear() === now.getFullYear() ? date : `${date} ${at.getFullYear()}`;
+}

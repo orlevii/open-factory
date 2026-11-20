@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   agentSummary,
   credential,
@@ -90,7 +90,7 @@ test("restartPending shows the restart icon with hidden text", async () => {
   expect(within(links[0] as HTMLElement).queryByText("restart pending")).not.toBeInTheDocument();
 });
 
-test("the Active / Archived radio pair writes ?archived=only and lists archived agents", async () => {
+test("the Active / Ended radio pair writes ?ended=only and lists ended agents", async () => {
   const api = mockWorld({
     agents: tree,
     archived: [agentSummary({ slug: "old", displayName: "Old one", archivedAt: "2026-11-01" })],
@@ -99,8 +99,8 @@ test("the Active / Archived radio pair writes ?archived=only and lists archived 
   await rows();
   const active = screen.getByRole("radio", { name: "Active" });
   expect(active).toBeChecked();
-  await userEvent.click(screen.getByRole("radio", { name: "Archived" }));
-  await vi.waitFor(() => expect(router.state.location.search).toEqual({ archived: "only" }));
+  await userEvent.click(screen.getByRole("radio", { name: "Ended" }));
+  await vi.waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
   const row = await screen.findByRole("link", { name: /Old one/ });
   expect(within(row).getByText("Archived")).toBeInTheDocument();
   expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true);
@@ -216,7 +216,7 @@ test("the header links to New agent", async () => {
   );
 });
 
-test("archived view: a report whose manager isn't listed isn't indented but names it", async () => {
+test("ended view: a report whose manager isn't listed isn't indented but names it", async () => {
   mockWorld({
     archived: [
       agentSummary({
@@ -228,8 +228,130 @@ test("archived view: a report whose manager isn't listed isn't indented but name
       }),
     ],
   });
-  renderApp("/agents?archived=only", alice);
+  renderApp("/agents?ended=only", alice);
   const row = await screen.findByRole("link", { name: /Old one/ });
   expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("0px");
   expect(within(row).getByText("reports to @lead")).toHaveClass("sr-only");
+});
+
+describe("the Ended view (S7 UI design §3)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 20, 10, 0));
+  });
+  afterEach(() => vi.useRealTimers());
+  const at = (d: number, h = 14, m = 32) => new Date(2026, 10, d, h, m).toISOString();
+  const spawned = (over: Parameters<typeof agentSummary>[0]) =>
+    agentSummary({
+      kind: "ephemeral",
+      status: "terminated",
+      reportsTo: "lead",
+      depth: 1,
+      template: "tech-lead",
+      terminatedAt: at(19),
+      terminatedBy: "lead",
+      workspacePinned: false,
+      ...over,
+    });
+  const ended = [
+    spawned({
+      slug: "tech-lead-ab12",
+      displayName: "Tech Lead · ab12",
+      workspaceGraceEndsAt: at(22),
+    }),
+    spawned({
+      slug: "tech-lead-cd34",
+      displayName: "Tech Lead · cd34",
+      workspacePinned: true,
+      workspaceGraceEndsAt: at(22),
+    }),
+    spawned({
+      slug: "tech-lead-ef56",
+      displayName: "Tech Lead · ef56",
+      workspaceGraceEndsAt: at(17),
+      workspaceDeletedAt: at(17, 14, 40),
+    }),
+    agentSummary({ slug: "old", displayName: "Old one", archivedAt: at(19, 9) }),
+  ];
+  const endedWorld = (agents: typeof ended, more = false) =>
+    mockWorld({
+      extra: {
+        "GET /api/agents?ended=only": () => json({ agents, more, running: { count: 0, max: 8 } }),
+      },
+    });
+  const note = (row: HTMLElement) => row.querySelector("[data-agent-note]")?.textContent ?? null;
+
+  test("a flat list in server order (newest end first), each row noting its end and workspace", async () => {
+    endedWorld(ended);
+    renderApp("/agents?ended=only", alice);
+    const links = await rows();
+    expect(links.map((l) => l.getAttribute("href"))).toEqual([
+      "/agents/tech-lead-ab12",
+      "/agents/tech-lead-cd34",
+      "/agents/tech-lead-ef56",
+      "/agents/old",
+    ]);
+    // Flat: no row is indented, even though the spawned ones report to @lead.
+    for (const l of links)
+      expect(l.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("0px");
+    const [a, b, c, d] = links as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+    expect(note(a)).toBe("Terminated 19 Nov · workspace kept until 22 Nov");
+    expect(note(b)).toBe("Terminated 19 Nov · workspace pinned");
+    expect(note(c)).toBe("Terminated 19 Nov · workspace deleted");
+    expect(note(d)).toBe("Archived 19 Nov");
+    // The status slot: a label with no dot for both end states.
+    expect(within(a).getByText("Terminated")).toBeInTheDocument();
+    expect(within(d).getByText("Archived")).toBeInTheDocument();
+    expect(a.querySelector("[data-status-dot]")).toBeNull();
+    expect(screen.queryByText(/Showing the latest/)).toBeNull();
+    expect(screen.queryByText(/of 8 running/)).toBeNull();
+  });
+
+  test("empty: 'No ended agents.'", async () => {
+    endedWorld([]);
+    renderApp("/agents?ended=only", alice);
+    expect(await screen.findByText("No ended agents.")).toBeInTheDocument();
+  });
+
+  test("with more, a muted line under the list says only the latest 200 are shown", async () => {
+    endedWorld(ended, true);
+    renderApp("/agents?ended=only", alice);
+    const list = await screen.findByRole("list", { name: "Agents" });
+    const line = await screen.findByText("Showing the latest 200 ended agents.");
+    expect(line).toHaveClass("text-muted-foreground");
+    expect(list.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test("an old ?archived=only bookmark lands on ?ended=only", async () => {
+    endedWorld(ended);
+    const { router } = renderApp("/agents?archived=only", alice);
+    await vi.waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
+    expect(screen.getByRole("radio", { name: "Ended" })).toBeChecked();
+    expect(await screen.findByRole("link", { name: /Old one/ })).toBeInTheDocument();
+  });
+});
+
+test("on mobile, a spawned agent's name keeps its ' · ab12' tail; the head truncates", async () => {
+  vi.stubGlobal("innerWidth", 400);
+  mockWorld({
+    agents: [
+      tree[0] as ReturnType<typeof agentSummary>,
+      agentSummary({
+        slug: "tech-lead-ab12",
+        displayName: "A very long tech lead display name · ab12",
+        kind: "ephemeral",
+        reportsTo: "lead",
+        depth: 1,
+      }),
+    ],
+  });
+  renderApp("/agents", alice);
+  const row = await screen.findByRole("link", { name: /A very long tech lead display name/ });
+  const head = within(row).getByText("A very long tech lead display name");
+  const tail = within(row).getByText("· ab12");
+  expect(head).toHaveClass("truncate");
+  expect(tail).toHaveClass("shrink-0");
+  expect(tail).not.toHaveClass("truncate");
+  // Spawned agents nest under their spawner in the Active view.
+  expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("20px");
 });

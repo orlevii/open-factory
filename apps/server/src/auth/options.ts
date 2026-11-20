@@ -12,6 +12,8 @@ export interface AuthOptionParams {
   nameTaken?: (name: string) => Promise<boolean>;
   /** True only inside the sign-up gate (S10 §9.3); without it no user can be created, not even the first. */
   mayCreateUser?: () => boolean;
+  /** True when the user is disabled (S10 §9.4); no session can be created for them. */
+  isDisabled?: (userId: string) => Promise<boolean>;
 }
 
 export function authOptions(p: AuthOptionParams) {
@@ -30,6 +32,8 @@ export function authOptions(p: AuthOptionParams) {
     user: {
       additionalFields: {
         handle: { type: "string", required: true, input: true, validator: { input: handleSchema } },
+        // input: false: sign-up and update-user can't set it (V2); it comes back on getSession.
+        disabledAt: { type: "date", required: false, input: false },
       },
     },
     plugins: [bearer()],
@@ -43,6 +47,19 @@ export function authOptions(p: AuthOptionParams) {
               throw new APIError("FORBIDDEN", {
                 code: "invite_required",
                 message: "Sign-up needs an invite link from a member of this factory.",
+              });
+            }
+          },
+        },
+      },
+      session: {
+        create: {
+          // S10 §9.4 (the admin plugin's ban pattern): no sign-in method creates a session for a disabled user.
+          before: async (session) => {
+            if (await p.isDisabled?.(session.userId)) {
+              throw new APIError("FORBIDDEN", {
+                code: "USER_DISABLED",
+                message: "This account is disabled.",
               });
             }
           },

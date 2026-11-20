@@ -3,6 +3,7 @@ import {
   createInviteResponseSchema,
   inviteItemSchema,
   signUpStateSchema,
+  usersAdminListSchema,
 } from "@open-factory/shared";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -11,10 +12,30 @@ import { signUpState } from "../users/sign-up-gate.ts";
 
 const idParams = z.object({ id: z.string() });
 
-/** S10 spec §9.2: invites (the user routes join in a later task). Human session only. */
+/** S10 spec §9.2, §9.4: users and invites. Human session only. */
 export const usersRoutes: FastifyPluginAsyncZod = async (app) => {
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
+
+  app.get("/api/users", { schema: { response: { 200: usersAdminListSchema } } }, async () => ({
+    users: await app.userAdmin.list(),
+  }));
+
+  app.post(
+    "/api/users/:id/disable",
+    {
+      schema: {
+        params: idParams,
+        response: { 200: z.object({ revokedInvites: z.number().int() }) },
+      },
+    },
+    async (req) => app.userAdmin.disable((req.user as { id: string }).id, req.params.id),
+  );
+
+  app.post("/api/users/:id/enable", { schema: { params: idParams } }, async (req, reply) => {
+    await app.userAdmin.enable(req.params.id);
+    return reply.code(204).send();
+  });
 
   app.post(
     "/api/invites",

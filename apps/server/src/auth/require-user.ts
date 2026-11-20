@@ -20,7 +20,15 @@ export async function getUser(request: FastifyRequest): Promise<RequestUser | nu
     headers: fromNodeHeaders(request.headers),
   });
   if (!session) return null;
-  const u = session.user as { id: string; email: string; name: string; handle: string };
+  const u = session.user as {
+    id: string;
+    email: string;
+    name: string;
+    handle: string;
+    disabledAt?: Date | string | null;
+  };
+  // S10 §9.4: a disabled user is signed out on every request, even if a session row survived.
+  if (u.disabledAt) return null;
   return { id: u.id, email: u.email, name: u.name, handle: u.handle };
 }
 

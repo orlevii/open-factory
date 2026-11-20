@@ -1,6 +1,7 @@
 import { type Db, schema } from "@open-factory/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { eq } from "drizzle-orm";
 import type { Config } from "../config.ts";
 import { authSecret } from "../crypto/keys.ts";
 import { isNameTaken } from "../messaging/principals.ts";
@@ -21,6 +22,14 @@ export function createAuth(config: Config, db: Db) {
         return taken === "user" || taken === "agent";
       },
       mayCreateUser: () => signUpContext.getStore()?.allowed === true,
+      // One primary-key lookup.
+      isDisabled: async (userId) => {
+        const [row] = await db
+          .select({ disabledAt: schema.users.disabledAt })
+          .from(schema.users)
+          .where(eq(schema.users.id, userId));
+        return row?.disabledAt != null;
+      },
     }),
   );
 }

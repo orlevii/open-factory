@@ -69,6 +69,7 @@ import { TaskStore } from "./tasks/task-store.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { InviteService } from "./users/invites.ts";
+import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
 import { migrateWorkdirState } from "./workspace/state-migration.ts";
@@ -99,6 +100,7 @@ declare module "fastify" {
     tasks: TaskService;
     usage: UsageService;
     invites: InviteService;
+    userAdmin: UserAdminService;
     factorySettings: FactorySettings;
     reaper: Reaper;
     schedules: ScheduleService;
@@ -302,6 +304,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     "invites",
     new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
   );
+  app.decorate("userAdmin", new UserAdminService({ db: deps.db, now: clock, bus }));
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);

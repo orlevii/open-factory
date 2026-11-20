@@ -1,25 +1,106 @@
-import { signUpSchema } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { apiFetch, signUpSchema, signUpStateSchema } from "@open-factory/shared";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { flushSync } from "react-dom";
+import { z } from "zod";
 import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
-import { type AuthField, mapAuthError, mapAuthFailure } from "@/components/auth-error";
+import {
+  type AuthField,
+  FIRST_USER_MESSAGE,
+  INVITE_INVALID_MESSAGE,
+  INVITE_LOST_RACE_MESSAGE,
+  INVITE_MISSING_MESSAGE,
+  mapAuthError,
+  mapAuthFailure,
+} from "@/components/auth-error";
+import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 
+export const signUpStateQueryOptions = (invite?: string) =>
+  queryOptions({
+    queryKey: ["sign-up-state", invite ?? ""],
+    queryFn: () =>
+      apiFetch(`/api/auth/sign-up-state${invite ? `?invite=${encodeURIComponent(invite)}` : "?"}`, {
+        schema: signUpStateSchema,
+      }),
+    staleTime: 0,
+  });
+
 export const Route = createFileRoute("/sign-up")({
+  validateSearch: z.object({ invite: z.string().optional().catch(undefined) }),
+  loaderDeps: ({ search }) => ({ invite: search.invite }),
   beforeLoad: async ({ context }) => {
     if (await context.queryClient.ensureQueryData(sessionQueryOptions)) throw redirect({ to: "/" });
   },
-  component: SignUp,
+  // Only so the first load shows the pending mark; a failure renders as the error line.
+  loader: async ({ context, deps }) => {
+    await context.queryClient
+      .fetchQuery(signUpStateQueryOptions(deps.invite))
+      .catch(() => undefined);
+  },
+  component: SignUpPage,
 });
+
+function SignUpPage() {
+  const { invite } = Route.useSearch();
+  const state = useQuery(signUpStateQueryOptions(invite));
+  if (state.data) {
+    if (
+      state.data.invite === "invalid" ||
+      (state.data.invite === "missing" && !state.data.bootstrap)
+    )
+      return (
+        <AuthCard
+          title="Create your account"
+          submitLabel="Sign up"
+          pendingLabel="Signing up…"
+          submitting={false}
+          hideSubmit
+          onSubmit={() => {}}
+          footer={<SignInLink />}
+        >
+          <p role="status" className="text-[0.8125rem] leading-[1.125rem]">
+            {state.data.invite === "invalid" ? INVITE_INVALID_MESSAGE : INVITE_MISSING_MESSAGE}
+          </p>
+        </AuthCard>
+      );
+    return <SignUp invite={invite} bootstrap={state.data.bootstrap} />;
+  }
+  if (state.isError)
+    return (
+      <AuthCard
+        title="Create your account"
+        submitLabel="Sign up"
+        pendingLabel="Signing up…"
+        submitting={false}
+        hideSubmit
+        onSubmit={() => {}}
+        footer={<SignInLink />}
+      >
+        <ErrorLine text="Couldn't check this sign-up link." onRetry={() => void state.refetch()} />
+      </AuthCard>
+    );
+  return null;
+}
+
+function SignInLink() {
+  return (
+    <span>
+      Already have an account?{" "}
+      <Link to="/sign-in" className="font-medium text-foreground underline underline-offset-4">
+        Sign in
+      </Link>
+    </span>
+  );
+}
 
 type Values = Record<AuthField, string>;
 type Errors = Partial<Record<AuthField, string>>;
 
-function SignUp() {
+function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [values, setValues] = useState<Values>({ name: "", handle: "", email: "", password: "" });
@@ -53,12 +134,17 @@ function SignUp() {
     setErrors({});
     setSubmitting(true);
     try {
-      const failure = await authClient.signUp.email(parsed.data).then(
+      // `invite` isn't a user field the client knows; the server's catch-all consumes it (spec §9.3).
+      const withInvite = { ...parsed.data, ...(invite ? { invite } : {}) };
+      const body: typeof parsed.data = withInvite;
+      const failure = await authClient.signUp.email(body).then(
         ({ error }) => (error ? { error } : null),
         (thrown: unknown) => ({ thrown }),
       );
       if (failure) {
         const m = mapAuthFailure(failure);
+        if (bootstrap && "error" in failure && failure.error.code === "invite_required")
+          m.message = INVITE_LOST_RACE_MESSAGE;
         if (m.field) showFieldErrors(form, { [m.field]: m.message });
         else setFormError(m.message);
         return;
@@ -80,15 +166,9 @@ function SignUp() {
       submitting={submitting}
       formError={formError}
       onSubmit={(form) => void submit(form)}
-      footer={
-        <span>
-          Already have an account?{" "}
-          <Link to="/sign-in" className="font-medium text-foreground underline underline-offset-4">
-            Sign in
-          </Link>
-        </span>
-      }
+      footer={<SignInLink />}
     >
+      {bootstrap && <p className="text-[0.8125rem] leading-[1.125rem]">{FIRST_USER_MESSAGE}</p>}
       <FormField
         name="name"
         label="Name"

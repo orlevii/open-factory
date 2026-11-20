@@ -2,6 +2,15 @@ export type AuthField = "name" | "handle" | "email" | "password";
 
 /** Sentinel code for "the request never got a real answer from the server". */
 export const NETWORK_ERROR = "NETWORK_ERROR";
+export const INVITE_MISSING_MESSAGE = "Sign-up needs an invite link from a member of this factory.";
+export const INVITE_INVALID_MESSAGE =
+  "This invite link isn't valid anymore. Ask a member of this factory for a new one.";
+export const INVITE_LOST_RACE_MESSAGE =
+  "Someone else just became the first user. Ask them for an invite link.";
+export const FIRST_USER_MESSAGE =
+  "You're the first user of this factory. You'll invite everyone else from Settings → Users.";
+export const DISABLED_MESSAGE =
+  "This account is disabled. Ask a member of this factory to enable it.";
 export const NETWORK_MESSAGE = "Can't reach the server. Check that it's running, then try again.";
 
 /** Maps better-auth error codes to a form field (spec §7.4). Anything unknown is form-level. */
@@ -20,6 +29,12 @@ export function mapAuthError(
       return { field: "password", message: "Password must be at least 8 characters." };
     case "INVALID_EMAIL_OR_PASSWORD":
       return { message: "Wrong email or password." };
+    case "invite_invalid":
+      return { message: INVITE_INVALID_MESSAGE };
+    case "invite_required":
+      return { message: INVITE_MISSING_MESSAGE };
+    case "USER_DISABLED":
+      return { message: DISABLED_MESSAGE };
     case NETWORK_ERROR:
       return { message: NETWORK_MESSAGE };
     default:

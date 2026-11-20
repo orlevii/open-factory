@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
+import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
 const auth = vi.hoisted(() => ({
@@ -12,9 +13,13 @@ vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
 
+let bootstrap = true;
+
 beforeEach(() => {
   auth.getSession.mockReset();
   auth.signIn.email.mockReset();
+  bootstrap = true;
+  mockApi({ "GET /api/auth/sign-up-state?": () => json({ bootstrap, invite: "missing" }) });
 });
 
 async function signIn(email: string, password: string) {
@@ -28,8 +33,29 @@ test("the page shows the wordmark, the title and a link to sign up", async () =>
   renderApp("/sign-in", null);
   expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument();
   expect(screen.getByRole("img", { name: "Open Factory" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/sign-up");
+  expect(await screen.findByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/sign-up");
   expect(screen.getByLabelText("Email")).toHaveFocus();
+});
+
+test("the Sign up link is hidden unless the factory is in bootstrap", async () => {
+  bootstrap = false;
+  renderApp("/sign-in", null);
+  await screen.findByLabelText("Email");
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  expect(screen.queryByRole("link", { name: "Sign up" })).not.toBeInTheDocument();
+  expect(screen.queryByText("No account yet?")).not.toBeInTheDocument();
+});
+
+test("USER_DISABLED shows the disabled line", async () => {
+  auth.signIn.email.mockResolvedValue({
+    data: null,
+    error: { code: "USER_DISABLED", message: "This account is disabled.", status: 403 },
+  });
+  renderApp("/sign-in", null);
+  await signIn("alice@example.com", "password123");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This account is disabled. Ask a member of this factory to enable it.",
+  );
 });
 
 test("wrong credentials are a form-level alert", async () => {

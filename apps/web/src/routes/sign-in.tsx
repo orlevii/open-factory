@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { flushSync } from "react-dom";
@@ -8,6 +8,7 @@ import { mapAuthError, mapAuthFailure } from "@/components/auth-error";
 import { FormField } from "@/components/form-field";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
+import { signUpStateQueryOptions } from "@/routes/sign-up";
 
 export const Route = createFileRoute("/sign-in")({
   beforeLoad: async ({ context }) => {
@@ -26,6 +27,8 @@ type Errors = Partial<Record<Field, string>>;
 function SignIn() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  // The "Sign up" link shows only while the factory has no users yet (invite-only afterwards).
+  const bootstrap = useQuery(signUpStateQueryOptions()).data?.bootstrap === true;
   const [values, setValues] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string>();
@@ -83,12 +86,17 @@ function SignIn() {
       formError={formError}
       onSubmit={(form) => void submit(form)}
       footer={
-        <span>
-          No account yet?{" "}
-          <Link to="/sign-up" className="font-medium text-foreground underline underline-offset-4">
-            Sign up
-          </Link>
-        </span>
+        bootstrap ? (
+          <span>
+            No account yet?{" "}
+            <Link
+              to="/sign-up"
+              className="font-medium text-foreground underline underline-offset-4"
+            >
+              Sign up
+            </Link>
+          </span>
+        ) : null
       }
     >
       <FormField

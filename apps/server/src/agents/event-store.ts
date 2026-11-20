@@ -372,6 +372,18 @@ export class EventStore {
    * Boot (S7 §8, §12): rows still pending to a terminated agent (one that raced in during the crash window, after the
    * termination's transaction rejected the rest) become `rejected`, as `terminateRows` makes them.
    */
+  /**
+   * Boot (S9 §5): at boot no runtime is loaded, so a pending row's write mark (`delivered_event_seq`, set when a batch
+   * was written to a process that hadn't started yet) is stale: the process is gone. Only `markPending` (the exit
+   * rollback) cleared it before, so after a crash a row written to a not-yet-started process kept its seq forever and
+   * a firing would never have replaced it. Delivered rows keep theirs (deep links).
+   */
+  async clearStaleWriteMarks(): Promise<void> {
+    await this.db
+      .update(messages)
+      .set({ deliveredEventSeq: null, deliveredTurnId: null })
+      .where(and(eq(messages.state, "pending"), isNotNull(messages.deliveredEventSeq)));
+  }
   async rejectPendingToTerminated() {
     await this.db
       .update(messages)

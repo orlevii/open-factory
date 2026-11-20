@@ -7,12 +7,13 @@ import { EventBus } from "../agents/event-bus.ts";
 import { EventStore } from "../agents/event-store.ts";
 import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
-import { insertAgent } from "../agents/testing/rows.ts";
+import { insertAgent, insertSchedule, insertScheduledMessage } from "../agents/testing/rows.ts";
 import { noForward, noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, containerName, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
+import { ScheduleStore } from "../scheduling/schedule-store.ts";
 import { Reaper } from "../spawning/reaper.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
@@ -740,4 +741,51 @@ test("S6 §17.2: boot wakes only for due member updates and loads agents with yo
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("boot clears write marks left on pending rows, so a firing replaces the row again; delivered rows keep theirs", async () => {
+  const id = await agent({ status: "errored" });
+  await insertSchedule(t.sql, { id: "sch1", targetAgentId: id, cron: "0 9 * * *" });
+  await insertScheduledMessage(t.sql, { id: "pm", toAgentId: id, scheduleId: "sch1", firings: 1 });
+  await t.sql`update messages set delivered_event_seq = 4 where id = 'pm'`;
+  await insertSchedule(t.sql, { id: "sch2", targetAgentId: id, cron: "0 9 * * *" });
+  await insertScheduledMessage(t.sql, {
+    id: "dm",
+    toAgentId: id,
+    scheduleId: "sch2",
+    state: "delivered",
+  });
+  await t.sql`update messages set delivered_event_seq = 9 where id = 'dm'`;
+  boot = new Boot();
+  const schedules = new ScheduleStore({ db: t.db });
+  const [before] = await t.sql`select delivered_event_seq from messages where id = 'pm'`;
+  expect(before?.delivered_event_seq).toBe(4);
+  await boot.run();
+  const [pm] =
+    await t.sql`select state, delivered_event_seq, delivered_turn_id from messages where id = 'pm'`;
+  expect(pm).toEqual({ state: "pending", delivered_event_seq: null, delivered_turn_id: null });
+  const [dm] = await t.sql`select delivered_event_seq from messages where id = 'dm'`;
+  expect(dm?.delivered_event_seq).toBe(9);
+  // the next firing replaces the pending row (it would have written nothing while the mark was set)
+  const [sched] = await t.sql`select * from schedules where id = 'sch1'`;
+  const row = {
+    id: "sch1",
+    targetAgentId: id,
+    body: "later",
+    bodyAuthorUserId: "u1",
+    bodyAuthorAgentId: null,
+  };
+  void sched;
+  const written = await t.db.transaction((tx) =>
+    schedules.upsertFiring(tx, {
+      schedule: row as never,
+      due: new Date(),
+      missed: 1,
+      late: false,
+      now: new Date(),
+    }),
+  );
+  expect(written).toBe("pm");
+  const [after] = await t.sql`select firings, body from messages where id = 'pm'`;
+  expect(after).toEqual({ firings: 2, body: "later" });
 });

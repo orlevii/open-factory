@@ -53,21 +53,41 @@ export const envelopeSchema = z.object({
 });
 export type Envelope = z.infer<typeof envelopeSchema>;
 
+export const INBOX_KINDS = ["message", "mention", "task_event"] as const;
 export const inboxItemSchema = z.object({
   id: z.string(),
   messageId: z.string(),
-  from: z.object({ kind: z.enum(["agent", "factory"]), name: z.string() }),
+  kind: z.enum(INBOX_KINDS),
+  read: z.boolean(),
+  from: z.object({ kind: z.enum(["agent", "human", "factory"]), name: z.string() }),
   about: z.string().optional(),
   to: z.string(),
   preview: z.string(),
   urgent: z.boolean(),
   createdAt: z.string(),
-  link: z.object({ agentSlug: z.string(), seq: z.number().int().optional() }),
+  /** The task a mention or task event is about, with its current title. */
+  task: z.object({ key: z.string(), title: z.string() }).optional(),
+  /** A task event's notice, so the UI never parses the preview. */
+  fact: z.enum(["done", "cancelled"]).optional(),
+  link: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("session"),
+      agentSlug: z.string(),
+      seq: z.number().int().optional(),
+    }),
+    z.object({ kind: z.literal("task"), key: z.string(), commentId: z.string().optional() }),
+  ]),
 });
+export type InboxItem = z.infer<typeof inboxItemSchema>;
 export const inboxPageSchema = z.object({
   items: z.array(inboxItemSchema),
   nextCursor: z.string().nullable(),
 });
+export const readAllBodySchema = z.object({ upTo: z.string().min(1) });
+export const undoReadAllBodySchema = z.object({ readAt: z.string().min(1) });
+export const readAllResponseSchema = z.object({ readAt: z.string(), count: z.number().int() });
+export const undoReadAllResponseSchema = z.object({ count: z.number().int() });
+export const unreadCountSchema = z.object({ count: z.number().int().nonnegative() });
 export const eventRefSchema = z.object({ agentSlug: z.string(), seq: z.number().int() });
 export const messageLookupSchema = z.object({
   id: z.string(),

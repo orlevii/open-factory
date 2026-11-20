@@ -35,12 +35,14 @@ function Row({ item, now }: { item: InboxItem; now: Date }) {
       : `@${item.from.name}`;
   const label = `From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
   const previewId = `inbox-preview-${item.id}`;
-  const search = item.link.seq === undefined ? undefined : { event: item.link.seq };
+  // Task links are wired with the task pages (S8 plan task 20); until then an item that is about a task opens the list.
+  const link = item.link.kind === "session" ? item.link : undefined;
+  const search = link?.seq === undefined ? undefined : { event: link.seq };
   return (
     <li className="border-b border-border last:border-b-0">
       <Link
         to="/agents/$slug"
-        params={{ slug: item.link.agentSlug }}
+        params={{ slug: link?.agentSlug ?? "" }}
         search={search}
         data-inbox-id={item.id}
         aria-label={label}

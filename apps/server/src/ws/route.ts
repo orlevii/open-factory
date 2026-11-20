@@ -39,9 +39,11 @@ export async function wsRoutes(app: FastifyInstance) {
     const generations = new Map<string, number>();
     let closed = false;
     const offAll = app.bus.subscribeAll(send); // agent_status and supervisor frames go to every socket
+    const offUser = app.bus.subscribeUser(userId, send); // S8: a user's read changes go to their own sockets only
     socket.on("close", () => {
       closed = true;
       offAll();
+      offUser();
       for (const u of unsubs.values()) u();
       unsubs.clear();
     });

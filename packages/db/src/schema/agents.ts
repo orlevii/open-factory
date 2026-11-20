@@ -175,6 +175,10 @@ export const messages = pgTable(
   (t) => [
     index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt),
     index("messages_from_agent_idx").on(t.fromAgentId, t.createdAt),
+    // S10: turn attribution reads a closing turn's delivered messages.
+    index("messages_delivered_turn_idx")
+      .on(t.deliveredTurnId)
+      .where(sql`${t.deliveredTurnId} is not null`),
   ],
 );
 

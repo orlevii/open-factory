@@ -140,7 +140,6 @@ export async function seedTestAgent(
     secrets: [],
     canSpawn: [],
     maxLiveSpawns: 5,
-    warmWindowMinutes: 70,
     ...opts.config,
   });
   const [row] = await app.db

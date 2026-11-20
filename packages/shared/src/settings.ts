@@ -73,7 +73,7 @@ export const factorySettingsSchema = z.object({
   /** The @handle of the last editor. */
   updatedBy: z.string().nullable(),
 });
-export type FactorySettings = z.infer<typeof factorySettingsSchema>;
+export type FactorySettingsDto = z.infer<typeof factorySettingsSchema>;
 
 const bounded = ([lo, hi]: readonly [number, number]) =>
   z

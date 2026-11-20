@@ -1955,7 +1955,7 @@ export class AgentRuntime {
       if (this.terminated) throw new AgentStartError(TERMINATED_START);
       return this.failStart(err, "prepareStart failed");
     }
-    const { launch: dockerLaunch, ...prepSpec } = prepared;
+    const { launch: dockerLaunch, credentialId, ...prepSpec } = prepared;
     let spec: AgentRuntimeSpec = prepSpec;
     if (!this.firstStartDone) {
       this.firstStartDone = true;
@@ -1990,7 +1990,7 @@ export class AgentRuntime {
     this.tokenGens.set(proc, generation);
     onLaunched();
     this.proc = proc;
-    this.procCredentialId = liveCredentialId(this.agent);
+    this.procCredentialId = credentialId; // what prepareStart launched on, not the row (a spawned agent's differs)
     this.procRuntime = spec.runtime;
     this.imageRequeued = false;
     this.started = false;
@@ -2352,7 +2352,9 @@ export class AgentRuntime {
       case "rate_limit_status":
         // Not a timeline event; a status write must never fail the turn.
         try {
-          await this.d.store.recordRateLimit(liveCredentialId(this.agent), e, new Date());
+          // The launch credential: the status is about the one the process runs on, even after an edit.
+          if (this.procCredentialId)
+            await this.d.store.recordRateLimit(this.procCredentialId, e, new Date());
         } catch (err) {
           this.d.log.error(
             { err, agent: this.agent.slug },
@@ -2481,6 +2483,21 @@ export class AgentRuntime {
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
+      // S10 §11: close the turn before the cleanup, which can take seconds (a Docker stop). A status frame published
+      // meanwhile already says turnOpen false, so the row must be closed by then. A failed close must not skip the
+      // cleanup: it is rethrown where the close used to be.
+      const closeFailure = openTurnId
+        ? await this.d.store
+            .closeTurn(openTurnId, {
+              isError: !e.expected,
+              terminalReason: e.expected ? "process_stopped" : "process_exited",
+              usage,
+            })
+            .then(
+              () => undefined,
+              (err: unknown) => ({ err }),
+            )
+        : undefined;
       // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
       if (terminating) keepSlot = !(await this.terminationCleanup());
       else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
@@ -2498,12 +2515,7 @@ export class AgentRuntime {
             : "the agent process exited before the session started",
         });
       }
-      if (openTurnId)
-        await this.d.store.closeTurn(openTurnId, {
-          isError: !e.expected,
-          terminalReason: e.expected ? "process_stopped" : "process_exited",
-          usage,
-        });
+      if (closeFailure) throw closeFailure.err;
       await this.append(null, e);
       if (terminating) await this.reportLostWork("terminated", lost);
       else if (intent?.kind === "hibernate") {

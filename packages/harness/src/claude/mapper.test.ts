@@ -291,7 +291,7 @@ test("every rate limit event maps to rate_limit_status; only rejected also emits
 });
 
 test("a real rate_limit_event carries utilization only inside unifiedWindows", () => {
-  const lines = readFileSync(`${FIXTURES_DIR}rate-limit-allowed.ndjson`, "utf8")
+  const lines = readFileSync(`${FIXTURES_DIR}rate-limit-event-live-allowed.ndjson`, "utf8")
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l));
@@ -306,6 +306,47 @@ test("a real rate_limit_event carries utilization only inside unifiedWindows", (
       utilization: 0.01,
     },
   ]);
+});
+
+test("a real-shape rejected event: rate_limited carries the window's utilization and reset too", () => {
+  const s = createMapperState({ resumed: false });
+  const out = mapLine(
+    {
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "rejected",
+        rateLimitType: "five_hour",
+        unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1795209600, status: "rejected" } },
+      },
+    },
+    s,
+  );
+  expect(out).toEqual([
+    {
+      type: "rate_limit_status",
+      status: "rejected",
+      rateLimitType: "five_hour",
+      utilization: 1,
+      resetsAt: 1795209600,
+    },
+    {
+      type: "rate_limited",
+      status: "rejected",
+      rateLimitType: "five_hour",
+      utilization: 1,
+      resetsAt: 1795209600,
+    },
+  ]);
+});
+
+test("a rate_limit_event without rateLimitType: the status has no type rather than an invented one", () => {
+  const s = createMapperState({ resumed: false });
+  expect(
+    mapLine(
+      { type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1795209600 } },
+      s,
+    ),
+  ).toEqual([{ type: "rate_limit_status", status: "allowed", resetsAt: 1795209600 }]);
 });
 
 test("rate_limit_status without a known status is not invented", () => {

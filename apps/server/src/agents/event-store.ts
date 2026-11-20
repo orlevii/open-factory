@@ -493,7 +493,7 @@ export class EventStore {
     credentialId: string,
     s: {
       status: "allowed" | "allowed_warning" | "rejected";
-      rateLimitType: string;
+      rateLimitType?: string;
       utilization?: number;
       resetsAt?: number;
     },
@@ -503,10 +503,12 @@ export class EventStore {
       .update(credentials)
       .set({
         rlStatus: s.status,
-        rlType: s.rateLimitType,
+        rlType: s.rateLimitType ?? null,
         rlUtilization: s.utilization ?? null,
         rlResetsAt: s.resetsAt === undefined ? null : new Date(s.resetsAt * 1000),
         rlObservedAt: at,
+        // Set explicitly so `$onUpdate` doesn't bump it: updated_at means the credential was edited.
+        updatedAt: sql`${credentials.updatedAt}`,
       })
       .where(
         and(

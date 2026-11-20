@@ -44,7 +44,6 @@ export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConf
   secrets: [],
   canSpawn: [],
   maxLiveSpawns: 5,
-  warmWindowMinutes: 70,
   ...over,
 });
 

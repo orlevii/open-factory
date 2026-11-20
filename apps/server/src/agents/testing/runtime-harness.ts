@@ -1,4 +1,3 @@
-import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import type { Forward } from "../../messaging/forwarder.ts";
 import type { SlotPort } from "../../supervisor/slots.ts";
@@ -54,7 +53,13 @@ export const noopTokens = {
   revoke: () => {},
 };
 
-export const okSpec = (a: { id: string; slug: string }): AgentRuntimeSpec => ({
+/** A local spec on the agent's own credential (`cred-<id>`, as `insertAgent` names it, when the row has none). */
+export const okSpec = (a: {
+  id: string;
+  slug: string;
+  credentialId?: string | null;
+}): PreparedSpec => ({
+  credentialId: a.credentialId ?? `cred-${a.id}`,
   agentId: a.id,
   slug: a.slug,
   cwd: "/w",
@@ -117,6 +122,7 @@ export class RuntimeHarness {
       sessionId?: string;
       status?: string;
       slots?: SlotPort;
+      /** Pins the warm window in the agent's config snapshot; omitted (the factory default) by default. */
       warmWindowMinutes?: number;
       cleanup?: RuntimeDeps["cleanup"];
       journal?: RuntimeDeps["journal"];
@@ -145,7 +151,9 @@ export class RuntimeHarness {
       ...(opts.errorKind ? { errorKind: opts.errorKind } : {}),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),
-      ...(opts.warmWindowMinutes ? { warmWindowMinutes: opts.warmWindowMinutes } : {}),
+      ...(opts.warmWindowMinutes !== undefined
+        ? { warmWindowMinutes: opts.warmWindowMinutes }
+        : {}),
     });
     this.driver = new FakeDriver();
     this.bus = new EventBus();

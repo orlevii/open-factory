@@ -4,7 +4,8 @@ CREATE TABLE "factory_settings" (
 	"default_warm_window_minutes" integer DEFAULT 70 NOT NULL,
 	"member_update_debounce_seconds" integer DEFAULT 30 NOT NULL,
 	"updated_at" timestamp with time zone,
-	"updated_by" text
+	"updated_by" text,
+	CONSTRAINT "factory_settings_singleton" CHECK ("factory_settings"."id" = 1)
 );
 --> statement-breakpoint
 CREATE TABLE "invites" (
@@ -35,8 +36,9 @@ ALTER TABLE "invites" ADD CONSTRAINT "invites_used_by_users_id_fk" FOREIGN KEY (
 ALTER TABLE "turns" ADD CONSTRAINT "turns_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "turns" ADD CONSTRAINT "turns_credential_id_credentials_id_fk" FOREIGN KEY ("credential_id") REFERENCES "public"."credentials"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "users" ADD CONSTRAINT "users_disabled_by_users_id_fk" FOREIGN KEY ("disabled_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "messages_delivered_turn_idx" ON "messages" USING btree ("delivered_turn_id") WHERE "messages"."delivered_turn_id" is not null;--> statement-breakpoint
 CREATE INDEX "turns_task_idx" ON "turns" USING btree ("task_id") WHERE "turns"."task_id" is not null;--> statement-breakpoint
 CREATE INDEX "turns_credential_started_idx" ON "turns" USING btree ("credential_id","started_at");--> statement-breakpoint
 CREATE INDEX "turns_started_idx" ON "turns" USING btree ("started_at");--> statement-breakpoint
-ALTER TABLE "factory_settings" ADD CONSTRAINT "factory_settings_singleton" CHECK ("id" = 1);--> statement-breakpoint
+ALTER TABLE "credentials" ADD CONSTRAINT "credentials_rl_status" CHECK ("credentials"."rl_status" IN ('allowed','allowed_warning','rejected'));--> statement-breakpoint
 INSERT INTO "factory_settings" ("id") VALUES (1);

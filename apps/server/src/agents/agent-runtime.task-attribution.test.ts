@@ -159,6 +159,20 @@ test("a process exit with an open turn and an awaiting task batch: NULL, the bat
   expect(await deliveredTurn(awaiting.id)).toBeNull();
 });
 
+test("a normal turn_end with no delivered messages (e.g. a manual /compact): NULL", async () => {
+  await idle();
+  await newTask(); // a task exists, but nothing of it reaches the turn
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await h.rt.settled();
+  const turns = await turnRows();
+  expect(turns).toHaveLength(2);
+  expect(turns.at(-1)?.ended_at).not.toBeNull();
+  expect(turns.at(-1)?.task_id).toBeNull();
+  const [n] = await h.t
+    .sql`select count(*)::int as n from messages where delivered_turn_id = ${turns.at(-1)?.id ?? ""}`;
+  expect(n?.n).toBe(0);
+});
+
 test("closeDanglingTurns at boot: the turn is closed unattributed", async () => {
   await idle();
   const t1 = await newTask();
@@ -173,23 +187,43 @@ test("closeDanglingTurns at boot: the turn is closed unattributed", async () => 
   expect(row?.task_id).toBeNull();
 });
 
-test("V4: on the exit path, agent_status with turnOpen false is published after the turn row is closed", async () => {
-  await idle();
+test("V4: on the exit path, no agent_status says turnOpen false before the turn row is closed", async () => {
+  // The cleanup (a Docker stop can take seconds) blocks; meanwhile a status is published from outside, as a
+  // supervisor wake would. Every closed-turn frame must find the close already resolved.
+  let entered!: () => void;
+  const inCleanup = new Promise<void>((r) => (entered = r));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  await h.makeRuntime({
+    cleanup: async () => {
+      entered();
+      await gate;
+      return undefined;
+    },
+  });
+  await h.send("boot");
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
-  const turnId = (await turnRows()).at(-1)?.id ?? "";
-  // The row as each closed-turn status frame left the runtime: read in the listener, before the runtime goes on.
-  const seen: Promise<unknown>[] = [];
+  let closed = false;
+  const closeTurn = h.store.closeTurn.bind(h.store);
+  vi.spyOn(h.store, "closeTurn").mockImplementation(async (...a) => {
+    await closeTurn(...a);
+    closed = true;
+  });
+  const frames: boolean[] = []; // `closed` as each turnOpen:false frame left the runtime
   const off = h.bus.subscribeAll((m: ServerMessage) => {
     if (m.type === "agent_status" && m.agent === h.rt.agent.slug && m.turnOpen === false)
-      seen.push(
-        h.t.sql`select ended_at from turns where id = ${turnId}`.then((r) => r[0]?.ended_at),
-      );
+      frames.push(closed);
   });
-  h.driver.last.exit(1, "boom");
+  h.driver.last.exit(1, "boom"); // a crash: the leftovers are cleaned up
+  await inCleanup;
+  h.rt.publishStatus();
+  const duringCleanup = frames.length;
+  release();
   await h.rt.settled();
   off();
-  expect(seen.length).toBeGreaterThan(0);
-  const endedAts = await Promise.all(seen);
-  expect(endedAts.at(-1)).not.toBeNull();
+  vi.restoreAllMocks();
+  expect(duringCleanup).toBeGreaterThan(0);
+  expect(frames.length).toBeGreaterThan(duringCleanup);
+  expect(frames.every(Boolean)).toBe(true);
 });

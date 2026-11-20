@@ -52,7 +52,6 @@ const detail = (issues: unknown[] = []) => ({
       secrets: [],
       canSpawn: [],
       maxLiveSpawns: 5,
-      warmWindowMinutes: 70,
     },
     files: [
       file("template.yaml", "name: lead\ndisplay_name: Lead\n"),

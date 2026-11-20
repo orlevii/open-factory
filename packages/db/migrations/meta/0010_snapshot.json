@@ -1,5 +1,5 @@
 {
-  "id": "3101fadb-7edb-45bf-8d50-ab46c31b21e7",
+  "id": "46b9626d-e079-4b86-aa96-d070009eaf46",
   "prevId": "5ad2cb7f-4e85-47ec-ac8a-c3d3d1379f68",
   "version": "7",
   "dialect": "postgresql",
@@ -622,6 +622,22 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_delivered_turn_idx": {
+          "name": "messages_delivered_turn_idx",
+          "columns": [
+            {
+              "expression": "delivered_turn_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"messages\".\"delivered_turn_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1677,7 +1693,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "credentials_rl_status": {
+          "name": "credentials_rl_status",
+          "value": "\"credentials\".\"rl_status\" IN ('allowed','allowed_warning','rejected')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.factory_settings": {
@@ -1743,7 +1764,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "factory_settings_singleton": {
+          "name": "factory_settings_singleton",
+          "value": "\"factory_settings\".\"id\" = 1"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.invites": {

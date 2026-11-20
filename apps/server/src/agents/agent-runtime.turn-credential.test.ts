@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { okSpec, RuntimeHarness } from "./testing/runtime-harness.ts";
 
 const h = new RuntimeHarness();
 beforeAll(() => h.setup());
@@ -41,6 +41,14 @@ test("a spawned agent's turn records the spawner's credential", async () => {
   expect(await turnCredentials(h.agentId)).toEqual(["cred-spawner"]);
 });
 
+test("a spawned agent started on the spawner's credential while its own row still names another: the turn records the launch one", async () => {
+  // prepareStart reads the spawner's current credential; a start can race syncChildren updating the child row.
+  await insertAgent(h.t.sql, { id: "spawner2", slug: "spawner2" });
+  await h.makeRuntime({ spec: (a) => ({ ...okSpec(a), credentialId: "cred-spawner2" }) });
+  await oneTurn();
+  expect(await turnCredentials(h.agentId)).toEqual(["cred-spawner2"]);
+});
+
 test("moving the agent to another credential mid-process: the next turn still records the launch credential", async () => {
   await h.makeRuntime();
   await oneTurn();
@@ -59,14 +67,10 @@ test("after the credential row is deleted (agent terminated first), the turn's c
   await h.makeRuntime();
   await oneTurn();
   expect(await turnCredentials(h.agentId)).toEqual([`cred-${h.agentId}`]);
+  // A terminated agent is ephemeral, so it reports to someone (a DB check).
+  await insertAgent(h.t.sql, { id: "boss", slug: "boss" });
   await h.t
-    .sql`update agents set kind = 'ephemeral', reports_to = null, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`.catch(
-    async () => {
-      await insertAgent(h.t.sql, { id: "boss", slug: "boss" });
-      await h.t
-        .sql`update agents set kind = 'ephemeral', reports_to = 'boss', terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
-    },
-  );
+    .sql`update agents set kind = 'ephemeral', reports_to = 'boss', terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
   await h.t.sql`delete from credentials where id = ${`cred-${h.agentId}`}`;
   expect(await turnCredentials(h.agentId)).toEqual([null]);
 });

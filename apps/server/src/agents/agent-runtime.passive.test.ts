@@ -3,6 +3,7 @@ import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
+import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
@@ -42,6 +43,7 @@ async function make(o: { spawned?: boolean } = {}) {
     bus: new EventBus(),
     driver,
     prepareStart: async (a) => ({
+      credentialId: liveCredentialId(a),
       agentId: a.id,
       slug: a.slug,
       cwd: "/w",

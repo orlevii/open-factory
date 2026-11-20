@@ -13,7 +13,7 @@ const CONFIG = {
   secrets: [],
   canSpawn: [],
   maxLiveSpawns: 5,
-  warmWindowMinutes: 70,
+  // No warmWindowMinutes: like a template that omits it, the runtime uses the factory default (S10 §8.2).
 };
 
 /** A minimal agent row (plus a credential row with a dummy blob) for tests that don't start real agents. */
@@ -24,6 +24,7 @@ export async function insertAgent(
     slug: string;
     sessionId?: string | null;
     status?: string;
+    /** Pins the warm window in the config snapshot; omitted by default. */
     warmWindowMinutes?: number;
     displayName?: string;
     reportsTo?: string | null;
@@ -39,7 +40,7 @@ export async function insertAgent(
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
   await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
             values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
-                    'test', ${JSON.stringify({ ...CONFIG, ...(a.warmWindowMinutes ? { warmWindowMinutes: a.warmWindowMinutes } : {}) })}::jsonb, 'local', ${credId},
+                    'test', ${JSON.stringify({ ...CONFIG, ...(a.warmWindowMinutes !== undefined ? { warmWindowMinutes: a.warmWindowMinutes } : {}) })}::jsonb, 'local', ${credId},
                     ${a.reportsTo ?? null}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${a.terminatedAt ? "ephemeral" : "persistent"}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
 }
 

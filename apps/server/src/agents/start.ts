@@ -28,8 +28,11 @@ export interface DockerLaunch {
   mountCheck: MountCheckContext;
 }
 
-/** The spec of one start; a Docker start also carries its `launch` (never passed to the driver). */
-export type PreparedSpec = AgentRuntimeSpec & { launch?: DockerLaunch };
+/**
+ * The spec of one start; a Docker start also carries its `launch`. `credentialId` is the credential the process runs
+ * on (a spawned agent's is its spawner's current one). Neither is passed to the driver.
+ */
+export type PreparedSpec = AgentRuntimeSpec & { launch?: DockerLaunch; credentialId: string };
 
 /** `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. */
 export type PrepareStart = (
@@ -326,11 +329,12 @@ export function createPrepareStart(d: {
       return docker && prepared.mountCheck
         ? {
             ...spec,
+            credentialId,
             launch: {
               image: config.image ?? d.config.defaultImage,
               mountCheck: prepared.mountCheck,
             },
           }
-        : spec;
+        : { ...spec, credentialId };
     });
 }

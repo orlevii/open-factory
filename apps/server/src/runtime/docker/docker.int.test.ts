@@ -390,7 +390,8 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       CLAUDE_CODE_OAUTH_TOKEN: "tok-docker",
       CLAUDE_CONFIG_DIR: path.join(w.workdir, ".claude-config"),
       FAKE_CLAUDE_DIR: w.fake.dir,
-      OPEN_FACTORY_URL: "http://host.docker.internal:3000",
+      // The agent listener's port: the OS chooses it for the test app.
+      OPEN_FACTORY_URL: `http://host.docker.internal:${w.app.agentListener.port}`,
     });
     for (const k of ["DATABASE_URL", "FACTORY_SECRET_KEY", "FACTORY_HOME"])
       expect(start?.env).not.toHaveProperty(k);
@@ -411,6 +412,9 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       "process_started",
       "message_in",
       "session_started",
+      // The fake replays a recorded init that lists no MCP servers (it never connects to the factory MCP), so the
+      // runtime reports it unavailable, as assembled.test.ts expects too.
+      "mcp_unavailable",
       "turn_started",
       "assistant_text",
       "usage",

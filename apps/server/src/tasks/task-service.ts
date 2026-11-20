@@ -21,6 +21,7 @@ import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
 import { type PlannedRow, plan } from "./notifier.ts";
 import { type Actor, canChange, forbiddenSentence } from "./permission.ts";
+import { type ListFilter, TaskReads } from "./task-reads.ts";
 import type { EventType, Principal, ResolvedLink, TaskStore } from "./task-store.ts";
 
 const { agents, users } = schema;
@@ -99,6 +100,7 @@ const sameSet = (a: string[], b: string[]) =>
 const settled = (s: TaskStatus) => s === "done" || s === "cancelled";
 
 export class TaskService {
+  private readonly reads: TaskReads;
   constructor(
     private readonly d: {
       db: Db;
@@ -109,7 +111,17 @@ export class TaskService {
       bus: EventBus;
       log: FastifyBaseLogger;
     },
-  ) {}
+  ) {
+    this.reads = new TaskReads({ db: d.db, tasks: d.tasks });
+  }
+
+  list(actor: Actor, filter: ListFilter) {
+    return this.reads.list(actor, filter);
+  }
+
+  detail(key: string, o: Parameters<TaskReads["detail"]>[1]) {
+    return this.reads.detail(key, o);
+  }
 
   async create(
     actor: Actor,

@@ -7,7 +7,6 @@ import type { Actor } from "./permission.ts";
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let or: Actor;
-let sam: Actor;
 const ids: Record<string, string> = {};
 const agent = (slug: string): Actor => ({ kind: "agent", agentId: ids[slug] as string, slug });
 
@@ -17,7 +16,6 @@ beforeEach(async () => {
   const u1 = await signUp(h.app, { handle: "or" });
   const u2 = await signUp(h.app, { handle: "sam" });
   or = { kind: "user", userId: u1.user.id, handle: "or" };
-  sam = { kind: "user", userId: u2.user.id, handle: "sam" };
   ids.or = u1.user.id;
   ids.sam = u2.user.id;
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;

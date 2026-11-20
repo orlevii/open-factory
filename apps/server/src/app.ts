@@ -28,6 +28,7 @@ import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
+import { taskTools } from "./mcp/tools/task-tools.ts";
 import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
@@ -315,6 +316,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       runtimes,
       spawner,
       terminator,
+      tasks,
       log: app.log,
     });
   } catch (err) {
@@ -366,6 +368,7 @@ async function listenForAgents(
     runtimes: AgentRuntimes;
     spawner: SpawnPort;
     terminator: TerminatePort;
+    tasks: TaskService;
     log: FastifyInstance["log"];
   },
 ) {
@@ -385,6 +388,7 @@ async function listenForAgents(
     loadCaller: (id) => d.store.agentById(id),
     tools: (caller) => [
       sendMessageTool(d.router),
+      ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
       listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
       ...(maySpawn(caller)
         ? [

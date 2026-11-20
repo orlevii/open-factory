@@ -4,7 +4,8 @@ export type NoticeType =
   | "factory_restarted"
   | "restart"
   | "restart_crons"
-  | "rate_limit_reset";
+  | "rate_limit_reset"
+  | "crons_stopped";
 
 const tasksSentence = (tasks: string[]) =>
   tasks.length

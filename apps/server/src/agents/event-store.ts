@@ -353,7 +353,7 @@ export class EventStore {
   }
   private deliverableWhere(debounceMs: number) {
     const cutoff = new Date(Date.now() - debounceMs);
-    return sql`(${messages.kind} in ('message', 'system', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+    return sql`((${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} <> 'crons_stopped')) or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
   /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {

@@ -153,7 +153,8 @@ export type HibernateReason =
   | "freed_slot"
   | "apply_changes"
   | "shutdown"
-  | "archived";
+  | "archived"
+  | "crons_stopped";
 
 /** The live non-ambient tasks and crons a stop would kill (spec §9.4). */
 export type LostWork = {
@@ -189,6 +190,13 @@ type Entry = MessageEntry | CompactEntry;
 type Subject = NonNullable<Envelope["subject"]>;
 
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
+/**
+ * S9 §10.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the agent was
+ * stopped on purpose). It rides at the head of the next batch that has something else. The one predicate every place
+ * that counts a queued item as a reason to act uses.
+ */
+const isPassive = (e: Entry): boolean =>
+  e.kind === "message" && e.row.kind === "system" && e.row.notice === "crons_stopped";
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
 /** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
 const isHeld = (e: Entry): e is MessageEntry =>
@@ -917,7 +925,8 @@ export class AgentRuntime {
       // member update, which wakes it once due): the termination would reject them, so wait for the delivery. Peer
       // events alone never wake an agent and don't hold it; an errored agent's rows wait for a human's Restart, and an
       // errored agent is reaped (spec §10.3).
-      ((this.queue.length > 0 || this.held.some(isUpdate)) && this.acceptsWake("queued_items"))
+      ((this.queue.some((e) => !isPassive(e)) || this.held.some(isUpdate)) &&
+        this.acceptsWake("queued_items"))
     );
   }
 
@@ -1127,7 +1136,7 @@ export class AgentRuntime {
    * held member updates that are due (S6 §8.3). Young updates and peer events alone are not.
    */
   hasDeliverable(): boolean {
-    return this.queue.length > 0 || this.heldDue();
+    return this.queue.some((e) => !isPassive(e)) || this.heldDue();
   }
 
   /**
@@ -2473,7 +2482,8 @@ export class AgentRuntime {
   ) {
     if (!lost.tasks.length && !lost.crons.length) return;
     await this.append(null, { type: "background_work_lost", reason, ...lost });
-    if (reason !== "archived")
+    // A human stopped the crons in the open (S9 Q13): their manager isn't told.
+    if (reason !== "archived" && reason !== "crons_stopped")
       await this.forwardFact("work_lost", {
         lost: {
           tasks: lost.tasks.map((t) => t.description || t.taskId),
@@ -3030,6 +3040,18 @@ export class AgentRuntime {
       while (this.queue[0]?.kind === "message") batch.push(this.queue.shift() as MessageEntry);
       // S6 §8.1: a batch written while no turn is open carries every held row, due or not.
       if (!this.turnOpen()) batch.push(...this.held.splice(0));
+      // S9 §10.3: a passive notice alone is never written; it waits for a batch with something else. A compact queued
+      // behind it goes ahead (flush otherwise cuts a batch at the first non-message entry).
+      if (batch.every(isPassive)) {
+        this.queue.unshift(...batch);
+        const at = this.queue.findIndex((e) => e.kind === "compact");
+        if (at > 0 && this.queue.slice(0, at).every(isPassive)) {
+          const [c] = this.queue.splice(at, 1);
+          if (c) this.queue.unshift(c);
+          continue;
+        }
+        break;
+      }
       if (!(await this.writeBatch(batch))) break; // a rejected write leaves the batch at the head: stop, don't spin
     }
     // Due held rows on their own, only while no turn is open (S6 §8.1).

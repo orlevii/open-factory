@@ -15,7 +15,7 @@ import { ScheduleTime } from "./schedule-time";
 const who = (a: ScheduleAuthor) =>
   a.kind === "user"
     ? `@${a.handle}`
-    : `@${a.slug}${a.archived || a.terminated ? " (archived)" : ""}`;
+    : `@${a.slug}${a.terminated ? " (terminated)" : a.archived ? " (archived)" : ""}`;
 const whoPlain = (a: ScheduleAuthor) => (a.kind === "user" ? `@${a.handle}` : `@${a.slug}`);
 
 /** The first line of a message as plain text: never rendered markdown, never HTML. */

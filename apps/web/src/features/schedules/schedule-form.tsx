@@ -8,7 +8,14 @@ import {
   validateCron,
 } from "@open-factory/shared";
 import { Link, useBlocker } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type MutableRefObject,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { FieldShell } from "@/components/field-shell";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
@@ -58,6 +65,7 @@ export function ScheduleForm({
   saved,
   cancelTo,
   afterMessage,
+  leaving: leavingProp,
 }: {
   initial?: ScheduleItem | undefined;
   presetTarget?: string | undefined;
@@ -69,6 +77,8 @@ export function ScheduleForm({
   saved?: boolean;
   cancelTo?: string;
   afterMessage?: ReactNode;
+  /** Set by the page once it has done something that leaves (a delete): the unsaved-changes guard then stays quiet. */
+  leaving?: MutableRefObject<boolean>;
 }) {
   const start: FormValues = initial
     ? valuesOf(initial)
@@ -92,7 +102,8 @@ export function ScheduleForm({
   const [failed, setFailed] = useState(false);
   const [toFocus, setToFocus] = useState<Field | null>(null);
   const form = useRef<HTMLFormElement>(null);
-  const leaving = useRef(false);
+  const ownLeaving = useRef(false);
+  const leaving = leavingProp ?? ownLeaving;
   const { agents } = useAssignableAgents();
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 

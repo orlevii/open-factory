@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,11 @@ function SchedulesPage() {
   // One-shot router state from another page (Created S-8. / Deleted S-3.): read once, then cleared.
   const state = useLocation({ select: (l) => l.state }) as { outcome?: PageOutcome };
   const [initial] = useState(state.outcome);
+  useEffect(() => {
+    // Read once: clear it so a reload or Back doesn't show "Deleted S-3." / "Created S-8." again.
+    if (state.outcome)
+      void navigate({ to: "/schedules", search, replace: true, state: {} as never });
+  }, [state.outcome, navigate, search]);
   const filters: ScheduleFilters = { target: search.target, done: search.done };
   const onChange = (next: ScheduleFilters) =>
     void navigate({

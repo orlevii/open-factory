@@ -2,7 +2,7 @@ import type { ScheduleItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { CirclePause, CirclePlay, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,7 @@ export function ScheduleEdit({ scheduleKey }: { scheduleKey: string }) {
   const navigate = useNavigate();
   const { data: s, isError, refetch } = useQuery(scheduleDetailOptions(scheduleKey));
   const [saved, setSaved] = useState(false);
+  const leaving = useRef(false);
   const [restoreState, setRestoreState] = useState<"idle" | "pending" | "failed">("idle");
   const [actionFailed, setActionFailed] = useState<string | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: schedulesQueryKey });
@@ -99,6 +100,7 @@ export function ScheduleEdit({ scheduleKey }: { scheduleKey: string }) {
     try {
       await deleteSchedule(scheduleKey);
       await refresh();
+      leaving.current = true; // the delete is done: the unsaved-changes guard must not ask now
       await navigate({
         to: "/schedules",
         search: {},
@@ -208,6 +210,7 @@ export function ScheduleEdit({ scheduleKey }: { scheduleKey: string }) {
             readOnly={deleted}
             agentAuthored={s.bodyAuthor.kind === "agent"}
             saved={saved}
+            leaving={leaving}
             onSubmit={async (body) => {
               setSaved(false);
               await patchSchedule(scheduleKey, body as PatchScheduleBody);

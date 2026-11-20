@@ -1,7 +1,7 @@
 import { type AgentSummary, ApiError, type LiveCron } from "@open-factory/shared";
 import { CircleStop } from "lucide-react";
 import type { RefObject } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -48,6 +48,13 @@ export function useStopCrons(agent: AgentSummary): StopCrons {
   const [confirm, setConfirm] = useState(false);
   const [outcome, setOutcome] = useState<{ text: string; key: number } | undefined>();
   const trigger = useRef<HTMLButtonElement>(null);
+  // The outcome belongs to the crons it stopped: clear it when new ones appear (0 to above 0).
+  const count = agent.crons.length;
+  const prev = useRef(count);
+  useEffect(() => {
+    if (prev.current === 0 && count > 0) setOutcome(undefined);
+    prev.current = count;
+  }, [count]);
   async function run() {
     try {
       const r = await stopCrons(agent.slug);
@@ -136,8 +143,9 @@ export function CronsStopLayer({ agent, stop }: { agent: AgentSummary; stop: Sto
     <>
       <StopCronsDialog
         slug={agent.slug}
-        crons={stop.confirm || agent.crons.length ? agent.crons : []}
-        open={stop.confirm}
+        crons={agent.crons}
+        // Nothing left to stop (they ended while it was open): close rather than read "Stop 0 crons".
+        open={stop.confirm && agent.crons.length > 0}
         onOpenChange={stop.setConfirm}
         onConfirm={stop.run}
         onCloseAutoFocus={(e) => {

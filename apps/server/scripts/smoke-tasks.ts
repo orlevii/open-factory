@@ -294,7 +294,10 @@ async function until<T>(
 
 let orUser = { userId: "", handle: "or" };
 let samUser = { userId: "", handle: "sam" };
-const actorOr = () => ({ kind: "user" as const, userId: orUser.userId, handle: orUser.handle });
+let orCookie = "";
+/** Every human action goes through the real REST routes, signed in as @or (no service calls, no bypass). */
+const api = (method: "GET" | "POST" | "PATCH", url: string, payload?: object) =>
+  app.inject({ method, url, headers: { cookie: orCookie }, ...(payload ? { payload } : {}) });
 
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
 async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
@@ -451,6 +454,7 @@ try {
     sam: await signUp("sam", "Sam"),
   }));
   orUser = { userId: users.or.userId, handle: "or" };
+  orCookie = users.or.cookie;
   samUser = { userId: users.sam.userId, handle: "sam" };
   await step("1. credential created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
@@ -496,17 +500,19 @@ try {
   // 2. AC 1: a human creates T-1 assigned to hibernated dev; dev wakes with the task_assigned envelope.
   const devFrom = await lastSeq("dev");
   const devBefore = (await app.runtimes.bySlug("dev"))?.live().status;
-  const created = await step("2. @or creates T-1 assigned to dev", () =>
-    app.tasks.create(actorOr(), {
+  const created = await step("2. @or creates T-1 assigned to dev (POST /api/tasks)", async () => {
+    const r = await api("POST", "/api/tasks", {
       title: "Smoke one",
       body: `Read this task with get_task, then comment on it with comment_task mentioning @or and asking one short question. Include the word ${WORD}.`,
       assignee: "dev",
-    }),
-  );
+    });
+    if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+    return (r.json() as { task: { key: string; assignee: { slug: string } | null } }).task;
+  });
   check(
     "2. the task has key T-1 and dev as assignee",
-    created.task.key === "T-1" && created.task.assignee === "dev",
-    JSON.stringify(created.task),
+    created.key === "T-1" && created.assignee?.slug === "dev",
+    JSON.stringify({ key: created.key, assignee: created.assignee }),
   );
   const assignedId = String(
     (
@@ -544,18 +550,129 @@ try {
       okCalls(turn, "mcp__factory__comment_task").length > 0,
     toolTrace(turn),
   );
-  const mention = (
-    await conn.sql`select i.kind, i.read_at, m.comment_id, m.task_id from inbox_items i join messages m on m.id = i.message_id where i.user_id = ${orUser.userId}`
-  )[0];
+  const inbox = (await api("GET", "/api/inbox")).json() as {
+    items: {
+      kind: string;
+      read: boolean;
+      from: { kind: string; name: string };
+      link: { kind: string; key?: string; commentId?: string };
+    }[];
+  };
+  const mention = inbox.items.find((i) => i.kind === "mention");
   check(
-    "2. AC 2: @or's inbox has one unread mention item with a comment id",
-    mention?.kind === "mention" && mention.read_at === null && Boolean(mention.comment_id),
+    "2. AC 2: GET /api/inbox for @or has one unread mention from dev linking T-1 and a comment id",
+    inbox.items.filter((i) => i.kind === "mention").length === 1 &&
+      mention?.read === false &&
+      mention.from.name === "dev" &&
+      mention.link.kind === "task" &&
+      mention.link.key === "T-1" &&
+      Boolean(mention.link.commentId),
     brief(JSON.stringify(mention)),
   );
   void samUser;
 
   if (!EARLY) {
-    // Extended by the final live check (plan task 23).
+    // 3. AC 3 setup first: T-2 (depends on T-1, assigned to tester) exists BEFORE the human tells dev to finish T-1,
+    // so dev can't mark T-1 done before the dependency is in place and race the unblocked check.
+    const t2 = await step("3. @or creates T-2 depending on T-1, assigned to tester", async () => {
+      const r = await api("POST", "/api/tasks", {
+        title: "Smoke two",
+        body: "Say OK in one word. Do not use any tools.",
+        assignee: "tester",
+        dependsOn: ["T-1"],
+      });
+      if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+      return (r.json() as { task: { key: string; blockedBy: string[] } }).task;
+    });
+    check(
+      "3. T-2 is blocked by T-1",
+      t2.key === "T-2" && t2.blockedBy.join() === "T-1",
+      JSON.stringify(t2),
+    );
+    await step("3. dev and tester are quiet before the next step", () => quiet(["dev", "tester"]));
+
+    // 4. AC 2: the human comments back mentioning @dev; dev receives a task_comment from @or and finishes the task.
+    const devFrom2 = await lastSeq("dev");
+    const testerFrom = await lastSeq("tester");
+    const c = await step(
+      "4. @or comments on T-1 mentioning @dev (POST /api/tasks/T-1/comments)",
+      async () => {
+        const r = await api("POST", "/api/tasks/T-1/comments", {
+          body: "@dev Yes. Mark the task done when you have read this.",
+        });
+        if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+        return r.json() as { comment: { id: string }; deliveredTo: string[] };
+      },
+    );
+    check(
+      "4. the comment reached dev",
+      c.deliveredTo.includes("dev"),
+      JSON.stringify(c.deliveredTo),
+    );
+    const commentRow = String(
+      (
+        await conn.sql`select id from messages where kind = 'task_comment' and from_user_id = ${orUser.userId}`
+      )[0]?.id ?? "",
+    );
+    const turn2 = await step("4. dev's turn for the comment ends", () =>
+      turnOf("dev", commentRow, devFrom2),
+    );
+    say(`    dev: ${toolTrace(turn2)}`);
+    const env2 = envelopes(await since("dev", devFrom2))
+      .flatMap((x) => x.envs)
+      .find((m) => m.kind === "task_comment");
+    check(
+      "4. dev's batch holds a task_comment from @or about T-1 with the comment id",
+      env2?.from === "@or" && env2.taskKey === "T-1" && env2.commentId === c.comment.id,
+      env2 ? envBrief(env2) : "no task_comment envelope",
+    );
+    const done = okCalls(turn2, "mcp__factory__update_task").find(
+      (x) => (x.event.input as { status?: string }).status === "done",
+    );
+    check("4. dev called update_task with status done", Boolean(done), toolTrace(turn2));
+
+    // 5. AC 3: or (T-1's creator) hears of it as an inbox task_event; tester is told T-2 is unblocked.
+    const inbox2 = (await api("GET", "/api/inbox")).json() as {
+      items: { kind: string; fact?: string; link: { key?: string } }[];
+    };
+    const ev = inbox2.items.find((i) => i.kind === "task_event");
+    check(
+      "5. AC 3: @or's inbox has a task_event with fact done linking T-1",
+      ev?.fact === "done" && ev.link.key === "T-1",
+      brief(JSON.stringify(ev)),
+    );
+    const unblocked = await soft(
+      "5. AC 3: tester receives a task_update (unblocked) about T-2",
+      () =>
+        until(
+          "tester's unblocked update",
+          async () => {
+            const es = await since("tester", testerFrom);
+            return envelopes(es)
+              .flatMap((x) => x.envs)
+              .find(
+                (m) => m.kind === "task_update" && m.fact === "unblocked" && m.taskKey === "T-2",
+              );
+          },
+          240_000,
+        ),
+    );
+    if (unblocked) say(`    tester got: ${envBrief(unblocked)}`);
+    check(
+      "5. the unblocked update is from @factory about T-2",
+      unblocked?.from === "@factory" && unblocked.taskKey === "T-2",
+      unblocked ? envBrief(unblocked) : "none",
+    );
+    const t2After = (await api("GET", "/api/tasks/T-2")).json() as {
+      blockedBy: string[];
+      status: string;
+    };
+    check(
+      "5. GET /api/tasks/T-2 is no longer blocked",
+      t2After.blockedBy.length === 0,
+      JSON.stringify(t2After.blockedBy),
+    );
+    await step("5. dev and tester go quiet", () => quiet(["dev", "tester"]));
   }
 } catch (err) {
   if (!(err instanceof StopRun))

@@ -105,7 +105,18 @@ async function startIdle(
   return { proc: p, token: p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string };
 }
 
-test("tools per caller: spawner sees four with the enum, others two (spec §7.1)", async () => {
+/** Every agent's tools: messaging (S6) and tasks (S8 §9). */
+const BASE_TOOLS = [
+  "comment_task",
+  "create_task",
+  "get_task",
+  "list_peers",
+  "list_tasks",
+  "send_message",
+  "update_task",
+];
+
+test("tools per caller: spawner sees two more with the enum, others the messaging and task tools (spec §7.1, S8 §9)", async () => {
   const driver = new FakeDriver();
   const t = await makeTestApp({ harnessDriver: driver });
   try {
@@ -125,20 +136,14 @@ test("tools per caller: spawner sees four with the enum, others two (spec §7.1)
       }[];
     };
     const lead = await names("lead");
-    expect(lead.map((x) => x.name).sort()).toEqual([
-      "list_peers",
-      "send_message",
-      "spawn_agent",
-      "terminate_agent",
-    ]);
+    expect(lead.map((x) => x.name).sort()).toEqual(
+      [...BASE_TOOLS, "spawn_agent", "terminate_agent"].sort(),
+    );
     expect(
       lead.find((x) => x.name === "spawn_agent")?.inputSchema.properties.template?.enum,
     ).toEqual(["tech-lead", "developer"]);
-    expect((await names("solo")).map((x) => x.name).sort()).toEqual(["list_peers", "send_message"]);
-    expect((await names("capped")).map((x) => x.name).sort()).toEqual([
-      "list_peers",
-      "send_message",
-    ]);
+    expect((await names("solo")).map((x) => x.name).sort()).toEqual(BASE_TOOLS);
+    expect((await names("capped")).map((x) => x.name).sort()).toEqual(BASE_TOOLS);
     // A spawned agent never spawns (depth one), even when its template has can_spawn.
     const tplDir = path.join(t.factoryHome, "templates", "developer");
     mkdirSync(tplDir, { recursive: true });
@@ -162,10 +167,9 @@ test("tools per caller: spawner sees four with the enum, others two (spec §7.1)
     p?.emit(...ev.fullTurn());
     await (await t.app.runtimes.bySlug("developer-e1"))?.settled();
     const r = await mcpCall(url, p?.spec.env.OPEN_FACTORY_AGENT_TOKEN as string, "tools/list", {});
-    expect((r.json.result.tools as { name: string }[]).map((x) => x.name).sort()).toEqual([
-      "list_peers",
-      "send_message",
-    ]);
+    expect((r.json.result.tools as { name: string }[]).map((x) => x.name).sort()).toEqual(
+      BASE_TOOLS,
+    );
   } finally {
     await t.close();
   }

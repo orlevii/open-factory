@@ -2343,6 +2343,17 @@ export class AgentRuntime {
         this.maybeRestart();
         break;
       }
+      case "rate_limit_status":
+        // Not a timeline event; a status write must never fail the turn.
+        try {
+          await this.d.store.recordRateLimit(liveCredentialId(this.agent), e, new Date());
+        } catch (err) {
+          this.d.log.error(
+            { err, agent: this.agent.slug },
+            "could not record the rate-limit status",
+          );
+        }
+        break;
       case "rate_limited":
         await this.append(this.openTurnId, e);
         this.rateLimitedTurn = true;

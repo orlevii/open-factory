@@ -488,6 +488,33 @@ export class EventStore {
     if (!row?.until) throw new Error(`credential ${id} not found`);
     return { name: row.name, until: row.until, exact: row.exact };
   }
+  /** Latest rate-limit status the CLI reported for a credential; an older observation never overwrites a newer one. */
+  async recordRateLimit(
+    credentialId: string,
+    s: {
+      status: "allowed" | "allowed_warning" | "rejected";
+      rateLimitType: string;
+      utilization?: number;
+      resetsAt?: number;
+    },
+    at: Date,
+  ): Promise<void> {
+    await this.db
+      .update(credentials)
+      .set({
+        rlStatus: s.status,
+        rlType: s.rateLimitType,
+        rlUtilization: s.utilization ?? null,
+        rlResetsAt: s.resetsAt === undefined ? null : new Date(s.resetsAt * 1000),
+        rlObservedAt: at,
+      })
+      .where(
+        and(
+          eq(credentials.id, credentialId),
+          or(isNull(credentials.rlObservedAt), lte(credentials.rlObservedAt, at)),
+        ),
+      );
+  }
   /** Clears the pause; with `until`, only a window that ends by then (a later one landed meanwhile: keep it). */
   async clearCredentialPause(id: string, until?: Date) {
     await this.db

@@ -341,12 +341,26 @@ function writeTemplate(name: string, files: Record<string, string>) {
   }
 }
 
-async function signUp(handle: string, name: string) {
+/** S10 §9.3: sign-up is invite-only once a user exists, so a later user signs up with an invite the inviter creates. */
+async function signUp(handle: string, name: string, inviter?: { cookie: string }) {
+  let invite: string | undefined;
+  if (inviter) {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/invites",
+      headers: { cookie: inviter.cookie, origin: app.config.publicOrigin },
+    });
+    if (created.statusCode !== 201)
+      throw new Error(`invite for ${handle} failed ${created.statusCode}: ${brief(created.body)}`);
+    invite =
+      new URL((created.json() as { link: string }).link).searchParams.get("invite") ?? undefined;
+  }
   const res = await app.inject({
     method: "POST",
     url: "/api/auth/sign-up/email",
     headers: { origin: app.config.publicOrigin },
     payload: {
+      invite,
       name,
       handle,
       email: `${handle}-${WORD.toLowerCase()}@example.invalid`,
@@ -461,10 +475,10 @@ try {
   say(
     `  human server http://${config.host}:${config.port}; agent listener port ${app.agentListener.port}`,
   );
-  const users = await step("1. users @or and @sam signed up through the app", async () => ({
-    or: await signUp("or", "Or"),
-    sam: await signUp("sam", "Sam"),
-  }));
+  const users = await step("1. users @or and @sam signed up through the app", async () => {
+    const or = await signUp("or", "Or");
+    return { or, sam: await signUp("sam", "Sam", or) };
+  });
   orCookie = users.or.cookie;
   await step(
     `1. factory settings: max running agents ${MAX_RUNNING}, member update debounce 180 s`,

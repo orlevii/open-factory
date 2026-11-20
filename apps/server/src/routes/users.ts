@@ -1,7 +1,13 @@
-import { createInviteResponseSchema, inviteItemSchema } from "@open-factory/shared";
+import type { Db } from "@open-factory/db";
+import {
+  createInviteResponseSchema,
+  inviteItemSchema,
+  signUpStateSchema,
+} from "@open-factory/shared";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
+import { signUpState } from "../users/sign-up-gate.ts";
 
 const idParams = z.object({ id: z.string() });
 
@@ -34,4 +40,18 @@ export const usersRoutes: FastifyPluginAsyncZod = async (app) => {
     await app.invites.restore(req.params.id);
     return reply.code(204).send();
   });
+};
+
+/** S10 §9.3: what the sign-up page shows. Public (no session yet), so it lives outside the guarded plugin. */
+export const signUpStateRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
+  app.get(
+    "/api/auth/sign-up-state",
+    {
+      schema: {
+        querystring: z.object({ invite: z.string().optional() }),
+        response: { 200: signUpStateSchema },
+      },
+    },
+    async (req) => signUpState({ db, invites: app.invites }, req.query.invite),
+  );
 };

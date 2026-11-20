@@ -10,6 +10,8 @@ export interface AuthOptionParams {
   database: BetterAuthOptions["database"];
   /** Returns true if the name already belongs to an agent or a human (one namespace, spec §7.1). */
   nameTaken?: (name: string) => Promise<boolean>;
+  /** True only inside the sign-up gate (S10 §9.3); without it no user can be created, not even the first. */
+  mayCreateUser?: () => boolean;
 }
 
 export function authOptions(p: AuthOptionParams) {
@@ -31,6 +33,22 @@ export function authOptions(p: AuthOptionParams) {
       },
     },
     plugins: [bearer()],
+    databaseHooks: {
+      user: {
+        create: {
+          // The backstop (S10 §9.3, F2): whatever path or endpoint reached better-auth, a user is created
+          // only through handleSignUp, which checks the invite. No zero-users exception here.
+          before: async () => {
+            if (!p.mayCreateUser?.()) {
+              throw new APIError("FORBIDDEN", {
+                code: "invite_required",
+                message: "Sign-up needs an invite link from a member of this factory.",
+              });
+            }
+          },
+        },
+      },
+    },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         if ((ctx.path !== "/sign-up/email" && ctx.path !== "/update-user") || !p.nameTaken) return;

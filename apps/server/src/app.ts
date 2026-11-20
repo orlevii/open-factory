@@ -48,7 +48,7 @@ import { statusRoutes } from "./routes/status.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
 import { usageRoutes } from "./routes/usage.ts";
-import { usersRoutes } from "./routes/users.ts";
+import { signUpStateRoutes, usersRoutes } from "./routes/users.ts";
 import { dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
@@ -373,12 +373,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   }
 
   await app.register(statusRoutes, { sql: deps.sql });
-  await app.register(authRoutes);
+  await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
   await app.register(usageRoutes);
+  await app.register(signUpStateRoutes, { db: deps.db });
   await app.register(usersRoutes);
   await app.register(settingsRoutes, { db: deps.db });
   await app.register(secretsRoutes);

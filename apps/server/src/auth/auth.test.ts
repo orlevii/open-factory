@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
-import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { makeTestApp, signUp, TEST_ORIGIN, testInvite } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 beforeAll(async () => {
@@ -43,6 +43,7 @@ describe("sign-up and /api/me", () => {
   test("a second user can sign up; duplicate handle is HANDLE_TAKEN; duplicate email rejected", async () => {
     const first = await signUp(t.app, { handle: "bob" });
     const dupHandle = await post("/api/auth/sign-up/email", {
+      invite: await testInvite(t.app),
       name: "B2",
       handle: "bob",
       email: "other@example.com",
@@ -51,6 +52,7 @@ describe("sign-up and /api/me", () => {
     expect(dupHandle.statusCode).toBe(422);
     expect(dupHandle.json()).toMatchObject({ code: "HANDLE_TAKEN" });
     const dupEmail = await post("/api/auth/sign-up/email", {
+      invite: await testInvite(t.app),
       name: "B3",
       handle: "bob-two",
       email: first.input.email,
@@ -64,6 +66,7 @@ describe("sign-up and /api/me", () => {
     "invalid or reserved handle %s is rejected",
     async (handle) => {
       const res = await post("/api/auth/sign-up/email", {
+        invite: await testInvite(t.app),
         name: "X",
         handle,
         email: `${handle}-${Date.now()}@example.com`,
@@ -94,6 +97,7 @@ describe("auth bridge", () => {
       const res = await post(
         "/api/auth/sign-up/email",
         {
+          invite: await testInvite(t.app),
           name: "Spoof",
           handle: `spoof-${Date.now() % 100000}`,
           email: `spoof-${Date.now()}@example.com`,

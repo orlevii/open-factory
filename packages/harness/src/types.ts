@@ -32,6 +32,11 @@ export interface FactoryMessage {
   taskKey?: string;
   taskTitle?: string;
   commentId?: string;
+  scheduleKey?: string;
+  by?: string;
+  due?: string;
+  firings?: number;
+  late?: boolean;
   ids?: string[];
   about?: string;
   /** The raw, unescaped bodies (for the UI). */

@@ -200,9 +200,9 @@ function UsageSegment({ agent, usage }: { agent: AgentSummary; usage?: AgentUsag
   return (
     <>
       <Link
-        // Typed as the session route until the usage route exists in the route tree.
-        to={"/agents/$slug/usage" as "/agents/$slug"}
+        to="/agents/$slug/usage"
         params={{ slug: agent.slug }}
+        search={{}}
         aria-label={cost ? `Usage: ${cost} estimated, last 7 days` : undefined}
         className={`max-md:hidden text-muted-foreground tabular-nums ${LINK_CLASS}`}
       >

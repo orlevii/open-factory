@@ -28,6 +28,7 @@ import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates.i
 import { Route as AppTemplatesNameRouteImport } from './routes/_app/templates.$name'
 import { Route as AppTemplatesNewRouteImport } from './routes/_app/templates.new'
 import { Route as AppAgentsSlugEditRouteImport } from './routes/_app/agents.$slug_.edit'
+import { Route as AppAgentsSlugUsageRouteImport } from './routes/_app/agents.$slug_.usage'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -123,6 +124,11 @@ const AppAgentsSlugEditRoute = AppAgentsSlugEditRouteImport.update({
   path: '/agents/$slug/edit',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAgentsSlugUsageRoute = AppAgentsSlugUsageRouteImport.update({
+  id: '/agents/$slug_/usage',
+  path: '/agents/$slug/usage',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -143,6 +149,7 @@ export interface FileRoutesByFullPath {
   '/tasks/': typeof AppTasksIndexRoute
   '/templates/': typeof AppTemplatesIndexRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
+  '/agents/$slug/usage': typeof AppAgentsSlugUsageRoute
 }
 export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
@@ -163,6 +170,7 @@ export interface FileRoutesByTo {
   '/tasks': typeof AppTasksIndexRoute
   '/templates': typeof AppTemplatesIndexRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
+  '/agents/$slug/usage': typeof AppAgentsSlugUsageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -185,6 +193,7 @@ export interface FileRoutesById {
   '/_app/tasks/': typeof AppTasksIndexRoute
   '/_app/templates/': typeof AppTemplatesIndexRoute
   '/_app/agents/$slug_/edit': typeof AppAgentsSlugEditRoute
+  '/_app/agents/$slug_/usage': typeof AppAgentsSlugUsageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -207,6 +216,7 @@ export interface FileRouteTypes {
     | '/tasks/'
     | '/templates/'
     | '/agents/$slug/edit'
+    | '/agents/$slug/usage'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/sign-in'
@@ -227,6 +237,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/templates'
     | '/agents/$slug/edit'
+    | '/agents/$slug/usage'
   id:
     | '__root__'
     | '/_app'
@@ -248,6 +259,7 @@ export interface FileRouteTypes {
     | '/_app/tasks/'
     | '/_app/templates/'
     | '/_app/agents/$slug_/edit'
+    | '/_app/agents/$slug_/usage'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -391,6 +403,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAgentsSlugEditRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/agents/$slug_/usage': {
+      id: '/_app/agents/$slug_/usage'
+      path: '/agents/$slug/usage'
+      fullPath: '/agents/$slug/usage'
+      preLoaderRoute: typeof AppAgentsSlugUsageRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -411,6 +430,7 @@ interface AppRouteChildren {
   AppTasksIndexRoute: typeof AppTasksIndexRoute
   AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
   AppAgentsSlugEditRoute: typeof AppAgentsSlugEditRoute
+  AppAgentsSlugUsageRoute: typeof AppAgentsSlugUsageRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -430,6 +450,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppTasksIndexRoute: AppTasksIndexRoute,
   AppTemplatesIndexRoute: AppTemplatesIndexRoute,
   AppAgentsSlugEditRoute: AppAgentsSlugEditRoute,
+  AppAgentsSlugUsageRoute: AppAgentsSlugUsageRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

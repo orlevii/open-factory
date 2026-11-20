@@ -10,7 +10,7 @@ import { agentsListQueryOptions } from "@/features/session/api";
 import { AgentPicker } from "./agent-picker";
 import type { CreateTaskBody } from "./api";
 import { checkDependencies, DependencyEditor } from "./dependency-editor";
-import { checkLink, LinkEditor, type LinkRow, newLinkRow, rowsToInput } from "./link-editor";
+import { checkLink, LinkEditor, type LinkRow, rowsToInput } from "./link-editor";
 
 const FIELDS = ["title", "body", "assignee", "dependsOn", "links"] as const;
 type Field = (typeof FIELDS)[number];

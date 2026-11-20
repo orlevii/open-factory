@@ -206,18 +206,19 @@ test("a create publishes tasks_changed to a connected WebSocket", async () => {
   const frames: unknown[] = [];
   ws.on("message", (d) => frames.push(JSON.parse(String(d))));
   await new Promise((r) => ws.once("open", r));
-  await new Promise<void>((r) => {
-    const t = setInterval(() => frames.length && (clearInterval(t), r()), 5);
-  });
+  // Resolves once a frame matching `want` has arrived (checked on every message; no polling).
+  const arrived = (want: (f: { type: string }) => boolean) =>
+    new Promise<void>((resolve) => {
+      const check = () => {
+        const hit = frames.some((f) => want(f as { type: string }));
+        if (hit) resolve();
+        return hit;
+      };
+      if (!check()) ws.on("message", check);
+    });
+  await arrived((f) => f.type === "hello");
   await create({ title: "live" });
-  await new Promise<void>((r) => {
-    const t = setInterval(
-      () =>
-        frames.some((f) => (f as { type: string }).type === "tasks_changed") &&
-        (clearInterval(t), r()),
-      5,
-    );
-  });
+  await arrived((f) => f.type === "tasks_changed");
   expect(frames).toContainEqual({ type: "tasks_changed", keys: ["T-1"] });
   ws.close();
 });

@@ -110,7 +110,6 @@ const mcpRequests: McpRequest[] = [];
 const openMcp = new Map<string, McpRequest>();
 /** Response codes of every request in the run (human server and agent listener). */
 const statusCodes = new Map<number, number>();
-let listenerReady: { hosts?: unknown; port?: unknown } | undefined;
 /** Each agent process's system/init tool list, read from the driver's debug log of claude's stdout. */
 const inits: { slug: string; time: number; tools: string[] }[] = [];
 const serverWarnings: string[] = [];
@@ -137,7 +136,6 @@ const logStream = new Writable({
           if (l.type === "system" && l.subtype === "init" && Array.isArray(l.tools))
             inits.push({ slug: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
         }
-        if (o.msg === "agent listener ready") listenerReady = { hosts: o.hosts, port: o.port };
         if (o.msg === "incoming request" && o.req?.url?.startsWith("/mcp")) {
           const r: McpRequest = {
             method: String(o.req.method),
@@ -241,8 +239,6 @@ const idOf = (slug: Slug) => {
 const since = (slug: Slug, seq = 0): Promise<SessionEvent[]> =>
   app.store.after(idOf(slug), seq, 10_000);
 const lastSeq = async (slug: Slug) => (await since(slug)).at(-1)?.seq ?? 0;
-const textOf = (es: SessionEvent[]) =>
-  es.flatMap((e) => (e.event.type === "assistant_text" ? [e.event.text] : [])).join("\n");
 const toolTrace = (es: SessionEvent[]) =>
   es
     .flatMap(({ event: e }) =>
@@ -266,10 +262,6 @@ const okCalls = (es: SessionEvent[], name: string) =>
     );
     return r?.event.type === "tool_result" && !r.event.isError;
   });
-const resultOf = (es: SessionEvent[], toolUseId: string) => {
-  const r = es.find((e) => e.event.type === "tool_result" && e.event.toolUseId === toolUseId);
-  return r?.event.type === "tool_result" ? r.event : undefined;
-};
 const envelopes = (es: SessionEvent[]) =>
   es.flatMap((e) =>
     e.event.type === "message_in" ? [{ seq: e.seq, at: e.at, envs: e.event.messages }] : [],

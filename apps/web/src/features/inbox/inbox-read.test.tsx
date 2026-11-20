@@ -83,7 +83,13 @@ const world = (
       unread = Math.max(0, unread - 1);
       return json({ ok: true });
     });
-  return { api, set: (l: unknown[], c: number) => ((list = l), (unread = c)) };
+  return {
+    api,
+    set: (l: unknown[], c: number) => {
+      list = l;
+      unread = c;
+    },
+  };
 };
 
 test("kinds: a mention, a human mention and a task event render their sender lines, badges and targets", async () => {

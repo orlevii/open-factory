@@ -142,12 +142,11 @@ export function TaskDetailView({
   const [highlight, setHighlight] = useState<string>();
   const [missing, setMissing] = useState(false);
   const handled = useRef<string>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once per target, when the task has loaded
   useEffect(() => {
     if (!task || !commentId || handled.current === commentId) return;
     handled.current = commentId;
     const c = task.activity.find((a) => a.type === "comment" && a.id === commentId);
-    if (!c || c.type !== "comment") return setMissing(true);
+    if (c?.type !== "comment") return setMissing(true);
     setHighlight(commentId);
     if (c.author.kind === "agent") setDraft((d) => (d === "" ? `${authorMention(c.author)} ` : d));
     requestAnimationFrame(() => {

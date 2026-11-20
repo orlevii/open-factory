@@ -28,6 +28,9 @@ export function TerminateButton({
   const [open, setOpen] = useState(false);
   const confirming = useRef(false);
   const done = useRef(false);
+  // The latest state, for a request that settles after a terminated frame re-rendered the view.
+  const terminatedNow = useRef(terminated);
+  terminatedNow.current = terminated;
   useEffect(() => {
     if (terminated && !confirming.current && !done.current) setOpen(false);
   }, [terminated]);
@@ -41,6 +44,12 @@ export function TerminateButton({
       done.current = true;
       onTerminated(a, true);
     } catch (e) {
+      // It ended anyway (a frame said so while the request was out): the goal is met, so the dialog
+      // closes as on success rather than showing an error about an agent that is already gone.
+      if (terminatedNow.current) {
+        done.current = true;
+        return;
+      }
       onTerminated(agent, false);
       throw e;
     } finally {

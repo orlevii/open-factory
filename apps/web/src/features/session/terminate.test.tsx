@@ -327,3 +327,96 @@ test("Unpin after the grace confirms: the workspace is deleted", async () => {
   expect(await screen.findByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
   expect(await screen.findByText("Workspace unpinned.")).toBeInTheDocument();
 });
+
+const frameNow = () =>
+  ws.onMessage?.({
+    type: "agent_status",
+    agent: SLUG,
+    status: "terminated",
+    turnOpen: false,
+    restartPending: false,
+    restartWaitingOn: 0,
+  } as ServerMessage);
+
+test("the terminated frame arriving before the response: the dialog stays open until it, then Pin takes focus", async () => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  let framed = false;
+  const { state } = await open(spawned(), {
+    [`POST /api/agents/${SLUG}/terminate`]: async () => {
+      state.agent = terminated({ terminatedBy: "@alice" });
+      act(() => frameNow());
+      framed = true;
+      await held;
+      return json({ agent: state.agent });
+    },
+  });
+  await userEvent.click(screen.getByRole("button", { name: `Terminate @${SLUG}` }));
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await vi.waitFor(() => expect(framed).toBe(true));
+  // The view has turned read-only behind it, but the request is still pending.
+  expect(
+    await screen.findByText("This agent was terminated. Its session is read-only."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("alertdialog")).toBe(dialog);
+  await act(async () => release());
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  const pin = await screen.findByRole("button", { name: "Pin workspace" });
+  await vi.waitFor(() => expect(document.activeElement).toBe(pin));
+});
+
+test("a failed terminate request after the agent was terminated anyway closes the dialog", async () => {
+  const { state } = await open(spawned(), {
+    [`POST /api/agents/${SLUG}/terminate`]: () => {
+      state.agent = terminated({ terminatedBy: "lead" });
+      act(() => frameNow());
+      return json({ error: { code: "internal", message: "Something broke." } }, 500);
+    },
+  });
+  await userEvent.click(screen.getByRole("button", { name: `Terminate @${SLUG}` }));
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByText("Something broke.")).toBeNull();
+  const pin = await screen.findByRole("button", { name: "Pin workspace" });
+  await vi.waitFor(() => expect(document.activeElement).toBe(pin));
+});
+
+test("an errored spawned agent: the recovery actions, the divider, then Terminate", async () => {
+  await open(spawned({ status: "errored", errorKind: "resume", lastError: "boom" }));
+  const header = screen.getByRole("banner");
+  const names = within(header)
+    .getAllByRole("button")
+    .map((b) => b.getAttribute("aria-label") ?? b.textContent);
+  expect(names.slice(-3)).toEqual(["Restart", "Start a new session", `Terminate @${SLUG}`]);
+  expect(within(header).queryByRole("button", { name: /Compact|Interrupt/ })).toBeNull();
+  const divider = header.querySelector("[data-action-divider]") as HTMLElement;
+  expect(divider.nextElementSibling).toBe(
+    within(header).getByRole("button", { name: `Terminate @${SLUG}` }),
+  );
+});
+
+test("a spawned agent's edit page says it can't be edited and links back to its session", async () => {
+  mockApi({
+    [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
+    "GET /api/agents?ended=exclude": () =>
+      json({ agents: [spawned()], running: { count: 1, max: 8 } }),
+    "GET /api/templates": () => json({ templates: [] }),
+  });
+  renderApp(`/agents/${SLUG}/edit`, alice);
+  const line = await screen.findByText(
+    (_, el) =>
+      el?.tagName === "P" &&
+      el.textContent === "Spawned agents can't be edited; terminate it instead.",
+  );
+  expect(line).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: `Open @${SLUG}'s session` })).toHaveAttribute(
+    "href",
+    `/agents/${SLUG}`,
+  );
+  expect(screen.queryByRole("button", { name: /Save|Re-sync|Archive/ })).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
+});

@@ -128,6 +128,7 @@ export function SessionView({
       {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
       <Timeline
         slug={slug}
+        spawned={agent.kind === "ephemeral"}
         rows={s.rows}
         failedIds={s.failedIds}
         interruptedEnds={s.interruptedEnds}
@@ -281,7 +282,9 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
 }
 
 /** "This message wasn't delivered: @dev was terminated." or "…was archived." (S7 UI design §5.3), from
- *  the recipient's state: the viewed agent itself, else the ended list. Nothing until it is known. */
+ *  the recipient's state: the viewed agent itself, else the ended list. When neither says (the list
+ *  failed, or the recipient is older than its newest 200), "…is no longer available.", which never
+ *  guesses. Nothing until it is known. */
 function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
   const self = to === viewed.slug ? viewed : undefined;
   const ended = useQuery({
@@ -292,10 +295,14 @@ function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
   if (!self && ended.isPending) return null;
   const recipient = self ?? ended.data?.find((a) => a.slug === to);
   const why =
-    recipient?.terminatedAt || recipient?.status === "terminated" ? "terminated" : "archived";
+    recipient?.terminatedAt || recipient?.status === "terminated"
+      ? "was terminated"
+      : recipient?.archivedAt
+        ? "was archived"
+        : "is no longer available";
   return (
     <>
-      This message wasn't delivered: <span className="font-mono">@{to}</span> was {why}.
+      This message wasn't delivered: <span className="font-mono">@{to}</span> {why}.
     </>
   );
 }

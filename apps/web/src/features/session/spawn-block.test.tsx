@@ -94,7 +94,10 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
     within(block).getByRole("link", { name: "Open @tech-lead-ab12's session" }),
   ).toHaveAttribute("href", "/agents/tech-lead-ab12");
   // The description is plain text, the brief goes through Markdown.
-  expect(within(block).getByText("Writes the S8 spec").closest(".prose-of")).toBeNull();
+  const description = within(block).getByText("Writes the S8 spec");
+  expect(description.tagName).toBe("P");
+  // One muted line (S7 UI design §4.1): a long one ends in an ellipsis; the text stays whole in the DOM.
+  expect(description).toHaveClass("truncate", "text-muted-foreground");
   expect(within(block).getByText("spec").tagName).toBe("STRONG");
   expect(within(block).getByText("Spawned")).toBeInTheDocument();
   // Never an id.
@@ -176,6 +179,49 @@ test("a failed spawn shows the tool's sentence with the failed-tool icon", async
   expect(sentence.parentElement?.querySelector("svg")).toHaveClass("text-destructive");
   expect(within(block).queryByText("Spawned")).toBeNull();
   expect(senderOf(block)).toBe("@lead spawn from template tech-lead");
+});
+
+const denied = (toolUseId: string): AnyEvent => ({
+  type: "permission_denied",
+  toolUseId,
+  toolName: "x",
+  reasonType: "rule",
+  reason: "Spawning isn't allowed here",
+});
+
+test("a denied spawn shows the denial sentence as a failure, never 'Spawned'", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      spawn(),
+      denied("toolu_s"),
+      { type: "turn_end", isError: false, numTurns: 1 },
+    ],
+    "Writes the S8 spec",
+  );
+  const block = screen.getByRole("article", { name: "@lead's spawn from tech-lead failed" });
+  const sentence = within(block).getByText("Denied: Spawning isn't allowed here");
+  expect(sentence.parentElement?.querySelector("svg")).toHaveClass("text-destructive");
+  expect(within(block).queryByText("Spawned")).toBeNull();
+  expect(within(block).queryByText(/No result/)).toBeNull();
+});
+
+test("a denied terminate is a failed quiet line with the denial sentence", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      terminate("tech-lead-ab12", "t1"),
+      denied("t1"),
+      { type: "turn_end", isError: false, numTurns: 1 },
+    ],
+    /Couldn't terminate/,
+  );
+  const line = screen.getByText(
+    (_, el) =>
+      el?.tagName === "P" &&
+      textOf(el) === "Couldn't terminate @tech-lead-ab12: Denied: Spawning isn't allowed here",
+  );
+  expect(line.querySelector("svg.lucide-circle-x")).toHaveClass("text-destructive");
 });
 
 test("malformed spawn_agent input falls back to the tool row", async () => {

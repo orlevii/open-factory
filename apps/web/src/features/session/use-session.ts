@@ -147,8 +147,6 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     [qc],
   );
 
-  // A status frame says `terminated` but carries no termination fields (who, when, the workspace):
-  // fetch them once. A failure leaves the strip without its sentence; the next load fills it.
   /** Refetches the summary only (not the events): after a send raced a termination. */
   const refreshAgent = useCallback(
     () =>
@@ -158,6 +156,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
       ),
     [qc, slug],
   );
+  // A status frame says `terminated` but carries no termination fields (who, when, the workspace):
+  // fetch them once. A failure leaves the strip without its sentence; the next load fills it.
   const needsTermination =
     state.agent?.status === "terminated" && state.agent.terminatedAt === undefined;
   useEffect(() => {

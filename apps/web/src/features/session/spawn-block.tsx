@@ -105,7 +105,9 @@ export function SpawnBlock({
       }
       footer={failed ? <FailedNote row={row} /> : <Footer row={row} spawned={spawned} />}
     >
-      <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground [overflow-wrap:anywhere]">
+      {/* One muted line (S7 UI design §4.1): a long description ends in an ellipsis; the whole text
+          stays in the DOM, so screen readers read it all. */}
+      <p className="mb-1 truncate text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
         {input.description}
       </p>
       <ClampedMarkdown source={input.prompt} />

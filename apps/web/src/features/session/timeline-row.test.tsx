@@ -15,7 +15,7 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 /** Renders the rows the events produce; returns each top-level row's text. */
-function lines(events: AnyEvent[]) {
+function lines(events: AnyEvent[], spawned = false) {
   const rows = buildRows(events.map((e) => se(e, null)));
   const { container } = render(
     <div>
@@ -23,6 +23,7 @@ function lines(events: AnyEvent[]) {
         <div key={row.key} data-row>
           <TimelineRow
             slug="dev"
+            spawned={spawned}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -145,6 +146,18 @@ test("timeline: a runtime error has no fix link (the strip explains it)", () => 
     },
   ]);
   expect((els[0] as HTMLElement).querySelector("a")).toBeNull();
+});
+
+test("timeline: a spawned agent's error never links to the edit page (it can't be edited)", () => {
+  const err = (fix: "edit_agent" | "resync"): AnyEvent => ({
+    type: "error",
+    source: "spawn",
+    message: `failed (${fix})`,
+    fix,
+  });
+  const { els } = lines([err("edit_agent"), err("resync")], true);
+  expect(els).toHaveLength(2);
+  for (const el of els) expect(el.querySelector("a")).toBeNull();
 });
 
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {

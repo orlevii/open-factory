@@ -20,6 +20,7 @@ const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]
  *  deep-link centring and tint, and one tab stop with roving focus (UI design §4.3, §7). */
 export function Timeline(props: {
   slug: string;
+  spawned?: boolean;
   rows: Row[];
   failedIds: Set<string>;
   interruptedEnds: Set<number>;
@@ -226,6 +227,7 @@ export function Timeline(props: {
               >
                 <TimelineRow
                   slug={props.slug}
+                  spawned={props.spawned}
                   row={row}
                   expanded={expanded}
                   toggle={toggle}

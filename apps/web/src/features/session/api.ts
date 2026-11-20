@@ -1,6 +1,4 @@
 import {
-  type AgentDetail,
-  type AgentSummary,
   agentDetailSchema,
   agentListSchema,
   agentResponseSchema,
@@ -9,7 +7,7 @@ import {
   messageLookupSchema,
   queueItemResponseSchema,
 } from "@open-factory/shared";
-import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
+import { queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
 
 type Running = { count: number; max: number };
@@ -115,10 +113,3 @@ export const setWorkspacePin = (slug: string, pinned: boolean) =>
     method: pinned ? "PUT" : "DELETE",
     schema: agentResponseSchema,
   }).then((r) => r.agent);
-
-/** Puts a response's summary into the cached detail (keeping its queue and cursor), and refreshes
- *  the lists, where a terminated agent moves from Active to Ended. */
-export function applyAgentSummary(qc: QueryClient, agent: AgentSummary) {
-  qc.setQueryData<AgentDetail>(["agent", agent.slug], (d) => (d ? { ...d, agent } : d));
-  void qc.invalidateQueries({ queryKey: ["agents"] });
-}

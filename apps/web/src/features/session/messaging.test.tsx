@@ -432,7 +432,16 @@ test("?message= for a delivered message loads the window around its recipient ev
 });
 
 test("?message= for a rejected message names who it wasn't delivered to", async () => {
-  lookupWorld(() => json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }));
+  const api = lookupWorld(() =>
+    json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),
+  );
+  api.on("GET /api/agents?ended=only", () =>
+    json({
+      agents: [agentSummary({ slug: "b", displayName: "Builder", archivedAt: AT })],
+      more: false,
+      running: { count: 1, max: 8 },
+    }),
+  );
   renderApp("/agents/dev?message=mid", alice);
   const notice = await screen.findByText(
     (_, el) =>
@@ -468,6 +477,30 @@ test("?message= for a message rejected by a terminated recipient says it was ter
   );
   expect(within(notice).getByText("@b")).toHaveClass("font-mono");
 });
+
+test.each([
+  [
+    "not among the newest ended agents",
+    () => json({ agents: [], more: true, running: { count: 1, max: 8 } }),
+  ],
+  ["the ended list failed", () => json({ error: { code: "internal", message: "x" } }, 500)],
+])(
+  "?message= for a rejected message is neutral when the recipient's state is unknown (%s)",
+  async (_, ended) => {
+    const api = lookupWorld(() =>
+      json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),
+    );
+    api.on("GET /api/agents?ended=only", ended);
+    renderApp("/agents/dev?message=mid", alice);
+    expect(
+      await screen.findByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent === "This message wasn't delivered: @b is no longer available.",
+      ),
+    ).toBeInTheDocument();
+  },
+);
 
 test("the announcer says '<name> messaged you' for a send to this human or @humans, not to agents", async () => {
   await open([{ type: "assistant_text", text: "history" }], "history");

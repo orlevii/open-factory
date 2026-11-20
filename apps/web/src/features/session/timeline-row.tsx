@@ -184,10 +184,15 @@ function quietIcon(e: AnyEvent): ReactNode {
 function FixLink({
   fix,
   slug,
+  spawned,
 }: {
   fix: NonNullable<Extract<AnyEvent, { type: "error" }>["fix"]>;
   slug: string;
+  spawned?: boolean;
 }) {
+  // A spawned agent can't be edited or re-synced (the server drops these fixes for it, spec §8):
+  // never link to an edit page that can only refuse.
+  if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
   const cls =
     "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
   if (fix === "edit_agent")
@@ -219,6 +224,8 @@ function FixLink({
 
 export interface TimelineRowProps {
   slug: string;
+  /** The session's agent is a spawned one (no edit page). */
+  spawned?: boolean;
   row: Row;
   expanded: Set<string>;
   toggle(key: string): void;
@@ -302,7 +309,7 @@ export function TimelineRow(props: TimelineRowProps) {
           </p>
           {row.event.fix && (
             <p>
-              <FixLink fix={row.event.fix} slug={props.slug} />
+              <FixLink fix={row.event.fix} slug={props.slug} spawned={props.spawned} />
             </p>
           )}
           {row.event.detail && (

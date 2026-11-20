@@ -7,7 +7,7 @@
 // credential and is never printed: everything this script prints goes through `redact`.
 // Uses a throwaway database and a temp FACTORY_HOME; the human server and the agent listener listen on loopback
 // (Docker Desktop reaches loopback at host.docker.internal; on plain Linux the listener adds the bridge gateway).
-// Model: haiku. FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS=180 so an idle manager's batch can't split.
+// Model: haiku. A member update debounce of 180 s (factory settings) so an idle manager's batch can't split.
 // Org: `dev` and `tester` (both top level); humans `or` and `sam`.
 import { randomBytes } from "node:crypto";
 import {
@@ -370,6 +370,18 @@ async function signUp(handle: string, name: string) {
   return { cookie, userId: me.id };
 }
 
+/** S10: the cap and the debounce are factory settings, set through the API after sign-up (no longer env vars). */
+async function patchFactorySettings(cookie: string, body: Record<string, number>) {
+  const res = await app.inject({
+    method: "PATCH",
+    url: "/api/settings/factory",
+    headers: { cookie },
+    payload: body,
+  });
+  if (res.statusCode !== 200)
+    throw new Error(`PATCH /api/settings/factory failed ${res.statusCode}: ${brief(res.body)}`);
+}
+
 /** The five task tools every agent gets (spec §9). */
 const TASK_TOOLS = ["create_task", "update_task", "list_tasks", "get_task", "comment_task"].map(
   (n) => `mcp__factory__${n}`,
@@ -413,7 +425,6 @@ try {
     FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
-    FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "180",
     HOST: "127.0.0.1",
     PORT: String(port),
     FACTORY_AGENT_PORT: String(agentPort),
@@ -447,6 +458,9 @@ try {
   }));
   orUser = { userId: users.or.userId, handle: "or" };
   orCookie = users.or.cookie;
+  await step("1. factory settings: member update debounce 180 s", () =>
+    patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
+  );
   samUser = { userId: users.sam.userId, handle: "sam" };
   await step("1. credential created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),

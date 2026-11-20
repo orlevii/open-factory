@@ -16,7 +16,7 @@ import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
-import { type Config, localRuntimeAllowed } from "./config.ts";
+import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
@@ -43,6 +43,7 @@ import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { schedulesRoutes } from "./routes/schedules.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
+import { settingsRoutes } from "./routes/settings.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
@@ -55,6 +56,7 @@ import { ScheduleService } from "./scheduling/schedule-service.ts";
 import { ScheduleStore } from "./scheduling/schedule-store.ts";
 import { Scheduler } from "./scheduling/scheduler.ts";
 import { SecretService } from "./secrets/secret-service.ts";
+import { FactorySettings } from "./settings/factory-settings.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
 import { Reaper } from "./spawning/reaper.ts";
 import { SpawnService } from "./spawning/spawn-service.ts";
@@ -94,6 +96,7 @@ declare module "fastify" {
     terminator: TerminateService;
     tasks: TaskService;
     usage: UsageService;
+    factorySettings: FactorySettings;
     reaper: Reaper;
     schedules: ScheduleService;
     scheduler: Scheduler;
@@ -118,6 +121,8 @@ export interface AppDeps {
     setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
     clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   };
+  /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function loggerOptions(config: Config) {
@@ -167,6 +172,10 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
     app.log,
   );
+  // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
+  const settings = await FactorySettings.load(deps.db);
+  app.decorate("factorySettings", settings);
+  for (const w of removedEnvWarnings(deps.env ?? process.env)) app.log.warn(w);
 
   const store = new EventStore(deps.db);
   const bus = new EventBus();
@@ -201,10 +210,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     prepareStart,
     tokens,
     log: app.log,
-    memberUpdateDebounceMs: config.memberUpdateDebounceMs,
+    // Read at construction for now; S10 Tasks 11 and 12 make the cap and the debounce live.
+    memberUpdateDebounceMs: settings.memberUpdateDebounceMs(),
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
-    maxRunningAgents: config.maxRunningAgents,
+    maxRunningAgents: settings.maxRunningAgents(),
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
     docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
@@ -352,6 +362,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
   await app.register(usageRoutes);
+  await app.register(settingsRoutes, { db: deps.db });
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
@@ -392,7 +403,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       containers,
       supervisor: runtimes.supervisor,
       runtimes,
-      memberUpdateDebounceMs: config.memberUpdateDebounceMs,
+      memberUpdateDebounceMs: settings.memberUpdateDebounceMs(),
       forward: (f) => router.forward(f),
       log: app.log,
     });

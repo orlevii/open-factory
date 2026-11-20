@@ -37,7 +37,6 @@ Environment variables (`npm start` loads `.env` if present):
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
 | `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
 | `FACTORY_HOST_SKILLS_DIR` | no | `~/.claude/skills` | where host skills named in a template's `skills:` list are read from; a leading `~` is expanded |
-| `FACTORY_MAX_RUNNING_AGENTS` | no | `8` | most agent processes running at once, minimum 1; see "Running agents and the cap" |
 | `FACTORY_ALLOW_LOCAL_RUNTIME` | no | `false` | `true` lets agents with `runtime: local` start; see "Local runtime" |
 | `FACTORY_DEFAULT_IMAGE` | no | `ghcr.io/orlevii/open-factory/base:latest` | container image for Docker agents whose template names none |
 | `FACTORY_DOCKER_CLAUDE_BIN` | no | `claude` | path to Claude Code inside the container image |
@@ -45,8 +44,9 @@ Environment variables (`npm start` loads `.env` if present):
 | `FACTORY_AGENT_PORT` | no | `PORT + 1` | port of the agent listener, the separate surface agents call (see "Agent listener") |
 | `FACTORY_AGENT_HOST` | no | loopback, plus the Docker bridge gateway on Linux | comma-separated IP addresses the agent listener binds; replaces the default list. The only way to bind `0.0.0.0` or `::` |
 | `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${FACTORY_AGENT_PORT}` | how containers reach the agent listener (`OPEN_FACTORY_URL` in the container). Local agents always use `http://127.0.0.1:${FACTORY_AGENT_PORT}` |
-| `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` | no | `30` | how long a report's updates wait for an idle manager before waking it (`0` = at once) |
 | `FACTORY_MAX_SPAWNS_PER_HOUR` | no | `20` | most agents one agent may spawn in a rolling hour, terminated ones included, minimum 1; see "Spawning" |
+
+The max running agents, the default warm window and the member update debounce are set in the app under Settings → Factory, not in the environment. `FACTORY_MAX_RUNNING_AGENTS` and `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` are no longer read; the server logs a warning at boot when either is still set.
 
 ## Run an agent
 
@@ -95,7 +95,7 @@ Agents don't use the human API. They message each other and the humans through t
 
 ## Running agents and the cap
 
-`FACTORY_MAX_RUNNING_AGENTS` (default 8) limits how many agent processes run at once, warm idle ones included. An agent that wakes while every slot is taken waits in a first-in, first-out queue and shows as queued. To free a slot sooner, the factory hibernates the least recently active idle agent early, before its warm window ends. Agents that are mid-turn, have background tasks or have crons are never chosen.
+The max running agents setting (Settings → Factory, default 8) limits how many agent processes run at once, warm idle ones included. An agent that wakes while every slot is taken waits in a first-in, first-out queue and shows as queued. To free a slot sooner, the factory hibernates the least recently active idle agent early, before its warm window ends. Agents that are mid-turn, have background tasks or have crons are never chosen.
 
 **Rate limits.** When Claude reports that a credential's limit is rejected, the factory pauses that credential until the reported reset time (30 minutes if none is reported). Agents on it keep their messages queued, and idle ones hibernate. At the reset, an agent that was cut off mid-turn gets a notice from `@factory` that the limit reset, ahead of any pending messages.
 

@@ -22,6 +22,7 @@ import type { FastifyInstance } from "fastify";
 import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
 import { type Config, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
+import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 
@@ -36,6 +37,8 @@ export interface TestAppOptions {
   schedulerTimers?: AppDeps["schedulerTimers"];
   /** Capture the app's real log output (production redact config, no transport) at info level. */
   logStream?: { write(s: string): void };
+  /** Written to the `factory_settings` row before the app boots (S10 §8.1: these are no longer env vars). */
+  factorySettings?: Partial<FactorySettingsValues>;
 }
 
 export async function makeTestApp(opts: TestAppOptions = {}) {
@@ -57,6 +60,9 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);
+    if (o.factorySettings && Object.keys(o.factorySettings).length > 0) {
+      await db.update(schema.factorySettings).set(o.factorySettings);
+    }
     const app = await buildApp(config, {
       db,
       sql,

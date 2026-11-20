@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { factoryZoneDefault, zoneSchema } from "@open-factory/shared";
 import { z } from "zod";
 
-/** `FACTORY_MAX_RUNNING_AGENTS` when unset (spec §5.2). */
+/** The seeded `factory_settings.max_running_agents` (S10 §8.1); tests and runtime harnesses use it. */
 export const DEFAULT_MAX_RUNNING_AGENTS = 8;
 
 export const PLACEHOLDER_SECRET = "change-me-to-a-random-string-of-32-chars-or-more";
@@ -23,7 +23,6 @@ export interface Config {
   isProduction: boolean;
   claudeBin: string;
   hostSkillsDir: string;
-  maxRunningAgents: number;
   allowLocalRuntime: boolean;
   defaultImage: string;
   dockerClaudeBin: string;
@@ -32,7 +31,6 @@ export interface Config {
   agentPort: number;
   /** `FACTORY_AGENT_HOST`: replaces the default bind list when set. */
   agentHosts: string[] | undefined;
-  memberUpdateDebounceMs: number;
   /** `FACTORY_MAX_SPAWNS_PER_HOUR`: children per spawner created in the last 60 minutes (S7 §5.5). */
   maxSpawnsPerHour: number;
   /** `FACTORY_TIMEZONE` (S9): the zone agent-created schedules default to, named in the generated CLAUDE.md. */
@@ -80,11 +78,6 @@ const envSchema = z.object({
   NODE_ENV: z.string().optional(),
   FACTORY_CLAUDE_BIN: z.string().min(1).default("claude"),
   FACTORY_HOST_SKILLS_DIR: z.string().min(1).default("~/.claude/skills"),
-  FACTORY_MAX_RUNNING_AGENTS: z.coerce
-    .number({ message: "must be a whole number" })
-    .int()
-    .min(1)
-    .default(DEFAULT_MAX_RUNNING_AGENTS),
   FACTORY_ALLOW_LOCAL_RUNTIME: z.enum(["true", "false"]).default("false"),
   FACTORY_DEFAULT_IMAGE: z.string().min(1).default("ghcr.io/orlevii/open-factory/base:latest"),
   FACTORY_DOCKER_CLAUDE_BIN: z.string().min(1).default("claude"),
@@ -97,12 +90,6 @@ const envSchema = z.object({
     .max(65535)
     .optional(),
   FACTORY_AGENT_HOST: z.string().optional(),
-  FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: z.coerce
-    .number({ message: "must be a whole number of seconds" })
-    .int()
-    .min(0)
-    .max(86_400, "must be at most 86400 (one day)")
-    .default(30),
   FACTORY_MAX_SPAWNS_PER_HOUR: z.coerce
     .number({ message: "must be a whole number" })
     .int()
@@ -110,6 +97,19 @@ const envSchema = z.object({
     .default(20),
   FACTORY_TIMEZONE: zoneSchema.optional(),
 });
+
+/** Env vars S10 moved to `factory_settings` (Q6): no shim, nothing reads them; boot only warns when one is set. */
+const REMOVED_ENV = [
+  "FACTORY_MAX_RUNNING_AGENTS",
+  "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS",
+] as const;
+
+/** One boot warning per removed variable that is still set (empty counts as unset, as in `loadConfig`). */
+export function removedEnvWarnings(env: NodeJS.ProcessEnv): string[] {
+  return REMOVED_ENV.filter((k) => env[k] !== undefined && env[k] !== "").map(
+    (k) => `${k} is no longer read; set it in Settings → Factory.`,
+  );
+}
 
 function expandHome(p: string): string {
   return path.resolve(p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -160,7 +160,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     isProduction: e.NODE_ENV === "production",
     claudeBin: e.FACTORY_CLAUDE_BIN,
     hostSkillsDir: expandHome(e.FACTORY_HOST_SKILLS_DIR),
-    maxRunningAgents: e.FACTORY_MAX_RUNNING_AGENTS,
     allowLocalRuntime: e.FACTORY_ALLOW_LOCAL_RUNTIME === "true",
     defaultImage: e.FACTORY_DEFAULT_IMAGE,
     dockerClaudeBin: e.FACTORY_DOCKER_CLAUDE_BIN,
@@ -171,7 +170,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     ),
     agentPort,
     agentHosts: agentHosts?.length ? agentHosts : undefined,
-    memberUpdateDebounceMs: e.FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS * 1000,
     maxSpawnsPerHour: e.FACTORY_MAX_SPAWNS_PER_HOUR,
     factoryTimezone: e.FACTORY_TIMEZONE ?? factoryZoneDefault(),
   };

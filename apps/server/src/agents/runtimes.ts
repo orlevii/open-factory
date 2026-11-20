@@ -23,13 +23,13 @@ export interface RuntimesDeps {
   tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
-  /** `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` in ms (S6 §8.2); the runtime's 30 s default when unset. */
+  /** The member update debounce in ms (S6 §8.2, a factory setting since S10); the runtime's 30 s default when unset. */
   memberUpdateDebounceMs?: number;
   /** S6 §9.1: every runtime's forwarding port (the Router's `forward`). */
   forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
+  /** The cap (the `max_running_agents` factory setting); defaults to `DEFAULT_MAX_RUNNING_AGENTS`. */
   maxRunningAgents?: number;
   /**
    * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake

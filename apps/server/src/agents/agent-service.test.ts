@@ -567,3 +567,70 @@ test("archive names every live spawned agent", async () => {
     extra: { reports: ["spawner-3-aa11", "spawner-3-bb22"] },
   });
 });
+
+test("a spawned agent can't be edited, re-synced, archived or unarchived: 409 ephemeral_agent", async () => {
+  const id = await createSpawner("spawner-4");
+  await insertChild(t.sql, id, "spawner-4-ee11");
+  const refused = {
+    status: 409,
+    code: "ephemeral_agent",
+    message: "Spawned agents can't be edited; terminate it instead.",
+  };
+  await expect(svc.update("spawner-4-ee11", { displayName: "X" })).rejects.toMatchObject(refused);
+  await expect(svc.resync("spawner-4-ee11")).rejects.toMatchObject(refused);
+  await expect(svc.archive("spawner-4-ee11")).rejects.toMatchObject(refused);
+  await expect(svc.unarchive("spawner-4-ee11")).rejects.toMatchObject(refused);
+  const { cookie } = await t.signUpUser();
+  const res = await t.app.inject({
+    method: "PATCH",
+    url: "/api/agents/spawner-4-ee11",
+    headers: { cookie },
+    payload: { displayName: "X" },
+  });
+  expect(res.statusCode).toBe(409);
+  expect(res.json()).toMatchObject({ error: { code: "ephemeral_agent" } });
+  const [r] = await t.sql`select display_name from agents where slug = 'spawner-4-ee11'`;
+  expect(r?.display_name).toBe("Kid");
+});
+
+test("a spawned agent can't be a manager on create or edit", async () => {
+  const id = await createSpawner("spawner-5");
+  await insertChild(t.sql, id, "spawner-5-ff11");
+  const field = {
+    message: "Choose an active agent.",
+    extra: { fields: { reportsTo: "Choose an active agent." } },
+  };
+  await expect(
+    svc.create({
+      template: "lead",
+      slug: "under-kid",
+      displayName: "Under",
+      description: "",
+      reportsTo: "spawner-5-ff11",
+      credential: "work",
+    }),
+  ).rejects.toMatchObject(field);
+  await expect(svc.update("spawner-5", { reportsTo: "spawner-5-ff11" })).rejects.toMatchObject(
+    field,
+  );
+  await createSpawner("spawner-6");
+  await expect(svc.update("spawner-6", { reportsTo: "spawner-5-ff11" })).rejects.toMatchObject(
+    field,
+  );
+});
+
+test("renaming a spawner restarts its live spawned agents, never a terminated one", async () => {
+  const id = await createSpawner("spawner-7");
+  await insertChild(t.sql, id, "spawner-7-aa11");
+  await insertChild(t.sql, id, "spawner-7-dd44", true);
+  const spy = vi.spyOn(runtimes, "requestRestart");
+  try {
+    await svc.update("spawner-7", { displayName: "Seven" });
+    expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(
+      [id, await idOf("spawner-7-aa11")].sort(),
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(await runtimes.get(await idOf("spawner-7-dd44"))).toBeUndefined();
+});

@@ -7,7 +7,7 @@ import {
   slugSchema,
   treeOrder,
 } from "@open-factory/shared";
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
 import { isNameTaken } from "../messaging/principals.ts";
@@ -102,12 +102,13 @@ export class AgentService {
         slug: schema.agents.slug,
         reportsTo: schema.agents.reportsTo,
         archivedAt: schema.agents.archivedAt,
+        terminatedAt: schema.agents.terminatedAt,
       })
       .from(schema.agents);
     const slugById = new Map(allAgents.map((r) => [r.id, r.slug]));
     const reportCount = new Map<string, number>();
     for (const a of allAgents)
-      if (a.reportsTo && !a.archivedAt)
+      if (a.reportsTo && !a.archivedAt && !a.terminatedAt)
         reportCount.set(a.reportsTo, (reportCount.get(a.reportsTo) ?? 0) + 1);
     const credName = new Map(
       (await db.select().from(schema.credentials)).map((c) => [c.id, c.name]),
@@ -163,6 +164,89 @@ export class AgentService {
     return found;
   }
 
+  /** S7 §9.3: a spawned agent follows its spawner and its template; it is terminated, never edited. */
+  private assertPersistent(row: AgentRow) {
+    if (row.kind === "ephemeral")
+      throw new ApiError(
+        409,
+        "ephemeral_agent",
+        "Spawned agents can't be edited; terminate it instead.",
+      );
+  }
+
+  /** S7 §5.7: the spawner's row first, `FOR NO KEY UPDATE` (never `FOR UPDATE`), before any child row. */
+  private async lockAgent(tx: Tx, id: string) {
+    const [r] = await tx
+      .select()
+      .from(schema.agents)
+      .where(eq(schema.agents.id, id))
+      .for("no key update");
+    return r;
+  }
+
+  /**
+   * S7 §6.3: the one owner of live children's credential and grants. Call inside every transaction that changes a
+   * spawner's credential or grants, after the spawner's row is written: it rewrites each live child's `credential_id`
+   * to the spawner's and its grants to the spawner's ∩ the child's template `projects`. Locks the spawner's row, then
+   * the children's (§5.7). Returns the changed children's ids; the caller refreshes and restarts them after the commit.
+   */
+  async syncChildren(tx: Tx, spawnerId: string): Promise<string[]> {
+    const spawner = await this.lockAgent(tx, spawnerId);
+    if (!spawner) return [];
+    const held = await tx
+      .select({ id: schema.projects.id, name: schema.projects.name })
+      .from(schema.agentProjectGrants)
+      .innerJoin(schema.projects, eq(schema.projects.id, schema.agentProjectGrants.projectId))
+      .where(eq(schema.agentProjectGrants.agentId, spawnerId));
+    const kids = await tx
+      .select()
+      .from(schema.agents)
+      .where(
+        and(
+          eq(schema.agents.reportsTo, spawnerId),
+          eq(schema.agents.kind, "ephemeral"),
+          isNull(schema.agents.terminatedAt),
+        ),
+      )
+      .orderBy(asc(schema.agents.id))
+      .for("no key update");
+    const changed: string[] = [];
+    for (const k of kids) {
+      const want = held.filter((p) => k.config.projects.includes(p.name));
+      const have = (
+        await tx
+          .select({ id: schema.agentProjectGrants.projectId })
+          .from(schema.agentProjectGrants)
+          .where(eq(schema.agentProjectGrants.agentId, k.id))
+      )
+        .map((r) => r.id)
+        .sort();
+      const sameGrants =
+        have.join("\0") ===
+        want
+          .map((p) => p.id)
+          .sort()
+          .join("\0");
+      if (k.credentialId === spawner.credentialId && sameGrants) continue;
+      if (k.credentialId !== spawner.credentialId)
+        await tx
+          .update(schema.agents)
+          .set({ credentialId: spawner.credentialId })
+          .where(eq(schema.agents.id, k.id));
+      if (!sameGrants) await this.replaceGrants(tx, k.id, want);
+      changed.push(k.id);
+    }
+    return changed;
+  }
+
+  /** After the commit: the Supervisor reads the credential from the loaded row, so reload, then apply (§6.3). */
+  private async applyToChildren(ids: string[]) {
+    for (const id of ids) {
+      await this.d.runtimes.refresh(id);
+      await this.d.runtimes.requestRestart(id);
+    }
+  }
+
   private notFound(slug: string) {
     return new ApiError(404, "agent_not_found", `No agent named ${slug}`);
   }
@@ -186,7 +270,15 @@ export class AgentService {
     const [m] = await this.d.db
       .select()
       .from(schema.agents)
-      .where(and(eq(schema.agents.slug, slug), isNull(schema.agents.archivedAt)));
+      .where(
+        and(
+          eq(schema.agents.slug, slug),
+          eq(schema.agents.kind, "persistent"),
+          isNull(schema.agents.archivedAt),
+          isNull(schema.agents.terminatedAt),
+        ),
+      );
+    // S7 §9.3: no spawned managers, so reports never hang under an agent that gets terminated.
     if (!m) throw new FieldError("reportsTo", "Choose an active agent.");
     return m;
   }
@@ -282,6 +374,7 @@ export class AgentService {
   async update(slug: string, b: PatchAgentBody): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
     const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
     const currentGrants = await this.grantNames(row.id);
     const changed = { feeds: false, text: false };
     let moved: { to: string | null } | undefined;
@@ -323,20 +416,23 @@ export class AgentService {
       if (!same) changed.feeds = true;
     }
 
-    await db.transaction(async (tx) => {
+    const children = await db.transaction(async (tx) => {
+      await this.lockAgent(tx, row.id);
       if (Object.keys(set).length)
         await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
       if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
+      return this.syncChildren(tx, row.id);
     });
 
     await runtimes.refresh(row.id);
+    await this.applyToChildren(children);
     if (moved && before) await this.peerEvents(row.id, { kind: "moved", to: moved.to }, before);
     if (changed.feeds || changed.text) await runtimes.requestRestart(row.id);
     if (changed.text) {
       const reports = await db
         .select({ id: schema.agents.id })
         .from(schema.agents)
-        .where(and(eq(schema.agents.reportsTo, row.id), isNull(schema.agents.archivedAt)));
+        .where(and(eq(schema.agents.reportsTo, row.id), liveAgent));
       for (const r of reports) await runtimes.requestRestart(r.id);
     }
     return this.summary(slug);
@@ -401,11 +497,13 @@ export class AgentService {
   ): Promise<{ agent: AgentSummary; backupDir?: string; applied: "now" | "on_restart" }> {
     const { db, runtimes, workspace } = this.d;
     const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
     if (row.archivedAt)
       throw new ApiError(409, "agent_archived", `@${slug} is archived. Restore it first.`);
     const tpl = await this.d.templates.loadValid(row.template);
     let backupDir: string | undefined;
     let applied: "now" | "on_restart" = "now";
+    let children: string[] = [];
     try {
       await workspace.lock.run(slug, async () => {
         // Checked before any disk change, so a stale template project leaves everything as it was.
@@ -419,12 +517,14 @@ export class AgentService {
         const r = await workspace.resync(slug, tpl, { canWriteNow });
         backupDir = r.backupDir;
         applied = r.applied;
-        await db.transaction(async (tx) => {
+        children = await db.transaction(async (tx) => {
+          await this.lockAgent(tx, row.id);
           await tx
             .update(schema.agents)
             .set({ config: tpl.config, runtime: tpl.config.runtime })
             .where(eq(schema.agents.id, row.id));
           if (projects) await this.replaceGrants(tx, row.id, projects);
+          return this.syncChildren(tx, row.id);
         });
       });
     } catch (err) {
@@ -432,6 +532,7 @@ export class AgentService {
     }
     await runtimes.refresh(row.id);
     await runtimes.requestRestart(row.id);
+    await this.applyToChildren(children);
     return { agent: await this.summary(slug), applied, ...(backupDir ? { backupDir } : {}) };
   }
 
@@ -448,6 +549,7 @@ export class AgentService {
   async archive(slug: string): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
     const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
     if (row.archivedAt) return this.summary(slug);
     // S7 §5.7: the row lock first (`FOR NO KEY UPDATE`, never `FOR UPDATE`), then the live reports in the same
     // transaction, so a spawn committing in between can't leave an archived spawner a live child.
@@ -497,6 +599,7 @@ export class AgentService {
   async unarchive(slug: string): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
     const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
     if (!row.archivedAt) return this.summary(slug);
     if (row.reportsTo) {
       const [m] = await db.select().from(schema.agents).where(eq(schema.agents.id, row.reportsTo));

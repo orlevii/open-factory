@@ -162,7 +162,9 @@ export function createPrepareStart(d: {
         await assertCliBundle(d.config.cliBundle);
       }
 
-      const credentialId = liveCredentialId(agent);
+      // A spawned agent runs on its spawner's current credential (§6.1), not on its own row's: syncChildren keeps the
+      // two equal, and a missed path or a start racing the change can then never use a credential the spawner dropped.
+      const credentialId = spawned ? spawned.inherited.credentialId : liveCredentialId(agent);
       const [cred] = await d.db
         .select()
         .from(schema.credentials)

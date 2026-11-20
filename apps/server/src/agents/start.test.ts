@@ -434,6 +434,24 @@ test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny 
   expect(md(child.slug)).toContain("No projects are granted to you.");
 });
 
+test("a child's start uses its spawner's current credential, even when its own row lags (no syncChildren)", async () => {
+  const child = await seedChild();
+  await t.db.insert(schema.credentials).values({
+    id: "c2",
+    name: "other",
+    kind: "oauth_token",
+    valueEnc: vault.seal("tok-2", "credentials:c2"),
+  });
+  // The spawner moved to c2 without its child following: the child must not keep a credential the spawner dropped.
+  await t.db
+    .update(schema.agents)
+    .set({ credentialId: "c2" })
+    .where(eq(schema.agents.id, agent.id));
+  const spec = await prepareStart(child, { agentToken: "tok" });
+  expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-2");
+  expect(Object.values(spec.env)).not.toContain("tok-1");
+});
+
 test("the spawner's current deny rules reach the child at its next start (no snapshot)", async () => {
   const child = await seedChild();
   await prepareStart(child, { agentToken: "tok" });

@@ -345,10 +345,10 @@ export function AgentForm(props: Props) {
     }
   }
 
-  // Manager options: active agents in tree order. On Edit the agent and everything under it are
-  // left out, because picking one of them would make a cycle.
+  // Manager options: active persistent agents in tree order (a spawned agent never manages). On Edit
+  // the agent and everything under it are left out, because picking one of them would make a cycle.
   const managerOptions = (() => {
-    const list = activeAgents.data ?? [];
+    const list = (activeAgents.data ?? []).filter((a) => a.kind === "persistent");
     if (!agent) return list;
     const excluded = new Set([agent.slug]);
     let grew = true;

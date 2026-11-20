@@ -199,6 +199,30 @@ test("Edit: the manager select leaves out the agent and its descendants, indente
   expect(screen.queryByLabelText("Slug")).not.toBeInTheDocument();
 });
 
+test("the manager select leaves out spawned agents", async () => {
+  const agents = [
+    agentSummary({ slug: "cto", displayName: "CTO" }),
+    agentSummary({ slug: "lead", displayName: "Lead", reportsTo: "cto", depth: 1 }),
+    agentSummary({
+      slug: "lead-ab12",
+      displayName: "Dev · ab12",
+      kind: "ephemeral",
+      reportsTo: "lead",
+      depth: 2,
+    }),
+  ];
+  mockWorld({ agents });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  const select = field("Manager") as unknown as HTMLSelectElement;
+  await vi.waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+  expect([...select.options].map((o) => o.textContent)).toEqual([
+    "No manager (reports to the humans)",
+    "CTO (@cto)",
+    "    Lead (@lead)",
+  ]);
+});
+
 test("projects: From the template, then Custom with Use template default", async () => {
   mockWorld();
   renderApp("/agents/new?template=lead", alice);

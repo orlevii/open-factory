@@ -30,10 +30,52 @@ describe("loadConfig", () => {
     expect(c.allowLocalRuntime).toBe(false);
     expect(c.defaultImage).toBe("ghcr.io/orlevii/open-factory/base:latest");
     expect(c.dockerClaudeBin).toBe("claude");
-    expect(c.agentUrl).toBe("http://host.docker.internal:3000");
+    expect(c.agentUrl).toBe("http://host.docker.internal:3001");
     expect(c.cliBundle).toMatch(/apps\/cli\/dist\/open-factory\.js$/);
     expect(path.isAbsolute(c.cliBundle)).toBe(true);
-    expect(loadConfig({ ...ok, PORT: "4000" }).agentUrl).toBe("http://host.docker.internal:4000");
+    expect(loadConfig({ ...ok, PORT: "4000" }).agentUrl).toBe("http://host.docker.internal:4001");
+  });
+  test("PORT=65535 without FACTORY_AGENT_PORT, and hostnames in FACTORY_AGENT_HOST, are config errors", () => {
+    expect(() => loadConfig({ ...ok, PORT: "65535" })).toThrow(/FACTORY_AGENT_PORT/);
+    expect(loadConfig({ ...ok, PORT: "65535", FACTORY_AGENT_PORT: "65000" }).agentPort).toBe(65000);
+    expect(() => loadConfig({ ...ok, FACTORY_AGENT_HOST: "127.0.0.1,my-host" })).toThrow(
+      /must be an IP address/,
+    );
+  });
+  test("agent listener settings", () => {
+    const c = loadConfig({ ...ok, PORT: "4000" });
+    expect(c.agentPort).toBe(4001);
+    expect(c.agentHosts).toBeUndefined();
+    expect(c.memberUpdateDebounceMs).toBe(30_000);
+    const o = loadConfig({
+      ...ok,
+      FACTORY_AGENT_PORT: "0",
+      FACTORY_AGENT_HOST: "127.0.0.1, 10.0.0.5",
+      FACTORY_AGENT_URL: "http://factory:9000/",
+    });
+    expect(o.agentPort).toBe(0);
+    expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
+    expect(o.agentUrl).toBe("http://factory:9000");
+    expect(
+      loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0" }).memberUpdateDebounceMs,
+    ).toBe(0);
+    expect(() => loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "-1" })).toThrow(
+      ConfigError,
+    );
+  });
+  test("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is at most a day (a longer timer overflows setTimeout)", () => {
+    expect(
+      loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "86400" }).memberUpdateDebounceMs,
+    ).toBe(86_400_000);
+    expect(() => loadConfig({ ...ok, FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "86401" })).toThrow(
+      /FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS must be at most 86400 \(one day\)/,
+    );
+  });
+  test("FACTORY_AGENT_PORT can't be PORT (unless 0, any free port)", () => {
+    expect(() => loadConfig({ ...ok, PORT: "4000", FACTORY_AGENT_PORT: "4000" })).toThrow(
+      /FACTORY_AGENT_PORT must differ from PORT/,
+    );
+    expect(loadConfig({ ...ok, PORT: "4000", FACTORY_AGENT_PORT: "0" }).agentPort).toBe(0);
   });
   test("FACTORY_ALLOW_LOCAL_RUNTIME only accepts true/false", () => {
     expect(loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "true" }).allowLocalRuntime).toBe(true);

@@ -8,7 +8,8 @@ import { EventStore } from "../agents/event-store.ts";
 import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import { noForward, noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
@@ -30,6 +31,7 @@ class Boot {
   readonly docker = new FakeDockerClient();
   readonly runtimes: AgentRuntimes;
   readonly logs: { level: string; msg: string }[] = [];
+  readonly forwarded: Forward[] = [];
   readonly log = {
     debug: () => {},
     info: (_: object, msg: string) => this.logs.push({ level: "info", msg }),
@@ -38,6 +40,8 @@ class Boot {
   };
   constructor(max = 8) {
     this.runtimes = new AgentRuntimes({
+      tokens: noopTokens,
+      forward: noForward,
       store,
       bus: new EventBus(),
       driver: this.driver,
@@ -54,6 +58,10 @@ class Boot {
       containers: new ContainerManager({ docker: this.docker, log: silentLog, uid: 501, gid: 20 }),
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
+      memberUpdateDebounceMs: 30_000,
+      forward: async (f) => {
+        this.forwarded.push(f);
+      },
       log: this.log,
     });
   }
@@ -94,7 +102,7 @@ async function agent(o: { status?: string } = {}): Promise<string> {
   return id;
 }
 const pending = (id: string, body: string) =>
-  store.createMessage({ fromUserId: "u1", toAgentId: id, body, urgent: false });
+  store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
 const openTurn = (id: string) => store.openTurn(id);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });
@@ -238,10 +246,14 @@ test("dangling turns closed with factory_restarted; reconciled + background_work
   ]);
   expect((await row(id)).runtimeJournal).toBeNull();
   expect(await events(untouched)).toEqual([]);
-  expect(boot.logs).toContainEqual({
-    level: "info",
-    msg: "background work lost; would notify the manager",
-  });
+  expect(boot.forwarded).toEqual([
+    {
+      agentId: id,
+      fact: "work_lost",
+      body: expect.stringContaining("Reported by @"),
+    },
+  ]);
+  expect(boot.forwarded[0]?.body).toContain("> pnpm test\n> every 5 minutes");
 });
 
 test("an agent whose attempt was cut short is errored and not woken", async () => {
@@ -249,9 +261,13 @@ test("an agent whose attempt was cut short is errored and not woken", async () =
   await t.sql`update agents set attempting = true where id = ${fresh}`;
   await store.createNotice({ toAgentId: fresh, notice: "crash", body: "crashed" });
   const resumeFailed = await agent({ status: "errored" });
-  await t.sql`update agents set attempting = true, error_kind = 'resume', last_error = 'No conversation'
-              where id = ${resumeFailed}`;
+  await t.sql`update agents set attempting = true, error_kind = 'resume', last_error = 'No conversation',
+              errored_reported = true where id = ${resumeFailed}`;
   await pending(resumeFailed, "hi");
+  // A crash whose automatic attempt failed (reported), then a human retry the restart cut short: same episode.
+  const crashRetry = await agent({ status: "errored" });
+  await t.sql`update agents set attempting = true, error_kind = 'crash', last_error = 'Exited unexpectedly (code 1)',
+              errored_reported = true where id = ${crashRetry}`;
   boot = new Boot();
   await boot.run();
   expect(await row(fresh)).toMatchObject({
@@ -268,6 +284,11 @@ test("an agent whose attempt was cut short is errored and not woken", async () =
   });
   await boot.settleAll([fresh, resumeFailed]);
   expect(boot.driver.starts).toHaveLength(0);
+  // S6 §9.1: the cut-short automatic attempt starts an errored episode; the cut-short human retries were inside one.
+  expect(boot.forwarded.filter((f) => f.fact === "errored").map((f) => f.agentId)).toEqual([fresh]);
+  const body = boot.forwarded.find((f) => f.agentId === fresh)?.body;
+  expect(body).toContain("is errored and needs a human. Reported by @");
+  expect(body).toContain(`\n> ${ATTEMPT_CUT_SHORT}`);
 });
 
 test("an agent mid-turn at crash gets factory_restarted and one boot_resume wake (attempting set)", async () => {
@@ -407,12 +428,27 @@ test("a cap lowered at boot with more agents waking than slots starts the first 
   await boot.run();
   await boot.settleAll(ids);
   const [a, b, c, d, e] = ids as [string, string, string, string, string];
-  expect(boot.startOrder()).toEqual([a, b, c]);
+  // The first three in line hold the slots. Their grant jobs run concurrently, so the spawn order among them is the
+  // DB's, not the queue's: the queue order shows in who is still waiting.
+  expect([...boot.startOrder()].sort()).toEqual([a, b, c].sort());
   expect((await boot.rt(d)).live().status).toBe("queued");
   expect((await boot.rt(e)).live().status).toBe("queued");
-  for (const id of [a, b, c]) (boot.starts(id)[0] as FakeProcess).emit(...ev.fullTurn());
+  const procs = [a, b, c].map((id) => boot?.starts(id)[0] as FakeProcess);
+  for (const p of procs) {
+    p.holdStop = true;
+    p.emit(...ev.fullTurn());
+  }
   await boot.settleAll(ids);
-  // Two idle holders are hibernated for the two waiting; the slots go to the queue in FIFO order.
+  // Two idle holders are hibernated for the two waiting; the slots go to the queue in FIFO order. One slot at a time,
+  // for the same reason as above.
+  const evicted = procs.filter((p) => p.stopped);
+  expect(evicted).toHaveLength(2);
+  evicted[0]?.releaseStop();
+  await boot.settleAll(ids);
+  expect(boot.startOrder().slice(3)).toEqual([d]);
+  expect((await boot.rt(e)).live().status).toBe("queued");
+  evicted[1]?.releaseStop();
+  await boot.settleAll(ids);
   expect(boot.startOrder().slice(3)).toEqual([d, e]);
   expect(boot.runtimes.supervisor.running()).toEqual({ count: 3, max: 3 });
 });
@@ -442,4 +478,35 @@ test("a reap that fails keeps the agent's journal and doesn't wake it", async ()
     level: "error",
     msg: "reaping the previous run's processes failed; the agent isn't woken",
   });
+});
+
+test("S6 §17.2: boot wakes only for due member updates and loads agents with young ones, whose timer wakes them", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], now: Date.now() + 60_000 });
+  try {
+    const report = await agent();
+    const young = await agent();
+    const due = await agent();
+    const update = (to: string) =>
+      store.createHeld({ kind: "member_update", toAgentId: to, fromAgentId: report, body: "b" });
+    await update(due);
+    vi.setSystemTime(Date.now() + 31_000);
+    await update(young);
+    boot = new Boot();
+    await boot.run();
+    await boot.settleAll([young, due]);
+    expect(boot.startOrder()).toEqual([due]);
+    const rt = await boot.runtimes.get(young);
+    expect(rt?.queueItems()).toEqual([
+      expect.objectContaining({ kind: "held", waitReason: "window", count: 1 }),
+    ]);
+    await vi.advanceTimersByTimeAsync(29_000);
+    await boot.settleAll([young]);
+    expect(boot.starts(young)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_500);
+    await boot.settleAll([young]);
+    expect(boot.starts(young)).toHaveLength(1);
+    expect(boot.starts(young)[0]?.sent[0]?.map((m) => m.kind)).toEqual(["member_update"]);
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Fastify from "fastify";
 import { expect, test } from "vitest";
-import { loggerOptions } from "./app.ts";
+import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
+import { AGENT_URL_ON_HUMAN_PORT_WARNING, loggerOptions } from "./app.ts";
 import { loadConfig } from "./config.ts";
-import { makeTestApp } from "./test/helpers.ts";
+import { callTool } from "./mcp/testing/mcp-client.ts";
+import { makeTestApp, signUp } from "./test/helpers.ts";
 
 test("the OAuth token is redacted at every realistic depth", async () => {
   const secret = "sk-ant-oat-FAKE-SECRET-123";
@@ -38,6 +40,123 @@ test("buildApp canonicalizes FACTORY_HOME with realpath", async () => {
   try {
     expect(t.app.config.factoryHome).toBe(realpathSync(path.join(tmp, "link")));
     expect(t.app.config.factoryHome).toBe(path.join(tmp, "real"));
+  } finally {
+    await t.close();
+  }
+});
+
+test("the agent listener is up after buildApp, its port reaches the config, and close revokes tokens then closes it", async () => {
+  const t = await makeTestApp({ harnessDriver: new FakeDriver() });
+  const port = t.app.agentListener.port;
+  expect(port).toBeGreaterThan(0);
+  expect(t.app.config.agentPort).toBe(port);
+  expect(t.app.config.agentUrl).toBe(`http://host.docker.internal:${port}`);
+  const url = `http://127.0.0.1:${port}`;
+  expect(await (await fetch(`${url}/api/status`)).json()).toEqual({
+    version: expect.any(String),
+  });
+  const { token } = t.app.agentTokens.mint("someone");
+  await t.app.close();
+  expect(t.app.agentTokens.verify(token)).toBeUndefined();
+  await expect(fetch(`${url}/api/status`)).rejects.toThrow();
+  await t.close();
+});
+
+test("a FACTORY_AGENT_URL on the human port logs the upgrade warning", async () => {
+  const lines: string[] = [];
+  // The human port is set here, not taken from the helper's default, and read back from the app's config.
+  const t = await makeTestApp({
+    harnessDriver: new FakeDriver(),
+    env: { PORT: "4719", FACTORY_AGENT_URL: "http://host.docker.internal:4719" },
+    logStream: { write: (l) => void lines.push(l) },
+  });
+  try {
+    expect(new URL(t.app.config.agentUrl).port).toBe(String(t.app.config.port));
+    expect(lines.join("")).toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
+  } finally {
+    await t.close();
+  }
+  const quiet: string[] = [];
+  const u = await makeTestApp({
+    harnessDriver: new FakeDriver(),
+    logStream: { write: (l) => void quiet.push(l) },
+  });
+  await u.close();
+  expect(quiet.join("")).not.toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
+});
+
+/** Starts `slug` with a human message and an idle first turn; returns its live token. */
+async function startIdle(
+  t: Awaited<ReturnType<typeof makeTestApp>>,
+  driver: FakeDriver,
+  slug: string,
+) {
+  const { cookie } = await signUp(t.app, { handle: `h-${slug}` });
+  await t.app.inject({
+    method: "POST",
+    url: `/api/agents/${slug}/messages`,
+    headers: { cookie },
+    payload: { body: "hi" },
+  });
+  const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
+  if (!p) throw new Error(`${slug} not started`);
+  p.emit(...ev.fullTurn());
+  await (await t.app.runtimes.bySlug(slug))?.settled();
+  return { proc: p, token: p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string };
+}
+
+test("an agent token never reaches the logs, on the agent listener or the REST API", async () => {
+  const lines: string[] = [];
+  const driver = new FakeDriver();
+  const t = await makeTestApp({
+    harnessDriver: driver,
+    logStream: { write: (l) => void lines.push(l) },
+  });
+  try {
+    await t.seedAgent({ slug: "dev" });
+    const { token } = await startIdle(t, driver, "dev");
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const url = `http://127.0.0.1:${t.app.agentListener.port}`;
+    await callTool(url, token, "list_peers", {});
+    await callTool(url, token, "send_message", { to: "@h-dev", body: "for the inbox" });
+    await expect(callTool(url, `${token}x`, "list_peers", {})).rejects.toThrow("401");
+    for (const route of ["/api/agents", "/api/inbox", "/api/messages/nope"]) {
+      const r = await t.app.inject({
+        method: "GET",
+        url: route,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(r.statusCode, route).toBe(401);
+    }
+    const out = lines.join("");
+    expect(out).toContain('"url":"/mcp"'); // the listener's request lines are there
+    expect(out).not.toContain(token);
+  } finally {
+    await t.close();
+  }
+});
+
+test("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS reaches the runtimes: 0 writes a member update at once", async () => {
+  const driver = new FakeDriver();
+  const t = await makeTestApp({
+    harnessDriver: driver,
+    env: { FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0" },
+  });
+  try {
+    const lead = await t.seedAgent({ slug: "lead" });
+    const dev = await t.seedAgent({ slug: "dev" });
+    await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
+    const { proc } = await startIdle(t, driver, "lead");
+    const row = await t.app.store.createHeld({
+      kind: "member_update",
+      toAgentId: lead.id,
+      fromAgentId: dev.id,
+      body: "progress",
+    });
+    const rt = await t.app.runtimes.bySlug("lead");
+    await rt?.receiveHeld(row);
+    await rt?.settled();
+    expect(proc.sent.flat().map((m) => m.body)).toContain("progress");
   } finally {
     await t.close();
   }

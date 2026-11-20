@@ -27,6 +27,7 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
       slug: "lead",
       credential: { kind: "oauth_token", value: "agent-token" },
       secrets: { GH_TOKEN: "gh" },
+      agentToken: "t",
     },
     "local",
   );
@@ -45,6 +46,7 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
     GIT_COMMITTER_NAME: "lead",
     GIT_AUTHOR_EMAIL: "lead@open-factory.local",
     GIT_COMMITTER_EMAIL: "lead@open-factory.local",
+    OPEN_FACTORY_AGENT_TOKEN: "t",
   });
 });
 
@@ -55,6 +57,7 @@ test("secrets can never override PATH, the credential var, the config dir or the
       configDir: "/c",
       slug: "a1",
       credential: { kind: "oauth_token", value: "factory-token" },
+      agentToken: "t",
       secrets: {
         PATH: "/evil",
         ANTHROPIC_API_KEY: "evil-key",
@@ -83,6 +86,7 @@ test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => 
       slug: "a1",
       credential: { kind: "api_key", value: "k" },
       secrets: {},
+      agentToken: "t",
     },
     "local",
   );
@@ -101,6 +105,7 @@ test("the server's own ANTHROPIC_*/CLAUDE_* never leak; exactly one credential v
         slug: "a1",
         credential: { kind, value: "agent" },
         secrets: {},
+        agentToken: "t",
       },
       "local",
     );
@@ -116,12 +121,24 @@ test("the server's own ANTHROPIC_*/CLAUDE_* never leak; exactly one credential v
 test("two agents with different credentials get their own values", () => {
   const a = buildAgentEnv(
     {},
-    { configDir: "/a", slug: "aa", credential: { kind: "oauth_token", value: "A" }, secrets: {} },
+    {
+      configDir: "/a",
+      slug: "aa",
+      credential: { kind: "oauth_token", value: "A" },
+      secrets: {},
+      agentToken: "t",
+    },
     "local",
   );
   const b = buildAgentEnv(
     {},
-    { configDir: "/b", slug: "bb", credential: { kind: "oauth_token", value: "B" }, secrets: {} },
+    {
+      configDir: "/b",
+      slug: "bb",
+      credential: { kind: "oauth_token", value: "B" },
+      secrets: {},
+      agentToken: "t",
+    },
     "local",
   );
   expect([a.CLAUDE_CODE_OAUTH_TOKEN, b.CLAUDE_CODE_OAUTH_TOKEN]).toEqual(["A", "B"]);
@@ -132,6 +149,7 @@ const extra = {
   slug: "lead",
   credential: { kind: "oauth_token" as const, value: "agent-token" },
   secrets: { GH_TOKEN: "gh" },
+  agentToken: "t",
 };
 
 test.each(["local", "docker"] as const)("%s: server-only vars never leak", (rt) => {
@@ -176,6 +194,7 @@ test("docker: no host PATH/HOME/USER/SHELL; OPEN_FACTORY_URL set", () => {
       "GIT_AUTHOR_NAME",
       "GIT_COMMITTER_EMAIL",
       "GIT_COMMITTER_NAME",
+      "OPEN_FACTORY_AGENT_TOKEN",
       "OPEN_FACTORY_URL",
     ].sort(),
   );
@@ -231,4 +250,21 @@ test("model and effort are omitted when the snapshot sets none", () => {
   });
   expect(spec).not.toHaveProperty("model");
   expect(spec).not.toHaveProperty("effort");
+});
+
+test("the agent token is the one variable S6 adds, and a secret can't override it", () => {
+  for (const runtime of ["local", "docker"] as const) {
+    const env = buildAgentEnv(
+      serverEnv,
+      {
+        configDir: "/w/.claude-config",
+        slug: "dev",
+        credential: { kind: "oauth_token", value: "cred" },
+        secrets: { OPEN_FACTORY_AGENT_TOKEN: "evil" },
+        agentToken: "tok",
+      },
+      runtime,
+    );
+    expect(env.OPEN_FACTORY_AGENT_TOKEN).toBe("tok");
+  }
 });

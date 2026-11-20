@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { envelopeSchema } from "./messaging.ts";
 
 const parent = { parentToolUseId: z.string().optional() };
 
@@ -9,20 +10,12 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     model: z.string(),
     cwd: z.string(),
     claudeCodeVersion: z.string(),
+    mcpServers: z.array(z.object({ name: z.string(), status: z.string() })).optional(),
   }),
   z.object({ type: z.literal("turn_started") }),
   z.object({
     type: z.literal("message_in"),
-    messages: z.array(
-      z.object({
-        id: z.string(),
-        from: z.string(),
-        kind: z.enum(["message", "system"]),
-        urgent: z.boolean(),
-        body: z.string(),
-        taskKey: z.string().optional(),
-      }),
-    ),
+    messages: z.array(envelopeSchema),
   }),
   z.object({ type: z.literal("assistant_text"), text: z.string(), ...parent }),
   z.object({
@@ -156,6 +149,8 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "rate_limit_reset",
         "queued_items",
         "apply_changes",
+        "member_updates",
+        "agent_message",
       ])
       .optional(),
   }),
@@ -215,6 +210,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
     exact: z.boolean(),
   }),
   z.object({ type: z.literal("rate_limit_reset"), credential: z.string() }),
+  z.object({ type: z.literal("mcp_unavailable"), status: z.string() }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;
 

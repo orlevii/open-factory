@@ -7,6 +7,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
+import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -45,6 +46,8 @@ async function makeRuntime(
   if (!agent) throw new Error("no agent");
   bus.subscribe(agent.slug, (m) => frames.push(m));
   rt = new AgentRuntime({
+    tokens: noopTokens,
+    forward: noForward,
     agent,
     store,
     bus,
@@ -70,7 +73,7 @@ async function makeRuntime(
   return rt;
 }
 const send = (body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
   (await store.after(agentId, 0, 1000)).map((e) => ({
     seq: e.seq,
@@ -220,6 +223,25 @@ test("urgent while a compact is in flight does not interrupt it; it waits behind
   expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["STOP"]);
 });
 
+test("a hand-off of a row this runtime already wrote (boot wakes got it first) never interrupts the turn reading it", async () => {
+  await startedIdle();
+  const row = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: agentId,
+    body: "STOP",
+    urgent: true,
+  });
+  // What boot reconciliation's wake did while the Router's send waited on `booted`: the row is loaded and written.
+  await rt.deliver(row, { sender: "human", fromLabel: "@or" });
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
+  driver.last.emit(ev.turn()); // the turn reading it opens
+  await rt.settled();
+  const writes = driver.last.writes.length;
+  await rt.deliver(row, { sender: "human", fromLabel: "@or" }); // the Router's late hand-off
+  expect(driver.last.controls).toEqual([]);
+  expect(driver.last.writes).toHaveLength(writes);
+});
+
 test("urgent while idle is a normal send", async () => {
   await startedIdle();
   await send("now", true);
@@ -287,7 +309,12 @@ test("a rejected interrupt write before an unexpected exit keeps the real exit r
 });
 
 test("the first batch after a notice begins with it, even ahead of an older pending message", async () => {
-  await store.createMessage({ fromUserId: "u1", toAgentId: agentId, body: "old", urgent: false });
+  await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: agentId,
+    body: "old",
+    urgent: false,
+  });
   await rt.init(); // as after a restart: "old" is pending
   await rt.postNotice("crash", "it crashed"); // no process: nothing is written
   expect(rt.queueItems().map((q) => [q.kind, q.from, q.body])).toEqual([

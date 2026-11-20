@@ -5,6 +5,15 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { agentSummary } from "@/test/session-fixtures";
 import { AgentStrip } from "./agent-strip";
 
+// The manager is a router link; the real link is covered in the full-app tests (messaging.test.tsx).
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+    <a href="/" className={className}>
+      {children}
+    </a>
+  ),
+}));
+
 const NOW = new Date(2026, 10, 19, 10, 0);
 const todayAt = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 const minutesAgo = (n: number) => new Date(NOW.getTime() - n * 60_000).toISOString();
@@ -168,4 +177,15 @@ test("strip: the live region adds no layout item of its own, so an empty one lea
   const filled = liveRegion(strip({ restartPending: true }));
   expect(filled).toHaveClass("contents");
   expect(filled.textContent).toBe("·Restarts when idle to apply changes");
+});
+
+test.each([
+  [{ reportsTo: "lead", reports: 3 }, "Reports to @lead · 3 reports"],
+  [{ reportsTo: "lead", reports: 0 }, "Reports to @lead"],
+  [{ reportsTo: null, reports: 1 }, "No manager · 1 report"],
+  [{ reportsTo: null, reports: 0 }, "No manager"],
+])("org segment %o", (o, text) => {
+  const el = strip(o);
+  expect(el.querySelector("[data-strip-org]")?.textContent).toBe(text);
+  expect(el.querySelector("[role=status] [data-strip-org]")).toBeNull(); // outside the live region
 });

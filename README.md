@@ -42,7 +42,10 @@ Environment variables (`npm start` loads `.env` if present):
 | `FACTORY_DEFAULT_IMAGE` | no | `ghcr.io/orlevii/open-factory/base:latest` | container image for Docker agents whose template names none |
 | `FACTORY_DOCKER_CLAUDE_BIN` | no | `claude` | path to Claude Code inside the container image |
 | `FACTORY_CLI_BUNDLE` | no | `apps/cli/dist/open-factory.js` in the repo | the bundled CLI mounted into containers |
-| `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${PORT}` | how containers reach this server (`OPEN_FACTORY_URL` in the container) |
+| `FACTORY_AGENT_PORT` | no | `PORT + 1` | port of the agent listener, the separate surface agents call (see "Agent listener") |
+| `FACTORY_AGENT_HOST` | no | loopback, plus the Docker bridge gateway on Linux | comma-separated IP addresses the agent listener binds; replaces the default list. The only way to bind `0.0.0.0` or `::` |
+| `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${FACTORY_AGENT_PORT}` | how containers reach the agent listener (`OPEN_FACTORY_URL` in the container). Local agents always use `http://127.0.0.1:${FACTORY_AGENT_PORT}` |
+| `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` | no | `30` | how long a report's updates wait for an idle manager before waking it (`0` = at once) |
 
 ## Run an agent
 
@@ -62,10 +65,24 @@ Docker is the default runtime for new templates. Each agent gets one container, 
 - **Pulls are explicit.** The factory pulls an image only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image...").
 - **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, build your own image `FROM` the base image and set it as the template's `image:`.
 - **Re-creation wipes `/home/agent`.** The container is removed and re-created on a wake when its grants (mounts) or its image changed. Shell history, `gh` login state, `known_hosts` and caches in `/home/agent` are lost. Keep credentials in secrets, and the working directory is never affected.
-- **Reaching the server.** Containers call back to the factory at `host.docker.internal` (`FACTORY_AGENT_URL`). On Docker Desktop a server bound to `127.0.0.1` is reachable that way. On plain Linux it is not: bind the server to the Docker bridge address (for example `HOST=172.17.0.1`), or run it on a compose network with the containers and set `FACTORY_AGENT_URL` to its service name. `HOST=0.0.0.0` also works but exposes the factory to your LAN, so treat it as the less safe fallback.
+- **Reaching the factory.** Containers call the factory's agent listener at `FACTORY_AGENT_URL` (`http://host.docker.internal:<agent port>` by default). See "Agent listener" for Linux, compose, rootless Docker and firewalls.
 - **CLI bundle.** The bundled CLI is mounted into containers, so run `pnpm build` first; a Docker agent will not start without it.
 
 `pnpm smoke:docker` is a live check, not part of `pnpm test`: it runs a real Claude in a real container (build the image as `open-factory-base:dev` first) and needs an OAuth token in `~/.open-factory-spike/oauth-token`.
+
+## Agent listener
+
+Agents don't use the human API. They message each other and the humans through the factory MCP (`send_message`, `list_peers`), served on a second, minimal HTTP surface, the agent listener: only `/mcp` and `/api/status`, no cookies, no browser routes. Each agent process gets its own token (`OPEN_FACTORY_AGENT_TOKEN`), valid only while that process runs; a request without a valid token gets `401`, and one carrying an `Origin` header (a browser) gets `403`.
+
+- **Port.** `FACTORY_AGENT_PORT`, `PORT + 1` by default (`3001`).
+- **Bind list.** By default `127.0.0.1`, plus, when the server runs on Linux and Docker is reachable, the Docker bridge gateway (for example `172.17.0.1`): the address `host.docker.internal` resolves to in a default-bridge container. The default list never contains `0.0.0.0`. Docker Desktop (macOS, Windows) routes `host.docker.internal` to the host's loopback, so loopback alone works there. Only loopback and the bridge subnet may connect; anything else is closed before a byte is read.
+- **Who can reach it.** Other containers on the default bridge can reach the agent listener, not only agents. The per-process token protects it: without a live agent token a request gets `401` and `/api/status` returns only the version.
+- **When the gateway can't be used.** The factory binds the gateway Docker reports even while `docker0` has no carrier (no container attached yet, the usual state at boot). When that address is not local to the factory (Docker Desktop for Linux, rootless Docker, a remote `DOCKER_HOST`, the factory itself in a container), or Docker reports no private gateway, the factory logs one warning and stays on loopback. A custom `host-gateway-ip` is not detected: `host.docker.internal` then resolves to an address the factory doesn't listen on. In these cases set `FACTORY_AGENT_HOST` to the address `host.docker.internal` resolves to in your containers. With **rootless Docker** the bridge lives in Docker's own network namespace, so that address is not on a host interface: set `FACTORY_AGENT_HOST` and `FACTORY_AGENT_URL` to an address both sides share. `FACTORY_AGENT_HOST=0.0.0.0` binds every interface; the token is then the only protection and the boot says so. While the local runtime is allowed, `FACTORY_AGENT_HOST` must include `127.0.0.1` (or `0.0.0.0`): local agents call the factory there.
+- **The factory in a container.** Not supported yet. Agent containers always run on Docker's default bridge, so they can only reach the factory at an address the default bridge can reach. If you run the factory in a container anyway, publish its agent port and set `FACTORY_AGENT_URL` to that published port as the bridge sees it, for example `FACTORY_AGENT_URL=http://host.docker.internal:<published port>`.
+- **Host firewalls.** A firewall that drops traffic from `docker0` blocks agents (their MCP connection fails, so they can't message anyone; the session may say the factory tools didn't connect). With ufw: `ufw allow in on docker0 to any port <agent port>`.
+- **Upgrading from an earlier version.** `FACTORY_AGENT_URL` used to point at the human port. If you set it explicitly (for example `http://host.docker.internal:3000`), move it to the agent port (`http://host.docker.internal:3001`) or unset it: the factory logs a warning at boot when its port equals `PORT`, and Docker agents can't reach the factory tools until it is fixed.
+
+`pnpm smoke:messaging` is a live check, not part of `pnpm test`: real Claude (haiku) agents `lead`, `ada` and `bob` with humans `or` and `sam` exercise agent-to-agent messages with a wake, batched member updates, an urgent interrupt, `list_peers` and a message to `@humans`. It runs Docker agents on `open-factory-base:dev` (run `pnpm build` first); `pnpm smoke:messaging --local` runs them on the host instead. It needs Postgres and an OAuth token in `~/.open-factory-spike/oauth-token`, and uses a throwaway database and `FACTORY_HOME`.
 
 ## Local runtime
 

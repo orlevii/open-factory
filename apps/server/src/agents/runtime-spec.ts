@@ -23,6 +23,7 @@ export function buildAgentEnv(
     credential: { kind: "oauth_token" | "api_key"; value: string };
     secrets: Record<string, string>;
     agentUrl?: string;
+    agentToken: string;
   },
   runtime: "local" | "docker",
 ): Record<string, string> {
@@ -47,6 +48,8 @@ export function buildAgentEnv(
     delete env.OPEN_FACTORY_URL;
     if (extra.agentUrl) env.OPEN_FACTORY_URL = extra.agentUrl;
   }
+  // Last, so no secret can override it. Never log it.
+  env.OPEN_FACTORY_AGENT_TOKEN = extra.agentToken;
   return env;
 }
 

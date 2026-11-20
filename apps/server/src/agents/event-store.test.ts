@@ -81,7 +81,7 @@ test("turns and messages", async () => {
   expect(turn?.ended_at).toBeTruthy();
 
   const m = await store.createMessage({
-    fromUserId: "u1",
+    from: { userId: "u1" },
     toAgentId: "a1",
     body: "hi",
     urgent: true,
@@ -101,7 +101,12 @@ test("turns and messages", async () => {
 });
 
 test("pendingQueue returns system notices first, including sender-less rows", async () => {
-  await store.createMessage({ fromUserId: "u1", toAgentId: "a2", body: "older", urgent: false });
+  await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a2",
+    body: "older",
+    urgent: false,
+  });
   await store.createNotice({ toAgentId: "a2", notice: "crash", body: "n" });
   const q = await store.pendingQueue("a2");
   expect(q.map((m) => m.body)).toEqual(["n", "older"]);

@@ -23,9 +23,19 @@ test("localTransport: SIGTERM ends a child; forceKill SIGKILLs one that traps TE
   expect(await t.terminate()).toBe(true);
   await t.forceKill();
   expect((await t.exit).signal).toBe("SIGKILL");
-  // Spawn-and-kill is the load-sensitive part: the full suite runs ~100 workers, so the default 5 s
-  // test timeout, not the logic, is what flaked (150 concurrent runs under CPU load never failed).
-}, 20_000);
+});
+
+test("localTransport: forceKill also ends a child forked while the group kill lands", async () => {
+  // The leader forks in a loop, so the group SIGKILL races a fork in flight. On macOS the new child can miss it and
+  // keep the pipes open, so `exit` never resolved (19 of 20 runs hung before the sweep on the leader's exit).
+  const t = localTransport(spec, [
+    "-c",
+    "echo up; i=0; while [ $i -lt 2000 ]; do sleep 30 & i=$((i+1)); done; wait",
+  ]);
+  await t.stdout[Symbol.asyncIterator]().next();
+  await t.forceKill();
+  expect((await t.exit).signal).toBe("SIGKILL");
+});
 
 test("localTransport: lines are delivered before exit; write after exit rejects", async () => {
   const t = localTransport(spec, ["-c", "echo one; echo two >&2"]);

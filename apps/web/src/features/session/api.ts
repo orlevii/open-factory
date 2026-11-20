@@ -3,6 +3,7 @@ import {
   agentListSchema,
   apiFetch,
   eventsPageSchema,
+  messageLookupSchema,
   queueItemResponseSchema,
 } from "@open-factory/shared";
 import { queryOptions } from "@tanstack/react-query";
@@ -52,6 +53,9 @@ export function fetchEvents(
     schema: eventsPageSchema,
   });
 }
+
+export const fetchMessage = (id: string) =>
+  apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
 
 export const postMessage = (slug: string, body: string, urgent: boolean) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/messages`, {

@@ -120,17 +120,23 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/agents/:slug/messages",
     { schema: { params: slugParams, body: sendMessageBodySchema } },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       const u = user(req);
       try {
-        const item = await rt.sendMessage({
-          fromUserId: u.id,
-          fromHandle: u.handle,
-          body: req.body.body,
-          urgent: req.body.urgent,
-        });
-        return reply.code(202).send(queueItemResponseSchema.parse({ item }));
+        // For a human sender the Router resolves agents only: a user, `humans` or a reserved name is not found.
+        const r = await app.router.send(
+          { userId: u.id, handle: u.handle },
+          req.params.slug,
+          req.body.body,
+          req.body.urgent,
+        );
+        if (!r.ok) {
+          if (r.code === "archived") {
+            const e = new AgentArchivedError(req.params.slug);
+            return err(reply, 409, "agent_archived", e.message);
+          }
+          return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+        }
+        return reply.code(202).send(queueItemResponseSchema.parse({ item: r.item }));
       } catch (e) {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);

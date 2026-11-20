@@ -5,10 +5,12 @@ import type { ReactNode } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { CompactionMarker } from "./compaction-marker";
 import { MessageBlock } from "./message-block";
+import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
+import { PeerLine, UpdateGroup } from "./update-group";
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono">{children}</span>
@@ -131,6 +133,8 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
           Rate limit on credential <Mono>{e.credential}</Mono> reset
         </>
       );
+    case "mcp_unavailable":
+      return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
     default:
       return e.type;
   }
@@ -144,6 +148,7 @@ function quietDetail(e: AnyEvent): string | undefined {
     return e.stderrTail ? `${how}\n${e.stderrTail}` : how;
   }
   if (e.type === "compact_failed" && e.trigger === "auto") return e.error;
+  if (e.type === "mcp_unavailable") return e.status;
   return undefined;
 }
 
@@ -153,6 +158,7 @@ const WARN = new Set([
   "stop_escalated",
   "background_work_lost",
   "rate_limit_paused",
+  "mcp_unavailable",
 ]);
 
 function quietIcon(e: AnyEvent): ReactNode {
@@ -225,6 +231,20 @@ export function TimelineRow(props: TimelineRowProps) {
             failed={failedIds.has(row.message.id)}
           />
         </div>
+      );
+    case "update_group":
+      return <UpdateGroup row={row} rowProps={rp} />;
+    case "peer":
+      return <PeerLine envelope={row.envelope} rowProps={rp} />;
+    case "outgoing":
+      return (
+        <OutgoingMessage
+          slug={props.slug}
+          row={row}
+          showCall={expanded.has(row.key)}
+          onToggleCall={() => toggle(row.key)}
+          rowProps={rp}
+        />
       );
     case "text":
       return (

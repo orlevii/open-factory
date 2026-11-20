@@ -1,4 +1,4 @@
-import type { HarnessEvent } from "@open-factory/shared";
+import type { Envelope, HarnessEvent, MessageKind } from "@open-factory/shared";
 
 export interface Mount {
   source: string;
@@ -25,10 +25,17 @@ export interface AgentRuntimeSpec {
 export interface FactoryMessage {
   id: string;
   from: string;
-  kind: "message" | "system";
+  kind: MessageKind;
   urgent: boolean;
+  /** Already escaped by groupEnvelopes (single/merge); renderEnvelopes writes it as given. */
   body: string;
   taskKey?: string;
+  ids?: string[];
+  about?: string;
+  /** The raw, unescaped bodies (for the UI). */
+  parts?: Envelope["parts"];
+  fact?: string;
+  subject?: Envelope["subject"];
 }
 
 export interface ExitInfo {

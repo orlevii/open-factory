@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
+import { Neighborhood } from "../messaging/neighborhood.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
@@ -134,6 +135,7 @@ async function seedStartFixture() {
     vault,
     workspace,
     lock,
+    neighborhood: new Neighborhood(t.db),
     serverEnv: {
       PATH: "/usr/bin",
       HOME: "/home/u",
@@ -148,7 +150,7 @@ async function seedStartFixture() {
 beforeEach(seedStartFixture);
 
 test("assembles the spec: env has the decrypted credential and secret; files prepared", async () => {
-  const spec = await prepareStart(agent);
+  const spec = await prepareStart(agent, { agentToken: "tok" });
   expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-1");
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.cwd).toBe(path.join(home, "agents", agent.slug));
@@ -158,7 +160,7 @@ test("assembles the spec: env has the decrypted credential and secret; files pre
 });
 
 test("the child env is an allowlist: server secrets and own credentials never reach the agent", async () => {
-  const { env } = await prepareStart(agent);
+  const { env } = await prepareStart(agent, { agentToken: "tok" });
   for (const k of ["DATABASE_URL", "FACTORY_SECRET_KEY", "SSH_AUTH_SOCK", "ANTHROPIC_API_KEY"])
     expect(env).not.toHaveProperty(k);
   expect(Object.values(env)).not.toContain("server-own-key");
@@ -171,7 +173,7 @@ test("the child env is an allowlist: server secrets and own credentials never re
 
 test("an api_key credential sets ANTHROPIC_API_KEY only", async () => {
   await t.sql`update credentials set kind = 'api_key', value_enc = ${vault.seal("key-1", "credentials:c1")}`;
-  const { env } = await prepareStart(await reload(agent.id));
+  const { env } = await prepareStart(await reload(agent.id), { agentToken: "tok" });
   expect(env.ANTHROPIC_API_KEY).toBe("key-1");
   expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
 });
@@ -190,7 +192,7 @@ test("the manager is described in CLAUDE.md", async () => {
     })
     .returning();
   await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""} where id = ${agent.id}`;
-  const spec = await prepareStart(agent); // stale row: prepareStart must reload
+  const spec = await prepareStart(agent, { agentToken: "tok" }); // stale row: prepareStart must reload
   const md = await import("node:fs").then((fs) =>
     fs.readFileSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"), "utf8"),
   );
@@ -225,7 +227,7 @@ test.each([
 ])("fails closed: %s", async (_n, mutate, message, fix) => {
   await mutate();
   const row = await reload(agent.id);
-  await expect(prepareStart(row)).rejects.toMatchObject({
+  await expect(prepareStart(row, { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
     ...(message ? { message } : {}),
     fix,
@@ -234,7 +236,7 @@ test.each([
 
 test("archived agents never start", async () => {
   await t.sql`update agents set archived_at = now()`;
-  await expect(prepareStart(await reload(agent.id))).rejects.toMatchObject({
+  await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentArchivedError",
     message: `@${agent.slug} is archived. Restore it first.`,
   });
@@ -250,7 +252,7 @@ test("prepare runs under the workspace lock for the agent's slug", async () => {
       }),
   );
   let done = false;
-  const p = prepareStart(agent).then((s) => {
+  const p = prepareStart(agent, { agentToken: "tok" }).then((s) => {
     done = true;
     return s;
   });
@@ -267,7 +269,7 @@ test("an invalid stored config is an AgentStartError with the edit_agent fix", a
     .update(schema.agents)
     .set({ config: { name: 5 } as never })
     .where(eq(schema.agents.id, agent.id));
-  await expect(prepareStart(agent)).rejects.toMatchObject({
+  await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
     fix: "edit_agent",
   });
@@ -278,8 +280,8 @@ test("prepare fails closed when .claude-config is a symlink to a host dir", asyn
   const workdir = workspace.workdir(agent.slug);
   rmSync(`${workdir}/.claude-config`, { recursive: true, force: true });
   symlinkSync(hostDir, `${workdir}/.claude-config`);
-  await expect(prepareStart(agent)).rejects.toThrow(AgentStartError);
-  await expect(prepareStart(agent)).rejects.toThrow(/is a symlink/);
+  await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toThrow(AgentStartError);
+  await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toThrow(/is a symlink/);
   expect(readdirSync(hostDir)).toEqual([]);
 });
 
@@ -287,7 +289,7 @@ test("gate off: local start fails closed with fix=runtime, before prepare; nothi
   const prepare = vi.spyOn(workspace, "prepare");
   factoryConfig.allowLocalRuntime = false;
   try {
-    await expect(prepareStart(agent)).rejects.toMatchObject({
+    await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toMatchObject({
       name: "AgentStartError",
       message:
         "The local runtime is disabled on this factory. Set FACTORY_ALLOW_LOCAL_RUNTIME=true to run agents unsandboxed.",
@@ -301,7 +303,7 @@ test("gate off: local start fails closed with fix=runtime, before prepare; nothi
 });
 
 test("gate on: local starts as before", async () => {
-  const spec = await prepareStart(agent);
+  const spec = await prepareStart(agent, { agentToken: "tok" });
   expect(spec.runtime).toBe("local");
 });
 
@@ -309,7 +311,7 @@ test("gate off: a docker agent is never gated", async () => {
   await t.db.update(schema.agents).set({ runtime: "docker" }).where(eq(schema.agents.id, agent.id));
   factoryConfig.allowLocalRuntime = false;
   try {
-    const outcome = await prepareStart(await reload(agent.id)).then(
+    const outcome = await prepareStart(await reload(agent.id), { agentToken: "tok" }).then(
       () => "started",
       (e: unknown) => e,
     );

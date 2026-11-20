@@ -7,6 +7,7 @@ const base = {
   permissionMode: "auto" as const,
   plugins: ["p@m"],
   grantedPaths: ["/code/app"],
+  mcpUrl: "http://127.0.0.1:3001/mcp",
 };
 
 test("rebuild: template base, plugin keys from plugins-config carried and filtered, agent keys dropped", () => {
@@ -35,7 +36,7 @@ test("rebuild: template base, plugin keys from plugins-config carried and filter
   });
   expect(s).not.toHaveProperty("agentAdded");
   expect(s.permissions).toEqual({
-    deny: ["Bash(curl:*)"],
+    deny: ["Bash(curl:*)", "SendMessage", "ListAgents"],
     defaultMode: "auto",
     additionalDirectories: ["/data", "/code/app"],
   });
@@ -59,7 +60,7 @@ test("autoMode: $defaults first in every list, deduped; factory environment appe
   expect(am.environment).toEqual([
     "$defaults",
     "Team env.",
-    ...factoryEnvironment("lead", base.workdir, ["/code/app"]),
+    ...factoryEnvironment("lead", base.workdir, ["/code/app"], base.mcpUrl),
   ]);
   expect(am).not.toHaveProperty("allow");
 });
@@ -73,7 +74,7 @@ test("bypass sets bypassPermissions; no grants → 'none' in the environment ent
     tpl: {},
   });
   expect((s.permissions as { defaultMode: string }).defaultMode).toBe("bypassPermissions");
-  expect(factoryEnvironment("lead", "/w", [])[1]).toContain("(none)");
+  expect(factoryEnvironment("lead", "/w", [], "http://127.0.0.1:3001/mcp")[1]).toContain("(none)");
 });
 
 test("claudeMdExcludes: every ancestor's four files plus the workdir's own CLAUDE.md files", () => {
@@ -86,4 +87,18 @@ test("claudeMdExcludes: every ancestor's four files plus the workdir's own CLAUD
   expect(ex).not.toContain("/h/of/agents/lead/AGENTS.md");
   const s = buildSettings({ ...base, pluginKeys: {}, tpl: { claudeMdExcludes: ["/x/CLAUDE.md"] } });
   expect((s.claudeMdExcludes as string[])[0]).toBe("/x/CLAUDE.md");
+});
+
+test("settings deny the built-in SendMessage and ListAgents and trust the exact MCP URL", () => {
+  const s = buildSettings({
+    ...base,
+    tpl: { permissions: { deny: ["Bash(curl:*)", "SendMessage"] } },
+    pluginKeys: {},
+    mcpUrl: "http://127.0.0.1:3001/mcp",
+  }) as { permissions: { deny: string[] }; autoMode: { environment: string[] } };
+  expect(s.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
+  expect(s.autoMode.environment[0]).toBe("$defaults");
+  expect(s.autoMode.environment.at(-1)).toBe(
+    "The Open Factory MCP server at http://127.0.0.1:3001/mcp is trusted local infrastructure this agent uses to message other agents and humans.",
+  );
 });

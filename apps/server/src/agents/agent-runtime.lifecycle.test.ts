@@ -6,7 +6,14 @@ import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.t
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import { ev, type FakeDriver } from "./testing/fake-driver.ts";
-import { okSpec, RuntimeHarness, silentLog } from "./testing/runtime-harness.ts";
+import {
+  noForward,
+  noopTokens,
+  okSpec,
+  RuntimeHarness,
+  sendAs,
+  silentLog,
+} from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 const h = new RuntimeHarness();
@@ -30,7 +37,7 @@ async function makeRuntime(opts: { startError?: Error; sessionId?: string; statu
   return rt;
 }
 const send = (body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
   (await store.after(agentId, 0, 1000)).map((e) => ({
     seq: e.seq,
@@ -56,7 +63,16 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
   expect(p.opts).toEqual({});
   expect(p.spec.env).toEqual({ TOKEN_SEEN: "yes" });
   expect(p.sent).toEqual([
-    [{ id: expect.any(String), from: "@or", kind: "message", urgent: false, body: "hello" }],
+    [
+      {
+        id: expect.any(String),
+        from: "@or",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        parts: [{ id: expect.any(String), body: "hello", createdAt: expect.any(String) }],
+      },
+    ],
   ]);
   expect(rt.live().status).toBe("working");
   p.emit(ev.session(), ev.turn(), ev.text("hi"), ev.usage(), ev.end());
@@ -172,15 +188,17 @@ test("an unexpected prepareStart failure is a generic AgentStartError, logged, n
   });
 });
 
-test("archived: send, compact and interrupt refuse inside the job; a refused message is not stored", async () => {
+test("archived: send, compact and interrupt refuse inside the job; a message handed over is marked rejected", async () => {
   await makeRuntime();
   rt.markArchived();
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
   await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
   await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
-  expect(
-    await t.sql`select count(*)::int as n from messages where to_agent_id = ${agentId}`,
-  ).toEqual([{ n: 0 }]);
+  // The Router committed the row before the hand-off (S6 §7.3): its state tells the truth.
+  expect(await t.sql`select state from messages where to_agent_id = ${agentId}`).toEqual([
+    { state: "rejected" },
+  ]);
+  expect(rt.queueItems()).toEqual([]);
 });
 
 test("prepareStart reporting an archived agent marks the runtime archived", async () => {
@@ -210,6 +228,8 @@ test("the runtime does not hold the slug lock around prepareStart (the real one 
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
+    tokens: noopTokens,
+    forward: noForward,
     agent,
     store,
     bus,
@@ -361,6 +381,8 @@ test("pending after a failed start, then delivered as one turn on the next start
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
   rt = new AgentRuntime({
+    tokens: noopTokens,
+    forward: noForward,
     agent,
     store,
     bus,

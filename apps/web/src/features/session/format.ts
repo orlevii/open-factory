@@ -28,3 +28,18 @@ export function formatResetTime(until: Date, now: Date): string {
   if (days <= 6) return `${WEEKDAYS[until.getDay()]} ${hhmm}`;
   return `${until.getDate()} ${MONTHS[until.getMonth()]} ${hhmm}`;
 }
+
+/** Past time for a row (S6 UI design §4): `14:32` today, `Yesterday 14:32`, `27 Nov 09:10`, and
+ *  `27 Nov 2025 09:10` for another year. Future times (clock skew) fall back to S5's format. */
+export function formatInboxTime(at: Date, now: Date): string {
+  const hhmm = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((day(now) - day(at)) / 86_400_000);
+  if (days < 0) return formatResetTime(at, now);
+  if (days === 0) return hhmm;
+  if (days === 1) return `Yesterday ${hhmm}`;
+  const date = `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+  return at.getFullYear() === now.getFullYear()
+    ? `${date} ${hhmm}`
+    : `${date} ${at.getFullYear()} ${hhmm}`;
+}

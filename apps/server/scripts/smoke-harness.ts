@@ -1,6 +1,7 @@
 // Live smoke for S3 (spec §13.3). Needs Postgres (pnpm compose up -d) and CLAUDE_CODE_OAUTH_TOKEN in the env;
 // the token is stored as the test agent's credential (the server itself never reads it).
 // Uses the real runtime, driver and Postgres store; bypasses only HTTP and auth. Model: haiku.
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,6 +16,8 @@ import { createPrepareStart } from "../src/agents/start.ts";
 import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
+import { AgentTokens } from "../src/mcp/tokens.ts";
+import { Neighborhood } from "../src/messaging/neighborhood.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
 import { KeyedMutex } from "../src/workspace/lock.ts";
 import { Workspace } from "../src/workspace/workspace.ts";
@@ -51,7 +54,14 @@ const agent = await seedTestAgent(
       : {}),
   },
 );
-const prepareStart = createPrepareStart({ db, config, vault, workspace, lock });
+const prepareStart = createPrepareStart({
+  db,
+  config,
+  vault,
+  workspace,
+  lock,
+  neighborhood: new Neighborhood(db),
+});
 const store = new EventStore(db);
 const bus = new EventBus();
 const log = { debug() {}, info: console.log, warn: console.warn, error: console.error };
@@ -78,13 +88,22 @@ const make = () =>
     bus,
     driver: createClaudeDriver({ log, transports: { local: localTransport } }),
     prepareStart,
+    tokens: new AgentTokens(),
     log,
     slots: unlimitedSlots,
+    forward: async () => {}, // a lone agent: nothing to forward to
   });
 let rt = make();
 await rt.init();
-const send = (body: string, urgent = false) =>
-  rt.sendMessage({ fromUserId: "smoke", fromHandle: "smoke", body, urgent });
+const send = async (body: string, urgent = false) => {
+  const row = await store.createMessage({
+    from: { userId: "smoke" },
+    toAgentId: rt.agent.id,
+    body,
+    urgent,
+  });
+  return rt.deliver(row, { sender: "human", fromLabel: "@smoke" });
+};
 const waitFor = async (pred: (e: AnyEvent) => boolean, from: number, ms = 120_000) => {
   const end = Date.now() + ms;
   while (Date.now() < end) {

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { AgentStartError } from "./errors.ts";
 import { ev } from "./testing/fake-driver.ts";
-import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
 
 const h = new RuntimeHarness();
@@ -47,7 +47,7 @@ test("noStart blocks a start already inside prepareStart", async () => {
     open = r;
   });
   const p = h.send("hi");
-  await vi.waitFor(() => expect(h.prepareCalls).toBe(1)); // the send job is suspended in prepareStart
+  await h.prepared(1); // the send job is suspended in prepareStart
   h.rt.setNoStart();
   open();
   await expect(p).rejects.toThrow(/being stopped/);
@@ -57,8 +57,9 @@ test("noStart blocks a start already inside prepareStart", async () => {
 test("a message sent during a hibernate's stop grace is not written to the closing process", async () => {
   await idle();
   h.driver.last.holdStop = true;
+  const row = await h.row("during");
   void h.rt.hibernate("warm_window");
-  const p = h.send("during");
+  const p = deliverHuman(h.rt, row); // enqueued behind the hibernate, during its stop grace
   await h.rt.settled();
   expect(h.driver.starts[0]?.sent.flat().map((m) => m.body)).toEqual(["hi"]);
   h.driver.starts[0]?.releaseStop();
@@ -153,4 +154,17 @@ test("process_started records the wake reason", async () => {
     (e) => e.event.type === "process_started",
   );
   expect(started?.event).toEqual({ type: "process_started", resumed: false, reason: "compact" });
+});
+
+test("handed-over rows queue in (created_at, id) order whatever order their jobs run in; one handed twice queues once", async () => {
+  // Errored, and an agent sender: nothing wakes it, so the queue is what the deliveries left.
+  await h.makeRuntime({ status: "errored", errorKind: "crash" });
+  const older = await h.row("older");
+  const newer = await h.row("newer");
+  const label = { sender: "agent" as const, fromLabel: "@peer" };
+  await h.rt.deliver(newer, label);
+  await h.rt.deliver(older, label);
+  await h.rt.deliver(newer, label);
+  expect(h.rt.queueItems().map((q) => q.body)).toEqual(["older", "newer"]);
+  expect(h.driver.starts).toHaveLength(0);
 });

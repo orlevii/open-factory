@@ -9,6 +9,9 @@ import {
 } from "@open-factory/shared";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
+import type { Neighborhood } from "../messaging/neighborhood.ts";
+import { isNameTaken } from "../messaging/principals.ts";
+import type { PeerChange, Router } from "../messaging/router.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -55,8 +58,29 @@ export class AgentService {
       log: RuntimeLog;
       /** The one ContainerManager: a running container counts as a process for the re-sync gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
+      /** Peer events (spec §10.2): the neighborhood to snapshot and the router that writes the rows. */
+      neighborhood: Neighborhood;
+      router: Pick<Router, "peerEvents">;
     },
   ) {}
+
+  /** The rows are already committed: a failure here is logged and never fails the human's request. */
+  private async peerEvents(
+    id: string,
+    change: PeerChange,
+    before: { managerId: string | null; peerIds: string[] },
+  ): Promise<void> {
+    try {
+      await this.d.router.peerEvents(id, change, before);
+    } catch (err) {
+      this.d.log.error({ err, agent: id }, "Writing peer events failed");
+    }
+  }
+
+  private async snapshot(id: string): Promise<{ managerId: string | null; peerIds: string[] }> {
+    const n = await this.d.neighborhood.of(id);
+    return { managerId: n.manager?.id ?? null, peerIds: n.peers.map((p) => p.id) };
+  }
 
   async list(archived: "exclude" | "include" | "only"): Promise<AgentSummary[]> {
     const { db } = this.d;
@@ -70,11 +94,19 @@ export class AgentService {
             ? isNotNull(schema.agents.archivedAt)
             : undefined,
       );
-    const slugById = new Map(
-      (await db.select({ id: schema.agents.id, slug: schema.agents.slug }).from(schema.agents)).map(
-        (r) => [r.id, r.slug],
-      ),
-    );
+    const allAgents = await db
+      .select({
+        id: schema.agents.id,
+        slug: schema.agents.slug,
+        reportsTo: schema.agents.reportsTo,
+        archivedAt: schema.agents.archivedAt,
+      })
+      .from(schema.agents);
+    const slugById = new Map(allAgents.map((r) => [r.id, r.slug]));
+    const reportCount = new Map<string, number>();
+    for (const a of allAgents)
+      if (a.reportsTo && !a.archivedAt)
+        reportCount.set(a.reportsTo, (reportCount.get(a.reportsTo) ?? 0) + 1);
     const credName = new Map(
       (await db.select().from(schema.credentials)).map((c) => [c.id, c.name]),
     );
@@ -111,6 +143,7 @@ export class AgentService {
           template: r.template,
           runtime: r.runtime,
           reportsTo: i.reportsTo,
+          reports: reportCount.get(r.id) ?? 0,
           credential: credName.get(r.credentialId) ?? "",
           projects: (projectsOf.get(r.id) ?? []).sort(),
           grantsOverridden: r.grantsOverridden,
@@ -189,17 +222,15 @@ export class AgentService {
 
   private async createLocked(b: CreateAgentBody): Promise<AgentSummary> {
     const { db, workspace } = this.d;
-    const [taken] = await db
-      .select({ id: schema.agents.id })
-      .from(schema.agents)
-      .where(eq(schema.agents.slug, b.slug));
-    if (taken) throw slugTaken();
+    // One rule (spec §7.1). A simultaneous sign-up and agent create with the same name is an accepted race; sends then fail with 'matches both'.
+    const taken = await isNameTaken(db, b.slug);
+    if (taken === "agent" || taken === "user") throw slugTaken();
     const tpl = await this.d.templates.loadValid(b.template);
     const credentialId = await this.credentialId(b.credential);
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
     const projects = await this.projectRows(b.projects ?? tpl.config.projects);
 
-    const prep: PrepareInput = {
+    const prep: Omit<PrepareInput, "mcpUrl" | "peers" | "reports"> = {
       slug: b.slug,
       displayName: b.displayName,
       description: b.description,
@@ -242,6 +273,7 @@ export class AgentService {
       if (isSlugUnique(err)) throw slugTaken();
       throw err;
     }
+    await this.peerEvents(id, { kind: "joined" }, { managerId: null, peerIds: [] });
     return this.summary(b.slug);
   }
 
@@ -250,6 +282,7 @@ export class AgentService {
     const row = await this.rowBySlug(slug);
     const currentGrants = await this.grantNames(row.id);
     const changed = { feeds: false, text: false };
+    let moved: { to: string | null } | undefined;
     const set: Partial<typeof schema.agents.$inferInsert> = {};
 
     if (b.displayName !== undefined && b.displayName !== row.displayName) {
@@ -272,9 +305,11 @@ export class AgentService {
       if (manager) await this.assertNoCycle(slug, row.id, manager);
       if ((manager?.id ?? null) !== row.reportsTo) {
         set.reportsTo = manager?.id ?? null;
+        moved = { to: manager?.slug ?? null };
         changed.feeds = true;
       }
     }
+    const before = moved ? await this.snapshot(row.id) : undefined;
     let newGrants: { id: string; name: string }[] | undefined;
     if (b.projects !== undefined) {
       const names = b.projects === null ? row.config.projects : b.projects;
@@ -293,6 +328,7 @@ export class AgentService {
     });
 
     await runtimes.refresh(row.id);
+    if (moved && before) await this.peerEvents(row.id, { kind: "moved", to: moved.to }, before);
     if (changed.feeds || changed.text) await runtimes.requestRestart(row.id);
     if (changed.text) {
       const reports = await db
@@ -421,6 +457,7 @@ export class AgentService {
       .sort();
     if (reports.length)
       throw new ApiError(409, "has_reports", reportsMessage(reports), { reports });
+    const before = await this.snapshot(row.id);
     await db
       .update(schema.agents)
       .set({ archivedAt: new Date() })
@@ -433,6 +470,7 @@ export class AgentService {
       this.d.log.error({ err, slug }, "Stopping an archived agent failed");
     }
     await runtimes.refresh(row.id);
+    await this.peerEvents(row.id, { kind: "left", reason: "archived" }, before);
     return this.summary(slug);
   }
 
@@ -451,6 +489,7 @@ export class AgentService {
     }
     await db.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
     await runtimes.refresh(row.id);
+    await this.peerEvents(row.id, { kind: "joined" }, { managerId: null, peerIds: [] });
     return this.summary(slug);
   }
 }

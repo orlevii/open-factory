@@ -1,7 +1,47 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Clock, Factory } from "lucide-react";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
+import { agentsQueryOptions } from "./api";
 import { formatTime } from "./format";
+
+/** The `FixLink` underline: visible and muted, turning signal on hover. */
+export const LINK_CLASS =
+  "underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+
+/** Slug -> display name for the active agents (cached list). `undefined` until it has loaded. */
+const toNames = (agents: { slug: string; displayName: string }[]) =>
+  new Map(agents.map((a) => [a.slug, a.displayName]));
+export function useAgentNames(): Map<string, string> | undefined {
+  // A module-level select: the map is rebuilt only when the list itself changes.
+  return useQuery({ ...agentsQueryOptions, select: toNames }).data;
+}
+
+/** An agent slug in mono, as a link to its session. An archived or unknown agent (once the list has
+ *  loaded) is the plain slug, with no link and no display name. `name` adds " · Display name". */
+export function AgentLink({ slug, name = false }: { slug: string; name?: boolean }) {
+  const names = useAgentNames();
+  const display = names?.get(slug);
+  if (names && display === undefined)
+    return <span className="font-mono text-foreground">@{slug}</span>;
+  return (
+    <>
+      <Link
+        to="/agents/$slug"
+        params={{ slug }}
+        aria-label={`Open @${slug}'s session`}
+        className={`font-mono text-foreground ${LINK_CLASS}`}
+      >
+        @{slug}
+      </Link>
+      {name && display && <span className="text-muted-foreground"> · {display}</span>}
+    </>
+  );
+}
+
+/** Agent senders are bare slugs; humans are `@handle`, the factory `@factory`. */
+export const isAgentSender = (from: string) => !from.startsWith("@");
 
 /** Incoming input (UI design §4.1): on the ground with a 1px rule edge and 6px radius, never a bubble.
  *  The sender line is generic (`from` + badges), never the raw envelope XML. A `system` message is a
@@ -26,6 +66,10 @@ export function MessageBlock(props: {
           <span className="flex items-center gap-1 text-foreground">
             <Factory aria-hidden="true" className="size-3.5" />
             Factory
+          </span>
+        ) : isAgentSender(from) ? (
+          <span>
+            <AgentLink slug={from} name />
           </span>
         ) : (
           <span className="font-mono text-foreground">{from}</span>
@@ -60,17 +104,26 @@ export function MessageBlock(props: {
 
 const CLAMP_LINES = 40;
 
-/** Bodies over 40 lines clamp with "Show all" (bodies may be up to 64 KB). */
-function ClampedMarkdown({ source }: { source: string }) {
+/** Bodies over 40 lines clamp with "Show all" (bodies may be up to 64 KB); update parts clamp at 8. */
+export function ClampedMarkdown({
+  source,
+  limit = CLAMP_LINES,
+}: {
+  source: string;
+  limit?: number;
+}) {
   const [all, setAll] = useState(false);
   const lines = source.split("\n");
-  if (lines.length <= CLAMP_LINES || all) return <Markdown source={source} />;
+  if (lines.length <= limit || all) return <Markdown source={source} />;
   return (
     <>
-      <Markdown source={lines.slice(0, CLAMP_LINES).join("\n")} />
+      <Markdown source={lines.slice(0, limit).join("\n")} />
       <button
         type="button"
-        onClick={() => setAll(true)}
+        onClick={(e) => {
+          e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
+          setAll(true);
+        }}
         className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
       >
         Show all

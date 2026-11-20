@@ -45,6 +45,11 @@ export const agents = pgTable("agents", {
   lastError: text("last_error"),
   errorKind: text("error_kind"),
   attempting: boolean("attempting").notNull().default(false),
+  /**
+   * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to the manager or the humans). Set once
+   * per episode; cleared with the error. Read at boot so a restart never reports one episode twice.
+   */
+  erroredReported: boolean("errored_reported").notNull().default(false),
   runtimeJournal: jsonb("runtime_journal").$type<RuntimeJournal>(),
   rateLimitNoticeOwed: boolean("rate_limit_notice_owed").notNull().default(false),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -100,9 +105,13 @@ export const messages = pgTable(
     kind: text("kind").notNull().default("message"),
     fromUserId: text("from_user_id").references(() => users.id),
     notice: text("notice"),
-    toAgentId: text("to_agent_id")
-      .notNull()
-      .references(() => agents.id, { onDelete: "cascade" }),
+    fromAgentId: text("from_agent_id").references((): AnyPgColumn => agents.id),
+    subjectAgentId: text("subject_agent_id").references((): AnyPgColumn => agents.id),
+    toAgentId: text("to_agent_id").references(() => agents.id, { onDelete: "cascade" }),
+    toUserId: text("to_user_id").references(() => users.id),
+    toAllHumans: boolean("to_all_humans").notNull().default(false),
+    fromToolUseId: text("from_tool_use_id"),
+    deliveredEventSeq: integer("delivered_event_seq"),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -110,8 +119,32 @@ export const messages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },
-  (t) => [index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt)],
+  (t) => [
+    index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt),
+    index("messages_from_agent_idx").on(t.fromAgentId, t.createdAt),
+  ],
 );
+
+export const inboxItems = pgTable(
+  "inbox_items",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().$type<"message">(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("inbox_items_user_message_unique").on(t.userId, t.messageId),
+    index("inbox_items_user_created_idx").on(t.userId, t.createdAt.desc()),
+  ],
+);
+export type InboxItemRow = typeof inboxItems.$inferSelect;
 
 export type AgentRow = typeof agents.$inferSelect;
 export type TurnRow = typeof turns.$inferSelect;

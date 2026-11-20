@@ -3,6 +3,7 @@ import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import { notices } from "../agents/notices.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import { type Forward, factFor } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
 import type { Supervisor } from "./supervisor.ts";
@@ -18,12 +19,20 @@ export interface ReconcileDeps {
     | "clearRuntimeJournals"
     | "pausedCredentials"
     | "bootWakes"
+    | "agentsWithYoungUpdates"
   >;
   journal: Pick<ProcessJournal, "reap">;
   /** Absent when the factory has no Docker runtime; step 2 is then skipped. */
   containers?: Pick<ContainerManager, "listOurs" | "stopListed">;
   supervisor: Pick<Supervisor, "pause">;
-  runtimes: Pick<AgentRuntimes, "bySlug">;
+  runtimes: Pick<AgentRuntimes, "bySlug" | "load">;
+  /** A member update younger than this is not yet deliverable (spec §8). */
+  memberUpdateDebounceMs: number;
+  /**
+   * S6 §9.1: the Router's `forward`. Rows are persisted here; their hand-off to a manager waits for `bootDone()`, which
+   * runs once this function has returned.
+   */
+  forward: (f: Forward) => Promise<void>;
   log: RuntimeLog;
 }
 
@@ -87,20 +96,27 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
       reason: "factory_restarted",
       ...lost,
     });
-    d.log.info(
-      { agent: a.slug, manager: a.reportsTo, reason: "factory_restarted", ...lost },
-      "background work lost; would notify the manager",
-    );
+    await forward(d, a, "work_lost", {
+      lost: {
+        tasks: lost.tasks.map((t) => t.description || t.taskId),
+        crons: lost.crons.map((c) => c.humanSchedule),
+      },
+    });
   }
 
   // 4. Attempts cut short: errored, not woken (a crash-looping server must not spend tokens on every boot).
   const cutShort = new Set(await d.store.failCutShortAttempts(ATTEMPT_CUT_SHORT));
   for (const a of rows)
-    if (cutShort.has(a.id))
+    if (cutShort.has(a.id)) {
       d.log.info(
         { agent: a.slug },
         "an attempt was cut short by the restart; the agent is errored",
       );
+      // Errored with no attempt pending (S6 §9.1), once per episode: a human retry cut short was inside an episode
+      // already reported (`errored_reported`, set by the Router); a crash's automatic attempt or a boot_resume was not.
+      if (!a.erroredReported)
+        await forward(d, a, "errored", { text: a.lastError ?? ATTEMPT_CUT_SHORT });
+    }
 
   // 5. Interrupted work (R2): the factory-restarted notice, so the wake below resumes it (its single attempt).
   for (const a of rows) {
@@ -123,7 +139,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   for (const p of await d.store.pausedCredentials()) d.supervisor.pause(p.id, p.until, p.exact);
   // Then the wakes, by each agent's oldest pending item, one at a time so the queue keeps that order. Each runtime is
   // loaded first: the Supervisor only wakes a loaded runtime.
-  for (const w of await d.store.bootWakes()) {
+  for (const w of await d.store.bootWakes(d.memberUpdateDebounceMs)) {
     if (reapFailed.has(w.id)) continue;
     try {
       const rt = await d.runtimes.bySlug(w.slug);
@@ -131,6 +147,32 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
     } catch (err) {
       d.log.error({ err, agent: w.slug }, "boot wake failed");
     }
+  }
+  // S6 §8.2: an agent whose member updates are all still inside the window isn't woken, but its runtime is loaded so
+  // `init()` arms the debounce timer that wakes it once the oldest is due (spec §17.2 "arms timers for young ones").
+  for (const id of await d.store.agentsWithYoungUpdates(d.memberUpdateDebounceMs)) {
+    if (reapFailed.has(id)) continue;
+    try {
+      await d.runtimes.load(id);
+    } catch (err) {
+      d.log.error({ err, agent: id }, "loading an agent with held updates failed");
+    }
+  }
+}
+
+/** A forwarding failure is logged: boot goes on, as for a failed wake (the fact is lost, the agent's state is not). */
+async function forward(
+  d: ReconcileDeps,
+  a: AgentRow,
+  fact: "work_lost" | "errored",
+  detail: Parameters<typeof factFor>[2],
+): Promise<void> {
+  if (a.archivedAt) return;
+  try {
+    await d.forward({ agentId: a.id, fact, body: factFor(fact, a.slug, detail) });
+  } catch (err) {
+    // The fact is then not reported (for a cut-short attempt: its errored episode stays unreported); boot goes on.
+    d.log.error({ err, agent: a.slug, fact }, "forwarding a fact to the manager failed");
   }
 }
 

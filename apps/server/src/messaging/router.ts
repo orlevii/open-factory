@@ -1,0 +1,327 @@
+import type { Db } from "@open-factory/db";
+import type { AgentStatus, QueueItem } from "@open-factory/shared";
+import type { FastifyBaseLogger } from "fastify";
+import type { EventBus } from "../agents/event-bus.ts";
+import type { EventStore, PendingRow, Tx } from "../agents/event-store.ts";
+import type { AgentRuntimes } from "../agents/runtimes.ts";
+import type { Forward } from "./forwarder.ts";
+import type { Neighborhood } from "./neighborhood.ts";
+import { type PeerLeft, peerBody } from "./peer-body.ts";
+import { resolveName } from "./principals.ts";
+
+export type Sender =
+  | { agentId: string; toolUseId?: string | null }
+  | { userId: string; handle: string };
+
+export type SendResult =
+  | {
+      ok: true;
+      id: string;
+      to: string;
+      status: AgentStatus | "inbox";
+      note?: string;
+      item?: QueueItem;
+    }
+  | {
+      ok: false;
+      message: string;
+      code: "not_found" | "ambiguous" | "self" | "archived" | "reserved";
+    };
+
+/** What happened to the subject of a peer event (spec §10.2). */
+export type PeerChange =
+  | { kind: "joined" }
+  | { kind: "left"; reason: "archived" }
+  | { kind: "moved"; to: string | null };
+
+/** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
+export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[] };
+
+const SHUTTING_DOWN =
+  "The factory is shutting down; the message will be delivered after it restarts.";
+
+const notFound = (name: string): SendResult => ({
+  ok: false,
+  code: "not_found",
+  message: `No agent or user named '${name}'. Call list_peers to see who you can message.`,
+});
+const archived = (slug: string): SendResult => ({
+  ok: false,
+  code: "archived",
+  message: `@${slug} is archived and can't receive messages.`,
+});
+
+/**
+ * Address resolution, persistence, rejections and the delivery hand-off (spec §7). Rows are durable as soon as they
+ * are committed; every hand-off to a runtime waits for `bootDone()` (the end of boot reconciliation, §7.3 step 3).
+ */
+export class Router {
+  private release!: () => void;
+  /** Set by `close()`: no hand-off starts once shutdown has begun (committed rows stay pending for the next boot). */
+  private closed = false;
+  private abort!: (err: Error) => void;
+  private readonly booted = new Promise<void>((resolve, reject) => {
+    this.release = resolve;
+    this.abort = reject;
+  });
+
+  constructor(
+    private readonly d: {
+      db: Db;
+      store: EventStore;
+      runtimes: AgentRuntimes;
+      bus: EventBus;
+      log: FastifyBaseLogger;
+      neighborhood: Neighborhood;
+    },
+  ) {}
+
+  /** Opens the hand-off gate; called once `reconcile()` has finished. */
+  bootDone(): void {
+    this.release();
+  }
+
+  /**
+   * Shutdown: from here on no hand-off runs (each row stays pending for the next boot), and one still waiting for a
+   * boot that never finished fails instead of hanging its request.
+   */
+  close(): void {
+    this.closed = true;
+    this.booted.catch(() => {});
+    this.abort(new Error(SHUTTING_DOWN));
+  }
+
+  /**
+   * One message from an agent (`send_message`) or a human (the REST route, which addresses agents only). An agent
+   * recipient's row is committed, then handed over: awaited for a human (its start failures reach the route),
+   * enqueued for an agent. A message to humans is delivered at once to their inbox.
+   */
+  async send(from: Sender, to: string, body: string, urgent: boolean): Promise<SendResult> {
+    if ("userId" in from) return this.sendFromHuman(from, to, body, urgent);
+    const r = await resolveName(this.d.db, to);
+    switch (r.kind) {
+      case "none":
+        return notFound(r.name);
+      case "ambiguous":
+        return {
+          ok: false,
+          code: "ambiguous",
+          message: `'${r.name}' matches both an agent and a user; ask a human to rename one.`,
+        };
+      case "reserved":
+        return {
+          ok: false,
+          code: "reserved",
+          message: `'${r.name}' is reserved and can't receive messages.`,
+        };
+      case "humans":
+      case "user": {
+        const { row } = await this.d.store.createHumanMessage({
+          kind: "message",
+          fromAgentId: from.agentId,
+          to: r.kind === "humans" ? "all" : { userId: r.userId },
+          body,
+          urgent,
+          fromToolUseId: from.toolUseId ?? null,
+        });
+        this.d.bus.publishAll({ type: "inbox_changed" });
+        return {
+          ok: true,
+          id: row.id,
+          to: r.kind === "humans" ? "@humans" : `@${r.handle}`,
+          status: "inbox",
+        };
+      }
+      case "agent": {
+        if (r.agent.id === from.agentId)
+          return { ok: false, code: "self", message: "You can't message yourself." };
+        if (r.agent.archivedAt) return archived(r.agent.slug);
+        const row = await this.d.store.createMessage({
+          from: { agentId: from.agentId },
+          toAgentId: r.agent.id,
+          body,
+          urgent,
+          fromToolUseId: from.toolUseId ?? null,
+        });
+        await this.booted;
+        // Shutting down: the committed row is the next boot's to deliver; the sender's call still succeeds (a retry
+        // would send it twice).
+        if (this.closed)
+          return {
+            ok: true,
+            id: row.id,
+            to: r.agent.slug,
+            status: this.d.runtimes.statusOf(r.agent),
+          };
+        // The recipient's status at send time (spec §6.1): read before the hand-off enqueues its wake. The row is
+        // committed: a recipient whose init fails never fails the sender's call (a retry would send it twice); its
+        // status is then what its row says, and the row stays pending (runtimes.deliver logs, never throws).
+        const status = await this.statusOf(r.agent.id).catch((err: unknown) => {
+          this.d.log.error(
+            { err, agent: r.agent.slug, message: row.id },
+            "loading the recipient failed; the message stays pending",
+          );
+          return this.d.runtimes.statusOf(r.agent);
+        });
+        await this.d.runtimes.deliver(row, "agent");
+        return {
+          ok: true,
+          id: row.id,
+          to: r.agent.slug,
+          status,
+          ...(status === "errored"
+            ? {
+                note: `@${r.agent.slug} is errored; your message will be delivered when a human restarts it.`,
+              }
+            : {}),
+        };
+      }
+    }
+  }
+
+  /** The human REST route resolves agents only (a user, `humans` or a reserved name is "not found"). */
+  private async sendFromHuman(
+    from: { userId: string; handle: string },
+    slug: string,
+    body: string,
+    urgent: boolean,
+  ): Promise<SendResult> {
+    const agent = await this.d.store.agentBySlug(slug);
+    if (!agent) return notFound(slug);
+    if (agent.archivedAt) return archived(agent.slug);
+    const row = await this.d.store.createMessage({
+      from: { userId: from.userId },
+      toAgentId: agent.id,
+      body,
+      urgent,
+    });
+    await this.booted;
+    if (this.closed) throw new Error(SHUTTING_DOWN);
+    const status = await this.statusOf(agent.id);
+    const item = await this.d.runtimes.deliver(row, "human");
+    return { ok: true, id: row.id, to: agent.slug, status, ...(item ? { item } : {}) };
+  }
+
+  /**
+   * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). With
+   * a manager, a held `member_update` (the report's text as itself; a fact as `@factory` about it), handed over once
+   * boot is done and never awaited. A top-level agent's `errored` goes to every human's inbox; anything else of a
+   * top-level agent stays in its session. The manager is read from the database: a change moves future rows only.
+   */
+  async forward(f: Forward): Promise<void> {
+    const agent = await this.d.store.agentById(f.agentId);
+    if (!agent) return;
+    // One transaction with the durable episode state (R4): a crash between the two would report the same errored
+    // episode again on the next boot. The hand-off and the inbox frame follow the commit.
+    const out = await this.d.store.transaction(async (tx) => {
+      const persisted = await this.persistForward(agent, f, tx);
+      if (f.fact === "errored") await this.d.store.setErroredReported(f.agentId, tx);
+      return persisted;
+    });
+    if (out?.held) this.handOffHeld(out.held);
+    if (out?.inbox) this.d.bus.publishAll({ type: "inbox_changed" });
+  }
+
+  private async persistForward(
+    agent: NonNullable<Awaited<ReturnType<EventStore["agentById"]>>>,
+    f: Forward,
+    tx: Tx,
+  ): Promise<{ held?: PendingRow; inbox?: true } | undefined> {
+    if (agent.reportsTo) {
+      const held = await this.d.store.createHeld(
+        {
+          kind: "member_update",
+          toAgentId: agent.reportsTo,
+          ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
+          body: f.body,
+        },
+        tx,
+      );
+      return { held };
+    }
+    if (f.fact !== "errored") return undefined;
+    await this.d.store.createHumanMessage(
+      {
+        kind: "system",
+        fromAgentId: null,
+        notice: "agent_errored",
+        subjectAgentId: f.agentId,
+        to: "all",
+        body: f.body,
+        urgent: false,
+      },
+      tx,
+    );
+    return { inbox: true };
+  }
+
+  /**
+   * Spec §10.2: held `peer_joined`/`peer_left` rows for everyone whose neighborhood changed (the subject's peers, with
+   * notice `peer`, and its manager, with notice `report`), written with `peerBody`. `joined` reads the neighborhood
+   * now (call it after the change); `left` and `moved` notify the `before` snapshot, and `moved` also announces the
+   * join to the new neighborhood. Archived recipients are skipped; the subject itself gets nothing. Rows are
+   * persisted before this resolves and handed over once boot is done, never awaited.
+   */
+  async peerEvents(
+    subjectId: string,
+    change: PeerChange,
+    before: NeighborhoodSnapshot,
+  ): Promise<void> {
+    const subject = await this.d.store.agentById(subjectId);
+    if (!subject) return;
+    if (change.kind !== "joined") {
+      const left: PeerLeft =
+        change.kind === "left" ? { reason: "archived" } : { reason: "moved", to: change.to };
+      await this.notify(subject, "peer_left", before.peerIds, before.managerId, left);
+    }
+    if (change.kind !== "left") {
+      const now = await this.d.neighborhood.of(subjectId);
+      await this.notify(
+        subject,
+        "peer_joined",
+        now.peers.map((p) => p.id),
+        now.manager?.id ?? null,
+      );
+    }
+  }
+
+  private async notify(
+    subject: { id: string; slug: string; displayName: string },
+    kind: "peer_joined" | "peer_left",
+    peerIds: string[],
+    managerId: string | null,
+    left?: PeerLeft,
+  ): Promise<void> {
+    const targets: { id: string; relation: "peer" | "report" }[] = peerIds.map((id) => ({
+      id,
+      relation: "peer",
+    }));
+    if (managerId) targets.push({ id: managerId, relation: "report" });
+    for (const t of targets) {
+      const to = await this.d.store.agentById(t.id);
+      if (!to || to.archivedAt || to.id === subject.id) continue;
+      const row = await this.d.store.createHeld({
+        kind,
+        toAgentId: to.id,
+        subjectAgentId: subject.id,
+        notice: t.relation,
+        body: peerBody(subject, t.relation, left ? { kind, left } : { kind: "peer_joined" }),
+      });
+      this.handOffHeld(row);
+    }
+  }
+
+  /** A held row's hand-off, once boot is done and unless shutdown has begun (the row then waits for the next boot). */
+  private handOffHeld(row: PendingRow): void {
+    void this.booted.then(
+      () => {
+        if (!this.closed) this.d.runtimes.deliverHeld(row);
+      },
+      () => {}, // shutting down before boot finished: the row is pending for the next boot
+    );
+  }
+
+  private async statusOf(agentId: string): Promise<AgentStatus> {
+    return (await this.d.runtimes.load(agentId))?.statusFrame().status ?? "hibernated";
+  }
+}

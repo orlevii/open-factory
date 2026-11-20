@@ -1,14 +1,17 @@
 import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import { errorKindSchema } from "@open-factory/shared";
+import { type AgentStatus, errorKindSchema, type QueueItem } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import type { AgentTokens } from "../mcp/tokens.ts";
+import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
+import { AgentArchivedError, AgentStartError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
-import type { EventStore } from "./event-store.ts";
+import type { EventStore, PendingRow } from "./event-store.ts";
 import type { PrepareStart } from "./start.ts";
 
 export interface RuntimesDeps {
@@ -16,8 +19,13 @@ export interface RuntimesDeps {
   bus: EventBus;
   driver: HarnessDriver;
   prepareStart: PrepareStart;
+  tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
+  /** `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` in ms (S6 §8.2); the runtime's 30 s default when unset. */
+  memberUpdateDebounceMs?: number;
+  /** S6 §9.1: every runtime's forwarding port (the Router's `forward`). */
+  forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
   /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
@@ -90,6 +98,13 @@ export function versionCheckEnv(serverEnv: NodeJS.ProcessEnv): Record<string, st
   return env;
 }
 
+/** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human, `@slug` for an agent. */
+function senderLabel(row: PendingRow): string {
+  if (row.fromHandle) return `@${row.fromHandle}`;
+  if (row.fromSlug) return `@${row.fromSlug}`;
+  throw new Error(`message ${row.id} has no sender`);
+}
+
 export type LiveFields = ReturnType<AgentRuntime["live"]>;
 
 export class AgentRuntimes {
@@ -133,7 +148,18 @@ export class AgentRuntimes {
 
   async bySlug(slug: string): Promise<AgentRuntime | undefined> {
     const row = await this.d.store.agentBySlug(slug);
-    if (!row) return undefined;
+    return row ? this.runtimeOf(row) : undefined;
+  }
+
+  /** `bySlug` by id: the runtime, created and initialised on first use. */
+  async load(agentId: string): Promise<AgentRuntime | undefined> {
+    const loaded = this.byId.get(agentId);
+    if (loaded) return loaded;
+    const row = await this.d.store.agentById(agentId);
+    return row ? this.runtimeOf(row) : undefined;
+  }
+
+  private runtimeOf(row: AgentRow): Promise<AgentRuntime> {
     let rt = this.byId.get(row.id);
     if (!rt) {
       const runtime = new AgentRuntime({
@@ -142,8 +168,13 @@ export class AgentRuntimes {
         bus: this.d.bus,
         driver: this.d.driver,
         prepareStart: this.d.prepareStart,
+        tokens: this.d.tokens,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
+        ...(this.d.memberUpdateDebounceMs !== undefined
+          ? { memberUpdateDebounceMs: this.d.memberUpdateDebounceMs }
+          : {}),
+        forward: this.d.forward,
         slots: this.supervisor,
         ...(this.d.localRuntimeAllowed ? { localRuntimeAllowed: this.d.localRuntimeAllowed } : {}),
         ...(this.d.journal ? { journal: this.d.journal } : {}),
@@ -174,6 +205,68 @@ export class AgentRuntimes {
       });
     }
     return rt;
+  }
+
+  /**
+   * S6 §7.3: hands a committed `message` row to its recipient. A human's send awaits the job (S3's synchronous
+   * `503 agent_start_failed` and `409 agent_archived`); an agent's only enqueues it: a slow start never blocks the
+   * sender's tool call, and a failure leaves the row pending (or `rejected` when archived), logged, never thrown.
+   */
+  async deliver(row: PendingRow, sender: "human" | "agent"): Promise<QueueItem | undefined> {
+    if (sender === "human") {
+      const rt = await this.recipientOf(row);
+      return rt.deliver(row, { sender, fromLabel: senderLabel(row) });
+    }
+    // An agent's send already committed its row: a recipient that can't be loaded (a failed init) leaves it pending
+    // for the next hand-off or boot, logged; it never reaches the sender, whose retry would duplicate the message.
+    let rt: AgentRuntime;
+    try {
+      rt = await this.recipientOf(row);
+    } catch (err) {
+      this.d.log.error(
+        { err, agentId: row.toAgentId, message: row.id },
+        "loading the recipient failed; the message stays pending",
+      );
+      return undefined;
+    }
+    void rt.deliver(row, { sender, fromLabel: senderLabel(row) }).catch((err: unknown) => {
+      if (err instanceof AgentArchivedError || err instanceof AgentStartError)
+        this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
+      else
+        this.d.log.error(
+          { err, agent: rt.agent.slug, message: row.id },
+          "delivering a message failed",
+        );
+    });
+    return undefined;
+  }
+
+  private async recipientOf(row: PendingRow): Promise<AgentRuntime> {
+    if (!row.toAgentId) throw new Error(`message ${row.id} has no agent recipient`);
+    const rt = await this.load(row.toAgentId);
+    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toAgentId} not found`);
+    return rt;
+  }
+
+  /** S6 §8: hands a committed held row (member update, peer event) to its recipient; never awaited, never throws. */
+  deliverHeld(row: PendingRow): void {
+    const to = row.toAgentId;
+    if (!to) {
+      this.d.log.error({ message: row.id }, "a held row has no agent recipient");
+      return;
+    }
+    void this.load(to)
+      .then((rt) => rt?.receiveHeld(row))
+      .catch((err: unknown) =>
+        this.d.log.error({ err, agentId: to, message: row.id }, "delivering a held row failed"),
+      );
+  }
+
+  /** The live status of a loaded runtime; for one not loaded, what its row says (errored or hibernated). */
+  statusOf(agent: Pick<AgentRow, "id" | "status">): AgentStatus {
+    const rt = this.loaded.get(agent.id);
+    if (rt) return rt.statusFrame().status;
+    return agent.status === "errored" ? "errored" : "hibernated";
   }
 
   /** One cleanup port for both runtimes: the local journal reap and the Docker container stop, by the agent's runtime. */

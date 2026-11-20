@@ -5,7 +5,15 @@ import { EventBus } from "../agents/event-bus.ts";
 import { EventStore } from "../agents/event-store.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import {
+  deliverHuman,
+  humanRow,
+  noForward,
+  noopTokens,
+  okSpec,
+  sendAs,
+  silentLog,
+} from "../agents/testing/runtime-harness.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -51,10 +59,12 @@ class World {
     await insertAgent(t.sql, { id, slug: `sup${n}`, ...(o.status ? { status: o.status } : {}) });
     if (o.errorKind) await t.sql`update agents set error_kind = ${o.errorKind} where id = ${id}`;
     for (const body of o.pending ?? [])
-      await store.createMessage({ fromUserId: "u1", toAgentId: id, body, urgent: false });
+      await store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
     const agent = await store.agentById(id);
     if (!agent) throw new Error("no agent");
     const rt = new AgentRuntime({
+      tokens: noopTokens,
+      forward: noForward,
       agent,
       store,
       bus: this.bus,
@@ -100,7 +110,7 @@ afterEach(async () => {
 });
 
 const send = (rt: AgentRuntime, body: string) =>
-  rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent: false });
+  sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent: false });
 const status = (rt: AgentRuntime) => rt.live().status;
 const started = (rt: AgentRuntime) => w.starts(rt).length > 0;
 const stopped = (rt: AgentRuntime) => w.starts(rt).some((p) => p.stopped);
@@ -232,10 +242,14 @@ test("a cap lowered by config at boot with more queued than slots evicts only as
   }
   expect([a, b, c].map(stopped)).toEqual([true, true, false]);
   expect([a.isStopping(), b.isStopping(), c.hibernatable()]).toEqual([true, true, true]);
+  // The freed slots go to the queue in FIFO order. One at a time: two slots freed together start d and e in two
+  // concurrent grant jobs, whose spawn order is up to the DB, not the queue.
   w.proc(a).releaseStop();
+  await w.settleAll();
+  expect([started(d), started(e)]).toEqual([true, false]);
+  expect(status(e)).toBe("queued");
   w.proc(b).releaseStop();
   await w.settleAll();
-  // The freed slots go to the queue in FIFO order.
   const order = w.driver.starts.map((p) => p.spec.agentId);
   expect(order.slice(3)).toEqual([d.agent.id, e.agent.id]);
   expect(stopped(c)).toBe(false);
@@ -295,8 +309,13 @@ test("a victim that refuses is replaced by the next candidate", async () => {
   await idleAt(b, 2000);
   // A message reaches a between the pick and its hibernate job: a re-checks in its job and refuses.
   const original = a.hibernate.bind(a);
+  const meanwhile = await humanRow(store, a, {
+    fromUserId: "u1",
+    body: "meanwhile",
+    urgent: false,
+  });
   vi.spyOn(a, "hibernate").mockImplementationOnce((reason) => {
-    void send(a, "meanwhile");
+    void deliverHuman(a, meanwhile); // enqueued ahead of the hibernate job
     return original(reason);
   });
   await send(c, "hi");

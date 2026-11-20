@@ -43,6 +43,8 @@ function AppLayout() {
       onUnauthenticated: () => navigate({ to: "/sign-in" }),
       onStatus: setStatus,
       onMessage: (m) => {
+        // A message reached the humans: refetch the Inbox (only a mounted list actually fetches).
+        if (m.type === "inbox_changed") void qc.invalidateQueries({ queryKey: ["inbox"] });
         for (const fn of listeners.current) fn(m);
       },
       onOpen: () => setOpenCount((n) => n + 1),

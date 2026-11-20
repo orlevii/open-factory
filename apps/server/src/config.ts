@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,10 @@ export interface Config {
   dockerClaudeBin: string;
   cliBundle: string;
   agentUrl: string;
+  agentPort: number;
+  /** `FACTORY_AGENT_HOST`: replaces the default bind list when set. */
+  agentHosts: string[] | undefined;
+  memberUpdateDebounceMs: number;
 }
 
 /** The one gate rule (spec §13): start, validator, live status and Restart all ask this. */
@@ -80,6 +85,19 @@ const envSchema = z.object({
   FACTORY_DOCKER_CLAUDE_BIN: z.string().min(1).default("claude"),
   FACTORY_CLI_BUNDLE: z.string().min(1).default(DEFAULT_CLI_BUNDLE),
   FACTORY_AGENT_URL: httpUrl.optional(),
+  FACTORY_AGENT_PORT: z.coerce
+    .number({ message: "must be a port number" })
+    .int()
+    .min(0)
+    .max(65535)
+    .optional(),
+  FACTORY_AGENT_HOST: z.string().optional(),
+  FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: z.coerce
+    .number({ message: "must be a whole number of seconds" })
+    .int()
+    .min(0)
+    .max(86_400, "must be at most 86400 (one day)")
+    .default(30),
 });
 
 function expandHome(p: string): string {
@@ -95,6 +113,29 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   }
   const e = parsed.data;
   const publicUrl = (e.PUBLIC_URL ?? `http://localhost:${e.PORT}`).replace(/\/$/, "");
+  const agentPort = e.FACTORY_AGENT_PORT ?? e.PORT + 1;
+  const issues: string[] = [];
+  if (agentPort !== 0 && agentPort === e.PORT) {
+    issues.push(
+      "FACTORY_AGENT_PORT must differ from PORT (the agent listener is a separate server); set another port, or 0 for any free one",
+    );
+  }
+  if (agentPort > 65535) {
+    issues.push(
+      "FACTORY_AGENT_PORT defaults to PORT + 1, which is above 65535; set FACTORY_AGENT_PORT",
+    );
+  }
+  const agentHosts = e.FACTORY_AGENT_HOST?.split(",")
+    .map((h) => h.trim())
+    .filter(Boolean);
+  for (const h of agentHosts ?? []) {
+    if (!isIP(h)) {
+      issues.push(
+        `FACTORY_AGENT_HOST entry "${h}" must be an IP address (hostnames can't be matched to a source range)`,
+      );
+    }
+  }
+  if (issues.length) throw new ConfigError(issues);
   return {
     databaseUrl: e.DATABASE_URL,
     secretKey: e.FACTORY_SECRET_KEY,
@@ -113,6 +154,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     defaultImage: e.FACTORY_DEFAULT_IMAGE,
     dockerClaudeBin: e.FACTORY_DOCKER_CLAUDE_BIN,
     cliBundle: path.resolve(e.FACTORY_CLI_BUNDLE),
-    agentUrl: (e.FACTORY_AGENT_URL ?? `http://host.docker.internal:${e.PORT}`).replace(/\/$/, ""),
+    agentUrl: (e.FACTORY_AGENT_URL ?? `http://host.docker.internal:${agentPort}`).replace(
+      /\/$/,
+      "",
+    ),
+    agentPort,
+    agentHosts: agentHosts?.length ? agentHosts : undefined,
+    memberUpdateDebounceMs: e.FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS * 1000,
   };
 }

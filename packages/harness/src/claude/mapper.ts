@@ -127,6 +127,14 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
           model: String(e.model ?? ""),
           cwd: String(e.cwd ?? ""),
           claudeCodeVersion: String(e.claude_code_version ?? ""),
+          ...(Array.isArray(e.mcp_servers)
+            ? {
+                mcpServers: e.mcp_servers.map((m: Json) => ({
+                  name: String(m.name ?? ""),
+                  status: String(m.status ?? ""),
+                })),
+              }
+            : {}),
         });
       }
       out.push({ type: "turn_started" });

@@ -5,6 +5,7 @@ import { templateConfigSchema } from "@open-factory/shared";
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
+import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -26,7 +27,11 @@ export interface DockerLaunch {
 /** The spec of one start; a Docker start also carries its `launch` (never passed to the driver). */
 export type PreparedSpec = AgentRuntimeSpec & { launch?: DockerLaunch };
 
-export type PrepareStart = (agent: AgentRow) => Promise<PreparedSpec>;
+/** `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. */
+export type PrepareStart = (
+  agent: AgentRow,
+  extra: { agentToken: string },
+) => Promise<PreparedSpec>;
 
 export const CLI_BUNDLE_MISSING = "Build the CLI first (pnpm build).";
 
@@ -49,10 +54,11 @@ export function createPrepareStart(d: {
   lock: KeyedMutex;
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
   containers?: Pick<ContainerManager, "stopIfRunning">;
+  neighborhood: Neighborhood;
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
-  return (stale) =>
+  return (stale, { agentToken }) =>
     d.lock.run(stale.slug, async () => {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
@@ -129,6 +135,12 @@ export function createPrepareStart(d: {
           .where(eq(schema.agents.id, agent.reportsTo));
         manager = m ?? null;
       }
+      const hood = await d.neighborhood.of(agent.id);
+      const entry = (a: AgentRow) => ({
+        slug: a.slug,
+        displayName: a.displayName,
+        description: a.description,
+      });
       const grants = await d.db
         .select({ name: schema.projects.name, hostPath: schema.projects.hostPath })
         .from(schema.agentProjectGrants)
@@ -156,6 +168,12 @@ export function createPrepareStart(d: {
           config,
           manager,
           grants,
+          peers: hood.peers.map(entry),
+          reports: hood.reports.map(entry),
+          mcpUrl:
+            config.runtime === "docker"
+              ? `${d.config.agentUrl}/mcp`
+              : `http://127.0.0.1:${d.config.agentPort}/mcp`,
         });
       } catch (err) {
         if (err instanceof WorkspaceError) throw new AgentStartError(err.message, err.fix);
@@ -179,6 +197,7 @@ export function createPrepareStart(d: {
             credential: { kind: cred.kind, value: credentialValue },
             secrets,
             agentUrl: d.config.agentUrl,
+            agentToken,
           },
           config.runtime,
         ),

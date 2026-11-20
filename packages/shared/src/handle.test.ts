@@ -11,7 +11,7 @@ describe("handleSchema", () => {
   );
   test("rejects reserved handles", () => {
     for (const h of RESERVED_HANDLES) expect(handleSchema.safeParse(h).success).toBe(false);
-    expect(RESERVED_HANDLES).toEqual(["humans", "me", "scheduler", "factory"]);
+    expect(RESERVED_HANDLES).toEqual(["humans", "me", "scheduler", "factory", "all", "system"]);
   });
   test("is synchronous (better-auth rejects async validators)", () => {
     expect(() => handleSchema.parse("ok-handle")).not.toThrow();

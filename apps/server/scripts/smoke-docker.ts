@@ -248,7 +248,8 @@ async function turn(body: string, ms = 240_000): Promise<{ from: number; events:
   const from = await lastSeq();
   const rt = await app.runtimes.bySlug(SLUG);
   if (!rt) throw new Error(`no runtime for ${SLUG}`);
-  await rt.sendMessage({ fromUserId: "smoke", fromHandle: "smoke", body, urgent: false });
+  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, SLUG, body, false);
+  if (!sent.ok) throw new Error(`send to ${SLUG} failed: ${sent.message}`);
   const got = await until(
     "the turn to end",
     async () => {
@@ -570,7 +571,8 @@ try {
     brief(JSON.stringify(sleepProc)),
   );
 
-  // 6. The factory is reachable from the container (spec §11.6).
+  // 6. The factory is reachable from the container (spec §11.6). Since the messaging work OPEN_FACTORY_URL names the
+  // agent listener, whose /api/status answers the version only (no database check).
   const curl = await exec(["curl", "-s", "--max-time", "10", `${config.agentUrl}/api/status`]);
   let statusBody: { version?: unknown; db?: unknown } = {};
   try {
@@ -578,7 +580,7 @@ try {
   } catch {}
   check(
     "6. curl $OPEN_FACTORY_URL/api/status from the container answers",
-    curl.code === 0 && statusBody.db === "ok" && typeof statusBody.version === "string",
+    curl.code === 0 && statusBody.db === undefined && typeof statusBody.version === "string",
     `GET ${config.agentUrl}/api/status → exit ${curl.code}: ${brief(curl.stdout)}`,
   );
 

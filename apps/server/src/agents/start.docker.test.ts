@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
+import { Neighborhood } from "../messaging/neighborhood.ts";
 import {
   ContainerManager,
   containerName,
@@ -30,7 +31,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
-import { silentLog } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, silentLog } from "./testing/runtime-harness.ts";
 
 /**
  * The Docker start path end to end over a fake Docker daemon (spec §10, §11): the real prepareStart, Workspace,
@@ -179,8 +180,11 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
     workspace,
     lock,
     containers,
+    neighborhood: new Neighborhood(t.db),
   });
   const runtimes = new AgentRuntimes({
+    tokens: noopTokens,
+    forward: noForward,
     store,
     bus: new EventBus(),
     driver: createClaudeDriver({
@@ -209,7 +213,7 @@ async function setup(scenario: string | FakeScenario = "reply"): Promise<World> 
 }
 
 const send = (w: World, body = "hi") =>
-  w.rt.sendMessage({ fromUserId: "u1", fromHandle: "or", body, urgent: false });
+  sendAs(store, w.rt, { fromUserId: "u1", fromHandle: "or", body, urgent: false });
 const events = async (w: World): Promise<AnyEvent[]> =>
   (await store.after(w.agent.id, 0, 1000)).map((e) => e.event as AnyEvent);
 const until = (check: () => unknown | Promise<unknown>) =>
@@ -623,7 +627,10 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
   const message =
     "Can't reach Docker at unix:///tmp/of-test-docker.sock: connect ECONNREFUSED /tmp/of-test-docker.sock.";
   // The prepare path (the image is known): stopIfRunning can't reach the daemon.
-  await expect(w.prepareStart(w.agent)).rejects.toMatchObject({ name: "AgentStartError", message });
+  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
+    name: "AgentStartError",
+    message,
+  });
   expect(w.workspace.prepare).not.toHaveBeenCalled();
   // A wake: the image check can't reach it either.
   await send(w);
@@ -634,7 +641,7 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
 test("missing CLI bundle: 'Build the CLI first (pnpm build).'", async () => {
   const w = await setup();
   rmSync(w.cliBundle);
-  await expect(w.prepareStart(w.agent)).rejects.toMatchObject({
+  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
     message: "Build the CLI first (pnpm build).",
   });
@@ -651,6 +658,8 @@ test.each(["abc", "0", "-5", "12345678901"])(
     w.docker.pidFile = pidFile;
     await w.rt.stop({ graceMs: 50, termWaitMs: 200 });
     await until(async () => expect((await events(w)).map((e) => e.type)).toContain("exited"));
+    // `exited` is appended mid-job and the slot is released further down that same job: let the job finish.
+    await w.rt.settled();
 
     expect(execRuns(w)).toContainEqual(["cat", CLAUDE_PID_FILE]);
     expect(execRuns(w).some((cmd) => cmd[0] === "kill")).toBe(false);

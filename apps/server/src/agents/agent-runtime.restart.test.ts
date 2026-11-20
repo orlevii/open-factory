@@ -3,7 +3,7 @@ import type { AgentRuntime } from "./agent-runtime.ts";
 import { AgentStartError } from "./errors.ts";
 import type { EventStore } from "./event-store.ts";
 import { ev, type FakeDriver, type FakeProcess } from "./testing/fake-driver.ts";
-import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 
 const h = new RuntimeHarness();
 let store: EventStore;
@@ -181,7 +181,7 @@ test("pending items trigger the restart's own start; a start failure keeps its r
   await idle();
   driver.last.holdStop = true;
   await rt.requestRestart();
-  const p = send("queued").catch(() => {});
+  const p = deliverHuman(rt, await h.row("queued")).catch(() => {}); // pending before the exit, not after it
   h.startError = new AgentStartError(
     "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.",
     "secrets",
@@ -199,7 +199,9 @@ test("shutdown during the grace never respawns", async () => {
   await idle();
   driver.last.holdStop = true;
   await rt.requestRestart();
-  const s = send("x").catch(() => {});
+  // The row first, then its delivery enqueued ahead of the stop: a message whose insert lands after the stop is done
+  // isn't one that arrived during the grace, and rightly wakes the agent (no closing latch here).
+  const s = deliverHuman(rt, await h.row("x")).catch(() => {});
   const stopping = rt.stop();
   expect(rt.live().restartPending).toBe(false);
   driver.starts[0]?.releaseStop();
@@ -213,7 +215,7 @@ test("archive during the grace never respawns and clears restartPending", async 
   await idle();
   driver.last.holdStop = true;
   await rt.requestRestart();
-  const s = send("x").catch(() => {});
+  const s = deliverHuman(rt, await h.row("x")).catch(() => {}); // delivered during the grace, not after it
   await rt.settled();
   rt.markArchived();
   const stopping = rt.stop({ graceMs: 3000, termWaitMs: 10_000 });
@@ -256,22 +258,18 @@ test("a shutdown landing while the restart's exit job is in prepareStart never s
   await idle();
   driver.last.holdStop = true;
   await rt.requestRestart();
-  const s = send("x").catch(() => {});
+  const s = deliverHuman(rt, await h.row("x")).catch(() => {});
   await rt.settled();
   let open: () => void = () => {};
   h.prepareGate = new Promise<void>((r) => {
     open = r;
   });
   driver.starts[0]?.releaseStop();
-  await vi.waitFor(() => expect(h.prepareCalls).toBe(2)); // the exit job is suspended in the respawn's prepare
+  await h.prepared(2); // the exit job is suspended in the respawn's prepare
   const stopping = rt.stop({ graceMs: 3000, termWaitMs: 10_000 });
   open();
-  const outcome = await Promise.race([
-    stopping.then(() => "stopped"),
-    new Promise((r) => setTimeout(() => r("hung"), 2000)),
-  ]);
+  await stopping; // a stop() that never resolved fails at the test timeout
   await s;
-  expect(outcome).toBe("stopped");
   expect(driver.starts).toHaveLength(1);
   expect(rt.live().status).toBe("hibernated");
   expect(rt.queueItems().map((i) => (i.kind === "message" ? i.body : i.kind))).toEqual(["x"]); // still pending for the next start
@@ -281,24 +279,27 @@ test("a shutdown landing while the restart's exit is being recorded never spawns
   await idle();
   driver.last.holdStop = true;
   await rt.requestRestart();
-  const s = send("x").catch(() => {});
+  const s = deliverHuman(rt, await h.row("x")).catch(() => {});
   await rt.settled();
   let open: () => void = () => {};
   const gate = new Promise<void>((r) => {
     open = r;
   });
-  let reached = false;
+  let reach: () => void = () => {};
+  const reached = new Promise<void>((r) => {
+    reach = r;
+  });
   const real = store.append.bind(store);
   const spy = vi.spyOn(store, "append").mockImplementation(async (...args) => {
     if (args[2].type === "exited") {
-      reached = true;
+      reach();
       await gate;
     }
     return real(...args);
   });
   try {
     driver.starts[0]?.releaseStop();
-    await vi.waitFor(() => expect(reached).toBe(true));
+    await reached;
     const stopping = rt.stop();
     open();
     await stopping;
@@ -364,7 +365,8 @@ test("an unexpected exit clears restartPending; only the crash recovery starts a
 });
 
 test("requestRestart racing a start: the start wins the queue, the restart waits for the first turn", async () => {
-  const p = send("hi");
+  const row = await h.row("hi");
+  const p = deliverHuman(rt, row); // enqueued first: the start wins the queue
   const r = rt.requestRestart();
   await Promise.all([p, r]);
   expect(driver.starts).toHaveLength(1);

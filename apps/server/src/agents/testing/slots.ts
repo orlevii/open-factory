@@ -1,13 +1,15 @@
-import type { SlotPort, WakeReason } from "../../supervisor/slots.ts";
+import type { CredentialPause, SlotPort, WakeReason } from "../../supervisor/slots.ts";
 
 export type SlotEvent = ["request", WakeReason] | ["release"] | ["hibernatable"] | ["stop_failed"];
 
-/** A SlotPort that records every call and grants every wake. */
+/** A SlotPort that records every call and grants every wake (unless `answer` says otherwise). */
 export class RecordingSlots implements SlotPort {
   readonly events: SlotEvent[] = [];
-  requestWake(_agentId: string, reason: WakeReason): "granted" {
+  /** What every wake request answers (default: granted). */
+  answer: "granted" | "queued" | "dropped" = "granted";
+  requestWake(_agentId: string, reason: WakeReason): "granted" | "queued" | "dropped" {
     this.events.push(["request", reason]);
-    return "granted";
+    return this.answer;
   }
   release() {
     this.events.push(["release"]);
@@ -28,7 +30,7 @@ export class RecordingSlots implements SlotPort {
     return false;
   }
   pause() {}
-  pauseOf() {
+  pauseOf(_agentId?: string): CredentialPause | undefined {
     return undefined;
   }
 }

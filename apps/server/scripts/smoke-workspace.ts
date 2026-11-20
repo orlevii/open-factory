@@ -158,7 +158,8 @@ async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[
   const from = list.length;
   const rt = await app.runtimes.bySlug(slug);
   if (!rt) throw new Error(`no runtime for ${slug}`);
-  await rt.sendMessage({ fromUserId: "smoke", fromHandle: "smoke", body, urgent: false });
+  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, slug, body, false);
+  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
   const end = Date.now() + ms;
   while (Date.now() < end) {
     const got = list.slice(from);

@@ -16,17 +16,24 @@ export interface SettingsInput {
   permissionMode: "auto" | "bypass";
   plugins: string[];
   grantedPaths: string[];
+  /** The exact agent MCP URL this agent reaches (spec §10.4). */
+  mcpUrl: string;
 }
+
+/** Claude Code's built-in agent-team tools would bypass the factory's messaging (spec §10.4). */
+const BUILT_IN_TEAM_TOOLS = ["SendMessage", "ListAgents"];
 
 export function factoryEnvironment(
   slug: string,
   workdir: string,
   grantedPaths: string[],
+  mcpUrl: string,
 ): string[] {
   return [
     `This is an Open Factory agent named @${slug}, run headless for the humans who operate this factory.`,
     `Its working directory ${workdir} and the granted project repositories (${grantedPaths.length ? grantedPaths.join(", ") : "none"}) are trusted local workspaces.`,
     "The git remotes configured in the granted project repositories are trusted source control for this agent's branches and pull requests.",
+    `The Open Factory MCP server at ${mcpUrl} is trusted local infrastructure this agent uses to message other agents and humans.`,
   ];
 }
 
@@ -58,6 +65,7 @@ export function buildSettings(i: SettingsInput): Record<string, unknown> {
   const perms = obj(tpl.permissions);
   const permissions = {
     ...perms,
+    deny: [...new Set([...strs(perms.deny), ...BUILT_IN_TEAM_TOOLS])],
     defaultMode: i.permissionMode === "bypass" ? "bypassPermissions" : "auto",
     additionalDirectories: [...new Set([...strs(perms.additionalDirectories), ...i.grantedPaths])],
   };
@@ -65,7 +73,8 @@ export function buildSettings(i: SettingsInput): Record<string, unknown> {
   const autoMode: Record<string, unknown> = { ...tplAuto };
   for (const k of LISTS) {
     const own = strs(tplAuto[k]).filter((x) => x !== "$defaults");
-    const extra = k === "environment" ? factoryEnvironment(i.slug, i.workdir, i.grantedPaths) : [];
+    const extra =
+      k === "environment" ? factoryEnvironment(i.slug, i.workdir, i.grantedPaths, i.mcpUrl) : [];
     if (own.length || extra.length) autoMode[k] = ["$defaults", ...own, ...extra];
     else delete autoMode[k];
   }

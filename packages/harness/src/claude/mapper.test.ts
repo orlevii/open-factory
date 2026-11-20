@@ -46,6 +46,7 @@ test("rate-limit-event-allowed: one plain turn; allowed rate limit dropped", () 
     model: "claude-haiku-5-5",
     cwd: "/spike/work/a",
     claudeCodeVersion: "2.1.327",
+    mcpServers: [],
   });
   expect(events[2]).toEqual({ type: "assistant_text", text: "pong" });
   expect(ofType(events, "usage")[0]).toMatchObject({
@@ -683,5 +684,22 @@ test("the rejected rate-limit fixture maps to rate_limited", () => {
   expect(evs.find((e) => e.type === "rate_limited")).toMatchObject({
     status: "rejected",
     rateLimitType: "five_hour",
+  });
+});
+
+test("session_started carries the MCP connection results (fixture mcp-http-env-header)", () => {
+  const { events } = mapFixture("mcp-http-env-header");
+  const s = events.find((e) => e.type === "session_started");
+  expect(s).toMatchObject({ mcpServers: [{ name: "factory", status: "connected" }] });
+});
+
+test("session_started passes through any MCP status string, including pending", () => {
+  const { events } = mapFixture("mcp-plugin-and-project");
+  const s = events.find((e) => e.type === "session_started");
+  expect(s).toMatchObject({
+    mcpServers: [
+      { name: "plugin:vplug:plugsrv", status: "connected" },
+      { name: "proj", status: "connected" },
+    ],
   });
 });

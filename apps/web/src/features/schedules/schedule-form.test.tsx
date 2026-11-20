@@ -171,7 +171,7 @@ test("creating sends the form's values and returns to the list with Created S-8.
     cron: "0 9 * * 1-5",
     body: "Review the board",
   });
-  expect((post?.body as { timezone: string }).timezone).toBeTruthy();
+  expect(post?.body).toHaveProperty("timezone", expect.any(String));
   expect(screen.getByRole("heading", { name: "Schedules" })).toBeInTheDocument();
 });
 

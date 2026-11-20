@@ -6,7 +6,7 @@
 - **UI design:** [`docs/superpowers/designs/2026-11-20-s8-tasks-inbox-ui-design.md`](../designs/2026-11-20-s8-tasks-inbox-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/task.md`, `message.md`, `user.md`, `agent.md`, `reporting-line.md`; `docs/product/behavior/tasks.md`, `inbox.md`, `agents-and-sessions.md`; `docs/product/architecture/factory-mcp.md`, `data-model.md`, `context-assembly.md`, `usage-tracking.md`; ADRs 0002, 0004, 0012, 0015, 0019; `docs/product/open-questions.md` (S0 and S4–S7 findings).
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md): delivery queue, event store, deep links and the highlight), S4 ([spec](2026-11-19-s4-templates-workspace-design.md): `buildClaudeMd`, `MarkdownEditor`), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): wake reasons, `ERRORED_WAKES`, boot reconciliation, rate-limit pauses), S6 ([spec](2026-11-19-s6-messaging-reporting-design.md): agent listener, tokens, factory MCP, router, one namespace, truthful senders, envelopes, `inbox_items`, `GET /api/messages/:id`) and S7 ([spec](2026-11-19-s7-spawning-design.md): terminated agents, the live predicate, lock order, per-caller tool lists).
-- **Decision log:** the S8 decision issue (linked from the PR).
+- **Decision log:** #59 ("S8 Tasks and inbox: design decisions").
 - **Stacked on:** `spec/s7-spawning` (PR #58) → `spec/s6-messaging-reporting` (PR #53) → `spec/s5-supervisor-docker` (PR #46) → `spec/s4-templates-workspace` (PR #37) → `spec/s3-walking-skeleton` (PR #27).
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -453,7 +453,7 @@ Before that, **plan task 1** checks V1 alone, as S7 did: a probe registration of
 
 Consumed: none fully. Touched: **#47** (comments are a second agent-to-agent path; `@humans` mentions; no task caps): a note, stays open. Untouched: #48, #49 (no CLI in S8), #22, #23 and the rest.
 
-Follow-ups (new issues, linked from the PR): an "assigned to an ended agent" filter; text search over tasks; per-task usage storage if S10 wants a column; browser notifications, if moved out of the PR.
+Follow-ups: an "assigned to an ended agent" filter (#60); text search over tasks (#61); how turns map to tasks for per-task usage, decided in S10 (#62); browser notifications get their own issue only if they move out of the PR.
 
 ## 22. Decisions needing Or's call (owner-proxy certainty 3/5)
 

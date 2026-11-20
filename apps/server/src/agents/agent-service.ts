@@ -317,6 +317,21 @@ export class AgentService {
     return changed;
   }
 
+  private async liveChildren(spawnerId: string): Promise<string[]> {
+    const rows = await this.d.db
+      .select({ id: schema.agents.id })
+      .from(schema.agents)
+      .where(
+        and(
+          eq(schema.agents.reportsTo, spawnerId),
+          eq(schema.agents.kind, "ephemeral"),
+          isNull(schema.agents.terminatedAt),
+        ),
+      )
+      .orderBy(asc(schema.agents.id));
+    return rows.map((r) => r.id);
+  }
+
   /** After the commit: the Supervisor reads the credential from the loaded row, so reload, then apply (§6.3). */
   private async applyToChildren(ids: string[]) {
     for (const id of ids) {
@@ -610,7 +625,9 @@ export class AgentService {
     }
     await runtimes.refresh(row.id);
     await runtimes.requestRestart(row.id);
-    await this.applyToChildren(children);
+    // A re-sync can change the spawner's secrets and deny rules, which each child derives at its start (§6.3): every
+    // live child restarts, not only those whose credential or grants changed (a child never holds more than its spawner).
+    await this.applyToChildren([...new Set([...children, ...(await this.liveChildren(row.id))])]);
     return { agent: await this.summary(slug), applied, ...(backupDir ? { backupDir } : {}) };
   }
 

@@ -896,6 +896,21 @@ test("a sweep during a termination that is still stopping: one terminated event,
   expect(await w.row()).toMatchObject({ runtime_journal: null, error_kind: null });
 });
 
+test("a stuck terminated agent records stop_escalated once, however many sweeps retry the escalation", async () => {
+  const w = await world();
+  await makeStopFailed(w);
+  w.docker.removeError = new Error("the daemon refused");
+  await w.terminate("@or");
+  await w.settled();
+  const escalations = async () => (await w.events()).filter((e) => e.type === "stop_escalated");
+  const before = (await escalations()).length;
+  expect(await w.rt.sweepStuck()).toBe("still");
+  expect(await w.rt.sweepStuck()).toBe("still");
+  await w.settled();
+  expect((await escalations()).length).toBeLessThanOrEqual(Math.max(before, 1));
+  expect((await escalations()).length).toBe(Math.max(before, 1));
+});
+
 test("a sweep while a shutdown stop is in progress does nothing", async () => {
   const w = await world();
   await w.idle();

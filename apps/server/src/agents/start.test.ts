@@ -514,6 +514,7 @@ test.each([
   try {
     await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
       name: "AgentStartError",
+      message: expect.stringMatching(/(can't start| Terminate it and spawn a new one)\.$/),
       fix: undefined,
     });
     expect(prepare).not.toHaveBeenCalled();

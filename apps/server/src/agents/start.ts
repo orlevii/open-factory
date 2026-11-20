@@ -71,7 +71,7 @@ export async function deriveInheritance(
   const parsed = templateConfigSchema.safeParse(spawner.config);
   if (!parsed.success)
     throw new AgentStartError(
-      `The saved configuration of ${by} is invalid. Edit @${spawner.slug} to fix it.`,
+      `The saved configuration of ${by} is invalid. Terminate it and spawn a new one.`,
     );
   let spawnerSettings: Record<string, unknown>;
   try {
@@ -79,7 +79,7 @@ export async function deriveInheritance(
   } catch (err) {
     if (err instanceof WorkspaceError)
       throw new AgentStartError(
-        `The template copy of ${by} can't be read. Re-sync @${spawner.slug}.`,
+        `The template copy of ${by} can't be read. Terminate it and spawn a new one.`,
       );
     throw err;
   }

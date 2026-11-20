@@ -231,6 +231,8 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
         .agents.map((a: { slug: string }) => a.slug),
     ).toEqual(["boss"]);
     expect((await call("GET", "/api/agents")).json().agents).toEqual([]);
+    // The renamed parameter is a clear 400, not a silently different list.
+    expect((await call("GET", "/api/agents?archived=only")).statusCode).toBe(400);
     expect((await call("POST", "/api/agents/boss/unarchive")).json().agent.archivedAt).toBeNull();
 
     for (const [m, url] of [

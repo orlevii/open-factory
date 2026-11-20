@@ -333,6 +333,7 @@ export class AgentRuntime {
   private erroredForwarded: boolean;
   private readonly escalations = new WeakMap<HarnessProcess, Promise<void>>();
   private readonly tokenGens = new WeakMap<HarnessProcess, number>(); // the token generation each process was started with
+  private readonly escalationRecorded = new WeakSet<HarnessProcess>();
   private readonly escalated = new WeakSet<HarnessProcess>(); // SIGKILLed or container-stopped: its exit reaps (§9.6)
   private escalationTimer: ReturnType<typeof setTimeout> | undefined;
   private lastStatusJson = "";
@@ -2639,9 +2640,13 @@ export class AgentRuntime {
     if (proc !== this.proc) return; // its exit was recorded meanwhile
     const how = this.cleanupTarget().runtime === "docker" ? "container_stop" : "sigkill";
     this.d.log.warn({ agent: this.agent.slug, pid: proc.pid, how }, "stop timed out; escalating");
-    await this.append(null, { type: "stop_escalated", how }).catch((err) =>
-      this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),
-    );
+    // Once per process: a stuck terminated agent is retried by every sweep and must not append one event each time.
+    if (!this.escalationRecorded.has(proc)) {
+      this.escalationRecorded.add(proc);
+      await this.append(null, { type: "stop_escalated", how }).catch((err) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),
+      );
+    }
     this.escalated.add(proc); // even a failed one: whenever it exits, the exit reaps
     try {
       await proc.forceKill();

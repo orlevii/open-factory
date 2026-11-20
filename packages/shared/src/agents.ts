@@ -135,7 +135,8 @@ export const compactBodySchema = z.object({
 });
 export const queueItemResponseSchema = z.object({ item: queueItemSchema });
 
-export const agentListQuerySchema = z.object({
+// Strict: `?archived=` was renamed to `?ended=` in S7, and an old caller must get a 400, not a silently changed list.
+export const agentListQuerySchema = z.strictObject({
   ended: z.enum(["exclude", "only"]).default("exclude"),
 });
 export const SPAWN_SUFFIX_PATTERN = /^[a-z0-9-]+$/;

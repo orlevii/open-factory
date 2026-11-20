@@ -160,6 +160,22 @@ test("a spawner re-sync whose template drops a project removes it from its child
   expect(restarts.mock.calls.map((c) => c[0])).toContain(child.id);
 });
 
+test("a spawner re-sync refreshes and restarts every live child, even when its grants are unchanged", async () => {
+  const { t, driver, lead } = await setup();
+  const child = await spawnIdle(t, driver, lead.id, "r2");
+  const gone = await spawnIdle(t, driver, lead.id, "r3");
+  expect(await t.app.terminator.terminate(gone.id, "@or")).toEqual({ status: "terminated" });
+  await gone.rt.settled();
+  const restarts = vi.spyOn(t.app.runtimes, "requestRestart");
+  const refreshes = vi.spyOn(t.app.runtimes, "refresh");
+
+  await t.app.agents.resync("lead");
+  // The child's secrets and deny rules derive from the spawner at start, so it restarts to pick the change up.
+  expect(refreshes.mock.calls.map((c) => c[0])).toContain(child.id);
+  expect(restarts.mock.calls.map((c) => c[0])).toContain(child.id);
+  expect(restarts.mock.calls.map((c) => c[0])).not.toContain(gone.id);
+});
+
 test("terminated children are never touched by syncChildren", async () => {
   const { t, driver, lead, creds, projects } = await setup();
   const live = await spawnIdle(t, driver, lead.id, "l1");

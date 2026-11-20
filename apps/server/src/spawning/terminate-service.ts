@@ -58,6 +58,9 @@ export class TerminateService implements TerminatePort {
     by: string,
     o: { latched?: boolean } = {},
   ): Promise<{ status: "terminated" }> {
+    // These guards run before the provisional latch and its unmark-on-failure try below, on purpose: nothing is latched
+    // yet. A caller that latched already (`latched: true`) owns its own unmark if one of them throws (a new latched caller
+    // must not rely on terminate() to unmark for it).
     const rt = await this.d.runtimes.load(agentId);
     if (!rt) throw new ApiError(404, "agent_not_found", "No such agent");
     if (rt.agent.kind !== "ephemeral")

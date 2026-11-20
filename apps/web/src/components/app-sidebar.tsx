@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Mark, Wordmark } from "@/components/wordmark";
 import { useUnreadCount } from "@/features/inbox/api";
+import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
@@ -70,6 +72,7 @@ export function AppSidebar() {
   const user = session?.user;
   const theme = useThemePreference();
   const { data: unread = 0 } = useUnreadCount();
+  const notifications = useBrowserNotifications();
 
   async function signOut() {
     await authClient.signOut();
@@ -201,6 +204,24 @@ export function AppSidebar() {
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
+                {notifications.supported && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {/* preventDefault keeps the menu open, so the description under the switch is seen. */}
+                    <DropdownMenuCheckboxItem
+                      checked={notifications.enabled}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        void notifications.toggle();
+                      }}
+                    >
+                      Browser notifications
+                    </DropdownMenuCheckboxItem>
+                    {notifications.blocked && (
+                      <p className="px-2 pb-1 text-xs text-muted-foreground">{BLOCKED_NOTE}</p>
+                    )}
+                  </>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void signOut()}>
                   <LogOut aria-hidden="true" />

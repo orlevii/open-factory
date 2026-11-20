@@ -5,6 +5,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { useInboxNotifier } from "@/features/inbox/notifications";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -33,6 +34,10 @@ function AppLayout() {
   const [openCount, setOpenCount] = useState(0);
   const listeners = useRef(new Set<(m: ServerMessage) => void>());
   const conn = useRef<WsConnection | null>(null);
+  const notify = useInboxNotifier();
+  // The socket outlives renders: it always calls the latest notifier.
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
   useEffect(() => {
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.
@@ -48,6 +53,7 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
           void qc.invalidateQueries({ queryKey: ["inbox-unread"] });
           void qc.invalidateQueries({ queryKey: ["inbox-home"] });
+          notifyRef.current();
         }
         // S8: the list, an open detail page and the agents' open-task counts refetch (only mounted ones fetch).
         if (m.type === "tasks_changed") {

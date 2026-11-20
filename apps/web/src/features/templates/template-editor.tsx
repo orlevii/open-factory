@@ -5,7 +5,7 @@ import {
   type TemplateFile,
   type TemplateIssue,
 } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Loader2, Trash2, UserPlus } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
@@ -16,7 +16,9 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { factorySettingsQueryOptions } from "@/features/settings/api";
 import {
+  buildImage,
   deletedState,
   deleteTemplate,
   saveTemplateFile,
@@ -24,6 +26,7 @@ import {
   validateTemplateFile,
 } from "./api";
 import { CodeTextarea } from "./code-textarea";
+import { ImageStatusLabel } from "./image-status";
 import { IssueIcon, IssueList, sortIssues } from "./issue-list";
 
 type FileState = {
@@ -87,6 +90,8 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const [gone, setGone] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [jumpN, setJumpN] = useState(0);
+  // The live factory default, for the warm_window_minutes hint (Settings → Factory changes it).
+  const warmDefault = useQuery(factorySettingsQueryOptions).data?.defaultWarmWindowMinutes;
   const refs = useRef<Partial<Record<TemplateFile, HTMLTextAreaElement | null>>>({});
   // The last content each file was validated or saved as, so blur only asks when it changed.
   const checked = useRef<Partial<Record<TemplateFile, string>>>({});
@@ -292,6 +297,12 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
           <span>{template.config.runtime === "docker" ? "Docker" : "Local"}</span>
         )}
         {template.config && <span aria-hidden="true">·</span>}
+        {template.imageStatus && (
+          <>
+            <ImageLine image={template.imageStatus} />
+            <span aria-hidden="true">·</span>
+          </>
+        )}
         <span className="flex min-w-0 max-w-full font-mono">
           <MiddleTruncate text={template.path} />
         </span>
@@ -416,6 +427,12 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       textareaRef={attach(f)}
                     />
                   )}
+                  {f === "template.yaml" && s.started && warmDefault !== undefined && (
+                    <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+                      <code className="font-mono">warm_window_minutes</code>:{" "}
+                      <span>Omit to use the factory default ({warmDefault} min).</span>
+                    </p>
+                  )}
                   {s.started && <IssueList issues={mine} showFile={false} />}
                   {s.conflict && (
                     <div className="grid justify-items-start gap-2 text-sm">
@@ -537,5 +554,49 @@ function Status({ outcome }: { outcome?: Outcome }) {
         <InlineOutcome tone={outcome.tone}>{outcome.text}</InlineOutcome>
       )}
     </div>
+  );
+}
+
+/** `image:` with its status (spec §12.8), and Build for a user image that isn't built. */
+function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]> }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const canBuild =
+    image.kind === "user" &&
+    image.status !== "built" &&
+    image.status !== "building" &&
+    image.status !== "no_dockerfile";
+  const build = async () => {
+    setPending(true);
+    setError(undefined);
+    try {
+      await buildImage(image.name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2">
+      <span className="font-mono">image: {image.name}</span>
+      <ImageStatusLabel status={image.status} className="text-foreground" />
+      {canBuild && (
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-disabled={pending || undefined}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          onClick={() => !pending && void build()}
+        >
+          Build
+        </Button>
+      )}
+      {error && (
+        <span role="alert" className="text-destructive">
+          {error}
+        </span>
+      )}
+    </span>
   );
 }

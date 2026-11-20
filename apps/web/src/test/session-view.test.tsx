@@ -678,6 +678,21 @@ test("an error with fix credentials or projects links to that section", async ()
   );
 });
 
+test("an error with fix image links to Templates → Images", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message:
+      "Image `playwright` isn't built. Build it in Templates → Images, or run `open-factory images build playwright`.",
+    fix: "image",
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Open Templates → Images" })).toHaveAttribute(
+    "href",
+    "/templates#images",
+  );
+});
+
 test("an error with fix edit_agent links to the edit page", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",

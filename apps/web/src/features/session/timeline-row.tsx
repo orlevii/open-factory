@@ -207,8 +207,13 @@ function FixLink({
     );
   // The strip's disabled segment explains the runtime gate (S5 UI design §3.2): no link.
   if (fix === "runtime") return null;
-  // The Images page (S10) is the link for `image`; it lands with that page.
-  if (fix === "image") return null;
+  // An unbuilt user image is built in Templates → Images (spec §10.1).
+  if (fix === "image")
+    return (
+      <Link to="/templates" hash="images" className={cls}>
+        Open Templates → Images
+      </Link>
+    );
   // Re-sync lives on the agent's edit page.
   if (fix === "resync")
     return (

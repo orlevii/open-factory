@@ -473,3 +473,196 @@ test("the changed-on-disk block takes focus on its Reload button", async () => {
   await conflictPage();
   expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
 });
+
+// S10 §12.8: the Image column, the template page status and the Images section.
+
+const imagesList = (images: unknown[]) =>
+  json({
+    imagesDir: "/h/of/images",
+    baseImage: "ghcr.io/orlevii/open-factory/base:latest",
+    images,
+  });
+const img = (p: Record<string, unknown>) => ({ name: "playwright", usedBy: [], ...p });
+
+test("list: the Image column shows each status as an icon and a word, plus the image name", async () => {
+  const withImage = (name: string, kind: string, image: string, status: string) => ({
+    ...summary({ name }),
+    imageStatus: { kind, name: image, status },
+  });
+  mockApi({
+    "GET /api/templates": () =>
+      json({
+        dir: "/d",
+        templates: [
+          withImage("t1", "user", "pw", "building"),
+          withImage("t2", "user", "fl", "failed"),
+          withImage("t3", "user", "od", "out_of_date"),
+          withImage("t4", "user", "bu", "built"),
+          withImage("t5", "user", "nb", "not_built"),
+          withImage("t6", "user", "nd", "no_dockerfile"),
+          withImage("t7", "user", "uk", "unknown"),
+          withImage("t8", "registry", "ghcr.io/x/y:1", "present"),
+          withImage("t9", "registry", "ghcr.io/x/z:1", "pulled_on_start"),
+        ],
+      }),
+    "GET /api/images": () => imagesList([]),
+  });
+  renderApp("/templates", alice);
+  const icon = async (word: string) => {
+    const el = (await screen.findAllByText(word))[0] as HTMLElement;
+    const svg = el.closest("[data-image-status]")?.querySelector("svg");
+    expect(svg).not.toBeNull();
+    return svg as SVGElement;
+  };
+  expect(await icon("Building…")).toHaveClass("text-signal");
+  expect(await icon("Build failed")).toHaveClass("text-destructive");
+  expect(await icon("Out of date")).toHaveClass("text-warning");
+  expect(await icon("Built")).toHaveClass("text-success");
+  expect(await icon("Not built")).toHaveClass("text-muted-foreground");
+  expect(await icon("No Dockerfile")).toHaveClass("text-muted-foreground");
+  expect(await icon("Unknown")).toHaveClass("text-muted-foreground");
+  expect(await icon("Present locally")).toBeInTheDocument();
+  expect(await icon("Pulled when missing")).toHaveClass("text-muted-foreground");
+  expect(screen.getByText("ghcr.io/x/z:1")).toHaveClass("font-mono");
+  expect(screen.getByText("pw")).toHaveClass("font-mono");
+});
+
+test("Images section: rows with status, Used by, Build/Rebuild, View log only when a log is held; the note", async () => {
+  const api = mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () =>
+      imagesList([
+        img({
+          name: "playwright",
+          status: "built",
+          builtAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+          usedBy: ["lead", "dev"],
+        }),
+        img({ name: "fresh", status: "not_built" }),
+        img({
+          name: "broken",
+          status: "failed",
+          lastBuild: {
+            state: "failed",
+            finishedAt: new Date().toISOString(),
+            durationMs: 1000,
+            error: "boom",
+          },
+        }),
+      ]),
+    "POST /api/images/fresh/build": () => json({ state: "building" }, 202),
+    "GET /api/images/fresh/log": () => json({ state: null, lines: [] }),
+  });
+  renderApp("/templates", alice);
+  const section = await screen.findByRole("region", { name: "Images" });
+  const row = (name: string) =>
+    within(section).getByText(name, { selector: "[data-image-name]" }).closest("li") as HTMLElement;
+  await within(section).findByText("Built 2 hours ago");
+  expect(within(row("playwright")).getByText("Used by lead, dev")).toBeInTheDocument();
+  expect(within(row("playwright")).getByRole("button", { name: "Rebuild" })).toBeInTheDocument();
+  expect(within(row("playwright")).queryByRole("button", { name: "View log" })).toBeNull();
+  expect(within(row("fresh")).getByRole("button", { name: "Build" })).toBeInTheDocument();
+  expect(within(row("broken")).getByRole("button", { name: "View log" })).toBeInTheDocument();
+  expect(
+    within(section).getByText("Agents use a rebuilt image from their next start."),
+  ).toBeInTheDocument();
+
+  await userEvent.click(within(row("fresh")).getByRole("button", { name: "Build" }));
+  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
+    true,
+  );
+  expect(await within(row("fresh")).findByRole("log")).toBeInTheDocument();
+});
+
+test("Images section: empty state names imagesDir and baseImage from the server", async () => {
+  mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () => imagesList([]),
+  });
+  renderApp("/templates", alice);
+  const section = await screen.findByRole("region", { name: "Images" });
+  expect(
+    await within(section).findByText((_, el) =>
+      el?.tagName === "P"
+        ? el.textContent ===
+          "No images yet. Add a Dockerfile at /h/of/images/<name>/Dockerfile, starting FROM ghcr.io/orlevii/open-factory/base:latest."
+        : false,
+    ),
+  ).toBeInTheDocument();
+});
+
+test("Images section: an unknown status shows the Docker isn't reachable line; a failed load says so", async () => {
+  const api = mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () => imagesList([img({ status: "unknown" })]),
+  });
+  const { unmount } = renderApp("/templates", alice);
+  expect(
+    await screen.findByText(
+      "Docker isn't reachable. Check that the daemon is running and the server can reach its socket.",
+    ),
+  ).toBeInTheDocument();
+  unmount();
+  api.on("GET /api/images", () => json({ error: { code: "x", message: "boom" } }, 500));
+  renderApp("/templates", alice);
+  expect(await screen.findByText("Couldn't load images.")).toBeInTheDocument();
+});
+
+test("the header's Images link goes to #images and focuses the section heading", async () => {
+  mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () => imagesList([]),
+  });
+  renderApp("/templates#images", alice);
+  const heading = await screen.findByRole("heading", { name: "Images" });
+  await vi.waitFor(() => expect(heading).toHaveFocus());
+  expect(screen.getByRole("link", { name: "Images" })).toHaveAttribute("href", "/templates#images");
+});
+
+const withUserImage = (status: string) => {
+  const d = detail();
+  return {
+    template: {
+      ...d.template,
+      imageStatus: { kind: "user", name: "playwright", status },
+    },
+  };
+};
+
+test("template page: the image status next to image:, and Build for a not_built user image", async () => {
+  const api = mockApi({
+    "GET /api/templates/lead": () => json(withUserImage("not_built")),
+    "POST /api/images/playwright/build": () => json({ state: "building" }, 202),
+  });
+  renderApp("/templates/lead", alice);
+  expect(await screen.findByText("Not built")).toBeInTheDocument();
+  expect(screen.getByText("image: playwright")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Build" }));
+  expect(
+    api.calls.some((c) => c.method === "POST" && c.url === "/api/images/playwright/build"),
+  ).toBe(true);
+});
+
+test("template page: no Build button once the image is built", async () => {
+  mockApi({ "GET /api/templates/lead": () => json(withUserImage("built")) });
+  renderApp("/templates/lead", alice);
+  expect(await screen.findByText("Built")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Build" })).not.toBeInTheDocument();
+});
+
+test("editor: the warm_window_minutes hint shows the live factory default", async () => {
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "GET /api/settings/factory": () =>
+      json({
+        maxRunningAgents: 8,
+        defaultWarmWindowMinutes: 45,
+        memberUpdateDebounceSeconds: 60,
+        allowLocalRuntime: false,
+        updatedAt: null,
+        updatedBy: null,
+      }),
+  });
+  renderApp("/templates/lead", alice);
+  expect(await screen.findByText("Omit to use the factory default (45 min).")).toBeInTheDocument();
+});

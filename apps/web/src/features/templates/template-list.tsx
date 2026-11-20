@@ -2,6 +2,7 @@ import type { templateSummarySchema } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, TriangleAlert } from "lucide-react";
 import type { z } from "zod";
+import { ImageStatusLabel } from "./image-status";
 
 type Summary = z.infer<typeof templateSummarySchema>;
 
@@ -55,6 +56,12 @@ export function TemplateList({ dir, templates }: { dir: string; templates: Summa
             <span className="order-3 flex basis-full gap-4 text-[0.8125rem] text-muted-foreground md:order-none md:contents">
               {t.runtime && (
                 <span className="md:shrink-0">{t.runtime === "docker" ? "Docker" : "Local"}</span>
+              )}
+              {t.imageStatus && (
+                <span className="flex min-w-0 items-center gap-1.5 md:shrink-0">
+                  <ImageStatusLabel status={t.imageStatus.status} />
+                  <span className="truncate font-mono">{t.imageStatus.name}</span>
+                </span>
               )}
               <span className="md:shrink-0">
                 {t.agentCount === 0 ? "No agents" : plural(t.agentCount, "agent")}

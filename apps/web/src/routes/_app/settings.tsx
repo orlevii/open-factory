@@ -79,6 +79,13 @@ function SettingsPage() {
     document.getElementById(hash)?.scrollIntoView?.({ block: "start" });
     if (!(addSecret && hash === "secrets")) document.getElementById(`${hash}-title`)?.focus();
   }, [hash, addSecret]);
+  // A click on the anchor of the current hash changes no location, so the effect above doesn't
+  // run: move to the section here.
+  const revisit = (id: string) => {
+    if (id !== hash) return;
+    document.getElementById(id)?.scrollIntoView?.({ block: "start" });
+    document.getElementById(`${id}-title`)?.focus();
+  };
 
   return (
     <>
@@ -94,6 +101,7 @@ function SettingsPage() {
                     to="."
                     search={(prev) => prev}
                     hash={s.id}
+                    onClick={() => revisit(s.id)}
                     className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                   >
                     {s.title}

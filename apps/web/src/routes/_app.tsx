@@ -1,11 +1,12 @@
-import type { ServerMessage } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import type { AgentDetail, AgentSummary, ServerMessage } from "@open-factory/shared";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { useInboxNotifier } from "@/features/inbox/notifications";
+import { runningQueryKey } from "@/features/session/api";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -26,6 +27,15 @@ export const Route = createFileRoute("/_app")({
 
 const USAGE_DEBOUNCE_MS = 5000;
 
+/** `turnOpen` for an agent as the cached agent lists or detail last saw it; undefined when uncached. */
+function cachedTurnOpen(qc: QueryClient, slug: string): boolean | undefined {
+  for (const [, list] of qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] })) {
+    const row = Array.isArray(list) ? list.find((a) => a.slug === slug) : undefined;
+    if (row) return row.turnOpen;
+  }
+  return qc.getQueryData<AgentDetail>(["agent", slug])?.agent.turnOpen;
+}
+
 /** shadcn writes this cookie on every toggle; reading it keeps the collapsed state across reloads. */
 const sidebarOpenFromCookie = () => !document.cookie.split("; ").includes("sidebar_state=false");
 
@@ -40,6 +50,7 @@ function AppLayout() {
   // Last `turnOpen` per agent: a true to false edge is a finished turn, whose cost the usage views refetch.
   const turnOpen = useRef(new Map<string, boolean>());
   const usageTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const opened = useRef(false);
   // The socket outlives renders: it always calls the latest notifier.
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -80,27 +91,38 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["users"] });
           void qc.invalidateQueries({ queryKey: ["invites"] });
         }
-        if (m.type === "images_changed" || m.type === "image_build") {
+        // Only a build's start and end frames (no `lines`) change a status; the 250 ms log batches
+        // in between would refetch the list and every open template several times a second.
+        if (m.type === "images_changed" || (m.type === "image_build" && !m.lines)) {
           void qc.invalidateQueries({ queryKey: ["images"] });
           void qc.invalidateQueries({ queryKey: ["templates"] });
         }
         if (m.type === "agent_status") {
-          const was = turnOpen.current.get(m.agent);
+          // Before the first frame for an agent, the cached list or detail (fetched over REST) tells
+          // whether a turn was already open when the socket connected. Listeners run after this, so
+          // the cache still holds the state from before this frame.
+          const was = turnOpen.current.get(m.agent) ?? cachedTurnOpen(qc, m.agent);
           turnOpen.current.set(m.agent, m.turnOpen);
-          if (was === true && !m.turnOpen) {
-            clearTimeout(usageTimer.current);
-            usageTimer.current = setTimeout(
-              () => void qc.invalidateQueries({ queryKey: ["usage"] }),
-              USAGE_DEBOUNCE_MS,
-            );
+          // A 5 s window that further edges don't extend: a busy factory still refreshes.
+          if (was === true && !m.turnOpen && usageTimer.current === undefined) {
+            usageTimer.current = setTimeout(() => {
+              usageTimer.current = undefined;
+              void qc.invalidateQueries({ queryKey: ["usage"] });
+            }, USAGE_DEBOUNCE_MS);
           }
         }
         for (const fn of listeners.current) fn(m);
       },
       onOpen: () => {
         setOpenCount((n) => n + 1);
-        // Turns may have finished while the socket was down.
+        // The first open follows the loaders' fetches; a reconnect may have missed turn ends and
+        // supervisor frames while the socket was down.
+        if (!opened.current) {
+          opened.current = true;
+          return;
+        }
         void qc.invalidateQueries({ queryKey: ["usage"] });
+        void qc.invalidateQueries({ queryKey: runningQueryKey });
       },
     });
     conn.current = connection;
@@ -109,6 +131,7 @@ function AppLayout() {
       connection.close();
       conn.current = null;
       clearTimeout(usageTimer.current);
+      usageTimer.current = undefined;
     };
   }, [qc, navigate]);
   const hub = useMemo<WsHub>(

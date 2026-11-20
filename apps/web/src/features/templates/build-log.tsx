@@ -1,11 +1,15 @@
 import type { ImageItem } from "@open-factory/shared";
 import { CircleAlert, CircleCheck } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { useWs } from "@/lib/ws-context";
 import { fetchImageLog } from "./api";
 
 type LogState = "building" | "succeeded" | "failed" | null;
+
+/** A panel that joined a running build refetches the whole log at most this often. */
+const REFETCH_EVERY_MS = 1000;
 
 // CSI sequences (colours, cursor moves) and OSC sequences (titles, links) from Docker's build output.
 const ESC = String.fromCharCode(27);
@@ -29,7 +33,8 @@ export function formatBuildDuration(ms: number): string {
  * The build's lines: the log endpoint for what came before, then `image_build` frames. A frame carries only the
  * lines since the last batch, so they are appended only when this panel saw the build start (its first frame has
  * no lines); a panel that joined a running build refetches the log on each frame instead, since it can't tell
- * which of a batch's lines its snapshot already holds.
+ * which of a batch's lines its snapshot already holds. Batches come every 250 ms, so those refetches are throttled
+ * (at once, then at most once a second); the build's end refetches at once.
  */
 function useBuildLog(name: string) {
   const hub = useWs();
@@ -52,9 +57,34 @@ function useBuildLog(name: string) {
     );
   }, [name]);
 
+  // Leading and trailing: the first batch refetches at once; batches inside the next second are
+  // folded into one refetch at its end.
+  const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; again: boolean }>({
+    again: false,
+  });
+  const refetchSoon = useCallback(() => {
+    const t = throttle.current;
+    if (t.timer !== undefined) {
+      t.again = true;
+      return;
+    }
+    refetch();
+    const tick = () => {
+      if (!t.again) {
+        t.timer = undefined;
+        return;
+      }
+      t.again = false;
+      refetch();
+      t.timer = setTimeout(tick, REFETCH_EVERY_MS);
+    };
+    t.timer = setTimeout(tick, REFETCH_EVERY_MS);
+  }, [refetch]);
+
   useEffect(() => {
     // A (re)connect may have missed frames: start from the snapshot again.
     live.current = false;
+    const t = throttle.current;
     const off = hub.listen((m) => {
       if (m.type !== "image_build" || m.name !== name) return;
       if (m.state === "building" && !m.lines) {
@@ -65,8 +95,10 @@ function useBuildLog(name: string) {
         return;
       }
       if (!live.current) {
-        if (m.state !== "building") setLog((l) => l && { ...l, state: m.state });
-        refetch();
+        if (m.state !== "building") {
+          setLog((l) => l && { ...l, state: m.state });
+          refetch();
+        } else refetchSoon();
         return;
       }
       const more = (m.lines ?? []).map(stripAnsi);
@@ -76,14 +108,19 @@ function useBuildLog(name: string) {
       }));
     });
     refetch();
-    return off;
-  }, [hub, name, refetch]);
+    return () => {
+      off();
+      clearTimeout(t.timer);
+      t.timer = undefined;
+      t.again = false;
+    };
+  }, [hub, name, refetch, refetchSoon]);
 
-  return { log, failed };
+  return { log, failed, refetch };
 }
 
 export function BuildLog({ name, item }: { name: string; item?: ImageItem }) {
-  const { log, failed } = useBuildLog(name);
+  const { log, failed, refetch } = useBuildLog(name);
   const ref = useRef<HTMLPreElement>(null);
   const [follow, setFollow] = useState(true);
   const [copy, setCopy] = useState<"copied" | "failed">();
@@ -116,11 +153,7 @@ export function BuildLog({ name, item }: { name: string; item?: ImageItem }) {
 
   return (
     <div className="grid gap-2 rounded-lg border border-border bg-card p-3">
-      {failed && !log && (
-        <p role="alert" className="text-[0.8125rem] text-muted-foreground">
-          Couldn't load images.
-        </p>
-      )}
+      {failed && !log && <ErrorLine text="Couldn't load the build log." onRetry={refetch} />}
       <pre
         ref={ref}
         role="log"

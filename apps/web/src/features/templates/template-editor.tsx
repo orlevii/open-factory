@@ -379,6 +379,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               const busy = isBusy(outcome);
               const canSave = isDirty(s) && !busy;
               const save$ = () => void save(f);
+              const warmHint = f === "template.yaml" && s.started && warmDefault !== undefined;
               return (
                 <TabsContent
                   key={f}
@@ -420,6 +421,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                     <CodeTextarea
                       id={`editor-${f}`}
                       aria-label={f}
+                      describedBy={warmHint ? `editor-${f}-warm-hint` : undefined}
                       value={s.content}
                       onChange={(v) => edit(f, v)}
                       onBlur={() => void validate(f)}
@@ -427,8 +429,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       textareaRef={attach(f)}
                     />
                   )}
-                  {f === "template.yaml" && s.started && warmDefault !== undefined && (
-                    <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+                  {warmHint && (
+                    <p
+                      id={`editor-${f}-warm-hint`}
+                      className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+                    >
                       <code className="font-mono">warm_window_minutes</code>:{" "}
                       <span>Omit to use the factory default ({warmDefault} min).</span>
                     </p>
@@ -561,12 +566,18 @@ function Status({ outcome }: { outcome?: Outcome }) {
 function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]> }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const canBuild =
+  // Once a build starts here the button stays rendered (aria-disabled while it runs), so focus
+  // isn't dropped to <body> when the status changes under it.
+  const [started, setStarted] = useState(false);
+  // Unknown (Docker unreachable) offers no Build here: it would only fail.
+  const showBuild =
     image.kind === "user" &&
-    image.status !== "built" &&
-    image.status !== "building" &&
-    image.status !== "no_dockerfile";
+    image.status !== "no_dockerfile" &&
+    image.status !== "unknown" &&
+    (image.status !== "built" || started);
+  const disabled = pending || image.status === "building";
   const build = async () => {
+    setStarted(true);
     setPending(true);
     setError(undefined);
     try {
@@ -581,13 +592,13 @@ function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]
     <span className="flex min-w-0 flex-wrap items-center gap-x-2">
       <span className="font-mono">image: {image.name}</span>
       <ImageStatusLabel status={image.status} className="text-foreground" />
-      {canBuild && (
+      {showBuild && (
         <Button
           variant="ghost"
           size="xs"
-          aria-disabled={pending || undefined}
+          aria-disabled={disabled || undefined}
           className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-          onClick={() => !pending && void build()}
+          onClick={() => !disabled && void build()}
         >
           Build
         </Button>

@@ -102,6 +102,47 @@ test("log: joined mid-build, a frame refetches the log instead of guessing which
   expect(api.calls.filter((c) => c.url.endsWith("/log"))).toHaveLength(2);
 });
 
+test("log: joined mid-build, a burst of frames refetches at most once a second (leading and trailing)", async () => {
+  const api = mockApi({
+    "GET /api/images/playwright/log": () => json({ state: "building", lines: ["a"] }),
+  });
+  const logCalls = () => api.calls.filter((c) => c.url.endsWith("/log")).length;
+  const { emit } = renderLog(item());
+  await vi.waitFor(() => expect(screen.getByRole("log").textContent).toBe("a"));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const batch = () =>
+      emit({ type: "image_build", name: "playwright", state: "building", lines: ["x"] });
+    batch(); // leading: refetches at once
+    expect(logCalls()).toBe(2);
+    batch();
+    batch();
+    expect(logCalls()).toBe(2);
+    act(() => vi.advanceTimersByTime(1000)); // trailing: one refetch for the two held back
+    expect(logCalls()).toBe(3);
+    act(() => vi.advanceTimersByTime(5000));
+    expect(logCalls()).toBe(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("log: a failed log fetch says so with Retry", async () => {
+  let ok = false;
+  mockApi({
+    "GET /api/images/playwright/log": () =>
+      ok
+        ? json({ state: "succeeded", lines: ["done"] })
+        : json({ error: { code: "x", message: "boom" } }, 500),
+  });
+  renderLog(item({ status: "built" }));
+  expect(await screen.findByText("Couldn't load the build log.")).toBeInTheDocument();
+  ok = true;
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("done")).toBeInTheDocument();
+  expect(screen.queryByText("Couldn't load the build log.")).toBeNull();
+});
+
 test("log: success line from the list's lastBuild; failure shows Build failed and the error", async () => {
   mockApi({ "GET /api/images/playwright/log": () => json({ state: "building", lines: [] }) });
   const { emit, rerender } = renderLog(item());

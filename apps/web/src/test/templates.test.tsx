@@ -574,6 +574,28 @@ test("Images section: rows with status, Used by, Build/Rebuild, View log only wh
   expect(await within(row("fresh")).findByRole("log")).toBeInTheDocument();
 });
 
+test("Images section: Rebuild stays rendered but aria-disabled while building; none without a Dockerfile", async () => {
+  const api = mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () =>
+      imagesList([
+        img({ name: "busy", status: "building", builtAt: new Date().toISOString() }),
+        img({ name: "empty", status: "no_dockerfile" }),
+      ]),
+    "GET /api/images/busy/log": () => json({ state: "building", lines: [] }),
+  });
+  renderApp("/templates", alice);
+  const section = await screen.findByRole("region", { name: "Images" });
+  const row = (name: string) =>
+    within(section).getByText(name, { selector: "[data-image-name]" }).closest("li") as HTMLElement;
+  await within(section).findByText("busy", { selector: "[data-image-name]" });
+  const rebuild = within(row("busy")).getByRole("button", { name: "Rebuild" });
+  expect(rebuild).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(rebuild);
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+  expect(within(row("empty")).queryByRole("button", { name: /Build/ })).toBeNull();
+});
+
 test("Images section: empty state names imagesDir and baseImage from the server", async () => {
   mockApi({
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
@@ -643,6 +665,20 @@ test("template page: the image status next to image:, and Build for a not_built 
   ).toBe(true);
 });
 
+test("template page: Build stays rendered but aria-disabled while building; none for unknown", async () => {
+  const api = mockApi({ "GET /api/templates/lead": () => json(withUserImage("building")) });
+  const { unmount } = renderApp("/templates/lead", alice);
+  const build = await screen.findByRole("button", { name: "Build" });
+  expect(build).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(build);
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+  unmount();
+  api.on("GET /api/templates/lead", () => json(withUserImage("unknown")));
+  renderApp("/templates/lead", alice);
+  expect(await screen.findByText("Unknown")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Build" })).not.toBeInTheDocument();
+});
+
 test("template page: no Build button once the image is built", async () => {
   mockApi({ "GET /api/templates/lead": () => json(withUserImage("built")) });
   renderApp("/templates/lead", alice);
@@ -664,5 +700,9 @@ test("editor: the warm_window_minutes hint shows the live factory default", asyn
       }),
   });
   renderApp("/templates/lead", alice);
-  expect(await screen.findByText("Omit to use the factory default (45 min).")).toBeInTheDocument();
+  const hint = await screen.findByText("Omit to use the factory default (45 min).");
+  // Tied to the template.yaml textarea, not only placed next to it.
+  const textarea = screen.getByRole("textbox", { name: "template.yaml" });
+  const describedBy = textarea.getAttribute("aria-describedby")?.split(" ") ?? [];
+  expect(describedBy).toContain((hint.closest("p") as HTMLElement).id);
 });

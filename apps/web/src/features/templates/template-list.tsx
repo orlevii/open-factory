@@ -60,7 +60,10 @@ export function TemplateList({ dir, templates }: { dir: string; templates: Summa
               {t.imageStatus && (
                 <span className="flex min-w-0 items-center gap-1.5 md:shrink-0">
                   <ImageStatusLabel status={t.imageStatus.status} />
-                  <span className="truncate font-mono">{t.imageStatus.name}</span>
+                  {/* From md the cell doesn't shrink, so a long registry ref is capped here. */}
+                  <span className="min-w-0 truncate font-mono md:max-w-56">
+                    {t.imageStatus.name}
+                  </span>
                 </span>
               )}
               <span className="md:shrink-0">

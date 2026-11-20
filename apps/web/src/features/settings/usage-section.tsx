@@ -32,14 +32,20 @@ function Table({ title, head, children }: { title: string; head: ReactNode; chil
       <h3 id={id} className="text-[0.8125rem] font-medium">
         {title}
       </h3>
-      <div className="overflow-x-auto">
+      {/* A named region with a tab stop, so a keyboard can scroll a table wider than the screen. */}
+      <section
+        aria-labelledby={id}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs a tab stop.
+        tabIndex={0}
+        className="overflow-x-auto rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
         <table aria-labelledby={id} className="w-full border-collapse text-sm">
           <thead className="border-b">
             <tr>{head}</tr>
           </thead>
           <tbody className="[&>tr]:border-b [&>tr:last-child]:border-0">{children}</tbody>
         </table>
-      </div>
+      </section>
     </div>
   );
 }
@@ -148,7 +154,8 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
                   onClick={() => toggle(a.slug)}
                 >
                   <Chevron open={open} />
-                  {`${open ? "Hide" : "Show"} ${kids.length} ${noun} of @${a.slug}`}
+                  {/* The name stays constant; aria-expanded and the chevron carry the state. */}
+                  {`Show ${kids.length} ${noun} of @${a.slug}`}
                 </Button>
               </DisclosureRow>
             )}
@@ -169,7 +176,7 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
             onClick={() => setShowIdle((v) => !v)}
           >
             <Chevron open={showIdle} />
-            {showIdle ? "Hide" : "Show"}
+            Show
           </Button>
         </DisclosureRow>
       )}

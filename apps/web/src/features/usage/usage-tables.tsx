@@ -2,10 +2,11 @@ import type { AgentUsage, Totals } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { formatTokens } from "@/features/session/format";
+import { LINK_CLASS } from "@/features/session/message-block";
 import { formatCost } from "./format";
 
-export const linkClass =
-  "underline underline-offset-4 decoration-muted-foreground hover:decoration-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm";
+/** The shared link underline, with a focus ring for links inside table cells. */
+export const linkClass = `${LINK_CLASS} rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`;
 export const th =
   "py-1.5 pr-4 text-left text-[0.8125rem] font-normal text-muted-foreground last:pr-0";
 export const thNum = `${th} text-right`;
@@ -34,15 +35,21 @@ function Section({
         {title}
       </h2>
       {note && <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{note}</p>}
-      {/* Wide tables scroll inside themselves rather than widening the page on a phone. */}
-      <div className="overflow-x-auto">
+      {/* Wide tables scroll inside themselves rather than widening the page on a phone; a named
+          region with a tab stop, so a keyboard can scroll them too. */}
+      <section
+        aria-labelledby={id}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs a tab stop.
+        tabIndex={0}
+        className="overflow-x-auto rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
         <table aria-labelledby={id} className="w-full border-collapse text-sm">
           <thead className="border-b">
             <tr>{head}</tr>
           </thead>
           <tbody className="[&>tr]:border-b [&>tr:last-child]:border-0">{children}</tbody>
         </table>
-      </div>
+      </section>
     </section>
   );
 }

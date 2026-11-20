@@ -100,9 +100,16 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
   // `base`, so it is no conflict. No concurrency token exists: last write wins.
   const serverValues = valuesOf(server);
   const serverKey = JSON.stringify(serverValues);
+  // While our own save is in flight its echo may land first (the server publishes before it
+  // answers): the save's answer sets `base`, and this runs again once it has.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only a change on the server (or a clean form) counts
   useEffect(() => {
-    if (same(serverValues, base.current)) return;
+    if (pending) return;
+    // Back to what we loaded (someone reverted their change): nothing to warn about any more.
+    if (same(serverValues, base.current)) {
+      setConflict(false);
+      return;
+    }
     if (dirty) {
       setConflict(true);
       return;
@@ -110,7 +117,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
     base.current = serverValues;
     setV(serverValues);
     setConflict(false);
-  }, [serverKey, dirty]);
+  }, [serverKey, dirty, pending]);
 
   const focus = (f: Field) => form.current?.querySelector<HTMLElement>(`#field-${f}`)?.focus();
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when asked for

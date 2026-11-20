@@ -90,6 +90,12 @@ test("a warning without resetsAt is near the limit for an hour after it was seen
   ).toBe("Within limits · seen 2 hours ago");
 });
 
+test("an observation ahead of this clock (skew) reads seen just now, never in the future", () => {
+  expect(line({ rateLimit: rl({ observedAt: minutesFromNow(2) }) }).text).toBe(
+    "Within limits · seen just now",
+  );
+});
+
 test("a warning whose reset has passed: Within limits · seen 5 minutes ago, with an icon", () => {
   const r = line({
     rateLimit: rl({ status: "allowed_warning", utilization: 0.82, resetsAt: minutesFromNow(-10) }),

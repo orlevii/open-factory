@@ -442,6 +442,48 @@ describe("usage in the tree (S10 §12.1)", () => {
     ).toBeInTheDocument();
   });
 
+  test("an agent with no row in the loaded usage shows a dash; nothing while usage hasn't loaded", async () => {
+    mockWorld({
+      agents: [
+        agentSummary({ slug: "lead", displayName: "Team Lead" }),
+        agentSummary({ slug: "solo", displayName: "Solo" }),
+      ],
+      extra: {
+        "GET /api/usage/agents?window=rolling": () =>
+          json({ agents: [usageRow("lead", "persistent", t(1.2, 3), t(0, 0), t(1.2, 3))] }),
+      },
+    });
+    renderApp("/agents", alice);
+    const [lead, solo] = (await rows()) as [HTMLElement, HTMLElement];
+    // Own turns but no spawned turns: no "(own …, spawned —)" parenthesis.
+    expect(await within(lead).findByText("Estimated cost, last 7 days: $1.20")).toBeInTheDocument();
+    expect(within(solo).getByText("—")).toBeInTheDocument();
+    expect(within(solo).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
+  });
+
+  test("the cost cell stays empty while usage fails to load", async () => {
+    mockWorld({
+      agents: [agentSummary({ slug: "solo", displayName: "Solo" })],
+      extra: {
+        "GET /api/usage/agents?window=rolling": () => json({ error: { code: "x" } }, 500),
+      },
+    });
+    renderApp("/agents", alice);
+    const [solo] = (await rows()) as [HTMLElement];
+    expect(within(solo).queryByText("—")).toBeNull();
+    expect(within(solo).queryByText(/Estimated cost/)).toBeNull();
+  });
+
+  test("the explanation line also shows above the Ended list", async () => {
+    mockWorld({
+      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
+      extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
+    });
+    renderApp("/agents?ended=only", alice);
+    await screen.findByRole("list", { name: "Agents" });
+    expect(screen.getByText(/^Costs are estimates for the last 7 days\./)).toBeInTheDocument();
+  });
+
   test("the tree asks for the rolling window", async () => {
     const api = usageWorld();
     renderApp("/agents", alice);

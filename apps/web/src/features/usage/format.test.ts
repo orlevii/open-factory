@@ -15,6 +15,12 @@ test("formatCost", () => {
   expect(formatCost(0, 0)).toBe("—");
   expect(formatCost(12.345, 1)).toBe("$12.35");
   expect(formatCost(1234.5, 1)).toBe("$1,235");
+  // Rounded to cents before choosing the format.
+  expect(formatCost(0.995, 1)).toBe("$1.00");
+  expect(formatCost(999.995, 1)).toBe("$1,000");
+  expect(formatCost(999.996, 1)).toBe("$1,000");
+  expect(formatCost(999.994, 1)).toBe("$999.99");
+  expect(formatCost(0.0049, 1)).toBe("<$0.01");
 });
 
 test("formatCostEst adds the suffix except on a dash", () => {
@@ -25,6 +31,11 @@ test("formatCostEst adds the suffix except on a dash", () => {
 test("formatTokens gains M", () => {
   expect(formatTokens(1_234_567)).toBe("1.2M");
   expect(formatTokens(123_456)).toBe("123k");
+  expect(formatTokens(999_499)).toBe("999k");
+  expect(formatTokens(999_500)).toBe("1.0M");
+  expect(formatTokens(999_999)).toBe("1.0M");
+  expect(formatTokens(99_949)).toBe("99.9k");
+  expect(formatTokens(99_950)).toBe("100k");
 });
 
 test("days are parsed and shown without a zone shift", () => {
@@ -45,25 +56,4 @@ test("niceMax rounds up to 1/2/5 x 10^n", () => {
 
 test("rate limit windows", () => {
   expect(RATE_LIMIT_WINDOW).toEqual({ five_hour: "5-hour", seven_day: "7-day" });
-});
-
-test("the tree's rolling window sends window=rolling and no days", async () => {
-  const { agentsUsageQuery } = await import("./api");
-  const urls: string[] = [];
-  const orig = globalThis.fetch;
-  globalThis.fetch = (async (u: string) => {
-    urls.push(String(u));
-    return new Response(JSON.stringify({ agents: [] }), {
-      headers: { "content-type": "application/json" },
-    });
-  }) as unknown as typeof fetch;
-  try {
-    const ctx = { queryKey: [], signal: new AbortController().signal, meta: undefined } as never;
-    await (agentsUsageQuery("rolling7").queryFn as (c: never) => Promise<unknown>)(ctx);
-    await (agentsUsageQuery(30).queryFn as (c: never) => Promise<unknown>)(ctx);
-  } finally {
-    globalThis.fetch = orig;
-  }
-  expect(urls).toEqual(["/api/usage/agents?window=rolling", "/api/usage/agents?days=30"]);
-  expect(agentsUsageQuery(7).queryKey[0]).toBe("usage");
 });

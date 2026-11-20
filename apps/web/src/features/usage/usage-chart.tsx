@@ -7,14 +7,19 @@ const HEIGHT = 160;
 const FALLBACK_WIDTH = 600; // jsdom, and the first paint before ResizeObserver reports
 const PAD = { top: 8, right: 24, bottom: 20, left: 48 };
 const LABEL_EVERY: Record<UsageDays, number> = { 7: 1, 30: 7, 90: 14 };
+/** Room a "20 Nov" x label needs; narrower columns label fewer days. */
+const LABEL_MIN_WIDTH = 48;
+/** The y scale never drops below 2 cents, so its three labels stay distinct ($0.00, $0.01, $0.02). */
+const MIN_SCALE_USD = 0.02;
 
 function turnsLabel(turns: number): string {
   return `${turns} ${turns === 1 ? "turn" : "turns"}`;
 }
 
-/** "Thu 20 Nov · $3.21 est. · 41 turns", today's ending "· today so far". */
+/** "Thu 20 Nov · $3.21 est. · 41 turns", today's ending "· today so far". A day with no turns
+ *  reads "—" (§6), as in the hidden table. */
 function tooltipText(d: DayUsage, today: string): string {
-  const cost = formatCostEst(d.costUsd, Math.max(d.turns, 1));
+  const cost = formatCostEst(d.costUsd, d.turns);
   const parts = [formatDayShort(d.date), cost, turnsLabel(d.turns)];
   if (d.date === today) parts.push("today so far");
   return parts.join(" · ");
@@ -64,9 +69,10 @@ export function UsageChart({
   const plotH = HEIGHT - PAD.top - PAD.bottom;
   const colW = n > 0 ? plotW / n : plotW;
   const barW = Math.max(colW * 0.7, 1);
-  const max = niceMax(Math.max(0, ...days.map((d) => d.costUsd)));
+  const max = niceMax(Math.max(MIN_SCALE_USD, ...days.map((d) => d.costUsd)));
   const yOf = (v: number) => PAD.top + plotH - (v / max) * plotH;
-  const every = LABEL_EVERY[rangeDays];
+  // Thinned by range, and further when the columns are too narrow; still anchored on today.
+  const every = Math.max(LABEL_EVERY[rangeDays], Math.ceil(LABEL_MIN_WIDTH / colW));
   const current = selected !== null ? days[selected] : undefined;
   const tip = current ? tooltipText(current, today) : "";
 

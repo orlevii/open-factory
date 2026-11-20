@@ -19,7 +19,7 @@ beforeEach(() => {
   auth.getSession.mockReset();
   auth.signIn.email.mockReset();
   bootstrap = true;
-  mockApi({ "GET /api/auth/sign-up-state?": () => json({ bootstrap, invite: "missing" }) });
+  mockApi({ "GET /api/auth/sign-up-state": () => json({ bootstrap, invite: "missing" }) });
 });
 
 async function signIn(email: string, password: string) {

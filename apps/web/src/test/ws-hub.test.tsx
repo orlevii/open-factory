@@ -99,10 +99,10 @@ async function mounted() {
   await screen.findByText("probe 0");
   const spy = vi.spyOn(r.queryClient, "invalidateQueries");
   const usage = () => spy.mock.calls.filter(([f]) => f?.queryKey?.[0] === "usage").length;
-  return { spy, usage };
+  return { spy, usage, qc: r.queryClient };
 }
 
-test("a turn-closed edge invalidates usage once after 5 s; two edges inside it invalidate once", async () => {
+test("a turn-closed edge invalidates usage once, 5 s after the first edge; later edges don't extend it", async () => {
   const { usage } = await mounted();
   vi.useFakeTimers();
   try {
@@ -114,33 +114,62 @@ test("a turn-closed edge invalidates usage once after 5 s; two edges inside it i
     vi.advanceTimersByTime(3000);
     send(status("dev", true));
     send(status("dev", false)); // second edge inside the window
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(usage()).toBe(0);
-    vi.advanceTimersByTime(1);
+    vi.advanceTimersByTime(1); // 5 s after the first edge
     expect(usage()).toBe(1);
     vi.advanceTimersByTime(20_000);
+    expect(usage()).toBe(1);
+    // A later edge opens a new window.
+    send(status("dev", true));
+    send(status("dev", false));
+    vi.advanceTimersByTime(5000);
+    expect(usage()).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a first false frame is not an edge; the first open doesn't invalidate usage, a reconnect does", async () => {
+  const { usage, spy } = await mounted();
+  act(() => h.opts?.onMessage?.(status("dev", false)));
+  expect(usage()).toBe(0);
+  act(() => h.opts?.onOpen?.()); // first open: the loaders just fetched
+  expect(usage()).toBe(0);
+  act(() => h.opts?.onOpen?.()); // reconnect
+  expect(usage()).toBe(1);
+  expect(spy).toHaveBeenCalledWith({ queryKey: ["supervisor"] });
+});
+
+test("a turn open at connect (per the cached agents list) is seen ending", async () => {
+  const { usage, qc } = await mounted();
+  qc.setQueryData(["agents", "exclude"], [{ slug: "dev", turnOpen: true }]);
+  qc.setQueryData(["agents", "only"], [{ slug: "old", turnOpen: false }]);
+  vi.useFakeTimers();
+  try {
+    act(() => h.opts?.onMessage?.(status("old", false))); // cached closed: no edge
+    act(() => h.opts?.onMessage?.(status("dev", false))); // cached open: an edge
+    vi.advanceTimersByTime(5000);
     expect(usage()).toBe(1);
   } finally {
     vi.useRealTimers();
   }
 });
 
-test("a first false frame is not an edge; reconnect invalidates usage", async () => {
-  const { usage } = await mounted();
-  act(() => h.opts?.onMessage?.(status("dev", false)));
-  expect(usage()).toBe(0);
-  act(() => h.opts?.onOpen?.());
-  expect(usage()).toBe(1);
-});
-
-test("admin frames invalidate their keys", async () => {
+test("admin frames invalidate their keys; build log batches don't", async () => {
   const { spy } = await mounted();
   const keys = () => spy.mock.calls.map(([f]) => f?.queryKey?.[0]);
   act(() => h.opts?.onMessage?.({ type: "settings_changed" }));
   act(() => h.opts?.onMessage?.({ type: "users_changed" }));
-  act(() => h.opts?.onMessage?.({ type: "images_changed" }));
-  act(() => h.opts?.onMessage?.({ type: "image_build", name: "x", state: "building" }));
-  expect(keys()).toEqual(
-    expect.arrayContaining(["factory-settings", "users", "invites", "images", "templates"]),
+  expect(keys()).toEqual(expect.arrayContaining(["factory-settings", "users", "invites"]));
+  const images = () => keys().filter((k) => k === "images").length;
+  act(() =>
+    h.opts?.onMessage?.({ type: "image_build", name: "x", state: "building", lines: ["a"] }),
   );
+  expect(images()).toBe(0);
+  act(() => h.opts?.onMessage?.({ type: "image_build", name: "x", state: "building" }));
+  expect(images()).toBe(1);
+  act(() => h.opts?.onMessage?.({ type: "images_changed" }));
+  expect(images()).toBe(2);
+  expect(keys()).toContain("templates");
 });

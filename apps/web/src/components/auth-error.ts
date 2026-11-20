@@ -45,13 +45,33 @@ export function mapAuthError(
 /** Gateway statuses a proxy (Vite dev, a reverse proxy) returns when the server behind it is down. */
 const UNREACHABLE_STATUSES = new Set([0, 502, 503, 504]);
 
+/** What better-auth's client resolves as `error`: better-fetch spreads the parsed JSON body next to
+ *  `status`. better-auth's own errors are a top-level `{ code, message }`; the S10 sign-up gate
+ *  answers in the app's ApiError envelope, `{ error: { code, message } }`. */
+export type AuthClientError = {
+  code?: string;
+  message?: string;
+  status?: number;
+  error?: { code?: string; message?: string };
+};
+
+/** The error code of a resolved failure, top-level or nested; undefined for none. */
+export function authErrorCode(error: AuthClientError): string | undefined {
+  return error.code ?? (typeof error.error === "object" ? error.error.code : undefined);
+}
+
 /** better-auth's client (better-fetch, no catchAllError) resolves `{ error }` for HTTP errors and
  *  rejects with the fetch TypeError when the server can't be reached at all. This maps both. */
-export function mapAuthFailure(
-  failure: { error: { code?: string; message?: string; status?: number } } | { thrown: unknown },
-): { field?: AuthField; message: string } {
+export function mapAuthFailure(failure: { error: AuthClientError } | { thrown: unknown }): {
+  field?: AuthField;
+  message: string;
+} {
   if ("thrown" in failure) return mapAuthError(NETWORK_ERROR, "");
-  const { code, message, status } = failure.error;
+  const { status } = failure.error;
+  const code = authErrorCode(failure.error);
+  const message =
+    failure.error.message ??
+    (typeof failure.error.error === "object" ? failure.error.error.message : undefined);
   if (!code && (status === undefined || UNREACHABLE_STATUSES.has(status)))
     return mapAuthError(NETWORK_ERROR, "");
   return mapAuthError(code, message ?? "");

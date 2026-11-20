@@ -7,6 +7,7 @@ import { z } from "zod";
 import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
 import {
   type AuthField,
+  authErrorCode,
   FIRST_USER_MESSAGE,
   INVITE_INVALID_MESSAGE,
   INVITE_LOST_RACE_MESSAGE,
@@ -22,10 +23,12 @@ import { refreshSession, sessionQueryOptions } from "@/lib/session";
 export const signUpStateQueryOptions = (invite?: string) =>
   queryOptions({
     queryKey: ["sign-up-state", invite ?? ""],
-    queryFn: () =>
-      apiFetch(`/api/auth/sign-up-state${invite ? `?invite=${encodeURIComponent(invite)}` : "?"}`, {
+    queryFn: () => {
+      const query = new URLSearchParams(invite ? { invite } : {}).toString();
+      return apiFetch(`/api/auth/sign-up-state${query ? `?${query}` : ""}`, {
         schema: signUpStateSchema,
-      }),
+      });
+    },
     staleTime: 0,
   });
 
@@ -48,10 +51,8 @@ function SignUpPage() {
   const { invite } = Route.useSearch();
   const state = useQuery(signUpStateQueryOptions(invite));
   if (state.data) {
-    if (
-      state.data.invite === "invalid" ||
-      (state.data.invite === "missing" && !state.data.bootstrap)
-    )
+    // While bootstrapping any sign-up succeeds, so a stale or junk invite doesn't block the form.
+    if (!state.data.bootstrap && state.data.invite !== "valid")
       return (
         <AuthCard
           title="Create your account"
@@ -143,7 +144,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
       );
       if (failure) {
         const m = mapAuthFailure(failure);
-        if (bootstrap && "error" in failure && failure.error.code === "invite_required")
+        if (bootstrap && "error" in failure && authErrorCode(failure.error) === "invite_required")
           m.message = INVITE_LOST_RACE_MESSAGE;
         if (m.field) showFieldErrors(form, { [m.field]: m.message });
         else setFormError(m.message);

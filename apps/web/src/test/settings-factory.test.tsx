@@ -2,6 +2,7 @@ import type { FactorySettingsDto, ServerMessage } from "@open-factory/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { factorySettingsQueryOptions } from "@/features/settings/api";
 import type { WsOptions } from "@/lib/ws";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -232,6 +233,72 @@ test("a settings_changed frame while dirty shows the conflict notice; Reload tak
   expect(cap).toHaveValue(12);
   expect(await field("Default warm window")).toHaveValue(90);
   expect(screen.queryByText("These settings were changed elsewhere.")).not.toBeInTheDocument();
+});
+
+test("our own save's echo arriving before the PATCH resolves is no conflict", async () => {
+  let release: () => void = () => {};
+  const { state, api } = world({
+    "PATCH /api/settings/factory": async (body) => {
+      // The server commits and publishes settings_changed before it answers.
+      state.settings = { ...state.settings, ...(body as Partial<FactorySettingsDto>) };
+      await new Promise<void>((r) => {
+        release = r;
+      });
+      return json(state.settings);
+    },
+  });
+  const user = userEvent.setup();
+  const { queryClient } = renderApp("/settings", alice);
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  await user.clear(warm);
+  await user.type(warm, "120");
+  const region = await factory();
+  // The notice must never render, not even for one frame.
+  let flashed = false;
+  const watch = new MutationObserver(() => {
+    if (document.body.textContent?.includes("These settings were changed elsewhere."))
+      flashed = true;
+  });
+  watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+  await user.click(within(region).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(api.calls.some((c) => c.method === "PATCH")).toBe(true));
+  await frame({ type: "settings_changed" });
+  // The refetch lands (with our saved values) while the PATCH is still pending.
+  await waitFor(() =>
+    expect(queryClient.getQueryData(factorySettingsQueryOptions.queryKey)).toMatchObject({
+      defaultWarmWindowMinutes: 120,
+    }),
+  );
+  await act(async () => release());
+  expect(await within(region).findByText("Saved.")).toBeInTheDocument();
+  watch.disconnect();
+  expect(flashed).toBe(false);
+  expect(screen.queryByText("These settings were changed elsewhere.")).not.toBeInTheDocument();
+});
+
+test("the conflict notice clears when the server goes back to the loaded values", async () => {
+  const { state } = world();
+  const user = userEvent.setup();
+  renderApp("/settings", alice);
+  const cap = await field("Concurrency cap");
+  await waitFor(() => expect(cap).toHaveValue(8));
+  await user.clear(cap);
+  await user.type(cap, "10");
+  state.settings = settings({ maxRunningAgents: 12 });
+  await frame({ type: "settings_changed" });
+  const region = await factory();
+  expect(
+    await within(region).findByText("These settings were changed elsewhere."),
+  ).toBeInTheDocument();
+  state.settings = settings();
+  await frame({ type: "settings_changed" });
+  await waitFor(() =>
+    expect(
+      within(region).queryByText("These settings were changed elsewhere."),
+    ).not.toBeInTheDocument(),
+  );
+  expect(cap).toHaveValue(10);
 });
 
 test("a settings_changed frame on a clean form just takes the new values", async () => {

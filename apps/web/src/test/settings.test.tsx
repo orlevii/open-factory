@@ -708,6 +708,17 @@ test("On this page links all six anchors; #usage focuses the Usage heading", asy
   await waitFor(() => expect(heading).toHaveFocus());
 });
 
+test("clicking the anchor of the current hash again still moves focus to its heading", async () => {
+  world();
+  renderApp("/settings#credentials", alice);
+  const heading = await screen.findByRole("heading", { level: 2, name: "Credentials" });
+  await waitFor(() => expect(heading).toHaveFocus());
+  const nav = screen.getByRole("navigation", { name: "On this page" });
+  within(nav).getByRole("link", { name: "Usage" }).focus();
+  await userEvent.click(within(nav).getByRole("link", { name: "Credentials" }));
+  await waitFor(() => expect(heading).toHaveFocus());
+});
+
 const leadFamily = (): AgentUsageRow[] => [
   usageRow({
     slug: "writer",

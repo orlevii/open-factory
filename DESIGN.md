@@ -152,7 +152,7 @@ The strategy is **restrained**: cool neutrals do almost all the work, plus one a
 
 Task status: Done uses `success`, the Blocked marker uses `warning`; both always with a label.
 
-Chart series start at `--chart-2`; `--chart-1` (signal) marks only the focused datum.
+Chart series start at `--chart-2`; `--signal` marks only the focused datum.
 
 ### Named Rules
 

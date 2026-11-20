@@ -15,7 +15,16 @@ vi.mock("@/lib/ws", () => ({
 
 type State = { bootstrap: boolean; invite: "valid" | "invalid" | "missing" };
 let api: ReturnType<typeof mockApi>;
-const serve = (state: State) => api.on("GET /api/auth/sign-up-state?", () => json(state));
+const serve = (state: State) => {
+  api.on("GET /api/auth/sign-up-state", () => json(state));
+  api.on("GET /api/auth/sign-up-state?", () => json(state));
+};
+/** What better-fetch resolves for the sign-up gate's 403: the parsed body `{ error: { code,
+ *  message } }` (apps/server/src/users/sign-up-gate.ts) spread next to status and statusText. */
+const gateError = (code: string, message: string) => ({
+  data: null,
+  error: { error: { code, message }, status: 403, statusText: "Forbidden" },
+});
 
 beforeEach(() => {
   auth.getSession.mockReset();
@@ -183,6 +192,48 @@ test("a 403 invite_invalid on submit shows the invalid line at form level", asyn
   await screen.findByLabelText("Name");
   await fill(valid);
   expect(await screen.findByRole("alert")).toHaveTextContent(INVALID);
+});
+
+test("the gate's real 403 body (nested error) maps to the invalid line", async () => {
+  serve({ bootstrap: false, invite: "valid" });
+  auth.signUp.email.mockResolvedValue(
+    gateError("invite_invalid", "This invite link isn't valid anymore."),
+  );
+  renderApp("/sign-up?invite=tok_1", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  expect(await screen.findByRole("alert")).toHaveTextContent(INVALID);
+});
+
+test("the gate's real 403 invite_required after loading as bootstrap shows the lost-race line", async () => {
+  auth.signUp.email.mockResolvedValue(gateError("invite_required", "Sign-up needs an invite."));
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  expect(await screen.findByRole("alert")).toHaveTextContent(LOST_RACE);
+});
+
+test("the gate's real 403 invite_required on an invite page shows the needs-an-invite line", async () => {
+  serve({ bootstrap: false, invite: "valid" });
+  auth.signUp.email.mockResolvedValue(gateError("invite_required", "Sign-up needs an invite."));
+  renderApp("/sign-up?invite=tok_1", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  expect(await screen.findByRole("alert")).toHaveTextContent(MISSING);
+});
+
+test("bootstrap with a stale invite link shows the form and the first-user line", async () => {
+  serve({ bootstrap: true, invite: "invalid" });
+  renderApp("/sign-up?invite=old", null);
+  expect(await screen.findByLabelText("Name")).toBeInTheDocument();
+  expect(screen.getByText(FIRST_USER)).toBeInTheDocument();
+  expect(screen.queryByText(INVALID)).not.toBeInTheDocument();
+});
+
+test("without an invite the state URL has no query string", async () => {
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  expect(api.calls[0]?.url).toBe("/api/auth/sign-up-state");
 });
 
 test("a 403 invite_required after loading as bootstrap shows the lost-race line", async () => {

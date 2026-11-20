@@ -1,6 +1,6 @@
 import type { DayUsage } from "@open-factory/shared";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { UsageChart } from "./usage-chart";
 
 function day(date: string, costUsd: number, turns: number): DayUsage {
@@ -37,6 +37,23 @@ const week = [
 function renderChart(days = week, rangeDays: 7 | 30 | 90 = 7) {
   return render(
     <UsageChart days={days} rangeDays={rangeDays} timezone="Europe/Berlin" today="2026-11-20" />,
+  );
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+/** A ResizeObserver that reports `width` once observing starts. */
+function stubWidth(width: number) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private cb: (e: { contentRect: { width: number } }[]) => void) {}
+      observe() {
+        this.cb([{ contentRect: { width } }]);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
   );
 }
 
@@ -135,4 +152,29 @@ test("the y axis runs to a nice maximum with three $ gridlines", () => {
     (t) => t.textContent,
   );
   expect(ticks).toEqual(["$0.00", "$25.00", "$50.00"]);
+});
+
+test("a day with no turns reads the same in the tooltip, the live region and the hidden table", () => {
+  const { container } = renderChart();
+  fireEvent.keyDown(group(), { key: "Home" });
+  fireEvent.keyDown(group(), { key: "ArrowRight" }); // 15 Nov, no turns
+  expect(live(container)).toHaveTextContent(/^Sun 15 Nov · — · 0 turns$/);
+  expect(screen.getByTestId("usage-chart-tooltip")).toHaveTextContent(/^Sun 15 Nov · — · 0 turns$/);
+  const row = within(screen.getByRole("table")).getAllByRole("row")[2] as HTMLElement;
+  expect(row).toHaveTextContent("Sun 15 Nov—0");
+});
+
+test("7-day x labels thin out when the columns are too narrow for them", () => {
+  stubWidth(358); // a 390px phone: about 41px per column
+  const { container } = renderChart(series(7), 7);
+  const labels = Array.from(container.querySelectorAll("text[data-x-label]"));
+  expect(labels.map((t) => t.textContent)).toEqual(["14 Nov", "16 Nov", "18 Nov", "20 Nov"]);
+});
+
+test("sub-cent maxima keep distinct y labels", () => {
+  const { container } = renderChart([day("2026-11-19", 0.002, 1), day("2026-11-20", 0.004, 1)]);
+  const ticks = Array.from(container.querySelectorAll("text[data-y-label]")).map(
+    (t) => t.textContent,
+  );
+  expect(ticks).toEqual(["$0.00", "$0.01", "$0.02"]);
 });

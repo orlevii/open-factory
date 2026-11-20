@@ -80,7 +80,9 @@ function ImageRow({ item }: { item: ImageItem }) {
   const [error, setError] = useState<string>();
   const logId = `image-log-${item.name}`;
   const exists = item.status === "built" || item.status === "out_of_date" || !!item.builtAt;
-  const canBuild = item.status !== "building" && item.status !== "no_dockerfile";
+  // Rendered while building too (aria-disabled), so a focused Build keeps focus as the status flips.
+  const canBuild = item.status !== "no_dockerfile";
+  const building = item.status === "building";
   const hasLog = item.status === "building" || !!item.lastBuild;
 
   const build = async () => {
@@ -109,7 +111,13 @@ function ImageRow({ item }: { item: ImageItem }) {
         )}
         <span className="ml-auto flex gap-2">
           {canBuild && (
-            <Button variant="ghost" size="sm" onClick={() => void build()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-disabled={building || undefined}
+              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              onClick={() => !building && void build()}
+            >
               {exists ? "Rebuild" : "Build"}
             </Button>
           )}

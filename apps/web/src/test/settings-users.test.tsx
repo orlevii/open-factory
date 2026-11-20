@@ -208,6 +208,16 @@ test("Enable needs no confirmation and says so inline", async () => {
   await waitFor(() => expect(row).not.toHaveTextContent("Disabled"));
 });
 
+test("a pending invite whose creator isn't listed reads Created by a former user", async () => {
+  world({ invites: [invite({ createdBy: "u-gone" })] });
+  renderApp("/settings", me);
+  const region = await usersSection();
+  expect(
+    await within(region).findByText("Created by a former user · expires in 6 days"),
+  ).toBeInTheDocument();
+  expect(within(region).queryByText(/@unknown/)).toBeNull();
+});
+
 test("pending invites: creator and expiry; Revoke is immediate with Undo; Undo restores", async () => {
   const { api, state } = world({
     invites: [invite()],

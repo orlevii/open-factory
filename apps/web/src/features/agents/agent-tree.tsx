@@ -75,14 +75,16 @@ export function AgentName({ agent }: { agent: AgentSummary }) {
 /** The 7-day figure of a row: a persistent agent's total includes what it spawned; a spawned agent
  *  and every row of the flat Ended list show their own. */
 function usageCell(row: AgentUsageRow | undefined, own: boolean) {
-  if (!row) return null;
+  const lead = "Estimated cost, last 7 days";
+  // The response holds only agents with turns in the window (plus live persistent ones): a loaded
+  // response without this agent means no turns.
+  if (!row) return { text: "—", sr: `${lead}: none` };
   const t = own || row.kind === "ephemeral" ? row.own : row.total;
   const text = formatCost(t.costUsd, t.turns);
-  const lead = "Estimated cost, last 7 days";
   const sr =
     t.turns === 0
       ? `${lead}: none`
-      : !own && row.kind === "persistent" && row.spawned
+      : !own && row.kind === "persistent" && row.spawned && row.spawned.turns > 0
         ? `${lead}: ${text} (own ${formatCost(row.own.costUsd, row.own.turns)}, spawned ${formatCost(row.spawned.costUsd, row.spawned.turns)})`
         : `${lead}: ${text}`;
   return { text, sr };
@@ -117,7 +119,8 @@ export function AgentTree({
         const level = shown.get(a.slug) ?? 0;
         const depth = Math.min(level, isMobile ? MOBILE_DEPTH_CAP : level);
         const ended = a.archivedAt !== null || a.status === "terminated";
-        const cost = usageCell(usage?.get(a.slug), flat);
+        // Empty while usage is loading or failed; a dash once loaded without a row for this agent.
+        const cost = usage ? usageCell(usage.get(a.slug), flat) : null;
         const note = ended ? endedNote(a, now) : agentNote(a);
         return (
           <li key={a.slug}>

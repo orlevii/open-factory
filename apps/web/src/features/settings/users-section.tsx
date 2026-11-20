@@ -97,6 +97,7 @@ function InviteRow({
   onRevoke,
 }: {
   invite: InviteItem;
+  /** "@or", or "a former user" when the creator isn't in the users list. */
   creator: string;
   onRevoke(): void;
 }) {
@@ -116,7 +117,7 @@ function InviteRow({
         }
       >
         <span className={`${smallClass} text-muted-foreground tabular-nums`}>
-          Created by @{creator} · expires {expiresIn(invite.expiresAt)}
+          Created by {creator} · expires {expiresIn(invite.expiresAt)}
         </span>
       </RowLine>
     </li>
@@ -160,7 +161,12 @@ export function UsersSection() {
 
   const users = usersQuery.data ?? [];
   const invites = invitesQuery.data ?? [];
-  const handleOf = (id: string) => users.find((u) => u.id === id)?.handle ?? "unknown";
+  // An invite's creator missing from the list (a stale list, or a removed account) is named
+  // without a handle rather than as a fake one.
+  const creatorOf = (id: string) => {
+    const handle = users.find((u) => u.id === id)?.handle;
+    return handle ? `@${handle}` : "a former user";
+  };
 
   async function disable(u: UserAdminItem) {
     setRow(u.id, undefined);
@@ -201,7 +207,7 @@ export function UsersSection() {
   }
 
   async function revoke(invite: InviteItem) {
-    const creator = handleOf(invite.createdBy);
+    const creator = creatorOf(invite.createdBy);
     setInviteOutcome(undefined);
     try {
       await revokeInvite(invite.id);
@@ -216,7 +222,7 @@ export function UsersSection() {
     qc.setQueryData(invitesQueryOptions.queryKey, (old) => old?.filter((i) => i.id !== invite.id));
     setInviteOutcome({
       tone: "success",
-      content: `Revoked the invite from @${creator}.`,
+      content: `Revoked the invite from ${creator}.`,
       undo: () => void undo(invite),
       focusKey: Date.now(),
     });
@@ -360,7 +366,7 @@ export function UsersSection() {
               <InviteRow
                 key={i.id}
                 invite={i}
-                creator={handleOf(i.createdBy)}
+                creator={creatorOf(i.createdBy)}
                 onRevoke={() => void revoke(i)}
               />
             ))}

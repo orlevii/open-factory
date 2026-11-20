@@ -26,6 +26,7 @@ import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
+import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
@@ -361,6 +362,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       spawner,
       terminator,
       tasks,
+      schedules,
       log: app.log,
     });
   } catch (err) {
@@ -414,6 +416,7 @@ async function listenForAgents(
     spawner: SpawnPort;
     terminator: TerminatePort;
     tasks: TaskService;
+    schedules: ScheduleService;
     log: FastifyInstance["log"];
   },
 ) {
@@ -434,6 +437,14 @@ async function listenForAgents(
     tools: (caller) => [
       sendMessageTool(d.router),
       ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+      // Q12: persistent agents only; a spawned agent never sees the schedule tools.
+      ...(caller.kind === "persistent"
+        ? scheduleTools({
+            schedules: d.schedules,
+            factoryZone: config.factoryTimezone,
+            loadAgent: (id) => d.store.agentById(id),
+          })
+        : []),
       listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
       ...(maySpawn(caller)
         ? [

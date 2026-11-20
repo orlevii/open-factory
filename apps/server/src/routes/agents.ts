@@ -19,6 +19,7 @@ import { z } from "zod";
 import {
   AgentArchivedError,
   AgentStartError,
+  AgentTerminatedError,
   NoOpenTurnError,
   RecoveryRefusedError,
 } from "../agents/errors.ts";
@@ -140,6 +141,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.code(202).send(queueItemResponseSchema.parse({ item: r.item }));
       } catch (e) {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+        if (e instanceof AgentTerminatedError)
+          return err(reply, 409, "agent_terminated", e.message);
         if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
         throw e;
       }
@@ -160,6 +163,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+        if (e instanceof AgentTerminatedError)
+          return err(reply, 409, "agent_terminated", e.message);
         if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
         throw e;
       }
@@ -170,6 +175,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   const recoveryError = (reply: FastifyReply, e: unknown) => {
     if (e instanceof RecoveryRefusedError) return err(reply, 409, e.code, e.message);
     if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+    if (e instanceof AgentTerminatedError) return err(reply, 409, "agent_terminated", e.message);
     if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
     throw e;
   };
@@ -215,6 +221,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.code(202).send({});
       } catch (e) {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+        if (e instanceof AgentTerminatedError)
+          return err(reply, 409, "agent_terminated", e.message);
         if (e instanceof NoOpenTurnError)
           return err(reply, 409, "no_open_turn", "Nothing to interrupt");
         throw e;

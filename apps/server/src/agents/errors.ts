@@ -28,6 +28,14 @@ export class AgentArchivedError extends Error {
     this.name = "AgentArchivedError";
   }
 }
+/** S7 §8: the agent was terminated; it is read-only forever (REST answers `409 agent_terminated`). */
+export class AgentTerminatedError extends Error {
+  constructor(slug: string) {
+    super(`@${slug} was terminated and can't receive messages.`);
+    this.name = "AgentTerminatedError";
+  }
+}
+
 /** Why Restart or Start a new session is refused (spec §9.7); the route answers 409 with the code. */
 export type RecoveryRefusal =
   | "not_errored"

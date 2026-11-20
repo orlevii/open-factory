@@ -1,5 +1,6 @@
-import type { AgentRow, Db } from "@open-factory/db";
+import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentStatus, QueueItem } from "@open-factory/shared";
+import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
@@ -230,6 +231,15 @@ export class Router {
     // One transaction with the durable episode state (R4): a crash between the two would report the same errored
     // episode again on the next boot. The hand-off and the inbox frame follow the commit.
     const out = await this.d.store.transaction(async (tx) => {
+      // S7 §8, §9.3: nothing about a terminated agent is forwarded. Its row is locked FOR NO KEY UPDATE (the lock a
+      // termination takes, so the two serialize; agent rows before message rows), and a forward that lost the race
+      // writes nothing.
+      const [subject] = await tx
+        .select({ terminatedAt: schema.agents.terminatedAt })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, f.agentId))
+        .for("no key update");
+      if (!subject || subject.terminatedAt) return undefined;
       const persisted = await this.persistForward(agent, f, tx);
       if (f.fact === "errored") await this.d.store.setErroredReported(f.agentId, tx);
       return persisted;

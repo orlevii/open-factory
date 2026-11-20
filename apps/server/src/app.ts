@@ -49,6 +49,7 @@ import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
 import { SpawnService } from "./spawning/spawn-service.ts";
+import { TerminateService } from "./spawning/terminate-service.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
@@ -78,6 +79,7 @@ declare module "fastify" {
     neighborhood: Neighborhood;
     agentTokens: AgentTokens;
     spawner: SpawnService;
+    terminator: TerminateService;
     agentListener: { port: number; close(): Promise<void> };
   }
 }
@@ -241,6 +243,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     closing: () => runtimes.supervisor.closing(),
   });
   app.decorate("spawner", spawner);
+  const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
+  app.decorate("terminator", terminator);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
@@ -280,9 +284,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       neighborhood,
       runtimes,
       spawner,
-      // STUB until Task 9 replaces it with the real service: a call fails with a clear message instead of
-      // half-working.
-      terminator: { terminateChild: async () => ({ ok: false, message: NOT_AVAILABLE_YET }) },
+      terminator,
       log: app.log,
     });
   } catch (err) {
@@ -316,8 +318,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   }
   return app;
 }
-
-const NOT_AVAILABLE_YET = "Spawning isn't available yet.";
 
 /**
  * Binds the agent listener (spec §5.1, §5.3) with the factory MCP behind it. With `FACTORY_AGENT_PORT=0` the port

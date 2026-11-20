@@ -10,7 +10,7 @@ import type { ProcessJournal } from "../runtime/local/journal.ts";
 import type { WakeReason } from "../supervisor/slots.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
-import { AgentArchivedError, AgentStartError } from "./errors.ts";
+import { AgentArchivedError, AgentStartError, AgentTerminatedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow } from "./event-store.ts";
 import type { PrepareStart } from "./start.ts";
@@ -43,7 +43,10 @@ export interface RuntimesDeps {
    * Claude path and the default image.
    */
   docker?: {
-    containers: Pick<ContainerManager, "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove">;
+    containers: Pick<
+      ContainerManager,
+      "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove" | "remove"
+    >;
     claudeBin: string;
     defaultImage: string;
   };
@@ -239,7 +242,11 @@ export class AgentRuntimes {
       return undefined;
     }
     void rt.deliver(row, o).catch((err: unknown) => {
-      if (err instanceof AgentArchivedError || err instanceof AgentStartError)
+      if (
+        err instanceof AgentArchivedError ||
+        err instanceof AgentTerminatedError ||
+        err instanceof AgentStartError
+      )
         this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
       else
         this.d.log.error(

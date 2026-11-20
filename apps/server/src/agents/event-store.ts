@@ -38,7 +38,16 @@ function isCursorInstant(at: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === at.slice(0, 19);
 }
 
-const { agents, credentials, sessionEvents, turns, messages, inboxItems, users } = schema;
+const {
+  agents,
+  agentProjectGrants,
+  credentials,
+  sessionEvents,
+  turns,
+  messages,
+  inboxItems,
+  users,
+} = schema;
 type MessageRow = typeof messages.$inferSelect;
 /** The one joined row shape the queue and the runtime use (spec §7.3): the row plus who sent it and what it is about. */
 export type PendingRow = MessageRow & {
@@ -136,6 +145,33 @@ export class EventStore {
   }
   async setAttempting(agentId: string, attempting: boolean) {
     await this.db.update(agents).set({ attempting }).where(eq(agents.id, agentId));
+  }
+  /**
+   * S7 §8 step 2, inside the termination's transaction (the agent rows are locked first): terminated, `attempting`
+   * cleared, its grants deleted (projects keep their RESTRICT FKs), and every pending row addressed to it rejected.
+   */
+  async terminateRows(tx: Tx, agentId: string, by: string) {
+    await tx
+      .update(agents)
+      .set({ terminatedAt: new Date(), terminatedBy: by, attempting: false })
+      .where(eq(agents.id, agentId));
+    await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
+    await tx
+      .update(messages)
+      .set({ state: "rejected" })
+      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")));
+  }
+  /**
+   * Whether the agent has an event of `type`. Rides `session_events_agent_seq_unique (agent_id, seq)` on its
+   * `agent_id` prefix (one agent's events only); called only on termination paths.
+   */
+  async hasEvent(agentId: string, type: string): Promise<boolean> {
+    const [r] = await this.db
+      .select({ id: sessionEvents.id })
+      .from(sessionEvents)
+      .where(and(eq(sessionEvents.agentId, agentId), eq(sessionEvents.type, type)))
+      .limit(1);
+    return Boolean(r);
   }
   /** Replaces the whole journal (spec §12); null clears it. */
   async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {

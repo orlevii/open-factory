@@ -41,6 +41,7 @@ import { capText } from "./cap.ts";
 import {
   AgentArchivedError,
   AgentStartError,
+  AgentTerminatedError,
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
@@ -101,7 +102,7 @@ export interface RuntimeDeps {
 }
 
 export interface DockerDeps {
-  containers: Pick<ContainerManager, "ensure" | "stopIfRunning" | "forceRemove">;
+  containers: Pick<ContainerManager, "ensure" | "stopIfRunning" | "forceRemove" | "remove">;
   /** `FACTORY_DOCKER_CLAUDE_BIN`. */
   claudeBin: string;
   /** `ensure` found the image gone after the pull check: the next wake checks and pulls again. */
@@ -161,6 +162,7 @@ export type AfterExit =
   | { kind: "hibernate"; reason: HibernateReason; lost: LostWork }
   // Restart and Start a new session: the exit releases the slot and makes the attempt's wake, if one is on.
   | { kind: "restart"; by: string }
+  | { kind: "terminate"; by: string } // S7 §8 step 3: its exit removes the container and never wakes
   | { kind: "failed_start" } // S3's stop after a spawn or resume failure
   | { kind: "internal" }; // S3's onJobFailure stop
 
@@ -257,6 +259,9 @@ const stopFailedMessage = (pid: number | undefined) =>
 const previousProcessMessage = (pid: number | undefined) =>
   `The agent's previous process couldn't be stopped. Check the host${pid ? ` (pid ${pid})` : ""}, then restart again.`;
 
+/** A start refused because the agent was terminated (S7 §8 step 1): not recorded as a start failure. */
+const TERMINATED_START = "The agent was terminated.";
+
 /** The owed-notification bound (spec §6.1). */
 const OWED_BOUND_MS = 30_000;
 /** Local process-tree snapshots while a turn is open or a task is live (spec §12). */
@@ -304,6 +309,11 @@ export class AgentRuntime {
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
   private archived: boolean;
+  // S7 §8 step 1: the termination latch, separate from `archived` (which reload reassigns from the row). Only ever OR'd
+  // in from `terminated_at` and cleared only by `unmarkTerminated()`. `terminationCommitted`: the row says so (the
+  // status shows it, arriving rows are rejected); a provisional latch only holds everything still.
+  private terminated: boolean;
+  private terminationCommitted: boolean;
   private lastError: string | undefined;
   private errorKind: ErrorKind | undefined;
   // Spec §9.2: an attempt to bring back interrupted work is in progress (persisted). `attemptReason` is its wake's
@@ -367,10 +377,15 @@ export class AgentRuntime {
     this.errorKind = kind.success ? kind.data : undefined;
     this.attempting = d.agent.attempting;
     this.archived = Boolean(d.agent.archivedAt);
+    this.terminated = Boolean(d.agent.terminatedAt);
+    this.terminationCommitted = this.terminated;
     this.slots = d.slots;
   }
 
   async init() {
+    // The row may have been terminated since it was read for the constructor.
+    const r = await this.d.store.agentById(this.agent.id);
+    if (r?.terminatedAt && !this.terminationCommitted) this.markTerminated({ committed: true });
     const pending = (await this.d.store.pendingQueue(this.agent.id)).map(entryOf);
     for (const e of pending) this.seen.add(e.row.id);
     this.queue = pending.filter((e) => !isHeld(e));
@@ -385,7 +400,12 @@ export class AgentRuntime {
    */
   receiveHeld(row: PendingRow): Promise<void> {
     return this.run(async () => {
-      // Archived: the row just stays pending (spec §16's `rejected` rule is about send_message, Router-side).
+      // Terminated (committed): the row is rejected. Archived: it just stays pending (spec §16's `rejected` rule is
+      // about send_message, Router-side). A provisional latch keeps it held, unwritten (S7 §8 step 1).
+      if (this.terminationCommitted) {
+        if (!this.seen.has(row.id)) await this.d.store.markRejected(row.id);
+        return;
+      }
       if (!this.seen.has(row.id) && !this.archived) {
         const entry = entryOf(row);
         if (!isHeld(entry)) throw new Error(`message ${row.id} isn't a held kind`);
@@ -412,6 +432,11 @@ export class AgentRuntime {
     o: { sender: "human" | "agent"; fromLabel: string; reason?: WakeReason },
   ): Promise<QueueItem> {
     return this.apiJob(async () => {
+      if (this.terminationCommitted) {
+        // S7 §8 step 2: the transaction rejected what was pending; a row handed over after it is rejected here.
+        await this.d.store.markRejected(row.id);
+        throw new AgentTerminatedError(this.agent.slug);
+      }
       if (this.archived) {
         await this.d.store.markRejected(row.id);
         const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === row.id);
@@ -441,6 +466,9 @@ export class AgentRuntime {
         // nothing to wake for, and an urgent interrupt now would stop the very turn reading it.
         return this.itemOf(entryOf(row));
       }
+      // A provisional latch (S7 §8 step 1): queued and seen, but no wake, interrupt or flush. If the termination
+      // fails, `unmarkTerminated` delivers it; if it commits, the transaction rejected it.
+      if (this.terminated) return this.itemOf(entry ?? entryOf(row));
       if (o.sender === "human") {
         // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
         if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
@@ -497,6 +525,7 @@ export class AgentRuntime {
       ...(c.focus ? { focus: c.focus } : {}),
     };
     return this.apiJob(async () => {
+      this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       this.queue.push(entry);
       this.publishQueue();
@@ -508,6 +537,7 @@ export class AgentRuntime {
 
   async interrupt(c: { byHandle: string }): Promise<void> {
     return this.apiJob(async () => {
+      this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
@@ -536,7 +566,9 @@ export class AgentRuntime {
         const moved = r.credentialId !== this.agent.credentialId;
         this.agent = r;
         this.archived = Boolean(r.archivedAt);
-        if (moved) await this.onCredentialChanged();
+        // Never a plain assignment (S7 §8 step 1): a provisional latch must survive a refresh during the termination.
+        if (r.terminatedAt && !this.terminationCommitted) this.markTerminated({ committed: true });
+        if (moved && !this.terminated) await this.onCredentialChanged();
       }
       this.publishStatus();
     });
@@ -553,7 +585,8 @@ export class AgentRuntime {
         this.proc &&
         this.proc !== this.deadProc &&
         this.proc !== this.failingProc &&
-        !this.stopping
+        !this.stopping &&
+        !this.terminated
       ) {
         this.restartPending = true;
         this.maybeRestart();
@@ -568,6 +601,7 @@ export class AgentRuntime {
    */
   restart(r: { byHandle: string; runtimeAllowed: boolean }): Promise<void> {
     return this.apiJob(async () => {
+      this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       this.refuseRecoveryWhileAttempting();
       if (!this.errored)
@@ -610,6 +644,7 @@ export class AgentRuntime {
    */
   resetSession(r: { byHandle: string }): Promise<void> {
     return this.apiJob(async () => {
+      this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       this.refuseRecoveryWhileAttempting();
       if (
@@ -648,6 +683,118 @@ export class AgentRuntime {
       );
       this.publishStatus();
     });
+  }
+
+  /**
+   * S7 §8 step 1, synchronous: nothing sends, wakes, starts, restarts, compacts or writes from here on. A provisional
+   * latch (`committed: false`, set before the termination's transaction) keeps arriving rows queued rather than
+   * rejected and doesn't show as terminated. The committed one drops what was queued (the transaction rejected it)
+   * and ends any attempt (the transaction cleared `attempting`). No Supervisor call: `acceptsWake()` is now false,
+   * and the Supervisor drops ineligible entries when it grants.
+   */
+  markTerminated(o: { committed: boolean }): void {
+    this.terminated = true;
+    this.restartPending = false;
+    if (o.committed && !this.terminationCommitted) {
+      this.terminationCommitted = true;
+      this.queue = [];
+      this.held = [];
+      this.attempting = false;
+      this.attemptReason = undefined;
+      this.attemptOwedAtExit = false;
+      this.publishQueue();
+    }
+    this.clearOwedBound();
+    this.updateWarmTimer();
+    this.updateHeldTimer();
+    this.publishStatus();
+  }
+
+  /**
+   * S7 §8 step 2 on failure: the provisional latch is undone (a committed one never is). What arrived meanwhile is
+   * delivered normally: a running process flushes it, otherwise a `queued_items` wake is requested.
+   */
+  unmarkTerminated(): void {
+    if (this.terminationCommitted || !this.terminated) return;
+    this.terminated = false;
+    this.updateHeldTimer();
+    this.publishStatus();
+    void this.run(async () => {
+      if (this.proc) await this.flushOrStop("flush after a failed termination failed");
+      else if (this.hasDeliverable()) await this.wakeFromJob("queued_items");
+      this.publishStatus();
+    }).catch((err: unknown) =>
+      this.d.log.error(
+        { err, agent: this.agent.slug },
+        "delivering after a failed termination failed",
+      ),
+    );
+  }
+
+  isTerminated(): boolean {
+    return this.terminated;
+  }
+
+  /**
+   * S7 §8 step 3, as a job: the `terminated` event (once), then a forced stop whose exit (step 4) removes the container
+   * or reaps the journal and releases the slot. With no process, step 4 runs now. A process left by a failed stop
+   * (`stop_failed`) gets one more escalation, as Restart does. Never awaited from inside another job.
+   */
+  terminateStop(by: string): Promise<void> {
+    return this.run(async () => {
+      await this.ensureTerminatedEvent(by);
+      const proc = this.proc;
+      if (proc && proc !== this.deadProc)
+        this.beginForceStop({ kind: "terminate", by }, { graceMs: 0, termWaitMs: 3000 });
+      else if (proc) {
+        this.stopping = true;
+        this.afterExit = { kind: "terminate", by };
+        await this.escalateNow(proc, { removeOnFailure: true });
+      } else await this.finishTerminationWithoutProcess();
+      this.publishStatus();
+    });
+  }
+
+  /** Inside a job (or at boot, before any job): appends `terminated{by}` unless the agent already has one. */
+  async ensureTerminatedEvent(by: string): Promise<void> {
+    if (await this.d.store.hasEvent(this.agent.id, "terminated")) return;
+    await this.append(null, { type: "terminated", by });
+  }
+
+  /** S7 §8 step 4 with no process: the container removal or the journal reap, then the slot goes back. */
+  private async finishTerminationWithoutProcess() {
+    if (await this.terminationCleanup()) this.slots.release(this.agent.id);
+  }
+
+  /**
+   * S7 §8 step 4's cleanup: Docker removes the container (stop, then remove); local reaps whatever the journal names.
+   * On success the journal is cleared. False when it failed: `stop_failed`, keeping the slot (S5 §9.6), logged; no
+   * `errored` fact (forwarding is latched off). The sweep retries.
+   */
+  private async terminationCleanup(): Promise<boolean> {
+    const target = this.cleanupTarget();
+    let done: CleanupResult | undefined;
+    try {
+      if (target.runtime === "docker") {
+        const removed = await this.d.docker?.containers.remove(this.agent.id, this.agent.slug);
+        done = removed ? { container: "removed" } : undefined;
+      } else done = await this.d.cleanup?.(target);
+    } catch (err) {
+      this.d.log.error(
+        { err, agent: this.agent.slug, runtime: target.runtime },
+        `cleaning up a terminated agent failed${err instanceof Error ? `: ${err.message}` : ""}`,
+      );
+      await this.setErrored(stopFailedMessage(undefined), "stop_failed");
+      this.slots.stopFailed(this.agent.id);
+      return false;
+    }
+    this.journalProc = undefined;
+    this.carriedPids = [];
+    this.journalWork = { tasks: [], crons: [] };
+    await this.d.store.setRuntimeJournal(this.agent.id, null);
+    this.journalJson = "null";
+    if (done) await this.append(null, { type: "cleanup", ...done });
+    return true;
   }
 
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
@@ -710,6 +857,7 @@ export class AgentRuntime {
    */
   bootWake(reason: "boot" | "boot_resume"): Promise<void> {
     return this.run(async () => {
+      if (this.terminated) return;
       if (reason === "boot_resume") await this.beginAttempt(reason, false);
       else await this.wakeFromJob(reason);
       this.publishStatus();
@@ -731,7 +879,7 @@ export class AgentRuntime {
    * only for Start a new session; any other errored agent only for crash recovery, Restart, reset or a human's message.
    */
   acceptsWake(reason: WakeReason): boolean {
-    if (this.archived || this.noStart) return false;
+    if (this.terminated || this.archived || this.noStart) return false;
     if (this.attempting) return reason === this.attemptReason;
     if (!this.errored) return true;
     if (this.errorKind === "stop_failed") return reason === "restart";
@@ -814,7 +962,7 @@ export class AgentRuntime {
     current: () => boolean = () => true,
   ): Promise<void> {
     return this.run(async () => {
-      if (!current()) return;
+      if (!current() || this.terminated) return; // no continue notice for a terminated agent (S7 §12)
       await this.append(null, { type: "rate_limit_reset", credential: n.credential });
       await this.addNotice("rate_limit_reset", notices.rateLimitReset(n));
       await this.d.store.setNoticeOwed(this.agent.id, false);
@@ -838,7 +986,7 @@ export class AgentRuntime {
    */
   imagePullFailed(message: string): Promise<void> {
     return this.run(async () => {
-      if (this.proc || this.starting) return; // started meanwhile through another wake: nothing failed
+      if (this.proc || this.starting || this.terminated) return; // started meanwhile, or terminated: nothing failed
       await this.append(null, { type: "error", source: "spawn", message });
       await this.setErrored(message, "start");
       this.publishStatus();
@@ -925,6 +1073,7 @@ export class AgentRuntime {
       proc !== this.failingProc &&
       !this.stopping &&
       !this.noStart &&
+      !this.terminated &&
       !this.busy() &&
       !this.pinned() &&
       !this.restartPending &&
@@ -1057,6 +1206,7 @@ export class AgentRuntime {
           !(
             err instanceof AgentStartError ||
             err instanceof AgentArchivedError ||
+            err instanceof AgentTerminatedError ||
             err instanceof NoOpenTurnError ||
             err instanceof RecoveryRefusedError
           ) &&
@@ -1072,7 +1222,7 @@ export class AgentRuntime {
 
   private status(): AgentStatus {
     return statusOf({
-      terminated: false, // Task 9 replaces this with the terminated latch
+      terminated: this.terminated && this.terminationCommitted, // a provisional latch doesn't show (S7 §8 step 1)
       errored: this.errored,
       attempting: this.attempting,
       working:
@@ -1128,6 +1278,7 @@ export class AgentRuntime {
    * as `turn_failed`, denials as `denied`. Subagent text, tool calls, blank text and everything else stay here.
    */
   private async forwardEvent(e: AnyEvent) {
+    if (this.terminated) return; // S7 §8: nothing about a terminated agent is forwarded
     if (e.type === "assistant_text") {
       if (e.parentToolUseId || !e.text.trim()) return;
       await this.d.forward({ agentId: this.agent.id, body: capText(e.text) });
@@ -1138,6 +1289,7 @@ export class AgentRuntime {
   }
 
   private async forwardFact(fact: FactCode, detail?: FactDetail) {
+    if (this.terminated) return; // S7 §8: the peer event (or the spawner's tool result) already said it
     await this.d.forward({
       agentId: this.agent.id,
       fact,
@@ -1147,7 +1299,7 @@ export class AgentRuntime {
 
   /** Errored with no attempt pending (S6 §9.1): forwarded once per errored episode. */
   private async forwardErrored() {
-    if (this.erroredForwarded) return;
+    if (this.erroredForwarded || this.terminated) return;
     // Set before the write so a re-entrant failure path (onJobFailure → setErrored) doesn't report it again; a failed
     // insert reported nothing, so the flag is cleared and a later errored path can retry.
     this.erroredForwarded = true;
@@ -1161,6 +1313,7 @@ export class AgentRuntime {
 
   /** The error cleared (an attempt succeeded, or Start a new session): the episode ends. */
   private async forwardRecovered() {
+    if (this.terminated) return;
     this.erroredForwarded = false;
     await this.forwardFact("recovered");
   }
@@ -1349,7 +1502,13 @@ export class AgentRuntime {
       await this.flush();
     } catch (err) {
       // A start failure is already recorded (an `error` event, errored with its real message and fix).
-      if (!(err instanceof AgentStartError || err instanceof AgentArchivedError)) {
+      if (
+        !(
+          err instanceof AgentStartError ||
+          err instanceof AgentArchivedError ||
+          err instanceof AgentTerminatedError
+        )
+      ) {
         if (this.proc) await this.onJobFailure(this.proc, err);
         else this.d.log.error({ err, agent: this.agent.slug }, what);
       }
@@ -1390,8 +1549,7 @@ export class AgentRuntime {
    * could be written), or the image went missing (the wake is pulled again).
    */
   private async launch(reason: WakeReason, onLaunched: () => void): Promise<boolean> {
-    if (this.archived) throw new AgentArchivedError(this.agent.slug);
-    this.refuseWhileStopping();
+    this.refuseBeforeLaunch();
     // One token per launch (spec §5.2), revoked when its process exits; a start that never gets a process revokes it
     // here, whatever the failure and whether or not the slot is kept. The plaintext goes only to prepareStart.
     const { token, generation } = this.d.tokens.mint(this.agent.id);
@@ -1422,6 +1580,8 @@ export class AgentRuntime {
         this.archived = true;
         throw err;
       }
+      // Terminated during prepare: not a start failure to record (and nothing to forward).
+      if (this.terminated) throw new AgentStartError(TERMINATED_START);
       return this.failStart(err, "prepareStart failed");
     }
     const { launch: dockerLaunch, ...prepSpec } = prepared;
@@ -1655,10 +1815,16 @@ export class AgentRuntime {
       throw new AgentStartError("The agent is being stopped.");
   }
 
-  /** The last check before the launch: the stop latches, and an archive that landed during prepare. */
+  /** The last check before the launch: the stop latches, and an archive or termination that landed during prepare. */
   private refuseBeforeLaunch() {
+    if (this.terminated) throw new AgentStartError(TERMINATED_START);
     if (this.archived) throw new AgentArchivedError(this.agent.slug);
     this.refuseWhileStopping();
+  }
+
+  /** S7 §8: REST compact, interrupt, restart and reset-session on a terminated agent (`409 agent_terminated`). */
+  private refuseTerminated() {
+    if (this.terminated) throw new AgentTerminatedError(this.agent.slug);
   }
 
   private async pump(proc: HarnessProcess) {
@@ -1870,6 +2036,9 @@ export class AgentRuntime {
 
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
     this.revokeToken(proc);
+    // S7 §8 step 4: the exit path is chosen by the latch, not by the recorded intent (markStopFailed overwrites it with
+    // `internal`, and a crash exit may arrive before the stop job recorded one). A forced stop that never wakes.
+    const terminating = this.terminated;
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
@@ -1878,9 +2047,10 @@ export class AgentRuntime {
     if (this.escalationTimer) clearTimeout(this.escalationTimer);
     this.escalationTimer = undefined;
     // Spec §9.1: no recorded intent and not expected, whether or not the agent is errored or attempting.
-    const crash = !intent && !e.expected;
-    // Leftovers are cleaned up after a crash, an escalation and a Restart's force stop (spec §9.2, §9.6, §9.7, §12).
-    const forced = crash || intent?.kind === "restart" || this.escalated.has(proc);
+    const crash = !terminating && !intent && !e.expected;
+    // Leftovers are cleaned up after a crash, an escalation, a Restart's force stop and a termination (spec §9.2, §9.6,
+    // §9.7, §12; S7 §8).
+    const forced = crash || intent?.kind === "restart" || this.escalated.has(proc) || terminating;
     const lost = this.lostSnapshot(); // before the tasks and crons are reset below
     // A hibernate that cut work short (in practice shutdown or archive: the others wait for idle) also reaps: a
     // `setsid` task outlives Claude's exit, and its journal is cleared below (spec §12, §18.3: nothing survives close).
@@ -1899,7 +2069,8 @@ export class AgentRuntime {
     const openTurnId = this.openTurnId;
     const usage = this.lastUsage;
     // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7); held rows go back to held.
-    this.requeue(rolledBack.flat());
+    // A terminated agent's are rejected below instead (S7 §8 step 4).
+    if (!terminating) this.requeue(rolledBack.flat());
     // Notices go ahead of rolled-back batches (spec §9.5); a stable partition keeps each group in order.
     this.queue = [...this.queue.filter(isNotice), ...this.queue.filter((e) => !isNotice(e))];
     this.openTurnId = undefined;
@@ -1916,12 +2087,15 @@ export class AgentRuntime {
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
     try {
-      if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
+      // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
+      if (terminating) keepSlot = !(await this.terminationCleanup());
+      else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
       else this.journalProc = undefined; // a clean exit: nothing of it is left to reap
-      await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
+      if (!terminating) await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
-        await this.d.store.markPending(ids);
+        if (terminating) for (const id of ids) await this.d.store.markRejected(id);
+        else await this.d.store.markPending(ids);
         await this.append(null, {
           type: "delivery_failed",
           messageIds: ids,
@@ -1937,7 +2111,8 @@ export class AgentRuntime {
           usage,
         });
       await this.append(null, e);
-      if (intent?.kind === "hibernate") {
+      if (terminating) await this.reportLostWork("terminated", lost);
+      else if (intent?.kind === "hibernate") {
         await this.recordLostWork(intent, Boolean(openTurnId));
         await this.append(null, {
           type: "hibernated",
@@ -1947,7 +2122,7 @@ export class AgentRuntime {
             : {}),
         });
       }
-      if (intent?.kind === "restart") await this.reportLostWork("restart", lost);
+      if (intent?.kind === "restart" && !terminating) await this.reportLostWork("restart", lost);
       if (policy !== "none" && policy !== "hibernated")
         await this.recordCrash(e, policy, live, keepSlot);
       // A crash keeps the journal's tasks and crons (the lost work is reported from them); a reap drops its pids.
@@ -1964,6 +2139,7 @@ export class AgentRuntime {
       if (this.attemptReason) await this.endAttemptIfNothingStarts(this.attemptReason);
       return;
     }
+    if (terminating) return; // never a wake after a terminated agent's exit (S7 §8 step 4)
     // failed_start and internal never wake; a crash makes one automatic attempt only when work was lost (§9.2).
     const canAttempt = !keepSlot && this.stopsInProgress === 0 && !this.slots.closing();
     if (policy === "recover" && !keepSlot) {
@@ -2016,7 +2192,11 @@ export class AgentRuntime {
 
   /** Spec §9.4: `background_work_lost` when live tasks or crons died, forwarded to the manager (S6 §9.1) unless archived. */
   private async reportLostWork(
-    reason: "crash" | "restart" | Exclude<HibernateReason, "warm_window" | "freed_slot">,
+    reason:
+      | "crash"
+      | "restart"
+      | "terminated"
+      | Exclude<HibernateReason, "warm_window" | "freed_slot">,
     lost: LostWork,
   ) {
     if (!lost.tasks.length && !lost.crons.length) return;
@@ -2535,6 +2715,7 @@ export class AgentRuntime {
    * while the credential is paused (spec §7.2; an urgent interrupt is written outside the flush).
    */
   private async flush() {
+    if (this.terminated) return; // S7 §8 step 1: no batch write once latched
     while (
       this.proc &&
       !this.stopping &&
@@ -2604,7 +2785,7 @@ export class AgentRuntime {
     if (this.heldTimer) clearTimeout(this.heldTimer);
     this.heldTimer = undefined;
     const at = this.heldDueAt();
-    if (at === undefined || this.noStart || this.archived) return;
+    if (at === undefined || this.noStart || this.archived || this.terminated) return;
     const dueIn = this.dueAtTurnEnd ? 0 : at - Date.now();
     if (dueIn <= 0 && (this.heldFiredFor === at || !this.heldActionable())) return;
     const timer: ReturnType<typeof setTimeout> = setTimeout(

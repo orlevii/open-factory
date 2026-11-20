@@ -26,6 +26,7 @@ test("structure with everything present; deterministic", () => {
     "## Who you are",
     "## How messages reach you",
     "## Messaging",
+    "## Tasks",
     "## Your workspace",
   ]);
   expect(md).toContain("@lead");
@@ -190,4 +191,42 @@ test("quoteDescription never splits a surrogate pair: 200 code points in total",
   expect(quoteDescription(`${"a".repeat(198)}${emoji}${emoji}b`)).toBe(
     `"${"a".repeat(198)}${emoji}…"`,
   );
+});
+
+test("the kinds line lists the task kinds, names `task`, and @factory notices include task changes (S8 §10)", () => {
+  const md = buildClaudeMd(input);
+  expect(md).toContain(
+    "The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment` and `task_update`.",
+  );
+  expect(md).toContain("`task` names the task a task message is about");
+  expect(md).toContain(
+    "(restarts, recoveries, rate limits, changes to your neighborhood and task changes)",
+  );
+});
+
+test("the Tasks section follows Messaging with the seven rules, for persistent and spawned agents alike", () => {
+  const bullets = [
+    "- Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.",
+    "- When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.",
+    "- Your text output is not a reply to a comment: answer with `comment_task` (or `send_message`), or nobody sees it.",
+    "- To ask a human about a task, comment on it mentioning `@handle` or `@humans`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
+    "- Mention an agent in a comment to bring it in: it receives the comment.",
+    "- Move your task to in progress when you start and to done when you finish: its creator and the agents waiting on it are told when it is done.",
+    "- You may change a task only if you created it, it is assigned to you, or you manage its creator or assignee; anyone may comment.",
+  ];
+  for (const md of [
+    buildClaudeMd(input),
+    buildClaudeMd({ ...input, kind: "ephemeral", spawner: { slug: "boss" } }),
+  ]) {
+    const at = md.indexOf("## Tasks\n");
+    expect(at).toBeGreaterThan(md.indexOf("## Messaging"));
+    const end = md.indexOf("\n## ", at + 1);
+    expect(
+      md
+        .slice(at, end)
+        .split("\n")
+        .filter((l) => l.startsWith("- ")),
+    ).toEqual(bullets);
+  }
+  expect(buildClaudeMd(input)).toBe(buildClaudeMd(structuredClone(input)));
 });

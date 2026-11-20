@@ -205,6 +205,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@balena/dockerignore':
+        specifier: 1.0.2
+        version: 1.0.2
       '@fastify/static':
         specifier: ^10.1.11
         version: 10.1.11
@@ -241,6 +244,9 @@ importers:
       postgres:
         specifier: ^4.1.1
         version: 4.1.1
+      tar-stream:
+        specifier: 2.2.0
+        version: 2.2.0
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

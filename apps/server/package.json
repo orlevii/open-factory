@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@balena/dockerignore": "1.0.2",
     "@fastify/static": "^10.1.11",
     "@fastify/websocket": "^11.3.7",
     "@modelcontextprotocol/server": "2.4.0",
@@ -16,6 +17,7 @@
     "fastify": "^5.12.8",
     "fastify-type-provider-zod": "^7.0.0",
     "postgres": "^4.1.1",
+    "tar-stream": "2.2.0",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },

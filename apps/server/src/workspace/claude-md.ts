@@ -1,3 +1,5 @@
+import { inline } from "../messaging/inline.ts";
+
 export interface OrgEntry {
   slug: string;
   displayName: string;
@@ -8,12 +10,6 @@ export interface OrgEntry {
 
 /** Spec §10.3: each org list is capped; `list_peers` returns everyone. */
 export const ORG_LIST_CAP = 25;
-
-/** Display names and descriptions are user-controlled: one line, and no angle brackets, so they can't
- *  forge a `<factory-message>` envelope or start a heading/list line of their own. */
-function inline(text: string): string {
-  return text.replace(/[<>]/g, "").replace(/\s+/g, " ").trim();
-}
 
 /** S7 §11.1: an agent-written description is one line, in double quotes, with its own `"` made `'`, capped at 200. */
 export function quoteDescription(text: string): string {

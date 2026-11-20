@@ -867,3 +867,96 @@ test("a provisional latch whose transaction fails: the held timer is re-armed an
   await w.settled();
   expect(proc.sent.flat().map((m) => m.body)).toContain("an update");
 });
+
+// ---------- The sweep (S7 §8 step 5, §10.2, §10.3) against a termination in progress ----------
+
+test("a sweep during a termination that is still stopping: one terminated event, one slot release, one container removal", async () => {
+  const w = await world();
+  await w.idle();
+  const proc = w.proc();
+  proc.holdStop = true; // the termination's stop is under way and doesn't finish yet
+  const release = vi.spyOn(w.runtimes.supervisor, "release");
+  const removals = vi.spyOn(w.docker, "remove");
+  await w.terminate();
+  await w.settled();
+  expect(proc.stopped).toBe(true);
+  expect(proc.exited).toBe(false);
+  // Never stuck while its stop is in progress: nothing done, the workspace must not go either.
+  expect(await w.rt.sweepStuck()).toBe("still");
+  expect(removals).not.toHaveBeenCalled();
+  proc.releaseStop();
+  await w.settled();
+  // A sweep after the clean exit finds nothing left (the removal finds no container).
+  expect(await w.rt.sweepStuck()).toBe("none");
+  await w.settled();
+  expect(removals).toHaveBeenCalledTimes(1);
+  expect(release.mock.calls.filter(([a]) => a === w.id)).toHaveLength(1);
+  expect((await w.events()).filter((e) => e.type === "terminated")).toHaveLength(1);
+  expect(w.docker.containersOf(w.id)).toEqual([]);
+  expect(await w.row()).toMatchObject({ runtime_journal: null, error_kind: null });
+});
+
+test("a sweep while a shutdown stop is in progress does nothing", async () => {
+  const w = await world();
+  await w.idle();
+  const proc = w.proc();
+  proc.holdStop = true;
+  const stopping = w.rt.stop(); // stopsInProgress > 0 until it returns
+  await w.terminate();
+  expect(await w.rt.sweepStuck()).toBe("still");
+  proc.releaseStop();
+  await stopping;
+  await w.settled();
+  expect((await w.events()).filter((e) => e.type === "terminated")).toHaveLength(1);
+  expect(w.docker.containersOf(w.id)).toEqual([]);
+});
+
+test("last_activity_at is written after the batch commits, as its own statement (terminate vs a batch write)", async () => {
+  const w = await world();
+  await w.idle();
+  const entered = deferred();
+  const gate = deferred();
+  const markDelivered = h.store.markDelivered.bind(h.store);
+  vi.spyOn(h.store, "markDelivered").mockImplementation(async (ids, tx) => {
+    entered.resolve();
+    await gate.promise;
+    return markDelivered(ids, tx);
+  });
+  let committed = false;
+  const transaction = h.store.transaction.bind(h.store);
+  vi.spyOn(h.store, "transaction").mockImplementation((async (
+    fn: Parameters<typeof transaction>[0],
+  ) => {
+    const r = await transaction(fn);
+    committed = true;
+    return r;
+  }) as typeof h.store.transaction);
+  const atCall: boolean[] = [];
+  const setLastActivity = h.store.setLastActivity.bind(h.store);
+  const writes = vi.spyOn(h.store, "setLastActivity").mockImplementation(async (id, at) => {
+    if (id === w.id) atCall.push(committed);
+    return setLastActivity(id, at);
+  });
+  const old = new Date(Date.now() - 86_400_000);
+  await h.t.sql`update agents set last_activity_at = ${old.toISOString()} where id = ${w.id}`;
+  const row = await h.store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: w.id,
+    body: "mid-batch",
+    urgent: false,
+  });
+  const sending = w.rt.deliver(row, { sender: "human", fromLabel: "@or" });
+  await entered.promise;
+  const terminating = w.terminate();
+  await lockWaiter(); // the termination waits on the batch's message row lock
+  expect(atCall).toEqual([]); // nothing written to the agent row while the batch's transaction is open
+  gate.resolve();
+  await sending;
+  expect(await terminating).toEqual({ status: "terminated" });
+  await w.settled();
+  await Promise.all(writes.mock.results.map((r) => r.value));
+  expect(atCall.length).toBeGreaterThanOrEqual(1);
+  expect(atCall.every(Boolean)).toBe(true);
+  const r = await h.store.agentById(w.id);
+  expect(r?.lastActivityAt.getTime()).toBeGreaterThan(old.getTime());
+});

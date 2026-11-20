@@ -162,6 +162,27 @@ export class Workspace {
   }
 
   /**
+   * S7 §10.3 step 3: a terminated agent's workspace after the grace. The one Workspace method that takes the lock
+   * itself: under `lock.run(slug)` it re-reads the pin (`stillUnpinned`; the pin route takes the same lock, so a pin
+   * that returned success always keeps the workspace), then removes the workdir (`.claude-config` and its session
+   * JSONL included) and the factory's state for it, each through `SafeFs.removeAll` (a link is removed as a link,
+   * never followed), then records the deletion (`markDeleted`) before the lock is released. False when pinned.
+   */
+  async deleteWorkspace(
+    slug: string,
+    stillUnpinned: () => Promise<boolean>,
+    markDeleted: () => Promise<void>,
+  ): Promise<boolean> {
+    return this.lock.run(slug, async () => {
+      if (!(await stillUnpinned())) return false;
+      await new SafeFs(this.workdir(slug)).removeAll();
+      await new SafeFs(agentStateDir(this.d.factoryHome, slug)).removeAll();
+      await markDeleted();
+      return true;
+    });
+  }
+
+  /**
    * Under the caller-held lock: install, then either write the workdir files at once
    * (`canWriteNow`: nothing can race the writes) or stage them in `resync-pending/` for the next
    * `prepare` (spec §11.4 part 4). The template copy in state/ and the plugin install are
@@ -240,8 +261,8 @@ export class Workspace {
   }
 
   /**
-   * Lock contract: no Workspace method takes a lock itself. Callers must hold `lock.run(slug, …)`
-   * around materialize, resync and prepare (createPrepareStart does so for prepare).
+   * Lock contract: no Workspace method takes a lock itself except `deleteWorkspace`. Callers must hold
+   * `lock.run(slug, …)` around materialize, resync and prepare (createPrepareStart does so for prepare).
    */
   async prepare(i: PrepareInput): Promise<{
     workdir: string;

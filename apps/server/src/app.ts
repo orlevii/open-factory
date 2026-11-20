@@ -48,6 +48,7 @@ import { dockerTransport } from "./runtime/docker/exec-transport.ts";
 import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
+import { Reaper } from "./spawning/reaper.ts";
 import { SpawnService } from "./spawning/spawn-service.ts";
 import { TerminateService } from "./spawning/terminate-service.ts";
 import { registerStatic } from "./static.ts";
@@ -80,6 +81,7 @@ declare module "fastify" {
     agentTokens: AgentTokens;
     spawner: SpawnService;
     terminator: TerminateService;
+    reaper: Reaper;
     agentListener: { port: number; close(): Promise<void> };
   }
 }
@@ -245,16 +247,29 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("spawner", spawner);
   const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
   app.decorate("terminator", terminator);
+  // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.
+  const reaper = new Reaper({
+    store,
+    runtimes,
+    terminator,
+    workspace,
+    log: app.log,
+    now: () => Date.now(),
+  });
+  app.decorate("reaper", reaper);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
+    reaper.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
     // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
     tokens.revokeAll();
     await agentListener?.close();
+    // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
+    await reaper.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -308,6 +323,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       log: app.log,
     });
     router.bootDone();
+    void reaper.run();
+    reaper.start();
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.

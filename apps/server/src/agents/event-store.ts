@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
+import { type AgentRow, type Db, type RuntimeJournal, schema } from "@open-factory/db";
 import {
   type AnyEvent,
   anyEventSchema,
@@ -18,6 +18,7 @@ import {
   lt,
   lte,
   notInArray,
+  or,
   type SQL,
   sql,
 } from "drizzle-orm";
@@ -176,6 +177,83 @@ export class EventStore {
       .where(and(eq(sessionEvents.agentId, agentId), eq(sessionEvents.type, type)))
       .limit(1);
     return Boolean(r);
+  }
+  /**
+   * S7 §10.2: the agent's last activity, as its own statement (never inside a batch's transaction, which holds message
+   * rows: an agents-row update after them would invert the lock order). `greatest` keeps a late write from moving it
+   * backwards.
+   */
+  async setLastActivity(agentId: string, at: Date) {
+    await this.db
+      .update(agents)
+      .set({
+        lastActivityAt: sql`greatest(${agents.lastActivityAt}, ${at.toISOString()}::timestamptz)`,
+      })
+      .where(eq(agents.id, agentId));
+  }
+  /**
+   * S7 §10.3 step 1: live spawned agents idle since before `cutoff`, except those owed a continue notice and those
+   * whose credential is paused at `now` (a rate-limit pause is waiting, not idleness). The runtime re-checks each.
+   */
+  async ttlCandidates(cutoff: Date, now: Date): Promise<AgentRow[]> {
+    const rows = await this.db
+      .select({ agent: agents })
+      .from(agents)
+      .leftJoin(credentials, eq(credentials.id, agents.credentialId))
+      .where(
+        and(
+          eq(agents.kind, "ephemeral"),
+          isNull(agents.terminatedAt),
+          isNull(agents.archivedAt),
+          lt(agents.lastActivityAt, cutoff),
+          eq(agents.rateLimitNoticeOwed, false),
+          or(isNull(credentials.rateLimitedUntil), lte(credentials.rateLimitedUntil, now)),
+        ),
+      )
+      .orderBy(asc(agents.lastActivityAt), asc(agents.id));
+    return rows.map((r) => r.agent);
+  }
+  /**
+   * S7 §10.3 step 2, bounded (never every terminated agent): a failed stop or removal (`stop_failed`, which every
+   * failed container removal sets), a journal still kept, or a termination recent enough that its stop may still be
+   * in flight (`terminated_at > recentCutoff`).
+   */
+  async stuckCandidates(recentCutoff: Date): Promise<AgentRow[]> {
+    return this.db
+      .select()
+      .from(agents)
+      .where(
+        and(
+          isNotNull(agents.terminatedAt),
+          or(
+            eq(agents.errorKind, "stop_failed"),
+            isNotNull(agents.runtimeJournal),
+            gt(agents.terminatedAt, recentCutoff),
+          ),
+        ),
+      )
+      .orderBy(asc(agents.terminatedAt), asc(agents.id));
+  }
+  /** S7 §10.3 step 3: terminated before `cutoff`, its workspace neither pinned nor deleted yet. */
+  async workspaceCandidates(cutoff: Date): Promise<AgentRow[]> {
+    return this.db
+      .select()
+      .from(agents)
+      .where(
+        and(
+          lt(agents.terminatedAt, cutoff),
+          eq(agents.workspacePinned, false),
+          isNull(agents.workspaceDeletedAt),
+        ),
+      )
+      .orderBy(asc(agents.terminatedAt), asc(agents.id));
+  }
+  /** S7 §10.4: under the workspace lock, so a deletion that re-reads it under the same lock sees the pin. */
+  async setWorkspacePinned(agentId: string, pinned: boolean) {
+    await this.db.update(agents).set({ workspacePinned: pinned }).where(eq(agents.id, agentId));
+  }
+  async setWorkspaceDeleted(agentId: string, at: Date) {
+    await this.db.update(agents).set({ workspaceDeletedAt: at }).where(eq(agents.id, agentId));
   }
   /** Replaces the whole journal (spec §12); null clears it. */
   async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {

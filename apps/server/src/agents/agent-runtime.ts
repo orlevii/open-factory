@@ -801,11 +801,102 @@ export class AgentRuntime {
   }
 
   /**
+   * S7 §10.3 step 1, as a job (serialized with wakes and starts): whether the TTL may reap this agent now. Only with no
+   * process (not starting, running or stopping), no queued or granted wake, no credential pause, not terminated, and
+   * the row's `last_activity_at` still before `cutoff`. When all hold, the provisional latch is set here, inside the
+   * job, so no wake can start a process between this check and the termination's transaction. The caller then runs
+   * `TerminateService.terminate(…, { latched: true })` outside this agent's jobs.
+   */
+  reaperCheck(cutoff: number): Promise<boolean> {
+    return this.run(async () => {
+      if (!this.reapable()) return false;
+      const row = await this.d.store.agentById(this.agent.id);
+      if (
+        row?.kind !== "ephemeral" ||
+        row.terminatedAt ||
+        row.archivedAt ||
+        row.rateLimitNoticeOwed ||
+        row.lastActivityAt.getTime() >= cutoff
+      )
+        return false;
+      if (!this.reapable()) return false; // anything that changed while the row was read
+      this.markTerminated({ committed: false });
+      return true;
+    });
+  }
+
+  private reapable(): boolean {
+    return !(
+      this.terminated ||
+      this.archived ||
+      this.noStart ||
+      this.slots.closing() ||
+      this.proc ||
+      this.starting ||
+      this.stopsInProgress > 0 ||
+      this.slots.isQueued(this.agent.id) ||
+      this.credentialPaused()
+    );
+  }
+
+  /**
+   * S7 §8 step 5 and §10.3 step 2, as a job: the sweep's pass over a terminated agent. First a missing `terminated`
+   * event is appended (a crash after the commit). A stop still under way (a live process, a start, a `stop()`) is never
+   * stuck: "still", nothing done. A process a failed stop left gets one more escalation (its exit cleans up). With no
+   * process, a `stop_failed` agent, a journal that names processes, or (Docker) a container still listed for it gets
+   * the cleanup again: the journal reap or the container removal; on success the slot goes back. "none": nothing was
+   * left.
+   */
+  sweepStuck(): Promise<"none" | "cleared" | "still"> {
+    return this.run(async () => {
+      const row = await this.d.store.agentById(this.agent.id);
+      if (!row?.terminatedAt) return "none";
+      if (!this.terminationCommitted) this.markTerminated({ committed: true });
+      const by = row.terminatedBy ?? "@factory";
+      await this.ensureTerminatedEvent(by);
+      const proc = this.proc;
+      if (this.stopsInProgress > 0 || this.starting || (proc && proc !== this.deadProc))
+        return "still";
+      if (proc) {
+        // The process a failed stop left (stop_failed): one more escalation, as terminateStop does.
+        this.stopping = true;
+        this.afterExit = { kind: "terminate", by };
+        await this.escalateNow(proc, { removeOnFailure: true });
+        this.publishStatus();
+        return "still";
+      }
+      const j = row.runtimeJournal;
+      const stuck =
+        this.stopFailed() ||
+        row.errorKind === "stop_failed" ||
+        Boolean(j?.claude || j?.descendants?.length);
+      if (!stuck && this.cleanupTarget().runtime !== "docker") return "none";
+      // Docker: the removal finds a container still listed for it (running or stopped), or none.
+      const r = await this.terminationCleanup();
+      if (!r) return "still";
+      if (!stuck && !r.done) return "none";
+      this.slots.release(this.agent.id);
+      this.publishStatus();
+      return "cleared";
+    });
+  }
+
+  /** S7 §10.2: the in-memory activity time, persisted as its own statement; a failure is only logged. */
+  private persistActivity() {
+    const at = new Date(this.lastActivityAt);
+    void this.d.store
+      .setLastActivity(this.agent.id, at)
+      .catch((err: unknown) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "recording the last activity failed"),
+      );
+  }
+
+  /**
    * S7 §8 step 4's cleanup: Docker removes the container (stop, then remove); local reaps whatever the journal names.
    * On success the journal is cleared. False when it failed: `stop_failed`, keeping the slot (S5 §9.6), logged; no
    * `errored` fact (forwarding is latched off). The sweep retries.
    */
-  private async terminationCleanup(): Promise<boolean> {
+  private async terminationCleanup(): Promise<false | { done: CleanupResult | undefined }> {
     const target = this.cleanupTarget();
     let done: CleanupResult | undefined;
     try {
@@ -838,7 +929,7 @@ export class AgentRuntime {
       await this.d.store.clearErrored(this.agent.id);
     }
     if (done) await this.append(null, { type: "cleanup", ...done });
-    return true;
+    return { done };
   }
 
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
@@ -1690,6 +1781,7 @@ export class AgentRuntime {
       resumed: Boolean(resumeSessionId),
       reason,
     });
+    this.persistActivity(); // after the event committed (S7 §10.2)
     this.journalProc = undefined; // a new process: its own journaled tree starts empty
     await this.snapshotJournal(proc);
     this.publishStatus();
@@ -1987,6 +2079,7 @@ export class AgentRuntime {
         // Held rows pending at this turn boundary are due at once, unless the turn only read updates (S6 §8.1).
         this.dueAtTurnEnd = this.held.some(isUpdate) && !updateOnly;
         this.lastActivityAt = Date.now();
+        this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
         if (e.command === "compact") this.compactInFlight = false;
         if (e.originKind === "task-notification")
@@ -2923,6 +3016,8 @@ export class AgentRuntime {
       event: dto,
     });
     this.lastActivityAt = Date.now();
+    // Its own statement, after the batch's transaction committed: never inside it (S7 §10.2, the lock order of §5.7).
+    this.persistActivity();
     if (this.attempting) this.attemptBatchWritten = true;
     if (!this.started) this.inFlight.push(batch);
     const kinds = batch.map((e) => kindOf(e.row));

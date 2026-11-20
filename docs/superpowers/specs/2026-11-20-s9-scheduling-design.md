@@ -1,7 +1,7 @@
 # S9 Scheduling: Technical Design
 
 - **Date:** 2026-11-20
-- **Status:** approved by owner-proxy (owner-s9); pending the spec self-review and the UI review; pending Or's review of the low-certainty items (§22)
+- **Status:** approved by owner-proxy (owner-s9), revised after the spec self-review and the impeccable UI review (round 1, R1–R5 in the decision log); pending Or's review of the low-certainty items (§22)
 - **Roadmap spec:** `docs/product/roadmap/v0.1/s09-scheduling.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-20-s9-scheduling-ui-design.md`](../designs/2026-11-20-s9-scheduling-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/schedule.md`, `message.md`, `agent.md`; `docs/product/behavior/administration.md`, `agents-and-sessions.md`; `docs/product/architecture/agent-runtime.md`, `harness-driver.md`, `factory-mcp.md`, `data-model.md`, `context-assembly.md`, `system-overview.md`, `tech-stack.md`; ADRs 0008, 0016, 0019; `docs/product/open-questions.md` (S0 cron findings, S4–S8 corrections).
@@ -89,11 +89,13 @@ schedules   id text pk, number integer not null unique default nextval('schedule
             created_by_user_id  text null references users(id),
             body_author_agent_id text null references agents(id), -- exactly one body author (CHECK, Q18)
             body_author_user_id  text null references users(id),
-            next_run_at timestamptz null,                         -- null: a fired one-shot (done) or deleted
-            last_fired_at timestamptz null,
+            next_run_at timestamptz null,                         -- null: a one-shot whose time came (done) or deleted
+            last_fired_at timestamptz null,                       -- set only when a row was written (not on an archived skip)
+            fail_count integer not null default 0, retry_at timestamptz null, -- firing backoff (§8.1 step 4)
             paused_at timestamptz null, deleted_at timestamptz null,
             created_at timestamptz not null default now(), updated_at timestamptz not null default now()
   index schedules_due_idx on (next_run_at) where deleted_at is null and paused_at is null and next_run_at is not null
+  CHECK (run_at IS NULL OR cron IS NULL); CHECK (num_nonnulls(cron, run_at) = 1); CHECK (num_nonnulls(created_by_agent_id, created_by_user_id) = 1); CHECK (num_nonnulls(body_author_agent_id, body_author_user_id) = 1)
   index schedules_target_idx on (target_agent_id) where deleted_at is null
   index schedules_creator_idx on (created_by_agent_id) where deleted_at is null and created_by_agent_id is not null
 
@@ -103,13 +105,14 @@ messages    + schedule_id text null references schedules(id),
   unique index messages_schedule_pending_idx on (schedule_id, to_agent_id) where state = 'pending' and schedule_id is not null
 ```
 
-- **Derived state, no status column (Q15, Q9, D3):** `deleted` = `deleted_at` set; `paused` = `paused_at` set; `done` = a one-shot (`run_at` set) with `next_run_at` null and `last_fired_at` set; otherwise active. "Skipped: @x is archived" and "Pending: @x is errored" are derived at read time from the target's row and runtime status.
+- **Derived state, no status column (Q15, Q9, D3):** `deleted` = `deleted_at` set; `paused` = `paused_at` set; `done` = a one-shot (`run_at` set) with `next_run_at` null, not deleted (R5): it ran when `last_fired_at` is set, and "didn't run" when its time came while the target was archived (`last_fired_at` null); otherwise active. "Skipped" (target archived) and "Waiting" (a pending row while the target is errored) are derived at read time from the target's row and runtime status.
 - **The `messages` CHECK** gains one branch and every earlier branch gains `schedule_id IS NULL AND author_agent_id IS NULL AND author_user_id IS NULL AND due_at IS NULL AND firings IS NULL AND late IS NULL`:
-  `kind = 'scheduled' AND from_user_id IS NULL AND from_agent_id IS NULL AND notice IS NULL AND subject_agent_id IS NULL AND task_id IS NULL AND comment_id IS NULL AND to_agent_id IS NOT NULL AND to_all_humans = false AND schedule_id IS NOT NULL AND num_nonnulls(author_agent_id, author_user_id) = 1 AND due_at IS NOT NULL AND firings >= 1 AND late IS NOT NULL`.
+  `kind = 'scheduled' AND from_user_id IS NULL AND from_agent_id IS NULL AND notice IS NULL AND subject_agent_id IS NULL AND task_id IS NULL AND comment_id IS NULL AND to_agent_id IS NOT NULL AND to_all_humans = false AND schedule_id IS NOT NULL AND num_nonnulls(author_agent_id, author_user_id) = 1 AND due_at IS NOT NULL AND firings IS NOT NULL AND firings >= 1 AND late IS NOT NULL` (`firings >= 1` alone accepts NULL: found in review on Postgres 18).
   The row carries its author because the schedule's `body_author` can change after the firing (Q18: a pending row stays as fired). A migration test inserts every S3–S8 row shape and the new one, and rejects the wrong shapes (S8's V3 technique).
 - **The partial unique index** is the database's guarantee of "at most one pending firing per schedule and target": the replace path updates that row; a concurrent insert fails with `23505` instead of stacking (§8.2).
 - `agents.pinned_crons` (data-model doc) is not added: pins are live process state (Q5).
-- `bootWakes`' deliverable kinds gain `scheduled`; the `crons_stopped` notice is excluded (§10.3).
+- `bootWakes`' deliverable kinds gain `scheduled`; the `crons_stopped` notice is excluded (`kind = 'system' AND notice <> 'crons_stopped'`, §10.3).
+- **Boot clears stale write marks:** reconciliation runs `UPDATE messages SET delivered_event_seq = NULL, delivered_turn_id = NULL WHERE state = 'pending' AND delivered_event_seq IS NOT NULL` before `bootWakes`. Today only the exit rollback (`markPending`) clears them, so after a server crash a row written to a not-yet-started process keeps its seq forever, and §8.2 would then never replace it (review finding: a human Restart of an errored target, a crash, boot's `failCutShortAttempts` re-errors it, and every later firing would write nothing). No process survives a boot, so no pending row is "being read" then.
 
 ## 6. Factory schedules
 
@@ -117,11 +120,11 @@ messages    + schedule_id text null references schedules(id),
 
 | Field | Rule |
 |---|---|
-| `cron` | Exactly one of `cron`/`at`. Five fields (minute hour day-of-month month day-of-week), parsed by croner in its default mode (day-of-month and day-of-week are ORed as in Vixie cron). No seconds field, no year, no `@nicknames`. Must have a next occurrence (`0 0 30 2 *` is refused: "This cron never fires."). Errors are croner's message rewritten as one sentence naming the field. |
-| `at` | ISO 8601 date-time. With an offset it is that instant; without one it is read in `timezone`. Must be in the future (a 60 s grace for clock skew is not given: "That time has passed."). |
+| `cron` | Exactly one of `cron`/`at`. Plain Vixie cron (R3): exactly five whitespace-separated fields (minute hour day-of-month month day-of-week), each made of numbers, `*`, ranges, lists, steps, month names (`jan`) or day names (`mon`), day-of-week 0–7; checked by our own pre-validation before croner, which otherwise accepts seconds and year fields, `@nicknames`, `L`, `W`, `#` and `?` (all refused: "Use 5 fields: minute hour day-of-month month day-of-week." / "Only numbers, *, ranges, lists, steps and names are allowed."). Parsed by croner in its default mode (day-of-month and day-of-week are ORed as in Vixie cron; verified). Must have a next occurrence (`0 0 30 2 *` is refused: "This pattern never runs."). Field errors are croner's message rewritten as one sentence naming the field. |
+| `at` | ISO 8601 date-time. With an offset it is that instant; without one it is read in `timezone` (a wall time that doesn't exist that day, 02:30 on the spring-forward night, is read as 03:30, the instant the same offset arithmetic gives: unlike a cron, which runs at 03:00; pinned in tests). Must be in the future (no grace: "That time has passed."). |
 | `timezone` | IANA name accepted by `Intl.DateTimeFormat` (checked in the Zod refine); unknown → "Unknown time zone 'Mars/Base'; use an IANA name such as Europe/Berlin." Default: the UI sends the browser's zone; MCP uses `FACTORY_TIMEZONE` (§7.1). |
 | `body` | 1 byte to 64 KB (S6's message cap), markdown. |
-| `to` (MCP) / `target` (REST) | A live agent: slug, `@slug` or (MCP) `me`. Not archived, not terminated, not a human, not `@humans`, not a reserved name. S6's `resolveName` and its sentences. |
+| `to` (MCP) / `target` (REST) | A live agent (persistent or spawned; a spawned target's schedules are deleted when it is terminated): slug, `@slug` or (MCP) `me`. Not archived, not terminated, not a human, not `@humans`, not a reserved name. S6's `resolveName` and its sentences. |
 
 ### 6.2 Agent limits (Q10; enforced in `ScheduleService`, so every path is covered)
 
@@ -135,11 +138,11 @@ Apply when an **agent** creates a schedule (and to `cron`/`at` an agent writes; 
 ### 6.3 Creation, edit, pause, resume, delete, restore
 
 - **Create:** writes the row with `created_by` and `body_author` = the actor, computes `next_run_at` (first occurrence strictly after now, or `at`), commits, re-arms the timer, publishes `schedules_changed`.
-- **Edit (humans, Q18):** changing `cron`/`at`/`timezone` recomputes `next_run_at` from now (switching between cron and at included). Changing `body` sets `body_author` to the editor. Changing `target` re-checks the new target is live. A pending firing stays exactly as fired (old body, old target, old author); the next firing replaces it (§8.2). Editing a done one-shot's `at` to a future time makes it active again. `created_by` never changes.
+- **Edit (humans, Q18):** `PATCH` carries only changed fields, and only those are validated (so a done or near-due one-shot's message can be edited). Changing `cron`/`at`/`timezone` recomputes `next_run_at` from now (switching between cron and at included). Changing `body` sets `body_author` to the editor. Changing `target` re-checks the new target is live. A pending firing stays exactly as fired (old body, old target, old author); the next firing replaces it (§8.2). Editing a done one-shot's `at` to a future time makes it active again. `created_by` never changes.
 - **Pause / resume (humans, Q19):** pause sets `paused_at`; a pending row is left alone. Resume clears it and calls `recomputeFromNow` (no catch-up).
 - **Delete:** sets `deleted_at` (and `next_run_at` null). Humans get an inline Undo (UI); agents' `cancel_schedule` is the same soft delete (Q17). A pending row of a deleted schedule stays pending and is delivered (it was fired).
-- **Restore (Undo):** clears `deleted_at` and calls `recomputeFromNow`; a one-shot whose `at` has passed is restored as done. Allowed for humans only; the agent limit is not re-checked (a human acted).
-- **`recomputeFromNow(schedule)`**: `next_run_at` = first occurrence strictly after now (cron), or `run_at` if still in the future, else null (done). The one helper behind resume, restore, unarchive and timing edits, so "no catch-up" lives in one place.
+- **Restore (Undo):** re-checks the target is live (R2: a schedule deleted because its target was terminated can't come back: `409 target_ended`, "@x was terminated."), clears `deleted_at` and calls `recomputeFromNow`; a one-shot whose `at` has passed is restored as done. Allowed for humans only; the agent limit is not re-checked (a human acted). Every other mutation of a deleted schedule (edit, pause, resume) answers `404 schedule_not_found`.
+- **`recomputeFromNow(schedule)`** (also clears `fail_count`/`retry_at`): `next_run_at` = first occurrence strictly after now (cron), or `run_at` if still in the future, else null (done). The one helper behind resume, restore, unarchive and timing edits, so "no catch-up" lives in one place.
 
 ## 7. Time
 
@@ -150,35 +153,37 @@ Every schedule stores its IANA zone; all instants are `timestamptz`. `FACTORY_TI
 ### 7.2 DST (croner, verified while designing on 11.0.0)
 
 - A wall time that doesn't exist that day (02:30 on the spring-forward night) fires at the next valid time (03:00), once.
-- A fixed wall time that occurs twice (02:30 on the fall-back night) fires once, at the first occurrence.
-- Interval patterns follow wall-clock minutes, so `*/30 * * * *` fires at 02:00, 02:30, 02:00 and 02:30 again across the repeated hour (real time every 30 minutes).
-Unit tests pin these for `Europe/Berlin` and `America/New_York` at the 2026 transitions, so a croner upgrade that changes them fails CI.
+- A **single** fixed wall time that occurs twice (`30 2 * * *` on the fall-back night) fires once, at the first occurrence.
+- A list, range or step that hits the repeated hour fires at **both** repeats: `*/30 * * * *` and `0,30 2 * * *` run at 02:00 and 02:30 CEST and again at 02:00 and 02:30 CET; `0 2,3 * * *` likewise (verified in review on 11.0.0, Berlin 2026-10-25).
+Unit tests pin these, and the `at` reading of §6.1, for `Europe/Berlin` and `America/New_York` at the 2026 transitions, so a croner upgrade that changes them fails CI.
 
 ### 7.3 The clock
 
-The `Scheduler` takes `now()` (injected; tests use fake timers plus that clock). The timer is armed for `min(next_run_at)` over active schedules, **clamped to at most 60 s**, so a wall-clock jump, a laptop sleep or a missed re-arm is corrected within a minute; it is re-armed after every tick and after every committed change (`rearm()`), and armed once at start (Q1 condition b). One tick at a time: a tick that is running when the timer fires again is not overlapped; the next tick follows it.
+The `Scheduler` takes `now()` (injected; tests use fake timers plus that clock), and every query it runs passes that instant as a parameter, never Postgres `now()`. The timer is armed for `min(coalesce(retry_at, next_run_at))` over active schedules, **at least 1 s ahead** after a tick that made no progress (so a stuck row can never hot-loop, §8.1 step 4) and **clamped to at most 60 s**, so a wall-clock jump, a laptop sleep or a missed re-arm is corrected within a minute; it is re-armed after every tick and after every committed change (`rearm()`), and armed once at start (Q1 condition b). One tick at a time: a tick that is running when the timer fires again is not overlapped; the next tick follows it.
 
 ## 8. Firing
 
 ### 8.1 The tick
 
-1. Read due ids without locks: `next_run_at <= now() AND paused_at IS NULL AND deleted_at IS NULL`, oldest first, at most 100 per tick (the rest fire on the immediately following tick).
+1. Read due ids without locks: `next_run_at <= $now AND (retry_at IS NULL OR retry_at <= $now) AND paused_at IS NULL AND deleted_at IS NULL`, oldest first, at most 100 per tick (the rest fire on the immediately following tick).
 2. For each, one transaction (§12 order):
-   1. Lock the **target agent row** `FOR SHARE`.
-   2. Lock the schedule `FOR UPDATE SKIP LOCKED`; re-read it; if it is no longer due (edited, paused, deleted meanwhile), skip.
-   3. Compute the occurrences between `next_run_at` and now: `due` = the latest occurrence ≤ now; `missed` = how many occurrences that is (counted up to 1,000; one-shot: 1); `late` = `now − due > 60 s`. Advance `next_run_at` to the first occurrence strictly after now (a one-shot: null) and set `last_fired_at = now`.
-   4. **Target ended:** terminated → cannot happen (its schedules were deleted with it, §10.1), but if read, delete the schedule. **Archived** → write no row (Q9); the schedule stays; that is the whole firing.
-   5. Otherwise insert or replace the pending row (§8.2).
+   1. Lock the **target agent row** `FOR SHARE` (the target read in step 1, unlocked).
+   2. Lock the schedule `FOR NO KEY UPDATE SKIP LOCKED` (never `FOR UPDATE`, S7's rule); re-read it; if it is no longer due (edited, paused, deleted meanwhile) or its `target_agent_id` is no longer the agent locked in 2.1 (retargeted meanwhile), skip: it is re-read on the next tick.
+   3. Compute: `due` = the latest occurrence ≤ now (croner `previousRuns(1, now + 1 ms)`, so an occurrence exactly at now counts; a one-shot: `run_at`); `missed` = the number of occurrences in `[next_run_at, now]` (counted by stepping, capped at 1,000; a one-shot: 1); `late` = `now − due > 60 s`. Advance `next_run_at` to the first occurrence strictly after now (a one-shot: null); clear `fail_count`/`retry_at`.
+   4. **Target ended:** terminated → cannot happen (its schedules were deleted with it, §10.1), but if read, delete the schedule. **Archived** → write no row and leave `last_fired_at` unchanged (Q9, R5); the schedule stays; that is the whole firing.
+   5. Otherwise set `last_fired_at = now` and insert or replace the pending row (§8.2).
 3. After each commit: hand the row to `runtimes.deliver(row, { sender: "scheduler", reason: "scheduled" })` (after `bootDone`, skipped once shutdown has begun, never awaited inside a transaction, `.catch`ed and logged: S8's rule); publish `schedules_changed`.
-4. A transaction that fails (deadlock `40P01`, serialization) is retried once from step 2.1; a second failure is logged and the schedule stays due (it fires on the next tick). Nothing is lost: claim, advance and message write are one transaction (Q20).
+4. A transaction that fails (deadlock `40P01`, serialization) is retried once from step 2.1. A second failure (or any other error: a constraint, a bug) is logged and, in its own statement, sets `fail_count + 1` and `retry_at = now + min(5 s × 2^(fail_count), 60 s)`, so a broken row is retried at most once a minute and never spins the tick. Nothing is lost: claim, advance and message write are one transaction (Q20).
 
 ### 8.2 Replace, never stack (Q6)
 
-"Undelivered" means the `scheduled` row is still `pending`: messages to a running agent are written to stdin at once (mid-turn included), so a firing finds a pending row only while its target is hibernated and queued, starting, errored or rate-limited, or while a batch to a not-yet-started process awaits confirmation.
+"Undelivered" means the `scheduled` row is still `pending`: messages to a running agent are written to stdin at once (mid-turn included), so a firing finds a pending row only while its target is hibernated and queued, starting, errored, rate-limited, stopping, held behind an urgent hold or a compact in flight, or while a batch to a not-yet-started process awaits confirmation.
 
-- If a pending row of this schedule to this target exists (locked `FOR UPDATE` by its partial unique index lookup), it is **updated in place**: `body` and author = the schedule's current body and `body_author`, `due_at` = this occurrence, `firings = firings + missed`, `late` = this firing's late flag, `created_at` unchanged (its queue position is kept). Otherwise a row is inserted with `firings = missed`.
+- If a pending row of this schedule to this target exists (locked `FOR NO KEY UPDATE`, found through its partial unique index), it is **updated in place**: `body` and author = the schedule's current body and `body_author`, `due_at` = this occurrence, `firings = firings + missed`, `late` = this firing's late flag, `created_at` unchanged (its queue position is kept). Otherwise a row is inserted with `firings = missed`.
 - The pending row may already be written to a process that hasn't started yet (S5's `inFlight`: written, not confirmed, still `pending`). The transaction can't ask the runtime (no runtime call in a transaction), so it reads the row's own state: a written row has its `delivered_event_seq` set (S6 §11). The firing therefore distinguishes three cases on the locked pending row: none → insert; `delivered_event_seq IS NULL` → replace as above; `delivered_event_seq` set → **write nothing** (the agent is about to read that row; this firing coalesces into it). The partial unique index makes a fourth case (two pending rows) impossible. This is the accepted coalescing race of Q6, made explicit.
-- The runtime's queued entry is refreshed on hand-off: `deliver` for an id the runtime has already seen and still queues replaces the entry's row (S5's `addNotice` does the same for notices) instead of returning early, so the next batch carries the updated body and counts.
+- **What was delivered is what the row says** (review finding). The runtime renders a batch from its in-memory entries, sends it, and only then commits `delivered_event_seq`; and a hand-off job can queue behind a start job that writes the older entry. So a replacement can land between rendering and the batch's commit. Two rules make the row truthful anyway:
+  1. `writeBatch`'s transaction writes the **rendered** `body`, author, `due_at`, `firings` and `late` of every `scheduled` row in the batch back onto its row (`UPDATE … WHERE id = $id`), in the same transaction that sets `delivered_event_seq`. The row then records exactly what the agent read; a replacement that landed in the window is coalesced into it (Q6's accepted race: the agent read one firing fewer than happened, never more).
+  2. The runtime's queued entry is refreshed on hand-off, **monotonically**: `deliver` for an id the runtime has already seen and still queues re-reads the row (`pendingRow(id)`, inside the runtime job) and replaces the entry's row only if the stored `firings` is higher (an older hand-off arriving after `init()` loaded a newer version never regresses it), instead of returning early. A seen id that is no longer queued (already written) returns as today.
 
 ### 8.3 Catch-up (Q3)
 
@@ -186,7 +191,7 @@ Boot is not special: after `bootDone` the Scheduler starts, and its first tick f
 
 ### 8.4 Delivery (Q8)
 
-Scheduled rows are **direct messages** (S6's queue, not the held list): `ORDER.scheduled = 1` with messages and task rows in created order; they wake a hibernated target with the new wake reason **`scheduled`** through the cap and FIFO; wait out rate-limit pauses; are written mid-turn like any message; are never urgent. `scheduled` is **not** in `ERRORED_WAKES`: to an errored target the row stays pending (replaced on every firing) and never starts a recovery attempt, whoever created the schedule (the sender at fire time is `@scheduler`; no human is watching, Q8). "Start a new session" (a human action) still starts with queued scheduled rows (S8's accepted rule). The runtime's `senderLabel` renders a `scheduled` row as `@scheduler`.
+Scheduled rows are **direct messages** (S6's queue, not the held list): `ORDER.scheduled = 1` with messages and task rows in created order (the replaced row keeps its `created_at`, so its place); they wake a hibernated target with the new wake reason **`scheduled`** through the cap and FIFO; wait out rate-limit pauses; are written mid-turn like any message; are never urgent. `scheduled` is **not** in `ERRORED_WAKES`: to an errored target the row stays pending (replaced on every firing) and never starts a recovery attempt, whoever created the schedule (the sender at fire time is `@scheduler`; no human is watching, Q8). "Start a new session" (a human action) still starts with queued scheduled rows (S8's accepted rule). The hand-off uses the existing agent path, `runtimes.deliver(row, "agent", "scheduled")` (no new sender kind). `entryOf` and `senderLabel` render a `scheduled` row as `@scheduler` (today a sender-less non-message row becomes `@factory`). The joined `PendingRow` gains the schedule key, the schedule's zone and the author's slug or handle.
 
 ### 8.5 The envelope (Q7)
 
@@ -196,7 +201,7 @@ Morning review: open tasks, blockers, what shipped.
 </factory-message>
 ```
 
-- `from` is always `@scheduler`; `by` is the row's author (`@handle` for a human, the bare slug for an agent), read from the row's author columns, never from tool input. `due` is the row's `due_at` rendered as ISO 8601 with the schedule zone's offset at that instant (stored on the row as the zone name at firing time is not needed: the offset is computed from `schedule.timezone` when the row is read; a later zone edit therefore changes how a still-pending row's `due` renders, accepted). `firings` only when > 1; `late` only when true. The rendering is a pure function of the row (S6), so the same row renders the same bytes.
+- `from` is always `@scheduler`; `by` is the row's author (`@handle` for a human, the bare slug for an agent), read from the row's author columns, never from tool input. `due` is the row's `due_at` rendered as ISO 8601 with the schedule zone's offset at that instant (stored on the row as the zone name at firing time is not needed: the offset is computed from `schedule.timezone` when the row is read; a later zone edit therefore changes how a still-pending row's `due` renders, accepted). `firings` only when > 1; `late` only when true. The rendering is a pure function of the joined row (the row plus its schedule's key and zone and its author's name, S6), so the same rows render the same bytes.
 - The body is the author's text verbatim, through `groupEnvelopes`' escaping (the one owner); every attribute through `attr()`. Rows of one schedule are never merged (one pending row per schedule anyway).
 - The CLAUDE.md line (§10.4) tells the agent the body was written by `by` and is weighed like that author's own messages.
 
@@ -207,7 +212,7 @@ Registered **per caller**, only for **persistent** agents (S7's per-caller list;
 | Tool | Behaviour |
 |---|---|
 | `schedule_message(body, cron?, at?, timezone?, to?)` | Exactly one of `cron`/`at` ("Pass either cron or at."). `to` defaults to the caller (`me` accepted). §6.1 validation, §6.2 limits. Returns `{id: "S-3", to, cron?|at?, timezone, next_run: "<ISO with offset>", note?}`; `note` when the target is errored ("@x is errored; it will see this when a human restarts it.") or is the caller and is a recurring schedule ("You will be woken at each run; cancel it with cancel_schedule when it is no longer needed."). |
-| `list_schedules()` | The caller's own schedules (created by it) and those targeting it, not deleted and not done, newest first, at most 100: `{id, to, created_by, by, cron?|at?, timezone, next_run, paused, yours: boolean}`. Bodies are returned as JSON-escaped data (S8 rule), capped at 2,000 characters each with `truncated: true`. |
+| `list_schedules()` | The caller's own schedules (created by it) and those targeting it, not deleted and not done, newest first, at most 100: `{id, to, created_by, by, cron?|at?, timezone, next_run, paused, yours: boolean, body, truncated?}`. Bodies are returned as JSON-escaped data (S8 rule), capped at 2,000 characters each with `truncated: true`. |
 | `cancel_schedule(id)` | Only schedules the caller created: otherwise "S-3 was created by @or; only its creator or a human can cancel it." Unknown or deleted: "There is no schedule S-3." Returns `{id, status: "cancelled"}`; a pending firing is still delivered. |
 
 The tool descriptions say: schedules survive restarts and wake the target; use `CronCreate` instead for a short loop inside this session.
@@ -220,8 +225,8 @@ The tool descriptions say: schedules survive restarts and wake the target; use `
 |---|---|
 | Target terminated | S7's termination transaction soft-deletes every schedule targeting the agent (after its agent locks, §12). Pending scheduled rows are rejected like every pending row (S7). |
 | Creator terminated | Not reachable: spawned agents can't create schedules (Q12) and persistent agents are archived, never terminated. Kept as an assertion in the service test. |
-| Target archived | Firings skip (no row, `next_run_at` advances). The UI shows "Skipped: @x is archived". Creating or retargeting to an archived agent is refused. |
-| Target unarchived | `AgentService.unarchive` calls `recomputeFromNow` for every schedule targeting it, in its transaction after the agent lock: no catch-up. |
+| Target archived | Firings skip (no row, `next_run_at` advances, `last_fired_at` unchanged). The UI shows "Skipped" with "@x · archived". Creating, retargeting or restoring to an archived agent is refused. |
+| Target unarchived | `AgentService.unarchive` (which has no transaction today) gets one: lock the agent row `FOR NO KEY UPDATE`, clear `archived_at`, `recomputeFromNow` every schedule targeting it (agents before schedules), commit, then `scheduler.rearm()`: no catch-up. |
 | Creator archived (persistent) | Its schedules keep firing; the UI shows "created by @x (archived)". |
 | Target errored | Rows stay pending and are replaced; no recovery (§8.4); UI "Pending: @x is errored". |
 | Target rate-limited, hibernated, queued at the cap, starting | Rows wait / wake through the normal paths; replacement applies while pending. |
@@ -229,25 +234,33 @@ The tool descriptions say: schedules survive restarts and wake the target; use `
 | Apply-restart, hibernate, restart, crash | Pending rows are durable; the firing timer is independent of the target's process. |
 | Server stops between commit and hand-off | The row is pending; `bootWakes` (now counting `scheduled`) wakes the target; S6's seen-id set prevents a double write (test, Q20). |
 | Server stops mid-firing (before commit) | Nothing was written; `next_run_at` is unchanged; it fires at boot (late if > 60 s). |
-| Shutdown begun | The Scheduler is stopped first (before `runtimes.close()`): no new tick; a tick in progress finishes its current transaction, hand-offs are skipped (`Router.closed` rule). |
-| Before `bootDone` | The Scheduler isn't started (it starts right after `router.bootDone()`, next to the Reaper). |
+| Shutdown begun | The Scheduler is stopped first (`scheduler.stop()` next to `reaper.stop()`, before `runtimes.close()`): no new tick; a tick in progress finishes its current transaction and its hand-offs are skipped (`Router.closed` rule); the onClose hook then `await scheduler.idle()` before the database closes (as `reaper.idle()`). |
+| Before `bootDone` | The Scheduler isn't started (it starts right after `router.bootDone()`, next to the Reaper). `rearm()` before `start()` or after `stop()` is a no-op (REST and MCP calls can arrive earlier: the agent listener is up before reconciliation). |
 | Token of an exited or ended process | `401` at the listener. A terminated caller already past the listener: the service re-checks the caller is live in the transaction ("You can't schedule messages: you were terminated." — only reachable through a race, since spawned agents don't have the tools). |
 
 ### 10.2 Harness crons: what S9 adds to S5 (Q5)
 
 S5 already keeps the live set per process (`cron_created`/`cron_deleted`, one-shots dropped after their firing turn, the 7-day expiry timer, `runtime_journal.crons`, the pin, the "N crons" count). S9 adds, with **no table**:
 
-- `LiveCron` keeps `durable` (from `tool_use_result.durable`, mapped onto `cron_created` as an optional field) and the agent status (summary and `agent_status` frame) gains `crons: {cronId, humanSchedule, recurring, durable, nextFireAt, expiresAt}[]` (empty when none); `waitingOn.crons` stays the count.
+- `LiveCron` keeps `durable` (from `tool_use_result.durable`, mapped onto `cron_created` as an optional field) and the agent status (summary and `agent_status` frame) gains `crons: {cronId, humanSchedule, recurring, durable, nextFireAt?, expiresAt?}[]` (empty when none); `nextFireAt` only for one-shots (a recurring cron's `nextFireAt` is the first firing, never updated: S0 gives no later value), `expiresAt` only for recurring ones; `waitingOn.crons` stays the count. The agent summary also gains `cronZone`, the zone Claude's process runs in and writes `humanSchedule` in: `UTC` for Docker agents (the base image sets no `TZ`, and S9 passes none) and the server's resolved zone for local agents, so the UI can say so when it differs from the viewer's. (Passing `TZ=FACTORY_TIMEZONE` into containers would align them; not done in S9, to keep the runtime env unchanged.)
 - **Apply-restart keeps S5's rule (Q5b, S5 Q17, #38):** it doesn't wait for crons (a revoked grant or credential must stop applying; a pin can last 7 days); the restart-crons notice names each lost cron by its schedule text so the agent can recreate it, and the manager gets `work_lost`. This closes #31.
 
 ### 10.3 Stop crons (Q13)
 
 `POST /api/agents/:slug/stop-crons` (human, session auth) → `runtime.stopCrons(byHandle)` in a runtime job:
 
-- No live crons → `409 no_crons` ("@x has no crons."). Archived, terminated → S5/S7's refusals.
-- Not busy (no open turn, no batch awaiting, no live non-ambient task, no owed notification, no compact or urgent hold): adds the notice and calls `beginHibernate("crons_stopped")` now (S5's one hibernate path: close stdin, bounded wait, SIGTERM; `background_work_lost{reason: "crons_stopped"}` lists the crons).
-- Busy: sets `stopCronsPending`; `hibernatable()` then ignores the pin, and the first moment the agent is otherwise hibernatable it hibernates with the same reason (the warm window is not waited for). The status frame carries `stopCronsPending` ("Stops when its current work finishes"). A server shutdown or an exit clears it (the crons die anyway).
-- **The `crons_stopped` notice** (from `@factory`): "@or stopped your crons: every 5 minutes, at 14:30 once. Don't recreate them unless you are asked to." It is a **passive notice**: it never wakes the agent (excluded from `queued_items` wakes, from `hasDeliverable` and from `bootWakes`) and rides at the head of the next batch. A second Stop before the next wake replaces it (S5's one-pending-notice-per-type rule).
+| Runtime state at the call | Result |
+|---|---|
+| No process, or no live crons | `409 no_crons` ("@x has no crons."); the UI treats it as done. |
+| Archived, terminated | S5/S7's refusals. |
+| A stop already under way (`stopping`, a dead or failing process, `stop_failed`) | `409 stopping` ("@x is already stopping; its crons stop with it."). |
+| Idle (no open turn, no batch awaiting, no live non-ambient task, no owed notification, no compact in flight, no urgent hold) | Stops now: in this job, add the notice (text from the crons live **now**) and `beginHibernate("crons_stopped")`. |
+| Busy, errored-with-a-process, attempting a recovery, rate-limited with a process, restart pending | Sets `stopCronsPending` (`by` kept); `hibernatable()` then ignores the pin, and at the first moment the agent is otherwise hibernatable it stops as in the idle row, in that job (the warm window is not waited for). |
+
+- **Stop wins over a pending apply-restart:** when `stopCronsPending` is set, `maybeRestart` doesn't run; the stop's exit then wakes the agent only if non-passive items are queued, which delivers the restart as S5's apply-restart does (its new process reads the new config), and the `restart_crons` notice is **not** added (its "Recreate them" would contradict the stop).
+- Crons created while the stop is pending are stopped too (the notice lists what is live at the stop). If the crons reach 0 before the stop (deleted, fired, expired), `stopCronsPending` is cleared and nothing happens. A server shutdown or an exit clears it (the crons die anyway). The status frame carries `stopCronsPending`.
+- `beginHibernate` S5's way (close stdin, bounded wait, SIGTERM); `hibernated{reason: "crons_stopped", by: "@or"}` and `background_work_lost{reason: "crons_stopped", by: "@or", crons}` gain an optional `by` (the enum and `HibernateReason` gain `crons_stopped`), so the UI never parses prose.
+- **The `crons_stopped` notice** (from `@factory`): "@or stopped your crons: every 5 minutes; at 14:30, once. Don't recreate them unless you are asked to." It is a **passive notice**, by one predicate `isPassive(entry)` (a `system` row with notice `crons_stopped`) used everywhere a queue item counts as a reason to act: `hasDeliverable`, the `queued_items` wake after an exit, the Reaper's `reapable()` (so a passive notice never keeps a spawned agent alive), `flush()` (a passive notice alone is never written; it rides at the head of the next batch with something else), and `deliverableWhere` for `bootWakes`. A second Stop before the next wake replaces it (S5's one-pending-notice-per-type rule).
 - `background_work_lost` with reason `crons_stopped` is **not forwarded** to the manager (Q13: a human did it in the open); every other reason keeps S6's forwarding.
 - Spawned agents: the same action (their crons pin them too; S7's Reaper already skips cron-pinned agents).
 
@@ -266,7 +279,7 @@ The factory context says never to use `durable` (use `schedule_message`). A dura
 
 | Route | Behaviour |
 |---|---|
-| `GET /api/schedules?target=<slug>&done=true` | Not deleted; done one-shots only with `done=true`; ordered by `next_run_at` nulls last, then key, at most 500. Each item: `key, target {slug, displayName, archived, terminated}, cron?, at?, timezone, body, nextRunAt, lastFiredAt, paused, done, createdBy, bodyAuthor (agent slug or user handle), pendingFiring, state` where `state` ∈ `active | paused | done | skipped_archived | pending_errored` (derived; `pending_errored` when a pending row exists and the target's runtime status is errored). |
+| `GET /api/schedules?target=<slug>&done=true` | Not deleted; done one-shots only with `done=true`; ordered active (by `next_run_at`), then paused (by `next_run_at`), then done (`coalesce(last_fired_at, run_at)` newest first), then key, at most 500; the UI keeps this order. Each item: `key, target {slug, displayName, archived, terminated}, cron?, at?, timezone, body, nextRunAt, lastFiredAt, paused, done, createdBy, bodyAuthor, pendingFiring, state` where `createdBy` and `bodyAuthor` are `{kind: "agent", slug, archived, terminated} | {kind: "user", handle}`, and `state` ∈ `active | paused | done | skipped_archived | pending_errored` (derived; `pending_errored` when a pending row exists and the target's runtime status is errored; `done` items carry `ran: boolean`). |
 | `GET /api/schedules/:key` | One schedule (the edit page). |
 | `POST /api/schedules` | Create (§6.1); `201` with the item. |
 | `PATCH /api/schedules/:key` | Edit (§6.3); fields absent are unchanged. |
@@ -274,9 +287,8 @@ The factory context says never to use `durable` (use `schedule_message`). A dura
 | `DELETE /api/schedules/:key` | Soft delete; `200` with the item (the UI keeps it for Undo). |
 | `POST /api/schedules/:key/restore` | Undo. |
 | `POST /api/agents/:slug/stop-crons` | §10.3. |
-| `GET /api/schedules/preview?cron=&timezone=&n=3` | Not needed: the web computes the preview with the shared `cron.ts` (croner in `apps/web`, same exact version). |
 
-Errors use S8's shapes (`400 invalid_schedule` with the sentence, `404 schedule_not_found`, `409 target_ended`). Queue items (`queueItemSchema`) and `MessageLookup` gain `scheduleKey`, `firings`, `late`, `dueAt` for pending and delivered scheduled rows; `GET /api/schedules/:key` also returns a deleted schedule (with `deleted: true`) so a badge link can offer Restore. Every mutation publishes `schedules_changed` to all sockets after its commit; the agent summary gains `scheduleCount` (active schedules targeting it) for the strip.
+Errors use S8's shapes (`400 invalid_schedule` with the sentence, `404 schedule_not_found`, `409 target_ended`). Queue items (`queueItemSchema`) and `MessageLookup` gain `scheduleKey`, `firings`, `late`, `dueAt` for pending and delivered scheduled rows; `GET /api/schedules/:key` also returns a deleted schedule (with `deleted: true`) so a badge link can offer Restore. Every mutation publishes `schedules_changed` to all sockets after its commit; the agent summary gains `scheduleCount` (schedules targeting it that are neither deleted nor done: what `/schedules?target=` shows by default, R4) for the strip. The web computes the run preview with the shared `cron.ts` (croner through `packages/shared`, one version).
 
 ## 12. Locking and concurrency
 
@@ -285,16 +297,16 @@ Errors use S8's shapes (`400 invalid_schedule` with the sentence, `404 schedule_
 Written in the header of `schedule-store.ts`:
 
 1. Read without locks to learn which agents are involved (target, new target, caller).
-2. **Agent rows** first, in one statement, persistent before spawned, then by id (S7/S8 order): `FOR SHARE` for targets; the creating agent `FOR NO KEY UPDATE` when it creates (serialises its own creates so the 20-limit count can't be raced). Re-check each is live.
-3. **Schedule rows**, `FOR NO KEY UPDATE` (edits, deletes) or `FOR UPDATE SKIP LOCKED` (the firing; nothing references a schedule by a key a firing changes, so `FOR UPDATE` conflicts only with other schedule writers).
-4. **Message rows**: the pending scheduled row `FOR UPDATE`, then insert or update.
+2. **Agent rows** first, persistent before spawned, then by id (S7/S8 order): the creating agent `FOR NO KEY UPDATE` when it creates (serialises its own creates so the 20-limit count can't be raced), then the targets `FOR SHARE` in one sorted statement (one statement can't mix lock modes, so these are two statements, both in that order). Re-check each is live.
+3. **Schedule rows**, `FOR NO KEY UPDATE` (edits, deletes, restore) or `FOR NO KEY UPDATE SKIP LOCKED` (the firing). Never `FOR UPDATE` (S7's rule: it would conflict with the `KEY SHARE` that message inserts take through `schedule_id`). An edit that changes the target re-reads the schedule under its lock and, if the target changed meanwhile, retries once from step 1.
+4. **Message rows**: the pending scheduled row `FOR NO KEY UPDATE`, then insert or update.
 
 **Invariant: agents before schedules before messages; no transaction locks a schedule row and then waits on an agent row.** S7's termination (agent rows, then `terminateRows`, which now also updates the target's schedules) and unarchive (agent row, then its schedules) follow it. Tasks are never touched by schedule transactions, so S8's "tasks before agents" is unaffected. A deadlock is retried once (§8.1); every call inside takes `tx`; the transaction never awaits a runtime call.
 
 ### 12.2 Races, each with a test (S8's `pg_stat_activity` technique, no sleeps, no server hooks)
 
 - **Termination vs firing:** termination first → the firing's `FOR SHARE` waits, then the schedule is deleted (re-read under its lock: skipped). Firing first → the termination waits on our `FOR SHARE`, then rejects the pending row in its own transaction.
-- **Edit vs firing:** whichever locks the schedule first wins; the firing re-reads under its lock (an edit that moved `next_run_at` into the future makes it skip; `SKIP LOCKED` makes a firing skip a schedule being edited and fire it on the next tick).
+- **Edit vs firing:** whichever locks the schedule first wins; the firing re-reads under its lock (an edit that moved `next_run_at` into the future or changed the target makes it skip; `SKIP LOCKED` makes a firing skip a schedule being edited and fire it on the next tick, at least 1 s later, §7.3).
 - **Two concurrent creates by one agent at 19:** serialised by the creator's `FOR NO KEY UPDATE`: one succeeds, one is refused.
 - **Firing vs batch write** (the accepted race of §8.2): the predicate `delivered_event_seq IS NULL` and the partial unique index keep it to coalescing, never two pending rows.
 
@@ -315,13 +327,14 @@ Written in the header of `schedule-store.ts`:
 | Firing transaction fails | Retried once, then logged; the schedule stays due and fires on the next tick. |
 | Hand-off throws (start failure) | Logged; the row stays pending; next wake or boot delivers it. |
 | croner throws on a stored expression (should be impossible: validated on write) | Logged; that schedule is paused by the scheduler with `paused_at` and a log line, so it can't spin every tick; the UI shows it paused. |
+| Any other persistent firing failure | Backoff per schedule (§8.1 step 4): at most one retry a minute, logged each time. |
 | `FACTORY_TIMEZONE` invalid | Boot fails with the zone sentence (config is validated like S5's). |
 | Stop crons on an agent whose stop fails | S5's escalation and `stop_failed` apply. |
 
 ## 15. UI (summary; the UI doc is the source)
 
-- **Schedules page** (`/schedules`): a dense table (target, when, message, by, state, actions Pause/Resume, Edit, Delete with Undo), filters target and "Show done"; create and edit on their own pages with the cron/once switch, a live "next 3 runs" preview in the chosen zone, the zone combobox (default the browser's), the `MarkdownEditor`, validation on blur.
-- **Session:** `scheduled` blocks with a "Scheduled · S-3" badge linking to the schedule, "by @x", and "due 09:00 · delivered late" / "covers 3 runs" notes.
+- **Schedules page** (`/schedules`): a stacked list (key, target, when, next run, state; the message's first line; authors), a row menu (Edit, Pause/Resume, Delete with Undo), filters target and "Show done"; create and edit on their own pages with the Repeats/Once switch, a "next 3 runs" preview in the chosen zone (updated on change/blur), a zone select grouped by region (R1), the `MarkdownEditor`, validation on blur.
+- **Session:** `scheduled` blocks with the "Scheduler" sender, an `S-3` badge linking to the schedule, "by @x", and "due … · delivered late" / "covers 3 runs" notes.
 - **Agent strip:** the "2 crons" segment opens a popover listing the live crons with **Stop crons** (confirmation naming the crons, button "Stop 2 crons"); "Stops when its current work finishes" while pending; "2 schedules" links to `/schedules?target=<slug>` when nonzero.
 
 ## 16. Dependencies
@@ -338,12 +351,13 @@ No automated test calls a live model. Timing tests use fake timers plus the inje
 ### 17.2 Server (fake driver, fake timers, real Postgres)
 - **Scheduler:** fires at the time; arms at most 60 s ahead; re-arms after create/edit/pause/delete; a clock jump forward fires once; one tick at a time; 101 due schedules take two ticks; a failing transaction retries once then stays due.
 - **AC 1** end to end (hibernated target wakes with `scheduled`; envelope bytes); **catch-up** after a simulated downtime (fires once, `late`, `firings` = missed, next run correct); one-shot catch-up; the skip fallback branch behind its test.
-- **AC 3** replacement: errored target, three firings → one row, `firings = 3`, current body and author, no attempt; the runtime's queued entry refreshed; a written-but-unconfirmed row is not replaced.
+- **AC 3** replacement: errored target, three firings → one row, `firings = 3`, current body and author, no attempt; the runtime's queued entry refreshed, monotonically (an older hand-off after `init()` doesn't regress it); a written-but-unconfirmed row is not replaced; a replacement landing between rendering and the batch's commit leaves the row equal to what was rendered (§8.2 rule 1); boot clears a stale `delivered_event_seq` and the next firing replaces again (the review's Restart → crash → errored path).
+- **Backoff:** a schedule whose firing throws every time is retried with 5 s → 60 s backoff and never re-arms the timer at 0 ms; a `SKIP LOCKED` skip re-arms at least 1 s ahead.
 - **Lifecycle:** every row of §10.1, including archive skip, unarchive without catch-up, termination deleting schedules, a pending row of a deleted schedule still delivered, shutdown between commit and hand-off delivered once at boot (Q20), `bootWakes` counting `scheduled`.
 - **Races** of §12.2 with lock-wait polling.
 - **Tools over HTTP** (real `fetch`, real tokens): persistent agents list the three tools, spawned agents don't; defaults (`to` = self, zone = `FACTORY_TIMEZONE`); limits (20, 15 min, one year); cancel rules; list contents.
 - **REST:** every route; derived states; `401` for a live agent token on each.
-- **Harness crons:** the status lists crons with `durable` and `expiresAt`; Stop crons idle (hibernates now, notice pending, no wake, not forwarded), busy (pending, hibernates at the first idle moment despite the pin), no crons (`409`); the passive notice doesn't wake through `queued_items` or `bootWakes`; apply-restart still doesn't wait (S5 test kept) and its notice names the crons.
+- **Harness crons:** the status lists crons with `durable`, `nextFireAt` (one-shots) and `expiresAt` (recurring); Stop crons for every row of §10.3's table (idle: hibernates now, notice pending, no wake, not forwarded; busy: pending, hibernates at the first idle moment despite the pin, the notice listing crons created meanwhile; crons reaching 0 clears it; a pending apply-restart: the stop wins, no `restart_crons`, the restart still applies; stopping/`stop_failed`: `409 stopping`); `isPassive` in every place it is used (no write of a passive notice alone, no `queued_items` wake, no `bootWakes` wake, the Reaper reaps a spawned agent whose only queued item is the notice); apply-restart still doesn't wait (S5 test kept) and its notice names the crons.
 - S3–S8 tests keep passing (the `messages` CHECK rewrite, `bootWakes`, `entryOf`, `ORDER`).
 
 ### 17.3 Harness
@@ -370,12 +384,12 @@ The early slice (§18) runs first; the whole script at the end; both outputs go 
 | V3 | Claude lists and calls the three schedule tools from the per-caller server, with the optional `cron`/`at` pair and `timezone`. | The early slice, right after the tools exist. | Split into `schedule_cron` and `schedule_once` (no optional pair). |
 | V4 | A haiku agent reading a `scheduled` envelope acts on the body and doesn't try to recreate a fired one-shot. | The early slice and step 1 of §17.5. | Sharpen the CLAUDE.md line; never script phrasings. |
 | V5 | The extended `messages` CHECK accepts every S3–S8 row shape and the new one, and rejects wrong shapes. | The migration test (Postgres 18). | Fix the CHECK. |
-| V6 | croner's DST behaviour is as §7.2 states (verified while designing on 11.0.0). | Unit tests on the pinned version. | Pin the behaviour by wrapping croner. |
+| V6 | croner's DST behaviour is as §7.2 states (verified while designing and again in review on 11.0.0), and our pre-validation refuses its extensions. | Unit tests on the pinned version. | Pin the behaviour by wrapping croner. |
 
 ## 19. Accepted risks and non-goals
 
 - **Catch-up after long downtime** fires once, late (Q3); the agent judges whether it still matters. Fallback: skip late recurring firings (one branch).
-- **Coalescing race** between a firing and a batch write to a not-yet-started process (§8.2): never two rows, at worst one firing counted into a row the agent is already reading.
+- **Coalescing race** between a firing and a batch's rendering and commit (§8.2): never two rows, and the row always says what the agent read; at worst a firing that landed in that window is counted into it without the agent seeing the higher count.
 - **A pending row keeps its body** after an edit; a zone edit changes how a pending row's `due` renders.
 - **DST** can make a single real gap of an agent schedule shorter than 15 minutes (§6.2).
 - **Humans have no floor:** a human's every-minute schedule costs a turn a minute.

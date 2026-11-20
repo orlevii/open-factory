@@ -1,0 +1,164 @@
+import type { AnyEvent, QueueItem } from "@open-factory/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { json, mockApi } from "@/test/mock-api";
+import { resetSeq, se } from "@/test/session-fixtures";
+import { QueueItems } from "./queue-items";
+import { buildRows } from "./rows";
+import { TimelineRow } from "./timeline-row";
+
+beforeEach(() => {
+  resetSeq();
+  mockApi({
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+  });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+function inRouter(ui: React.ReactNode) {
+  const root = createRootRoute({ component: () => <>{ui}</> });
+  const stub = (path: string) =>
+    createRoute({ getParentRoute: () => root, path, component: () => null });
+  const router = createRouter({
+    routeTree: root.addChildren([
+      stub("/schedules/$key"),
+      stub("/agents/$slug"),
+      stub("/tasks/$key"),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+}
+
+const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
+  type: "message_in",
+  messages: [
+    {
+      id: "m1",
+      from: "@scheduler",
+      kind: "scheduled",
+      urgent: false,
+      body: "Morning review",
+      scheduleKey: "S-3",
+      by: "@or",
+      due: "2026-11-23T09:00:00+01:00",
+      ...o,
+    },
+  ],
+});
+function renderEvents(events: AnyEvent[]) {
+  const rows = buildRows(events.map((e) => se(e, null)));
+  return inRouter(
+    <div>
+      {rows.map((row) => (
+        <div key={row.key} data-row>
+          <TimelineRow
+            slug="dev"
+            row={row}
+            expanded={new Set()}
+            toggle={() => {}}
+            rowProps={() => ({})}
+            failedIds={new Set()}
+            interruptedEnds={new Set()}
+          />
+        </div>
+      ))}
+    </div>,
+  );
+}
+
+test("a delivered scheduled block: Scheduler, the S-3 badge linking to the schedule, by @or, no notes when on time", async () => {
+  const { container } = renderEvents([scheduled()]);
+  expect(await screen.findByText("Scheduler")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Schedule S-3" })).toHaveAttribute(
+    "href",
+    "/schedules/S-3",
+  );
+  expect(container.textContent).toContain("by @or");
+  expect(container.textContent).not.toContain("delivered late");
+  expect(container.textContent).not.toContain("covers");
+});
+
+test("late and firings add the notes; an agent author links to its session", async () => {
+  const { container } = renderEvents([scheduled({ late: true, firings: 3, by: "lead" })]);
+  await screen.findByText("Scheduler");
+  expect(container.textContent).toContain(
+    "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",
+  );
+  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead");
+});
+
+test("a pending scheduled item shows in the dashed block with the badge and 'covers 3 runs'", async () => {
+  const item: QueueItem = {
+    id: "q1",
+    kind: "message",
+    from: "@scheduler",
+    body: "Check the build",
+    scheduleKey: "S-5",
+    firings: 3,
+    createdAt: "2026-11-23T08:00:00.000Z",
+  };
+  const { container } = inRouter(
+    <QueueItems items={[item]} agent={{ slug: "dev", status: "errored" } as never} />,
+  );
+  expect(await screen.findByRole("link", { name: "Schedule S-5" })).toBeInTheDocument();
+  expect(container.textContent).toContain("Scheduler");
+  expect(container.textContent).toContain("covers 3 runs");
+  expect(container.querySelector(".border-dashed")).not.toBeNull();
+});
+
+test("the three quiet lines read as specified, from the events' `by` and `durable`", async () => {
+  const { container } = renderEvents([
+    { type: "hibernated", reason: "crons_stopped", by: "@or" },
+    {
+      type: "background_work_lost",
+      reason: "crons_stopped",
+      by: "@or",
+      tasks: [],
+      crons: [{ cronId: "c1", humanSchedule: "Every 5 minutes" }],
+    },
+    {
+      type: "cron_created",
+      cronId: "c2",
+      recurring: true,
+      humanSchedule: "Every 5 minutes",
+      nextFireAt: 1,
+      durable: true,
+    },
+  ]);
+  await screen.findByText(/Hibernated: @or stopped its crons/);
+  expect(container.textContent).toContain("Stopped by @or: every 5 minutes (cron)");
+  expect(container.textContent).toContain("Cron created: every 5 minutes (kept on disk)");
+});
+
+test("escaping: a hostile body goes through the sanitized Markdown renderer; HTML stays text", async () => {
+  const alert = vi.fn();
+  vi.stubGlobal("alert", alert);
+  const { container } = renderEvents([
+    scheduled({
+      body: "**bold** <img src=x onerror=alert(1)> <script>alert(2)</script> [x](javascript:alert(3))",
+    }),
+  ]);
+  await screen.findByText("Scheduler");
+  expect(container.querySelector("strong")?.textContent).toBe("bold"); // markdown formats
+  expect(container.querySelector("img, script")).toBeNull();
+  expect(container.textContent).toContain("<img src=x onerror=alert(1)>");
+  expect(
+    [...container.querySelectorAll("a")].some((a) =>
+      a.getAttribute("href")?.startsWith("javascript:"),
+    ),
+  ).toBe(false);
+  expect(alert).not.toHaveBeenCalled();
+});

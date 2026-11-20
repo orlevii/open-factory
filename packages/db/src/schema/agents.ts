@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
+import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
 /** Snapshot of live runtime state, taken every 10 s, used to reap leftovers and report lost work. */
@@ -154,6 +155,13 @@ export const messages = pgTable(
     // S8: task messages. (task_id, comment_id) is a composite foreign key to task_comments, added in SQL.
     taskId: text("task_id").references((): AnyPgColumn => tasks.id),
     commentId: text("comment_id"),
+    // S9: scheduled rows. They carry their author (the schedule's body author can change after the firing).
+    scheduleId: text("schedule_id").references((): AnyPgColumn => schedules.id),
+    authorAgentId: text("author_agent_id").references((): AnyPgColumn => agents.id),
+    authorUserId: text("author_user_id").references(() => users.id),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    firings: integer("firings"),
+    late: boolean("late"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },

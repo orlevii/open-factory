@@ -62,6 +62,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     recurring: z.boolean(),
     humanSchedule: z.string(),
     nextFireAt: z.number(),
+    durable: z.boolean().optional(),
   }),
   z.object({ type: z.literal("cron_deleted"), cronId: z.string() }),
   z.object({
@@ -153,6 +154,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "agent_message",
         "spawned",
         "task_message",
+        "scheduled",
       ])
       .optional(),
   }),
@@ -174,6 +176,8 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
     type: z.literal("hibernated"),
     reason: z.string(),
     idleMinutes: z.number().optional(),
+    /** `crons_stopped`: the human who stopped the crons (`@handle`). */
+    by: z.string().optional(),
   }),
   z.object({
     type: z.literal("container"),
@@ -199,7 +203,9 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
       "restart",
       "factory_restarted",
       "terminated",
+      "crons_stopped",
     ]),
+    by: z.string().optional(),
     tasks: z.array(z.object({ taskId: z.string(), description: z.string().optional() })),
     crons: z.array(z.object({ cronId: z.string(), humanSchedule: z.string().optional() })),
   }),

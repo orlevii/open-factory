@@ -1,6 +1,7 @@
 /** Why a process start is requested (spec §5.2); recorded as `process_started.reason`. */
 export type WakeReason =
   | "message"
+  | "scheduled" // a `scheduled` row waits (S9 §8.4); never wakes an errored agent
   | "spawned" // a spawned agent's first wake (S7 §5.6); never wakes an errored agent
   | "compact"
   | "crash_recovery"

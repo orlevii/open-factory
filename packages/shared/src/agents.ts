@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sessionEventSchema } from "./events.ts";
 import { nameSchema, slugSchema } from "./names.ts";
+import { liveCronSchema } from "./schedules.ts";
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_FOCUS_CHARS = 2000;
@@ -71,6 +72,12 @@ export const agentSummarySchema = z.object({
   restartPending: z.boolean(),
   restartWaitingOn: z.number().int().nonnegative(),
   waitingOn: waitingOnSchema.default({ tasks: [], crons: 0 }),
+  /** S9: the live in-session crons, the zone their text is written in, and a pending Stop crons. */
+  crons: z.array(liveCronSchema).default([]),
+  cronZone: z.string().default("UTC"),
+  stopCronsPending: z.boolean().default(false),
+  /** S9: schedules targeting it that are neither deleted nor done. */
+  scheduleCount: z.number().int().nonnegative().default(0),
   ...agentLiveShape,
 });
 export type AgentSummary = z.infer<typeof agentSummarySchema>;
@@ -91,6 +98,9 @@ export const queueItemSchema = z.object({
   taskKey: z.string().optional(),
   taskTitle: z.string().optional(),
   commentId: z.string().optional(),
+  scheduleKey: z.string().optional(),
+  firings: z.number().int().positive().optional(),
+  late: z.boolean().optional(),
   createdAt: z.string(),
 });
 export type QueueItem = z.infer<typeof queueItemSchema>;

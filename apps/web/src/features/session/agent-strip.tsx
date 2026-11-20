@@ -4,6 +4,7 @@ import { RotateCw, ShieldOff } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CronsSegment, CronsStopLayer, type StopCrons, useStopCrons } from "./crons-popover";
 import { LINK_CLASS } from "./message-block";
 import { resetPhrase } from "./status-badge";
 import { TerminatedSegment } from "./terminated-strip";
@@ -98,8 +99,8 @@ const TaskText = ({ task }: { task: Task }) => (
 );
 
 /** "Waiting on: pnpm test (background, 3m) · 2 crons" (UI design §3.2); only while non-empty. */
-function WaitingOnSegment({ waitingOn }: { waitingOn: WaitingOn }) {
-  const { tasks, crons } = waitingOn;
+function WaitingOnSegment({ agent, stop }: { agent: AgentSummary; stop: StopCrons }) {
+  const { tasks, crons } = agent.waitingOn;
   useMinuteTick(tasks.length > 0);
   if (tasks.length === 0 && crons === 0) return null;
   const parts: { key: string; node: ReactNode }[] = [];
@@ -114,7 +115,7 @@ function WaitingOnSegment({ waitingOn }: { waitingOn: WaitingOn }) {
       ),
     });
   else for (const t of tasks) parts.push({ key: t.taskId, node: <TaskText task={t} /> });
-  if (crons > 0) parts.push({ key: "crons", node: crons === 1 ? "1 cron" : `${crons} crons` });
+  if (crons > 0) parts.push({ key: "crons", node: <CronsSegment agent={agent} stop={stop} /> });
   return (
     <>
       <Dot />
@@ -206,64 +207,83 @@ export function AgentStrip({
   // A terminated agent never restarts (S7): its process is gone for good.
   const terminated = agent.status === "terminated";
   const restarts = agent.restartPending && !terminated;
+  const stop = useStopCrons(agent);
   return (
-    <div
-      data-agent-strip
-      className="flex min-h-8 shrink-0 flex-wrap items-center gap-x-2 border-b border-border px-4 py-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6"
-    >
-      <span className="font-mono">{agent.slug}</span>
-      <Dot />
-      <span className="font-mono">{agent.template}</span>
-      <Dot />
-      <OrgSegment agent={agent} />
-      <Dot />
-      {agent.openTasks > 0 && (
-        <>
-          {/* The count includes in-progress tasks; it is outside the status region, so nothing re-announces it. */}
-          <Link
-            to="/tasks"
-            search={{ assignee: agent.slug }}
-            className={`text-muted-foreground ${LINK_CLASS}`}
-          >
-            {agent.openTasks} open {agent.openTasks === 1 ? "task" : "tasks"}
-          </Link>
-          <Dot />
-        </>
-      )}
-      {/* A deleted credential (S7: nulled on terminated agents) leaves no empty label. */}
-      {agent.credential !== null && (
-        <>
-          <span>
-            credential <span className="font-mono">{agent.credential}</span>
-          </span>
-          <Dot />
-        </>
-      )}
-      <Runtime agent={agent} />
-      {/* Mounted before it fills, so the change is announced when a status frame sets it.
-          `display: contents` keeps it out of the flex layout: empty, it adds no item (and no
-          second gap) before the next segment; filled, its children space like the rest. */}
-      <span role="status" className="contents">
-        {restarts && (
+    <>
+      <div
+        data-agent-strip
+        className="flex min-h-8 shrink-0 flex-wrap items-center gap-x-2 border-b border-border px-4 py-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6"
+      >
+        <span className="font-mono">{agent.slug}</span>
+        <Dot />
+        <span className="font-mono">{agent.template}</span>
+        <Dot />
+        <OrgSegment agent={agent} />
+        <Dot />
+        {agent.openTasks > 0 && (
           <>
+            {/* The count includes in-progress tasks; it is outside the status region, so nothing re-announces it. */}
+            <Link
+              to="/tasks"
+              search={{ assignee: agent.slug }}
+              className={`text-muted-foreground ${LINK_CLASS}`}
+            >
+              {agent.openTasks} open {agent.openTasks === 1 ? "task" : "tasks"}
+            </Link>
             <Dot />
-            <span className="inline-flex items-center gap-1.5">
-              <RotateCw aria-hidden="true" className="size-3.5 shrink-0" />
-              Restarts when idle to apply changes{waitingText(agent.restartWaitingOn)}
+          </>
+        )}
+        {agent.scheduleCount > 0 && (
+          <>
+            {/* S9: what /schedules?target= shows by default; hidden below md and at zero. */}
+            <Link
+              to="/schedules"
+              search={{ target: agent.slug }}
+              className={`max-md:hidden text-muted-foreground ${LINK_CLASS}`}
+            >
+              {agent.scheduleCount} {agent.scheduleCount === 1 ? "schedule" : "schedules"}
+            </Link>
+            <span aria-hidden="true" className="max-md:hidden">
+              ·
             </span>
           </>
         )}
-      </span>
-      {restarts && <Why label="Why does it restart?">{RESTART_WHY}</Why>}
-      {terminated ? (
-        // Waiting on and the paused/queued detail can't apply to an ended agent.
-        agent.terminatedAt && <TerminatedSegment agent={agent} onAgent={onAgent} />
-      ) : (
-        <>
-          <WaitingOnSegment waitingOn={agent.waitingOn} />
-          <DetailSegment agent={agent} slotsMax={slotsMax} />
-        </>
-      )}
-    </div>
+        {/* A deleted credential (S7: nulled on terminated agents) leaves no empty label. */}
+        {agent.credential !== null && (
+          <>
+            <span>
+              credential <span className="font-mono">{agent.credential}</span>
+            </span>
+            <Dot />
+          </>
+        )}
+        <Runtime agent={agent} />
+        {/* Mounted before it fills, so the change is announced when a status frame sets it.
+          `display: contents` keeps it out of the flex layout: empty, it adds no item (and no
+          second gap) before the next segment; filled, its children space like the rest. */}
+        <span role="status" className="contents">
+          {restarts && (
+            <>
+              <Dot />
+              <span className="inline-flex items-center gap-1.5">
+                <RotateCw aria-hidden="true" className="size-3.5 shrink-0" />
+                Restarts when idle to apply changes{waitingText(agent.restartWaitingOn)}
+              </span>
+            </>
+          )}
+        </span>
+        {restarts && <Why label="Why does it restart?">{RESTART_WHY}</Why>}
+        {terminated ? (
+          // Waiting on and the paused/queued detail can't apply to an ended agent.
+          agent.terminatedAt && <TerminatedSegment agent={agent} onAgent={onAgent} />
+        ) : (
+          <>
+            <WaitingOnSegment agent={agent} stop={stop} />
+            <DetailSegment agent={agent} slotsMax={slotsMax} />
+          </>
+        )}
+      </div>
+      <CronsStopLayer agent={agent} stop={stop} />
+    </>
   );
 }

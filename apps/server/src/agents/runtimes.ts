@@ -9,7 +9,7 @@ import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts
 import type { ProcessJournal } from "../runtime/local/journal.ts";
 import type { WakeReason } from "../supervisor/slots.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
-import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
+import { AgentRuntime, type CleanupResult, cronZoneOf, type RuntimeLog } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError, AgentTerminatedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow } from "./event-store.ts";
@@ -106,6 +106,7 @@ export function versionCheckEnv(serverEnv: NodeJS.ProcessEnv): Record<string, st
 function senderLabel(row: PendingRow): string {
   if (row.fromHandle) return `@${row.fromHandle}`;
   if (row.fromSlug) return `@${row.fromSlug}`;
+  if (row.kind === "scheduled") return "@scheduler";
   // S8: `task_assigned` and `task_update` have no sender columns; they are from the factory (spec §7.4).
   if (row.kind !== "message") return "@factory";
   throw new Error(`message ${row.id} has no sender`);
@@ -369,6 +370,9 @@ export class AgentRuntimes {
       restartPending: false,
       restartWaitingOn: 0,
       waitingOn: { tasks: [], crons: 0 },
+      crons: [],
+      cronZone: cronZoneOf(row.runtime === "docker" ? "docker" : "local"),
+      stopCronsPending: false,
       ...stuck,
     };
   }

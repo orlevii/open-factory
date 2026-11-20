@@ -15,6 +15,7 @@ const input: ClaudeMdInput = {
   kind: "persistent",
   spawner: null,
   spawning: null,
+  scheduling: { zone: "Europe/Berlin", maxSchedules: 20, minGapMinutes: 15 },
 };
 const base = input;
 const sections = (md: string) => md.split("\n").filter((l) => l.startsWith("#"));
@@ -27,6 +28,7 @@ test("structure with everything present; deterministic", () => {
     "## How messages reach you",
     "## Messaging",
     "## Tasks",
+    "## Scheduling",
     "## Your workspace",
   ]);
   expect(md).toContain("@lead");
@@ -196,7 +198,7 @@ test("quoteDescription never splits a surrogate pair: 200 code points in total",
 test("the kinds line lists the task kinds, names `task`, and @factory notices include task changes (S8 §10)", () => {
   const md = buildClaudeMd(input);
   expect(md).toContain(
-    "The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment` and `task_update`.",
+    "The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`.",
   );
   expect(md).toContain("`task` names the task a task message is about");
   expect(md).toContain(
@@ -229,4 +231,34 @@ test("the Tasks section follows Messaging with the seven rules, for persistent a
     ).toEqual(bullets);
   }
   expect(buildClaudeMd(input)).toBe(buildClaudeMd(structuredClone(input)));
+});
+
+test("S9: the kinds line names scheduled and the @scheduler sentence; persistent agents get three Scheduling bullets", () => {
+  const md = buildClaudeMd(input);
+  expect(md).toContain("`task_update` and `scheduled`");
+  expect(md).toContain(
+    "`@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).",
+  );
+  const sch = md.slice(md.indexOf("## Scheduling"), md.indexOf("## Your workspace"));
+  expect(sch.match(/^- /gm)).toHaveLength(3);
+  expect(sch).toContain("Schedules use Europe/Berlin unless you pass `timezone`.");
+  expect(sch).toContain("can't fire more often than every 15 minutes, and you can have at most 20");
+  expect(sch).toContain("Never pass `durable: true`.");
+});
+test("S9: a spawned agent's Scheduling section is only the CronCreate bullet; same inputs, same bytes", () => {
+  const spawned = {
+    ...input,
+    kind: "ephemeral" as const,
+    spawner: { slug: "lead" },
+    scheduling: null,
+  };
+  const md = buildClaudeMd(spawned);
+  const sch = md.slice(md.indexOf("## Scheduling"), md.indexOf("## Your workspace"));
+  expect(sch.match(/^- /gm)).toHaveLength(1);
+  expect(sch).toContain("CronCreate");
+  expect(sch).not.toContain("schedule_message");
+  expect(buildClaudeMd(spawned)).toBe(md);
+  expect(
+    buildClaudeMd({ ...input, scheduling: { zone: "UTC", maxSchedules: 20, minGapMinutes: 15 } }),
+  ).toContain("use UTC unless");
 });

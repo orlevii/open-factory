@@ -22,6 +22,7 @@ export interface ReconcileDeps {
     | "agentsWithYoungUpdates"
     | "setErrored"
     | "rejectPendingToTerminated"
+    | "clearStaleWriteMarks"
     | "terminatedWithoutEvent"
   >;
   journal: Pick<ProcessJournal, "reap">;
@@ -151,6 +152,8 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   await d.store.clearRuntimeJournals([...reapFailed]);
   // S7 §8: a row that raced in during the crash window, after the termination rejected the rest, is rejected too.
   await d.store.rejectPendingToTerminated();
+  // S9 §5: no runtime is loaded yet, so a pending row's write mark is stale; cleared so a firing can replace it again.
+  await d.store.clearStaleWriteMarks();
 
   // 6. Reset timers first (a wake on a paused credential must wait, not start a process that can't write its first
   // line); a window that already passed resets at once, creating the owed continue notices.

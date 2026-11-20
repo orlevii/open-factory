@@ -19,8 +19,14 @@ function one(m: FactoryMessage): string {
   const id = m.ids && m.ids.length > 1 ? `ids="${attr(m.ids.join(" "))}"` : `id="${attr(m.id)}"`;
   const about = m.about ? ` about="${attr(m.about)}"` : "";
   const task = m.taskKey ? ` task="${attr(m.taskKey)}"` : "";
+  const sched =
+    (m.scheduleKey ? ` schedule="${attr(m.scheduleKey)}"` : "") +
+    (m.by ? ` by="${attr(m.by)}"` : "") +
+    (m.due ? ` due="${attr(m.due)}"` : "") +
+    (m.firings && m.firings > 1 ? ` firings="${m.firings}"` : "") +
+    (m.late ? ' late="true"' : "");
   return (
-    `<factory-message from="${attr(m.from)}" kind="${m.kind}" urgent="${m.urgent}" ${id}${about}${task}>\n` +
+    `<factory-message from="${attr(m.from)}" kind="${m.kind}" urgent="${m.urgent}" ${id}${about}${task}${sched}>\n` +
     `${m.body}\n</factory-message>`
   );
 }
@@ -57,6 +63,12 @@ export type BatchRow = {
   taskKey?: string;
   taskTitle?: string;
   commentId?: string;
+  /** S9: a `scheduled` row. `by` is its author's `@handle` or slug, `due` is ISO 8601 with the schedule zone's offset. */
+  scheduleKey?: string;
+  by?: string;
+  due?: string;
+  firings?: number;
+  late?: boolean;
 };
 
 const ORDER: Record<MessageKind, number> = {
@@ -69,9 +81,18 @@ const ORDER: Record<MessageKind, number> = {
   task_assigned: 1,
   task_comment: 1,
   task_update: 1,
+  scheduled: 1,
 };
 
 const part = (r: BatchRow) => ({ id: r.id, body: r.body, createdAt: r.createdAt.toISOString() });
+
+const scheduleFields = (r: BatchRow) => ({
+  ...(r.scheduleKey ? { scheduleKey: r.scheduleKey } : {}),
+  ...(r.by ? { by: r.by } : {}),
+  ...(r.due ? { due: r.due } : {}),
+  ...(r.firings ? { firings: r.firings } : {}),
+  ...(r.late ? { late: true } : {}),
+});
 
 const taskFields = (r: BatchRow) => ({
   ...(r.taskKey ? { taskKey: r.taskKey } : {}),
@@ -90,6 +111,7 @@ function single(r: BatchRow): FactoryMessage {
     ...(r.fact ? { fact: r.fact } : {}),
     ...(r.subject ? { subject: r.subject } : {}),
     ...taskFields(r),
+    ...scheduleFields(r),
     parts: [part(r)],
   };
 }

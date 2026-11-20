@@ -18,8 +18,11 @@ import {
   type ErrorKind,
   errorKindSchema,
   type FactCode,
+  factoryZoneDefault,
+  formatOffsetIso,
   type HarnessEvent,
   HELD_KINDS,
+  type LiveCron as LiveCronView,
   type MessageKind,
   type QueueItem,
   statusOf,
@@ -46,6 +49,7 @@ import {
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
+  StopCronsError,
 } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow, Tx } from "./event-store.ts";
@@ -150,7 +154,8 @@ export type HibernateReason =
   | "freed_slot"
   | "apply_changes"
   | "shutdown"
-  | "archived";
+  | "archived"
+  | "crons_stopped";
 
 /** The live non-ambient tasks and crons a stop would kill (spec §9.4). */
 export type LostWork = {
@@ -160,7 +165,7 @@ export type LostWork = {
 
 /** What the `exited` job must do, recorded when a deliberate stop begins (spec §5.5). */
 export type AfterExit =
-  | { kind: "hibernate"; reason: HibernateReason; lost: LostWork }
+  | { kind: "hibernate"; reason: HibernateReason; lost: LostWork; by?: string }
   // Restart and Start a new session: the exit releases the slot and makes the attempt's wake, if one is on.
   | { kind: "restart"; by: string }
   | { kind: "terminate"; by: string } // S7 §8 step 3: its exit removes the container and never wakes
@@ -186,6 +191,13 @@ type Entry = MessageEntry | CompactEntry;
 type Subject = NonNullable<Envelope["subject"]>;
 
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
+/**
+ * S9 §10.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the agent was
+ * stopped on purpose). It rides at the head of the next batch that has something else. The one predicate every place
+ * that counts a queued item as a reason to act uses.
+ */
+const isPassive = (e: Entry): boolean =>
+  e.kind === "message" && e.row.kind === "system" && e.row.notice === "crons_stopped";
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
 /** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
 const isHeld = (e: Entry): e is MessageEntry =>
@@ -211,6 +223,8 @@ function entryOf(r: PendingRow): MessageEntry {
   const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
   let from: string;
   if (row.kind === "system") from = "@factory";
+  // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
+  else if (row.kind === "scheduled") from = "@scheduler";
   else if (fromHandle) from = `@${fromHandle}`;
   else if (fromSlug) from = fromSlug;
   else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
@@ -243,6 +257,34 @@ const taskFieldsOf = (
   ...(row.commentId ? { commentId: row.commentId } : {}),
 });
 
+/** S9: a `scheduled` row's envelope attributes; `due` carries the schedule zone's offset at that instant. */
+const scheduleFieldsOf = (
+  row: MessageRow & {
+    scheduleKey?: string | null;
+    scheduleZone?: string | null;
+    authorLabel?: string | null;
+  },
+) =>
+  row.kind === "scheduled" && row.scheduleKey
+    ? {
+        scheduleKey: row.scheduleKey,
+        ...(row.authorLabel ? { by: row.authorLabel } : {}),
+        ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
+        ...(row.firings ? { firings: row.firings } : {}),
+        ...(row.late ? { late: true } : {}),
+      }
+    : {};
+
+const queueScheduleOf = (row: MessageRow & { scheduleKey?: string | null }) =>
+  row.kind === "scheduled" && row.scheduleKey
+    ? {
+        scheduleKey: row.scheduleKey,
+        ...(row.firings ? { firings: row.firings } : {}),
+        ...(row.late ? { late: true } : {}),
+        ...(row.dueAt ? { dueAt: row.dueAt.toISOString() } : {}),
+      }
+    : {};
+
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
@@ -259,6 +301,7 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   ...(e.subject ? { subject: e.subject } : {}),
   // S8: a task message names its task; a `task_update`'s notice is its fact code (the UI keys on it, never on prose).
   ...taskFieldsOf(e.row),
+  ...scheduleFieldsOf(e.row),
   ...(e.row.kind === "task_update" && e.row.notice ? { fact: e.row.notice } : {}),
 });
 
@@ -284,12 +327,21 @@ const RATE_LIMIT_FALLBACK_MS = 30 * 60_000;
 const CRON_EXPIRY_MS = 7 * 24 * 3_600_000;
 const DEFAULT_WARM_WINDOW_MINUTES = 70;
 
+/**
+ * The zone Claude's process runs in, which `humanSchedule` is written in (S9 §10.2): UTC in Docker (the base image sets
+ * no `TZ`, and S9 passes none; follow-up #66), the server's resolved zone for a local agent.
+ */
+export const cronZoneOf = (runtime: "local" | "docker") =>
+  runtime === "docker" ? "UTC" : factoryZoneDefault();
+
 type LiveTask = { ambient: boolean; description: string; startedAt: number };
 type LiveCron = {
   recurring: boolean;
   humanSchedule: string;
   nextFireAt: number;
   createdAt: number;
+  /** From `CronCreate`'s result: whether the harness persisted it (S0/S9 V2: not in headless mode). */
+  durable: boolean;
 };
 
 /** Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. */
@@ -371,6 +423,9 @@ export class AgentRuntime {
   private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
   private liveTasks = new Map<string, LiveTask>(); // startedAt = first seen in a `background_tasks` set
   private crons = new Map<string, LiveCron>(); // the live in-session crons (spec §6.2): pin the agent
+  /** S9 §10.3: a Stop crons waiting for the first moment the agent isn't busy; `by` is the human's `@handle`. */
+  private stopCronsPending: { by: string } | undefined;
+  private stopCheckQueued = false;
   private owedNotifications = 0;
   private owedTimer: ReturnType<typeof setTimeout> | undefined;
   private warmTimer: ReturnType<typeof setTimeout> | undefined;
@@ -495,6 +550,15 @@ export class AgentRuntime {
         // Already written (boot reconciliation's wake loaded and delivered it while the Router waited on `booted`):
         // nothing to wake for, and an urgent interrupt now would stop the very turn reading it.
         return this.itemOf(entryOf(row));
+      } else if (row.kind === "scheduled") {
+        // S9 §8.2 rule 3: a firing replaced this still-queued row. Re-read it and take the stored version only if it
+        // covers more firings, so an older hand-off arriving after `init()` loaded a newer one never regresses it.
+        const fresh = await this.d.store.pendingJoined(row.id);
+        if (!fresh) return this.itemOf(entry); // written meanwhile, or rejected: as for any seen id
+        if ((fresh.firings ?? 0) > (entry.row.firings ?? 0)) {
+          entry.row = fresh;
+          this.publishQueue();
+        }
       }
       // A provisional latch (S7 §8 step 1): queued and seen, but no wake, interrupt or flush. If the termination
       // fails, `unmarkTerminated` delivers it; if it commits, the transaction rejected it.
@@ -602,6 +666,93 @@ export class AgentRuntime {
       }
       this.publishStatus();
     });
+  }
+
+  /**
+   * Stop crons (S9 §10.3): a human stops the agent's in-session crons by hibernating its process, with the passive
+   * `crons_stopped` notice waiting for its next wake. Idle: stops now; busy (or errored with a process, attempting,
+   * rate-limited): stops at the first moment the agent isn't busy, the warm window not waited for; an apply-restart's
+   * hibernate already under way is taken over. Anything else already stopping is refused.
+   */
+  stopCrons(byHandle: string): Promise<{ status: "stopped" | "pending" }> {
+    return this.apiJob(async () => {
+      this.refuseTerminated();
+      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      const by = `@${byHandle}`;
+      const proc = this.proc;
+      if (!proc || this.crons.size === 0) throw new StopCronsError("no_crons", this.agent.slug);
+      if (proc === this.deadProc || proc === this.failingProc) {
+        throw new StopCronsError("stopping", this.agent.slug);
+      }
+      if (this.stopping) {
+        const a = this.afterExit;
+        if (a?.kind !== "hibernate" || a.reason !== "apply_changes")
+          throw new StopCronsError("stopping", this.agent.slug);
+        // Takes the apply-restart's hibernate over, as a shutdown does: its exit records the stop, adds no
+        // `restart_crons` notice, and wakes only for non-passive items.
+        a.reason = "crons_stopped";
+        a.by = by;
+        this.restartPending = false;
+        await this.addStopNotice(by);
+        this.publishStatus();
+        return { status: "stopped" as const };
+      }
+      if (this.stopNowAllowed()) {
+        await this.stopCronsNow(by);
+        this.publishStatus();
+        return { status: "stopped" as const };
+      }
+      this.stopCronsPending = { by };
+      this.publishStatus();
+      return { status: "pending" as const };
+    });
+  }
+
+  /** Idle in the sense of the Stop crons table: nothing open, nothing owed, not errored, attempting or paused. */
+  private stopNowAllowed(): boolean {
+    return !this.busy() && !this.errored && !this.attempting && !this.credentialPaused();
+  }
+
+  private async addStopNotice(by: string) {
+    await this.addNotice(
+      "crons_stopped",
+      notices.cronsStopped({ by, crons: this.cronsList().map((c) => c.humanSchedule) }),
+    );
+  }
+
+  /** In a job: the notice (from the crons live now), then the stop. */
+  private async stopCronsNow(by: string) {
+    await this.addStopNotice(by);
+    if (this.beginHibernate("crons_stopped") && this.afterExit?.kind === "hibernate")
+      this.afterExit.by = by;
+  }
+
+  /** The pending stop's trigger (the same moments as an apply-restart's): re-checked in its own job. */
+  private queueStopCronsCheck() {
+    if (this.stopCheckQueued) return;
+    this.stopCheckQueued = true;
+    void this.run(async () => {
+      this.stopCheckQueued = false;
+      const p = this.stopCronsPending;
+      if (!p || this.terminated) return;
+      const proc = this.proc;
+      if (!proc || proc === this.deadProc || proc === this.failingProc || this.stopping) return;
+      if (this.crons.size === 0) return this.cronsMayHaveEnded();
+      if (!this.stopNowAllowed()) return;
+      this.stopCronsPending = undefined;
+      await this.stopCronsNow(p.by);
+      this.publishStatus();
+    }).catch((err: unknown) =>
+      this.d.log.error({ err, agent: this.agent.slug }, "stopping the crons failed"),
+    );
+  }
+
+  /** The crons reached zero before a pending stop ran: it is cleared and a restart it held back goes ahead. */
+  private cronsMayHaveEnded() {
+    if (!this.stopCronsPending || this.crons.size > 0) return;
+    this.stopCronsPending = undefined;
+    this.maybeRestart();
+    this.publishStatus();
   }
 
   /**
@@ -865,7 +1016,8 @@ export class AgentRuntime {
       // member update, which wakes it once due): the termination would reject them, so wait for the delivery. Peer
       // events alone never wake an agent and don't hold it; an errored agent's rows wait for a human's Restart, and an
       // errored agent is reaped (spec §10.3).
-      ((this.queue.length > 0 || this.held.some(isUpdate)) && this.acceptsWake("queued_items"))
+      ((this.queue.some((e) => !isPassive(e)) || this.held.some(isUpdate)) &&
+        this.acceptsWake("queued_items"))
     );
   }
 
@@ -1075,7 +1227,7 @@ export class AgentRuntime {
    * held member updates that are due (S6 §8.3). Young updates and peer events alone are not.
    */
   hasDeliverable(): boolean {
-    return this.queue.length > 0 || this.heldDue();
+    return this.queue.some((e) => !isPassive(e)) || this.heldDue();
   }
 
   /**
@@ -1194,6 +1346,10 @@ export class AgentRuntime {
     restartPending: boolean;
     restartWaitingOn: number;
     waitingOn: WaitingOn;
+    /** S9 §10.2: the live in-session crons, the zone their text is written in, and a pending Stop crons. */
+    crons: LiveCronView[];
+    cronZone: string;
+    stopCronsPending: boolean;
     rateLimitedUntil?: string;
     rateLimitExact?: boolean;
     runtimeDisabled?: string;
@@ -1217,7 +1373,26 @@ export class AgentRuntime {
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
       waitingOn: this.waitingOn(),
+      crons: this.cronsList(),
+      cronZone: cronZoneOf(this.agent.runtime),
+      stopCronsPending: Boolean(this.stopCronsPending),
     };
+  }
+
+  /**
+   * The live crons as the status lists them (S9 §10.2): `nextFireAt` only for one-shots (a recurring cron's is the first
+   * firing, never updated), `expiresAt` only for recurring ones (Claude drops them after 7 days).
+   */
+  cronsList(): LiveCronView[] {
+    return [...this.crons].map(([cronId, c]) => ({
+      cronId,
+      humanSchedule: c.humanSchedule,
+      recurring: c.recurring,
+      durable: c.durable,
+      ...(c.recurring
+        ? { expiresAt: new Date(c.createdAt + CRON_EXPIRY_MS).toISOString() }
+        : { nextFireAt: new Date(c.nextFireAt).toISOString() }),
+    }));
   }
 
   /** What keeps the agent warm: live non-ambient tasks (oldest first) and the live cron count. */
@@ -1444,6 +1619,7 @@ export class AgentRuntime {
           from: e.from,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
+          ...queueScheduleOf(e.row),
         }
       : {
           id: e.id,
@@ -2187,6 +2363,7 @@ export class AgentRuntime {
           humanSchedule: e.humanSchedule,
           nextFireAt: e.nextFireAt,
           createdAt: Date.now(),
+          durable: e.durable === true,
         });
         await this.append(this.openTurnId, e);
         await this.writeJournal();
@@ -2195,6 +2372,7 @@ export class AgentRuntime {
         this.crons.delete(e.cronId);
         await this.append(this.openTurnId, e);
         await this.writeJournal();
+        this.cronsMayHaveEnded();
         break;
       case "error":
         await this.append(this.openTurnId, e);
@@ -2237,6 +2415,7 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    this.stopCronsPending = undefined; // the crons die with the process anyway (S9 §10.3)
     const attemptOwed = this.attemptOwedAtExit; // only this process's exit honours it
     this.attemptOwedAtExit = false;
     if (this.escalationTimer) clearTimeout(this.escalationTimer);
@@ -2312,6 +2491,7 @@ export class AgentRuntime {
         await this.append(null, {
           type: "hibernated",
           reason: intent.reason,
+          ...(intent.reason === "crons_stopped" && intent.by ? { by: intent.by } : {}),
           ...(intent.reason === "warm_window"
             ? { idleMinutes: Math.round((Date.now() - this.lastActivityAt) / 60_000) }
             : {}),
@@ -2372,7 +2552,7 @@ export class AgentRuntime {
     const { reason, lost } = intent;
     const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
     if (reason !== "warm_window" && reason !== "freed_slot")
-      await this.reportLostWork(reason, lost);
+      await this.reportLostWork(reason, lost, intent.by);
     if (reason === "shutdown" && (turnWasOpen || anyLost))
       await this.addNotice(
         "factory_restarted",
@@ -2393,10 +2573,17 @@ export class AgentRuntime {
       | "terminated"
       | Exclude<HibernateReason, "warm_window" | "freed_slot">,
     lost: LostWork,
+    by?: string,
   ) {
     if (!lost.tasks.length && !lost.crons.length) return;
-    await this.append(null, { type: "background_work_lost", reason, ...lost });
-    if (reason !== "archived")
+    await this.append(null, {
+      type: "background_work_lost",
+      reason,
+      ...(reason === "crons_stopped" && by ? { by } : {}),
+      ...lost,
+    });
+    // A human stopped the crons in the open (S9 Q13): their manager isn't told.
+    if (reason !== "archived" && reason !== "crons_stopped")
       await this.forwardFact("work_lost", {
         lost: {
           tasks: lost.tasks.map((t) => t.description || t.taskId),
@@ -2577,6 +2764,11 @@ export class AgentRuntime {
    * the stop, because the `exited` that ends it is a job queued behind the caller.
    */
   private maybeRestart() {
+    // S9 §10.3: a pending Stop crons wins over a pending apply-restart; it is evaluated at the same moments.
+    if (this.stopCronsPending) {
+      this.queueStopCronsCheck();
+      return;
+    }
     // An attempt in progress finishes first; its success ends with a turn_end, which calls this again.
     if (!this.restartPending || this.errored || this.attempting) return;
     this.beginHibernate("apply_changes");
@@ -2765,6 +2957,7 @@ export class AgentRuntime {
             if (now - c.createdAt >= CRON_EXPIRY_MS) this.crons.delete(id);
           if (this.crons.size !== before) {
             await this.writeJournal();
+            this.cronsMayHaveEnded();
             this.publishStatus();
           }
         });
@@ -2779,7 +2972,10 @@ export class AgentRuntime {
     const before = this.crons.size;
     for (const [id, c] of this.crons)
       if (!c.recurring && c.nextFireAt <= now) this.crons.delete(id);
-    if (this.crons.size !== before) await this.writeJournal();
+    if (this.crons.size !== before) {
+      await this.writeJournal();
+      this.cronsMayHaveEnded();
+    }
   }
 
   /** Spec §6.1: armed only while no turn is open and a notification turn is owed. */
@@ -2953,6 +3149,18 @@ export class AgentRuntime {
       while (this.queue[0]?.kind === "message") batch.push(this.queue.shift() as MessageEntry);
       // S6 §8.1: a batch written while no turn is open carries every held row, due or not.
       if (!this.turnOpen()) batch.push(...this.held.splice(0));
+      // S9 §10.3: a passive notice alone is never written; it waits for a batch with something else. A compact queued
+      // behind it goes ahead (flush otherwise cuts a batch at the first non-message entry).
+      if (batch.every(isPassive)) {
+        this.queue.unshift(...batch);
+        const at = this.queue.findIndex((e) => e.kind === "compact");
+        if (at > 0 && this.queue.slice(0, at).every(isPassive)) {
+          const [c] = this.queue.splice(at, 1);
+          if (c) this.queue.unshift(c);
+          continue;
+        }
+        break;
+      }
       if (!(await this.writeBatch(batch))) break; // a rejected write leaves the batch at the head: stop, don't spin
     }
     // Due held rows on their own, only while no turn is open (S6 §8.1).
@@ -3031,6 +3239,17 @@ export class AgentRuntime {
     );
   }
 
+  /** Re-reads every `scheduled` entry of `batch` in place; entries whose row is no longer pending are removed. */
+  private async refreshScheduled(batch: MessageEntry[]): Promise<void> {
+    for (let i = batch.length - 1; i >= 0; i--) {
+      const e = batch[i];
+      if (e?.row.kind !== "scheduled") continue;
+      const fresh = await this.d.store.pendingJoined(e.row.id);
+      if (fresh) e.row = fresh;
+      else batch.splice(i, 1);
+    }
+  }
+
   /** False when the write was rejected (the batch is back at the head of the queue). */
   private async writeBatch(batch: MessageEntry[]): Promise<boolean> {
     const proc = this.proc;
@@ -3038,6 +3257,15 @@ export class AgentRuntime {
       this.requeue(batch);
       return false;
     }
+    // S9 §8.2 rule 2: a scheduled entry may be stale (loaded by `init()`, or handed over behind a slow start): render the
+    // row's current content, and drop one that is no longer pending (rejected by a termination).
+    try {
+      await this.refreshScheduled(batch);
+    } catch (err) {
+      this.requeue(batch);
+      throw err;
+    }
+    if (!batch.length) return true;
     const ids = batch.map((m) => m.row.id);
     let envelopes: FactoryMessage[];
     try {
@@ -3065,6 +3293,11 @@ export class AgentRuntime {
         );
         // Every write, before session_started too (S6 §11): the event that shows the rows to their recipient.
         await this.d.store.setDeliveredEventSeq(ids, out.seq, tx);
+        // S9 §8.2 rule 1: the row records exactly what was rendered (a replacement that landed since is coalesced).
+        await this.d.store.writeBackScheduled(
+          batch.filter((e) => e.row.kind === "scheduled").map((e) => e.row),
+          tx,
+        );
         if (this.started) await this.d.store.markDelivered(ids, tx);
         if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
         return out;

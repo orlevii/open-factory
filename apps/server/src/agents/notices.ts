@@ -4,7 +4,8 @@ export type NoticeType =
   | "factory_restarted"
   | "restart"
   | "restart_crons"
-  | "rate_limit_reset";
+  | "rate_limit_reset"
+  | "crons_stopped";
 
 const tasksSentence = (tasks: string[]) =>
   tasks.length
@@ -56,6 +57,10 @@ export const notices = {
       ...cronsSentence(i.crons),
       "Recreate them if you still need them.",
     ].join(" ");
+  },
+  /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */
+  cronsStopped(i: { by: string; crons: string[] }): string {
+    return `${i.by} stopped your crons: ${i.crons.join("; ")}. Don't recreate them unless you are asked to.`;
   },
   /** `at` only when the reset time was exact. */
   rateLimitReset(i: { credential: string; at?: Date }): string {

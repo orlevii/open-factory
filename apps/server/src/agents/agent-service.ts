@@ -99,6 +99,11 @@ export class AgentService {
       containers?: Pick<ContainerManager, "isRunning">;
       /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
       router: Pick<Router, "peerEvents" | "snapshot">;
+      /** S9 §10.1: unarchive recomputes every schedule targeting the agent in its transaction (no catch-up). */
+      scheduling?: {
+        recomputeForTarget(tx: Tx, agentId: string): Promise<void>;
+        changed(): void;
+      };
     },
   ) {}
 
@@ -203,6 +208,23 @@ export class AgentService {
       )
       .groupBy(schema.tasks.assigneeAgentId))
       if (r.agentId) openTasks.set(r.agentId, r.n);
+    // S9: schedules targeting each shown agent that are neither deleted nor done (the strip's link).
+    const scheduleCount = new Map<string, number>();
+    for (const r of await db
+      .select({ agentId: schema.schedules.targetAgentId, n: count() })
+      .from(schema.schedules)
+      .where(
+        and(
+          inArray(
+            schema.schedules.targetAgentId,
+            rows.map((x) => x.id),
+          ),
+          isNull(schema.schedules.deletedAt),
+          sql`not (${schema.schedules.runAt} is not null and ${schema.schedules.nextRunAt} is null)`,
+        ),
+      )
+      .groupBy(schema.schedules.targetAgentId))
+      scheduleCount.set(r.agentId, r.n);
     const credName = new Map(
       (
         await db
@@ -235,6 +257,7 @@ export class AgentService {
         reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
         reports: reportCount.get(r.id) ?? 0,
         openTasks: openTasks.get(r.id) ?? 0,
+        scheduleCount: scheduleCount.get(r.id) ?? 0,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         grantsOverridden: r.grantsOverridden,
@@ -712,17 +735,36 @@ export class AgentService {
     const row = await this.rowBySlug(slug);
     this.assertPersistent(row);
     if (!row.archivedAt) return this.summary(slug);
-    if (row.reportsTo) {
-      const [m] = await db.select().from(schema.agents).where(eq(schema.agents.id, row.reportsTo));
-      if (m?.archivedAt)
-        throw new ApiError(
-          409,
-          "manager_archived",
-          `Its manager @${m.slug} is archived. Change its manager first.`,
-        );
-    }
-    await db.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
+    // S9 §10.1: the agent row `FOR NO KEY UPDATE` first, then its schedules (agents before schedules). The manager
+    // check is inside the lock too, and a concurrent unarchive that lost the race changes nothing and emits nothing.
+    const changed = await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ archivedAt: schema.agents.archivedAt, reportsTo: schema.agents.reportsTo })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, row.id))
+        .for("no key update");
+      if (!locked?.archivedAt) return false;
+      if (locked.reportsTo) {
+        const [m] = await tx
+          .select()
+          .from(schema.agents)
+          .where(eq(schema.agents.id, locked.reportsTo));
+        if (m?.archivedAt)
+          throw new ApiError(
+            409,
+            "manager_archived",
+            `Its manager @${m.slug} is archived. Change its manager first.`,
+          );
+      }
+      await tx.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
+      await this.d.scheduling?.recomputeForTarget(tx, row.id);
+      return true;
+    });
+    if (!changed) return this.summary(slug);
     await runtimes.refresh(row.id);
+    // After the refresh: a firing in the millisecond before it reaches a runtime that still thinks the agent is
+    // archived and is rejected (accepted, spec §10.1).
+    this.d.scheduling?.changed();
     await this.peerEvents(row.id, { kind: "joined" }, { managerId: null, peerIds: [] });
     return this.summary(slug);
   }

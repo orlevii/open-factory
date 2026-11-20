@@ -308,6 +308,7 @@ function user(e: Json, s: MapperState): HarnessEvent[] {
         recurring: r.recurring === true,
         humanSchedule: String(r.humanSchedule ?? ""),
         nextFireAt: Number(r.nextFireAt ?? 0),
+        durable: r.durable === true,
       });
     }
   }

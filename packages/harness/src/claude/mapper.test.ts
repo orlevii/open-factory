@@ -214,6 +214,7 @@ test("cron-create-fire-delete: cron ids, and the firing turn is tagged cron", ()
       recurring: true,
       humanSchedule: "Every minute",
       nextFireAt: expect.any(Number),
+      durable: false,
     },
   ]);
   expect(ofType(events, "cron_deleted")).toEqual([{ type: "cron_deleted", cronId: "046617ac" }]);

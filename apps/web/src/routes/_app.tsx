@@ -61,6 +61,12 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["agents"] });
           void qc.invalidateQueries({ queryKey: ["agent"] });
         }
+        // S9: the Schedules page, an open edit page and the agents' schedule counts refetch (only mounted ones fetch).
+        if (m.type === "schedules_changed") {
+          void qc.invalidateQueries({ queryKey: ["schedules"] });
+          void qc.invalidateQueries({ queryKey: ["agents"] });
+          void qc.invalidateQueries({ queryKey: ["agent"] });
+        }
         for (const fn of listeners.current) fn(m);
       },
       onOpen: () => setOpenCount((n) => n + 1),

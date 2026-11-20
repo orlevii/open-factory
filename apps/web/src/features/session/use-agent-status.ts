@@ -25,6 +25,9 @@ export function useAgentStatusFrames() {
           restartPending: m.restartPending,
           restartWaitingOn: m.restartWaitingOn,
           waitingOn: m.waitingOn ?? { tasks: [], crons: 0 },
+          // S9: the live crons and a pending Stop crons (a frame without them means none).
+          crons: m.crons ?? [],
+          stopCronsPending: m.stopCronsPending ?? false,
           rateLimitedUntil: m.rateLimitedUntil,
           rateLimitExact: m.rateLimitExact,
           runtimeDisabled: m.runtimeDisabled,

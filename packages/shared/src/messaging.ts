@@ -9,6 +9,7 @@ export const MESSAGE_KINDS = [
   "task_assigned",
   "task_comment",
   "task_update",
+  "scheduled",
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export const HELD_KINDS: readonly MessageKind[] = ["member_update", "peer_joined", "peer_left"];
@@ -45,6 +46,12 @@ export const envelopeSchema = z.object({
   taskKey: z.string().optional(),
   taskTitle: z.string().optional(),
   commentId: z.string().optional(),
+  /** S9 `scheduled` rows: the schedule's key, its author, when it was due (zone offset), runs covered, delayed. */
+  scheduleKey: z.string().optional(),
+  by: z.string().optional(),
+  due: z.string().optional(),
+  firings: z.number().int().positive().optional(),
+  late: z.boolean().optional(),
   ids: z.array(z.string()).optional(),
   about: z.string().optional(),
   parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })).optional(),
@@ -97,4 +104,8 @@ export const messageLookupSchema = z.object({
   state: z.enum(["pending", "delivered", "rejected"]),
   recipientEvent: eventRefSchema.optional(),
   senderEvent: eventRefSchema.optional(),
+  scheduleKey: z.string().optional(),
+  firings: z.number().int().positive().optional(),
+  late: z.boolean().optional(),
+  dueAt: z.string().optional(),
 });

@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { factoryZoneDefault, zoneSchema } from "@open-factory/shared";
 import { z } from "zod";
 
 /** `FACTORY_MAX_RUNNING_AGENTS` when unset (spec §5.2). */
@@ -34,6 +35,8 @@ export interface Config {
   memberUpdateDebounceMs: number;
   /** `FACTORY_MAX_SPAWNS_PER_HOUR`: children per spawner created in the last 60 minutes (S7 §5.5). */
   maxSpawnsPerHour: number;
+  /** `FACTORY_TIMEZONE` (S9): the zone agent-created schedules default to, named in the generated CLAUDE.md. */
+  factoryTimezone: string;
 }
 
 /** The one gate rule (spec §13): start, validator, live status and Restart all ask this. */
@@ -105,6 +108,7 @@ const envSchema = z.object({
     .int()
     .min(1)
     .default(20),
+  FACTORY_TIMEZONE: zoneSchema.optional(),
 });
 
 function expandHome(p: string): string {
@@ -169,5 +173,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     agentHosts: agentHosts?.length ? agentHosts : undefined,
     memberUpdateDebounceMs: e.FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS * 1000,
     maxSpawnsPerHour: e.FACTORY_MAX_SPAWNS_PER_HOUR,
+    factoryTimezone: e.FACTORY_TIMEZONE ?? factoryZoneDefault(),
   };
 }

@@ -21,11 +21,17 @@ export function AgentPicker({
   value,
   onChange,
   describedBy,
+  placeholder = "Unassigned",
+  extraOption,
 }: {
   id: string;
   value: string;
   onChange(slug: string): void;
   describedBy?: string | undefined;
+  /** The empty option's text: "Unassigned" for tasks, "Choose an agent…" for schedules. */
+  placeholder?: string;
+  /** An agent that isn't assignable (archived) but is the current value: kept as an option while selected. */
+  extraOption?: { value: string; label: string } | undefined;
 }) {
   const { agents } = useAssignableAgents();
   return (
@@ -35,7 +41,10 @@ export function AgentPicker({
       aria-describedby={describedBy}
       onChange={(e) => onChange(e.target.value)}
     >
-      <option value="">Unassigned</option>
+      <option value="">{placeholder}</option>
+      {extraOption && !agents.some((a) => a.slug === extraOption.value) && (
+        <option value={extraOption.value}>{extraOption.label}</option>
+      )}
       {agents.map((a) => (
         <option key={a.slug} value={a.slug}>
           {agentOptionLabel(a)}

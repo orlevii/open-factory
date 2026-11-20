@@ -154,3 +154,24 @@ describe("loadConfig", () => {
     expect("claudeToken" in c).toBe(false);
   });
 });
+
+describe("FACTORY_TIMEZONE", () => {
+  test("unset: the server's resolved zone, or UTC", () => {
+    expect(loadConfig(ok).factoryTimezone).toBe(
+      new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    );
+  });
+  test("a valid IANA name is used", () => {
+    expect(loadConfig({ ...ok, FACTORY_TIMEZONE: "Europe/Berlin" }).factoryTimezone).toBe(
+      "Europe/Berlin",
+    );
+  });
+  test("an unknown zone is a boot error with the zone sentence", () => {
+    expect(() => loadConfig({ ...ok, FACTORY_TIMEZONE: "Mars/Base" })).toThrow(
+      /FACTORY_TIMEZONE Unknown time zone 'Mars\/Base'; use an IANA name such as Europe\/Berlin\./,
+    );
+  });
+  test("empty means not set", () => {
+    expect(loadConfig({ ...ok, FACTORY_TIMEZONE: "" }).factoryTimezone).toBeTruthy();
+  });
+});

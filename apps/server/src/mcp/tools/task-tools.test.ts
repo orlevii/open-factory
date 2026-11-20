@@ -42,12 +42,16 @@ const names = async (who: string) =>
     .sort();
 
 test("every agent lists the five task tools; a spawner has two more", async () => {
+  // S9: persistent agents also list the three schedule tools.
   const base = [
+    "cancel_schedule",
     "comment_task",
     "create_task",
     "get_task",
     "list_peers",
+    "list_schedules",
     "list_tasks",
+    "schedule_message",
     "send_message",
     "update_task",
   ];

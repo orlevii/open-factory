@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Clock, Factory } from "lucide-react";
+import { CalendarClock, Clock, Factory } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
+import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 
@@ -72,6 +73,29 @@ export function AgentLink({ slug, name = false }: { slug: string; name?: boolean
   );
 }
 
+/** "Mon 23 Nov 09:00 UTC+01:00": the envelope's `due` read at its own offset (the zone's name isn't on the envelope). */
+export function formatDue(due: string): string {
+  const m = /([+-])(\d{2}):(\d{2})$/.exec(due);
+  const at = new Date(due);
+  if (!m || Number.isNaN(at.getTime())) return due;
+  const offMin = (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(at.getTime() + offMin * 60_000))
+      .map((x) => [x.type, x.value]),
+  ) as Record<string, string>;
+  const off = offMin === 0 ? "UTC" : `UTC${m[1]}${m[2]}:${m[3]}`;
+  return `${p.weekday} ${p.day} ${p.month} ${p.hour}:${p.minute} ${off}`;
+}
+
 /** Agent senders are bare slugs; humans are `@handle`, the factory `@factory`. */
 export const isAgentSender = (from: string) => !from.startsWith("@");
 
@@ -88,15 +112,38 @@ export function MessageBlock(props: {
   failed?: boolean;
   /** S8: the task badge of a task message, after the sender. */
   badge?: ReactNode;
+  /** S9: a scheduled message: sender "Scheduler", the schedule badge, who wrote it, and the notes. */
+  scheduled?: {
+    key: string;
+    by?: string | undefined;
+    /** ISO 8601 with the schedule zone's offset (the envelope's `due`). */
+    due?: string | undefined;
+    late?: boolean | undefined;
+    firings?: number | undefined;
+  };
 }) {
-  const { from, system, body, urgent, at, queued, failed, badge } = props;
+  const { from, system, body, urgent, at, queued, failed, badge, scheduled } = props;
+  const notes = scheduled
+    ? [
+        ...(scheduled.late && scheduled.due
+          ? [`due ${formatDue(scheduled.due)} · delivered late`]
+          : []),
+        ...(scheduled.late && !scheduled.due ? ["delivered late"] : []),
+        ...((scheduled.firings ?? 1) > 1 ? [`covers ${scheduled.firings} runs`] : []),
+      ]
+    : [];
   return (
     <div
       data-message-block
       className={`rounded-lg border px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        {system ? (
+        {scheduled ? (
+          <span className="flex items-center gap-1 text-foreground">
+            <CalendarClock aria-hidden="true" className="size-3.5" />
+            Scheduler
+          </span>
+        ) : system ? (
           <span className="flex items-center gap-1 text-foreground">
             <Factory aria-hidden="true" className="size-3.5" />
             Factory
@@ -107,6 +154,17 @@ export function MessageBlock(props: {
           </span>
         ) : (
           <span className="font-mono text-foreground">{from}</span>
+        )}
+        {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
+        {scheduled?.by && (
+          <span className="text-muted-foreground">
+            by{" "}
+            {isAgentSender(scheduled.by) ? (
+              <AgentLink slug={scheduled.by} />
+            ) : (
+              <span className="font-mono text-foreground">{scheduled.by}</span>
+            )}
+          </span>
         )}
         {badge}
         {urgent && !system && (
@@ -127,6 +185,11 @@ export function MessageBlock(props: {
           </time>
         ) : null}
       </div>
+      {notes.length > 0 && (
+        <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+          {notes.join(" · ")}
+        </p>
+      )}
       {failed && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
           Not delivered

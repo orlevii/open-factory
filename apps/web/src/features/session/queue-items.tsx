@@ -82,6 +82,9 @@ export function QueueItems({ items, agent }: { items: QueueItem[]; agent: AgentS
               body={q.body ?? ""}
               urgent={q.urgent}
               queued={{ reason }}
+              {...(q.scheduleKey
+                ? { scheduled: { key: q.scheduleKey, late: q.late ?? false, firings: q.firings } }
+                : {})}
               badge={
                 q.taskKey ? (
                   <TaskBadge

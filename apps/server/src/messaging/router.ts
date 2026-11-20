@@ -139,6 +139,7 @@ export class Router {
           urgent,
           fromToolUseId: from.toolUseId ?? null,
         });
+        if (!row) throw new Error("a message to humans wrote no row");
         this.d.bus.publishAll({ type: "inbox_changed" });
         return {
           ok: true,
@@ -424,6 +425,31 @@ export class Router {
         if (!this.closed) this.d.runtimes.deliverHeld(row);
       },
       () => {}, // shutting down before boot finished: the row is pending for the next boot
+    );
+  }
+
+  /**
+   * S8 §7.4: committed task rows, handed over once boot is done and unless shutdown has begun; never awaited (the
+   * change succeeded, and a start failure shows on the agent). A human's comment is a human message (it starts an
+   * errored agent's recovery); every other task row wakes with `task_message`. Every hand-off is `.catch`ed and
+   * logged: `deliver` can reject, the server has no `unhandledRejection` handler, and the row stays pending for the
+   * next wake or boot.
+   */
+  handOffTaskRows(rows: { row: PendingRow; wake: "human" | "task_message" }[]): void {
+    void this.booted.then(
+      () => {
+        if (this.closed) return;
+        for (const { row, wake } of rows) {
+          const p =
+            wake === "human"
+              ? this.d.runtimes.deliver(row, "human")
+              : this.d.runtimes.deliver(row, "agent", "task_message");
+          p.catch((err: unknown) =>
+            this.d.log.info({ err, message: row.id }, "a task message stays pending"),
+          );
+        }
+      },
+      () => {}, // shutting down before boot finished: the rows are pending for the next boot
     );
   }
 

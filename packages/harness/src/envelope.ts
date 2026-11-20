@@ -53,6 +53,10 @@ export type BatchRow = {
   groupKey?: string;
   fact?: string;
   subject?: NonNullable<Envelope["subject"]>;
+  /** S8: the task a task message is about. */
+  taskKey?: string;
+  taskTitle?: string;
+  commentId?: string;
 };
 
 const ORDER: Record<MessageKind, number> = {
@@ -61,9 +65,19 @@ const ORDER: Record<MessageKind, number> = {
   member_update: 2,
   peer_joined: 3,
   peer_left: 3,
+  // S8: task messages are direct messages; they sort with `message`, in created order.
+  task_assigned: 1,
+  task_comment: 1,
+  task_update: 1,
 };
 
 const part = (r: BatchRow) => ({ id: r.id, body: r.body, createdAt: r.createdAt.toISOString() });
+
+const taskFields = (r: BatchRow) => ({
+  ...(r.taskKey ? { taskKey: r.taskKey } : {}),
+  ...(r.taskTitle ? { taskTitle: r.taskTitle } : {}),
+  ...(r.commentId ? { commentId: r.commentId } : {}),
+});
 
 function single(r: BatchRow): FactoryMessage {
   return {
@@ -75,6 +89,7 @@ function single(r: BatchRow): FactoryMessage {
     ...(r.about ? { about: r.about } : {}),
     ...(r.fact ? { fact: r.fact } : {}),
     ...(r.subject ? { subject: r.subject } : {}),
+    ...taskFields(r),
     parts: [part(r)],
   };
 }
@@ -92,13 +107,14 @@ function merge(run: BatchRow[]): FactoryMessage {
     ...(first.about ? { about: first.about } : {}),
     ...(first.fact ? { fact: first.fact } : {}),
     ...(first.subject ? { subject: first.subject } : {}),
+    ...taskFields(first),
     parts: run.map(part),
   };
 }
 
 /** Rows merge only when everything the envelope carries besides the body is the same (sender, about, fact, subject). */
 const runKey = (r: BatchRow) =>
-  JSON.stringify([r.from, r.about ?? null, r.fact ?? null, r.subject ?? null]);
+  JSON.stringify([r.from, r.about ?? null, r.fact ?? null, r.subject ?? null, r.taskKey ?? null]);
 
 /** Builds every batch: notices, messages, member-update groups (merged per consecutive sender), then peer events. */
 export function groupEnvelopes(rows: BatchRow[]): FactoryMessage[] {

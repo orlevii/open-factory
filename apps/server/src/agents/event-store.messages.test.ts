@@ -89,10 +89,10 @@ test("@humans fans out one inbox item per existing user, delivered at once", asy
     body: "hey",
     urgent: true,
   });
-  expect(row.state).toBe("delivered");
+  expect(row?.state).toBe("delivered");
   expect([...userIds].sort()).toEqual(["u1", "u2"]);
   expect((await store.inboxPage("u1")).items[0]).toMatchObject({
-    messageId: row.id,
+    messageId: row?.id,
     urgent: true,
     to: "@humans",
     from: { kind: "agent", name: "dev" },
@@ -119,8 +119,8 @@ test("inboxPage pages newest first with a cursor and links the sender's tool cal
       urgent: false,
       fromToolUseId: i === 2 ? "tu1" : null,
     });
-    ids.push(row.id);
-    await t.sql`update inbox_items set created_at = ${`2026-02-0${i + 1}T00:00:00Z`}::timestamptz where message_id = ${row.id}`;
+    ids.push(row?.id as string);
+    await t.sql`update inbox_items set created_at = ${`2026-02-0${i + 1}T00:00:00Z`}::timestamptz where message_id = ${row?.id as string}`;
   }
   const p1 = await store.inboxPage("u1", undefined, 2);
   expect(p1.items.map((i) => i.messageId)).toEqual([ids[2], ids[1]]);
@@ -187,7 +187,9 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
     body: "h",
     urgent: false,
   });
-  expect(messageLookupSchema.parse(await store.messageLookup(human.row.id))).toMatchObject({
+  expect(
+    messageLookupSchema.parse(await store.messageLookup(human.row?.id as string)),
+  ).toMatchObject({
     from: "dev",
     to: "@humans",
   });
@@ -200,7 +202,9 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
     body: "f",
     urgent: false,
   });
-  expect(messageLookupSchema.parse(await store.messageLookup(fact.row.id))).toMatchObject({
+  expect(
+    messageLookupSchema.parse(await store.messageLookup(fact.row?.id as string)),
+  ).toMatchObject({
     kind: "system",
     from: "@factory",
     to: "@or",

@@ -152,6 +152,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "member_updates",
         "agent_message",
         "spawned",
+        "task_message",
       ])
       .optional(),
   }),

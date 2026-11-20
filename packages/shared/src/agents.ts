@@ -86,6 +86,9 @@ export const queueItemSchema = z.object({
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
+  taskKey: z.string().optional(),
+  taskTitle: z.string().optional(),
+  commentId: z.string().optional(),
   createdAt: z.string(),
 });
 export type QueueItem = z.infer<typeof queueItemSchema>;

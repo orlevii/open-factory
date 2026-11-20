@@ -6,6 +6,9 @@ export const MESSAGE_KINDS = [
   "member_update",
   "peer_joined",
   "peer_left",
+  "task_assigned",
+  "task_comment",
+  "task_update",
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export const HELD_KINDS: readonly MessageKind[] = ["member_update", "peer_joined", "peer_left"];
@@ -40,6 +43,8 @@ export const envelopeSchema = z.object({
   urgent: z.boolean(),
   body: z.string(),
   taskKey: z.string().optional(),
+  taskTitle: z.string().optional(),
+  commentId: z.string().optional(),
   ids: z.array(z.string()).optional(),
   about: z.string().optional(),
   parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })).optional(),

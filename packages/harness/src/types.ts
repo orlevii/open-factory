@@ -30,6 +30,8 @@ export interface FactoryMessage {
   /** Already escaped by groupEnvelopes (single/merge); renderEnvelopes writes it as given. */
   body: string;
   taskKey?: string;
+  taskTitle?: string;
+  commentId?: string;
   ids?: string[];
   about?: string;
   /** The raw, unescaped bodies (for the UI). */

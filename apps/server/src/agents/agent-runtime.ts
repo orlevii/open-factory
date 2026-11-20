@@ -23,6 +23,7 @@ import {
   type MessageKind,
   type QueueItem,
   statusOf,
+  taskKey,
   type WaitingOn,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
@@ -234,6 +235,14 @@ function entryOf(r: PendingRow): MessageEntry {
   return entry;
 }
 
+const taskFieldsOf = (
+  row: MessageRow & { taskNumber?: number | null; taskTitle?: string | null },
+) => ({
+  ...(row.taskNumber ? { taskKey: taskKey(row.taskNumber) } : {}),
+  ...(row.taskTitle ? { taskTitle: row.taskTitle } : {}),
+  ...(row.commentId ? { commentId: row.commentId } : {}),
+});
+
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
@@ -248,6 +257,9 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
     ? { fact: e.row.notice }
     : {}),
   ...(e.subject ? { subject: e.subject } : {}),
+  // S8: a task message names its task; a `task_update`'s notice is its fact code (the UI keys on it, never on prose).
+  ...taskFieldsOf(e.row),
+  ...(e.row.kind === "task_update" && e.row.notice ? { fact: e.row.notice } : {}),
 });
 
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
@@ -1431,6 +1443,7 @@ export class AgentRuntime {
           urgent: e.row.urgent,
           from: e.from,
           createdAt: e.row.createdAt.toISOString(),
+          ...taskFieldsOf(e.row),
         }
       : {
           id: e.id,

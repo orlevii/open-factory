@@ -829,6 +829,14 @@ export class AgentRuntime {
     this.journalWork = { tasks: [], crons: [] };
     await this.d.store.setRuntimeJournal(this.agent.id, null);
     this.journalJson = "null";
+    // An earlier failed stop is resolved now: nothing of the agent is left. `stop_failed` would keep it a stuck
+    // candidate (§8 step 5) and its workspace undeletable forever.
+    if (this.stopFailed()) {
+      this.errored = false;
+      this.lastError = undefined;
+      this.errorKind = undefined;
+      await this.d.store.clearErrored(this.agent.id);
+    }
     if (done) await this.append(null, { type: "cleanup", ...done });
     return true;
   }

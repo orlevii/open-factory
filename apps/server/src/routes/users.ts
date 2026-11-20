@@ -33,7 +33,7 @@ export const usersRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post("/api/users/:id/enable", { schema: { params: idParams } }, async (req, reply) => {
-    await app.userAdmin.enable(req.params.id);
+    await app.userAdmin.enable((req.user as { id: string }).id, req.params.id);
     return reply.code(204).send();
   });
 

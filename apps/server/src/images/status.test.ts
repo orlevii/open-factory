@@ -1,13 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LABEL_BUILT_AT, LABEL_CONTEXT_HASH, type TemplateConfig } from "@open-factory/shared";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import type { TemplateRow } from "../templates/template-index.ts";
 import type { ImageBuilder } from "./builder.ts";
 import { contextHash } from "./context.ts";
-import { imageStatus, listImages, templateImageStatus } from "./status.ts";
+import { imageStatus, listImages, statusMemo, templateImageStatus } from "./status.ts";
 
 const TAG = "open-factory-user/smoke:latest";
 const DEFAULT = "ghcr.io/orlevii/open-factory/base:latest";
@@ -29,6 +29,7 @@ beforeEach(async () => {
     docker,
     imagesRoot: root,
     builder: { running: (n) => running.has(n), last: (n) => lasts.get(n) },
+    log: { warn: () => {} },
   };
 });
 afterEach(() => rm(root, { recursive: true, force: true }));
@@ -134,10 +135,40 @@ test("unknown when Docker can't be reached", async () => {
   expect((await imageStatus(d, "smoke")).status).toBe("unknown");
 });
 
-test("other Docker errors are not swallowed", async () => {
+test("any other Docker error reads as unknown and is logged at warn", async () => {
   await mkImage("smoke");
+  const warn = vi.fn();
+  d.log = { warn };
   docker.down = Object.assign(new Error("server error"), { statusCode: 500 });
-  await expect(imageStatus(d, "smoke")).rejects.toThrow("server error");
+  expect((await imageStatus(d, "smoke")).status).toBe("unknown");
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0]?.[0]).toMatchObject({ ref: TAG });
+});
+
+test("an images/ entry that links outside is no_dockerfile and nothing outside is read", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "of-outside-"));
+  try {
+    await writeFile(join(outside, "Dockerfile"), "FROM scratch\n");
+    await symlink(outside, join(root, "evil"));
+    expect((await imageStatus(d, "evil")).status).toBe("no_dockerfile");
+    expect(docker.calls.some((c) => c.op === "imageInspect")).toBe(false);
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("with a memo, each image is inspected once per request however many templates use it", async () => {
+  await mkImage("smoke");
+  const m = { ...d, memo: statusMemo() };
+  const cfg = (image?: string) => ({ runtime: "docker", image }) as TemplateConfig;
+  await Promise.all([
+    templateImageStatus(m, cfg("smoke"), DEFAULT),
+    templateImageStatus(m, cfg("smoke"), DEFAULT),
+    templateImageStatus(m, cfg(), DEFAULT),
+    templateImageStatus(m, cfg(), DEFAULT),
+  ]);
+  const inspected = docker.calls.filter((c) => c.op === "imageInspect").map((c) => c.args[0]);
+  expect(inspected.sort()).toEqual([DEFAULT, TAG].sort());
 });
 
 test("listImages lists every valid image folder by name with the templates that use it", async () => {

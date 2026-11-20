@@ -159,3 +159,18 @@ test("a folder that fails to index is skipped without pruning the others", async
   expect((await idx.scan()).map((r) => r.name)).toContain("ok1");
   expect((await idx.scan()).map((r) => r.name)).not.toContain("Bad_Name");
 });
+
+test("a user image counts only as a direct child of images/: a link leaving it doesn't validate", async () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "of-outside-"));
+  writeFileSync(path.join(outside, "Dockerfile"), "FROM scratch\n");
+  mkdirSync(path.join(home, "images/real"), { recursive: true });
+  writeFileSync(path.join(home, "images/real/Dockerfile"), "FROM scratch\n");
+  symlinkSync(outside, path.join(home, "images/evil"));
+  try {
+    const ctx = await idx.context();
+    expect(ctx.userImages.has("real")).toBe(true);
+    expect(ctx.userImages.has("evil")).toBe(false);
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});

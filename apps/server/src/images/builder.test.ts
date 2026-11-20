@@ -255,3 +255,39 @@ test("log and last are empty for a name never built", () => {
   expect(builder.last("nope")).toBeUndefined();
   expect(builder.running("nope")).toBe(false);
 });
+
+test("the context stream is destroyed when Docker reports a failure without reading it", async () => {
+  await mkImage("smoke");
+  let destroy: ReturnType<typeof vi.fn> | undefined;
+  vi.spyOn(docker, "buildImage").mockImplementation(async (c) => {
+    destroy = vi.spyOn(c as unknown as { destroy: () => void }, "destroy");
+    return { ok: false, error: "boom" };
+  });
+  expect(await builder.build("smoke", { pull: true })).toMatchObject({ state: "failed" });
+  expect(destroy).toHaveBeenCalled();
+});
+
+test("a publish that throws in finish never leaves the name building", async () => {
+  await mkImage("smoke");
+  const real = bus.publishAll.bind(bus);
+  const spy = vi.spyOn(bus, "publishAll").mockImplementation((m) => {
+    // The final flush of batched lines, the first publish in finish().
+    if (m.type === "image_build" && m.lines?.length) throw new Error("socket gone");
+    real(m);
+  });
+  await expect(builder.build("smoke", { pull: true })).rejects.toThrow("socket gone");
+  expect(builder.running("smoke")).toBe(false);
+  expect(builder.last("smoke")?.state).toBe("succeeded");
+  spy.mockRestore();
+  // Nothing is stuck: a new build starts and finishes.
+  expect(await builder.build("smoke", { pull: true })).toEqual({ state: "succeeded" });
+});
+
+test("the label's hash and the tar come from one walk of the folder", async () => {
+  const dir = await mkImage("smoke");
+  await writeFile(join(dir, "a.txt"), "a");
+  await builder.build("smoke", { pull: true });
+  const call = docker.calls.find((c) => c.op === "buildImage");
+  const labels = (call?.args[0] as { labels: Record<string, string> } | undefined)?.labels ?? {};
+  expect(labels[LABEL_CONTEXT_HASH]).toBe(await contextHash(dir, "smoke"));
+});

@@ -5,7 +5,7 @@ import { LABEL_BUILT_AT, LABEL_CONTEXT_HASH, userImageTag } from "@open-factory/
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { DockerClient } from "../runtime/docker/client.ts";
-import { contextHash, imageDir, packContext } from "./context.ts";
+import { hashEntries, imageDir, packEntries, walkContext } from "./context.ts";
 
 export type BuildResult = { state: "succeeded" } | { state: "failed"; error: string };
 export type LastBuild = {
@@ -22,6 +22,7 @@ const KEEP_LINES = 200;
 
 interface Run {
   promise: Promise<BuildResult>;
+  pull: boolean;
   lines: string[];
   pending: string[];
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,6 +98,7 @@ export class ImageBuilder {
 
     const run: Run = {
       promise: Promise.resolve({ state: "succeeded" }),
+      pull: o.pull,
       lines: [],
       pending: [],
       timer: undefined,
@@ -111,6 +113,11 @@ export class ImageBuilder {
 
   running(name: string): boolean {
     return this.runs.has(name);
+  }
+
+  /** The running build's `pull`, so a caller that joins it with a different one can be told. */
+  runningPull(name: string): boolean | undefined {
+    return this.runs.get(name)?.pull;
   }
 
   log(name: string): { state: "building" | "succeeded" | "failed" | null; lines: string[] } {
@@ -150,21 +157,26 @@ export class ImageBuilder {
   ): Promise<BuildResult> {
     const tag = userImageTag(name);
     const onLine = (line: string) => this.line(name, run, line);
-    let context: NodeJS.ReadableStream | undefined;
+    let context: Readable | undefined;
     try {
       const refs = fromRefs(await readFile(join(dir, "Dockerfile"), "utf8").catch(() => ""));
-      const hash = await contextHash(dir, name);
-      context = await packContext(dir, name);
+      // One walk: the label's hash and the tar cover the same entries, and the pack checks each file is
+      // still the one the walk saw.
+      const entries = await walkContext(dir, name);
+      const hash = await hashEntries(dir, name, entries);
+      context = packEntries(dir, name, entries);
       const labels = { [LABEL_CONTEXT_HASH]: hash, [LABEL_BUILT_AT]: started.toISOString() };
       const r = await this.d.docker.buildImage(context, { tag, pull, labels }, onLine);
       if (!r.ok) return { state: "failed", error: buildError(r.error, name, refs) };
       for (const ref of refs) await this.baseLine(ref, onLine);
       return { state: "succeeded" };
     } catch (err) {
-      (context as Readable | undefined)?.destroy?.();
       const error = err instanceof Error ? err.message : String(err);
       onLine(error);
       return { state: "failed", error };
+    } finally {
+      // Docker may stop reading early (a failure in the stream); the pack must not wait on it forever.
+      context?.destroy();
     }
   }
 
@@ -199,16 +211,20 @@ export class ImageBuilder {
   }
 
   private finish(name: string, run: Run, started: Date, result: BuildResult): BuildResult {
-    this.flush(name, run);
     const finishedAt = this.d.now();
-    this.lasts.set(name, {
-      state: result.state,
-      finishedAt,
-      ...(result.state === "failed" ? { error: result.error } : {}),
-      durationMs: finishedAt.getTime() - started.getTime(),
-      lines: run.lines.slice(-KEEP_LINES),
-    });
-    this.runs.delete(name);
+    try {
+      this.flush(name, run);
+    } finally {
+      // Before anything that can throw: a failed publish must never leave the name building.
+      this.lasts.set(name, {
+        state: result.state,
+        finishedAt,
+        ...(result.state === "failed" ? { error: result.error } : {}),
+        durationMs: finishedAt.getTime() - started.getTime(),
+        lines: run.lines.slice(-KEEP_LINES),
+      });
+      this.runs.delete(name);
+    }
     this.d.log.info({ image: name, state: result.state }, "image build finished");
     this.d.bus.publishAll({ type: "image_build", name, state: result.state });
     this.d.bus.publishAll({ type: "images_changed" });

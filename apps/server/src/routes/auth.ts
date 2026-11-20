@@ -25,7 +25,11 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
       // land here too. The user.create.before backstop covers whatever this match misses.
       const res =
         request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
-          ? await handleSignUp({ db, invites: app.invites, auth: app.auth }, req, request.body)
+          ? await handleSignUp(
+              { db, invites: app.invites, auth: app.auth, bus: app.bus, log: request.log },
+              req,
+              request.body,
+            )
           : await app.auth.handler(req);
       reply.status(res.status);
       const cookies = res.headers.getSetCookie();

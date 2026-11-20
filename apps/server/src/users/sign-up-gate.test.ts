@@ -1,9 +1,11 @@
 import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { schema } from "@open-factory/db";
+import type { ServerMessage } from "@open-factory/shared";
 import { count, eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { handleSignUp } from "./sign-up-gate.ts";
 
 /**
  * S10 §9.3 (F2), AC5: invite-only sign-up, checked in the /api/auth/* catch-all on the normalized path,
@@ -88,10 +90,13 @@ const INVALID = {
 };
 
 describe("bootstrap", () => {
-  test("with zero users, sign-up without an invite succeeds", async () => {
+  test("with zero users, sign-up without an invite succeeds and publishes users_changed", async () => {
+    const seen: ServerMessage[] = [];
+    h.app.bus.subscribeAll((m) => seen.push(m));
     const res = await rawPost(SIGN_UP, person());
     expect(res.status).toBe(200);
     expect(await userCount()).toBe(1);
+    expect(seen).toEqual([{ type: "users_changed" }]);
   });
 
   test("two concurrent first sign-ups: exactly one succeeds, the other gets invite_required", async () => {
@@ -140,12 +145,80 @@ describe("with one user", () => {
       .where(eq(schema.invites.id, expired.id));
     const revoked = await newInvite();
     await h.app.invites.revoke(revoked.id);
-    for (const token of [expired.token, revoked.token, "unknown-token", ""]) {
+    for (const token of [expired.token, revoked.token, "unknown-token"]) {
       const res = await rawPost(SIGN_UP, person({ invite: token }));
       expect(res.status).toBe(403);
       expect(res.body).toEqual(INVALID);
     }
     expect(await userCount()).toBe(1);
+  });
+
+  test('an empty invite counts as missing: invite_required, as sign-up-state says "missing"', async () => {
+    const res = await rawPost(SIGN_UP, person({ invite: "" }));
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(REQUIRED);
+  });
+
+  test("a successful sign-up publishes users_changed; a refused one doesn't", async () => {
+    const seen: ServerMessage[] = [];
+    h.app.bus.subscribeAll((m) => seen.push(m));
+    await rawPost(SIGN_UP, person());
+    expect(seen).toEqual([]);
+    const inv = await newInvite();
+    seen.length = 0;
+    expect((await rawPost(SIGN_UP, person({ invite: inv.token }))).status).toBe(200);
+    expect(seen).toEqual([{ type: "users_changed" }]);
+  });
+
+  describe("after better-auth's 2xx", () => {
+    const fakeAuth = (body: unknown, create?: Record<string, string>) => ({
+      handler: async () => {
+        if (create) {
+          await h.db.insert(schema.users).values({
+            id: create.id as string,
+            name: "Fake",
+            handle: create.handle as string,
+            email: create.email as string,
+            emailVerified: false,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+        }
+        return Response.json(body);
+      },
+    });
+    const deps = (auth: ReturnType<typeof fakeAuth>) => {
+      const log = { error: vi.fn() };
+      return { log, d: { db: h.db, invites: h.app.invites, auth, bus: h.app.bus, log } };
+    };
+    const req = () => new Request(`${h.app.config.publicUrl}${SIGN_UP}`, { method: "POST" });
+
+    test("a body without user.id: the user is found by email and the invite marked used", async () => {
+      const inv = await newInvite();
+      const p = person({ invite: inv.token });
+      const { d, log } = deps(fakeAuth({}, { id: "fake-1", handle: "fake-1", email: p.email }));
+      const res = await handleSignUp(d as never, req(), { ...p, email: p.email.toUpperCase() });
+      expect(res.status).toBe(200);
+      const [row] = await h.db.select().from(schema.invites).where(eq(schema.invites.id, inv.id));
+      expect(row?.usedBy).toBe("fake-1");
+      expect(log.error).not.toHaveBeenCalled();
+    });
+
+    test("markUsed returning false is logged at error level", async () => {
+      const inv = await newInvite();
+      const { d, log } = deps(fakeAuth({ user: { id: ownerId } }));
+      const spy = vi.spyOn(h.app.invites, "markUsed").mockResolvedValue(false);
+      try {
+        const res = await handleSignUp(d as never, req(), person({ invite: inv.token }));
+        expect(res.status).toBe(200);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ inviteId: inv.id }),
+        expect.stringContaining("already marked used"),
+      );
+    });
   });
 
   test("a failed sign-up (duplicate email) leaves the invite unused", async () => {

@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { schema } from "@open-factory/db";
 import type { ServerMessage, UserAdminItem } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 
@@ -135,6 +135,49 @@ describe("disable", () => {
     expect(await disabledAtOf(or.user.id)).toBeNull();
   });
 
+  test("an actor disabled after authenticating can't disable or enable anyone (401)", async () => {
+    const cy = await signUp(h.app, { handle: "cy" });
+    // As if a disable of al committed while al's request waited on the user locks.
+    await h.db
+      .update(schema.users)
+      .set({ disabledAt: new Date() })
+      .where(eq(schema.users.id, al.user.id));
+    await expect(h.app.userAdmin.disable(al.user.id, cy.user.id)).rejects.toMatchObject({
+      status: 401,
+      code: "unauthorized",
+    });
+    expect(await disabledAtOf(cy.user.id)).toBeNull();
+
+    expect((await as(or, "POST", `/api/users/${cy.user.id}/disable`)).statusCode).toBe(200);
+    await expect(h.app.userAdmin.enable(al.user.id, cy.user.id)).rejects.toMatchObject({
+      status: 401,
+      code: "unauthorized",
+    });
+    expect(await disabledAtOf(cy.user.id)).not.toBeNull();
+  });
+
+  test("enable deletes a session row that raced the disable", async () => {
+    expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(200);
+    // A sign-in whose session.create.before ran before the disable committed inserts after its DELETE.
+    await h.db.insert(schema.sessions).values({
+      id: "raced",
+      token: "raced-token",
+      userId: al.user.id,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      createdAt: new Date(Date.now() + 1000),
+      updatedAt: new Date(),
+    });
+    expect((await as(or, "POST", `/api/users/${al.user.id}/enable`)).statusCode).toBe(204);
+    const left = await h.db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.userId, al.user.id));
+    expect(left).toEqual([]);
+    // Enabling an enabled user signs nobody out.
+    expect((await as(or, "POST", `/api/users/${or.user.id}/enable`)).statusCode).toBe(204);
+    expect(await meStatus({ cookie: or.cookie })).toBe(200);
+  });
+
   test("an unknown user is 404", async () => {
     expect((await as(or, "POST", "/api/users/nope/disable")).statusCode).toBe(404);
     expect((await as(or, "POST", "/api/users/nope/enable")).statusCode).toBe(404);
@@ -155,8 +198,16 @@ describe("disable", () => {
         as(or, "POST", `/api/users/${al.user.id}/disable`),
         as(al, "POST", `/api/users/${or.user.id}/disable`),
       ]);
-      // Each iteration is a real round trip to Postgres, not a timer.
-      while ((await waiting()) < 2) {}
+      // Each iteration is a real round trip to Postgres, not a timer; bounded so a disable that fails
+      // before locking reports its cause instead of the test timeout.
+      let settled = false;
+      void both.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      for (let i = 0; (await waiting()) < 2; i++) {
+        if (settled || i >= 2000) throw new Error("disables never queued on the user locks");
+      }
       // Committing releases the locks; the disables then proceed.
     });
     const results = await (both as NonNullable<typeof both>);
@@ -281,6 +332,34 @@ describe("open sockets", () => {
     await pong;
     expect(theirs.frames.some((f) => f.type === "agent_status")).toBe(true);
     theirs.ws.close();
+  });
+
+  test("a socket whose upgrade raced the disable is closed once its closer is registered", async () => {
+    // The disable commits after getUser read the session (simulated: getSession still sees al enabled),
+    // so closeUser ran before this socket registered its closer.
+    await h.db
+      .update(schema.users)
+      .set({ disabledAt: new Date() })
+      .where(eq(schema.users.id, al.user.id));
+    const api = h.app.auth.api;
+    const real = api.getSession.bind(api);
+    const spy = vi.spyOn(api, "getSession").mockImplementation((async (o: never) => {
+      const s = (await real(o)) as { user: { disabledAt?: unknown } } | null;
+      if (s) s.user.disabledAt = null;
+      return s;
+    }) as never);
+    try {
+      const ws = new WebSocket(url, { headers: { authorization: `Bearer ${al.token}` } });
+      const closed = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        ws.once("close", (code, reason) => resolve({ code, reason: String(reason) }));
+        ws.once("unexpected-response", (_req, res) =>
+          reject(new Error(`status ${res.statusCode}`)),
+        );
+      });
+      expect(closed).toEqual({ code: 1008, reason: "user disabled" });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a WS upgrade with the old token is 401", async () => {

@@ -1,14 +1,17 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tar from "tar-stream";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
+  ContextChangedError,
   ContextLinkError,
   contextHash,
   ImageNameError,
   imageDir,
   packContext,
+  packEntries,
   walkContext,
 } from "./context.ts";
 
@@ -124,4 +127,56 @@ test("a file excluded by .dockerignore does not change the hash", async () => {
   const h0 = await contextHash(dir, "img");
   await writeFile(join(dir, "secret"), "2");
   expect(await contextHash(dir, "img")).toBe(h0);
+});
+
+test("ImageNameError quotes the name as JSON, so control characters are escaped", async () => {
+  const err = await imageDir(join(root, "images"), "a\0b").catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(ImageNameError);
+  expect((err as Error).message).toBe('Invalid image name "a\\u0000b".');
+});
+
+test("an unchanged folder's hash comes from the cache (one lstat walk); a changed size reads again", async () => {
+  const dir = await mk();
+  await writeFile(join(dir, "a"), "1");
+  const old = new Date(Date.now() - 60_000);
+  const age = async () => {
+    for (const f of ["Dockerfile", "a"]) await utimes(join(dir, f), old, old);
+  };
+  await age();
+  const h0 = await contextHash(dir, "img");
+  // Same size, same inode, mtime put back: the walk's signature is unchanged, so the bytes aren't read.
+  await writeFile(join(dir, "a"), "2");
+  await age();
+  expect(await contextHash(dir, "img")).toBe(h0);
+  await writeFile(join(dir, "a"), "22");
+  await age();
+  expect(await contextHash(dir, "img")).not.toBe(h0);
+});
+
+/** Drains a pack, resolving with the error it ends with (or undefined). */
+const drain = (pack: NodeJS.ReadableStream) =>
+  new Promise<unknown>((res) => {
+    pack.on("data", () => {});
+    pack.on("end", () => res(undefined));
+    pack.on("error", res);
+  });
+
+test("the pack never reads through a file swapped for a link after the walk", async () => {
+  const dir = await mk();
+  await writeFile(join(dir, "a"), "1");
+  await writeFile(join(root, "outside"), "secret");
+  const entries = await walkContext(dir, "img");
+  await rm(join(dir, "a"));
+  await symlink(join(root, "outside"), join(dir, "a"));
+  expect(await drain(packEntries(dir, "img", entries))).toBeInstanceOf(ContextChangedError);
+});
+
+test("the pack fails, without hanging, on a file swapped for a FIFO after the walk", async () => {
+  const dir = await mk();
+  await writeFile(join(dir, "a"), "1");
+  const entries = await walkContext(dir, "img");
+  await rm(join(dir, "a"));
+  execFileSync("mkfifo", [join(dir, "a")]);
+  expect((await stat(join(dir, "a"))).isFIFO()).toBe(true);
+  expect(await drain(packEntries(dir, "img", entries))).toBeInstanceOf(ContextChangedError);
 });

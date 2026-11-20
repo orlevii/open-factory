@@ -13,13 +13,28 @@ import type { DockerClient } from "../runtime/docker/client.ts";
 import { dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { TemplateRow } from "../templates/template-index.ts";
 import type { ImageBuilder } from "./builder.ts";
-import { contextHash } from "./context.ts";
+import { contextHash, ImageNameError, imageDir } from "./context.ts";
 import { resolveImage } from "./resolve.ts";
 
 export interface StatusDeps {
   docker: DockerClient;
   builder: Pick<ImageBuilder, "running" | "last">;
   imagesRoot: string;
+  log: { warn: (obj: object, msg: string) => void };
+  /** One status per image per request, shared across the templates that use it (see `statusMemo`). */
+  memo?: Map<string, Promise<unknown>>;
+}
+
+/** A fresh per-request memo for `StatusDeps.memo`. */
+export const statusMemo = () => new Map<string, Promise<unknown>>();
+
+function once<T>(d: StatusDeps, key: string, f: () => Promise<T>): Promise<T> {
+  if (!d.memo) return f();
+  const hit = d.memo.get(key) as Promise<T> | undefined;
+  if (hit) return hit;
+  const p = f();
+  d.memo.set(key, p);
+  return p;
 }
 
 const isFile = async (p: string) => {
@@ -30,19 +45,29 @@ const isFile = async (p: string) => {
   }
 };
 
-/** Docker unreachable reads as `unknown`; any other Docker error is a real failure. */
-async function orUnknown<T>(f: () => Promise<T>): Promise<T | "unknown"> {
+/**
+ * Any Docker error reads as `unknown` (a 404 is already `undefined`): an image's status never fails a
+ * list or a template page. Anything but an unreachable daemon is logged at warn.
+ */
+async function orUnknown<T>(
+  d: StatusDeps,
+  ref: string,
+  f: () => Promise<T>,
+): Promise<T | "unknown"> {
   try {
     return await f();
   } catch (err) {
-    if (dockerUnreachable(err)) return "unknown";
-    throw err;
+    if (!dockerUnreachable(err)) d.log.warn({ err, ref }, "image inspect failed; status unknown");
+    return "unknown";
   }
 }
 
 /** Spec §10.4, rows in order: derived on each read from the folder, the builder and the local image. */
-export async function imageStatus(d: StatusDeps, name: string): Promise<ImageItem> {
-  const dir = join(d.imagesRoot, name);
+export function imageStatus(d: StatusDeps, name: string): Promise<ImageItem> {
+  return once(d, `user:${name}`, () => computeImageStatus(d, name));
+}
+
+async function computeImageStatus(d: StatusDeps, name: string): Promise<ImageItem> {
   const last = d.builder.last(name);
   const base = {
     name,
@@ -58,10 +83,19 @@ export async function imageStatus(d: StatusDeps, name: string): Promise<ImageIte
         }
       : {}),
   };
+  // The builder's confinement rule (a direct child of images/ by real path): nothing outside is read.
+  let dir: string;
+  try {
+    dir = await imageDir(d.imagesRoot, name);
+  } catch (err) {
+    if (err instanceof ImageNameError) return { ...base, status: "no_dockerfile" };
+    throw err;
+  }
   if (!(await isFile(join(dir, "Dockerfile")))) return { ...base, status: "no_dockerfile" };
   if (d.builder.running(name)) return { ...base, status: "building" };
 
-  const image = await orUnknown(() => d.docker.imageInspect(userImageTag(name)));
+  const tag = userImageTag(name);
+  const image = await orUnknown(d, tag, () => d.docker.imageInspect(tag));
   if (image === "unknown") return { ...base, status: "unknown" };
   const builtAt = image?.labels[LABEL_BUILT_AT];
   const hash = image?.labels[LABEL_CONTEXT_HASH];
@@ -111,10 +145,13 @@ export async function templateImageStatus(
   const r = resolveImage(config.image, defaultImage);
   if (r.kind === "user")
     return { kind: "user", name: r.name, status: (await imageStatus(d, r.name)).status };
-  const image = await orUnknown(() => d.docker.imageInspect(r.ref));
+  const ref = r.ref;
+  const image = await once(d, `registry:${ref}`, () =>
+    orUnknown(d, ref, () => d.docker.imageInspect(ref)),
+  );
   return {
     kind: "registry",
-    name: r.ref,
+    name: ref,
     status: image === "unknown" ? "unknown" : image ? "present" : "pulled_on_start",
   };
 }

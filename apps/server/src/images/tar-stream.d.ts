@@ -9,6 +9,8 @@ declare module "tar-stream" {
     linkname?: string | null;
   }
   export interface Pack extends Readable {
+    /** Without a body: the returned stream takes exactly `header.size` bytes. */
+    entry(header: Headers, callback?: (err?: Error | null) => void): Writable;
     entry(
       header: Headers,
       buffer?: string | Buffer,

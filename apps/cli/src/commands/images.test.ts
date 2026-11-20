@@ -18,7 +18,9 @@ interface Call {
   body: unknown;
 }
 
-function harness(opts: { token?: string; builds?: Record<string, string[]> } = {}) {
+function harness(
+  opts: { token?: string; builds?: Record<string, string[]>; images?: unknown[] } = {},
+) {
   const out: string[] = [];
   const err: string[] = [];
   const calls: Call[] = [];
@@ -36,7 +38,8 @@ function harness(opts: { token?: string; builds?: Record<string, string[]> } = {
       accept: headers.get("accept"),
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     });
-    if (url.endsWith("/api/images")) return Response.json(list);
+    if (url.endsWith("/api/images"))
+      return Response.json(opts.images ? { ...list, images: opts.images } : list);
     const m = /\/api\/images\/([^/]+)\/build$/.exec(url);
     const lines = m && opts.builds?.[m[1] as string];
     if (lines) {
@@ -135,5 +138,41 @@ test("unknown subcommand prints usage and exits 2", async () => {
   expect(await run(["images", "frob"], h.io)).toBe(2);
   expect(h.err.join("\n")).toMatch(/Usage: open-factory images/);
   expect(await run(["images", "build"], h.io)).toBe(2);
+  expect(h.calls).toEqual([]);
+});
+
+test("--all skips folders without a Dockerfile and says so", async () => {
+  const h = harness({
+    images: [...list.images, { name: "empty", status: "no_dockerfile", usedBy: [] }],
+    builds: { smoke: ok(), bad: ok() },
+  });
+  expect(await run(["images", "build", "--all"], h.io)).toBe(0);
+  const builds = h.calls.filter((c) => c.method === "POST").map((c) => c.url.split("/")[5]);
+  expect(builds).toEqual(["smoke", "bad"]);
+  expect(h.out).toContain("Skipping empty: no Dockerfile in /data/images/empty");
+});
+
+test("--all with nothing to build says every image is built", async () => {
+  const h = harness({ images: [{ name: "ok", status: "built", usedBy: [] }] });
+  expect(await run(["images", "build", "--all"], h.io)).toBe(0);
+  expect(h.out).toEqual(["All images are built."]);
+  expect(h.calls.filter((c) => c.method === "POST")).toEqual([]);
+});
+
+test("a stream line that isn't a build message fails the build with a plain message", async () => {
+  for (const lines of [
+    ['{"line":"a"}', "{not json"],
+    ['{"line":"a"}', '{"what":1}'],
+  ]) {
+    const h = harness({ builds: { smoke: lines } });
+    expect(await run(["images", "build", "smoke"], h.io)).toBe(1);
+    expect(h.err).toEqual(["Build of smoke failed: unexpected response"]);
+  }
+});
+
+test("an unknown flag prints usage and exits 2", async () => {
+  const h = harness();
+  expect(await run(["images", "build", "smoke", "--foo"], h.io)).toBe(2);
+  expect(h.err.join("\n")).toMatch(/Usage: open-factory images/);
   expect(h.calls).toEqual([]);
 });

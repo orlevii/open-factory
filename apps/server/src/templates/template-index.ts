@@ -26,6 +26,7 @@ import { and, count, eq, isNull, notInArray } from "drizzle-orm";
 import { stringify } from "yaml";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
+import { imageDir } from "../images/context.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
@@ -107,7 +108,10 @@ export class TemplateIndex {
     return out.sort();
   }
 
-  /** Names of `<factoryHome>/images/<name>/` folders that hold a Dockerfile (a directory listing and a stat each). */
+  /**
+   * Names of `<factoryHome>/images/<name>/` folders that hold a Dockerfile, by the builder's rule: the folder's
+   * real path is a direct child of images/ (`imageDir`), so a link leaving images/ never validates.
+   */
   private async userImages(): Promise<string[]> {
     const root = path.join(this.config.factoryHome, "images");
     let entries: Dirent[];
@@ -120,7 +124,8 @@ export class TemplateIndex {
     for (const e of entries) {
       if (!isUserImageRef(e.name)) continue;
       try {
-        if ((await stat(path.join(root, e.name, "Dockerfile"))).isFile()) out.push(e.name);
+        const dir = await imageDir(root, e.name);
+        if ((await stat(path.join(dir, "Dockerfile"))).isFile()) out.push(e.name);
       } catch {}
     }
     return out;

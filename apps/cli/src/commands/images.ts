@@ -52,9 +52,21 @@ async function build(
     return false;
   }
   let final: { state: "succeeded" | "failed"; error?: string } | undefined;
+  let bad = false;
   const handle = (raw: string) => {
-    if (!raw.trim()) return;
-    const msg = buildStreamLineSchema.parse(JSON.parse(raw));
+    if (bad || !raw.trim()) return;
+    let parsed: ReturnType<typeof buildStreamLineSchema.safeParse>;
+    try {
+      parsed = buildStreamLineSchema.safeParse(JSON.parse(raw));
+    } catch {
+      bad = true;
+      return;
+    }
+    if (!parsed.success) {
+      bad = true;
+      return;
+    }
+    const msg = parsed.data;
     if ("line" in msg) io.out(msg.line);
     else final = msg;
   };
@@ -70,6 +82,10 @@ async function build(
     }
   }
   handle(buf + decoder.decode());
+  if (bad) {
+    io.err(`Build of ${name} failed: unexpected response`);
+    return false;
+  }
   if (final?.state === "succeeded") {
     io.out(`Built ${name}`);
     return true;
@@ -84,11 +100,19 @@ export async function images(args: string[], io: Io): Promise<number> {
     io.err(USAGE);
     return 2;
   }
-  const { values, positionals: names } = parseArgs({
-    args: rest,
-    options: { all: { type: "boolean" }, "no-pull": { type: "boolean" } },
-    allowPositionals: true,
-  });
+  let parsed: { values: { all?: boolean; "no-pull"?: boolean }; positionals: string[] };
+  try {
+    parsed = parseArgs({
+      args: rest,
+      options: { all: { type: "boolean" }, "no-pull": { type: "boolean" } },
+      allowPositionals: true,
+    });
+  } catch {
+    // An unknown flag is a usage error, like any other.
+    io.err(USAGE);
+    return 2;
+  }
+  const { values, positionals: names } = parsed;
   const building = sub === "build";
   if (!building ? rest.length > 0 : values.all ? names.length > 0 : names.length !== 1) {
     io.err(USAGE);
@@ -117,9 +141,19 @@ export async function images(args: string[], io: Io): Promise<number> {
     io.out(list.images.length ? table(list.images).join("\n") : `No images in ${list.imagesDir}`);
     return 0;
   }
-  const targets = values.all
-    ? list.images.filter((i) => i.status !== "built").map((i) => i.name)
-    : names;
+  let targets = names;
+  if (values.all) {
+    // A folder without a Dockerfile can only fail; say so instead of building it.
+    for (const i of list.images.filter((i) => i.status === "no_dockerfile"))
+      io.out(`Skipping ${i.name}: no Dockerfile in ${list.imagesDir}/${i.name}`);
+    targets = list.images
+      .filter((i) => i.status !== "built" && i.status !== "no_dockerfile")
+      .map((i) => i.name);
+    if (targets.length === 0) {
+      io.out("All images are built.");
+      return 0;
+    }
+  }
   const ctx = { url, token, fetchImpl };
   let failed = false;
   for (const name of targets) {

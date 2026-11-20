@@ -1,8 +1,8 @@
 import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, expect, test } from "vitest";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 import { hashToken, INVITE_TTL_MS } from "./invites.ts";
 
 /** S10 §9.2: invite tokens are random, stored hashed, single use, revocable, expiring. */
@@ -91,4 +91,45 @@ test("create, revoke and restore publish users_changed", async () => {
     { type: "users_changed" },
     { type: "users_changed" },
   ]);
+});
+
+describe("a disabled creator's invites are invalid (S10 §9.4)", () => {
+  test("an invite inserted for a disabled creator: check is null and listPending leaves it out", async () => {
+    const al = (await signUp(h.app, { handle: "al" })).user.id;
+    const { invite, link } = await h.app.invites.create(al);
+    // As if the create raced the disable and committed after it.
+    await h.db.update(schema.users).set({ disabledAt: now }).where(eq(schema.users.id, al));
+    expect(await h.app.invites.check(tokenOf(link))).toBeNull();
+    expect((await h.app.invites.listPending()).map((i) => i.id)).not.toContain(invite.id);
+  });
+
+  test("restoring a disabled creator's revoked invite is 409 and sign-up with it is invite_invalid", async () => {
+    const al = await signUp(h.app, { handle: "al" });
+    const { invite, link } = await h.app.invites.create(al.user.id);
+    await h.app.invites.revoke(invite.id);
+    await h.app.userAdmin.disable(userId, al.user.id);
+    await expect(h.app.invites.restore(invite.id)).rejects.toMatchObject({
+      status: 409,
+      code: "invite_creator_disabled",
+    });
+    // Even if the row were un-revoked by hand, the invite stays invalid.
+    await h.db
+      .update(schema.invites)
+      .set({ revokedAt: null })
+      .where(eq(schema.invites.id, invite.id));
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-up/email",
+      headers: { origin: TEST_ORIGIN, "content-type": "application/json" },
+      payload: {
+        name: "Eve",
+        handle: "eve",
+        email: "eve@example.com",
+        password: "password123",
+        invite: tokenOf(link),
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: { code: "invite_invalid" } });
+  });
 });

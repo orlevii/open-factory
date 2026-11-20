@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import type { ImagesList, TemplateDetail } from "@open-factory/shared";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { BUILD_EVENTS, FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
@@ -64,6 +64,8 @@ test("with Accept ndjson the response streams the lines and ends with the state"
   const r = await req("POST", "/api/images/smoke/build", {}, "application/x-ndjson");
   expect(r.statusCode).toBe(200);
   expect(r.headers["content-type"]).toContain("application/x-ndjson");
+  expect(r.headers["cache-control"]).toBe("no-store");
+  expect(r.headers["x-accel-buffering"]).toBe("no");
   const lines = r.body
     .trim()
     .split("\n")
@@ -143,6 +145,36 @@ test("GET log returns the last build's lines", async () => {
   expect(log.lines.join("\n")).toContain("Successfully tagged");
 });
 
+test("a stream that joins a running build with a different pull says so", async () => {
+  let release!: () => void;
+  let reached!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const emitted = new Promise<void>((r) => {
+    reached = r;
+  });
+  docker.builds.push({ gate, emitted: reached });
+  const first = h.app.images.build("smoke", { pull: true });
+  await emitted;
+  const subscribed = new Promise<void>((r) => {
+    const real = h.app.images.subscribe.bind(h.app.images);
+    vi.spyOn(h.app.images, "subscribe").mockImplementation((name, fn) => {
+      const off = real(name, fn);
+      r();
+      return off;
+    });
+  });
+  const joined = req("POST", "/api/images/smoke/build", { pull: false }, "application/x-ndjson");
+  await subscribed;
+  release();
+  const r = await joined;
+  await first;
+  expect(r.body).toContain(
+    "Joined the running build of smoke, which has pull on; this request's pull off doesn't apply to it.",
+  );
+});
+
 test("the templates list and detail carry imageStatus", async () => {
   const dir = path.join(h.factoryHome, "templates/web");
   mkdirSync(dir, { recursive: true });
@@ -161,6 +193,41 @@ test("the templates list and detail carry imageStatus", async () => {
   expect(((await req("GET", "/api/images")).json() as ImagesList).images[0]?.usedBy).toEqual([
     "web",
   ]);
+});
+
+test("a Docker error on one image's inspect never fails the templates list or detail: status unknown", async () => {
+  for (const [name, image] of [
+    ["web", "smoke"],
+    ["api", "docker.io/library/node:22"],
+  ]) {
+    const dir = path.join(h.factoryHome, `templates/${name}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, "template.yaml"),
+      `name: ${name}\ndisplay_name: ${name}\nruntime: docker\nimage: ${image}\n`,
+    );
+  }
+  vi.spyOn(docker, "imageInspect").mockRejectedValue(
+    Object.assign(new Error("invalid checksum digest length"), { statusCode: 400 }),
+  );
+  const list = await req("GET", "/api/templates");
+  expect(list.statusCode).toBe(200);
+  const statuses = (list.json() as { templates: TemplateDetail[] }).templates.map((t) => [
+    t.name,
+    t.imageStatus?.status,
+  ]);
+  expect(statuses).toEqual(
+    expect.arrayContaining([
+      ["web", "unknown"],
+      ["api", "unknown"],
+    ]),
+  );
+  const detail = await req("GET", "/api/templates/api");
+  expect(detail.statusCode).toBe(200);
+  expect((detail.json().template as TemplateDetail).imageStatus?.status).toBe("unknown");
+  const images = await req("GET", "/api/images");
+  expect(images.statusCode).toBe(200);
+  expect((images.json() as ImagesList).images[0]?.status).toBe("unknown");
 });
 
 test.each([

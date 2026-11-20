@@ -29,11 +29,11 @@ export const imagesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = asy
     }
   };
 
-  app.get("/api/images", { schema: { response: { 200: imagesListSchema } } }, async () => ({
+  app.get("/api/images", { schema: { response: { 200: imagesListSchema } } }, async (req) => ({
     imagesDir: imagesRoot(),
     baseImage: app.config.defaultImage,
     images: await listImages(
-      { docker, builder: app.images, imagesRoot: imagesRoot() },
+      { docker, builder: app.images, imagesRoot: imagesRoot(), log: req.log },
       await app.templates.scan(),
     ),
   }));
@@ -64,15 +64,33 @@ export const imagesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = asy
       // already running is joined, and its lines so far are replayed in the same tick.
       reply.hijack();
       const raw = reply.raw;
-      raw.writeHead(200, { "content-type": "application/x-ndjson" });
+      // Hijacked: Fastify's onSend/onResponse hooks don't run, so the headers and the log line are set here.
+      raw.writeHead(200, {
+        "content-type": "application/x-ndjson",
+        "cache-control": "no-store",
+        "x-accel-buffering": "no",
+      });
       const send = (o: object) => {
         if (!raw.destroyed && !raw.writableEnded) raw.write(`${JSON.stringify(o)}\n`);
       };
       const joined = app.images.running(name);
+      const joinedPull = app.images.runningPull(name);
       const unsubscribe = app.images.subscribe(name, (line) => send({ line }));
-      if (joined) for (const line of app.images.log(name).lines) send({ line });
+      if (joined) {
+        if (joinedPull !== undefined && joinedPull !== pull)
+          send({
+            line: `Joined the running build of ${name}, which has pull ${joinedPull ? "on" : "off"}; this request's pull ${pull ? "on" : "off"} doesn't apply to it.`,
+          });
+        for (const line of app.images.log(name).lines) send({ line });
+      }
       // A client disconnect only stops the stream; the build runs on (spec §10.5).
-      raw.on("close", unsubscribe);
+      raw.on("close", () => {
+        unsubscribe();
+        req.log.info(
+          { name, statusCode: raw.statusCode, responseTime: reply.elapsedTime },
+          "image build stream closed",
+        );
+      });
       try {
         const r = await app.images.build(name, { pull });
         send(r.state === "failed" ? { state: "failed", error: r.error } : { state: r.state });

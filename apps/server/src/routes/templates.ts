@@ -10,10 +10,11 @@ import {
   templatesListSchema,
   validateTemplateBodySchema,
 } from "@open-factory/shared";
+import type { FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
-import { templateImageStatus } from "../images/status.ts";
+import { statusMemo, templateImageStatus } from "../images/status.ts";
 import type { DockerClient } from "../runtime/docker/client.ts";
 
 const params = z.object({ name: nameSchema });
@@ -23,23 +24,27 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   app,
   { docker },
 ) => {
-  const imageDeps = () => ({
+  /** Per request: each image's status is computed once and shared by the templates that use it. */
+  const imageDeps = (req: FastifyRequest) => ({
     docker,
     builder: app.images,
     imagesRoot: path.join(app.config.factoryHome, "images"),
+    log: req.log,
+    memo: statusMemo(),
   });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
 
-  app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async () => {
+  app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async (req) => {
     const rows = await app.templates.scan();
     const byTemplate = await app.templates.agentCounts();
+    const deps = imageDeps(req);
     return {
       dir: app.templates.dir,
       templates: await Promise.all(
         rows.map(async (r) => {
           const imageStatus = await templateImageStatus(
-            imageDeps(),
+            deps,
             r.config ?? undefined,
             app.config.defaultImage,
           );
@@ -68,7 +73,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
     async (req) => {
       const template = await app.templates.detail(req.params.name);
       const imageStatus = await templateImageStatus(
-        imageDeps(),
+        imageDeps(req),
         template.config ?? undefined,
         app.config.defaultImage,
       );

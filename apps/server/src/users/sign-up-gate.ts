@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Db, schema } from "@open-factory/db";
 import type { SignUpState } from "@open-factory/shared";
-import { count } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
+import type { EventBus } from "../agents/event-bus.ts";
 import type { Auth } from "../auth/auth.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import type { InviteService } from "./invites.ts";
@@ -28,15 +29,20 @@ async function hasUsers(db: Db): Promise<boolean> {
   return (row?.c ?? 0) > 0;
 }
 
+export interface SignUpDeps {
+  db: Db;
+  invites: InviteService;
+  auth: Pick<Auth, "handler">;
+  bus: EventBus;
+  log: { error: (obj: object, msg: string) => void };
+}
+
 /**
  * The only way to create a user (S10 §9.3): serialized, invite-checked unless the factory has no users yet,
- * forwarded to better-auth without the `invite` field inside `signUpContext`, and the invite marked used on success.
+ * forwarded to better-auth without the `invite` field inside `signUpContext`, the invite marked used on
+ * success, and `users_changed` published (S10 §11).
  */
-export async function handleSignUp(
-  d: { db: Db; invites: InviteService; auth: Auth },
-  req: Request,
-  body: unknown,
-): Promise<Response> {
+export async function handleSignUp(d: SignUpDeps, req: Request, body: unknown): Promise<Response> {
   return signUpMutex.run("sign-up", async () => {
     const fields =
       body && typeof body === "object" && !Array.isArray(body)
@@ -47,7 +53,8 @@ export async function handleSignUp(
 
     let inviteId: string | null = null;
     if (await hasUsers(d.db)) {
-      if (invite === undefined || invite === null) {
+      // "" counts as missing, as on sign-up-state.
+      if (invite === undefined || invite === null || invite === "") {
         return forbidden("invite_required", INVITE_REQUIRED_MESSAGE);
       }
       const found = typeof invite === "string" ? await d.invites.check(invite) : null;
@@ -64,17 +71,40 @@ export async function handleSignUp(
     });
     const res = await signUpContext.run({ allowed: true }, () => d.auth.handler(forwarded));
 
-    if (inviteId && res.ok) {
-      const created = (await res
-        .clone()
-        .json()
-        .catch(() => null)) as { user?: { id?: unknown } } | null;
-      const userId = created?.user?.id;
-      if (typeof userId !== "string") throw new Error("sign-up succeeded without a user id");
-      await d.invites.markUsed(inviteId, userId);
+    if (!res.ok) return res;
+    if (inviteId) {
+      const userId = await createdUserId(d.db, res, fields?.email);
+      if (userId === null) {
+        d.log.error(
+          { inviteId },
+          "sign-up succeeded but the new user wasn't found; invite not marked used",
+        );
+      } else if (!(await d.invites.markUsed(inviteId, userId))) {
+        d.log.error(
+          { inviteId, userId },
+          "sign-up succeeded but the invite was already marked used",
+        );
+      }
     }
+    d.bus.publishAll({ type: "users_changed" });
     return res;
   });
+}
+
+/** The id in better-auth's 2xx body, or else the user with the submitted email (still under the mutex). */
+async function createdUserId(db: Db, res: Response, email: unknown): Promise<string | null> {
+  const created = (await res
+    .clone()
+    .json()
+    .catch(() => null)) as { user?: { id?: unknown } } | null;
+  const id = created?.user?.id;
+  if (typeof id === "string") return id;
+  if (typeof email !== "string") return null;
+  const [row] = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.email, email.toLowerCase()));
+  return row?.id ?? null;
 }
 
 /** For the sign-up page (S10 §9.3); public. */

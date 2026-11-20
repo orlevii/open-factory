@@ -39,19 +39,22 @@ export class InviteService {
     return { invite: toItem(row as Row), link: `${this.d.publicUrl}/sign-up?invite=${token}` };
   }
 
+  /** Pending: unused, unrevoked, unexpired, and created by a user who is still enabled (S10 §9.4). */
   async listPending(): Promise<InviteItem[]> {
     const rows = await this.d.db
-      .select()
+      .select({ invite: schema.invites })
       .from(schema.invites)
+      .innerJoin(schema.users, eq(schema.users.id, schema.invites.createdBy))
       .where(
         and(
+          isNull(schema.users.disabledAt),
           isNull(schema.invites.usedAt),
           isNull(schema.invites.revokedAt),
           gt(schema.invites.expiresAt, this.d.now()),
         ),
       )
       .orderBy(asc(schema.invites.createdAt), asc(schema.invites.id));
-    return rows.map(toItem);
+    return rows.map((r) => toItem(r.invite));
   }
 
   async revoke(id: string): Promise<void> {
@@ -65,8 +68,17 @@ export class InviteService {
   }
 
   async restore(id: string): Promise<void> {
-    const [row] = await this.d.db.select().from(schema.invites).where(eq(schema.invites.id, id));
-    if (!row) throw notFound();
+    const [found] = await this.d.db
+      .select({ invite: schema.invites, creatorDisabledAt: schema.users.disabledAt })
+      .from(schema.invites)
+      .innerJoin(schema.users, eq(schema.users.id, schema.invites.createdBy))
+      .where(eq(schema.invites.id, id));
+    if (!found) throw notFound();
+    const row = found.invite;
+    // Disabling a user revokes their invites for good (S10 §9.4, §12.10 "revoked invites stay revoked").
+    if (found.creatorDisabledAt) {
+      throw new ApiError(409, "invite_creator_disabled", "This invite's creator is disabled.");
+    }
     if (row.usedAt) throw new ApiError(409, "invite_used", "This invite was already used.");
     if (row.expiresAt <= this.d.now()) {
       throw new ApiError(409, "invite_expired", "This invite has expired.");
@@ -78,14 +90,20 @@ export class InviteService {
     this.d.bus.publishAll({ type: "users_changed" });
   }
 
-  /** One lookup by hash; unknown, used, revoked and expired all give null (one indistinguishable failure). */
+  /**
+   * One lookup by hash; unknown, used, revoked, expired and a disabled creator all give null (one
+   * indistinguishable failure). The creator's state is part of validity, so neither a restore nor an
+   * invite created while its creator was being disabled can outlive the disable.
+   */
   async check(token: string, tx: Exec = this.d.db): Promise<{ id: string } | null> {
     const [row] = await tx
       .select({ id: schema.invites.id })
       .from(schema.invites)
+      .innerJoin(schema.users, eq(schema.users.id, schema.invites.createdBy))
       .where(
         and(
           eq(schema.invites.tokenHash, hashToken(token)),
+          isNull(schema.users.disabledAt),
           isNull(schema.invites.usedAt),
           isNull(schema.invites.revokedAt),
           gt(schema.invites.expiresAt, this.d.now()),

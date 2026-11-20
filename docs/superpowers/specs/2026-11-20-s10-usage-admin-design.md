@@ -119,6 +119,8 @@ All routes are session-only (§13). `days ∈ {7, 30, 90}` (`400 invalid_days` o
 | `GET /api/tasks/:key` (existing) | gains `usage: {costUsd, turns} \| null` (null when no attributed turns). |
 | `GET /api/credentials` (existing) | each `CredentialSummary` gains `rateLimit: {status, type, utilization, resetsAt, observedAt} \| null` (the `rl_*` columns) and `pausedUntil?`, `pauseExact?` (the S5 pause), for the Credentials rows. |
 
+`GET /api/usage/agents` also takes an optional `window=rolling`, valid only with `days=7` or `days` omitted, for the tree's rolling 7 days; any other `window` value, or `rolling` with another `days`, is `400 invalid_window`.
+
 **Displayed rate-limit state** is derived, in this order: a live S5 pause → "rate-limited until"; else no `rl_observed_at` → "no data yet"; else `allowed_warning` whose `resetsAt` is in the future, or that has no `resetsAt` and was observed within the last hour → "near the limit"; else (including a warning whose reset has passed) → "within limits".
 
 ## 8. Factory settings (Q6–Q9, R7)
@@ -214,7 +216,7 @@ Derived on each `GET`, from the folder and the local Docker image (Docker is the
 | `out_of_date` | the image's context-hash label ≠ the folder's current hash |
 | `built` | otherwise, with `builtAt` from the label |
 
-For registry references a template shows `present` (local image exists) or `pulled_on_start`. Docker unreachable: every image shows `unknown`. Status words and icons are in §12.8.
+For registry references a template shows `present` (local image exists) or `pulled_on_start`. Docker unreachable (or any other Docker error, logged at warn): every image whose status needs Docker shows `unknown`, while `no_dockerfile` and `building` still show, since they come from the folder and the builder. Status words and icons are in §12.8.
 
 ### 10.5 REST and CLI
 

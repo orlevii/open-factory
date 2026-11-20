@@ -62,6 +62,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     recurring: z.boolean(),
     humanSchedule: z.string(),
     nextFireAt: z.number(),
+    durable: z.boolean().optional(),
   }),
   z.object({ type: z.literal("cron_deleted"), cronId: z.string() }),
   z.object({

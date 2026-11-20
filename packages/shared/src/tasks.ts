@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatKey, parseKey } from "./keys.ts";
 
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
@@ -13,11 +14,8 @@ export const TASK_NOTICES = [
 export type TaskNotice = (typeof TASK_NOTICES)[number];
 export const TASK_LINK_KINDS = ["url", "pr", "file", "agent"] as const;
 
-export function parseTaskKey(raw: string): number | null {
-  const m = /^(?:t-)?([1-9][0-9]{0,8})$/i.exec(raw.trim());
-  return m ? Number(m[1]) : null;
-}
-export const taskKey = (n: number) => `T-${n}`;
+export const parseTaskKey = (raw: string): number | null => parseKey("T", raw);
+export const taskKey = (n: number) => formatKey("T", n);
 
 const BODY_MAX = 64 * 1024;
 const bytes = (s: string) => new TextEncoder().encode(s).length;

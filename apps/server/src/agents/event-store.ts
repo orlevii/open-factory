@@ -647,9 +647,13 @@ export class EventStore {
   }
 
   // turns
-  async openTurn(agentId: string, tx: Exec = this.db): Promise<string> {
+  async openTurn(
+    agentId: string,
+    credentialId: string | null,
+    tx: Exec = this.db,
+  ): Promise<string> {
     const id = randomUUID();
-    await tx.insert(turns).values({ id, agentId, startedAt: new Date() });
+    await tx.insert(turns).values({ id, agentId, credentialId, startedAt: new Date() });
     return id;
   }
   async closeTurn(turnId: string, d: TurnClose, tx: Exec = this.db) {

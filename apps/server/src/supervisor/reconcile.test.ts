@@ -129,7 +129,7 @@ async function agent(o: { status?: string } = {}): Promise<string> {
 }
 const pending = (id: string, body: string) =>
   store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
-const openTurn = (id: string) => store.openTurn(id);
+const openTurn = (id: string) => store.openTurn(id, null);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });
 const events = async (id: string): Promise<AnyEvent[]> =>

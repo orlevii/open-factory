@@ -356,6 +356,8 @@ export class AgentRuntime {
   private started = false; // session_started seen for this process
   private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
+  /** The credential the live process was launched with (`reload()` may move the agent since); cleared on exit. */
+  private procCredentialId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
   private queue: Entry[] = [];
   // S6 §8.1: pending member updates and peer events, in (created_at, id) order; never written while a turn is open.
@@ -1988,6 +1990,7 @@ export class AgentRuntime {
     this.tokenGens.set(proc, generation);
     onLaunched();
     this.proc = proc;
+    this.procCredentialId = liveCredentialId(this.agent);
     this.procRuntime = spec.runtime;
     this.imageRequeued = false;
     this.started = false;
@@ -2275,7 +2278,7 @@ export class AgentRuntime {
       }
       case "turn_started":
         this.clearOwedBound(); // the bound only runs while no turn is open
-        this.openTurnId = await this.d.store.openTurn(this.agent.id);
+        this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.turnKinds = [];
         await this.append(this.openTurnId, e);
@@ -2466,7 +2469,10 @@ export class AgentRuntime {
     this.awaiting = [];
     this.awaitingKinds = [];
     this.turnKinds = [];
-    if (this.proc === proc) this.proc = undefined;
+    if (this.proc === proc) {
+      this.proc = undefined;
+      this.procCredentialId = undefined;
+    }
     this.started = false;
     const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
     const policy = crash ? this.onCrash(e, live) : "none";

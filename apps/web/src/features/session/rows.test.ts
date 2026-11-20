@@ -224,3 +224,84 @@ test("a denial pairs with a nested call too", () => {
   const child = (rows[0] as Extract<(typeof rows)[number], { kind: "tool" }>).children[0];
   expect(child && "denial" in child && child.denial?.toolUseId).toBe("c");
 });
+
+test("spawn_agent and terminate_agent calls with the right shape pair with their results; others fall back", () => {
+  seq = 0;
+  const spawnInput = { template: "tech-lead", description: "writes the spec", prompt: "Brief" };
+  const denial = {
+    type: "permission_denied",
+    toolName: "mcp__factory__terminate_agent",
+    toolUseId: "t2",
+    reasonType: "rule",
+    reason: "no",
+  } as const;
+  const rows = buildRows([
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "s1", name: "mcp__factory__spawn_agent", input: spawnInput }),
+    e({
+      type: "tool_result",
+      toolUseId: "s1",
+      content: '{"slug":"tech-lead-ab12"}',
+      isError: false,
+    }),
+    e({
+      type: "tool_call",
+      toolUseId: "t1",
+      name: "mcp__factory__terminate_agent",
+      input: { slug: "x" },
+    }),
+    e({
+      type: "tool_call",
+      toolUseId: "t2",
+      name: "mcp__factory__terminate_agent",
+      input: { slug: "y" },
+    }),
+    e(denial),
+    // Wrong shapes: a non-string prompt, a missing slug.
+    e({
+      type: "tool_call",
+      toolUseId: "s2",
+      name: "mcp__factory__spawn_agent",
+      input: { ...spawnInput, prompt: 1 },
+    }),
+    e({ type: "tool_call", toolUseId: "t3", name: "mcp__factory__terminate_agent", input: {} }),
+    // Nested inside a subagent, it stays nested.
+    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({
+      type: "tool_call",
+      toolUseId: "s3",
+      name: "mcp__factory__spawn_agent",
+      input: spawnInput,
+      parentToolUseId: "p",
+    }),
+  ]);
+  expect(rows.map((r) => r.kind)).toEqual([
+    "spawn",
+    "terminate",
+    "terminate",
+    "tool",
+    "tool",
+    "tool",
+  ]);
+  expect(rows[0]).toMatchObject({ kind: "spawn", turnOpen: true, result: { toolUseId: "s1" } });
+  expect(rows[1]).toMatchObject({ kind: "terminate", turnOpen: true });
+  expect(rows[1] && "result" in rows[1] && rows[1].result).toBeFalsy();
+  expect(rows[2]).toMatchObject({ kind: "terminate", denial });
+  const task = rows[5] as Extract<(typeof rows)[number], { kind: "tool" }>;
+  expect(task.children.map((c) => c.kind)).toEqual(["spawn"]);
+});
+
+test("an unanswered spawn after its turn ended is no longer open", () => {
+  seq = 0;
+  const rows = buildRows([
+    e({ type: "turn_started" }),
+    e({
+      type: "tool_call",
+      toolUseId: "s1",
+      name: "mcp__factory__spawn_agent",
+      input: { template: "dev", description: "d", prompt: "p" },
+    }),
+    e({ type: "turn_end", isError: false, numTurns: 1 }),
+  ]);
+  expect(rows).toMatchObject([{ kind: "spawn", turnOpen: false }]);
+});

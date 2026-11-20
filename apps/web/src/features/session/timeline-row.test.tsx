@@ -158,3 +158,63 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
   expect(el.querySelector("svg")).not.toBeNull();
   expect(el.querySelector("svg")).not.toHaveClass("text-destructive");
 });
+
+test("timeline: spawned-agent lifecycle lines without an agent link (human and TTL `by`)", () => {
+  const { texts, els } = lines([
+    { type: "process_started", resumed: false, reason: "spawned" },
+    { type: "terminated", by: "@or" },
+    { type: "terminated", by: "@factory" },
+    {
+      type: "background_work_lost",
+      reason: "terminated",
+      tasks: [{ taskId: "t1", description: "pnpm test" }],
+      crons: [],
+    },
+    {
+      type: "message_in",
+      messages: [
+        {
+          id: "p1",
+          from: "@factory",
+          kind: "peer_left",
+          urgent: false,
+          about: "tech-lead-ab12",
+          body: "IGNORED",
+          subject: {
+            slug: "tech-lead-ab12",
+            displayName: "Tech Lead · ab12",
+            relation: "peer",
+            left: { reason: "terminated", by: "@or" },
+          },
+        },
+        {
+          id: "p2",
+          from: "@factory",
+          kind: "peer_left",
+          urgent: false,
+          about: "dev-cd34",
+          body: "IGNORED",
+          subject: {
+            slug: "dev-cd34",
+            displayName: "Dev · cd34",
+            relation: "peer",
+            left: { reason: "terminated", by: "@factory" },
+          },
+        },
+      ],
+    },
+  ]);
+  expect(texts).toEqual([
+    "Terminated by @or",
+    "Terminated after 3 days without activity",
+    "Lost when it was terminated: pnpm test (background)",
+    "@tech-lead-ab12 · Tech Lead · ab12 left: terminated by @or",
+    "@dev-cd34 · Dev · cd34 left: terminated after 3 days without activity",
+  ]);
+  expect(within(els[0] as HTMLElement).getByText("@or")).toHaveClass("font-mono");
+  expect(within(els[3] as HTMLElement).getByText("@or")).toHaveClass("font-mono");
+  // The CircleX icon marks every "Terminated" line.
+  expect(els[0]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
+  expect(els[1]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
+  expect(texts.join()).not.toContain("@factory");
+});

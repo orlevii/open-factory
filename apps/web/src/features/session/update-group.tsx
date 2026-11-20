@@ -5,6 +5,7 @@ import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown } from "./message-block";
 import { CodePlate, QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
+import { terminatedPhrase } from "./spawn-block";
 
 const PART_CLAMP_LINES = 8;
 const WRITTEN_GAP_MS = 60_000;
@@ -184,7 +185,12 @@ export function PeerLine({
         </>
       );
     else if (s.left.reason === "archived") what = <>{who} left: archived</>;
-    else if (s.left.reason === "terminated") what = <>{who} left: terminated</>;
+    else if (s.left.reason === "terminated")
+      what = (
+        <>
+          {who} left: terminated {terminatedPhrase(s.left.by)}
+        </>
+      );
     else if (s.left.to === null) what = <>{who} left: now reports to the humans</>;
     else
       what = (

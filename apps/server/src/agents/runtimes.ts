@@ -9,7 +9,7 @@ import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts
 import type { ProcessJournal } from "../runtime/local/journal.ts";
 import type { WakeReason } from "../supervisor/slots.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
-import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
+import { AgentRuntime, type CleanupResult, cronZoneOf, type RuntimeLog } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError, AgentTerminatedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow } from "./event-store.ts";
@@ -370,6 +370,9 @@ export class AgentRuntimes {
       restartPending: false,
       restartWaitingOn: 0,
       waitingOn: { tasks: [], crons: 0 },
+      crons: [],
+      cronZone: cronZoneOf(row.runtime === "docker" ? "docker" : "local"),
+      stopCronsPending: false,
       ...stuck,
     };
   }

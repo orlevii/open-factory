@@ -18,9 +18,11 @@ import {
   type ErrorKind,
   errorKindSchema,
   type FactCode,
+  factoryZoneDefault,
   formatOffsetIso,
   type HarnessEvent,
   HELD_KINDS,
+  type LiveCron as LiveCronView,
   type MessageKind,
   type QueueItem,
   statusOf,
@@ -316,12 +318,21 @@ const RATE_LIMIT_FALLBACK_MS = 30 * 60_000;
 const CRON_EXPIRY_MS = 7 * 24 * 3_600_000;
 const DEFAULT_WARM_WINDOW_MINUTES = 70;
 
+/**
+ * The zone Claude's process runs in, which `humanSchedule` is written in (S9 §10.2): UTC in Docker (the base image sets
+ * no `TZ`, and S9 passes none; follow-up #66), the server's resolved zone for a local agent.
+ */
+export const cronZoneOf = (runtime: "local" | "docker") =>
+  runtime === "docker" ? "UTC" : factoryZoneDefault();
+
 type LiveTask = { ambient: boolean; description: string; startedAt: number };
 type LiveCron = {
   recurring: boolean;
   humanSchedule: string;
   nextFireAt: number;
   createdAt: number;
+  /** From `CronCreate`'s result: whether the harness persisted it (S0/S9 V2: not in headless mode). */
+  durable: boolean;
 };
 
 /** Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. */
@@ -1235,6 +1246,10 @@ export class AgentRuntime {
     restartPending: boolean;
     restartWaitingOn: number;
     waitingOn: WaitingOn;
+    /** S9 §10.2: the live in-session crons, the zone their text is written in, and a pending Stop crons. */
+    crons: LiveCronView[];
+    cronZone: string;
+    stopCronsPending: boolean;
     rateLimitedUntil?: string;
     rateLimitExact?: boolean;
     runtimeDisabled?: string;
@@ -1258,7 +1273,26 @@ export class AgentRuntime {
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
       waitingOn: this.waitingOn(),
+      crons: this.cronsList(),
+      cronZone: cronZoneOf(this.agent.runtime),
+      stopCronsPending: false,
     };
+  }
+
+  /**
+   * The live crons as the status lists them (S9 §10.2): `nextFireAt` only for one-shots (a recurring cron's is the first
+   * firing, never updated), `expiresAt` only for recurring ones (Claude drops them after 7 days).
+   */
+  cronsList(): LiveCronView[] {
+    return [...this.crons].map(([cronId, c]) => ({
+      cronId,
+      humanSchedule: c.humanSchedule,
+      recurring: c.recurring,
+      durable: c.durable,
+      ...(c.recurring
+        ? { expiresAt: new Date(c.createdAt + CRON_EXPIRY_MS).toISOString() }
+        : { nextFireAt: new Date(c.nextFireAt).toISOString() }),
+    }));
   }
 
   /** What keeps the agent warm: live non-ambient tasks (oldest first) and the live cron count. */
@@ -2229,6 +2263,7 @@ export class AgentRuntime {
           humanSchedule: e.humanSchedule,
           nextFireAt: e.nextFireAt,
           createdAt: Date.now(),
+          durable: e.durable === true,
         });
         await this.append(this.openTurnId, e);
         await this.writeJournal();

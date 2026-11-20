@@ -141,3 +141,16 @@ test("list: ordered active, paused, then done; ?target and ?done", async () => {
   expect(await keys("?done=true")).toEqual([sooner.key, later.key, paused.key, once.key]);
   expect(await keys("?target=dev")).toEqual([sooner.key]);
 });
+
+test("the agent summary counts schedules targeting it that are neither deleted nor done", async () => {
+  const a = await create();
+  await create();
+  const d = await create({ cron: undefined, at: "2026-11-21T09:00", timezone: "UTC" });
+  await h.sql`update schedules set next_run_at = null where number = ${Number(d.key.slice(2))}`;
+  const gone = await create();
+  await call("DELETE", `/api/schedules/${gone.key}`);
+  void a;
+  const summary = (await call("GET", "/api/agents/ceo")).json();
+  expect(summary.agent.scheduleCount).toBe(2);
+  expect(summary.agent.crons).toEqual([]);
+});

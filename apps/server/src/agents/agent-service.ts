@@ -3,7 +3,6 @@ import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
   type AgentSummary,
   type CreateAgentBody,
-  type LiveCron,
   type PatchAgentBody,
   slugSchema,
   treeOrder,
@@ -209,6 +208,23 @@ export class AgentService {
       )
       .groupBy(schema.tasks.assigneeAgentId))
       if (r.agentId) openTasks.set(r.agentId, r.n);
+    // S9: schedules targeting each shown agent that are neither deleted nor done (the strip's link).
+    const scheduleCount = new Map<string, number>();
+    for (const r of await db
+      .select({ agentId: schema.schedules.targetAgentId, n: count() })
+      .from(schema.schedules)
+      .where(
+        and(
+          inArray(
+            schema.schedules.targetAgentId,
+            rows.map((x) => x.id),
+          ),
+          isNull(schema.schedules.deletedAt),
+          sql`not (${schema.schedules.runAt} is not null and ${schema.schedules.nextRunAt} is null)`,
+        ),
+      )
+      .groupBy(schema.schedules.targetAgentId))
+      scheduleCount.set(r.agentId, r.n);
     const credName = new Map(
       (
         await db
@@ -241,10 +257,7 @@ export class AgentService {
         reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
         reports: reportCount.get(r.id) ?? 0,
         openTasks: openTasks.get(r.id) ?? 0,
-        crons: [] as LiveCron[],
-        cronZone: "UTC",
-        stopCronsPending: false,
-        scheduleCount: 0,
+        scheduleCount: scheduleCount.get(r.id) ?? 0,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         grantsOverridden: r.grantsOverridden,

@@ -185,3 +185,88 @@ test("a spawned agent behaves the same", async () => {
     reason: "crons_stopped",
   });
 });
+
+// ---------- 22b: apply-restart, crons reaching 0, exits ----------
+
+const noticesOf = () =>
+  t.sql`select notice, state from messages where to_agent_id = ${id} and kind = 'system' order by created_at`;
+const reasons = async () =>
+  (await events())
+    .filter((e) => e.type === "hibernated")
+    .map((e) => (e as { reason: string }).reason);
+
+test("a pending apply-restart: the stop runs at the first not-busy moment, adds no restart_crons, and the agent stays hibernated", async () => {
+  await idleWithCrons();
+  driver.last.emit(ev.background([{ taskId: "b1", description: "build" }]));
+  await rt.settled();
+  await rt.requestRestart(); // waits on the background task (crons don't hold it back)
+  expect(rt.live().restartPending).toBe(true);
+  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  driver.last.emit(ev.taskFinished("b1"), ev.background([]));
+  await rt.settled();
+  driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
+  await rt.settled();
+  await rt.settled();
+  expect(await reasons()).toEqual(["crons_stopped"]);
+  const notices = await noticesOf();
+  expect(notices.map((x) => x.notice)).toEqual(["crons_stopped"]); // no restart_crons: it would contradict the stop
+  expect(driver.starts).toHaveLength(1); // nothing but the passive notice queued: no wake
+  expect(rt.live().restartPending).toBe(false);
+});
+
+test("an apply_changes hibernate already under way is taken over: reason crons_stopped, notice added, no restart_crons", async () => {
+  await idleWithCrons();
+  driver.last.holdStop = true;
+  await rt.requestRestart(); // idle: its hibernate begins at once (crons don't block it)
+  expect(driver.last.stopped).toBe(true);
+  expect(await rt.stopCrons("or")).toEqual({ status: "stopped" });
+  driver.last.releaseStop();
+  await rt.settled();
+  expect(await reasons()).toEqual(["crons_stopped"]);
+  expect((await events()).find((e) => e.type === "hibernated")).toMatchObject({ by: "@or" });
+  expect((await noticesOf()).map((x) => x.notice)).toEqual(["crons_stopped"]);
+  expect(driver.starts).toHaveLength(1);
+});
+
+test("a queued message at the takeover's exit still wakes the agent (the restart is delivered)", async () => {
+  await idleWithCrons();
+  driver.last.holdStop = true;
+  await rt.requestRestart();
+  await rt.stopCrons("or");
+  await send("while stopping");
+  driver.last.releaseStop();
+  await rt.settled();
+  await rt.settled();
+  expect(driver.starts).toHaveLength(2);
+  expect((await events()).filter((e) => e.type === "process_started")).toHaveLength(2);
+});
+
+test("crons reaching 0 while the stop is pending clear it and a held-back restart goes ahead", async () => {
+  await idleWithCrons();
+  driver.last.emit(ev.background([{ taskId: "b1", description: "build" }]));
+  await rt.settled();
+  await rt.requestRestart();
+  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  driver.last.emit({ type: "cron_deleted", cronId: "c1" }, { type: "cron_deleted", cronId: "c2" });
+  await rt.settled();
+  expect(rt.statusFrame().stopCronsPending).toBe(false);
+  driver.last.emit(ev.taskFinished("b1"), ev.background([]));
+  await rt.settled();
+  driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
+  await rt.settled();
+  await rt.settled();
+  expect(await reasons()).toEqual(["apply_changes"]); // the restart ran; no stop notice
+  expect((await noticesOf()).map((x) => x.notice)).not.toContain("crons_stopped");
+});
+
+test("an exit while the stop is pending clears it", async () => {
+  await send("boot");
+  driver.last.emit(ev.session(), ev.turn());
+  await rt.settled();
+  driver.last.emit(ev.cron("c1"));
+  await rt.settled();
+  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  driver.last.exit(1, "boom");
+  await rt.settled();
+  expect(rt.statusFrame().stopCronsPending).toBe(false);
+});

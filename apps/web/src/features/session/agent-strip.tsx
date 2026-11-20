@@ -1,9 +1,10 @@
-import type { AgentSummary, WaitingOn } from "@open-factory/shared";
+import type { AgentSummary, AgentUsageRow, WaitingOn } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, ShieldOff } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatCost } from "@/features/usage/format";
 import { CronsSegment, CronsStopLayer, type StopCrons, useStopCrons } from "./crons-popover";
 import { LINK_CLASS } from "./message-block";
 import { resetPhrase } from "./status-badge";
@@ -191,16 +192,42 @@ function OrgSegment({ agent }: { agent: AgentSummary }) {
   );
 }
 
+/** "$4.12 est. · 7d" (the agent's tree figure) linking to its usage page; plain "Usage" with no
+ *  turns or no data yet. From md up. */
+function UsageSegment({ agent, usage }: { agent: AgentSummary; usage?: AgentUsageRow }) {
+  const t = usage && (usage.kind === "ephemeral" ? usage.own : usage.total);
+  const cost = t && t.turns > 0 ? formatCost(t.costUsd, t.turns) : null;
+  return (
+    <>
+      <Link
+        // Typed as the session route until the usage route exists in the route tree.
+        to={"/agents/$slug/usage" as "/agents/$slug"}
+        params={{ slug: agent.slug }}
+        aria-label={cost ? `Usage: ${cost} estimated, last 7 days` : undefined}
+        className={`max-md:hidden text-muted-foreground tabular-nums ${LINK_CLASS}`}
+      >
+        {cost ? `${cost} est. · 7d` : "Usage"}
+      </Link>
+      <span aria-hidden="true" className="max-md:hidden">
+        ·
+      </span>
+    </>
+  );
+}
+
 /** Muted strip under the header (UI design §3.2). Waiting on, the paused/queued detail and the
  *  per-minute timer sit outside the `role="status"` region: the session announcer already reports
  *  status changes, so nothing here is re-announced every minute. */
 export function AgentStrip({
   agent,
   slotsMax,
+  usage,
   onAgent,
 }: {
   agent: AgentSummary;
   slotsMax?: number;
+  /** The agent's 7-day usage row. */
+  usage?: AgentUsageRow;
   /** A fresh summary from a pin/unpin response. */
   onAgent?: (a: AgentSummary) => void;
 }) {
@@ -248,6 +275,7 @@ export function AgentStrip({
             </span>
           </>
         )}
+        <UsageSegment agent={agent} usage={usage} />
         {/* A deleted credential (S7: nulled on terminated agents) leaves no empty label. */}
         {agent.credential !== null && (
           <>

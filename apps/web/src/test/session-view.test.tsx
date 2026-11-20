@@ -511,7 +511,7 @@ test("strip: slug, template, manager, credential and runtime, identifiers in mon
   await screen.findByText("Two entries.");
   const strip = document.querySelector("[data-agent-strip]") as HTMLElement;
   expect(strip.textContent).toBe(
-    "dev·tech-lead·Reports to @cto·credential work·Unsandboxed: runs directly on this machine",
+    "dev·tech-lead·Reports to @cto·Usage·credential work·Unsandboxed: runs directly on this machine",
   );
   for (const id of ["dev", "tech-lead", "@cto", "work"])
     expect(within(strip).getByText(id)).toHaveClass("font-mono");

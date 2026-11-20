@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
 import { AgentLink, LINK_CLASS } from "@/features/session/message-block";
+import { formatCostEst } from "@/features/usage/format";
 import { sessionQueryOptions } from "@/lib/session";
 import {
   type PatchTaskBody,
@@ -523,6 +524,18 @@ function SideRest({ task, save }: { task: Detail; save: Save }) {
         )}
       </SideSection>
       <LinksSection task={task} save={save} />
+      {task.usage && (
+        <section className="grid gap-1 border-b border-border py-3">
+          <p className="text-[0.8125rem] leading-[1.125rem] tabular-nums">
+            Usage: {formatCostEst(task.usage.costUsd, task.usage.turns)} · {task.usage.turns}{" "}
+            {task.usage.turns === 1 ? "turn" : "turns"}
+          </p>
+          <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+            Counts only turns that handled this task's messages and nothing else. Real usage can be
+            higher.
+          </p>
+        </section>
+      )}
       <SideSection label="Created by">
         <p className="text-[0.8125rem] leading-[1.125rem]">
           {task.createdBy.kind === "agent" ? (

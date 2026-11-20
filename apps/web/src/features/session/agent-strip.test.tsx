@@ -1,5 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { agentSummary } from "@/test/session-fixtures";
@@ -7,8 +7,16 @@ import { AgentStrip } from "./agent-strip";
 
 // The manager is a router link; the real link is covered in the full-app tests (messaging.test.tsx).
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-    <a href="/" className={className}>
+  Link: ({
+    children,
+    className,
+    "aria-label": label,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+    "aria-label"?: string;
+  }) => (
+    <a href="/" className={className} aria-label={label}>
       {children}
     </a>
   ),
@@ -217,4 +225,39 @@ test("strip: open tasks link after the org segment, singular and plural, hidden 
   expect(within(three).getByText("3 open tasks")).toBeInTheDocument();
   document.body.innerHTML = "";
   expect(within(strip({ openTasks: 0 })).queryByText(/open task/)).toBeNull();
+});
+
+const usageRow = (costUsd: number, turns: number) => {
+  const totals = {
+    costUsd,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    turns,
+  };
+  return {
+    slug: "lead",
+    displayName: "Lead",
+    kind: "persistent" as const,
+    archived: false,
+    terminated: false,
+    own: totals,
+    total: totals,
+  };
+};
+
+test("strip: the usage segment shows the figure and spells it out in its aria-label", () => {
+  render(<AgentStrip agent={agentSummary({ slug: "lead" })} usage={usageRow(4.12, 3)} />);
+  const link = screen.getByRole("link", { name: "Usage: $4.12 estimated, last 7 days" });
+  expect(link).toHaveTextContent("$4.12 est. · 7d");
+  expect(link).toHaveClass("max-md:hidden");
+});
+
+test("strip: no turns, or no data yet, reads just Usage", () => {
+  render(<AgentStrip agent={agentSummary({ slug: "lead" })} usage={usageRow(0, 0)} />);
+  expect(screen.getByRole("link", { name: "Usage" })).toHaveTextContent(/^Usage$/);
+  cleanup();
+  render(<AgentStrip agent={agentSummary({ slug: "lead" })} />);
+  expect(screen.getByRole("link", { name: "Usage" })).toBeInTheDocument();
 });

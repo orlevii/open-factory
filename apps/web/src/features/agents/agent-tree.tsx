@@ -1,9 +1,10 @@
-import type { AgentSummary } from "@open-factory/shared";
+import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { RotateCw } from "lucide-react";
 import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
+import { formatCost } from "@/features/usage/format";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
@@ -71,9 +72,34 @@ export function AgentName({ agent }: { agent: AgentSummary }) {
   );
 }
 
+/** The 7-day figure of a row: a persistent agent's total includes what it spawned; a spawned agent
+ *  and every row of the flat Ended list show their own. */
+function usageCell(row: AgentUsageRow | undefined, own: boolean) {
+  if (!row) return null;
+  const t = own || row.kind === "ephemeral" ? row.own : row.total;
+  const text = formatCost(t.costUsd, t.turns);
+  const lead = "Estimated cost, last 7 days";
+  const sr =
+    t.turns === 0
+      ? `${lead}: none`
+      : !own && row.kind === "persistent" && row.spawned
+        ? `${lead}: ${text} (own ${formatCost(row.own.costUsd, row.own.turns)}, spawned ${formatCost(row.spawned.costUsd, row.spawned.turns)})`
+        : `${lead}: ${text}`;
+  return { text, sr };
+}
+
 /** The org tree: depth-first in server order, one link per agent. Only the name cell indents, so
  *  the other columns stay aligned. `flat` (the Ended view) keeps server order with no nesting. */
-export function AgentTree({ agents, flat = false }: { agents: AgentSummary[]; flat?: boolean }) {
+export function AgentTree({
+  agents,
+  flat = false,
+  usage,
+}: {
+  agents: AgentSummary[];
+  flat?: boolean;
+  /** 7-day usage by slug; the cost cell stays empty until it arrives. */
+  usage?: Map<string, AgentUsageRow>;
+}) {
   const isMobile = useIsMobile();
   const now = new Date();
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
@@ -91,13 +117,14 @@ export function AgentTree({ agents, flat = false }: { agents: AgentSummary[]; fl
         const level = shown.get(a.slug) ?? 0;
         const depth = Math.min(level, isMobile ? MOBILE_DEPTH_CAP : level);
         const ended = a.archivedAt !== null || a.status === "terminated";
+        const cost = usageCell(usage?.get(a.slug), flat);
         const note = ended ? endedNote(a, now) : agentNote(a);
         return (
           <li key={a.slug}>
             <Link
               to="/agents/$slug"
               params={{ slug: a.slug }}
-              className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:grid md:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_auto] md:py-0"
+              className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:grid md:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_auto_4rem] md:py-0"
             >
               <span className="flex w-28 shrink-0 items-center gap-1.5">
                 {a.archivedAt && a.status !== "terminated" ? (
@@ -162,6 +189,12 @@ export function AgentTree({ agents, flat = false }: { agents: AgentSummary[]; fl
                   {a.runtime === "local" ? <UnsandboxedBadge /> : <DockerBadge />}
                 </span>
               </span>
+              {cost && (
+                <span className="hidden text-right text-[0.8125rem] text-muted-foreground tabular-nums md:block">
+                  <span aria-hidden="true">{cost.text}</span>
+                  <span className="sr-only">{cost.sr}</span>
+                </span>
+              )}
             </Link>
           </li>
         );

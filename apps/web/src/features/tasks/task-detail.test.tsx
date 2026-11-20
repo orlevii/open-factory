@@ -433,3 +433,21 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
   for (const a of container.querySelectorAll("a"))
     expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
 });
+
+test("the usage line and its lower-bound hint show when the task has usage, and are absent when null", async () => {
+  world(() => detail({ usage: { costUsd: 1.23, turns: 14 } }));
+  renderApp("/tasks/T-42", alice);
+  expect(await screen.findByText("Usage: $1.23 est. · 14 turns")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Counts only turns that handled this task's messages and nothing else. Real usage can be higher.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("no usage line when the task has no attributed usage", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await screen.findByText("Plan the billing migration");
+  expect(screen.queryByText(/^Usage:/)).toBeNull();
+});

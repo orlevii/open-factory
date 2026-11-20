@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -368,4 +368,86 @@ test("on mobile, a spawned agent's name keeps its ' · ab12' tail; the head trun
   expect(tail).not.toHaveClass("truncate");
   // Spawned agents nest under their spawner in the Active view.
   expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("20px");
+});
+
+describe("usage in the tree (S10 §12.1)", () => {
+  const t = (costUsd: number, turns: number) => ({
+    costUsd,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    turns,
+  });
+  const usageRow = (
+    slug: string,
+    kind: "persistent" | "ephemeral",
+    own: ReturnType<typeof t>,
+    spawned?: ReturnType<typeof t>,
+    total = own,
+  ) => ({
+    slug,
+    displayName: slug,
+    kind,
+    archived: false,
+    terminated: false,
+    own,
+    ...(spawned ? { spawned } : {}),
+    total,
+  });
+  const usageWorld = () =>
+    mockWorld({
+      agents: [
+        agentSummary({ slug: "lead", displayName: "Team Lead" }),
+        agentSummary({ slug: "dev-1", displayName: "Developer", reportsTo: "lead", depth: 1 }),
+        agentSummary({ slug: "idle", displayName: "Idle one" }),
+      ],
+      extra: {
+        "GET /api/usage/agents?window=rolling": () =>
+          json({
+            agents: [
+              usageRow("lead", "persistent", t(1.2, 3), t(3.4, 5), t(4.6, 8)),
+              usageRow("dev-1", "ephemeral", t(0.5, 2)),
+              usageRow("idle", "persistent", t(0, 0)),
+            ],
+          }),
+      },
+    });
+
+  test("a persistent row shows the total with the spelled-out sr-only text; a spawned row its own; no turns is a dash", async () => {
+    usageWorld();
+    renderApp("/agents", alice);
+    const [lead, dev, idle] = (await rows()) as [HTMLElement, HTMLElement, HTMLElement];
+    expect(await within(lead).findByText("$4.60")).toBeInTheDocument();
+    expect(
+      within(lead).getByText("Estimated cost, last 7 days: $4.60 (own $1.20, spawned $3.40)"),
+    ).toHaveClass("sr-only");
+    expect(within(dev).getByText("$0.50").parentElement).toHaveClass("tabular-nums");
+    expect(within(dev).getByText("Estimated cost, last 7 days: $0.50")).toHaveClass("sr-only");
+    expect(within(idle).getByText("—")).toBeInTheDocument();
+    expect(within(idle).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
+    // Hidden below md; no tooltip trigger or title inside a row link.
+    expect(within(lead).getByText("$4.60").parentElement).toHaveClass("hidden", "md:block");
+    expect(lead.querySelector("[title], [data-slot=tooltip-trigger]")).toBeNull();
+  });
+
+  test("the muted line above the Active tree explains the column", async () => {
+    usageWorld();
+    renderApp("/agents", alice);
+    await screen.findByRole("list", { name: "Agents" });
+    expect(
+      screen.getByText(
+        "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  test("the tree asks for the rolling window", async () => {
+    const api = usageWorld();
+    renderApp("/agents", alice);
+    await screen.findByRole("list", { name: "Agents" });
+    await waitFor(() =>
+      expect(api.calls.some((c) => c.url === "/api/usage/agents?window=rolling")).toBe(true),
+    );
+  });
 });

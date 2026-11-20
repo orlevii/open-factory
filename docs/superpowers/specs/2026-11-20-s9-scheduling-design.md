@@ -223,7 +223,7 @@ The tool descriptions say: schedules survive restarts and wake the target; use `
 
 | Interaction | Rule |
 |---|---|
-| Target terminated | S7's termination transaction soft-deletes every schedule targeting the agent (after its agent locks, §12). Pending scheduled rows are rejected like every pending row (S7). |
+| Target terminated | S7's termination transaction soft-deletes every schedule targeting the agent (after its agent locks, §12). Pending scheduled rows are rejected like every pending row (S7). Soft, not hard (R2): delivered `scheduled` rows reference their schedule (`schedule_id` is required by the CHECK), so the terminated agent's read-only session keeps its badges; Restore refuses (`409 target_ended`). |
 | Creator terminated | Not reachable: spawned agents can't create schedules (Q12) and persistent agents are archived, never terminated. Kept as an assertion in the service test. |
 | Target archived | Firings skip (no row, `next_run_at` advances, `last_fired_at` unchanged). The UI shows "Skipped" with "@x · archived". Creating, retargeting or restoring to an archived agent is refused. |
 | Target unarchived | `AgentService.unarchive` (which has no transaction today) gets one: lock the agent row `FOR NO KEY UPDATE`, clear `archived_at`, `recomputeFromNow` every schedule targeting it (agents before schedules), commit, then `scheduler.rearm()`: no catch-up. |

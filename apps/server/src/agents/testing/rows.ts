@@ -33,6 +33,8 @@ export async function insertAgent(
     errorKind?: string | null;
     /** A terminated agent is ephemeral (a DB check): it needs a `reportsTo`. */
     terminatedAt?: Date | string | null;
+    /** Defaults to ephemeral when terminated, else persistent. An ephemeral agent needs a `reportsTo`. */
+    kind?: "persistent" | "ephemeral";
   },
 ): Promise<void> {
   const credId = `cred-${a.id}`;
@@ -41,10 +43,37 @@ export async function insertAgent(
   await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
             values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
                     'test', ${JSON.stringify({ ...CONFIG, ...(a.warmWindowMinutes !== undefined ? { warmWindowMinutes: a.warmWindowMinutes } : {}) })}::jsonb, 'local', ${credId},
-                    ${a.reportsTo ?? null}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${a.terminatedAt ? "ephemeral" : "persistent"}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
+                    ${a.reportsTo ?? null}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent")}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
 }
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
+
+/** A turn row with its usage. `endedAt` defaults to a minute after the start (`null` leaves the turn open); usage defaults to NULL. */
+export async function insertTurn(
+  sql: postgres.Sql,
+  t: {
+    id: string;
+    agentId: string;
+    startedAt: Date;
+    endedAt?: Date | null;
+    costUsd?: number | null;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    cacheWriteTokens?: number | null;
+    cacheReadTokens?: number | null;
+    model?: string | null;
+    taskId?: string | null;
+    credentialId?: string | null;
+  },
+): Promise<void> {
+  const ended = t.endedAt === undefined ? new Date(t.startedAt.getTime() + 60_000) : t.endedAt;
+  await sql`insert into turns (id, agent_id, started_at, ended_at, cost_usd, input_tokens, output_tokens, cache_write_tokens,
+                               cache_read_tokens, model, task_id, credential_id)
+            values (${t.id}, ${t.agentId}, ${iso(t.startedAt)}, ${iso(ended)},
+                    ${t.costUsd == null ? null : t.costUsd.toFixed(6)}, ${t.inputTokens ?? null}, ${t.outputTokens ?? null},
+                    ${t.cacheWriteTokens ?? null}, ${t.cacheReadTokens ?? null}, ${t.model ?? null}, ${t.taskId ?? null},
+                    ${t.credentialId ?? null})`;
+}
 
 /** A schedule row (number from the sequence) for tests that don't go through the service. The creator and author are user `u1` unless given. */
 export async function insertSchedule(

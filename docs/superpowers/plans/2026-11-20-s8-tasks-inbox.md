@@ -17,12 +17,12 @@
 
 ## Global Constraints
 
-- **Working mode:** the dev works directly, test-first (red, green, commit), one commit per task, conventional message ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. Postgres must be up (`pnpm compose up -d`) for server and db tests.
+- **Working mode:** the dev works directly, test-first (red, green, commit), one commit per task, conventional message ending with the `Co-Authored-By:` line given in **your own session's system reminder** (the commit sketches below show it as `<Co-Authored-By line from your session>`; never copy a model name from this plan), and the PR body ends with that reminder's PR attribution line. Postgres must be up (`pnpm compose up -d`) for server and db tests.
 - **Verify commands** (repo root): one file `pnpm vitest run <path>`; all `pnpm test`; `pnpm typecheck`; `pnpm lint` (`pnpm lint:fix` to format). Every task's last step runs its file(s), then `pnpm typecheck` and `pnpm lint`.
 - **Dependencies:** only the three exact pins above. **Never loosen any pnpm supply-chain setting**, no overrides or exceptions; never `pnpm dlx <tool>@latest`. shadcn components: `pnpm --filter @open-factory/web exec shadcn add <component>` (none expected: `DropdownMenu` exists).
 - **Layout rules:** nothing outside `apps/server/src/mcp/` imports the MCP SDK; nothing outside `packages/harness/src/claude/` knows a stream-json field; `extractMentions` is imported only from `@open-factory/shared/mentions` (never re-exported from the barrel: the CLI imports the barrel).
 - **No DB triggers.** Every rule is app code.
-- **Lock order (spec §13.1), in this order, in every task transaction:** (1) unlocked read of the acted-on task; which task rows to lock is decided **from the input** (`status` present → its dependents; `depends_on` present → the dependencies it adds); (2) `pg_advisory_xact_lock(TASK_GRAPH_LOCK)` only when `depends_on` changes; (3) task rows `FOR NO KEY UPDATE` in **one** statement ordered by id, re-read dependents and lock newcomers in a second sorted statement; (4) re-read the task and run `canChange`, recipients and blocked states on the locked data; (5) agent rows `FOR SHARE` in **one** statement ordered **persistent before spawned, then id** (the caller and every agent written to or assigned), re-check live; (6) message inserts and inbox items. **Invariant (written once in `task-store.ts`'s header): tasks before agents; no transaction may lock an agent row and then wait on a task row. Never `FOR UPDATE` on `tasks`/`task_comments`; never update `tasks.id`, `tasks.number`, `task_comments.(task_id, id)`.** Every store/router/resolver call inside takes `tx`. **The transaction never awaits a runtime call** (`runtimes.load`, `statusOf`, `deliver`). Every task transaction is retried once from step 1 on `40P01`.
+- **Lock order (spec §13.1), in this order, in every task transaction:** (1) unlocked read of the acted-on task; which task rows to lock is decided **from the input** (`status` present → its dependents; `depends_on` present → the dependencies it adds); (2) `pg_advisory_xact_lock(TASK_GRAPH_LOCK)` only when `depends_on` changes; (3) task rows `FOR NO KEY UPDATE` in **one** statement ordered by id, re-read dependents and lock newcomers in a second sorted statement; (4) re-read the task and run `canChange`, recipients and blocked states on the locked data; (5) agent rows `FOR SHARE` in **one** statement ordered **persistent before spawned, then id** (the caller and every agent written to or assigned), re-check live; (6) message inserts and inbox items. **Invariant (written once in `task-store.ts`'s header): tasks before agents; no transaction may lock an agent row and then wait on a task row. Never `FOR UPDATE` on `tasks`/`task_comments`; never update `tasks.id`, `tasks.number`, `task_comments.(task_id, id)`.** Every store/router/resolver call inside takes `tx`. **The transaction never awaits a runtime call** (`runtimes.load`, `statusOf`, `deliver`). Every task transaction is retried once from step 1 on `40P01`. **Write next to the invariant in the header:** the second sorted statement (newcomer dependents) is taken while already holding task locks, so it can deadlock against another transaction's first statement; that is expected and covered by the once-only retry; do not "fix" it with more locking. A second deadlock in a row is not a 500 or a thrown error: it becomes a plain error, "The task changed while you were editing it; try again." (tool error / `409 task_conflict`).
 - **Hand-offs:** after commit, through `Router.handOffTaskRows`, after `bootDone`, skipped when closed, never awaited, every promise `.catch`ed and logged.
 - **Truthful senders:** `task_assigned`/`task_update` have no sender columns (`@factory`); `task_comment` is from its author. Author text inside factory text is attributed and quoted; every envelope body is escaped by `groupEnvelopes`.
 - **Security:** `/api/tasks*` and `/api/inbox*` use `requireUser` (a valid agent token gets 401); link `url`/`pr` targets must be `http:`/`https:` ≤ 2,000 chars; titles and link titles are plain text everywhere; bodies and comments render only through `Markdown`; identity comes from the token or session, never from input.
@@ -348,7 +348,7 @@ Expected: `system/init` lists `mcp__factory__create_task`, `update_task`, `list_
 git add packages/shared/src/tasks.ts packages/shared/src/tasks.test.ts packages/shared/src/index.ts packages/harness/fixtures/README.md
 git commit -m "feat(shared): task schemas, verified live against haiku
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+<Co-Authored-By line from your session>"
 ```
 
 ---
@@ -432,7 +432,7 @@ test("a message's comment must belong to its task (composite FK)", async () => {
 git add packages/db
 git commit -m "feat(db): task tables, message task references and the CHECK rewrite
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+<Co-Authored-By line from your session>"
 ```
 
 ---
@@ -441,9 +441,9 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `packages/shared/src/mentions.ts`, `packages/shared/src/mentions.test.ts`
-- Modify: `packages/shared/package.json` (exports `"./mentions": "./src/mentions.ts"`; dependencies `"mdast-util-from-markdown": "2.1.0"`, `"micromark-extension-gfm": "3.0.0"`, `"mdast-util-gfm": "3.1.0"`), `pnpm-lock.yaml` (via `pnpm install`; the versions already resolve, so only importer entries change — check the diff shows no version changes)
+- Modify: `packages/shared/package.json` (exports `"./mentions": "./src/mentions.ts"`; dependencies `"mdast-util-from-markdown": "2.1.0"`, `"micromark-extension-gfm": "3.0.0"`, `"mdast-util-gfm": "3.1.0"`), `pnpm-lock.yaml` — add the dependencies through the package manager, never by hand-editing `package.json`: `pnpm --filter @open-factory/shared add --save-exact mdast-util-from-markdown@2.1.0 micromark-extension-gfm@3.0.0 mdast-util-gfm@3.1.0` (the versions already resolve, so only importer entries change — check the diff shows no version changes); add the `exports` entry by editing `package.json`
 
-**Interfaces — Produces:** `extractMentions(markdown: string): string[]` (names without `@`, lowercase, deduped, first-appearance order, `"humans"` included as a name).
+**Interfaces — Produces:** `extractMentions(markdown: string): {names: string[]; skipped: string[]}` (`names`: without `@`, lowercase, deduped, first-appearance order, `"humans"` included as a name; `skipped`: names whose source offset didn't match, see the note below).
 
 - [ ] **Step 1: Failing tests** `packages/shared/src/mentions.test.ts`:
 
@@ -468,7 +468,7 @@ test.each([
   ["<https://x.io/?q=@or>", []],
   ["[ask @or](https://x.io)", ["or"]],
   ["@or then @or again", ["or"]],
-])("%s", (src, want) => expect(m(src)).toEqual(want));
+])("%s", (src, want) => expect(m(src).names).toEqual(want));
 ```
 
 - [ ] **Step 2: Run** `pnpm vitest run packages/shared/src/mentions.test.ts` → FAIL.
@@ -486,9 +486,10 @@ const MENTION = /(?<![\p{L}\p{N}_/.@])@([a-z0-9][a-z0-9-]*)(?![\p{L}\p{N}_])/gu;
 type Node = { type: string; value?: string; url?: string; children?: Node[]; position?: { start: { offset?: number } } };
 
 /** Spec §8: the names mentioned outside code, through the same micromark+GFM parser react-markdown uses. */
-export function extractMentions(markdown: string): string[] {
+export function extractMentions(markdown: string): { names: string[]; skipped: string[] } {
   const tree = fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] }) as Node;
   const out: string[] = [];
+  const skipped: string[] = [];
   const visit = (n: Node) => {
     if (n.type === "code" || n.type === "inlineCode") return;
     // An autolink or bare URL: a link whose only text is its own URL.
@@ -499,7 +500,12 @@ export function extractMentions(markdown: string): string[] {
       for (const hit of n.value.matchAll(MENTION)) {
         // `\@or`: the escape vanished from the AST; read the source.
         const at = base + (hit.index ?? 0);
-        if (markdown[at - 1] === "\\" || markdown[at] !== "@") continue;
+        if (markdown[at] !== "@") { // offset drifted after an earlier escape: skip, never guess (limitation, see note)
+          const n2 = (hit[1] ?? "").replace(/-+$/, "");
+          if (n2 && !skipped.includes(n2)) skipped.push(n2);
+          continue;
+        }
+        if (markdown[at - 1] === "\\") continue;
         const name = (hit[1] ?? "").replace(/-+$/, "");
         if (name && !out.includes(name)) out.push(name);
       }
@@ -508,13 +514,13 @@ export function extractMentions(markdown: string): string[] {
     for (const c of n.children ?? []) visit(c);
   };
   visit(tree);
-  return out;
+  return { names: out, skipped: skipped.filter((n) => !out.includes(n)) };
 }
 ```
 
-Note: text-node offsets map 1:1 to the source only when the node has no escapes before the `@`; the `markdown[at] !== "@"` guard skips a mismatched offset (rather than guessing). If a fixture fails because of an earlier escape in the same text node, compute `at` by searching the source from `base` for `@${hit[1]}` instead; keep the fixture.
+Note: text-node offsets map 1:1 to the source only when the node has no escapes before the `@`; the `markdown[at] !== "@"` guard skips a mismatched offset rather than guessing. **No fallback search** (it could land on a deliberately escaped `\@or` and turn it into a mention). Record the limitation in a code comment: a mention placed after an escape in the same text node may be missed. To keep that miss visible, `extractMentions` returns `{names, skipped}` (`skipped`: the names whose offset didn't match), and `comment` (Task 8) reports each skipped name not otherwise reached in `not_reached` with reason `"unknown"`, so the author sees it went nowhere. Add a fixture: `"\\* @or"`-style text with an escape before the mention in the same node → `or` in `skipped`, and Task 8 asserts it appears in `not_reached`.
 
-- [ ] **Step 4: Run** → PASS. `pnpm install` (lockfile importer update only), `pnpm typecheck`, `pnpm lint`. Confirm `git diff pnpm-lock.yaml` adds no new package versions.
+- [ ] **Step 4: Run** → PASS (the deps were added with the `pnpm --filter … add --save-exact` command above), `pnpm typecheck`, `pnpm lint`. Confirm `git diff pnpm-lock.yaml` adds no new package versions.
 
 - [ ] **Step 5: Commit**
 
@@ -522,7 +528,7 @@ Note: text-node offsets map 1:1 to the source only when the node has no escapes 
 git add packages/shared pnpm-lock.yaml
 git commit -m "feat(shared): extract mentions outside code with the UI's markdown parser
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+<Co-Authored-By line from your session>"
 ```
 
 ---
@@ -829,7 +835,7 @@ comment(actor: Actor, key: string, body: string): Promise<{ id: string; delivere
   notReached: { name: string; reason: "unknown" | "ambiguous" | "archived" | "terminated" | "reserved" | "too_many" }[] }>;
 ```
 
-Procedure: `extractMentions(body)` (from `@open-factory/shared/mentions`) before the transaction; names beyond the first 50 → `too_many`. Inside the transaction (spec §13.1): lock the task row (no dependents), re-read it, resolve each name with `resolveName(tx, name)` (`humans` → all; user → user; agent → candidate; `reserved`/`none`/`ambiguous` → `not_reached`; the author → skipped silently), lock agents `FOR SHARE` (caller, assignee, candidate agents), drop ended ones into `not_reached` with their reason (the ended assignee too), insert the comment, touch the task, `plan()` with `comment`, write rows. Result `deliveredTo` = agent slugs written to (assignee included); `mentionedHumans` = `["@humans"]` or the handles.
+Procedure: `extractMentions(body)` (from `@open-factory/shared/mentions`) before the transaction; names beyond the first 50 → `too_many`; each `skipped` name (offset mismatch, Task 3) → `not_reached` with reason `unknown` (test it). Inside the transaction (spec §13.1): lock the task row (no dependents), re-read it, resolve each name with `resolveName(tx, name)` (`humans` → all; user → user; agent → candidate; `reserved`/`none`/`ambiguous` → `not_reached`; the author → skipped silently), lock agents `FOR SHARE` (caller, assignee, candidate agents), drop ended ones into `not_reached` with their reason (the ended assignee too), insert the comment, touch the task, `plan()` with `comment`, write rows. Result `deliveredTo` = agent slugs written to (assignee included); `mentionedHumans` = `["@humans"]` or the handles.
 
 - [ ] **Step 1: Failing tests:**
   - AC 2 server side: `dev` comments on T-1 (assigned to `dev`, created by `@or`) "@or can you confirm?" → `or` has one unread `mention` item linking `{kind:"task", key:"T-1", commentId}`; nothing to `dev`; result `mentionedHumans: ["@or"]`.
@@ -899,7 +905,7 @@ Run as soon as the tools exist (spec §17.5): tool listing, a human-created assi
   7. **Concurrent cycle:** T6→T7 and T7→T6 patched concurrently → exactly one refused with the cycle sentence.
   8. **Assignee re-check:** `dev`'s `update_task` racing `@or` reassigning to `qa` (hold `LOCK TABLE messages` so the reassignment commits first) → `dev`'s change is refused with the forbidden sentence.
   9. **Comment racing reassignment** → the comment goes to the assignee read under the lock (`qa`), not `dev`.
-  10. **Deadlock retry:** inject a `40P01` once via a wrapped `db` whose first `transaction` call throws `Object.assign(new Error("deadlock"), {code:"40P01"})` → the operation succeeds; two in a row → the error surfaces.
+  10. **Deadlock retry:** inject a `40P01` once via a wrapped `db` whose first `transaction` call throws `Object.assign(new Error("deadlock"), {code:"40P01"})` → the operation succeeds; two in a row → the operation fails with exactly "The task changed while you were editing it; try again." (tool error; REST `409 task_conflict`), never a raw 500.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/tasks/task-races.test.ts` → PASS (fix defects test-first if not).
 - [ ] **Step 3:** `pnpm typecheck`; `pnpm lint`.
 - [ ] **Step 4: Commit** `test(server): task lock order, races and deadlock retry`.
@@ -1052,6 +1058,7 @@ History `from`/`to` for `assignee` are rendered server-side as slugs; `depends_o
   - `?comment=<id>` of an agent comment: scrolled into view, `data-highlighted`, focused, composer prefilled "@dev "; of a human comment: no prefill; unknown id → "Comment not found. Showing the task."
   - `/tasks/T-999` → "Task not found." / "No task T-999." / "Back to tasks".
   - `tasks_changed` for this key refetches and keeps an open editor's text.
+  - **Agent text is inert (spec §15), one test:** a task body and a comment containing `<script>alert(1)</script>`, `<img src=x onerror=alert(1)>` and `[x](javascript:alert(1))` render with no `script` or `img` element in the container and no anchor whose `href` starts with `javascript:`; a title `<b>x</b>` renders as the literal text `<b>x</b>` (no `b` element). This guards against a later Markdown change silently dropping the guarantee.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement** (menus via `DropdownMenu` + `DropdownMenuRadioGroup`, the Theme menu's pattern in `app-sidebar.tsx`; the highlight reuses the session timeline's `data-highlighted` CSS). **Step 4: Run** → PASS; `pnpm typecheck`; `pnpm lint`.
 - [ ] **Step 5: Commit** `feat(web): task detail with activity, comments and deep links`.
 
@@ -1093,7 +1100,7 @@ If the PR is too large, this task moves to a follow-up issue unchanged; nothing 
 
 ### Task 23: Final live check and verification
 
-- [ ] **Step 1: Extend `smoke-tasks.ts` to the full run** (without `--early`): after the early steps, `or` posts `POST /api/tasks/T-1/comments {body:"@dev Yes. Mark the task done when you have read this."}`; assert `dev` receives a `task_comment` from `@or` and calls `update_task` with `status: "done"`; assert `or`'s inbox has a `task_event` with `fact: "done"` (or created T-1); create T-2 by `or` with `dependsOn: ["T-1"]` assigned to `qa` **before** T-1 is marked done and assert `qa` receives a `task_update` with `fact: "unblocked"`; assert no request carried an `Origin` header (as S6). Run `pnpm build && pnpm smoke:tasks` → all PASS. Keep the redacted output for the PR.
+- [ ] **Step 1: Extend `smoke-tasks.ts` to the full run** (without `--early`): after the early steps, **first** `or` creates T-2 with `dependsOn: ["T-1"]` assigned to `qa` (before the comment below, so the model can't mark T-1 done first and race the assertion); **then** `or` posts `POST /api/tasks/T-1/comments {body:"@dev Yes. Mark the task done when you have read this."}`; assert `dev` receives a `task_comment` from `@or` and calls `update_task` with `status: "done"`; assert `or`'s inbox has a `task_event` with `fact: "done"` (or created T-1); assert `qa` receives a `task_update` with `fact: "unblocked"` about T-2; assert no request carried an `Origin` header (as S6). Run `pnpm build && pnpm smoke:tasks` → all PASS. Keep the redacted output for the PR.
 - [ ] **Step 2: Full verification** (all must pass; paste the summary lines into the PR):
 
 ```bash

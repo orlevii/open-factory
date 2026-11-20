@@ -5,7 +5,7 @@
 - **Roadmap spec:** `docs/product/roadmap/v0.1/s10-usage-admin.md`
 - **Product sources of truth:** `docs/product/architecture/usage-tracking.md`, `base-image.md`, `data-model.md`, `agent-runtime.md`; `docs/product/behavior/administration.md`; `docs/product/concepts/credential.md`, `user.md`, `agent-template.md`; ADRs 0013 (one server process), 0019 (usage, no budgets).
 - **Builds on:** S1 (better-auth, `requireUser`, sign-up), S3 (`turns`, mapper usage deltas), S4 (templates, credentials, Settings sections), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): supervisor slot pool, credential rate-limit pauses, image pull on start, container spec hash, the local-runtime gate), S6 (member-update debounce), S7 (spawned agents: `kind = 'ephemeral'`, `reports_to` = spawner, the spawner's credential), S8 ([spec](2026-11-20-s8-tasks-inbox-design.md) §6.7: `messages.task_id`, `delivered_turn_id`), S9 (`FACTORY_TIMEZONE`).
-- **Decision log:** the S10 GitHub issue; question numbers below (Q1–Q20, R1–R10) refer to it.
+- **Decision log:** #68 ("S10 Usage and administration: design decisions"); question numbers below (Q1–Q20, R1–R10) refer to it.
 - **Stacked on:** `spec/s9-scheduling` (PR #67) → S8 → … → S3.
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -419,7 +419,7 @@ The output goes in the PR.
 
 Consumed: **#62** (resolved by Q1: stored at close, exactly-one-task rule, approximate), **#1** (sign-up closed: invites, bootstrap, disable). Notes: **#47** (S10 makes agent ping-pong visible in usage; no guard added), **#43** (the `allowed`/`allowed_warning` shapes, V5), **#2** (still no password reset; a disabled user can be re-enabled, a forgotten password still can't be reset).
 
-Follow-ups (new issues): user deletion; an agent-facing usage tool (managers seeing their spawns' cost); persisted image build history; usage export (CSV); a rate-limit history if near-limit trends turn out to matter.
+Follow-ups: user deletion (#69); an agent-facing usage tool (#70); persisted image build history (#71); usage export as CSV (#72); a rate-limit history per credential (#73).
 
 ## 20. Decision summary
 

@@ -6,8 +6,10 @@ import {
   parseTaskKey,
   patchTaskBodySchema,
   type TaskStatus,
+  taskCommentBodySchema,
   taskKey,
 } from "@open-factory/shared";
+import { extractMentions } from "@open-factory/shared/mentions";
 import { inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -32,6 +34,20 @@ export type TaskView = {
   blockedBy: string[];
 };
 export type ChangeResult = { task: TaskView; changed: string[]; note?: string };
+
+export type CommentResult = {
+  id: string;
+  deliveredTo: string[];
+  mentionedHumans: string[];
+  notReached: {
+    name: string;
+    reason: "unknown" | "ambiguous" | "archived" | "terminated" | "reserved" | "too_many";
+  }[];
+  note?: string;
+};
+
+/** Spec §6.1: at most 50 distinct mentions are resolved per comment. */
+const MAX_MENTIONS = 50;
 
 export const CONFLICT_SENTENCE = "The task changed while you were editing it; try again.";
 
@@ -120,24 +136,190 @@ export class TaskService {
     const out = await withDeadlockRetry(() =>
       this.d.db.transaction((tx) => this.procedure(tx, actor, key, input)),
     );
-    // After the commit: the errored note (a runtime read, never inside the transaction), then the hand-offs.
-    const notes: string[] = [];
-    for (const id of out.assignedAgentIds) {
-      const status = await this.d.router.statusOfAgent(id);
-      if (status === "errored") {
-        const slug = await this.slugOf(id);
-        notes.push(`@${slug} is errored; it will see this when a human restarts it.`);
-      }
-    }
+    const notes = await this.finish(out, out.assignedAgentIds);
     if (out.assigneeEnded && out.assigneeSlug)
       notes.push(`The assignee @${out.assigneeSlug} was ${out.assigneeEnded}.`);
-    this.d.router.handOffTaskRows(out.agentRows);
-    if (out.humans) this.d.bus.publishAll({ type: "inbox_changed" });
-    this.d.bus.publishAll({ type: "tasks_changed", keys: out.keys });
     return {
       task: out.view,
       changed: out.changed,
       ...(notes.length ? { note: notes.join(" ") } : {}),
+    };
+  }
+
+  /**
+   * After the commit: the errored notes (a runtime read, never inside the transaction, read before the hand-off
+   * enqueues its wake), then the hand-offs and frames. Returns the notes.
+   */
+  private async finish(
+    out: { agentRows: Outcome["agentRows"]; humans: boolean; keys: string[] },
+    erroredCheck: string[],
+  ): Promise<string[]> {
+    const notes: string[] = [];
+    for (const id of erroredCheck) {
+      if ((await this.d.router.statusOfAgent(id)) === "errored")
+        notes.push(
+          `@${await this.slugOf(id)} is errored; it will see this when a human restarts it.`,
+        );
+    }
+    this.d.router.handOffTaskRows(out.agentRows);
+    if (out.humans) this.d.bus.publishAll({ type: "inbox_changed" });
+    this.d.bus.publishAll({ type: "tasks_changed", keys: out.keys });
+    return notes;
+  }
+
+  /**
+   * Spec §6.6, §8: a comment on any task by anyone. Mentions are parsed outside the transaction (pure), resolved in it,
+   * and reach the assignee, mentioned agents and mentioned humans; `notReached` says who it didn't and why.
+   */
+  async comment(actor: Actor, key: string, body: string): Promise<CommentResult> {
+    const parsed = taskCommentBodySchema.safeParse({ body });
+    if (!parsed.success) throw validation(parsed.error);
+    const text = parsed.data.body;
+    const mentions = extractMentions(text);
+    const out = await withDeadlockRetry(() =>
+      this.d.db.transaction((tx) => this.commentProcedure(tx, actor, key, text, mentions)),
+    );
+    const notes = await this.finish(
+      out,
+      out.agentRows
+        .filter((r) => r.wake === "task_message")
+        .flatMap((r) => (r.row.toAgentId ? [r.row.toAgentId] : [])),
+    );
+    return { ...out.result, ...(notes.length ? { note: notes.join(" ") } : {}) };
+  }
+
+  private async commentProcedure(
+    tx: Exec,
+    actor: Actor,
+    key: string,
+    text: string,
+    mentions: { names: string[]; skipped: string[] },
+  ) {
+    const T = this.d.tasks;
+    const n = parseTaskKey(key);
+    const pre = n === null ? undefined : await T.byNumber(tx, n);
+    if (!pre) throw new TaskError("task_not_found", `No task ${key}.`, 404);
+    // Step 3, with no dependents: the comment only needs the task row itself.
+    const [task] = await T.lockTasks(tx, [pre.id]);
+    if (!task) throw new TaskError("task_not_found", `No task ${key}.`, 404);
+
+    const notReached: CommentResult["notReached"] = [];
+    const candidates: { id: string; slug: string }[] = [];
+    const userIds: string[] = [];
+    const handles = new Map<string, string>();
+    let all = false;
+    const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.agentId === id;
+    const isAuthorUser = (id: string) => actor.kind === "user" && actor.userId === id;
+    const names = mentions.names.slice(0, MAX_MENTIONS);
+    for (const name of names) {
+      const r = await resolveName(tx, name);
+      switch (r.kind) {
+        case "humans":
+          all = true;
+          break;
+        case "user":
+          if (!isAuthorUser(r.userId) && !userIds.includes(r.userId)) {
+            userIds.push(r.userId);
+            handles.set(r.userId, r.handle);
+          }
+          break;
+        case "agent":
+          if (!isAuthorAgent(r.agent.id) && !candidates.some((c) => c.id === r.agent.id))
+            candidates.push({ id: r.agent.id, slug: r.agent.slug });
+          break;
+        case "reserved":
+          notReached.push({ name, reason: "reserved" });
+          break;
+        case "ambiguous":
+          notReached.push({ name, reason: "ambiguous" });
+          break;
+        case "none":
+          notReached.push({ name, reason: "unknown" });
+          break;
+      }
+    }
+    for (const name of mentions.names.slice(MAX_MENTIONS))
+      notReached.push({ name, reason: "too_many" });
+    for (const name of mentions.skipped)
+      if (!mentions.names.includes(name) && !notReached.some((x) => x.name === name))
+        notReached.push({ name, reason: "unknown" });
+
+    // Step 5: agents FOR SHARE in one statement.
+    const involved = new Set<string>(candidates.map((c) => c.id));
+    if (actor.kind === "agent") involved.add(actor.agentId);
+    if (task.assigneeAgentId) involved.add(task.assigneeAgentId);
+    const locked = await T.lockAgents(tx, [...involved]);
+    const ended = new Map<string, "archived" | "terminated">();
+    for (const a of locked) {
+      if (a.terminatedAt) ended.set(a.id, "terminated");
+      else if (a.archivedAt) ended.set(a.id, "archived");
+    }
+    if (actor.kind === "agent") {
+      const e = ended.get(actor.agentId);
+      if (e) throw new TaskError("ended", `You can't work on tasks: you were ${e}.`, 409);
+    }
+    const mentionedAgentIds: string[] = [];
+    for (const c of candidates) {
+      const e = ended.get(c.id);
+      if (e) notReached.push({ name: c.slug, reason: e });
+      else mentionedAgentIds.push(c.id);
+    }
+    if (task.assigneeAgentId) {
+      const e = ended.get(task.assigneeAgentId);
+      if (e && !isAuthorAgent(task.assigneeAgentId))
+        notReached.push({ name: await this.slugOf(task.assigneeAgentId), reason: e });
+    }
+    const live = new Set(locked.filter((a) => !ended.has(a.id)).map((a) => a.id));
+
+    // Step 6.
+    const principal = principalOf(actor);
+    const comment = await T.insertComment(tx, { taskId: task.id, author: principal, body: text });
+    await T.touch(tx, task.id);
+    const deps = await T.dependencies(tx, task.id);
+    const planned = await this.notify(tx, {
+      actor,
+      live,
+      row: task,
+      next: {
+        title: task.title,
+        body: task.body,
+        status: task.status as TaskStatus,
+        assigneeAgentId: task.assigneeAgentId,
+      },
+      before: {
+        status: task.status as TaskStatus,
+        assigneeId: task.assigneeAgentId,
+        title: task.title,
+        body: task.body,
+      },
+      deps,
+      blocked: [],
+      links: [],
+      bodyChanged: false,
+      unblocked: [],
+      comment: {
+        id: comment.id,
+        body: text,
+        mentionedAgentIds,
+        mentionedUserIds: all ? "all" : userIds,
+      },
+    });
+    const written = await this.write(tx, actor, planned);
+    const deliveredTo: string[] = [];
+    for (const r of written.agentRows) {
+      const slug = await this.slugOf(r.row.toAgentId as string);
+      if (!deliveredTo.includes(slug)) deliveredTo.push(slug);
+    }
+    const mentionedHumans = !written.humans
+      ? []
+      : all
+        ? ["@humans"]
+        : userIds.map((u) => `@${handles.get(u)}`);
+    return {
+      agentRows: written.agentRows,
+      humans: written.humans,
+      keys: [taskKey(task.number)],
+      result: { id: comment.id, deliveredTo, mentionedHumans, notReached },
     };
   }
 

@@ -1,0 +1,223 @@
+import type { AddressInfo } from "node:net";
+import type { TaskDetail, TaskPage } from "@open-factory/shared";
+import { afterEach, beforeEach, expect, test } from "vitest";
+import WebSocket from "ws";
+import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+
+let h: Awaited<ReturnType<typeof makeTestApp>>;
+let or: Awaited<ReturnType<typeof signUp>>;
+let sam: Awaited<ReturnType<typeof signUp>>;
+const ids: Record<string, string> = {};
+
+beforeEach(async () => {
+  h = await makeTestApp({ harnessDriver: new FakeDriver() });
+  or = await signUp(h.app, { handle: "or" });
+  sam = await signUp(h.app, { handle: "sam" });
+  for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
+});
+afterEach(() => h.close());
+
+const as = (who: typeof or) => ({ cookie: who.cookie });
+const call = (method: "GET" | "POST" | "PATCH", url: string, payload?: object, who = or) =>
+  h.app.inject({ method, url, headers: as(who), ...(payload ? { payload } : {}) });
+const create = async (payload: object, who = or) => {
+  const r = await call("POST", "/api/tasks", payload, who);
+  expect(r.statusCode).toBe(201);
+  return r.json().task as TaskDetail;
+};
+
+test.each([
+  ["GET", "/api/tasks"],
+  ["POST", "/api/tasks"],
+  ["GET", "/api/tasks/T-1"],
+  ["PATCH", "/api/tasks/T-1"],
+  ["POST", "/api/tasks/T-1/comments"],
+] as const)(
+  "%s %s needs a human session: no auth and a live agent token both get 401",
+  async (method, url) => {
+    const none = await h.app.inject({ method, url, payload: {} });
+    expect(none.statusCode).toBe(401);
+    const { token } = h.app.agentTokens.mint(ids.dev as string);
+    const agent = await h.app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+    expect(agent.statusCode).toBe(401);
+  },
+);
+
+test("POST creates (201) as the human; the detail has history and the creator", async () => {
+  const t = await create({ title: "Plan", body: "Brief", assignee: "dev" });
+  expect(t).toMatchObject({
+    key: "T-1",
+    title: "Plan",
+    status: "open",
+    assignee: { slug: "dev" },
+    createdBy: { kind: "user", handle: "or" },
+    blockedBy: [],
+  });
+  expect(t.activity.map((a) => (a.type === "event" ? a.event : a.type))).toEqual([
+    "created",
+    "assignee",
+  ]);
+  const assignee = t.activity[1];
+  expect(assignee).toMatchObject({ event: "assignee", from: null, to: "dev" });
+});
+
+test("validation: a javascript: link is a 400 on links; an unknown dependency on dependsOn; an ended assignee is 409", async () => {
+  const bad = await call("POST", "/api/tasks", {
+    title: "x",
+    links: [{ kind: "url", target: "javascript:alert(1)" }],
+  });
+  expect(bad.statusCode).toBe(400);
+  expect(bad.json().error.fields.links).toBe("Links must be http(s) URLs.");
+  const dep = await call("POST", "/api/tasks", { title: "x", dependsOn: ["T-9"] });
+  expect(dep.json().error.fields).toEqual({ dependsOn: "No task T-9." });
+  await h.sql`update agents set archived_at = now() where slug = 'qa'`;
+  const ended = await call("POST", "/api/tasks", { title: "x", assignee: "qa" });
+  expect(ended.statusCode).toBe(409);
+  expect(ended.json().error).toMatchObject({
+    code: "assignee_ended",
+    message: "@qa was archived and can't be assigned tasks.",
+  });
+  expect((await call("POST", "/api/tasks", { title: "" })).json().error.fields.title).toBe(
+    "Enter a title.",
+  );
+});
+
+test("PATCH: any subset, a cycle is 400 on dependsOn, unknown is 404, null unassigns", async () => {
+  await create({ title: "a" });
+  await create({ title: "b", dependsOn: ["T-1"], assignee: "dev" });
+  const cyc = await call("PATCH", "/api/tasks/T-1", { dependsOn: ["T-2"] });
+  expect(cyc.statusCode).toBe(400);
+  expect(cyc.json().error.fields.dependsOn).toBe(
+    "T-2 already depends on T-1; that would make a cycle.",
+  );
+  const un = await call("PATCH", "/api/tasks/T-2", { assignee: null, status: "in_progress" });
+  expect(un.statusCode).toBe(200);
+  expect(un.json().task).toMatchObject({
+    status: "in_progress",
+    assignee: null,
+    blockedBy: ["T-1"],
+  });
+  const missing = await call("PATCH", "/api/tasks/T-99", { status: "done" });
+  expect(missing.statusCode).toBe(404);
+  expect(missing.json().error).toMatchObject({ code: "task_not_found", message: "No task T-99." });
+  expect((await call("GET", "/api/tasks/T-99")).statusCode).toBe(404);
+});
+
+test("GET /api/tasks: default filter, status=all, repeated status, assignee, unassigned, creator, keys", async () => {
+  await create({ title: "one", assignee: "dev" });
+  await create({ title: "two" });
+  await create({ title: "three", assignee: "qa" }, sam);
+  await call("PATCH", "/api/tasks/T-2", { status: "done" });
+  await call("PATCH", "/api/tasks/T-3", { status: "cancelled" });
+  const keys = async (q: string) =>
+    ((await call("GET", `/api/tasks${q}`)).json() as TaskPage).tasks.map((t) => t.key);
+  expect(await keys("")).toEqual(["T-1"]);
+  expect((await keys("?status=all")).sort()).toEqual(["T-1", "T-2", "T-3"]);
+  expect((await keys("?status=done&status=cancelled")).sort()).toEqual(["T-2", "T-3"]);
+  expect(await keys("?status=all&assignee=dev")).toEqual(["T-1"]);
+  expect(await keys("?status=all&unassigned=true")).toEqual(["T-2"]);
+  expect((await keys("?status=all&creator=me")).sort()).toEqual(["T-1", "T-2"]);
+  expect(await keys("?status=all&creator=@sam")).toEqual(["T-3"]);
+  expect((await keys("?keys=T-1,T-3")).sort()).toEqual(["T-1", "T-3"]);
+  expect((await call("GET", "/api/tasks?assignee=nobody")).statusCode).toBe(400);
+});
+
+test("paging: newest updated first, a cursor, an invalid cursor is 400 on before", async () => {
+  for (const t of ["a", "b", "c"]) await create({ title: t });
+  const p1 = (await call("GET", "/api/tasks?limit=2")).json() as TaskPage;
+  expect(p1.tasks.map((t) => t.key)).toEqual(["T-3", "T-2"]);
+  expect(p1.nextCursor).not.toBeNull();
+  const p2 = (
+    await call("GET", `/api/tasks?limit=2&before=${encodeURIComponent(p1.nextCursor as string)}`)
+  ).json() as TaskPage;
+  expect(p2.tasks.map((t) => t.key)).toEqual(["T-1"]);
+  expect(p2.nextCursor).toBeNull();
+  const bad = await call("GET", "/api/tasks?before=garbage");
+  expect(bad.statusCode).toBe(400);
+  expect(bad.json().error.fields.before).toBeDefined();
+});
+
+test("GET detail: activity oldest first with comments and history interleaved; blocks lists dependents with blocked", async () => {
+  await create({ title: "base" });
+  await create({ title: "next", dependsOn: ["T-1"], assignee: "dev" });
+  await call("PATCH", "/api/tasks/T-1", { status: "in_progress" });
+  const c = await call("POST", "/api/tasks/T-1/comments", { body: "@dev look at this" });
+  expect(c.statusCode).toBe(201);
+  expect(c.json()).toMatchObject({
+    comment: { type: "comment", author: { kind: "user", handle: "or" }, body: "@dev look at this" },
+    deliveredTo: ["dev"],
+    mentionedHumans: [],
+    notReached: [],
+  });
+  const d = (await call("GET", "/api/tasks/T-1")).json() as TaskDetail;
+  expect(d.activity.map((a) => (a.type === "event" ? a.event : "comment"))).toEqual([
+    "created",
+    "status",
+    "comment",
+  ]);
+  expect(d.blocks).toEqual([
+    { key: "T-2", title: "next", status: "open", blocked: true, assignee: "dev" },
+  ]);
+  const next = (await call("GET", "/api/tasks/T-2")).json() as TaskDetail;
+  expect(next.dependsOn).toEqual([
+    { key: "T-1", title: "base", status: "in_progress", blocked: false },
+  ]);
+  expect(next.blockedBy).toEqual(["T-1"]);
+});
+
+test("a comment's response says who it reached", async () => {
+  await create({ title: "t", assignee: "dev" });
+  const r = await call("POST", "/api/tasks/T-1/comments", { body: "@sam @nobody" });
+  expect(r.json()).toMatchObject({
+    deliveredTo: ["dev"],
+    mentionedHumans: ["@sam"],
+    notReached: [{ name: "nobody", reason: "unknown" }],
+  });
+  expect(
+    (await call("POST", "/api/tasks/T-1/comments", { body: "  " })).json().error.fields.body,
+  ).toBe("Write a comment first.");
+});
+
+test("GET /api/agents carries openTasks", async () => {
+  await create({ title: "a", assignee: "dev" });
+  await create({ title: "b", assignee: "dev" });
+  await call("PATCH", "/api/tasks/T-2", { status: "done" });
+  const agents = (await call("GET", "/api/agents")).json().agents as {
+    slug: string;
+    openTasks: number;
+  }[];
+  expect(Object.fromEntries(agents.map((a) => [a.slug, a.openTasks]))).toEqual({
+    lead: 0,
+    dev: 1,
+    qa: 0,
+  });
+});
+
+test("a create publishes tasks_changed to a connected WebSocket", async () => {
+  await h.app.listen({ port: 0, host: "127.0.0.1" });
+  const url = `ws://127.0.0.1:${(h.app.server.address() as AddressInfo).port}/api/ws`;
+  const ws = new WebSocket(url, { headers: { cookie: or.cookie, origin: TEST_ORIGIN } });
+  const frames: unknown[] = [];
+  ws.on("message", (d) => frames.push(JSON.parse(String(d))));
+  await new Promise((r) => ws.once("open", r));
+  await new Promise<void>((r) => {
+    const t = setInterval(() => frames.length && (clearInterval(t), r()), 5);
+  });
+  await create({ title: "live" });
+  await new Promise<void>((r) => {
+    const t = setInterval(
+      () =>
+        frames.some((f) => (f as { type: string }).type === "tasks_changed") &&
+        (clearInterval(t), r()),
+      5,
+    );
+  });
+  expect(frames).toContainEqual({ type: "tasks_changed", keys: ["T-1"] });
+  ws.close();
+});

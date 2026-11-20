@@ -136,3 +136,85 @@ export const patchTaskBodySchema = z.object({
   links: links.optional(),
 });
 export const taskCommentBodySchema = z.object({ body: commentBodySchema });
+
+/** Responses (REST). Dates are ISO strings. */
+export const taskStatusSchema = z.enum(TASK_STATUSES);
+export const taskAgentRefSchema = z.object({
+  slug: z.string(),
+  displayName: z.string(),
+  ended: z.enum(["archived", "terminated"]).optional(),
+});
+export type TaskAgentRef = z.infer<typeof taskAgentRefSchema>;
+export const taskPrincipalSchema = z.union([
+  z.object({ kind: z.literal("agent"), slug: z.string() }),
+  z.object({ kind: z.literal("user"), handle: z.string() }),
+]);
+export type TaskPrincipal = z.infer<typeof taskPrincipalSchema>;
+export const taskSummarySchema = z.object({
+  key: z.string(),
+  title: z.string(),
+  status: taskStatusSchema,
+  assignee: taskAgentRefSchema.nullable(),
+  blockedBy: z.array(z.string()),
+  createdBy: taskPrincipalSchema,
+  updatedAt: z.string(),
+});
+export type TaskSummary = z.infer<typeof taskSummarySchema>;
+export const taskPageSchema = z.object({
+  tasks: z.array(taskSummarySchema),
+  nextCursor: z.string().nullable(),
+});
+export type TaskPage = z.infer<typeof taskPageSchema>;
+export const taskLinkSchema = z.object({
+  kind: z.enum(TASK_LINK_KINDS),
+  target: z.string().optional(),
+  agent: taskAgentRefSchema.optional(),
+  title: z.string().optional(),
+});
+export type TaskLink = z.infer<typeof taskLinkSchema>;
+const taskRelationSchema = z.object({
+  key: z.string(),
+  title: z.string(),
+  status: taskStatusSchema,
+  blocked: z.boolean(),
+});
+export const taskActivitySchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("comment"),
+    id: z.string(),
+    author: taskPrincipalSchema,
+    body: z.string(),
+    at: z.string(),
+  }),
+  z.object({
+    type: z.literal("event"),
+    id: z.string(),
+    actor: taskPrincipalSchema,
+    event: z.enum(["created", "status", "assignee", "title", "body", "depends_on", "links"]),
+    from: z.unknown().optional(),
+    to: z.unknown().optional(),
+    at: z.string(),
+  }),
+]);
+export type TaskActivity = z.infer<typeof taskActivitySchema>;
+export const taskDetailSchema = taskSummarySchema.extend({
+  body: z.string(),
+  createdAt: z.string(),
+  dependsOn: z.array(taskRelationSchema),
+  blocks: z.array(taskRelationSchema.extend({ assignee: z.string().nullable() })),
+  links: z.array(taskLinkSchema),
+  activity: z.array(taskActivitySchema),
+});
+export type TaskDetail = z.infer<typeof taskDetailSchema>;
+export const taskChangeResponseSchema = z.object({
+  task: taskDetailSchema,
+  note: z.string().optional(),
+});
+export const taskCommentResponseSchema = z.object({
+  comment: taskActivitySchema.options[0],
+  deliveredTo: z.array(z.string()),
+  mentionedHumans: z.array(z.string()),
+  notReached: z.array(z.object({ name: z.string(), reason: z.string() })),
+  note: z.string().optional(),
+});
+export type TaskCommentResponse = z.infer<typeof taskCommentResponseSchema>;

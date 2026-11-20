@@ -42,6 +42,7 @@ import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
+import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
 import { dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
@@ -302,6 +303,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
   await app.register(inboxRoutes);
+  await app.register(tasksRoutes);
   await app.register(messagesRoutes);
   await registerStatic(app, deps.webRoot);
   // The agent listener (spec §5.3) starts before boot reconciliation: step 6 can start agents, and Claude connects to

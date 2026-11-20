@@ -188,6 +188,21 @@ export class AgentService {
         .where(and(inArray(schema.agents.reportsTo, liveIds), liveAgent))
         .groupBy(schema.agents.reportsTo))
         if (r.managerId) reportCount.set(r.managerId, r.n);
+    const openTasks = new Map<string, number>();
+    for (const r of await db
+      .select({ agentId: schema.tasks.assigneeAgentId, n: count() })
+      .from(schema.tasks)
+      .where(
+        and(
+          inArray(
+            schema.tasks.assigneeAgentId,
+            rows.map((x) => x.id),
+          ),
+          inArray(schema.tasks.status, ["open", "in_progress"]),
+        ),
+      )
+      .groupBy(schema.tasks.assigneeAgentId))
+      if (r.agentId) openTasks.set(r.agentId, r.n);
     const credName = new Map(
       (
         await db
@@ -219,6 +234,7 @@ export class AgentService {
         runtime: r.runtime,
         reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
         reports: reportCount.get(r.id) ?? 0,
+        openTasks: openTasks.get(r.id) ?? 0,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         grantsOverridden: r.grantsOverridden,

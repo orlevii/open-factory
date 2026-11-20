@@ -38,6 +38,7 @@ export type ChangeResult = { task: TaskView; changed: string[]; note?: string };
 
 export type CommentResult = {
   id: string;
+  createdAt: Date;
   deliveredTo: string[];
   mentionedHumans: string[];
   notReached: {
@@ -331,7 +332,13 @@ export class TaskService {
       agentRows: written.agentRows,
       humans: written.humans,
       keys: [taskKey(task.number)],
-      result: { id: comment.id, deliveredTo, mentionedHumans, notReached },
+      result: {
+        id: comment.id,
+        createdAt: comment.createdAt,
+        deliveredTo,
+        mentionedHumans,
+        notReached,
+      },
     };
   }
 

@@ -31,6 +31,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   template: "dev",
   reportsTo: null,
   reports: 0,
+  openTasks: 0,
   credential: "work",
   projects: [],
   grantsOverridden: false,

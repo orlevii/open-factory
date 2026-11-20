@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
+import { tasks } from "./tasks.ts";
 
 /** Snapshot of live runtime state, taken every 10 s, used to reap leftovers and report lost work. */
 export type RuntimeJournal = {
@@ -150,6 +151,9 @@ export const messages = pgTable(
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
     deliveredTurnId: text("delivered_turn_id").references(() => turns.id, { onDelete: "set null" }),
+    // S8: task messages. (task_id, comment_id) is a composite foreign key to task_comments, added in SQL.
+    taskId: text("task_id").references((): AnyPgColumn => tasks.id),
+    commentId: text("comment_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },
@@ -166,7 +170,7 @@ export const inboxItems = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull().$type<"message">(),
+    kind: text("kind").notNull().$type<"message" | "mention" | "task_event">(),
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
@@ -176,6 +180,8 @@ export const inboxItems = pgTable(
   (t) => [
     uniqueIndex("inbox_items_user_message_unique").on(t.userId, t.messageId),
     index("inbox_items_user_created_idx").on(t.userId, t.createdAt.desc()),
+    // S8: the unread count.
+    index("inbox_items_unread_idx").on(t.userId).where(sql`${t.readAt} is null`),
   ],
 );
 export type InboxItemRow = typeof inboxItems.$inferSelect;

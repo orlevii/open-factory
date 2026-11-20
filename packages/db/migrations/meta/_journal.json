@@ -57,6 +57,13 @@
       "when": 1795138582026,
       "tag": "0007_strange_lady_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795171385245,
+      "tag": "0008_modern_mephisto",
+      "breakpoints": true
     }
   ]
 }

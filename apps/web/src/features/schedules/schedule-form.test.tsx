@@ -198,9 +198,8 @@ test("a server field error maps to its field", async () => {
   );
   await userEvent.type(screen.getByLabelText("Message"), "x");
   await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  expect(await screen.findByText("Server says no.")).toBeInTheDocument();
   await waitFor(() =>
-    expect(
-      screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" }),
-    ).toBeInTheDocument(),
+    expect(screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" })).toHaveFocus(),
   );
 });

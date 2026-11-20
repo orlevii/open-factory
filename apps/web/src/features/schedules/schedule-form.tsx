@@ -96,6 +96,21 @@ export function ScheduleForm({
   const { agents } = useAssignableAgents();
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 
+  // Live: a refreshed schedule updates the fields the user hasn't touched; edited fields are kept.
+  const serverValues = initial ? JSON.stringify(valuesOf(initial)) : "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a change on the server counts
+  useEffect(() => {
+    if (!initial) return;
+    const next = valuesOf(initial);
+    setV((cur) => {
+      const out = { ...cur };
+      for (const k of Object.keys(next) as (keyof FormValues)[])
+        if (cur[k] === base.current[k]) out[k] = next[k] as never;
+      return out;
+    });
+    base.current = next;
+  }, [serverValues]);
+
   const changed = (f: keyof FormValues) => v[f] !== base.current[f];
   const dirty = (Object.keys(v) as (keyof FormValues)[]).some(changed);
   useBlocker({
@@ -180,10 +195,7 @@ export function ScheduleForm({
     try {
       leaving.current = create; // a created schedule navigates away
       await onSubmit(payload());
-      if (!create) {
-        base.current = v;
-        setPending(false);
-      }
+      if (!create) setPending(false); // `base` follows the saved values through the refreshed `initial`
     } catch (err) {
       leaving.current = false;
       setPending(false);

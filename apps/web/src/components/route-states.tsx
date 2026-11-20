@@ -99,7 +99,7 @@ export function ResourceNotFound({
   detail = "It may have been renamed or deleted.",
 }: {
   title: string;
-  backTo: "/templates" | "/agents" | "/tasks";
+  backTo: "/templates" | "/agents" | "/tasks" | "/schedules";
   backLabel: string;
   /** The line under the title: tasks are never deleted, so theirs says which key was asked for. */
   detail?: string;

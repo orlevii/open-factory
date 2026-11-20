@@ -1,9 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, CircleAlert } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { ArrowRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
+import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
+import { onRowKeyDown } from "@/lib/row-nav";
 import { type InboxItem, useInbox } from "./api";
 
 const PREVIEW_MAX = 280;
@@ -77,24 +79,6 @@ function Row({ item, now }: { item: InboxItem; now: Date }) {
   );
 }
 
-const ErrorLine = ({
-  text,
-  onRetry,
-  autoFocus,
-}: {
-  text: string;
-  onRetry(): void;
-  autoFocus?: boolean;
-}) => (
-  <div className="flex items-center gap-2 text-sm">
-    <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-    <span className="min-w-0 text-destructive">{text}</span>
-    <Button variant="ghost" size="sm" onClick={onRetry} autoFocus={autoFocus}>
-      Retry
-    </Button>
-  </div>
-);
-
 /** The Inbox: a plain list of links, one per message sent to the humans (and factory items), newest
  *  first. Arrow keys also move between rows; Tab reaches every row link as usual. */
 export function InboxList() {
@@ -133,27 +117,13 @@ export function InboxList() {
       if (r.isSuccess && last !== undefined) setFocusAfter(last);
     });
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
-    if (!keys.includes(e.key) || !(e.target instanceof HTMLAnchorElement)) return;
-    const links = [...e.currentTarget.querySelectorAll<HTMLElement>("a")];
-    const i = links.indexOf(e.target);
-    const next =
-      e.key === "Home"
-        ? 0
-        : e.key === "End"
-          ? links.length - 1
-          : Math.min(links.length - 1, Math.max(0, i + (e.key === "ArrowDown" ? 1 : -1)));
-    e.preventDefault();
-    links[next]?.focus();
-  };
   const now = new Date();
   return (
     <div className="grid gap-4">
       <ul
         ref={list}
         aria-label="Inbox"
-        onKeyDown={onKeyDown}
+        onKeyDown={onRowKeyDown}
         className="border-y border-border [overflow-anchor:auto]"
       >
         {items.map((item) => (

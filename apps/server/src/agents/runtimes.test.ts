@@ -23,6 +23,9 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
     restartPending: false,
     restartWaitingOn: 0,
     waitingOn: { tasks: [], crons: 0 },
+    crons: [],
+    cronZone: expect.any(String),
+    stopCronsPending: false,
   });
   expect((await t.app.runtimes.liveFields(id, { status: "errored" })).status).toBe("errored");
   await t.app.runtimes.refresh(id); // no-op without a runtime

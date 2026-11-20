@@ -76,6 +76,15 @@ export function useSession(slug: string, eventSeq?: number) {
     if (state.needsReload) void load(eventSeq); // keeps a deep-link window
   }, [state.needsReload, load, eventSeq]);
 
+  // A load that failed while the server was away (a restart: 502, network) retries itself when the
+  // socket is back, keeping what is on screen meanwhile; the shell's reconnect strip covers the wait.
+  const errorRef = useRef(error);
+  errorRef.current = error;
+  useEffect(() => {
+    const failed = errorRef.current;
+    if (ws.openCount && failed && failed.code !== "agent_not_found") void load(eventSeq);
+  }, [ws.openCount, load, eventSeq]);
+
   const events = useMemo(() => eventsInOrder(state), [state]);
   const rows = useMemo(() => buildRows(events), [events]);
   const failedIds = useMemo(() => deliveryFailedIds(events), [events]);

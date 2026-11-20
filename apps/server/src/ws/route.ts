@@ -38,7 +38,7 @@ export async function wsRoutes(app: FastifyInstance) {
     // generation was superseded (by a later subscribe or an unsubscribe) and must not register anything.
     const generations = new Map<string, number>();
     let closed = false;
-    const offAll = app.bus.subscribeAll(send); // agent_status goes to every socket
+    const offAll = app.bus.subscribeAll(send); // agent_status and supervisor frames go to every socket
     socket.on("close", () => {
       closed = true;
       offAll();

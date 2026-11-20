@@ -1,16 +1,25 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type AgentRow, schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { loadConfig } from "../config.ts";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
+import { AgentStartError } from "./errors.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
 
 const KEY = "k".repeat(40);
@@ -21,6 +30,7 @@ let hs: string;
 let workspace: Workspace;
 let lock: KeyedMutex;
 let prepareStart: PrepareStart;
+let factoryConfig: Config;
 let agent: AgentRow;
 let seq = 0;
 const vault = new Vault(KEY);
@@ -87,10 +97,13 @@ async function seedStartFixture() {
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
   const fake = createFakeClaude({ scenario: "reply" });
+  const cliBundle = path.join(mkdtempSync(path.join(tmpdir(), "cli-")), "open-factory.js");
+  writeFileSync(cliBundle, "//");
   workspace = new Workspace({
     factoryHome: home,
     hostSkillsDir: hs,
     claudeBin: fake.bin,
+    cliBundle,
     lock,
   });
   const grants = [{ name: "app", hostPath: repo }];
@@ -108,14 +121,16 @@ async function seedStartFixture() {
       grants,
     },
   );
+  factoryConfig = loadConfig({
+    DATABASE_URL: t.url,
+    FACTORY_SECRET_KEY: KEY,
+    FACTORY_HOME: home,
+    FACTORY_ALLOW_LOCAL_RUNTIME: "true",
+    LOG_LEVEL: "silent",
+  });
   prepareStart = createPrepareStart({
     db: t.db,
-    config: loadConfig({
-      DATABASE_URL: t.url,
-      FACTORY_SECRET_KEY: KEY,
-      FACTORY_HOME: home,
-      LOG_LEVEL: "silent",
-    }),
+    config: factoryConfig,
     vault,
     workspace,
     lock,
@@ -190,13 +205,6 @@ test.each([
     "secrets",
   ],
   [
-    "docker",
-    async () =>
-      t.sql`update agents set runtime = 'docker', config = jsonb_set(config, '{runtime}', '"docker"')`,
-    "The Docker runtime isn't available yet.",
-    undefined,
-  ],
-  [
     "bad key",
     async () => t.sql`update credentials set value_enc = ${Buffer.from([1, 2, 3])}`,
     "Can't decrypt credential work. Was FACTORY_SECRET_KEY changed?",
@@ -263,4 +271,50 @@ test("an invalid stored config is an AgentStartError with the edit_agent fix", a
     name: "AgentStartError",
     fix: "edit_agent",
   });
+});
+
+test("prepare fails closed when .claude-config is a symlink to a host dir", async () => {
+  const hostDir = mkdtempSync(path.join(tmpdir(), "host-"));
+  const workdir = workspace.workdir(agent.slug);
+  rmSync(`${workdir}/.claude-config`, { recursive: true, force: true });
+  symlinkSync(hostDir, `${workdir}/.claude-config`);
+  await expect(prepareStart(agent)).rejects.toThrow(AgentStartError);
+  await expect(prepareStart(agent)).rejects.toThrow(/is a symlink/);
+  expect(readdirSync(hostDir)).toEqual([]);
+});
+
+test("gate off: local start fails closed with fix=runtime, before prepare; nothing is touched", async () => {
+  const prepare = vi.spyOn(workspace, "prepare");
+  factoryConfig.allowLocalRuntime = false;
+  try {
+    await expect(prepareStart(agent)).rejects.toMatchObject({
+      name: "AgentStartError",
+      message:
+        "The local runtime is disabled on this factory. Set FACTORY_ALLOW_LOCAL_RUNTIME=true to run agents unsandboxed.",
+      fix: "runtime",
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    factoryConfig.allowLocalRuntime = true;
+    prepare.mockRestore();
+  }
+});
+
+test("gate on: local starts as before", async () => {
+  const spec = await prepareStart(agent);
+  expect(spec.runtime).toBe("local");
+});
+
+test("gate off: a docker agent is never gated", async () => {
+  await t.db.update(schema.agents).set({ runtime: "docker" }).where(eq(schema.agents.id, agent.id));
+  factoryConfig.allowLocalRuntime = false;
+  try {
+    const outcome = await prepareStart(await reload(agent.id)).then(
+      () => "started",
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toMatchObject({ fix: "runtime" });
+  } finally {
+    factoryConfig.allowLocalRuntime = true;
+  }
 });

@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
-import { createFakeClaude } from "../../testing/index.ts";
+import { createFakeClaude, FakeTransport } from "../../testing/index.ts";
+import { localTransport } from "../transport/local.ts";
 import { type AgentRuntimeSpec, ProcessNotRunningError } from "../types.ts";
 import { buildClaudeArgs } from "./args.ts";
-import { createClaudeDriver, StderrTail } from "./process.ts";
+import { createClaudeDriver } from "./driver.ts";
+import { ClaudeProcess, StderrTail } from "./process.ts";
 
 const spec = (bin: string, over: Partial<AgentRuntimeSpec> = {}): AgentRuntimeSpec => ({
   agentId: "a1",
@@ -59,7 +61,7 @@ test("args: fixed flags, resume and model only when given", () => {
 
 test("send writes one envelope turn; events are mapped; env passes through unchanged", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
-  const p = createClaudeDriver().start(spec(fake.bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
   const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
   await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }]);
@@ -89,7 +91,7 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
 
 test("runs in its own process group", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
-  const p = createClaudeDriver().start(spec(fake.bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   await new Promise((r) => setTimeout(r, 200));
   // the wrapper execs node, so the pid is the fake itself
   const pgid = Number(
@@ -103,7 +105,7 @@ test("runs in its own process group", async () => {
 
 test("compact writes /compact with focus and marks the mapper so a failure is manual", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
-  const p = createClaudeDriver().start(spec(fake.bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
   const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
   await p.control("compact", "keep the API");
@@ -120,7 +122,7 @@ test("compact writes /compact with focus and marks the mapper so a failure is ma
 
 test("interrupt writes a control_request", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
-  const p = createClaudeDriver().start(spec(fake.bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
   const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
   await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "ping" }]);
@@ -142,7 +144,7 @@ test("interrupt writes a control_request", async () => {
 
 test("stop closes stdin; the process exits 0 and emits exited{expected:true}", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
-  const p = createClaudeDriver().start(spec(fake.bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
   const all = collectUntil(p.events, () => false, events);
   const info = await p.stop({ graceMs: 3000 });
@@ -156,7 +158,7 @@ test("stop closes stdin; the process exits 0 and emits exited{expected:true}", a
 
 test("stop falls back to SIGTERM when the process doesn't exit on stdin close", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
-  const p = createClaudeDriver().start(spec(fake.bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "ping" }]);
   await new Promise((r) => setTimeout(r, 300));
   const info = await p.stop({ graceMs: 200, termWaitMs: 5000 });
@@ -165,7 +167,7 @@ test("stop falls back to SIGTERM when the process doesn't exit on stdin close", 
 
 test("resume of an unknown id maps to a resume error and exits 1", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
-  const p = createClaudeDriver().start(spec(fake.bin), {
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {
     resumeSessionId: "00000000-0000-4000-8000-000000000009",
   });
   const events: HarnessEvent[] = [];
@@ -179,7 +181,10 @@ test("resume of an unknown id maps to a resume error and exits 1", async () => {
 });
 
 test("a missing binary is a spawn error followed by exited", async () => {
-  const p = createClaudeDriver().start(spec("/nonexistent/claude"), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(
+    spec("/nonexistent/claude"),
+    {},
+  );
   const events: HarnessEvent[] = [];
   await collectUntil(p.events, () => false, events);
   expect(events.map((e) => e.type)).toEqual(["error", "exited"]);
@@ -199,7 +204,7 @@ const scriptBin = (body: string) => {
 
 test("an unexpected exit carries the stderr tail in exited", async () => {
   const bin = scriptBin("echo boom-1 >&2\necho boom-2 >&2\nexit 3");
-  const p = createClaudeDriver().start(spec(bin), {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(bin), {});
   const events: HarnessEvent[] = [];
   await collectUntil(p.events, () => false, events);
   expect(events.at(-1)).toMatchObject({
@@ -236,10 +241,79 @@ test("stop reports timedOut when the process ignores SIGTERM", async () => {
     `trap '' TERM\ntouch "$READY"\ni=0\nwhile [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done`,
   );
   const base = spec(bin);
-  const p = createClaudeDriver().start({ ...base, env: { ...base.env, READY: ready } }, {});
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(
+    { ...base, env: { ...base.env, READY: ready } },
+    {},
+  );
   while (!existsSync(ready)) await new Promise((r) => setTimeout(r, 20));
   const info = await p.stop({ graceMs: 100, termWaitMs: 200 });
   expect(info).toEqual({ code: null, signal: null, timedOut: true });
   // let it finish on its own so the test leaves no process behind
   await new Promise((r) => setTimeout(r, 3200));
+});
+
+test("stop() is idempotent: one stdin close, one SIGTERM, one promise", async () => {
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t);
+  const a = p.stop({ graceMs: 10, termWaitMs: 1000 });
+  const b = p.stop({ graceMs: 10, termWaitMs: 1000 });
+  expect(a).toBe(b);
+  await new Promise((r) => setTimeout(r, 50));
+  t.exitWith(143);
+  await a;
+  expect(t.endInputCalls).toBe(1);
+  expect(t.terminateCalls).toBe(1);
+});
+
+test("terminate() returning false falls through to the timeout", async () => {
+  const t = new FakeTransport({ terminateResult: false });
+  const p = new ClaudeProcess(spec("c"), {}, t);
+  await expect(p.stop({ graceMs: 5, termWaitMs: 5 })).resolves.toMatchObject({ timedOut: true });
+});
+
+test("forceKill reaches the transport", async () => {
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t);
+  await p.forceKill();
+  expect(t.forceKillCalls).toBe(1);
+});
+
+test("a throwing mapper line is logged and exited is still emitted", async () => {
+  const warns: string[] = [];
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t, {
+    debug() {},
+    error() {},
+    warn: (_o, msg) => void warns.push(msg),
+  });
+  // `message` is a getter that throws, so the mapper blows up on this line.
+  const bad = '{"type":"assistant"}';
+  const orig = JSON.parse;
+  JSON.parse = ((s: string, r?: never) =>
+    s === bad
+      ? Object.defineProperty({ type: "system" }, "subtype", {
+          get() {
+            throw new Error("boom");
+          },
+        })
+      : orig(s, r)) as typeof JSON.parse;
+  try {
+    t.emitStdout(bad);
+    t.exitWith(0);
+    const events: HarnessEvent[] = [];
+    await collectUntil(p.events, () => false, events);
+    expect(events.at(-1)).toMatchObject({ type: "exited" });
+    expect(warns).toContain("could not map stdout line");
+  } finally {
+    JSON.parse = orig;
+  }
+});
+
+test("FakeTransport.write rejects after endInput and after exit", async () => {
+  const a = new FakeTransport();
+  a.endInput();
+  await expect(a.write("x")).rejects.toBeInstanceOf(ProcessNotRunningError);
+  const b = new FakeTransport();
+  b.exitWith(0);
+  await expect(b.write("x")).rejects.toBeInstanceOf(ProcessNotRunningError);
 });

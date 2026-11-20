@@ -6,8 +6,41 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_FOCUS_CHARS = 2000;
 const utf8 = new TextEncoder();
 
-export const agentStatusSchema = z.enum(["hibernated", "working", "idle", "errored"]);
+export const agentStatusSchema = z.enum([
+  "hibernated",
+  "queued",
+  "working",
+  "idle",
+  "rate_limited",
+  "errored",
+]);
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
+export const errorKindSchema = z.enum([
+  "start",
+  "resume",
+  "resume_unrecoverable",
+  "crash",
+  "stop_failed",
+  "internal",
+]);
+export type ErrorKind = z.infer<typeof errorKindSchema>;
+
+export const waitingOnSchema = z.object({
+  tasks: z.array(z.object({ taskId: z.string(), description: z.string(), startedAt: z.string() })),
+  crons: z.number().int().nonnegative(),
+});
+export type WaitingOn = z.infer<typeof waitingOnSchema>;
+
+/** Live fields shared by the agent summary and the `agent_status` frame. */
+export const agentLiveShape = {
+  rateLimitedUntil: z.string().optional(),
+  rateLimitExact: z.boolean().optional(),
+  runtimeDisabled: z.string().optional(),
+  errorKind: errorKindSchema.optional(),
+  image: z.string().optional(),
+  pulling: z.boolean().optional(),
+};
 
 export const agentSummarySchema = z.object({
   slug: z.string(),
@@ -27,12 +60,14 @@ export const agentSummarySchema = z.object({
   archivedAt: z.string().nullable(),
   restartPending: z.boolean(),
   restartWaitingOn: z.number().int().nonnegative(),
+  waitingOn: waitingOnSchema.default({ tasks: [], crons: 0 }),
+  ...agentLiveShape,
 });
 export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact"]),
+  kind: z.enum(["message", "compact", "notice"]),
   body: z.string().optional(),
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
@@ -41,7 +76,10 @@ export const queueItemSchema = z.object({
 });
 export type QueueItem = z.infer<typeof queueItemSchema>;
 
-export const agentListSchema = z.object({ agents: z.array(agentSummarySchema) });
+export const agentListSchema = z.object({
+  agents: z.array(agentSummarySchema),
+  running: z.object({ count: z.number().int().nonnegative(), max: z.number().int().positive() }),
+});
 export const agentDetailSchema = z.object({
   agent: agentSummarySchema,
   queue: z.array(queueItemSchema),
@@ -100,4 +138,5 @@ export const agentResponseSchema = z.object({ agent: agentSummarySchema });
 export const resyncResponseSchema = z.object({
   agent: agentSummarySchema,
   backupDir: z.string().optional(),
+  applied: z.enum(["now", "on_restart"]),
 });

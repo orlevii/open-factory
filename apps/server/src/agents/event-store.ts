@@ -1,10 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { type Db, schema } from "@open-factory/db";
-import { type AnyEvent, anyEventSchema, type SessionEvent } from "@open-factory/shared";
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
+import {
+  type AnyEvent,
+  anyEventSchema,
+  type ErrorKind,
+  type SessionEvent,
+} from "@open-factory/shared";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { capPayload } from "./cap.ts";
+import type { NoticeType } from "./notices.ts";
 
-const { agents, sessionEvents, turns, messages } = schema;
+const { agents, credentials, sessionEvents, turns, messages } = schema;
+type MessageRow = typeof messages.$inferSelect;
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Exec = Db | Tx;
 
@@ -37,6 +56,149 @@ export class EventStore {
   }
   async setStatus(agentId: string, status: "hibernated" | "errored") {
     await this.db.update(agents).set({ status }).where(eq(agents.id, agentId));
+  }
+  /** Errored with its reason (spec §8.3). An error ends any attempt in progress, so `attempting` clears too. */
+  async setErrored(agentId: string, message: string, kind: ErrorKind) {
+    await this.db
+      .update(agents)
+      .set({ status: "errored", lastError: message, errorKind: kind, attempting: false })
+      .where(eq(agents.id, agentId));
+  }
+  /** An attempt succeeded (spec §9.2): the error and the attempt clear together. */
+  async clearErrored(agentId: string) {
+    await this.db
+      .update(agents)
+      .set({ status: "hibernated", lastError: null, errorKind: null, attempting: false })
+      .where(eq(agents.id, agentId));
+  }
+  async setAttempting(agentId: string, attempting: boolean) {
+    await this.db.update(agents).set({ attempting }).where(eq(agents.id, agentId));
+  }
+  /** Replaces the whole journal (spec §12); null clears it. */
+  async setRuntimeJournal(agentId: string, runtimeJournal: RuntimeJournal | null) {
+    await this.db.update(agents).set({ runtimeJournal }).where(eq(agents.id, agentId));
+  }
+  /**
+   * Boot (spec §5.7 step 4): every agent still `attempting` was in an attempt when the server stopped. It becomes
+   * errored (its error kept when it already had one, else `crash` with `message`) and the attempt clears. Returns ids.
+   */
+  async failCutShortAttempts(message: string): Promise<string[]> {
+    const rows = await this.db
+      .update(agents)
+      .set({
+        status: "errored",
+        lastError: sql`coalesce(${agents.lastError}, ${message})`,
+        errorKind: sql`coalesce(${agents.errorKind}, 'crash')`,
+        attempting: false,
+      })
+      .where(eq(agents.attempting, true))
+      .returning({ id: agents.id });
+    return rows.map((r) => r.id);
+  }
+  /**
+   * Boot (spec §5.7 step 6): the non-archived, non-errored agents with pending items, by their oldest pending item
+   * (FIFO across the restart). `resume` when a factory-restarted notice is among them.
+   */
+  async bootWakes(): Promise<{ id: string; slug: string; resume: boolean }[]> {
+    const rows = await this.db
+      .select({
+        id: agents.id,
+        slug: agents.slug,
+        resume: sql<boolean>`bool_or(${messages.notice} = 'factory_restarted')`,
+      })
+      .from(agents)
+      .innerJoin(messages, and(eq(messages.toAgentId, agents.id), eq(messages.state, "pending")))
+      .where(and(isNull(agents.archivedAt), sql`${agents.status} <> 'errored'`))
+      .groupBy(agents.id, agents.slug)
+      .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
+    return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
+  }
+  /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
+  async clearRuntimeJournals(keep: string[] = []) {
+    await this.db
+      .update(agents)
+      .set({ runtimeJournal: null })
+      .where(
+        and(
+          isNotNull(agents.runtimeJournal),
+          ...(keep.length ? [notInArray(agents.id, keep)] : []),
+        ),
+      );
+  }
+  /** The cut-off agent is owed one continue notice at the reset (spec §7.3). */
+  async setNoticeOwed(agentId: string, owed: boolean) {
+    await this.db.update(agents).set({ rateLimitNoticeOwed: owed }).where(eq(agents.id, agentId));
+  }
+  /** The non-archived agents on the credential that are owed a continue notice. */
+  async owedAgents(credentialId: string): Promise<{ id: string; slug: string }[]> {
+    return this.db
+      .select({ id: agents.id, slug: agents.slug })
+      .from(agents)
+      .where(
+        and(
+          eq(agents.credentialId, credentialId),
+          eq(agents.rateLimitNoticeOwed, true),
+          isNull(agents.archivedAt),
+        ),
+      )
+      .orderBy(asc(agents.slug));
+  }
+
+  // credentials (rate-limit pauses, spec §7.2)
+  /**
+   * Pauses the credential until `until`. A later window wins; it never shortens. Returns the window in force
+   * afterwards (the stored one when this one was shorter) and the credential's name.
+   */
+  async pauseCredential(
+    id: string,
+    until: Date,
+    exact: boolean,
+  ): Promise<{ name: string; until: Date; exact: boolean }> {
+    const at = sql`${until.toISOString()}::timestamptz`;
+    const longer = sql`(${credentials.rateLimitedUntil} is null or ${credentials.rateLimitedUntil} < ${at})`;
+    const [row] = await this.db
+      .update(credentials)
+      .set({
+        rateLimitedUntil: sql`case when ${longer} then ${at} else ${credentials.rateLimitedUntil} end`,
+        rateLimitExact: sql`case when ${longer} then ${exact} else ${credentials.rateLimitExact} end`,
+      })
+      .where(eq(credentials.id, id))
+      .returning({
+        name: credentials.name,
+        until: credentials.rateLimitedUntil,
+        exact: credentials.rateLimitExact,
+      });
+    if (!row?.until) throw new Error(`credential ${id} not found`);
+    return { name: row.name, until: row.until, exact: row.exact };
+  }
+  /** Clears the pause; with `until`, only a window that ends by then (a later one landed meanwhile: keep it). */
+  async clearCredentialPause(id: string, until?: Date) {
+    await this.db
+      .update(credentials)
+      .set({ rateLimitedUntil: null, rateLimitExact: true })
+      .where(
+        and(eq(credentials.id, id), ...(until ? [lte(credentials.rateLimitedUntil, until)] : [])),
+      );
+  }
+  /** Every credential with a stored pause, past or future (boot re-arms or clears them). */
+  async pausedCredentials(): Promise<{ id: string; name: string; until: Date; exact: boolean }[]> {
+    const rows = await this.db
+      .select({
+        id: credentials.id,
+        name: credentials.name,
+        until: credentials.rateLimitedUntil,
+        exact: credentials.rateLimitExact,
+      })
+      .from(credentials)
+      .where(isNotNull(credentials.rateLimitedUntil));
+    return rows.flatMap((r) => (r.until ? [{ ...r, until: r.until }] : []));
+  }
+  async credentialName(id: string): Promise<string | undefined> {
+    const [row] = await this.db
+      .select({ name: credentials.name })
+      .from(credentials)
+      .where(eq(credentials.id, id));
+    return row?.name;
   }
 
   // events
@@ -169,6 +331,19 @@ export class EventStore {
       .where(eq(turns.id, turnId));
   }
 
+  /**
+   * Boot (spec §5.7 step 3): turns still open when the server stopped are closed as `factory_restarted`, errors.
+   * Returns the ids of the agents that had one.
+   */
+  async closeDanglingTurns(): Promise<string[]> {
+    const rows = await this.db
+      .update(turns)
+      .set({ endedAt: new Date(), isError: true, terminalReason: "factory_restarted" })
+      .where(isNull(turns.endedAt))
+      .returning({ agentId: turns.agentId });
+    return [...new Set(rows.map((r) => r.agentId))];
+  }
+
   // messages
   async createMessage(m: { fromUserId: string; toAgentId: string; body: string; urgent: boolean }) {
     const [row] = await this.db
@@ -185,14 +360,62 @@ export class EventStore {
       .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
       .orderBy(asc(messages.createdAt), asc(messages.id));
   }
-  /** Pending messages in order, with the sender's handle (for envelopes and queue items). */
-  async pendingQueue(agentId: string) {
+  /**
+   * A system notice from `@factory`. One pending notice of each type per agent: a second one replaces the pending
+   * one's body (same row); a written (delivered) one is never touched.
+   */
+  async createNotice(
+    m: { toAgentId: string; notice: NoticeType; body: string },
+    /** Ids written to a process but not yet marked delivered: never replaced. */
+    inFlightIds: string[] = [],
+  ): Promise<MessageRow> {
+    const [existing] = await this.db
+      .update(messages)
+      .set({ body: m.body })
+      .where(
+        and(
+          eq(messages.toAgentId, m.toAgentId),
+          eq(messages.kind, "system"),
+          eq(messages.notice, m.notice),
+          eq(messages.state, "pending"),
+          ...(inFlightIds.length ? [notInArray(messages.id, inFlightIds)] : []),
+        ),
+      )
+      .returning();
+    if (existing) return existing;
+    const [row] = await this.db
+      .insert(messages)
+      .values({
+        id: randomUUID(),
+        kind: "system",
+        notice: m.notice,
+        toAgentId: m.toAgentId,
+        body: m.body,
+      })
+      .returning();
+    if (!row) throw new Error("insert returned no row");
+    return row;
+  }
+  /** Pending system notices describe the old session; "Start a new session" drops them. */
+  async deletePendingNotices(agentId: string): Promise<void> {
+    await this.db
+      .delete(messages)
+      .where(
+        and(
+          eq(messages.toAgentId, agentId),
+          eq(messages.kind, "system"),
+          eq(messages.state, "pending"),
+        ),
+      );
+  }
+  /** Pending items in delivery order (system notices first, then by age), with the sender's handle (null for `@factory`). */
+  async pendingQueue(agentId: string): Promise<(MessageRow & { fromHandle: string | null })[]> {
     const rows = await this.db
       .select({ m: messages, fromHandle: schema.users.handle })
       .from(messages)
-      .innerJoin(schema.users, eq(schema.users.id, messages.fromUserId))
+      .leftJoin(schema.users, eq(schema.users.id, messages.fromUserId))
       .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
-      .orderBy(asc(messages.createdAt), asc(messages.id));
+      .orderBy(sql`(${messages.kind} = 'system') desc`, asc(messages.createdAt), asc(messages.id));
     return rows.map((r) => ({ ...r.m, fromHandle: r.fromHandle }));
   }
   async markDelivered(ids: string[], tx: Exec = this.db) {

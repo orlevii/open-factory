@@ -232,6 +232,32 @@ const windowAround5 = () => {
 const page = (events: ReturnType<typeof se>[], before = false) =>
   json({ events, hasMore: { before, after: false } });
 
+test("a server restart: a reload that hits a 502 keeps the session on screen and retries when the socket is back", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  routes["/api/agents/dev"] = () =>
+    json({ error: { code: "bad_gateway", message: "Bad Gateway" } }, 502);
+  act(() => ws.onMessage?.({ type: "resync", agent: "dev" }));
+  expect(await screen.findByText(/Couldn't load this session/)).toBeInTheDocument();
+  expect(screen.getByText("Two entries.")).toBeInTheDocument(); // the last data stays
+  expect(screen.queryByRole("heading", { name: "Something went wrong." })).toBeNull();
+  routes["/api/agents/dev"] = () => json(detail());
+  act(() => ws.reopen());
+  await vi.waitFor(() => expect(screen.queryByText(/Couldn't load this session/)).toBeNull());
+  expect(screen.getByText("Two entries.")).toBeInTheDocument();
+});
+
+test("a first load that fails before the server is back retries itself on reconnect", async () => {
+  routes["/api/agents/dev"] = () =>
+    json({ error: { code: "bad_gateway", message: "Bad Gateway" } }, 502);
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByText(/Couldn't load this session/)).toBeInTheDocument();
+  routes["/api/agents/dev"] = () => json(detail());
+  act(() => ws.reopen());
+  expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
+  expect(screen.queryByText(/Couldn't load this session/)).toBeNull();
+});
+
 test("window mode: a reconnect resubscribes after the newest counted seq and doesn't double count", async () => {
   windowAround5();
   renderApp("/agents/dev?event=5", alice);
@@ -506,10 +532,10 @@ test("restart pending: the strip says so with the waiting count; Why? explains i
   expect(
     screen.getByText("Restarts when idle to apply changes (waiting on 1 background task)"),
   ).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Why?" }));
+  await userEvent.click(screen.getByRole("button", { name: "Why does it restart?" }));
   expect(
     await screen.findByText(
-      "The agent finishes its current work, then restarts with the new settings. Its session is kept. Reminders it scheduled in this session are lost.",
+      "The agent finishes its current turn and background tasks, then restarts with the new settings. Its session is kept. Its crons from this session stop, and it's told which, so it can recreate them.",
     ),
   ).toBeInTheDocument();
 });
@@ -663,17 +689,28 @@ test("an error with fix edit_agent links to the edit page", async () => {
   );
 });
 
-test("a resume error names pnpm agent:reset-session with the slug", async () => {
+test("an error with fix resync links to the agent's Re-sync", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message: "Re-sync @dev to reinstall its plugins into the factory-managed location.",
+    fix: "resync",
+  });
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("link", { name: "Re-sync the agent" })).toHaveAttribute(
+    "href",
+    "/agents/dev/edit",
+  );
+});
+
+test("a resume error no longer names the interim reset script", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "resume",
     message: "No conversation found",
   });
   renderApp("/agents/dev", alice);
-  const hint = await screen.findByText(/To start a new session/);
-  expect(hint.textContent).toBe(
-    "To start a new session: stop the server, run pnpm agent:reset-session dev, then start it again.",
-  );
-  expect(within(hint).getByText("pnpm agent:reset-session dev").tagName).toBe("CODE");
+  expect(await screen.findByText("No conversation found")).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/agent:reset-session|stop the server/);
   expect(document.body.textContent).not.toMatch(/seed:dev-agent/);
 });

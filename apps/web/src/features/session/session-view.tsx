@@ -1,3 +1,5 @@
+import type { AgentSummary } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -6,29 +8,26 @@ import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentStrip } from "./agent-strip";
+import { runningQueryOptions } from "./api";
 import { CompactPopover } from "./compact-popover";
 import { Composer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
 import { QueueItems } from "./queue-items";
+import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
-import { StatusBadge } from "./status-badge";
+import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { Timeline } from "./timeline";
 import { useAgentStatusFrames } from "./use-agent-status";
 import { useSession } from "./use-session";
-
-const STATUS_LABEL = {
-  hibernated: "Hibernated",
-  working: "Working",
-  idle: "Idle",
-  errored: "Errored",
-} as const;
 
 export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: number }) {
   useAgentStatusFrames();
   const s = useSession(slug, eventSeq);
   const navigate = useNavigate();
   const agent = s.state.agent;
-  const announce = useAnnouncer(agent?.displayName ?? slug, agent?.status, s.rows, !!agent);
+  const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
+  // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
+  const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   if (s.error?.code === "agent_not_found") return <NotFound />;
   if (!agent) {
     if (!s.error) return null; // the route's pending component covers the first load
@@ -53,11 +52,25 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
       )}
       <PageHeader
         title={agent.displayName}
-        documentTitle={`${STATUS_LABEL[agent.status]} · ${agent.displayName}`}
-        meta={<StatusBadge status={agent.status} />}
-        actions={<SessionActions slug={slug} turnOpen={agent.turnOpen} archived={archived} />}
+        documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
+        meta={
+          <>
+            <span className="max-md:hidden">
+              <StatusBadge
+                status={agent.status}
+                rateLimitedUntil={agent.rateLimitedUntil}
+                rateLimitExact={agent.rateLimitExact}
+                size="long"
+              />
+            </span>
+            <span className="md:hidden">
+              <StatusBadge status={agent.status} size="short" />
+            </span>
+          </>
+        }
+        actions={<SessionActions agent={agent} archived={archived} />}
       />
-      <AgentStrip agent={agent} />
+      <AgentStrip agent={agent} slotsMax={running.data?.max} />
       {s.missingEvent !== undefined && (
         <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
           Event {s.missingEvent} isn't in this session. Showing the latest.
@@ -80,7 +93,7 @@ export function SessionView({ slug, eventSeq }: { slug: string; eventSeq?: numbe
                 {archived ? "No messages yet." : "No messages yet. Send the first one below."}
               </p>
             )}
-            <QueueItems items={s.state.queue} lastError={agent.lastError} />
+            <QueueItems items={s.state.queue} agent={agent} />
             {working && (
               <p
                 data-working-line
@@ -142,7 +155,10 @@ function LoadError({ message, onRetry }: { message: string; onRetry(): void }) {
 }
 
 /** Announces replies, errors and status changes only (never every tool call). */
-function useAnnouncer(name: string, status: string | undefined, rows: Row[], loaded: boolean) {
+function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[], loaded: boolean) {
+  const status = agent?.status;
+  const until = agent?.rateLimitedUntil;
+  const exact = agent?.rateLimitExact;
   const prevStatus = useRef(status);
   const prevErrors = useRef<number | undefined>(undefined);
   const [msg, setMsg] = useState("");
@@ -151,10 +167,10 @@ function useAnnouncer(name: string, status: string | undefined, rows: Row[], loa
       setMsg(
         prevStatus.current === "working" && status === "idle"
           ? `${name} replied`
-          : `${name} is ${status}`,
+          : statusAnnouncement(name, status, { rateLimitedUntil: until, rateLimitExact: exact }),
       );
     prevStatus.current = status;
-  }, [status, name]);
+  }, [status, name, until, exact]);
   const errorCount = rows.filter((r) => r.kind === "error").length;
   const lastError = rows.findLast((r): r is Extract<Row, { kind: "error" }> => r.kind === "error");
   useEffect(() => {
@@ -166,15 +182,8 @@ function useAnnouncer(name: string, status: string | undefined, rows: Row[], loa
   return msg;
 }
 
-function SessionActions({
-  slug,
-  turnOpen,
-  archived,
-}: {
-  slug: string;
-  turnOpen: boolean;
-  archived: boolean;
-}) {
+function SessionActions({ agent, archived }: { agent: AgentSummary; archived: boolean }) {
+  const slug = agent.slug;
   return (
     <>
       <Tooltip>
@@ -188,13 +197,15 @@ function SessionActions({
         </TooltipTrigger>
         <TooltipContent className="md:hidden">Edit</TooltipContent>
       </Tooltip>
-      {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). */}
-      {!archived && (
+      {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). While
+          errored, the recovery actions replace them, so the header never holds more than two. */}
+      {!archived && agent.status !== "errored" && (
         <>
           <CompactPopover slug={slug} />
-          <InterruptButton slug={slug} turnOpen={turnOpen} />
+          <InterruptButton slug={slug} turnOpen={agent.turnOpen} />
         </>
       )}
+      {!archived && <RecoveryActions agent={agent} />}
     </>
   );
 }

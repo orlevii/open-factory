@@ -67,7 +67,7 @@ test("the slug is prefilled from the template name only when it's free", async (
   expect(field("Slug").value).toBe("");
 });
 
-test("a docker template shows the runtime warning and the summary", async () => {
+test("a docker template shows the summary and no runtime warning", async () => {
   mockWorld({
     details: {
       lead: templateDetail(
@@ -82,13 +82,29 @@ test("a docker template shows the runtime warning and the summary", async () => 
   });
   renderApp("/agents/new?template=lead", alice);
   await ready();
-  expect(
-    screen.getByText(
-      "Agents from this template can't start yet: the Docker runtime isn't available.",
-    ),
-  ).toBeInTheDocument();
+  expect(screen.queryByText(/can't start yet/)).not.toBeInTheDocument();
   expect(
     screen.getByText("Docker · model opus · skills: grilling · plugins: 1"),
+  ).toBeInTheDocument();
+});
+
+test("a local template with the gate off shows the validator's warning", async () => {
+  mockWorld({
+    details: {
+      lead: templateDetail(templateConfig({ runtime: "local" }), [
+        {
+          severity: "warning",
+          file: "template.yaml",
+          message: "The local runtime is disabled on this factory.",
+          path: "runtime",
+        },
+      ]),
+    },
+  });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  expect(
+    await screen.findByText("The local runtime is disabled on this factory."),
   ).toBeInTheDocument();
 });
 
@@ -283,7 +299,7 @@ test("Edit: saving a running agent says it restarts when idle", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(
     await screen.findByText(
-      "Saved. The agent restarts when idle to apply the changes. Reminders it scheduled in this session are lost.",
+      "Saved. The agent restarts when idle to apply the changes. Its crons from this session stop.",
     ),
   ).toBeInTheDocument();
   expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ displayName: "Boss" });

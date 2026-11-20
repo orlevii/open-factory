@@ -9,6 +9,7 @@ import { UndoArchiveLine } from "@/features/agents/agent-actions";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { PrerequisiteLine, usePrerequisites } from "@/features/agents/prerequisites";
+import { runningQueryOptions } from "@/features/session/api";
 import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 
 export const Route = createFileRoute("/_app/agents/")({
@@ -38,7 +39,12 @@ function AgentsPage() {
     <>
       <PageHeader
         title="Agents"
-        meta={<ArchivedFilter value={filter} />}
+        meta={
+          <>
+            {filter === "exclude" && <RunningCount />}
+            <ArchivedFilter value={filter} />
+          </>
+        }
         actions={
           <Button variant="ghost" asChild>
             <Link to="/agents/new" title="New agent">
@@ -93,6 +99,18 @@ function EmptyAgents() {
       invalidTemplate={p.invalidTemplate}
       prefix="No agents yet."
     />
+  );
+}
+
+/** "3 of 8 running", live from the `supervisor` frame; hidden on Archived and below md. */
+function RunningCount() {
+  // Filled by the list fetch on this page and by supervisor frames: no fetch of its own.
+  const { data } = useQuery({ ...runningQueryOptions, enabled: false });
+  if (!data) return null;
+  return (
+    <span className="ml-2 text-[0.8125rem] leading-[1.125rem] whitespace-nowrap text-muted-foreground max-md:hidden">
+      {data.count} of {data.max} running
+    </span>
   );
 }
 

@@ -1,5 +1,12 @@
+import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import { AgentRuntime, type RuntimeLog } from "./agent-runtime.ts";
+import { errorKindSchema } from "@open-factory/shared";
+import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import type { ContainerManager } from "../runtime/docker/containers.ts";
+import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
+import type { ProcessJournal } from "../runtime/local/journal.ts";
+import { Supervisor } from "../supervisor/supervisor.ts";
+import { AgentRuntime, type CleanupResult, type RuntimeLog } from "./agent-runtime.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import type { PrepareStart } from "./start.ts";
@@ -11,14 +18,118 @@ export interface RuntimesDeps {
   prepareStart: PrepareStart;
   log: RuntimeLog;
   holdTimeoutMs?: number;
+  /** The server's own env; only its PATH and HOME reach the version check. */
+  serverEnv?: NodeJS.ProcessEnv;
+  /** The cap (`FACTORY_MAX_RUNNING_AGENTS`); defaults to the config default. */
+  maxRunningAgents?: number;
+  /**
+   * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake
+   * process's pid is not ours, and must never be journaled or signalled.
+   */
+  journal?: ProcessJournal;
+  /** The local gate, read live (`() => localRuntimeAllowed(config)`). */
+  localRuntimeAllowed?: () => boolean;
+  /**
+   * The Docker runtime (spec §11): the one ContainerManager built in buildApp (never a second one), the in-container
+   * Claude path and the default image.
+   */
+  docker?: {
+    containers: Pick<ContainerManager, "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove">;
+    claudeBin: string;
+    defaultImage: string;
+  };
+}
+
+/**
+ * The local cleanup (spec §9.2 step 1, §12): reap the processes `runtime_journal` names now, each only while its start
+ * time still matches. Docker agents have nothing here (`dockerCleanup` stops their container).
+ */
+export function localCleanup(
+  store: Pick<EventStore, "agentById">,
+  journal: Pick<ProcessJournal, "reap">,
+): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+  return async (agent) => {
+    if (agent.runtime !== "local") return undefined;
+    let j: AgentRow["runtimeJournal"] | undefined;
+    try {
+      j = (await store.agentById(agent.id))?.runtimeJournal;
+    } catch (err) {
+      // The process did exit: what failed is the DB read, so nothing could be verified or reaped.
+      throw new Error("Reading the runtime journal from the database failed; nothing was reaped", {
+        cause: err,
+      });
+    }
+    if (!j?.claude && !j?.descendants?.length) return undefined;
+    const killedProcesses = await journal.reap(j);
+    return killedProcesses ? { killedProcesses } : undefined;
+  };
+}
+
+/**
+ * The Docker cleanup (spec §9.2 step 1, §9.6, §11.3): stop the agent's container (bounded `stop({t: 5})`, never
+ * removed), which kills everything in it, background shells included. A Docker error throws: the caller makes the
+ * agent `stop_failed`, keeping its slot.
+ */
+export function dockerCleanup(
+  containers: Pick<ContainerManager, "stopIfRunning">,
+): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+  return async (agent) => {
+    if (agent.runtime !== "docker") return undefined;
+    return (await containers.stopIfRunning(agent.id, agent.slug))
+      ? { container: "stopped" }
+      : undefined;
+  };
+}
+
+/** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
+ *  agent's env or its agent-writable `CLAUDE_CONFIG_DIR`, only `PATH` and the host `HOME`. */
+export function versionCheckEnv(serverEnv: NodeJS.ProcessEnv): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (serverEnv.PATH) env.PATH = serverEnv.PATH;
+  if (serverEnv.HOME) env.HOME = serverEnv.HOME;
+  return env;
 }
 
 export type LiveFields = ReturnType<AgentRuntime["live"]>;
 
 export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
+  /** The runtimes whose init finished: the Supervisor's synchronous view. */
+  private readonly loaded = new Map<string, AgentRuntime>();
   private versionChecked = false;
-  constructor(private readonly d: RuntimesDeps) {}
+  /** The one owner of the cap; every runtime starts through it. */
+  readonly supervisor: Supervisor;
+  constructor(private readonly d: RuntimesDeps) {
+    this.supervisor = new Supervisor({
+      max: d.maxRunningAgents ?? DEFAULT_MAX_RUNNING_AGENTS,
+      runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
+      bus: d.bus,
+      log: d.log,
+      credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
+      rateLimits: d.store,
+      load: (slug) => this.bySlug(slug),
+      ...(d.docker ? { images: this.images(d.docker) } : {}),
+    });
+  }
+
+  /** The Supervisor's image port (spec §11.2): the image of a loaded Docker agent, and a check-and-pull. */
+  private images(docker: NonNullable<RuntimesDeps["docker"]>) {
+    return {
+      refOf: (id: string) => {
+        const agent = this.loaded.get(id)?.agent;
+        if (agent?.runtime !== "docker") return undefined;
+        return agent.config.image ?? docker.defaultImage;
+      },
+      ensure: async (ref: string, signal: AbortSignal) => {
+        try {
+          await docker.containers.ensureImage(ref, signal);
+        } catch (err) {
+          // The registry's error stays verbatim (spec §11.2); only an unreachable daemon is named as such.
+          throw dockerUnreachable(err) ? dockerStartError(err) : err;
+        }
+      },
+    };
+  }
 
   async bySlug(slug: string): Promise<AgentRuntime | undefined> {
     const row = await this.d.store.agentBySlug(slug);
@@ -33,9 +144,28 @@ export class AgentRuntimes {
         prepareStart: this.d.prepareStart,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
-        onFirstStart: (spec) => this.checkVersionOnce(spec.claudeBin, spec.env),
+        slots: this.supervisor,
+        ...(this.d.localRuntimeAllowed ? { localRuntimeAllowed: this.d.localRuntimeAllowed } : {}),
+        ...(this.d.journal ? { journal: this.d.journal } : {}),
+        ...this.cleanupDeps(),
+        ...(this.d.docker
+          ? {
+              docker: {
+                containers: this.d.docker.containers,
+                claudeBin: this.d.docker.claudeBin,
+                onImageMissing: (ref: string) => this.supervisor.forgetImage(ref),
+              },
+            }
+          : {}),
+        // Local agents only: a Docker agent's claude runs in its image, not on the host.
+        onFirstStart: (spec) => {
+          if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);
+        },
       });
-      const pending = runtime.init().then(() => runtime);
+      const pending = runtime.init().then(() => {
+        if (this.byId.get(row.id) === pending) this.loaded.set(row.id, runtime);
+        return runtime;
+      });
       rt = pending;
       this.byId.set(row.id, pending);
       // Evict a failed init (e.g. a DB blip) so a later lookup retries instead of failing forever.
@@ -46,14 +176,30 @@ export class AgentRuntimes {
     return rt;
   }
 
+  /** One cleanup port for both runtimes: the local journal reap and the Docker container stop, by the agent's runtime. */
+  private cleanupDeps(): { cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined> } {
+    const local = this.d.journal ? localCleanup(this.d.store, this.d.journal) : undefined;
+    const docker = this.d.docker ? dockerCleanup(this.d.docker.containers) : undefined;
+    if (!local && !docker) return {};
+    return {
+      cleanup: async (agent) => (agent.runtime === "docker" ? docker?.(agent) : local?.(agent)),
+    };
+  }
+
   /** The runtime if it already exists. Never creates one. */
   async get(agentId: string): Promise<AgentRuntime | undefined> {
     return this.byId.get(agentId)?.catch(() => undefined);
   }
 
-  /** Refreshes a loaded runtime's row; a no-op when none is loaded. */
+  /**
+   * Refreshes a loaded runtime's row; a no-op when none is loaded. Then re-pumps the wake queue: a credential change
+   * may have moved a queued agent off a paused credential (spec §5.2).
+   */
   async refresh(agentId: string): Promise<void> {
-    await (await this.get(agentId))?.reload();
+    const rt = await this.get(agentId);
+    if (!rt) return;
+    await rt.reload();
+    this.supervisor.recheckQueue();
   }
 
   /** Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. */
@@ -61,42 +207,72 @@ export class AgentRuntimes {
     await (await this.get(agentId))?.requestRestart();
   }
 
-  /** Runtime-only fields; defaults for an agent that has no runtime yet. */
-  async liveFields(agentId: string, row: { status: string }): Promise<LiveFields> {
+  /**
+   * Runtime-only fields; defaults for an agent that has no runtime yet. `runtimeDisabled` comes from the row and the
+   * config, not the runtime: spec §8.2 sends it for every local agent while the gate is off, loaded or not (after a
+   * boot nothing is loaded until it is touched).
+   */
+  async liveFields(
+    agentId: string,
+    row: { status: string; lastError?: string | null; errorKind?: string | null; runtime?: string },
+  ): Promise<LiveFields> {
     const rt = await this.get(agentId);
     if (rt) return rt.live();
+    const errored = row.status === "errored";
+    const kind = errorKindSchema.safeParse(row.errorKind);
     return {
-      status: row.status === "errored" ? "errored" : "hibernated",
+      status: errored ? "errored" : "hibernated",
+      ...(errored && row.lastError ? { lastError: row.lastError } : {}),
+      ...(errored && kind.success ? { errorKind: kind.data } : {}),
+      ...(row.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
+        ? { runtimeDisabled: LOCAL_RUNTIME_DISABLED }
+        : {}),
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      waitingOn: { tasks: [], crons: 0 },
     };
   }
 
   /**
-   * In parallel, so the shutdown budget doesn't grow with the number of agents. allSettled throughout:
-   * one failed init or stop must not keep the other runtimes' processes running past shutdown.
+   * Shutdown (spec §5.6, §6.6): the closing latch first (the Supervisor's, then every runtime's, including those whose
+   * init finished after it), so nothing can start once shutdown has begun; then `stopAll`.
+   */
+  async close(): Promise<void> {
+    this.supervisor.close();
+    for (const rt of await this.all()) rt.setNoStart();
+    await this.stopAll();
+  }
+
+  /**
+   * `hibernate("shutdown")` (or `"archived"`) on every runtime in parallel, each waiting for its exit and its job queue
+   * to drain, so the shutdown budget doesn't grow with the number of agents. allSettled throughout: one failed init or
+   * stop must not keep the other runtimes' processes running past shutdown.
    */
   async stopAll(): Promise<void> {
-    const inits = await Promise.allSettled(this.byId.values());
-    const all = inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-    const stops = await Promise.allSettled(
-      all.map((rt) => rt.stop({ graceMs: 3000, termWaitMs: 10_000 })),
-    );
+    const stops = await Promise.allSettled((await this.all()).map((rt) => rt.stop()));
     for (const r of stops)
       if (r.status === "rejected") this.d.log.error({ err: r.reason }, "Stopping an agent failed");
   }
 
-  private checkVersionOnce(bin: string, env: Record<string, string>) {
+  /** Every runtime whose init succeeded, once every init in flight has settled. */
+  private async all(): Promise<AgentRuntime[]> {
+    const inits = await Promise.allSettled(this.byId.values());
+    return inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  }
+
+  private checkVersionOnce(bin: string) {
     if (this.versionChecked) return;
     this.versionChecked = true;
-    void checkClaudeVersion(bin, env).then(({ version, tooOld }) => {
-      if (version) this.d.log.info({ version }, "Claude Code version");
-      if (tooOld)
-        this.d.log.warn(
-          { version, minimum: MIN_CLAUDE_VERSION },
-          "Claude Code is older than the version S3 was verified on",
-        );
-    });
+    void checkClaudeVersion(bin, versionCheckEnv(this.d.serverEnv ?? process.env)).then(
+      ({ version, tooOld }) => {
+        if (version) this.d.log.info({ version }, "Claude Code version");
+        if (tooOld)
+          this.d.log.warn(
+            { version, minimum: MIN_CLAUDE_VERSION },
+            "Claude Code is older than the version S3 was verified on",
+          );
+      },
+    );
   }
 }

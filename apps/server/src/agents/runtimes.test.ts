@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
+import { versionCheckEnv } from "./runtimes.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 
@@ -20,6 +21,7 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
     turnOpen: false,
     restartPending: false,
     restartWaitingOn: 0,
+    waitingOn: { tasks: [], crons: 0 },
   });
   expect((await t.app.runtimes.liveFields(id, { status: "errored" })).status).toBe("errored");
   await t.app.runtimes.refresh(id); // no-op without a runtime
@@ -33,6 +35,29 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
   await t.app.runtimes.refresh(id);
   expect(a?.agent.displayName).toBe("Renamed");
   await t.sql`update agents set display_name = 'Test agent' where id = ${id}`;
+});
+
+test("the first GET /api/agents after boot carries runtimeDisabled for a local agent no runtime has loaded (spec §8.2)", async () => {
+  await t.seedAgent({ slug: "gated" });
+  const { cookie } = await t.signUpUser({ handle: "gate" });
+  const [row] = await t.sql`select id from agents where slug = 'gated'`;
+  const config = t.app.config as { allowLocalRuntime: boolean };
+  const list = async () => {
+    const r = await t.app.inject({ method: "GET", url: "/api/agents", headers: { cookie } });
+    expect(r.statusCode).toBe(200);
+    return (r.json() as { agents: { slug: string; runtimeDisabled?: string }[] }).agents.find(
+      (a) => a.slug === "gated",
+    );
+  };
+  config.allowLocalRuntime = false;
+  try {
+    expect(await t.app.runtimes.get(String(row?.id))).toBeUndefined();
+    expect((await list())?.runtimeDisabled).toBe("The local runtime is disabled on this factory.");
+  } finally {
+    config.allowLocalRuntime = true;
+  }
+  expect((await list())?.runtimeDisabled).toBeUndefined();
+  expect(await t.app.runtimes.get(String(row?.id))).toBeUndefined(); // listing never loads one
 });
 
 test("app.close stops running agents gracefully", async () => {
@@ -97,4 +122,17 @@ test("stopAll still stops healthy runtimes when another init fails", async () =>
   } finally {
     spy.mockRestore();
   }
+});
+
+test("the host version check gets only PATH and HOME, never the agent's config dir", () => {
+  expect(
+    versionCheckEnv({
+      PATH: "/bin",
+      HOME: "/home/me",
+      CLAUDE_CONFIG_DIR: "/agents/x/.claude-config",
+      DATABASE_URL: "postgres://x",
+      FACTORY_SECRET_KEY: "k",
+      ANTHROPIC_API_KEY: "a",
+    }),
+  ).toEqual({ PATH: "/bin", HOME: "/home/me" });
 });

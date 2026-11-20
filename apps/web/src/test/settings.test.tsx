@@ -311,7 +311,7 @@ test("secrets are write-only rows; Update saves a new value and says who restart
   await userEvent.type(value, "ghp_new");
   await userEvent.click(within(region).getByRole("button", { name: "Save value" }));
   const line = await within(region).findByText(
-    "Saved. @lead restarts when idle to use it. Reminders it scheduled in this session are lost.",
+    "Saved. @lead restarts when idle to use it. Its crons from this session stop.",
   );
   expect(line.closest("[tabindex='-1']")).toHaveFocus();
   expect(api.calls.find((c) => c.method === "PUT")?.body).toEqual({ value: "ghp_new" });
@@ -466,7 +466,7 @@ test("Change path saves with the restart warning; a missing folder is a field er
   await userEvent.click(within(region).getByRole("button", { name: "Save path" }));
   expect(
     await within(region).findByText(
-      "Saved. Granted agents restart when idle to use the new path. Reminders they scheduled in this session are lost.",
+      "Saved. Granted agents restart when idle to use the new path. Their crons from this session stop.",
     ),
   ).toBeInTheDocument();
 });

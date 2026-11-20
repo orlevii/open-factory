@@ -25,6 +25,10 @@ beforeEach(makeRuntime);
 const send = (body: string, urgent = false) => h.send(body, urgent);
 const bg = ev.background;
 const types = async () => (await store.after(agentId, 0, 1000)).map((e) => e.event.type);
+const startReasons = async () =>
+  (await store.after(agentId, 0, 1000)).flatMap((e) =>
+    e.event.type === "process_started" ? [e.event.reason] : [],
+  );
 /** A started, idle process on session sess-1. */
 async function idle() {
   await send("hi");
@@ -221,15 +225,18 @@ test("archive during the grace never respawns and clears restartPending", async 
   expect(rt.live().restartPending).toBe(false);
 });
 
-test("a timed-out stop marks errored and unblocks", async () => {
+test("a timed-out stop escalates and its exit runs the restart's intent", async () => {
   await idle();
   driver.last.stopResult = { code: null, signal: null, timedOut: true };
   driver.last.emitExitOnStop = false;
   await rt.requestRestart();
   await rt.settled();
-  expect(rt.live().status).toBe("errored");
-  expect(rt.live().lastError).toBe("Couldn't restart the agent: the process didn't stop.");
+  expect(driver.last.forceKilled).toBe(true);
+  expect(rt.live().status).toBe("hibernated");
   expect(rt.live().restartPending).toBe(false);
+  const evs = (await h.store.after(h.agentId, 0, 1000)).map((e) => e.event);
+  expect(evs).toContainEqual({ type: "stop_escalated", how: "sigkill" });
+  expect(evs.at(-1)).toMatchObject({ type: "hibernated", reason: "apply_changes" });
 });
 
 test("a stop() that takes over a timing-out restart doesn't mark it errored", async () => {
@@ -326,12 +333,12 @@ test("requestRestart on a process that failed to start (errored, stopping) sets 
   await rt.settled();
 });
 
-test("requestRestart on a fresh process after a crash (errored until session_started) still applies", async () => {
+test("requestRestart on a fresh process after an idle crash still applies", async () => {
   await idle();
   driver.last.exit(1);
   await rt.settled();
-  expect(rt.live().status).toBe("errored");
-  await send("again"); // starts with the old config; errored clears at session_started
+  expect(rt.live().status).toBe("hibernated"); // nothing was lost (spec §9.2)
+  await send("again"); // starts with the old config
   await rt.requestRestart();
   expect(rt.live().restartPending).toBe(true);
   driver.last.emit(...ev.fullTurn("sess-1"));
@@ -339,7 +346,7 @@ test("requestRestart on a fresh process after a crash (errored until session_sta
   expect(driver.last.stopped).toBe(true);
 });
 
-test("an unexpected exit clears restartPending and never respawns", async () => {
+test("an unexpected exit clears restartPending; only the crash recovery starts again", async () => {
   await send("hi");
   driver.last.emit(...ev.fullTurn("sess-1"), ev.turn());
   await rt.settled();
@@ -349,7 +356,11 @@ test("an unexpected exit clears restartPending and never respawns", async () => 
   driver.last.exit(1);
   await rt.settled();
   expect(rt.live().restartPending).toBe(false);
-  expect(driver.starts).toHaveLength(1);
+  expect(driver.starts).toHaveLength(2);
+  const started = (await h.store.after(h.agentId, 0, 1000)).filter(
+    (e) => e.event.type === "process_started",
+  );
+  expect(started.at(-1)?.event).toMatchObject({ reason: "crash_recovery" });
 });
 
 test("requestRestart racing a start: the start wins the queue, the restart waits for the first turn", async () => {
@@ -390,4 +401,38 @@ test("a fresh process after a restart doesn't inherit the old task set or notifi
   await rt.settled();
   expect(rt.live().restartWaitingOn).toBe(0);
   expect(driver.starts[1]?.stopped).toBe(true);
+});
+
+test("apply-restart doesn't wait for crons; the agent is told which stopped", async () => {
+  await idle();
+  driver.last.emit(ev.cron("c1", { humanSchedule: "every 5 minutes" }));
+  await rt.settled();
+  await rt.requestRestart();
+  await rt.settled();
+  expect(driver.starts[0]?.stopped).toBe(true);
+  expect(await types()).toEqual(expect.arrayContaining(["background_work_lost", "hibernated"]));
+  const lost = (await store.after(agentId, 0, 1000)).find(
+    (e) => e.event.type === "background_work_lost",
+  );
+  expect(lost?.event).toEqual({
+    type: "background_work_lost",
+    reason: "apply_changes",
+    tasks: [],
+    crons: [{ cronId: "c1", humanSchedule: "every 5 minutes" }],
+  });
+  expect(driver.starts).toHaveLength(2); // woken at once
+  expect(driver.last.sent[0]?.[0]).toMatchObject({
+    kind: "system",
+    body: expect.stringContaining("every 5 minutes"),
+  });
+  expect((await startReasons()).at(-1)).toBe("apply_changes");
+});
+
+test("apply-restart with nothing lost and nothing queued stays hibernated", async () => {
+  await idle();
+  await rt.requestRestart();
+  await rt.settled();
+  expect(await types()).not.toContain("background_work_lost");
+  expect(driver.starts).toHaveLength(1);
+  expect(rt.queueItems()).toEqual([]);
 });

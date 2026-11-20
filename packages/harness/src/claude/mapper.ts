@@ -66,6 +66,7 @@ const DROPPED_SYSTEM = new Set([
   "task_progress",
   "informational",
   "api_retry",
+  "session_state_changed",
 ]);
 /** Spec §6.2 drops every `hook_*` subtype, not just the ones seen so far. */
 const isDroppedSystem = (subtype: unknown) =>

@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 export class PluginInstallError extends Error {
   constructor(
@@ -39,19 +42,40 @@ export function redactOutput(s: string): string {
     );
 }
 
+/**
+ * Runs `claude plugin marketplace add` / `install` on the host (spec §11.7, blocker R1). Claude
+ * applies the `env` of its config-dir and project settings to the git it runs, so the host never
+ * points it at anything an agent can write: `pluginsConfig` is the factory-owned
+ * `state/agents/<slug>/plugins-config/`, the cwd is a fresh empty temp dir (removed afterwards), and
+ * the env is exactly `PATH`, the host `HOME` (operator-controlled; git needs its config and
+ * credential helpers for private marketplaces) and `CLAUDE_CONFIG_DIR`.
+ */
 export async function installPlugins(o: {
   claudeBin: string;
-  configDir: string;
-  cwd: string;
+  pluginsConfig: string;
   plugins: string[];
   tplSettings: Record<string, unknown>;
-  serverEnv: NodeJS.ProcessEnv;
+  hostHome: string | undefined;
+  path: string | undefined;
   commandTimeoutMs?: number;
   budgetMs?: number;
 }): Promise<void> {
-  const env: Record<string, string> = { CLAUDE_CONFIG_DIR: o.configDir };
-  if (o.serverEnv.PATH) env.PATH = o.serverEnv.PATH;
-  if (o.serverEnv.HOME) env.HOME = o.serverEnv.HOME;
+  const env: Record<string, string> = { CLAUDE_CONFIG_DIR: o.pluginsConfig };
+  if (o.path) env.PATH = o.path;
+  if (o.hostHome) env.HOME = o.hostHome;
+  const cwd = await mkdtemp(path.join(tmpdir(), "of-plugins-"));
+  try {
+    await runInstall(o, env, cwd);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+async function runInstall(
+  o: Parameters<typeof installPlugins>[0],
+  env: Record<string, string>,
+  cwd: string,
+): Promise<void> {
   const children = new Set<ReturnType<typeof execFile>>();
   let over = false;
 
@@ -66,7 +90,7 @@ export async function installPlugins(o: {
       const child = execFile(
         o.claudeBin,
         ["plugin", ...args],
-        { env, cwd: o.cwd, timeout: o.commandTimeoutMs ?? 120_000, maxBuffer: 10 * 1024 * 1024 },
+        { env, cwd, timeout: o.commandTimeoutMs ?? 120_000, maxBuffer: 10 * 1024 * 1024 },
         (err, stdout, stderr) => {
           children.delete(child);
           if (!err) return resolve();

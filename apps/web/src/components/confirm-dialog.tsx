@@ -12,12 +12,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-/** For destructive deletes only. The action is named in the title and on the button. */
+/** For destructive, irreversible actions only. The action is named in the title and on the button. */
 export function ConfirmDialog({
   open,
   onOpenChange,
   title,
   body,
+  detail,
   confirmLabel,
   onConfirm,
   onCloseAutoFocus,
@@ -26,6 +27,8 @@ export function ConfirmDialog({
   onOpenChange(o: boolean): void;
   title: string;
   body: ReactNode;
+  /** A muted line under the body, outside the description (e.g. the error that led here). */
+  detail?: ReactNode;
   confirmLabel: string;
   onConfirm(): Promise<void> | void;
   /** Where focus goes on close, when there is no trigger to return to (opened from a menu). */
@@ -61,6 +64,7 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{body}</AlertDialogDescription>
         </AlertDialogHeader>
+        {detail}
         <div
           role="alert"
           className="text-[0.8125rem] leading-[1.125rem] text-destructive empty:hidden"

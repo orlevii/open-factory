@@ -25,7 +25,7 @@ test("slug rules", () => {
     "factory",
   ])
     expect(slugSchema.safeParse(bad).success).toBe(false);
-  expect(RESERVED_SLUGS).toEqual(["humans", "me", "scheduler", "all", "system", "factory"]);
+  expect(RESERVED_SLUGS).toEqual(["humans", "me", "scheduler", "factory", "all", "system"]);
 });
 
 test("names and secret names", () => {

@@ -9,6 +9,7 @@ import {
 } from "@open-factory/shared";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
+import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
@@ -52,6 +53,8 @@ export class AgentService {
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
       log: RuntimeLog;
+      /** The one ContainerManager: a running container counts as a process for the re-sync gate (spec §11.4). */
+      containers?: Pick<ContainerManager, "isRunning">;
     },
   ) {}
 
@@ -340,20 +343,44 @@ export class AgentService {
     }
   }
 
-  async resync(slug: string): Promise<{ agent: AgentSummary; backupDir?: string }> {
+  /** Fails closed: a Docker agent whose container state can't be read (Docker down) is treated as running. */
+  private async containerRunning(row: AgentRow): Promise<boolean> {
+    if (row.runtime !== "docker") return false;
+    if (!this.d.containers) return true;
+    try {
+      return await this.d.containers.isRunning(row.id, row.slug);
+    } catch (err) {
+      this.d.log.warn(
+        { err, agent: row.slug },
+        "couldn't check the container; staging the re-sync",
+      );
+      return true;
+    }
+  }
+
+  async resync(
+    slug: string,
+  ): Promise<{ agent: AgentSummary; backupDir?: string; applied: "now" | "on_restart" }> {
     const { db, runtimes, workspace } = this.d;
     const row = await this.rowBySlug(slug);
     if (row.archivedAt)
       throw new ApiError(409, "agent_archived", `@${slug} is archived. Restore it first.`);
     const tpl = await this.d.templates.loadValid(row.template);
     let backupDir: string | undefined;
+    let applied: "now" | "on_restart" = "now";
     try {
       await workspace.lock.run(slug, async () => {
         // Checked before any disk change, so a stale template project leaves everything as it was.
         const projects = row.grantsOverridden
           ? undefined
           : await this.templateProjects(tpl.config.projects, row.template);
-        backupDir = await workspace.resync(slug, tpl);
+        // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
+        // must not be running either (spec §11.4 part 4).
+        const rt = await runtimes.get(row.id);
+        const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
+        const r = await workspace.resync(slug, tpl, { canWriteNow });
+        backupDir = r.backupDir;
+        applied = r.applied;
         await db.transaction(async (tx) => {
           await tx
             .update(schema.agents)
@@ -367,7 +394,7 @@ export class AgentService {
     }
     await runtimes.refresh(row.id);
     await runtimes.requestRestart(row.id);
-    return { agent: await this.summary(slug), ...(backupDir ? { backupDir } : {}) };
+    return { agent: await this.summary(slug), applied, ...(backupDir ? { backupDir } : {}) };
   }
 
   private async templateProjects(names: string[], template: string) {

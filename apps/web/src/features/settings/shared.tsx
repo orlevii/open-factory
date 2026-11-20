@@ -20,13 +20,13 @@ export const tags = (slugs: string[]) => {
   return t.length <= 1 ? (t[0] ?? "") : `${t.slice(0, -1).join(", ")} and ${t.at(-1)}`;
 };
 
-/** "@lead restarts when idle to use it. Reminders it scheduled in this session are lost." */
+/** "@lead restarts when idle to use it. Its crons from this session stop." */
 export const restartNote = (slugs: string[]) =>
   slugs.length === 0
     ? ""
     : slugs.length === 1
-      ? `${tags(slugs)} restarts when idle to use it. Reminders it scheduled in this session are lost.`
-      : `${tags(slugs)} restart when idle to use it. Reminders they scheduled in this session are lost.`;
+      ? `${tags(slugs)} restarts when idle to use it. Its crons from this session stop.`
+      : `${tags(slugs)} restart when idle to use it. Their crons from this session stop.`;
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [

@@ -1,7 +1,7 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import type { Db } from "@open-factory/db";
-import { createClaudeDriver, type HarnessDriver } from "@open-factory/harness";
+import { type Db, schema } from "@open-factory/db";
+import { createClaudeDriver, type HarnessDriver, localTransport } from "@open-factory/harness";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   serializerCompiler,
@@ -15,7 +15,7 @@ import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
-import type { Config } from "./config.ts";
+import { type Config, localRuntimeAllowed } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
@@ -29,10 +29,16 @@ import { projectsRoutes } from "./routes/projects.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { templatesRoutes } from "./routes/templates.ts";
+import { dockerodeClient } from "./runtime/docker/client.ts";
+import { ContainerManager } from "./runtime/docker/containers.ts";
+import { dockerTransport } from "./runtime/docker/exec-transport.ts";
+import { ProcessJournal } from "./runtime/local/journal.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { registerStatic } from "./static.ts";
+import { reconcile } from "./supervisor/reconcile.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
+import { migrateWorkdirState } from "./workspace/state-migration.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -100,6 +106,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("auth", createAuth(config, deps.db));
   registerErrorHandlers(app);
 
+  await mkdir(config.factoryHome, { recursive: true });
+  config.factoryHome = await realpath(config.factoryHome);
+  await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
+  await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
+
+  await migrateWorkdirState(
+    config.factoryHome,
+    (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
+    app.log,
+  );
+
   const store = new EventStore(deps.db);
   const bus = new EventBus();
   const vault = new Vault(config.secretKey);
@@ -108,18 +125,39 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     factoryHome: config.factoryHome,
     hostSkillsDir: config.hostSkillsDir,
     claudeBin: config.claudeBin,
+    cliBundle: config.cliBundle,
     lock,
     log: app.log,
   });
-  const prepareStart = createPrepareStart({ db: deps.db, config, vault, workspace, lock });
-  await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
-  await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
+  // dockerode connects lazily: constructing these makes no Docker call.
+  const docker = dockerodeClient();
+  const containers = new ContainerManager({ docker, log: app.log });
+  const journal = new ProcessJournal();
+  const prepareStart = createPrepareStart({
+    db: deps.db,
+    config,
+    vault,
+    workspace,
+    lock,
+    containers,
+  });
   const runtimes = new AgentRuntimes({
     store,
     bus,
     prepareStart,
     log: app.log,
-    driver: deps.harnessDriver ?? createClaudeDriver(app.log),
+    maxRunningAgents: config.maxRunningAgents,
+    localRuntimeAllowed: () => localRuntimeAllowed(config),
+    // The same ContainerManager the exec transport stops containers with.
+    docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
+    // Only the real driver's processes are ours to journal and reap (spec §12).
+    ...(deps.harnessDriver ? {} : { journal }),
+    driver:
+      deps.harnessDriver ??
+      createClaudeDriver({
+        log: app.log,
+        transports: { local: localTransport, docker: dockerTransport({ docker, containers }) },
+      }),
   });
   const templates = new TemplateIndex({ db: deps.db, config });
   const agents = new AgentService({
@@ -129,10 +167,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     lock,
     runtimes,
     log: app.log,
+    containers,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
-    driver: deps.harnessDriver ?? createClaudeDriver(),
+    driver: deps.harnessDriver ?? createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: config.claudeBin,
   });
   const credentials = new CredentialService({
@@ -155,7 +194,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("runtimes", runtimes);
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
-    await runtimes.stopAll();
+    // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
+    await runtimes.close();
   });
 
   await app.register(statusRoutes, { sql: deps.sql });
@@ -168,5 +208,23 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
   await registerStatic(app, deps.webRoot);
+  // Boot reconciliation (spec §5.7): after the migrations, before the server listens. Leftovers of the previous run
+  // are reaped (with the real journal whatever the driver: it only ever signals a pid whose start time matches).
+  try {
+    await reconcile({
+      store,
+      journal,
+      containers,
+      supervisor: runtimes.supervisor,
+      runtimes,
+      log: app.log,
+    });
+  } catch (err) {
+    // A wake may already have started a process. A failing close is logged and never masks the boot's error.
+    await app
+      .close()
+      .catch((e: unknown) => app.log.error({ err: e }, "closing after a failed boot failed"));
+    throw err;
+  }
   return app;
 }

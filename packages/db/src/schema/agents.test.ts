@@ -47,3 +47,31 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
   const [row] = await sql`select count(*)::int as n from session_events where agent_id = 'a1'`;
   expect(row?.n).toBe(0);
 });
+
+test("0003: system rows need no user and a notice; user rows need a user and no notice", async () => {
+  const { sql } = h;
+  await sql`insert into users (id, name, email, handle) values ('u2', 'Al', 'al@x.io', 'al')`;
+  await sql`insert into credentials (id, name, kind, value_enc) values ('c2', 'two', 'oauth_token', ${Buffer.from("x")})`;
+  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
+    values ('a3', 'third', 'Third', 'dev', '{}', 'local', 'c2')`;
+  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body, notice) values ('n1','system',null,'a3','x','crash')`;
+  await expect(
+    sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n2','system',null,'a3','x')`,
+  ).rejects.toThrow(/check/i);
+  await expect(
+    sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n3','message',null,'a3','x')`,
+  ).rejects.toThrow(/check/i);
+  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('m2','message','u2','a3','x')`;
+  const [a] =
+    await sql`select attempting, rate_limit_notice_owed, runtime_journal, last_error, error_kind from agents where id = 'a3'`;
+  expect(a).toEqual({
+    attempting: false,
+    rate_limit_notice_owed: false,
+    runtime_journal: null,
+    last_error: null,
+    error_kind: null,
+  });
+  const [c] =
+    await sql`select rate_limited_until, rate_limit_exact from credentials where id = 'c2'`;
+  expect(c).toEqual({ rate_limited_until: null, rate_limit_exact: true });
+});

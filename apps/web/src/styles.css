@@ -126,7 +126,7 @@
   --status-working: var(--signal);
   --status-idle: var(--success);
   --status-queued: var(--info);
-  --status-hibernated: oklch(0.62 0.01 255);
+  --status-hibernated: oklch(0.6 0.01 255);
   --status-rate-limited: var(--warning);
   --status-errored: var(--destructive);
   --status-terminated: oklch(0.8 0.005 250);
@@ -185,7 +185,7 @@
 
   --mark-track: color-mix(in oklch, var(--foreground) 14%, transparent);
 
-  --status-hibernated: oklch(0.55 0.008 255);
+  --status-hibernated: oklch(0.57 0.008 255);
   --status-terminated: oklch(0.4 0.008 255);
 
   --chart-1: oklch(0.682 0.211 37.7);

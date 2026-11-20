@@ -1,7 +1,7 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { RotateCw } from "lucide-react";
-import { StatusBadge } from "@/features/session/status-badge";
+import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,21 @@ function DockerBadge() {
       Docker
     </span>
   );
+}
+
+/** At most one muted note after the name (S5 UI design §4), by priority. Plain text: no interactive
+ *  elements inside the row link. */
+function agentNote(a: AgentSummary): string | null {
+  if (a.runtimeDisabled) return "Local runtime disabled";
+  if (a.status === "rate_limited") {
+    const reset = resetPhrase(a);
+    if (reset) return reset.bare;
+  }
+  const tasks = a.waitingOn.tasks.length;
+  if (tasks > 0) return `Waiting on ${tasks} ${tasks === 1 ? "task" : "tasks"}`;
+  const crons = a.waitingOn.crons;
+  if (crons > 0) return crons === 1 ? "1 cron" : `${crons} crons`;
+  return null;
 }
 
 /** The org tree: depth-first in server order, one link per agent. Only the name cell indents, so
@@ -36,6 +51,7 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
         const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
         const level = shown.get(a.slug) ?? 0;
         const depth = Math.min(level, isMobile ? MOBILE_DEPTH_CAP : level);
+        const note = a.archivedAt ? null : agentNote(a);
         return (
           <li key={a.slug}>
             <Link
@@ -51,7 +67,7 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
                     Archived
                   </span>
                 ) : (
-                  <StatusBadge status={a.status} />
+                  <StatusBadge status={a.status} size="short" />
                 )}
                 {a.restartPending && !a.archivedAt && (
                   <>
@@ -67,13 +83,23 @@ export function AgentTree({ agents }: { agents: AgentSummary[] }) {
               >
                 <span
                   className={cn(
-                    "relative block truncate",
+                    "relative flex min-w-0 items-baseline gap-2",
                     // The └ elbow: a 1px rule corner drawn just before a nested name.
                     level > 0 &&
                       "pl-3.5 before:absolute before:top-0 before:left-0.5 before:h-[0.6875rem] before:w-2 before:border-b before:border-l before:border-border",
                   )}
                 >
-                  {a.displayName}
+                  <span className="min-w-0 truncate">{a.displayName}</span>
+                  {/* Inline, not a second line, so live updates never change the row height. It
+                      gives way (truncates) before the name does. */}
+                  {note && (
+                    <span
+                      data-agent-note
+                      className="min-w-0 shrink-[1000] truncate text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+                    >
+                      {note}
+                    </span>
+                  )}
                 </span>
                 {a.reportsTo && (
                   <span className="sr-only">

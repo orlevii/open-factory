@@ -37,6 +37,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   archivedAt: null,
   restartPending: false,
   restartWaitingOn: 0,
+  waitingOn: { tasks: [], crons: 0 },
   ...over,
 });
 

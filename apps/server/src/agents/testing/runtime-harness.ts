@@ -1,11 +1,13 @@
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
+import type { SlotPort } from "../../supervisor/slots.ts";
 import { createTestDb } from "../../test/helpers.ts";
-import { AgentRuntime } from "../agent-runtime.ts";
+import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
 import { EventBus } from "../event-bus.ts";
 import { EventStore } from "../event-store.ts";
 import { FakeDriver } from "./fake-driver.ts";
 import { insertAgent } from "./rows.ts";
+import { unlimitedSlots } from "./unlimited-slots.ts";
 
 export const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -49,7 +51,17 @@ export class RuntimeHarness {
     return this.t.close();
   }
 
-  async makeRuntime(opts: { startError?: Error; sessionId?: string; status?: string } = {}) {
+  async makeRuntime(
+    opts: {
+      startError?: Error;
+      sessionId?: string;
+      status?: string;
+      slots?: SlotPort;
+      warmWindowMinutes?: number;
+      cleanup?: RuntimeDeps["cleanup"];
+      journal?: RuntimeDeps["journal"];
+    } = {},
+  ) {
     this.n += 1;
     this.agentId = `a${this.n}`;
     this.startError = opts.startError;
@@ -60,6 +72,7 @@ export class RuntimeHarness {
       slug: `dev${this.n}`,
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),
+      ...(opts.warmWindowMinutes ? { warmWindowMinutes: opts.warmWindowMinutes } : {}),
     });
     this.driver = new FakeDriver();
     this.bus = new EventBus();
@@ -82,6 +95,9 @@ export class RuntimeHarness {
       },
       log: silentLog,
       holdTimeoutMs: 200,
+      slots: opts.slots ?? unlimitedSlots,
+      ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),
+      ...(opts.journal ? { journal: opts.journal } : {}),
     });
     await this.rt.init();
     return this.rt;

@@ -6,13 +6,17 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { useConnectionLost } from "@/lib/connection";
-import { sessionQueryOptions } from "@/lib/session";
+import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
 import { WsContext, type WsHub } from "@/lib/ws-context";
 
 export const Route = createFileRoute("/_app")({
   beforeLoad: async ({ context }) => {
-    const session = await context.queryClient.ensureQueryData(sessionQueryOptions);
+    // A cached session is returned as is (a later failed check keeps it); only an empty cache fetches.
+    const session = await context.queryClient.ensureQueryData({
+      ...sessionQueryOptions,
+      retry: SESSION_GUARD_RETRIES,
+    });
     if (!session) throw redirect({ to: "/sign-in" });
     return { session };
   },

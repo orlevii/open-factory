@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -38,7 +38,7 @@ export interface TestAppOptions {
 export async function makeTestApp(opts: TestAppOptions = {}) {
   const tdb = await createTestDatabase();
   await migrate(tdb.url, MIGRATIONS_DIR);
-  const factoryHome = mkdtempSync(path.join(tmpdir(), "of-home-"));
+  const factoryHome = realpathSync(mkdtempSync(path.join(tmpdir(), "of-home-")));
   const hostSkillsDir = mkdtempSync(path.join(tmpdir(), "of-skills-"));
   const build = async (o: TestAppOptions) => {
     const config = loadConfig({
@@ -48,6 +48,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       LOG_LEVEL: "silent",
       FACTORY_HOME: factoryHome,
       FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+      FACTORY_ALLOW_LOCAL_RUNTIME: "true",
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);
@@ -151,10 +152,13 @@ export async function seedTestAgent(
   if (!row) throw new Error("seed failed");
   const workdir = agentWorkdir(app.config.factoryHome, slug);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
-  mkdirSync(templateCopyDir(workdir), { recursive: true });
+  mkdirSync(templateCopyDir(app.config.factoryHome, slug), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  writeFileSync(path.join(templateCopyDir(workdir), "settings.json"), "{}");
-  writeFileSync(path.join(templateCopyDir(workdir), "mcp.json"), '{"mcpServers":{}}');
+  writeFileSync(path.join(templateCopyDir(app.config.factoryHome, slug), "settings.json"), "{}");
+  writeFileSync(
+    path.join(templateCopyDir(app.config.factoryHome, slug), "mcp.json"),
+    '{"mcpServers":{}}',
+  );
   return row;
 }
 

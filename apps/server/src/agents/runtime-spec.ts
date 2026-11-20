@@ -22,12 +22,15 @@ export function buildAgentEnv(
     slug: string;
     credential: { kind: "oauth_token" | "api_key"; value: string };
     secrets: Record<string, string>;
+    agentUrl?: string;
   },
+  runtime: "local" | "docker",
 ): Record<string, string> {
   // Secrets go in first so nothing a user names a secret can override what the factory sets below.
   const env: Record<string, string> = { ...extra.secrets };
+  // A container gets none of the host's env: the image supplies its own PATH and HOME.
   for (const k of ENV_ALLOWLIST) {
-    const v = serverEnv[k];
+    const v = runtime === "local" ? serverEnv[k] : undefined;
     if (v) env[k] = v;
     else delete env[k];
   }
@@ -40,6 +43,10 @@ export function buildAgentEnv(
   delete env[otherVar as string]; // exactly one credential var, whatever a secret is called
   env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = extra.slug;
   env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = `${extra.slug}@open-factory.local`;
+  if (runtime === "docker") {
+    delete env.OPEN_FACTORY_URL;
+    if (extra.agentUrl) env.OPEN_FACTORY_URL = extra.agentUrl;
+  }
   return env;
 }
 

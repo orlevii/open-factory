@@ -5,6 +5,7 @@ export * from "./handle.ts";
 export * from "./names.ts";
 export * from "./schemas.ts";
 export * from "./settings.ts";
+export * from "./status.ts";
 export * from "./templates.ts";
 export * from "./tree.ts";
 export * from "./ws.ts";

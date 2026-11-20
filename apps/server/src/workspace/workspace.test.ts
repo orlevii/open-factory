@@ -43,6 +43,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     factoryHome: home,
     hostSkillsDir: hs,
     claudeBin: fake.bin,
+    cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
   });
   const tpl = { dir: tdir, config, tplSettings, tplMcp: { mcpServers: { x: { command: "x" } } } };
@@ -59,7 +60,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
 }
 
 test("materialize then prepare: the full layout", async () => {
-  const { ws, tpl, prep, repo, hs } = setup();
+  const { ws, tpl, prep, repo, hs, home } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
   const wd = ws.workdir("lead");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
@@ -81,6 +82,8 @@ test("materialize then prepare: the full layout", async () => {
     repo,
     realpathSync(path.join(hs, "grilling")),
     "/mk",
+    path.join(home, "state/agents/lead/plugins-config/plugins"),
+    "/opt/factory/bin/open-factory",
   ]);
 });
 
@@ -113,17 +116,17 @@ test("materialize: existing folder → folder_exists; plugin failure → caller 
 });
 
 test("resync backs up differing files and never deletes", async () => {
-  const { ws, tpl, prep } = setup();
+  const { home, ws, tpl, prep } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
   const wd = ws.workdir("lead");
   writeFileSync(path.join(wd, "AGENTS.md"), "# Lead\nlearned things\n");
   writeFileSync(path.join(wd, "mine.md"), "keep");
-  const dir = await ws.resync("lead", tpl);
-  expect(dir).toMatch(/^\.factory\/resync\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/);
-  expect(readFileSync(path.join(wd, dir as string, "AGENTS.md"), "utf8")).toContain("learned");
+  const dir = (await ws.resync("lead", tpl, { canWriteNow: true })).backupDir;
+  expect(dir).toMatch(/^state\/agents\/lead\/resync\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/);
+  expect(readFileSync(path.join(home, dir as string, "AGENTS.md"), "utf8")).toContain("learned");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
   expect(existsSync(path.join(wd, "mine.md"))).toBe(true);
-  expect(await ws.resync("lead", tpl)).toBeUndefined();
+  expect((await ws.resync("lead", tpl, { canWriteNow: true })).backupDir).toBeUndefined();
 });
 
 test("prepare treats a non-object previous settings.json like a parse failure", async () => {
@@ -139,9 +142,9 @@ test("prepare treats a non-object previous settings.json like a parse failure", 
 });
 
 test("prepare reports a missing or malformed template copy as a WorkspaceError", async () => {
-  const { ws, tpl, prep } = setup();
+  const { home, ws, tpl, prep } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
-  const copy = path.join(ws.workdir("lead"), ".factory/template");
+  const copy = path.join(home, "state/agents/lead/template");
   writeFileSync(path.join(copy, "settings.json"), "{nope");
   await expect(ws.prepare(prep)).rejects.toMatchObject({
     name: "WorkspaceError",

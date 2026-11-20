@@ -7,6 +7,7 @@ import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
+import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -62,6 +63,7 @@ async function makeRuntime(
       };
     },
     log: silentLog,
+    slots: unlimitedSlots,
     ...(opts.realHold ? {} : { holdTimeoutMs: 200 }),
   });
   await rt.init();
@@ -225,7 +227,7 @@ test("urgent while idle is a normal send", async () => {
   expect(driver.last.sent.at(-1)?.[0]).toMatchObject({ body: "now", urgent: true });
 });
 
-test("after an unexpected exit nothing restarts the process until the next API call", async () => {
+test("after an unexpected exit the dead process is never flushed; only the recovery attempt starts one", async () => {
   await makeRuntime({ realHold: true });
   await startedIdle();
   await send("long task");
@@ -235,11 +237,13 @@ test("after an unexpected exit nothing restarts the process until the next API c
   await send("STOP", true);
   driver.last.exit(1);
   await rt.settled();
-  // the exit clears the hold; even past its 10 s nothing flushes or restarts the dead process
+  // the exit clears the hold; even past its 10 s nothing is written to the dead process
   await vi.advanceTimersByTimeAsync(10_000);
   await rt.settled();
-  expect(driver.starts).toHaveLength(1);
-  expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
+  expect(driver.starts).toHaveLength(2);
+  expect(driver.starts[0]?.sent.flat().map((m) => m.body)).not.toContain("STOP");
+  expect(driver.last.sent[0]?.map((m) => m.kind)).toEqual(["system", "message"]);
+  expect(driver.last.sent[0]?.[1]?.body).toBe("STOP");
 });
 
 test("a rejected interrupt write (process going away) is not an internal error: urgent stays queued, Interrupt is 409", async () => {
@@ -254,13 +258,17 @@ test("a rejected interrupt write (process going away) is not an internal error: 
   expect(driver.last.controls).toEqual([]);
   expect(rt.live().status).not.toBe("errored");
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
-  await rt.stop(); // the expected exit arrives
+  await rt.stop(); // the expected exit arrives (a shutdown mid-turn: it leaves the factory-restarted notice)
   expect(rt.live().status).toBe("hibernated");
   const [a] = await t.sql`select status from agents where id = ${agentId}`;
   expect(a?.status).toBe("hibernated");
   await send("next");
   expect(driver.starts).toHaveLength(2);
-  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["STOP", "next"]);
+  expect(driver.last.sent.at(-1)?.map((m) => [m.kind, m.body])).toEqual([
+    ["system", expect.stringContaining("The factory restarted")],
+    ["message", "STOP"],
+    ["message", "next"],
+  ]);
 });
 
 test("a rejected interrupt write before an unexpected exit keeps the real exit reason", async () => {
@@ -273,7 +281,81 @@ test("a rejected interrupt write before an unexpected exit keeps the real exit r
   driver.last.exit(1);
   await rt.settled();
   expect(rt.live()).toMatchObject({
-    status: "errored",
+    errorKind: "crash",
     lastError: "Exited unexpectedly (code 1)",
   });
+});
+
+test("the first batch after a notice begins with it, even ahead of an older pending message", async () => {
+  await store.createMessage({ fromUserId: "u1", toAgentId: agentId, body: "old", urgent: false });
+  await rt.init(); // as after a restart: "old" is pending
+  await rt.postNotice("crash", "it crashed"); // no process: nothing is written
+  expect(rt.queueItems().map((q) => [q.kind, q.from, q.body])).toEqual([
+    ["notice", "@factory", "it crashed"],
+    ["message", "@or", "old"],
+  ]);
+  await send("new"); // starts the process
+  expect(driver.last.sent[0]).toMatchObject([
+    { from: "@factory", kind: "system", body: "it crashed" },
+    { from: "@or", kind: "message", body: "old" },
+    { from: "@or", kind: "message", body: "new" },
+  ]);
+});
+
+test("a notice is written ahead of older pending messages in one batch", async () => {
+  await startedIdle();
+  driver.last.failWrites = true;
+  await send("a");
+  await send("b");
+  driver.last.failWrites = false;
+  await rt.postNotice("factory_restarted", "restarted");
+  expect(driver.last.sent.at(-1)).toMatchObject([
+    { from: "@factory", kind: "system", body: "restarted" },
+    { from: "@or", kind: "message", body: "a" },
+    { from: "@or", kind: "message", body: "b" },
+  ]);
+  const hist = (await events()).find(
+    (e) => e.event.type === "message_in" && e.event.messages[0]?.kind === "system",
+  );
+  expect(hist).toBeDefined(); // history with a system message_in parses (rowsToDto validates)
+});
+
+test("a second notice of the same type replaces a pending one; an in-flight one is untouched", async () => {
+  await startedIdle();
+  driver.last.failWrites = true;
+  await rt.postNotice("restart", "first");
+  await rt.postNotice("restart", "second");
+  expect(rt.queueItems().map((q) => q.body)).toEqual(["second"]);
+  driver.last.failWrites = false;
+  await rt.postNotice("crash", "x"); // flush writes [second, x]
+  const sentBodies = driver.last.sent.at(-1)?.map((m) => m.body);
+  expect(sentBodies).toEqual(["second", "x"]);
+  await rt.postNotice("restart", "third"); // the earlier restart was written: a new row
+  const rows =
+    await t.sql`select body, state from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+  expect(rows.map((r) => r.body)).toEqual(["second", "third"]);
+});
+
+test("a notice written but not yet confirmed (no session_started) is never replaced: a new row is queued", async () => {
+  await send("a"); // process started, no session_started yet: batches stay in flight
+  await rt.postNotice("restart", "first"); // written, row still pending in the DB
+  await rt.postNotice("restart", "second");
+  expect(driver.last.sent.map((b) => b.map((m) => m.body))).toEqual([["a"], ["first"], ["second"]]);
+  const rows =
+    await t.sql`select body from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+  expect(rows.map((r) => r.body)).toEqual(["first", "second"]);
+});
+
+test("rolled-back batches go behind notices queued meanwhile", async () => {
+  await send("a"); // in flight
+  driver.last.failWrites = true;
+  await rt.postNotice("restart", "c"); // write rejected: queued
+  driver.last.exit();
+  await rt.settled();
+  // The recovery attempt's first batch: the notices (the crash one joins them), then the rolled-back batch.
+  expect(driver.last.sent[0]?.map((m) => [m.kind, m.body])).toEqual([
+    ["system", "c"],
+    ["system", expect.stringContaining("stopped unexpectedly")],
+    ["message", "a"],
+  ]);
 });

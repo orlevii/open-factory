@@ -2,14 +2,20 @@ import type { AgentDetail, AgentSummary } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useWs } from "@/lib/ws-context";
+import { runningQueryKey } from "./api";
 
-/** agent_status frames reach every socket; fold them into the cached list and detail. */
+/** agent_status and supervisor frames reach every socket; fold them into the cached list, detail
+ *  and running count. */
 export function useAgentStatusFrames() {
   const ws = useWs();
   const qc = useQueryClient();
   useEffect(
     () =>
       ws.listen((m) => {
+        if (m.type === "supervisor") {
+          qc.setQueryData(runningQueryKey, { count: m.running, max: m.max });
+          return;
+        }
         if (m.type !== "agent_status") return;
         // A frame without lastError clears it: the server omits the field once the error is gone.
         const patch = {
@@ -18,6 +24,13 @@ export function useAgentStatusFrames() {
           lastError: m.lastError,
           restartPending: m.restartPending,
           restartWaitingOn: m.restartWaitingOn,
+          waitingOn: m.waitingOn ?? { tasks: [], crons: 0 },
+          rateLimitedUntil: m.rateLimitedUntil,
+          rateLimitExact: m.rateLimitExact,
+          runtimeDisabled: m.runtimeDisabled,
+          errorKind: m.errorKind,
+          image: m.image,
+          pulling: m.pulling,
         };
         // Lists are keyed by the archived filter (["agents", "exclude"] ...): patch every variant.
         const cached = qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] });

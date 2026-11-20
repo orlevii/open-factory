@@ -14,12 +14,26 @@ const modelSchema = z
 
 const pluginRef = z.string().regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/, "Use name@marketplace.");
 
+// The Docker image reference grammar (distribution/reference): `[registry[:port]/]path[:tag][@algo:hex]`.
+const domainPart = "(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])";
+const pathPart = "[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*";
+const IMAGE_REF = new RegExp(
+  `^(?:${domainPart}(?:\\.${domainPart})*(?::[0-9]+)?/)?${pathPart}(?:/${pathPart})*` +
+    "(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?" +
+    "(?:@[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,})?$",
+);
+/** An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded. */
+export const imageRefSchema = z
+  .string()
+  .max(255)
+  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.");
+
 export const templateConfigSchema = z.object({
   name: nameSchema,
   displayName: z.string().min(1).max(80),
   description: z.string().max(500),
   runtime: z.enum(["docker", "local"]),
-  image: z.string().min(1).optional(),
+  image: imageRefSchema.optional(),
   permissionMode: z.enum(["auto", "bypass"]),
   model: modelSchema.optional(),
   effort: z.enum(EFFORTS).optional(),
@@ -41,7 +55,7 @@ export const templateYamlSchema = z
     display_name: z.string().min(1).max(80),
     description: z.string().max(500).default(""),
     runtime: z.enum(["docker", "local"]).default("docker"),
-    image: z.string().min(1).optional(),
+    image: imageRefSchema.optional(),
     permission_mode: z.enum(["auto", "bypass"]).default("auto"),
     model: modelSchema.optional(),
     effort: z.enum(EFFORTS).optional(),

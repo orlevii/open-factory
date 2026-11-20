@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { createClaudeDriver } from "@open-factory/harness";
+import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { expect, test } from "vitest";
 import { CredentialVerifier } from "./verify.ts";
@@ -7,7 +7,7 @@ import { CredentialVerifier } from "./verify.ts";
 test("success: env is minimal, haiku, temp dir removed", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
   const v = new CredentialVerifier({
-    driver: createClaudeDriver(),
+    driver: createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: fake.bin,
     serverEnv: {
       PATH: process.env.PATH,
@@ -40,7 +40,10 @@ test("success: env is minimal, haiku, temp dir removed", async () => {
 
 test("api key goes in ANTHROPIC_API_KEY, not the oauth variable", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
-  const v = new CredentialVerifier({ driver: createClaudeDriver(), claudeBin: fake.bin });
+  const v = new CredentialVerifier({
+    driver: createClaudeDriver({ transports: { local: localTransport } }),
+    claudeBin: fake.bin,
+  });
   expect(await v.verify("api_key", "sk-x")).toEqual({ ok: true });
   const start = fake.log().find((e) => e.kind === "start");
   if (start?.kind !== "start") throw new Error("the fake never started");
@@ -50,7 +53,10 @@ test("api key goes in ANTHROPIC_API_KEY, not the oauth variable", async () => {
 
 test("401 → rejected; api_key wording", async () => {
   const fake = createFakeClaude({ scenario: "invalid-token" });
-  const v = new CredentialVerifier({ driver: createClaudeDriver(), claudeBin: fake.bin });
+  const v = new CredentialVerifier({
+    driver: createClaudeDriver({ transports: { local: localTransport } }),
+    claudeBin: fake.bin,
+  });
   expect(await v.verify("oauth_token", "bad")).toEqual({
     ok: false,
     kind: "rejected",
@@ -64,7 +70,7 @@ test("401 → rejected; api_key wording", async () => {
 
 test("no session / timeout → unreachable", async () => {
   const v = new CredentialVerifier({
-    driver: createClaudeDriver(),
+    driver: createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: "/nonexistent/claude",
   });
   expect(await v.verify("oauth_token", "x")).toEqual({
@@ -77,7 +83,7 @@ test("no session / timeout → unreachable", async () => {
 test("a process that never answers times out as unreachable", async () => {
   const fake = createFakeClaude({ scenario: { onUser: [{ sleep: 60_000 }] } });
   const v = new CredentialVerifier({
-    driver: createClaudeDriver(),
+    driver: createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: fake.bin,
     timeoutMs: 300,
   });

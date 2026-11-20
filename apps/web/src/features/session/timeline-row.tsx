@@ -7,30 +7,69 @@ import { CompactionMarker } from "./compaction-marker";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
+import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 
-const hhmm = (epochSeconds: number) =>
-  new Date(epochSeconds * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+const Mono = ({ children }: { children: ReactNode }) => (
+  <span className="font-mono">{children}</span>
+);
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** Quiet-line copy, UI design §4.1. */
+/** "Hibernated after 70 minutes idle" … (S5 UI design §3.3), by the hibernate path's reason. */
+function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): string {
+  switch (e.reason) {
+    case "warm_window":
+      return e.idleMinutes === undefined
+        ? "Hibernated"
+        : `Hibernated after ${plural(e.idleMinutes, "minute", "minutes")} idle`;
+    case "freed_slot":
+      return "Hibernated to free a slot";
+    case "apply_changes":
+      return "Hibernated to apply changes";
+    case "shutdown":
+      return "Hibernated: the server stopped";
+    case "archived":
+      return "Stopped: the agent was archived";
+    default:
+      return "Hibernated";
+  }
+}
+
+/** The S3 start line, refined by why the process started. */
+function startedText(e: Extract<AnyEvent, { type: "process_started" }>): string {
+  if (e.reason === "crash_recovery") return "Resumed after a crash";
+  if (e.reason === "restart") return "Restarted";
+  if (e.reason === "boot_resume") return "Resumed after the server restarted";
+  return e.resumed ? "Woke up" : "Started a new session";
+}
+
+function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): string {
+  const items = [
+    ...e.tasks.map((t) => `${t.description ?? t.taskId} (background)`),
+    ...e.crons.map((c) => `${c.humanSchedule?.toLowerCase() ?? c.cronId} (cron)`),
+  ];
+  return `Lost when the process stopped: ${items.join(" · ")}`;
+}
+
+/** Quiet-line copy, S3 UI design §4.1 and S5 UI design §3.3. Never pids, container ids, exit codes or
+ *  signals: those stay in the expandable detail. */
 export function quietText(e: AnyEvent, interrupted = false): ReactNode {
   switch (e.type) {
     case "process_started":
-      return e.resumed ? "Resumed session" : "Started";
+      return startedText(e);
     case "exited":
-      if (e.expected) return "Stopped";
-      return e.code !== null
-        ? `Exited unexpectedly (code ${e.code})`
-        : `Exited unexpectedly (${e.signal ?? "unknown"})`;
+      return e.expected ? "Stopped" : <span className="text-foreground">Stopped unexpectedly</span>;
     case "session_reset":
-      return "Session reset";
+      return (
+        <>
+          New session started by <Mono>{e.by}</Mono>. Earlier history stays above; the agent no
+          longer remembers it.
+        </>
+      );
     case "control": {
-      const by = <span className="font-mono">{e.by}</span>;
+      const by = <Mono>{e.by}</Mono>;
       if (e.cmd === "interrupt") return <>{by} interrupted</>;
+      if (e.cmd === "restart") return <>Restarted by {by}</>;
       if (e.cmd === "compact")
         return e.arg ? (
           <>
@@ -59,21 +98,69 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
       return `Cron created: ${e.humanSchedule.toLowerCase()}`;
     case "cron_deleted":
       return "Cron deleted";
-    case "rate_limited":
-      return `Rate limited until ${hhmm(e.resetsAt)}`;
+    case "hibernated":
+      return hibernatedText(e);
+    case "container":
+      return e.action === "recreated" ? (
+        "Container re-created: image or mounts changed"
+      ) : (
+        <>
+          Container created (<Mono>{e.image}</Mono>)
+        </>
+      );
+    case "cleanup":
+      return e.container
+        ? "Stopped the container to clear leftover processes"
+        : `Stopped ${plural(e.killedProcesses ?? 0, "leftover process", "leftover processes")}`;
+    case "stop_escalated":
+      return "The process didn't stop in time, so it was killed";
+    case "background_work_lost":
+      return lostText(e);
+    case "reconciled":
+      return "Cleaned up after the server restarted";
+    case "rate_limit_paused":
+      return (
+        <>
+          Rate limit reached on credential <Mono>{e.credential}</Mono>. Paused
+          {resetPhrase({ rateLimitedUntil: e.until, rateLimitExact: e.exact })?.joined ?? ""}.
+        </>
+      );
+    case "rate_limit_reset":
+      return (
+        <>
+          Rate limit on credential <Mono>{e.credential}</Mono> reset
+        </>
+      );
     default:
       return e.type;
   }
 }
 
-/** Expandable detail for quiet lines that carry one (stderr tail, the raw auto-compact error). */
+/** Expandable detail for quiet lines that carry one (exit code and stderr tail, the raw auto-compact
+ *  error). */
 function quietDetail(e: AnyEvent): string | undefined {
-  if (e.type === "exited" && !e.expected && e.stderrTail) return e.stderrTail;
+  if (e.type === "exited" && !e.expected) {
+    const how = e.code !== null ? `Exit code ${e.code}` : `Signal ${e.signal ?? "unknown"}`;
+    return e.stderrTail ? `${how}\n${e.stderrTail}` : how;
+  }
   if (e.type === "compact_failed" && e.trigger === "auto") return e.error;
   return undefined;
 }
 
-const WARN = new Set(["delivery_failed", "compact_failed", "rate_limited"]);
+const WARN = new Set([
+  "delivery_failed",
+  "compact_failed",
+  "stop_escalated",
+  "background_work_lost",
+  "rate_limit_paused",
+]);
+
+function quietIcon(e: AnyEvent): ReactNode {
+  // One crash is red once: the unexpected exit, never a separate crimson error row.
+  if (e.type === "exited" && !e.expected)
+    return <CircleAlert aria-hidden="true" className="text-destructive" />;
+  return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
+}
 
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
@@ -91,7 +178,20 @@ function FixLink({
         Edit the agent
       </Link>
     );
-  const label = { credentials: "Credentials", secrets: "Secrets", projects: "Projects" }[fix];
+  // The strip's disabled segment explains the runtime gate (S5 UI design §3.2): no link.
+  if (fix === "runtime") return null;
+  // Re-sync lives on the agent's edit page.
+  if (fix === "resync")
+    return (
+      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
+        Re-sync the agent
+      </Link>
+    );
+  const label = {
+    credentials: "Credentials",
+    secrets: "Secrets",
+    projects: "Projects",
+  }[fix];
   return (
     <Link to="/settings" hash={fix} className={cls}>
       Open Settings → {label}
@@ -118,6 +218,7 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp}>
           <MessageBlock
             from={row.message.from}
+            system={row.message.kind === "system"}
             body={row.message.body}
             urgent={row.message.urgent}
             at={row.at}
@@ -155,13 +256,6 @@ export function TimelineRow(props: TimelineRowProps) {
             <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
             {row.event.message}
           </p>
-          {row.event.source === "resume" && (
-            <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-              To start a new session: stop the server, run{" "}
-              <code className="font-mono">pnpm agent:reset-session {props.slug}</code>, then start
-              it again.
-            </p>
-          )}
           {row.event.fix && (
             <p>
               <FixLink fix={row.event.fix} slug={props.slug} />
@@ -189,11 +283,7 @@ export function TimelineRow(props: TimelineRowProps) {
       );
     case "quiet":
       return (
-        <QuietLine
-          rowProps={rp}
-          icon={WARN.has(row.event.type) ? <TriangleAlert aria-hidden="true" /> : undefined}
-          detail={quietDetail(row.event)}
-        >
+        <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>
           {quietText(row.event, interruptedEnds.has(row.seq))}
         </QuietLine>
       );

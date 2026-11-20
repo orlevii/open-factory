@@ -10,6 +10,7 @@ export type {
 } from "./schema/agents.ts";
 export type { CredentialRow, ProjectRow, SecretRow, TemplateRow } from "./schema/factory.ts";
 export * as schema from "./schema/index.ts";
+export type { ScheduleRow } from "./schema/schedules.ts";
 export type {
   TaskCommentRow,
   TaskEventRow,

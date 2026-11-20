@@ -1,0 +1,192 @@
+/**
+ * SQL for `schedules`, and the one lock order every schedule transaction follows (S9 spec §12.1).
+ *
+ *   1. Read without locks to learn which agents are involved (target, new target, caller).
+ *   2. Agent rows FIRST, in ONE global order (persistent before spawned, then id), ONE ROW PER STATEMENT so each row
+ *      gets its own mode: the creating agent `FOR NO KEY UPDATE` (it serialises that agent's own creates, so the
+ *      20-schedule count can't be raced), every target `FOR SHARE`; a row that is both gets `FOR NO KEY UPDATE`.
+ *      (Creator first, then targets, would deadlock when A schedules for B while B schedules for A.) Re-check each is
+ *      live. A deadlock is still retried once from step 1 (`withDeadlockRetry`).
+ *   3. Schedule rows `FOR NO KEY UPDATE` (edit, delete, restore) or `FOR NO KEY UPDATE SKIP LOCKED` (the firing).
+ *      Never `FOR UPDATE`: it would conflict with the `KEY SHARE` that message inserts take through `schedule_id`.
+ *      An edit that changes the target re-reads the schedule under its lock and, if the target changed meanwhile,
+ *      retries once from step 1.
+ *   4. Message rows: the pending scheduled row `FOR NO KEY UPDATE`, then insert or update.
+ *
+ * Invariant: agents before schedules before messages. No transaction may lock a schedule row and then wait on an
+ * agent row. S7's termination (agent rows, then `terminateRows`, which also updates the target's schedules) and
+ * unarchive (agent row, then its schedules) follow it. Tasks are never touched here, so S8's "tasks before agents"
+ * is unaffected.
+ *
+ * Every method takes `tx` first, and every call inside a schedule transaction passes it (a call on its own connection
+ * would wait forever on our uncommitted rows). A transaction never awaits a runtime call (`runtimes.load`,
+ * `statusOf`, `deliver`).
+ */
+import { randomUUID } from "node:crypto";
+import { type Db, type ScheduleRow, schema } from "@open-factory/db";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import type { Exec } from "../agents/event-store.ts";
+
+const { schedules, agents, users, messages } = schema;
+
+export type Actor = { agentId: string } | { userId: string };
+export type LockWant = { id: string; mode: "update" | "share" };
+export type LockedAgent = {
+  id: string;
+  slug: string;
+  displayName: string;
+  kind: string;
+  archivedAt: Date | null;
+  terminatedAt: Date | null;
+};
+
+/** A schedule with the names the item needs. */
+export type ScheduleRecord = ScheduleRow & {
+  target: { slug: string; displayName: string; archivedAt: Date | null; terminatedAt: Date | null };
+  createdBy:
+    | { kind: "agent"; slug: string; archivedAt: Date | null; terminatedAt: Date | null }
+    | { kind: "user"; handle: string };
+  bodyAuthor:
+    | { kind: "agent"; slug: string; archivedAt: Date | null; terminatedAt: Date | null }
+    | { kind: "user"; handle: string };
+  pendingFiring: boolean;
+};
+
+/** "Done": a one-shot whose time came (R5). */
+export const isDone = (s: Pick<ScheduleRow, "runAt" | "nextRunAt" | "deletedAt">) =>
+  s.runAt !== null && s.nextRunAt === null && s.deletedAt === null;
+
+/** The SQL twin of `isDone`, for counts. */
+const doneSql = sql`(${schedules.runAt} is not null and ${schedules.nextRunAt} is null)`;
+
+export class ScheduleStore {
+  constructor(private readonly d: { db: Db }) {}
+
+  /** `deleted_at IS NULL`, written once (Q17). */
+  live() {
+    return isNull(schedules.deletedAt);
+  }
+
+  /**
+   * ONE row per statement, persistent before spawned then id (§12.1 step 2). A row wanted in both modes gets the
+   * stronger one. Returns the rows in lock order.
+   */
+  async lockAgents(tx: Exec, wants: LockWant[]): Promise<LockedAgent[]> {
+    const mode = new Map<string, "update" | "share">();
+    for (const w of wants) mode.set(w.id, mode.get(w.id) === "update" ? "update" : w.mode);
+    const kinds = await tx
+      .select({ id: agents.id, kind: agents.kind })
+      .from(agents)
+      .where(
+        sql`${agents.id} in (${sql.join(
+          [...mode.keys()].map((i) => sql`${i}`),
+          sql`, `,
+        )})`,
+      );
+    const order = kinds
+      .map((k) => ({ id: k.id, spawned: k.kind === "ephemeral" }))
+      .sort((a, b) => Number(a.spawned) - Number(b.spawned) || a.id.localeCompare(b.id));
+    const out: LockedAgent[] = [];
+    for (const { id } of order) {
+      const lock = mode.get(id) === "update" ? sql`for no key update` : sql`for share`;
+      const rows = await tx.execute(sql`
+        select id, slug, display_name as "displayName", kind, archived_at as "archivedAt",
+               terminated_at as "terminatedAt" from agents where id = ${id} ${lock}`);
+      if (rows[0]) out.push(rows[0] as unknown as LockedAgent);
+    }
+    return out;
+  }
+
+  /** Schedules created by `agentId` that count toward the 20 limit: not deleted, not done; paused ones count. */
+  async countActiveCreatedBy(tx: Exec, agentId: string): Promise<number> {
+    const [r] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schedules)
+      .where(and(eq(schedules.createdByAgentId, agentId), this.live(), sql`not ${doneSql}`));
+    return r?.n ?? 0;
+  }
+
+  async insert(
+    tx: Exec,
+    s: {
+      targetAgentId: string;
+      cron: string | null;
+      runAt: Date | null;
+      timezone: string;
+      body: string;
+      actor: Actor;
+      nextRunAt: Date;
+      now: Date;
+    },
+  ): Promise<ScheduleRow> {
+    const agent = "agentId" in s.actor ? s.actor.agentId : null;
+    const user = "userId" in s.actor ? s.actor.userId : null;
+    const [row] = await tx
+      .insert(schedules)
+      .values({
+        id: randomUUID(),
+        targetAgentId: s.targetAgentId,
+        cron: s.cron,
+        runAt: s.runAt,
+        timezone: s.timezone,
+        body: s.body,
+        createdByAgentId: agent,
+        createdByUserId: user,
+        bodyAuthorAgentId: agent,
+        bodyAuthorUserId: user,
+        nextRunAt: s.nextRunAt,
+        createdAt: s.now,
+        updatedAt: s.now,
+      })
+      .returning();
+    return row as ScheduleRow;
+  }
+
+  /** The joined records, ordered by id for determinism; callers order them as they need. */
+  async records(tx: Exec, where: ReturnType<typeof and>): Promise<ScheduleRecord[]> {
+    const ta = alias(agents, "ta");
+    const ca = alias(agents, "ca");
+    const ba = alias(agents, "ba");
+    const cu = alias(users, "cu");
+    const bu = alias(users, "bu");
+    const rows = await tx
+      .select({
+        s: schedules,
+        ta: {
+          slug: ta.slug,
+          displayName: ta.displayName,
+          archivedAt: ta.archivedAt,
+          terminatedAt: ta.terminatedAt,
+        },
+        ca: { slug: ca.slug, archivedAt: ca.archivedAt, terminatedAt: ca.terminatedAt },
+        ba: { slug: ba.slug, archivedAt: ba.archivedAt, terminatedAt: ba.terminatedAt },
+        cuHandle: cu.handle,
+        buHandle: bu.handle,
+        pending: sql<boolean>`exists (select 1 from ${messages} where ${messages.scheduleId} = ${schedules.id} and ${messages.state} = 'pending')`,
+      })
+      .from(schedules)
+      .innerJoin(ta, eq(ta.id, schedules.targetAgentId))
+      .leftJoin(ca, eq(ca.id, schedules.createdByAgentId))
+      .leftJoin(ba, eq(ba.id, schedules.bodyAuthorAgentId))
+      .leftJoin(cu, eq(cu.id, schedules.createdByUserId))
+      .leftJoin(bu, eq(bu.id, schedules.bodyAuthorUserId))
+      .where(where)
+      .orderBy(asc(schedules.number));
+    return rows.map((r) => ({
+      ...r.s,
+      target: r.ta,
+      createdBy: r.s.createdByAgentId
+        ? { kind: "agent" as const, ...r.ca }
+        : { kind: "user" as const, handle: r.cuHandle ?? "" },
+      bodyAuthor: r.s.bodyAuthorAgentId
+        ? { kind: "agent" as const, ...r.ba }
+        : { kind: "user" as const, handle: r.buHandle ?? "" },
+      pendingFiring: Boolean(r.pending),
+    })) as ScheduleRecord[];
+  }
+
+  async recordById(tx: Exec, id: string): Promise<ScheduleRecord | undefined> {
+    return (await this.records(tx, eq(schedules.id, id)))[0];
+  }
+}

@@ -116,6 +116,14 @@ const BASE_TOOLS = [
   "update_task",
 ];
 
+/** S9 (Q12): persistent agents also list the schedule tools; a spawned agent never does. */
+const PERSISTENT_TOOLS = [
+  ...BASE_TOOLS,
+  "cancel_schedule",
+  "list_schedules",
+  "schedule_message",
+].sort();
+
 test("tools per caller: spawner sees two more with the enum, others the messaging and task tools (spec §7.1, S8 §9)", async () => {
   const driver = new FakeDriver();
   const t = await makeTestApp({ harnessDriver: driver });
@@ -137,13 +145,13 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
     };
     const lead = await names("lead");
     expect(lead.map((x) => x.name).sort()).toEqual(
-      [...BASE_TOOLS, "spawn_agent", "terminate_agent"].sort(),
+      [...PERSISTENT_TOOLS, "spawn_agent", "terminate_agent"].sort(),
     );
     expect(
       lead.find((x) => x.name === "spawn_agent")?.inputSchema.properties.template?.enum,
     ).toEqual(["tech-lead", "developer"]);
-    expect((await names("solo")).map((x) => x.name).sort()).toEqual(BASE_TOOLS);
-    expect((await names("capped")).map((x) => x.name).sort()).toEqual(BASE_TOOLS);
+    expect((await names("solo")).map((x) => x.name).sort()).toEqual(PERSISTENT_TOOLS);
+    expect((await names("capped")).map((x) => x.name).sort()).toEqual(PERSISTENT_TOOLS);
     // A spawned agent never spawns (depth one), even when its template has can_spawn.
     const tplDir = path.join(t.factoryHome, "templates", "developer");
     mkdirSync(tplDir, { recursive: true });

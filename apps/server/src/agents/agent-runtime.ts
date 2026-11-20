@@ -527,6 +527,15 @@ export class AgentRuntime {
         // Already written (boot reconciliation's wake loaded and delivered it while the Router waited on `booted`):
         // nothing to wake for, and an urgent interrupt now would stop the very turn reading it.
         return this.itemOf(entryOf(row));
+      } else if (row.kind === "scheduled") {
+        // S9 §8.2 rule 3: a firing replaced this still-queued row. Re-read it and take the stored version only if it
+        // covers more firings, so an older hand-off arriving after `init()` loaded a newer one never regresses it.
+        const fresh = await this.d.store.pendingJoined(row.id);
+        if (!fresh) return this.itemOf(entry); // written meanwhile, or rejected: as for any seen id
+        if ((fresh.firings ?? 0) > (entry.row.firings ?? 0)) {
+          entry.row = fresh;
+          this.publishQueue();
+        }
       }
       // A provisional latch (S7 §8 step 1): queued and seen, but no wake, interrupt or flush. If the termination
       // fails, `unmarkTerminated` delivers it; if it commits, the transaction rejected it.
@@ -3064,6 +3073,17 @@ export class AgentRuntime {
     );
   }
 
+  /** Re-reads every `scheduled` entry of `batch` in place; entries whose row is no longer pending are removed. */
+  private async refreshScheduled(batch: MessageEntry[]): Promise<void> {
+    for (let i = batch.length - 1; i >= 0; i--) {
+      const e = batch[i];
+      if (e?.row.kind !== "scheduled") continue;
+      const fresh = await this.d.store.pendingJoined(e.row.id);
+      if (fresh) e.row = fresh;
+      else batch.splice(i, 1);
+    }
+  }
+
   /** False when the write was rejected (the batch is back at the head of the queue). */
   private async writeBatch(batch: MessageEntry[]): Promise<boolean> {
     const proc = this.proc;
@@ -3071,6 +3091,15 @@ export class AgentRuntime {
       this.requeue(batch);
       return false;
     }
+    // S9 §8.2 rule 2: a scheduled entry may be stale (loaded by `init()`, or handed over behind a slow start): render the
+    // row's current content, and drop one that is no longer pending (rejected by a termination).
+    try {
+      await this.refreshScheduled(batch);
+    } catch (err) {
+      this.requeue(batch);
+      throw err;
+    }
+    if (!batch.length) return true;
     const ids = batch.map((m) => m.row.id);
     let envelopes: FactoryMessage[];
     try {
@@ -3098,6 +3127,11 @@ export class AgentRuntime {
         );
         // Every write, before session_started too (S6 §11): the event that shows the rows to their recipient.
         await this.d.store.setDeliveredEventSeq(ids, out.seq, tx);
+        // S9 §8.2 rule 1: the row records exactly what was rendered (a replacement that landed since is coalesced).
+        await this.d.store.writeBackScheduled(
+          batch.filter((e) => e.row.kind === "scheduled").map((e) => e.row),
+          tx,
+        );
         if (this.started) await this.d.store.markDelivered(ids, tx);
         if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
         return out;

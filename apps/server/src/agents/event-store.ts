@@ -810,6 +810,37 @@ export class EventStore {
     if (!r) throw new Error(`message ${id} not found`);
     return r;
   }
+  /** S9: the joined row if it is still `pending` (rejected, delivered or gone: undefined). Re-reads what a firing replaced. */
+  async pendingJoined(id: string, tx: Exec = this.db): Promise<PendingRow | undefined> {
+    const [r] = await this.joined(tx).where(
+      and(eq(messages.id, id), eq(messages.state, "pending")),
+    );
+    return r;
+  }
+  /**
+   * S9 §8.2 rule 1: the rendered content of every `scheduled` row in a batch, written back in the transaction that
+   * records the delivery, so the row says exactly what the agent read.
+   */
+  async writeBackScheduled(
+    rows: Pick<
+      MessageRow,
+      "id" | "body" | "authorAgentId" | "authorUserId" | "dueAt" | "firings" | "late"
+    >[],
+    tx: Exec,
+  ): Promise<void> {
+    for (const r of rows)
+      await tx
+        .update(messages)
+        .set({
+          body: r.body,
+          authorAgentId: r.authorAgentId,
+          authorUserId: r.authorUserId,
+          dueAt: r.dueAt,
+          firings: r.firings,
+          late: r.late,
+        })
+        .where(eq(messages.id, r.id));
+  }
   private joined(tx: Exec) {
     const fa = alias(agents, "fa");
     const sa = alias(agents, "sa");

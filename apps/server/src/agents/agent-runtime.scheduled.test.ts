@@ -144,3 +144,95 @@ test("the queue after init() carries the schedule fields, and messageLookup too"
     dueAt: "2026-11-23T08:00:00.000Z",
   });
 });
+
+// ---------- replace, never stack: the runtime's side (S9 §8.2) ----------
+
+const humanSend = async (body: string) => {
+  const row = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: agentId,
+    body,
+    urgent: false,
+  });
+  return rt.deliver(await store.pendingRow(row.id), { sender: "human", fromLabel: "@or" });
+};
+const asAgent = (row: Awaited<ReturnType<typeof store.pendingRow>>) =>
+  rt.deliver(row, { sender: "agent", fromLabel: "@scheduler", reason: "scheduled" });
+
+test("a hand-off for a queued row the runtime already holds refreshes it, monotonically", async () => {
+  await makeRuntime({ status: "errored", sessionId: "sess-1" });
+  const first = await scheduled({ firings: 1 });
+  await asAgent(first);
+  await t.sql`update messages set firings = 2, body = 'second' where id = ${first.id}`;
+  const second = await store.pendingRow(first.id);
+  await asAgent(second);
+  expect(rt.queueItems().find((i) => i.id === first.id)).toMatchObject({
+    firings: 2,
+    body: "second",
+  });
+  // an older hand-off arriving after the newer one never regresses the entry
+  await asAgent(first);
+  expect(rt.queueItems().find((i) => i.id === first.id)).toMatchObject({
+    firings: 2,
+    body: "second",
+  });
+  // and init() having loaded a newer version is not regressed by a stale hand-off either
+  await t.sql`update messages set firings = 5, body = 'fifth' where id = ${first.id}`;
+  await rt.init();
+  await asAgent(first);
+  expect(rt.queueItems().find((i) => i.id === first.id)).toMatchObject({
+    firings: 5,
+    body: "fifth",
+  });
+});
+
+test("flush renders the row's current content, not a stale entry; a row rejected meanwhile is dropped", async () => {
+  const row = await scheduled({ firings: 1, body: "stale" });
+  const other = await (async () => {
+    await insertSchedule(t.sql, { id: `x${n}`, targetAgentId: agentId, cron: "0 9 * * *" });
+    await insertScheduledMessage(t.sql, {
+      id: `xm${n}`,
+      toAgentId: agentId,
+      scheduleId: `x${n}`,
+      body: "doomed",
+    });
+    return store.pendingRow(`xm${n}`);
+  })();
+  await rt.init(); // loads both entries as they are now
+  await t.sql`update messages set firings = 3, body = 'current' where id = ${row.id}`;
+  await t.sql`update messages set state = 'rejected' where id = ${other.id}`;
+  await humanSend("go");
+  driver.last.emit(ev.session(), ev.turn());
+  await rt.settled();
+  const sent = driver.last.sent[0] ?? [];
+  const sch = sent.filter((m) => m.kind === "scheduled");
+  expect(sch).toHaveLength(1);
+  expect(sch[0]).toMatchObject({ firings: 3, body: "current" });
+  expect(sent.some((m) => m.body.includes("doomed"))).toBe(false);
+});
+
+test("a replacement that lands between rendering and the batch's commit is coalesced: the row says what the agent read", async () => {
+  await humanSend("boot");
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  const proc = driver.last;
+  const realSend = proc.send.bind(proc);
+  let sendStarted!: () => void;
+  const started = new Promise<void>((r) => (sendStarted = r));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  proc.send = async (m) => {
+    sendStarted();
+    await gate;
+    return realSend(m);
+  };
+  const row = await scheduled({ firings: 2, body: "older body" });
+  const delivering = asAgent(row);
+  await started; // rendered (firings 2, "older body") and being written
+  await t.sql`update messages set firings = 3, body = 'newer body' where id = ${row.id}`;
+  release();
+  await delivering;
+  await rt.settled();
+  const [m] = await t.sql`select state, firings, body from messages where id = ${row.id}`;
+  expect(m).toMatchObject({ state: "delivered", firings: 2, body: "older body" });
+});

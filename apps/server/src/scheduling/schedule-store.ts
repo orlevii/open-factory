@@ -278,25 +278,59 @@ export class ScheduleStore {
   }
 
   /**
-   * Writes the firing's pending `scheduled` row. Returns the row id to hand over, or undefined when nothing was written.
-   * Task 11 adds the replace and write-nothing cases; this is the insert.
+   * Replace, never stack (spec §8.2). The pending row of this schedule and target is locked `FOR NO KEY UPDATE`, found
+   * through its partial unique index: none, insert; not yet written (`delivered_event_seq IS NULL`), update in place
+   * (body, author, due, firings + missed, late; `created_at` and so its queue position stay); written to a process that
+   * hasn't confirmed it, write nothing (the agent is about to read that row; this firing coalesces into it).
+   * Returns the row id to hand over, or undefined when nothing was written.
    */
   async upsertFiring(
     tx: Exec,
     f: { schedule: ScheduleRow; due: Date; missed: number; late: boolean; now: Date },
   ): Promise<string | undefined> {
+    const s = f.schedule;
+    const [pending] = await tx
+      .select({
+        id: messages.id,
+        seq: messages.deliveredEventSeq,
+        firings: messages.firings,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.scheduleId, s.id),
+          eq(messages.toAgentId, s.targetAgentId),
+          eq(messages.state, "pending"),
+        ),
+      )
+      .for("no key update");
+    if (pending) {
+      if (pending.seq !== null) return undefined;
+      await tx
+        .update(messages)
+        .set({
+          body: s.body,
+          authorAgentId: s.bodyAuthorAgentId,
+          authorUserId: s.bodyAuthorUserId,
+          dueAt: f.due,
+          firings: (pending.firings ?? 0) + f.missed,
+          late: f.late,
+        })
+        .where(eq(messages.id, pending.id));
+      return pending.id;
+    }
     const id = randomUUID();
     await tx.insert(messages).values({
       id,
       kind: "scheduled",
-      toAgentId: f.schedule.targetAgentId,
-      scheduleId: f.schedule.id,
-      authorAgentId: f.schedule.bodyAuthorAgentId,
-      authorUserId: f.schedule.bodyAuthorUserId,
+      toAgentId: s.targetAgentId,
+      scheduleId: s.id,
+      authorAgentId: s.bodyAuthorAgentId,
+      authorUserId: s.bodyAuthorUserId,
       dueAt: f.due,
       firings: f.missed,
       late: f.late,
-      body: f.schedule.body,
+      body: s.body,
       createdAt: f.now,
     });
     return id;

@@ -46,6 +46,7 @@ Environment variables (`npm start` loads `.env` if present):
 | `FACTORY_AGENT_HOST` | no | loopback, plus the Docker bridge gateway on Linux | comma-separated IP addresses the agent listener binds; replaces the default list. The only way to bind `0.0.0.0` or `::` |
 | `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${FACTORY_AGENT_PORT}` | how containers reach the agent listener (`OPEN_FACTORY_URL` in the container). Local agents always use `http://127.0.0.1:${FACTORY_AGENT_PORT}` |
 | `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` | no | `30` | how long a report's updates wait for an idle manager before waking it (`0` = at once) |
+| `FACTORY_MAX_SPAWNS_PER_HOUR` | no | `20` | most agents one agent may spawn in a rolling hour, terminated ones included, minimum 1; see "Spawning" |
 
 ## Run an agent
 
@@ -116,6 +117,21 @@ files/            optional, copied into the agent's working directory
 ```
 
 Template settings apply as written: templates are authored by the factory's operators. The factory owns `permissions.defaultMode`, keeps Claude's default `autoMode` rules (`$defaults`, so autoMode lists extend the defaults and can't replace them), appends granted project paths to `additionalDirectories`, and writes `claudeMdExcludes`.
+
+## Spawning
+
+An agent can spawn a fresh agent for one piece of work with `spawn_agent` (template, optional suffix, description, brief) and end it with `terminate_agent`. The call returns at once. The spawned agent reports to its spawner, gets the brief as its first message, and its text reaches the spawner as updates. It is named `<template>-<suffix>` (four random letters when no suffix is given), and slugs are never reused.
+
+- **Who can spawn.** Only persistent agents whose template lists `can_spawn` (the templates they may spawn from) and has `max_live_spawns` above 0 (default 5). Only those agents get the two tools. Spawned agents can't spawn, can't be edited and can't be anyone's manager. A spawner with live spawned agents can't be archived until they are terminated.
+- **Inheritance.** A spawned agent never holds anything its spawner lacks. It uses its spawner's credential; it gets the projects its template asks for that the spawner is granted, and the secrets its template asks for that the spawner also has; its deny rules are its template's plus its spawner's. A spawner in Docker can't spawn a local agent, an `auto` spawner can't spawn a `bypass` one, and no local agent is spawned while the local runtime is off. When a spawner's credential or project grants change, its live spawned agents follow (and restart). `spawn_agent` returns a `note` naming whatever was not passed on. MCP servers, plugins, skills, the image and the model come from the spawned agent's own template.
+- **Limits.** At most `max_live_spawns` live spawned agents per spawner (hibernated and errored ones count), and at most `FACTORY_MAX_SPAWNS_PER_HOUR` (20) spawns per spawner in any rolling hour, terminated ones included. Over either limit the call fails and says what to do.
+- **TTL.** A spawned agent with no activity for 3 days (no turn ended, no process started, nothing delivered) is terminated by the factory. Only an agent with no running process and no queued wake is terminated; one waiting on a rate-limit reset is skipped. This is a fixed rule that counts wall-clock time: after the factory has been down or asleep for 3 days or more, idle spawned agents are terminated on the first sweep (every 10 minutes, and once at boot).
+- **Terminate.** The spawner, a human (**Terminate** in the UI, `POST /api/agents/<slug>/terminate`) or the TTL ends a spawned agent from any state: its process stops, its container is removed, its pending messages are rejected and its session becomes read-only. Persistent agents are archived, not terminated.
+- **Workspace grace and pinning.** A terminated agent's working directory (its files and Claude session files) is deleted 3 days after it was terminated, another fixed wall-clock rule. Its session stays readable in the UI. **Pin** on a terminated agent (`PUT /api/agents/<slug>/workspace-pin`, `DELETE` to unpin) keeps the working directory until you unpin it; unpinning after the 3 days deletes it at the next sweep.
+- **Worktrees and branches spawned agents make are never deleted.** They are repo state and may hold unpushed work: clean them up yourself.
+- **Ended agents.** The agent list hides archived and terminated agents; `GET /api/agents?ended=only` lists them (`ended=exclude` is the default). This replaces the earlier `archived=` query.
+
+`pnpm smoke:spawning` is a live check, not part of `pnpm test`. A real Claude (haiku) lead spawns an agent, hears its reply and terminates it. Then it runs the full scenario: it spawns a tech lead and a proxy reviewer, who message each other and write `plan.md` into a temp git repo; it terminates both and spawns a developer, who commits on a branch in its own worktree. It runs Docker agents on `open-factory-base:dev` (run `pnpm build` first); `pnpm smoke:spawning --local` runs them on the host instead. It needs Postgres and an OAuth token in `~/.open-factory-spike/oauth-token`, and uses a throwaway database and `FACTORY_HOME`.
 
 ## Running on a server
 

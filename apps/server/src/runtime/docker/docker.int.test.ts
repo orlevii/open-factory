@@ -20,6 +20,7 @@ import Docker from "dockerode";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { EventStore } from "../../agents/event-store.ts";
 import { makeTestApp } from "../../test/helpers.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
 import { dockerodeClient } from "./client.ts";
@@ -209,6 +210,82 @@ async function setup(o: {
   worlds.push(w);
   return w;
 }
+
+/**
+ * A factory with a Docker spawner `lead` (may spawn `kid`, granted project `app`) and its spawned Docker agent
+ * `kid-<suffix>`, started by its brief and idle. A spawned agent's workdir is created by the spawn and the brief starts
+ * it at once, so the fake can't be copied there first: it lives in the project's repo instead, which the child inherits
+ * as a checked read-write mount at path parity. Its settings are secrets both templates list (a child holds nothing its
+ * spawner lacks).
+ */
+async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
+  const home = tmp("of-dspawn-");
+  const repo = gitRepo();
+  const cliBundle = path.join(tmp("of-cli-"), "open-factory.js");
+  writeFileSync(cliBundle, "// cli\n");
+  const env: Record<string, string> = {
+    FACTORY_HOME: home,
+    FACTORY_DEFAULT_IMAGE: IMAGE,
+    FACTORY_DOCKER_CLAUDE_BIN: fakeClaudeIn(repo).bin,
+    FACTORY_CLI_BUNDLE: cliBundle,
+  };
+  const t = await makeTestApp({ env });
+  const fake = installFakeClaude({ workdir: repo, scenario });
+  expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
+  const secrets = "secrets:\n  - FAKE_CLAUDE_SCENARIO\n  - FAKE_CLAUDE_DIR\n";
+  writeTemplate(home, "lead", `runtime: docker\ncan_spawn:\n  - kid\n${secrets}`);
+  writeTemplate(home, "kid", `runtime: docker\nprojects:\n  - app\n${secrets}`);
+  const credId = crypto.randomUUID();
+  await t.db.insert(schema.credentials).values({
+    id: credId,
+    name: "work",
+    kind: "oauth_token",
+    valueEnc: t.app.vault.seal("tok-docker", `credentials:${credId}`),
+  });
+  await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", fake.secrets.FAKE_CLAUDE_SCENARIO);
+  await t.app.secrets.put("FAKE_CLAUDE_DIR", fake.secrets.FAKE_CLAUDE_DIR);
+  await t.app.projects.create({ name: "app", hostPath: repo });
+  await t.app.agents.create({
+    template: "lead",
+    slug: "lead",
+    displayName: "Lead",
+    description: "",
+    reportsTo: null,
+    credential: "work",
+    projects: ["app"],
+  });
+  const leadId = await idOf(t.db, "lead");
+  agentIds.add(leadId);
+  const cookie = (await t.signUpUser({ handle: "or" })).cookie;
+
+  const r = await t.app.spawner.spawn(
+    leadId,
+    { template: "kid", description: "Does the work", prompt: "Do it", suffix },
+    null,
+  );
+  if (!r.ok) throw new Error(r.message);
+  agentIds.add(r.agentId);
+  const w: World = {
+    t,
+    app: t.app,
+    env,
+    home,
+    slug: r.slug,
+    agentId: r.agentId,
+    workdir: agentWorkdir(home, r.slug),
+    fake,
+    cookie,
+  };
+  worlds.push(w);
+  // The brief started it: its first turn ends and it is idle, its container running.
+  await until(async () => expect((await runtime(w)).live().status).toBe("idle"));
+  expect((await inspect(w)).State.Running).toBe(true);
+  return w;
+}
+
+/** Every container labelled with the agent's id, in any state. */
+const labelled = (agentId: string) =>
+  dk.listContainers({ all: true, filters: { label: [`${LABEL_AGENT_ID}=${agentId}`] } });
 
 const idOf = async (db: TestApp["db"], slug: string) => {
   const [r] = await db
@@ -550,6 +627,55 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       action: "started",
     });
   });
+
+  test("terminate removes a spawned agent's container and gives its slot back", async () => {
+    const w = await setupSpawned("reply");
+    expect(await labelled(w.agentId)).toHaveLength(1);
+    expect(w.app.runtimes.supervisor.running().count).toBe(1);
+
+    expect(await w.app.terminator.terminate(w.agentId, "@or")).toEqual({ status: "terminated" });
+    // The stop and the removal run in the background (spec §8 step 3): the container goes, running or not.
+    await until(async () => expect(await labelled(w.agentId)).toEqual([]));
+    await until(() => expect(w.app.runtimes.supervisor.running().count).toBe(0));
+    await expect(inspect(w)).rejects.toMatchObject({ statusCode: 404 });
+
+    const evs = await events(w);
+    expect(evs.filter((e) => e.type === "terminated")).toEqual([{ type: "terminated", by: "@or" }]);
+    expect(exits(w.fake.log())).toEqual([0]);
+    expect(w.app.runtimes.statusOf({ id: w.agentId, status: "hibernated" })).toBe("terminated");
+  });
+
+  test.each(["stopped", "running"] as const)(
+    "boot removes a terminated agent's leftover container (%s)",
+    async (state) => {
+      const w = await setupSpawned("reply");
+      expect(await (await runtime(w)).hibernate("warm_window")).toBe(true);
+      await until(async () => expect((await inspect(w)).State.Running).toBe(false));
+      const { Id } = await inspect(w);
+      await w.app.close();
+      // What a server that died leaves behind: the container still running (or stopped, as the hibernate left it).
+      if (state === "running") await dk.getContainer(Id).start();
+      expect((await inspect(w)).State.Running).toBe(state === "running");
+
+      // The termination committed with no app running (so no runtime loaded): exactly the state a crash between the
+      // commit and the stop leaves (spec §8 crash safety). No `terminated` event, the container still there.
+      const store = new EventStore(w.t.db);
+      await w.t.db.transaction((tx) => store.terminateRows(tx, w.agentId, "@or"));
+      expect(await store.hasTerminatedEvent(w.agentId)).toBe(false);
+
+      w.app = (await w.t.reopen({ env: w.env })).app;
+      // Boot reconciliation, before the app is returned: the container is gone, the event appended once, no slot held.
+      expect(await labelled(w.agentId)).toEqual([]);
+      await expect(dk.getContainer(Id).inspect()).rejects.toMatchObject({ statusCode: 404 });
+      const evs = await events(w);
+      expect(evs.filter((e) => e.type === "terminated")).toEqual([
+        { type: "terminated", by: "@or" },
+      ]);
+      expect(evs.map((e) => e.type)).not.toContain("reconciled");
+      expect(w.app.runtimes.supervisor.running().count).toBe(0);
+      expect(starts(w.fake.log())).toHaveLength(1);
+    },
+  );
 
   test("server restart invariant: one claude per agent (local and Docker)", async () => {
     const local = createFakeClaude({ scenario: LONG });

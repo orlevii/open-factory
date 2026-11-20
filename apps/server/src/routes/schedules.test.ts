@@ -37,6 +37,7 @@ test.each([
   ["POST", "/api/schedules/S-1/resume"],
   ["DELETE", "/api/schedules/S-1"],
   ["POST", "/api/schedules/S-1/restore"],
+  ["POST", "/api/agents/ceo/stop-crons"],
 ] as const)(
   "%s %s needs a human session: no auth and a live agent token both get 401",
   async (method, url) => {
@@ -153,4 +154,11 @@ test("the agent summary counts schedules targeting it that are neither deleted n
   const summary = (await call("GET", "/api/agents/ceo")).json();
   expect(summary.agent.scheduleCount).toBe(2);
   expect(summary.agent.crons).toEqual([]);
+});
+
+test("stop-crons: 409 no_crons for an agent without crons, 404 for an unknown agent", async () => {
+  const r = await call("POST", "/api/agents/ceo/stop-crons");
+  expect(r.statusCode).toBe(409);
+  expect(r.json().error).toMatchObject({ code: "no_crons", message: "@ceo has no crons." });
+  expect((await call("POST", "/api/agents/nobody/stop-crons")).statusCode).toBe(404);
 });

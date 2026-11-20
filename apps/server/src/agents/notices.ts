@@ -58,6 +58,10 @@ export const notices = {
       "Recreate them if you still need them.",
     ].join(" ");
   },
+  /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */
+  cronsStopped(i: { by: string; crons: string[] }): string {
+    return `${i.by} stopped your crons: ${i.crons.join("; ")}. Don't recreate them unless you are asked to.`;
+  },
   /** `at` only when the reset time was exact. */
   rateLimitReset(i: { credential: string; at?: Date }): string {
     return `The rate limit on credential \`${i.credential}\` reset${i.at ? ` at ${hhmm(i.at)}` : ""}. Continue where you left off.`;

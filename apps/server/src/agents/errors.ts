@@ -1,3 +1,5 @@
+import { ApiError } from "../errors.ts";
+
 export type StartFix = "credentials" | "secrets" | "projects" | "edit_agent" | "resync" | "runtime";
 
 export class AgentStartError extends Error {
@@ -65,5 +67,19 @@ export class InvalidCursorError extends Error {
   constructor() {
     super("Invalid cursor");
     this.name = "InvalidCursorError";
+  }
+}
+
+/** Why Stop crons is refused (S9 §10.3); both are `409`. */
+export class StopCronsError extends ApiError {
+  constructor(code: "no_crons" | "stopping", slug: string) {
+    super(
+      409,
+      code,
+      code === "no_crons"
+        ? `@${slug} has no crons.`
+        : `@${slug} is already stopping; its crons stop with it.`,
+    );
+    this.name = "StopCronsError";
   }
 }

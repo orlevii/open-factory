@@ -12,6 +12,7 @@ import {
   resyncResponseSchema,
   sendMessageBodySchema,
   slugSchema,
+  stopCronsResponseSchema,
 } from "@open-factory/shared";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
@@ -238,6 +239,21 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       return recoveryError(reply, e);
     }
   });
+
+  // S9 §10.3: a human stops the agent's in-session crons (its process hibernates, with the passive notice waiting).
+  app.post(
+    "/api/agents/:slug/stop-crons",
+    { schema: { params: slugParams, response: { 200: stopCronsResponseSchema } } },
+    async (req, reply) => {
+      const rt = await app.runtimes.bySlug(req.params.slug);
+      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      try {
+        return await rt.stopCrons(user(req).handle);
+      } catch (e) {
+        return recoveryError(reply, e);
+      }
+    },
+  );
 
   app.post(
     "/api/agents/:slug/reset-session",

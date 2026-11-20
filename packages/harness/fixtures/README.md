@@ -105,3 +105,10 @@ The HTTP layer must stream the response body (as S6 found for `subscriptions/lis
 ### Verified in S8 implementation
 
 Live gate V1 (Claude Code 2.1.327, haiku, `--permission-mode auto`): a probe server registered the five task tools (`create_task`, `update_task`, `list_tasks`, `get_task`, `comment_task`) with the real shared Zod schemas and stub handlers. All five appeared in the model's tool calls and every input shape arrived intact: `depends_on` as an array of two strings, `links` as an array with one object, `assignee: null` on `update_task` (alongside `status: "done"`), and `status: ["done"]` on `list_tasks`. No flattening fallback is needed.
+
+### Verified in S9 implementation
+
+Live gate V1/V2 (Claude Code 2.1.327, haiku, `--permission-mode auto`, `CLAUDE_CODE_OAUTH_TOKEN` read at run time, fresh `CLAUDE_CONFIG_DIR`, S0's `drive.mjs` and the `cron-create-fire-delete` and `cron-oneshot` scenarios).
+
+- **V1 (harness crons map as S0 recorded): confirmed.** The real mapper turns each trace into `cron_created` (`recurring` true or false), a `turn_end` with `originKind: "cron"` for the firing, and `cron_deleted` for the recurring cron after `CronDelete`; the one-shot gets no deletion event. `CronCreate`'s `tool_use_result` is `{id, humanSchedule, recurring, durable, nextFireAt}` (`nextFireAt` in epoch milliseconds, a float for the recurring one).
+- **V2 (does a `durable: true` cron survive a resume): negative.** The model passed `durable: true` in the `CronCreate` input (checked in the `tool_use` block), but the tool's result reported `durable: false`, no `.claude/scheduled_tasks.json` (nor a `.claude` directory) was written in the working directory, and after stopping the process and resuming the session with `--resume` across the job's fire time (waited 200 s) no `DURABLEFIRED` turn, no `command_lifecycle` and no cron turn appeared. In this headless stream-json mode the flag is ignored, so no cron outlives its process and the durable-cron cleanup (spec §10.4's fallback) is not needed.

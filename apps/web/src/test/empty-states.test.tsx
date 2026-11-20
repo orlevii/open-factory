@@ -10,10 +10,13 @@ vi.mock("@/lib/ws", () => ({
 
 test.each([
   ["/inbox", "Inbox", "Nothing in your inbox."],
-  ["/tasks", "Tasks", "No tasks yet."],
+  ["/tasks", "Tasks", "No open tasks."],
   ["/schedules", "Schedules", "No schedules yet."],
 ])("%s shows its heading and empty line", async (path, title, text) => {
-  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  mockApi({
+    "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
+    "GET /api/tasks?": () => json({ tasks: [], nextCursor: null }),
+  });
   renderApp(path, alice);
   expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
   expect(await screen.findByText(text)).toBeInTheDocument();

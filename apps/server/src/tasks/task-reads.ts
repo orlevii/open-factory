@@ -279,6 +279,7 @@ export class TaskReads {
 
     const events = o.events ? await this.events(t.id) : undefined;
     return {
+      id: t.id,
       key: taskKey(t.number),
       title: t.title,
       body: t.body,

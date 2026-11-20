@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { formatKey, parseKey } from "./keys.ts";
+import { taskUsageSchema } from "./usage.ts";
 
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
@@ -202,6 +203,7 @@ export const taskDetailSchema = taskSummarySchema.extend({
   blocks: z.array(taskRelationSchema.extend({ assignee: z.string().nullable() })),
   links: z.array(taskLinkSchema),
   activity: z.array(taskActivitySchema),
+  usage: taskUsageSchema,
 });
 export type TaskDetail = z.infer<typeof taskDetailSchema>;
 export const taskChangeResponseSchema = z.object({

@@ -46,6 +46,7 @@ import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
+import { usageRoutes } from "./routes/usage.ts";
 import { dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
 import { dockerTransport } from "./runtime/docker/exec-transport.ts";
@@ -63,6 +64,7 @@ import { reconcile } from "./supervisor/reconcile.ts";
 import { TaskService } from "./tasks/task-service.ts";
 import { TaskStore } from "./tasks/task-store.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
+import { UsageService } from "./usage/usage-service.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
 import { migrateWorkdirState } from "./workspace/state-migration.ts";
@@ -91,6 +93,7 @@ declare module "fastify" {
     spawner: SpawnService;
     terminator: TerminateService;
     tasks: TaskService;
+    usage: UsageService;
     reaper: Reaper;
     schedules: ScheduleService;
     scheduler: Scheduler;
@@ -264,9 +267,14 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     vault,
     verifier,
     runtimes,
+    now: clock,
     log: app.log,
   });
   app.decorate("credentials", credentials);
+  app.decorate(
+    "usage",
+    new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
+  );
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
@@ -343,6 +351,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
+  await app.register(usageRoutes);
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);

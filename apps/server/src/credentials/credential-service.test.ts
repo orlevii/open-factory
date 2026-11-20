@@ -33,6 +33,7 @@ beforeAll(async () => {
     vault: t.app.vault,
     verifier,
     runtimes: runtimes as never,
+    now: () => new Date(),
     log: { warn: (obj, msg) => void warns.push({ obj, msg }) },
   });
 });

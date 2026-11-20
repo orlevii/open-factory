@@ -20,6 +20,7 @@ export class CredentialService {
       vault: Vault;
       verifier: CredentialVerifier;
       runtimes: AgentRuntimes;
+      now: () => Date;
       log?: { warn: (obj: object, msg: string) => void };
     },
   ) {}
@@ -70,7 +71,18 @@ export class CredentialService {
       lastError: row.lastError,
       usedBy: slugs(u.active),
       archivedUsedBy: slugs(u.archived),
-      rateLimit: null, // filled from the rate-limit state in a later S10 task
+      rateLimit: row.rlObservedAt
+        ? {
+            status: row.rlStatus ?? "allowed",
+            type: row.rlType,
+            utilization: row.rlUtilization,
+            resetsAt: row.rlResetsAt ? row.rlResetsAt.toISOString() : null,
+            observedAt: row.rlObservedAt.toISOString(),
+          }
+        : null,
+      ...(row.rateLimitedUntil && row.rateLimitedUntil > this.d.now()
+        ? { pausedUntil: row.rateLimitedUntil.toISOString(), pauseExact: row.rateLimitExact }
+        : {}),
     };
   }
 

@@ -11,7 +11,7 @@ type Timer = ReturnType<typeof setTimeout>;
 
 export interface SchedulerDeps {
   db: Db;
-  store: Pick<EventStore, "pendingRow">;
+  store: Pick<EventStore, "pendingJoined">;
   schedules: ScheduleStore;
   runtimes: Pick<AgentRuntimes, "deliver">;
   bus: Pick<EventBus, "publishAll">;
@@ -47,6 +47,7 @@ export function planFiring(row: ScheduleRow, now: Date): Firing {
   };
 }
 
+// Only 40P01: 40001 (serialization failure) can't happen at READ COMMITTED, the isolation every transaction here uses.
 const isDeadlock = (err: unknown): boolean => {
   const e = err as { code?: string; cause?: { code?: string } } | null;
   return e?.code === "40P01" || e?.cause?.code === "40P01";
@@ -65,6 +66,9 @@ export class Scheduler {
   private stopped = false;
   private running: Promise<void> | undefined;
   private again = false;
+  /** A `rearm()` arrived while a tick ran: the tick re-reads the earliest run once more before it settles. */
+  private rearmWanted = false;
+  private readonly rearms = new Set<Promise<unknown>>();
   private readonly handoffs = new Set<Promise<unknown>>();
   private readonly setTimer: NonNullable<SchedulerDeps["setTimer"]>;
   private readonly clearTimer: NonNullable<SchedulerDeps["clearTimer"]>;
@@ -90,8 +94,14 @@ export class Scheduler {
 
   /** After a committed change: recompute the timer. A no-op before `start()` and after `stop()`. */
   rearm(): void {
-    if (!this.started || this.stopped || this.running) return;
-    void this.rearmFromDb();
+    if (!this.started || this.stopped) return;
+    if (this.running) {
+      this.rearmWanted = true;
+      return;
+    }
+    const p = this.rearmFromDb();
+    this.rearms.add(p);
+    void p.finally(() => this.rearms.delete(p));
   }
 
   /** Resolves when no tick is running and every hand-off promise of the ticks so far has settled. */
@@ -99,7 +109,8 @@ export class Scheduler {
     for (;;) {
       await this.running;
       if (this.handoffs.size) await Promise.allSettled([...this.handoffs]);
-      if (!this.running && !this.handoffs.size) return;
+      if (this.rearms.size) await Promise.allSettled([...this.rearms]);
+      if (!this.running && !this.handoffs.size && !this.rearms.size) return;
     }
   }
 
@@ -127,7 +138,11 @@ export class Scheduler {
         this.d.log.error({ err }, "a scheduler tick failed");
       }
     } while (this.again && !this.stopped);
-    await this.rearmAfterTick(progress);
+    // A rearm() that came in during the read below would be dropped (`running` is still set): read again if so.
+    do {
+      this.rearmWanted = false;
+      await this.rearmAfterTick(progress);
+    } while (this.rearmWanted && !this.stopped);
   }
 
   private arm(ms: number): void {
@@ -272,8 +287,9 @@ export class Scheduler {
   private handOff(messageId: string): void {
     if (this.stopped) return;
     const p = (async () => {
-      const row = await this.d.store.pendingRow(messageId);
-      if (this.stopped) return;
+      // Pending only: a boot wake or `init()` may have delivered it since, and a rejected row goes nowhere.
+      const row = await this.d.store.pendingJoined(messageId);
+      if (!row || this.stopped) return;
       await this.d.runtimes.deliver(row, "agent", "scheduled");
     })().catch((err: unknown) =>
       this.d.log.error({ err, message: messageId }, "handing a scheduled message over failed"),

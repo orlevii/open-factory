@@ -237,7 +237,7 @@ test("S9: the kinds line names scheduled and the @scheduler sentence; persistent
   const md = buildClaudeMd(input);
   expect(md).toContain("`task_update` and `scheduled`");
   expect(md).toContain(
-    "`@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (the factory was down).",
+    "`@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).",
   );
   const sch = md.slice(md.indexOf("## Scheduling"), md.indexOf("## Your workspace"));
   expect(sch.match(/^- /gm)).toHaveLength(3);

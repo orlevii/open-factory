@@ -345,3 +345,33 @@ test("a paused or deleted schedule never fires", async () => {
   await sched.tick();
   expect(await rows()).toHaveLength(0);
 });
+
+test("a row delivered between the commit and the hand-off is not handed over again", async () => {
+  await sched1();
+  clock = new Date("2026-11-23T08:00:00Z");
+  const pendingJoined = vi
+    .spyOn(EventStore.prototype, "pendingJoined")
+    .mockImplementation(async () => undefined); // the row is no longer pending
+  await sched.tick();
+  await sched.idle();
+  expect(pendingJoined).toHaveBeenCalled();
+  expect(deliver).not.toHaveBeenCalled();
+});
+
+test("a rearm() during the tick's last earliest() read is not dropped: the timer is re-read once more", async () => {
+  sched.start();
+  const original = store.earliest.bind(store);
+  let first = true;
+  vi.spyOn(store, "earliest").mockImplementation(async (...a) => {
+    const at = await original(...a);
+    if (first) {
+      first = false;
+      // A schedule committed just after that read, with its rearm() arriving while the tick is still running.
+      await sched1({ nextRunAt: new Date("2026-11-20T10:00:20Z") });
+      sched.rearm();
+    }
+    return at;
+  });
+  await sched.tick();
+  expect(lastTimer()?.ms).toBe(20_000);
+});

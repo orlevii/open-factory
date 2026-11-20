@@ -735,26 +735,32 @@ export class AgentService {
     const row = await this.rowBySlug(slug);
     this.assertPersistent(row);
     if (!row.archivedAt) return this.summary(slug);
-    if (row.reportsTo) {
-      const [m] = await db.select().from(schema.agents).where(eq(schema.agents.id, row.reportsTo));
-      if (m?.archivedAt)
-        throw new ApiError(
-          409,
-          "manager_archived",
-          `Its manager @${m.slug} is archived. Change its manager first.`,
-        );
-    }
-    // S9 §10.1: the agent row `FOR NO KEY UPDATE` first, then its schedules (agents before schedules).
-    await db.transaction(async (tx) => {
+    // S9 §10.1: the agent row `FOR NO KEY UPDATE` first, then its schedules (agents before schedules). The manager
+    // check is inside the lock too, and a concurrent unarchive that lost the race changes nothing and emits nothing.
+    const changed = await db.transaction(async (tx) => {
       const [locked] = await tx
-        .select({ archivedAt: schema.agents.archivedAt })
+        .select({ archivedAt: schema.agents.archivedAt, reportsTo: schema.agents.reportsTo })
         .from(schema.agents)
         .where(eq(schema.agents.id, row.id))
         .for("no key update");
-      if (!locked?.archivedAt) return;
+      if (!locked?.archivedAt) return false;
+      if (locked.reportsTo) {
+        const [m] = await tx
+          .select()
+          .from(schema.agents)
+          .where(eq(schema.agents.id, locked.reportsTo));
+        if (m?.archivedAt)
+          throw new ApiError(
+            409,
+            "manager_archived",
+            `Its manager @${m.slug} is archived. Change its manager first.`,
+          );
+      }
       await tx.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
       await this.d.scheduling?.recomputeForTarget(tx, row.id);
+      return true;
     });
+    if (!changed) return this.summary(slug);
     await runtimes.refresh(row.id);
     // After the refresh: a firing in the millisecond before it reaches a runtime that still thinks the agent is
     // archived and is rejected (accepted, spec §10.1).

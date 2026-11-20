@@ -179,9 +179,10 @@ export class EventStore {
    * cleared, its grants deleted (projects keep their RESTRICT FKs), and every pending row addressed to it rejected.
    */
   async terminateRows(tx: Tx, agentId: string, by: string) {
+    const now = this.clock();
     await tx
       .update(agents)
-      .set({ terminatedAt: new Date(), terminatedBy: by, attempting: false })
+      .set({ terminatedAt: now, terminatedBy: by, attempting: false, updatedAt: now })
       .where(eq(agents.id, agentId));
     await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
     await this.rejectPending(agentId, tx);
@@ -189,7 +190,7 @@ export class EventStore {
     // (agents before schedules). Soft: delivered `scheduled` rows keep their schedule, and Restore refuses.
     await tx
       .update(schedules)
-      .set({ deletedAt: new Date(), nextRunAt: null })
+      .set({ deletedAt: now, nextRunAt: null, updatedAt: now })
       .where(and(eq(schedules.targetAgentId, agentId), isNull(schedules.deletedAt)));
   }
   /** Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). */

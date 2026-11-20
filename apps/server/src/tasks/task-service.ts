@@ -149,7 +149,17 @@ export class TaskService {
     const out = await withDeadlockRetry(() =>
       this.d.db.transaction((tx) => this.procedure(tx, actor, key, input)),
     );
-    const notes = await this.finish(out, out.assignedAgentIds);
+    const notes = await this.finish(
+      out,
+      // Every agent that gets a task message to wait on (not a human's comment, which starts recovery): a note when errored.
+      [
+        ...new Set(
+          out.agentRows
+            .filter((r) => r.wake === "task_message")
+            .flatMap((r) => (r.row.toAgentId ? [r.row.toAgentId] : [])),
+        ),
+      ],
+    );
     if (out.assigneeEnded && out.assigneeSlug)
       notes.push(`The assignee @${out.assigneeSlug} was ${out.assigneeEnded}.`);
     return {
@@ -280,7 +290,7 @@ export class TaskService {
     if (task.assigneeAgentId) {
       const e = ended.get(task.assigneeAgentId);
       if (e && !isAuthorAgent(task.assigneeAgentId))
-        notReached.push({ name: await this.slugOf(task.assigneeAgentId), reason: e });
+        notReached.push({ name: await this.slugOf(task.assigneeAgentId, tx), reason: e });
     }
     const live = new Set(locked.filter((a) => !ended.has(a.id)).map((a) => a.id));
 
@@ -320,7 +330,7 @@ export class TaskService {
     const written = await this.write(tx, actor, planned);
     const deliveredTo: string[] = [];
     for (const r of written.agentRows) {
-      const slug = await this.slugOf(r.row.toAgentId as string);
+      const slug = await this.slugOf(r.row.toAgentId as string, tx);
       if (!deliveredTo.includes(slug)) deliveredTo.push(slug);
     }
     const mentionedHumans = !written.humans
@@ -342,8 +352,9 @@ export class TaskService {
     };
   }
 
-  private async slugOf(agentId: string): Promise<string> {
-    return (await this.d.store.agentById(agentId))?.slug ?? agentId;
+  /** Inside a transaction, pass `tx`: a call on its own connection would wait on our uncommitted rows (§13.1). */
+  private async slugOf(agentId: string, tx?: Exec): Promise<string> {
+    return (await this.d.store.agentById(agentId, tx))?.slug ?? agentId;
   }
 
   /** Spec §13.1, in order. */
@@ -368,7 +379,8 @@ export class TaskService {
     const assigneeId = await this.resolveAssignee(tx, actor, input.assignee);
 
     // 2. The advisory lock, only when depends_on changes.
-    if (newDeps) await T.lockGraph(tx);
+    // Only an edit that can add or remove an edge takes the global lock: a create with no dependencies has none.
+    if (newDeps && (pre || newDeps.length)) await T.lockGraph(tx);
 
     // 3. Task rows, FOR NO KEY UPDATE, in one sorted statement; newcomer dependents in a second one.
     const wantDependents = !!(pre && input.status);
@@ -378,6 +390,11 @@ export class TaskService {
       ...(newDeps?.map((x) => x.id) ?? []),
     ];
     const lockedRows = await T.lockTasks(tx, first);
+    // The new dependencies' statuses as locked, not as read before the locks (a completion may have committed meanwhile).
+    for (const d of newDeps ?? []) {
+      const fresh = lockedRows.find((r) => r.id === d.id);
+      if (fresh) d.status = fresh.status as TaskStatus;
+    }
     let dependentIds: string[] = [];
     if (wantDependents && pre) {
       dependentIds = (await T.dependents(tx, pre.id)).map((x) => x.id);
@@ -520,7 +537,7 @@ export class TaskService {
     if (assigneeId && (!before || changedAssignee)) {
       const e = ended.get(assigneeId);
       if (e) {
-        const slug = await this.slugOf(assigneeId);
+        const slug = await this.slugOf(assigneeId, tx);
         throw new TaskError(
           "assignee_ended",
           `@${slug} was ${e} and can't be assigned tasks.`,
@@ -669,7 +686,9 @@ export class TaskService {
         : [];
     const written = await this.write(tx, actor, planned);
 
-    const assigneeSlug = next.assigneeAgentId ? await this.slugOf(next.assigneeAgentId) : undefined;
+    const assigneeSlug = next.assigneeAgentId
+      ? await this.slugOf(next.assigneeAgentId, tx)
+      : undefined;
     const assigneeEnded = next.assigneeAgentId ? ended.get(next.assigneeAgentId) : undefined;
     const view: TaskView = {
       key: taskKey(row.number),

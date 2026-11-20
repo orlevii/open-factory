@@ -94,3 +94,25 @@ test("an edit quotes the new body in full", () => {
     ),
   ).toBe("@or moved T-42 to in progress.\n@or edited T-42's description:\n> new\n> body");
 });
+
+test("the 64 KB cap holds for a huge Links line and for later lines after an edited quote", () => {
+  const links = Array.from({ length: 50 }, (_, i) => ({
+    kind: "url",
+    label: `https://x.io/${"a".repeat(1900)}${i}`,
+    title: "t".repeat(190),
+  }));
+  const out = taskAssignedBody({ ...base, links, body: "line\n".repeat(30_000) });
+  expect(Buffer.byteLength(out)).toBeLessThanOrEqual(65_536);
+  expect(out).toContain("… and ");
+  const lines: Parameters<typeof taskUpdateBody>[0] = [
+    { k: "edited", actor: "@or" },
+    ...Array.from({ length: 200 }, (_, i) => ({
+      k: "renamed" as const,
+      actor: "@or",
+      to: `${"n".repeat(180)}${i}`,
+    })),
+  ];
+  const upd = taskUpdateBody(lines, "T-1", "x", { author: "@or", body: "a\n".repeat(40_000) });
+  expect(Buffer.byteLength(upd)).toBeLessThanOrEqual(65_536);
+  expect(upd).toContain("[truncated; call get_task for the rest]");
+});

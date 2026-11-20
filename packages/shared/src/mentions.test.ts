@@ -22,8 +22,17 @@ test.each([
 
 test("@humans is a name", () => expect(m("@humans and @dev").names).toEqual(["humans", "dev"]));
 
-test("a mention after an escape in the same text node is reported as skipped, never guessed", () => {
-  const r = m("\\* @or");
-  expect(r.names).toEqual([]);
-  expect(r.skipped).toEqual(["or"]);
+test("an escape or an entity earlier in the same text node does not shift or lose a mention", () => {
+  expect(m("\\* @or").names).toEqual(["or"]);
+  expect(m("x &amp; @or").names).toEqual(["or"]);
+  expect(m("\\@or and @dev").names).toEqual(["dev"]);
+  expect(m("&lt;@or&gt;").names).toEqual(["or"]);
+  expect(m("anything").skipped).toEqual([]);
+});
+
+test("a name followed by a hyphen and more letters is not a mention of the prefix", () => {
+  expect(m("@or-Dev").names).toEqual([]);
+  expect(m("@or-devé").names).toEqual([]);
+  expect(m("@or-dev").names).toEqual(["or-dev"]);
+  expect(m("@or- x").names).toEqual(["or"]);
 });

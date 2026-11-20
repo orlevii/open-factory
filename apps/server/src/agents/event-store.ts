@@ -781,15 +781,16 @@ export class EventStore {
         })
         .returning();
       if (!row) throw new Error("insert returned no row");
-      await tx.insert(inboxItems).values(
-        userIds.map((userId) => ({
-          id: randomUUID(),
-          userId,
-          kind: m.inboxKind ?? ("message" as const),
-          messageId: row.id,
-          createdAt: now,
-        })),
-      );
+      if (userIds.length)
+        await tx.insert(inboxItems).values(
+          userIds.map((userId) => ({
+            id: randomUUID(),
+            userId,
+            kind: m.inboxKind ?? ("message" as const),
+            messageId: row.id,
+            createdAt: now,
+          })),
+        );
       return { row, userIds };
     });
   }

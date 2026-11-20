@@ -20,8 +20,10 @@ import {
 } from "../server.ts";
 
 /** Spec §9: results are one text block of compact JSON; agent-written text is JSON-escaped data. */
-const LIST_NOTE =
-  "Showing the 50 most recently updated; pass a larger limit (max 200) or narrow the filter.";
+const listNote = (limit: number) =>
+  limit >= 200
+    ? "Showing the 200 most recently updated; narrow the filter."
+    : `Showing the ${limit} most recently updated; pass a larger limit (max 200) or narrow the filter.`;
 
 const principal = (p: { kind: "agent"; slug: string } | { kind: "user"; handle: string }) =>
   p.kind === "agent" ? p.slug : `@${p.handle}`;
@@ -166,7 +168,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                   updated_at: t.updatedAt.toISOString(),
                 })),
                 more: page.nextCursor !== null,
-                ...(page.nextCursor !== null && limit === 50 ? { note: LIST_NOTE } : {}),
+                ...(page.nextCursor !== null ? { note: listNote(limit) } : {}),
               };
             }),
         );

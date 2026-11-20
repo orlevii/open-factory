@@ -231,3 +231,60 @@ test("removing the last blocking dependency unblocks the task's assignee", async
     `T-2 "b" is no longer blocked: T-1 was removed from its dependencies.`,
   ]);
 });
+
+test("a task_update to an errored assignee carries the errored note", async () => {
+  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where slug = 'dev'`;
+  await h.app.tasks.create(or, { title: "t", assignee: "dev" });
+  const r = await h.app.tasks.update(or, "T-1", { status: "in_progress" });
+  expect(r.note).toBe("@dev is errored; it will see this when a human restarts it.");
+});
+
+test("removing the last blocker unblocks even when the other blocker's completion commits while the edit waits on the lock", async () => {
+  await h.app.tasks.create(or, { title: "X" });
+  await h.app.tasks.create(or, { title: "Y" });
+  await h.app.tasks.create(or, { title: "D", assignee: "dev", dependsOn: ["T-1", "T-2"] });
+  await settle("dev");
+  const before = (await rowsTo("dev")).length;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let ready!: () => void;
+  const isReady = new Promise<void>((r) => (ready = r));
+  const holder = h.sql.begin(async (tx) => {
+    await tx`update tasks set status = 'done', updated_at = now() where number = 1`;
+    ready();
+    await gate;
+  });
+  await isReady;
+  // D's edit keeps only X and waits on X's row lock; X is done (and Y still blocks) once it gets through.
+  const edit = h.app.tasks.update(or, "T-3", { dependsOn: ["T-1"] });
+  for (;;) {
+    const r =
+      await h.sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`;
+    if (r.length) break;
+    await new Promise((res) => setImmediate(res));
+  }
+  release();
+  await holder;
+  await edit;
+  const rows = (await rowsTo("dev")).slice(before);
+  expect(rows.map((x) => x.notice)).toEqual(["unblocked"]);
+});
+
+test("a create with no dependencies does not take the dependency graph lock; one with dependencies does", async () => {
+  const { TASK_GRAPH_LOCK } = await import("./task-store.ts");
+  const reserved = await h.sql.reserve();
+  await reserved`select pg_advisory_lock(${TASK_GRAPH_LOCK})`;
+  try {
+    const plain = await h.app.tasks.create(or, { title: "plain" });
+    expect(plain.task.key).toBe("T-1");
+    const withDeps = h.app.tasks.create(or, { title: "dep", dependsOn: ["T-1"] });
+    const first = await Promise.race([
+      withDeps.then(() => "done"),
+      new Promise((r) => setTimeout(() => r("waiting"), 300)),
+    ]);
+    expect(first).toBe("waiting");
+  } finally {
+    await reserved`select pg_advisory_unlock(${TASK_GRAPH_LOCK})`;
+    reserved.release();
+  }
+});

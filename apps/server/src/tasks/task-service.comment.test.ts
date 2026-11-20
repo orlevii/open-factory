@@ -135,10 +135,12 @@ test("51 distinct mentions: 50 resolved, the rest too_many", async () => {
   ]);
 });
 
-test("a mention after an escape in the same text node is reported unknown, not guessed", async () => {
-  const r = await h.app.tasks.comment(agent("dev"), "T-1", "\\* @sam");
-  expect(r.notReached).toEqual([{ name: "sam", reason: "unknown" }]);
-  expect(await inbox(ids.sam as string)).toHaveLength(0);
+test("a mention after an escape in the same text node is still a mention; an escaped one is not", async () => {
+  const r = await h.app.tasks.comment(agent("dev"), "T-1", "\\* @sam and \\@or");
+  expect(r.mentionedHumans).toEqual(["@sam"]);
+  expect(r.notReached).toEqual([]);
+  expect(await inbox(ids.sam as string)).toHaveLength(1);
+  expect(await inbox(ids.or as string)).toHaveLength(0);
 });
 
 test("an unrelated agent may comment; an empty comment and an unknown task are refused", async () => {

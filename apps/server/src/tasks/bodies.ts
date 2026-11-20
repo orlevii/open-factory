@@ -40,6 +40,21 @@ export type TaskAssignedInput = {
   links: { kind: string; label: string; title?: string }[];
 };
 
+const LINKS_CAP = 16 * 1024;
+/** `a · b · c`, cut at an item boundary within `cap` bytes with "… and N more" (titles and targets may be long). */
+function capJoined(items: string[], cap: number): string {
+  const kept: string[] = [];
+  let used = 0;
+  for (const it of items) {
+    const n = bytes(it) + (kept.length ? 3 : 0);
+    if (used + n > cap) break;
+    kept.push(it);
+    used += n;
+  }
+  const more = items.length - kept.length;
+  return more ? `${kept.join(" · ")} · … and ${more} more` : kept.join(" · ");
+}
+
 const statusWord = (s: TaskStatus) => s.replace("_", " ");
 
 export function taskAssignedBody(i: TaskAssignedInput): string {
@@ -54,7 +69,7 @@ export function taskAssignedBody(i: TaskAssignedInput): string {
     const links = i.links.map(
       (l) => `${l.kind} ${inline(l.label)}${l.title ? ` ${quoted(l.title)}` : ""}`,
     );
-    out.push(`Links: ${links.join(" · ")}`);
+    out.push(`Links: ${capJoined(links, LINKS_CAP)}`);
   }
   if (!i.body.trim()) return [...out, "The task has no description."].join("\n");
   const head = [...out, `The task, written by ${i.bodyAuthor}:`].join("\n");
@@ -83,6 +98,8 @@ export function taskUpdateBody(
   editedBody?: { author: string; body: string },
 ): string {
   const out: string[] = [];
+  /** Where the edited description's quote goes (right after its line), sized once every other line is known. */
+  let quoteAt = -1;
   for (const l of lines) {
     switch (l.k) {
       case "done":
@@ -106,18 +123,22 @@ export function taskUpdateBody(
       case "edited":
         out.push(`${l.actor} edited ${key}'s description:`);
         if (editedBody) {
-          const head = out.join("\n");
-          out.push(
-            editedBody.body.trim()
-              ? quoteBody(editedBody.body, TASK_BODY_CAP - bytes(head) - 1)
-              : "> (now empty)",
-          );
+          quoteAt = out.length;
+          out.push("");
         }
         break;
       case "unblocked":
         out.push(`${key} ${quoted(title)} is no longer blocked: ${l.cause} ${HOW[l.how]}.`);
         break;
     }
+  }
+  if (quoteAt >= 0 && editedBody) {
+    const others = out.filter((_, i) => i !== quoteAt).join("\n");
+    // Every other line, the newlines around the quote, and the quote itself must fit the cap together.
+    const room = TASK_BODY_CAP - bytes(others) - 2;
+    out[quoteAt] = editedBody.body.trim()
+      ? quoteBody(editedBody.body, Math.max(room, 0))
+      : "> (now empty)";
   }
   return out.join("\n");
 }

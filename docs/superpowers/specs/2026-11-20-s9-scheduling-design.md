@@ -6,7 +6,7 @@
 - **UI design:** [`docs/superpowers/designs/2026-11-20-s9-scheduling-ui-design.md`](../designs/2026-11-20-s9-scheduling-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/schedule.md`, `message.md`, `agent.md`; `docs/product/behavior/administration.md`, `agents-and-sessions.md`; `docs/product/architecture/agent-runtime.md`, `harness-driver.md`, `factory-mcp.md`, `data-model.md`, `context-assembly.md`, `system-overview.md`, `tech-stack.md`; ADRs 0008, 0016, 0019; `docs/product/open-questions.md` (S0 cron findings, S4–S8 corrections).
 - **Builds on:** S3 (cron events in the mapper, `originKind: "cron"`), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): the in-memory cron pin set, one hibernate path, wake reasons, `ERRORED_WAKES`, notices, boot reconciliation, rate-limit pauses), S6 ([spec](2026-11-19-s6-messaging-reporting-design.md): agent listener, tokens, router, truthful senders, `groupEnvelopes` escaping, commit-then-hand-off), S7 ([spec](2026-11-19-s7-spawning-design.md): per-caller tool lists, termination transaction, lock order, the Reaper), S8 ([spec](2026-11-20-s8-tasks-inbox-design.md): direct-message kinds, `T-<n>` keys, lock-order header, race tests on `pg_stat_activity`).
-- **Decision log:** issue to be opened ("S9 Scheduling: design decisions"); the question numbers below (Q1–Q23) refer to it.
+- **Decision log:** #64 ("S9 Scheduling: design decisions"); the question numbers below (Q1–Q23, R1–R5) refer to it.
 - **Stacked on:** `spec/s8-tasks-inbox` (PR #63) → S7 (#58) → S6 (#53) → S5 (#46) → S4 (#37) → S3 (#27).
 
 > `docs/product/` is gitignored, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -418,7 +418,7 @@ The early slice (§18) runs first; the whole script at the end; both outputs go 
 
 Consumed: **#31** (closed: S5 tells the agent and its manager; S9 names the crons and adds Stop crons; links S5 Q17 / #38). Notes: **#57** (pg-boss won't take over the sweep; the S9 timer could host it later), **#47** (schedules are another agent-to-agent path, bounded by the floor and the cap). Untouched: #26 (no scheduled compaction), #48, #49, #23.
 
-Follow-ups (small issues opened with the decision issue): schedules addressed to humans (reminders in the inbox); the durable-cron result if V2 needs the fallback (recorded either way). The §22 items Or may flip need no issue: each names its one-branch fallback.
+Follow-ups: schedules addressed to humans (#65); running Docker agents in the factory's zone (#66). The durable-cron result is recorded in open-questions either way (no issue). The §22 items Or may flip need no issue: each names its one-branch fallback.
 
 ## 22. Decisions needing Or's call (owner-proxy certainty 3/5)
 

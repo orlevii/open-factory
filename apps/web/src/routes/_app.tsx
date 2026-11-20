@@ -24,6 +24,8 @@ export const Route = createFileRoute("/_app")({
   component: AppLayout,
 });
 
+const USAGE_DEBOUNCE_MS = 5000;
+
 /** shadcn writes this cookie on every toggle; reading it keeps the collapsed state across reloads. */
 const sidebarOpenFromCookie = () => !document.cookie.split("; ").includes("sidebar_state=false");
 
@@ -35,6 +37,9 @@ function AppLayout() {
   const listeners = useRef(new Set<(m: ServerMessage) => void>());
   const conn = useRef<WsConnection | null>(null);
   const notify = useInboxNotifier();
+  // Last `turnOpen` per agent: a true to false edge is a finished turn, whose cost the usage views refetch.
+  const turnOpen = useRef(new Map<string, boolean>());
+  const usageTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // The socket outlives renders: it always calls the latest notifier.
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -67,15 +72,43 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["agents"] });
           void qc.invalidateQueries({ queryKey: ["agent"] });
         }
+        // S10: admin screens and usage views (only mounted ones fetch).
+        if (m.type === "settings_changed") {
+          void qc.invalidateQueries({ queryKey: ["factory-settings"] });
+        }
+        if (m.type === "users_changed") {
+          void qc.invalidateQueries({ queryKey: ["users"] });
+          void qc.invalidateQueries({ queryKey: ["invites"] });
+        }
+        if (m.type === "images_changed" || m.type === "image_build") {
+          void qc.invalidateQueries({ queryKey: ["images"] });
+          void qc.invalidateQueries({ queryKey: ["templates"] });
+        }
+        if (m.type === "agent_status") {
+          const was = turnOpen.current.get(m.agent);
+          turnOpen.current.set(m.agent, m.turnOpen);
+          if (was === true && !m.turnOpen) {
+            clearTimeout(usageTimer.current);
+            usageTimer.current = setTimeout(
+              () => void qc.invalidateQueries({ queryKey: ["usage"] }),
+              USAGE_DEBOUNCE_MS,
+            );
+          }
+        }
         for (const fn of listeners.current) fn(m);
       },
-      onOpen: () => setOpenCount((n) => n + 1),
+      onOpen: () => {
+        setOpenCount((n) => n + 1);
+        // Turns may have finished while the socket was down.
+        void qc.invalidateQueries({ queryKey: ["usage"] });
+      },
     });
     conn.current = connection;
     setStatus(connection.status());
     return () => {
       connection.close();
       conn.current = null;
+      clearTimeout(usageTimer.current);
     };
   }, [qc, navigate]);
   const hub = useMemo<WsHub>(

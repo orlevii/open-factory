@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentLiveShape, agentStatusSchema, queueItemSchema, waitingOnSchema } from "./agents.ts";
 import { sessionEventSchema } from "./events.ts";
+import { liveCronSchema } from "./schedules.ts";
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }),
@@ -22,6 +23,8 @@ export const agentStatusFrameSchema = z.object({
   restartPending: z.boolean(),
   restartWaitingOn: z.number().int().nonnegative(),
   waitingOn: waitingOnSchema.optional(),
+  crons: z.array(liveCronSchema).optional(),
+  stopCronsPending: z.boolean().optional(),
   ...agentLiveShape,
 });
 export type AgentStatusFrame = z.infer<typeof agentStatusFrameSchema>;
@@ -39,5 +42,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("inbox_changed") }),
   /** S8: after any task commit (create, change, comment); the list and an open detail page refetch when their key is listed. */
   z.object({ type: z.literal("tasks_changed"), keys: z.array(z.string()) }),
+  /** S9: after any schedule commit; the Schedules page, an open edit page and the strip's count refetch. */
+  z.object({ type: z.literal("schedules_changed") }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

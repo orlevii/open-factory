@@ -40,6 +40,10 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   restartPending: false,
   restartWaitingOn: 0,
   waitingOn: { tasks: [], crons: 0 },
+  crons: [],
+  cronZone: "UTC",
+  stopCronsPending: false,
+  scheduleCount: 0,
   ...over,
 });
 

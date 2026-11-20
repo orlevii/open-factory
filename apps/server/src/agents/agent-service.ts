@@ -3,6 +3,7 @@ import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
   type AgentSummary,
   type CreateAgentBody,
+  type LiveCron,
   type PatchAgentBody,
   slugSchema,
   treeOrder,
@@ -235,6 +236,10 @@ export class AgentService {
         reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
         reports: reportCount.get(r.id) ?? 0,
         openTasks: openTasks.get(r.id) ?? 0,
+        crons: [] as LiveCron[],
+        cronZone: "UTC",
+        stopCronsPending: false,
+        scheduleCount: 0,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         grantsOverridden: r.grantsOverridden,

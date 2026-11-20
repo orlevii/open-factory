@@ -69,6 +69,7 @@ const ORDER: Record<MessageKind, number> = {
   task_assigned: 1,
   task_comment: 1,
   task_update: 1,
+  scheduled: 1,
 };
 
 const part = (r: BatchRow) => ({ id: r.id, body: r.body, createdAt: r.createdAt.toISOString() });

@@ -246,6 +246,12 @@ test("a committed latch drops what was queued and cancels a pending apply-restar
   h.rt.markTerminated({ committed: true });
   expect(h.rt.queueItems()).toEqual([]);
   expect(h.rt.hasDeliverable()).toBe(false);
+  await h.rt.settled();
+  // Dropped from memory and rejected in the DB (a row committed after the transaction's update still says so).
+  const [queued] = await h.t.sql<
+    { state: string }[]
+  >`select state from messages where to_agent_id = ${h.agentId}`;
+  expect(queued?.state).toBe("rejected");
   h.rt.unmarkTerminated(); // a committed latch is never undone
   expect(h.rt.isTerminated()).toBe(true);
 });
@@ -290,4 +296,48 @@ test("a start inside prepareStart when the latch lands stops before the launch",
   open();
   await expect(sending).rejects.toThrow("The agent was terminated.");
   expect(h.driver.starts).toHaveLength(0);
+});
+
+test("provisional latches are counted: one failed termination doesn't undo another's", async () => {
+  await h.makeRuntime();
+  h.rt.markTerminated({ committed: false });
+  h.rt.markTerminated({ committed: false });
+  h.rt.unmarkTerminated();
+  expect(h.rt.isTerminated()).toBe(true);
+  expect(h.rt.acceptsWake("message")).toBe(false);
+  h.rt.unmarkTerminated();
+  expect(h.rt.isTerminated()).toBe(false);
+});
+
+test("unmarking restores an apply-restart the provisional latch held back", async () => {
+  await h.makeRuntime();
+  await idle();
+  const proc = h.driver.last;
+  proc.emit(ev.turn());
+  await h.rt.settled();
+  await h.rt.requestRestart();
+  // A turn is open, so the restart waits; the latch cancels it for now.
+  expect(h.rt.live().restartPending).toBe(true);
+  h.rt.markTerminated({ committed: false });
+  expect(h.rt.live().restartPending).toBe(false);
+  proc.emit(ev.end());
+  await h.rt.settled();
+  expect(proc.stopped).toBe(false);
+  h.rt.unmarkTerminated();
+  await h.rt.settled();
+  expect(proc.stopped).toBe(true); // idle: the restored restart applies at once
+});
+
+test("a Docker agent without the Docker runtime configured: the cleanup fails (stop_failed), the journal stays", async () => {
+  const slots = new RecordingSlots();
+  await h.makeRuntime({ slots });
+  await h.t
+    .sql`update agents set runtime = 'docker', runtime_journal = ${JSON.stringify({ tasks: [], crons: [] })}::jsonb where id = ${h.agentId}`;
+  await h.rt.reload();
+  h.rt.markTerminated({ committed: true });
+  await h.rt.terminateStop("@or");
+  expect(slots.events).toEqual([["stop_failed"]]);
+  const [r] = await h.t.sql`select error_kind, runtime_journal from agents where id = ${h.agentId}`;
+  expect(r).toEqual({ error_kind: "stop_failed", runtime_journal: { tasks: [], crons: [] } });
+  expect(h.forwarded).toEqual([]);
 });

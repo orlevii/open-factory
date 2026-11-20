@@ -78,6 +78,39 @@ const grantsOf = (app: T, agentId: string) =>
     .select()
     .from(schema.agentProjectGrants)
     .where(eq(schema.agentProjectGrants.agentId, agentId));
+/**
+ * Holds the termination's transaction open right after its `terminateRows` (locks taken, rows written, not committed):
+ * `entered` resolves then, and `release()` lets it commit. `during` runs inside that window first.
+ */
+function holdTermination(app: T, during: () => Promise<void> = async () => {}) {
+  let release!: () => void;
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  let enter!: () => void;
+  const entered = new Promise<void>((r) => {
+    enter = r;
+  });
+  const original = app.app.store.terminateRows.bind(app.app.store);
+  vi.spyOn(app.app.store, "terminateRows").mockImplementation(async (...a) => {
+    await original(...a);
+    await during();
+    enter();
+    await released;
+  });
+  return { entered, release };
+}
+
+/** Resolves once another backend waits on a row lock in a `for no key update` query. */
+async function lockWaiter(app: T) {
+  for (;;) {
+    const [w] = await app.sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and wait_event_type = 'Lock'
+        and query ilike '%for no key update%'`;
+    if ((w?.n ?? 0) >= 1) return;
+  }
+}
+
 const stateOf = async (app: T, id: string) =>
   (await app.db.select().from(schema.messages).where(eq(schema.messages.id, id)))[0]?.state;
 
@@ -109,11 +142,6 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
   expect(await rowsTo(t, pm.id, "peer_left")).toEqual([
     expect.objectContaining({ subjectAgentId: child.id, notice: "peer" }),
   ]);
-
-  // A forward racing the commit writes nothing: the Router re-checks the row in its own transaction.
-  const before = await rowsTo(t, lead.id, "member_update");
-  await t.app.router.forward({ agentId: child.id, body: "a late report" });
-  expect(await rowsTo(t, lead.id, "member_update")).toEqual(before);
 });
 
 test("terminate_agent: only your own spawned agents; idempotent; persistent agents refuse", async () => {
@@ -194,6 +222,72 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   expect(
     await t.app.router.send({ userId: user.id, handle: user.handle }, a.slug, "hello?", false),
   ).toMatchObject({ ok: false, code: "terminated" });
+});
+
+test("a forward that started before the commit and finishes after it writes nothing", async () => {
+  const { t, driver, lead } = await setup();
+  const child = await spawnIdle(t, driver, lead, "fw");
+  const before = await rowsTo(t, lead.id, "member_update");
+  const hold = holdTermination(t);
+  const terminating = t.app.terminator.terminate(child.id, "@or");
+  await hold.entered;
+  const forwarding = t.app.router.forward({ agentId: child.id, body: "a late report" });
+  await lockWaiter(t); // the forward waits on the child's row lock the termination holds
+  hold.release();
+  await terminating;
+  await forwarding;
+  expect(await rowsTo(t, lead.id, "member_update")).toEqual(before);
+});
+
+test("a send racing the termination is accepted, then its row is rejected and never written", async () => {
+  const { t, driver, lead } = await setup();
+  const { user } = await t.signUpUser();
+  const child = await spawnIdle(t, driver, lead, "sr");
+  const hold = holdTermination(t);
+  const terminating = t.app.terminator.terminate(child.id, "@or");
+  await hold.entered;
+  // The Router reads the child live (the commit hasn't happened); its row commits after terminateRows ran and is
+  // handed to the provisional latch, which queues it without writing.
+  const r = await t.app.router.send(
+    { userId: user.id, handle: user.handle },
+    child.slug,
+    "still there?",
+    false,
+  );
+  if (!r.ok) throw new Error(r.message);
+  hold.release();
+  await terminating;
+  expect(await stateOf(t, r.id)).toBe("rejected");
+  await child.rt.settled();
+  expect(child.proc.sent.flat().map((m) => m.body)).not.toContain("still there?");
+});
+
+test("rows handed over during the provisional window are rejected once it commits, held ones too", async () => {
+  const { t, driver, lead } = await setup();
+  const { user } = await t.signUpUser();
+  const child = await spawnIdle(t, driver, lead, "pw");
+  const ids: string[] = [];
+  holdTermination(t, async () => {
+    // Committed outside the termination's transaction after its reject-pending update ran, then handed over.
+    const direct = await t.app.store.createMessage({
+      from: { userId: user.id },
+      toAgentId: child.id,
+      body: "late",
+      urgent: false,
+    });
+    const held = await t.app.store.createHeld({
+      kind: "member_update",
+      toAgentId: child.id,
+      fromAgentId: lead.id,
+      body: "an update",
+    });
+    ids.push(direct.id, held.id);
+    await child.rt.deliver(direct, { sender: "human", fromLabel: `@${user.handle}` });
+    await child.rt.receiveHeld(held);
+  }).release();
+  await t.app.terminator.terminate(child.id, "@or");
+  expect(ids).toHaveLength(2);
+  for (const id of ids) expect(await stateOf(t, id)).toBe("rejected");
 });
 
 test("a failed transaction undoes the provisional latch: what arrived meanwhile is delivered", async () => {

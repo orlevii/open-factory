@@ -156,6 +156,10 @@ export class EventStore {
       .set({ terminatedAt: new Date(), terminatedBy: by, attempting: false })
       .where(eq(agents.id, agentId));
     await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
+    await this.rejectPending(agentId, tx);
+  }
+  /** Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). */
+  async rejectPending(agentId: string, tx: Exec = this.db) {
     await tx
       .update(messages)
       .set({ state: "rejected" })

@@ -314,6 +314,11 @@ export class AgentRuntime {
   // status shows it, arriving rows are rejected); a provisional latch only holds everything still.
   private terminated: boolean;
   private terminationCommitted: boolean;
+  // Provisional latches not yet committed or undone: concurrent terminations (a tool call and a human) each set one,
+  // and a failed one must not undo another still in flight.
+  private provisionalLatches = 0;
+  // What the first provisional latch held back, restored when the last one is undone.
+  private restartPendingAtLatch = false;
   private lastError: string | undefined;
   private errorKind: ErrorKind | undefined;
   // Spec §9.2: an attempt to bring back interrupted work is in progress (persisted). `attemptReason` is its wake's
@@ -693,16 +698,33 @@ export class AgentRuntime {
    * and the Supervisor drops ineligible entries when it grants.
    */
   markTerminated(o: { committed: boolean }): void {
+    if (!o.committed) {
+      this.provisionalLatches += 1;
+      this.restartPendingAtLatch ||= this.restartPending;
+    }
     this.terminated = true;
     this.restartPending = false;
     if (o.committed && !this.terminationCommitted) {
       this.terminationCommitted = true;
+      this.provisionalLatches = 0;
+      this.restartPendingAtLatch = false;
+      const dropped = [...this.queue, ...this.held].flatMap((e) =>
+        e.kind === "message" ? [e.row.id] : [],
+      );
       this.queue = [];
       this.held = [];
       this.attempting = false;
       this.attemptReason = undefined;
       this.attemptOwedAtExit = false;
       this.publishQueue();
+      // A row committed after the transaction's reject-pending update but handed over during the provisional window
+      // was only queued in memory: reject it in the DB too (spec §8, "Pending messages vs. rejection").
+      if (dropped.length)
+        void this.run(async () => {
+          for (const id of dropped) await this.d.store.markRejected(id);
+        }).catch((err: unknown) =>
+          this.d.log.error({ err, agent: this.agent.slug }, "rejecting dropped rows failed"),
+        );
     }
     this.clearOwedBound();
     this.updateWarmTimer();
@@ -711,17 +733,29 @@ export class AgentRuntime {
   }
 
   /**
-   * S7 §8 step 2 on failure: the provisional latch is undone (a committed one never is). What arrived meanwhile is
-   * delivered normally: a running process flushes it, otherwise a `queued_items` wake is requested.
+   * S7 §8 step 2 on failure: the provisional latch is undone (a committed one never is), once no other termination is
+   * still in flight. What arrived meanwhile is delivered normally: a running process flushes it, otherwise a
+   * `queued_items` wake is requested; an apply-restart the latch cancelled and the owed-notification bound come back.
+   * Not undone: an exit that happened during the window took the terminate path (the container removed, the
+   * journal reaped, no wake); the next wake starts the agent again as usual.
    */
   unmarkTerminated(): void {
     if (this.terminationCommitted || !this.terminated) return;
+    this.provisionalLatches = Math.max(0, this.provisionalLatches - 1);
+    if (this.provisionalLatches > 0) return;
     this.terminated = false;
+    const restart = this.restartPendingAtLatch;
+    this.restartPendingAtLatch = false;
     this.updateHeldTimer();
     this.publishStatus();
     void this.run(async () => {
+      if (this.terminated) return; // latched again meanwhile
+      if (restart && this.proc && this.proc !== this.deadProc && !this.stopping)
+        this.restartPending = true;
+      this.armOwedBound();
       if (this.proc) await this.flushOrStop("flush after a failed termination failed");
       else if (this.hasDeliverable()) await this.wakeFromJob("queued_items");
+      this.maybeRestart();
       this.publishStatus();
     }).catch((err: unknown) =>
       this.d.log.error(
@@ -776,7 +810,9 @@ export class AgentRuntime {
     let done: CleanupResult | undefined;
     try {
       if (target.runtime === "docker") {
-        const removed = await this.d.docker?.containers.remove(this.agent.id, this.agent.slug);
+        // Never counted as removed: the container may still run, so the sweep must retry (stop_failed keeps the slot).
+        if (!this.d.docker) throw new Error("the Docker runtime isn't configured");
+        const removed = await this.d.docker.containers.remove(this.agent.id, this.agent.slug);
         done = removed ? { container: "removed" } : undefined;
       } else done = await this.d.cleanup?.(target);
     } catch (err) {
@@ -2718,6 +2754,7 @@ export class AgentRuntime {
     if (this.terminated) return; // S7 §8 step 1: no batch write once latched
     while (
       this.proc &&
+      !this.terminated && // a latch set while a batch was being written stops the next one
       !this.stopping &&
       !this.credentialPaused() &&
       !this.hold &&

@@ -881,7 +881,7 @@ export class AgentRuntime {
         // The process a failed stop left (stop_failed): one more escalation, as terminateStop does.
         this.stopping = true;
         this.afterExit = { kind: "terminate", by };
-        await this.escalateNow(proc, { removeOnFailure: true });
+        await this.escalateNow(proc, { removeOnFailure: true, sweep: true });
         this.publishStatus();
         return "still";
       }
@@ -2636,12 +2636,16 @@ export class AgentRuntime {
    * Spec §9.6, inside a job: the stop timed out, so SIGKILL (local) or stop the container (Docker), then the exit's
    * own job runs with the recorded intent. A failed escalation, or no exit within 5 s, is `stop_failed`.
    */
-  private async escalateNow(proc: HarnessProcess, o: { removeOnFailure?: boolean } = {}) {
+  private async escalateNow(
+    proc: HarnessProcess,
+    o: { removeOnFailure?: boolean; sweep?: boolean } = {},
+  ) {
     if (proc !== this.proc) return; // its exit was recorded meanwhile
     const how = this.cleanupTarget().runtime === "docker" ? "container_stop" : "sigkill";
     this.d.log.warn({ agent: this.agent.slug, pid: proc.pid, how }, "stop timed out; escalating");
-    // Once per process: a stuck terminated agent is retried by every sweep and must not append one event each time.
-    if (!this.escalationRecorded.has(proc)) {
+    // A sweep's retry of a stuck terminated agent records the escalation only the first time (one event per process,
+    // not one per sweep); a user's Restart is a new act and always records.
+    if (!(o.sweep && this.escalationRecorded.has(proc))) {
       this.escalationRecorded.add(proc);
       await this.append(null, { type: "stop_escalated", how }).catch((err) =>
         this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),

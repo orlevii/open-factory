@@ -22,6 +22,7 @@ const cred = (o: Partial<CredentialSummary> = {}): CredentialSummary => ({
   lastError: null,
   usedBy: [],
   archivedUsedBy: [],
+  rateLimit: null,
   ...o,
 });
 const secret = (o: Partial<SecretSummary> = {}): SecretSummary => ({

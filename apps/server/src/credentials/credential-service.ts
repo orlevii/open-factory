@@ -70,6 +70,7 @@ export class CredentialService {
       lastError: row.lastError,
       usedBy: slugs(u.active),
       archivedUsedBy: slugs(u.archived),
+      rateLimit: null, // filled from the rate-limit state in a later S10 task
     };
   }
 

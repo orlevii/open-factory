@@ -16,7 +16,6 @@ test("defaults and camelCase output", () => {
     secrets: [],
     canSpawn: [],
     maxLiveSpawns: 5,
-    warmWindowMinutes: 70,
   });
   expect(templateConfigSchema.parse(c)).toEqual(c);
 });
@@ -92,4 +91,10 @@ test("image: only a Docker image reference", () => {
   const base = templateYamlSchema.parse({ name: "tl", display_name: "T" });
   expect(templateConfigSchema.safeParse({ ...base, image: "x/../y" }).success).toBe(false);
   expect(templateConfigSchema.safeParse({ ...base, image: "x/y:1" }).success).toBe(true);
+});
+
+test("warm_window_minutes has no default and is kept when set", () => {
+  const base = { name: "x1", display_name: "X" };
+  expect("warmWindowMinutes" in templateYamlSchema.parse(base)).toBe(false);
+  expect(templateYamlSchema.parse({ ...base, warm_window_minutes: 30 }).warmWindowMinutes).toBe(30);
 });

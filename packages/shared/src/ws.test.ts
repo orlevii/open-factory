@@ -36,3 +36,14 @@ test("subscribe frames and new server frames parse", () => {
   expect(serverMessageSchema.parse({ type: "resync", agent: "dev" }).type).toBe("resync");
   expect(serverMessageSchema.parse({ type: "queue", agent: "dev", items: [] }).type).toBe("queue");
 });
+
+test("S10 frames parse", () => {
+  for (const f of [
+    { type: "settings_changed" },
+    { type: "users_changed" },
+    { type: "images_changed" },
+    { type: "image_build", name: "pw", state: "building" },
+    { type: "image_build", name: "pw", state: "failed", lines: ["x"] },
+  ])
+    expect(serverMessageSchema.parse(f).type).toBe(f.type);
+});

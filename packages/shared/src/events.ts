@@ -105,6 +105,13 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     utilization: z.number().optional(),
   }),
   z.object({
+    type: z.literal("rate_limit_status"),
+    status: z.enum(["allowed", "allowed_warning", "rejected"]),
+    rateLimitType: z.string(),
+    utilization: z.number().optional(),
+    resetsAt: z.number().optional(),
+  }),
+  z.object({
     type: z.literal("turn_end"),
     isError: z.boolean(),
     terminalReason: z.string().optional(),
@@ -120,7 +127,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     detail: z.string().optional(),
     code: z.string().optional(),
     fix: z
-      .enum(["credentials", "secrets", "projects", "edit_agent", "runtime", "resync"])
+      .enum(["credentials", "secrets", "projects", "edit_agent", "runtime", "resync", "image"])
       .optional(),
   }),
   z.object({

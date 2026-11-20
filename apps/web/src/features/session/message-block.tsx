@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Clock, Factory } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
@@ -86,8 +86,10 @@ export function MessageBlock(props: {
   at?: string;
   queued?: { reason?: string };
   failed?: boolean;
+  /** S8: the task badge of a task message, after the sender. */
+  badge?: ReactNode;
 }) {
-  const { from, system, body, urgent, at, queued, failed } = props;
+  const { from, system, body, urgent, at, queued, failed, badge } = props;
   return (
     <div
       data-message-block
@@ -106,6 +108,7 @@ export function MessageBlock(props: {
         ) : (
           <span className="font-mono text-foreground">{from}</span>
         )}
+        {badge}
         {urgent && !system && (
           <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
         )}

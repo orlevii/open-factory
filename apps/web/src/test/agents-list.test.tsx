@@ -168,7 +168,9 @@ test("a terminated frame shows Terminated (no dot) at once, then the list refetc
   let calls = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
+    vi.fn(async (url: string) => {
+      // The sidebar's unread count is not what this test counts.
+      if (!url.startsWith("/api/agents")) return json({ count: 0 });
       if (calls++ > 0) await held;
       return json({
         agents: calls > 1 ? [] : [agentSummary({ slug: "x-ab12", displayName: "X · ab12" })],

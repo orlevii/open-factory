@@ -206,3 +206,15 @@ test("strip: a spawned agent says 'Spawned by @lead'; a deleted credential's seg
   expect(el.querySelector("[data-strip-org]")?.textContent).toBe("Spawned by @lead · 1 report");
   expect(el.textContent).not.toContain("credential");
 });
+
+test("strip: open tasks link after the org segment, singular and plural, hidden at 0, outside the status region", () => {
+  const one = strip({ openTasks: 1 });
+  const link = within(one).getByText("1 open task");
+  expect(link.tagName).toBe("A");
+  expect(liveRegion(one).contains(link)).toBe(false);
+  document.body.innerHTML = "";
+  const three = strip({ openTasks: 3 });
+  expect(within(three).getByText("3 open tasks")).toBeInTheDocument();
+  document.body.innerHTML = "";
+  expect(within(strip({ openTasks: 0 })).queryByText(/open task/)).toBeNull();
+});

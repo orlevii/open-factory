@@ -150,6 +150,8 @@ The strategy is **restrained**: cool neutrals do almost all the work, plus one a
 
 `success`, `warning`, `info` and `crimson` (destructive / errored) are indicator colours for dots and icons, always paired with a label. They are spaced around the signal so no status can be mistaken for "working": crimson is pushed to hue 20 (light) and 15 (dark), and warning (rate-limited) is ochre at hue 88–92, 50° clear of the orange. All seven agent statuses were checked side by side at 6px dot size in both themes. Colour alone does not separate every pair: in the light theme `working` and `rate_limited` are indistinguishable for deuteranopes (ΔE 1.0), and `queued` and `idle` for tritanopes. The tooth shape and the label carry the difference, which is why status is never colour alone. Agent status tokens (`--status-*`) and chart tokens (`--chart-*`) are defined alongside them for status indicators and data charts.
 
+Task status: Done uses `success`, the Blocked marker uses `warning`; both always with a label.
+
 ### Named Rules
 
 - **The Pilot Light Rule.** Orange means "live, on, focused". If an element is not one of those, it is not orange. That rules out orange buttons, headings, backgrounds and illustrations.

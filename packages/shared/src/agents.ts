@@ -55,6 +55,8 @@ export const agentSummarySchema = z.object({
   template: z.string(),
   reportsTo: z.string().nullable(),
   reports: z.number().int().nonnegative().default(0),
+  /** S8: open and in-progress tasks assigned to it (the session strip's link). */
+  openTasks: z.number().int().nonnegative().default(0),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
   grantsOverridden: z.boolean(),
@@ -86,6 +88,9 @@ export const queueItemSchema = z.object({
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
+  taskKey: z.string().optional(),
+  taskTitle: z.string().optional(),
+  commentId: z.string().optional(),
   createdAt: z.string(),
 });
 export type QueueItem = z.infer<typeof queueItemSchema>;

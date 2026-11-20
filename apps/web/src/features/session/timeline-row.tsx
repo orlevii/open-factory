@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Markdown } from "@/components/markdown/markdown";
+import { TaskBadge } from "@/features/tasks/task-badge";
 import { CompactionMarker } from "./compaction-marker";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
@@ -243,11 +244,28 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp}>
           <MessageBlock
             from={row.message.from}
-            system={row.message.kind === "system"}
+            // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
+            system={
+              row.message.kind === "system" ||
+              row.message.kind === "task_assigned" ||
+              row.message.kind === "task_update"
+            }
             body={row.message.body}
             urgent={row.message.urgent}
             at={row.at}
             failed={failedIds.has(row.message.id)}
+            badge={
+              row.message.taskKey ? (
+                <TaskBadge
+                  taskKey={row.message.taskKey}
+                  title={row.message.taskTitle}
+                  link={{
+                    comment:
+                      row.message.kind === "task_comment" ? row.message.commentId : undefined,
+                  }}
+                />
+              ) : undefined
+            }
           />
         </div>
       );

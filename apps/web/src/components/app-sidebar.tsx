@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -36,6 +37,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Mark, Wordmark } from "@/components/wordmark";
+import { useUnreadCount } from "@/features/inbox/api";
+import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
@@ -68,6 +71,8 @@ export function AppSidebar() {
   const { data: session } = useQuery(sessionQueryOptions);
   const user = session?.user;
   const theme = useThemePreference();
+  const { data: unread = 0 } = useUnreadCount();
+  const notifications = useBrowserNotifications();
 
   async function signOut() {
     await authClient.signOut();
@@ -100,12 +105,13 @@ export function AppSidebar() {
               <SidebarMenu>
                 {nav.map((item) => {
                   const active = isActive(pathname, item.to);
+                  const count = item.to === "/inbox" ? unread : 0;
                   return (
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton
                         asChild
                         isActive={active}
-                        tooltip={item.label}
+                        tooltip={count ? `${item.label} · ${count} unread` : item.label}
                         className={cn(
                           "relative gap-2.5 transition-colors duration-150",
                           isMobile ? "h-9" : "h-8",
@@ -115,6 +121,7 @@ export function AppSidebar() {
                           to={item.to}
                           onClick={closeMobile}
                           aria-current={active ? "page" : undefined}
+                          {...(count ? { "aria-label": `${item.label}, ${count} unread` } : {})}
                         >
                           {/* The active marker is one roof tooth at the 30° pitch (DESIGN.md). */}
                           {active && (
@@ -125,6 +132,21 @@ export function AppSidebar() {
                           )}
                           <item.icon aria-hidden="true" />
                           <span>{item.label}</span>
+                          {count > 0 && (
+                            <>
+                              {/* Ink, never orange: the count is information, not "live". */}
+                              <span
+                                aria-hidden="true"
+                                className="ml-auto text-[0.8125rem] text-muted-foreground tabular-nums group-data-[collapsible=icon]:hidden"
+                              >
+                                {count > 99 ? "99+" : count}
+                              </span>
+                              <span
+                                aria-hidden="true"
+                                className="absolute top-1.5 right-1.5 hidden size-1.5 rounded-full bg-foreground group-data-[collapsible=icon]:block"
+                              />
+                            </>
+                          )}
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -182,6 +204,24 @@ export function AppSidebar() {
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
+                {notifications.supported && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {/* preventDefault keeps the menu open, so the description under the switch is seen. */}
+                    <DropdownMenuCheckboxItem
+                      checked={notifications.enabled}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        void notifications.toggle();
+                      }}
+                    >
+                      Browser notifications
+                    </DropdownMenuCheckboxItem>
+                    {notifications.blocked && (
+                      <p className="px-2 pb-1 text-xs text-muted-foreground">{BLOCKED_NOTE}</p>
+                    )}
+                  </>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void signOut()}>
                   <LogOut aria-hidden="true" />

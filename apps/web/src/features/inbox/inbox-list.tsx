@@ -1,102 +1,16 @@
-import { Link } from "@tanstack/react-router";
-import { ArrowRight, CircleAlert } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
+import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
-import { formatInboxTime } from "@/features/session/format";
-import { type InboxItem, useInbox } from "./api";
-
-const PREVIEW_MAX = 280;
-const previewOf = (s: string) => (s.length > PREVIEW_MAX ? `${s.slice(0, PREVIEW_MAX)}…` : s);
-
-/** "Factory about ops" for factory items, "dev" for agents; `@` added by the callers. */
-function Sender({ item }: { item: InboxItem }) {
-  if (item.from.kind === "factory")
-    return (
-      <>
-        <span className="text-foreground">Factory</span>
-        {item.about && (
-          <span className="text-muted-foreground">
-            {" "}
-            about <span className="font-mono">@{item.about}</span>
-          </span>
-        )}
-      </>
-    );
-  return <span className="font-mono text-foreground">@{item.from.name}</span>;
-}
-
-function Row({ item, now }: { item: InboxItem; now: Date }) {
-  const at = new Date(item.createdAt);
-  const time = formatInboxTime(at, now);
-  const who =
-    item.from.kind === "factory"
-      ? `Factory${item.about ? ` about @${item.about}` : ""}`
-      : `@${item.from.name}`;
-  const label = `From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
-  const previewId = `inbox-preview-${item.id}`;
-  const search = item.link.seq === undefined ? undefined : { event: item.link.seq };
-  return (
-    <li className="border-b border-border last:border-b-0">
-      <Link
-        to="/agents/$slug"
-        params={{ slug: item.link.agentSlug }}
-        search={search}
-        data-inbox-id={item.id}
-        aria-label={label}
-        aria-describedby={previewId}
-        className="flex min-h-14 flex-col justify-center gap-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-      >
-        <span className="flex items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
-            <Sender item={item} />
-            <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="font-mono text-muted-foreground">{item.to}</span>
-            {item.urgent && (
-              <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
-            )}
-          </span>
-          <time
-            dateTime={item.createdAt}
-            title={at.toLocaleString()}
-            className="ml-auto shrink-0 text-muted-foreground"
-          >
-            {time}
-          </time>
-        </span>
-        <span
-          id={previewId}
-          className="line-clamp-2 text-muted-foreground md:line-clamp-1 [overflow-wrap:anywhere]"
-        >
-          {previewOf(item.preview)}
-        </span>
-      </Link>
-    </li>
-  );
-}
-
-const ErrorLine = ({
-  text,
-  onRetry,
-  autoFocus,
-}: {
-  text: string;
-  onRetry(): void;
-  autoFocus?: boolean;
-}) => (
-  <div className="flex items-center gap-2 text-sm">
-    <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-    <span className="min-w-0 text-destructive">{text}</span>
-    <Button variant="ghost" size="sm" onClick={onRetry} autoFocus={autoFocus}>
-      Retry
-    </Button>
-  </div>
-);
+import { onRowKeyDown } from "@/lib/row-nav";
+import { useInbox, useOpenItem } from "./api";
+import { InboxRow } from "./inbox-row";
 
 /** The Inbox: a plain list of links, one per message sent to the humans (and factory items), newest
  *  first. Arrow keys also move between rows; Tab reaches every row link as usual. */
 export function InboxList() {
   const q = useInbox();
+  const open = useOpenItem();
   const items = q.data;
   const list = useRef<HTMLUListElement>(null);
   // Pending focus, set only once a fetch has settled successfully: the control that was pressed may
@@ -131,31 +45,17 @@ export function InboxList() {
       if (r.isSuccess && last !== undefined) setFocusAfter(last);
     });
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
-    if (!keys.includes(e.key) || !(e.target instanceof HTMLAnchorElement)) return;
-    const links = [...e.currentTarget.querySelectorAll<HTMLElement>("a")];
-    const i = links.indexOf(e.target);
-    const next =
-      e.key === "Home"
-        ? 0
-        : e.key === "End"
-          ? links.length - 1
-          : Math.min(links.length - 1, Math.max(0, i + (e.key === "ArrowDown" ? 1 : -1)));
-    e.preventDefault();
-    links[next]?.focus();
-  };
   const now = new Date();
   return (
     <div className="grid gap-4">
       <ul
         ref={list}
         aria-label="Inbox"
-        onKeyDown={onKeyDown}
+        onKeyDown={onRowKeyDown}
         className="border-y border-border [overflow-anchor:auto]"
       >
         {items.map((item) => (
-          <Row key={item.id} item={item} now={now} />
+          <InboxRow key={item.id} item={item} now={now} onOpen={open} />
         ))}
       </ul>
       {q.isFetchNextPageError ? (

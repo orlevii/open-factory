@@ -434,8 +434,12 @@ try {
     `reply: ${brief(t1Text)}`,
   );
   // AC1 must prove the resumed session, not a file: nothing outside the conversation may hold the word.
+  // The agent's own send_message reply is conversation (since S6 a reply goes through it), so it is not a leak.
   const t1Writes = t1.events.filter(
-    (e) => e.type === "tool_call" && JSON.stringify(e.input).includes(WORD),
+    (e) =>
+      e.type === "tool_call" &&
+      !e.name.endsWith("send_message") &&
+      JSON.stringify(e.input).includes(WORD),
   );
   check(
     "1. the word was not written anywhere (no tool call carries it)",

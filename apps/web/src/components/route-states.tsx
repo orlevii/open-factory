@@ -96,18 +96,19 @@ export function ResourceNotFound({
   title,
   backTo,
   backLabel,
+  detail = "It may have been renamed or deleted.",
 }: {
   title: string;
-  backTo: "/templates" | "/agents";
+  backTo: "/templates" | "/agents" | "/tasks";
   backLabel: string;
+  /** The line under the title: tasks are never deleted, so theirs says which key was asked for. */
+  detail?: string;
 }) {
   usePageTitle(title);
   return (
     <StateFrame>
       <h2 className="font-heading text-base leading-5 font-semibold tracking-[-0.01em]">{title}</h2>
-      <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        It may have been renamed or deleted.
-      </p>
+      <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{detail}</p>
       <div className="flex items-center gap-2">
         <Button className="h-9" asChild>
           <Link to={backTo}>{backLabel}</Link>

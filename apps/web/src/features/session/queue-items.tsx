@@ -1,5 +1,6 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { Clock } from "lucide-react";
+import { TaskBadge } from "@/features/tasks/task-badge";
 import { formatResetTime } from "./format";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
@@ -77,10 +78,19 @@ export function QueueItems({ items, agent }: { items: QueueItem[]; agent: AgentS
           <div key={q.id} className="pt-3">
             <MessageBlock
               from={q.from}
-              system={q.kind === "notice"}
+              system={q.kind === "notice" || (q.taskKey !== undefined && q.from === "@factory")}
               body={q.body ?? ""}
               urgent={q.urgent}
               queued={{ reason }}
+              badge={
+                q.taskKey ? (
+                  <TaskBadge
+                    taskKey={q.taskKey}
+                    title={q.taskTitle}
+                    link={{ comment: q.commentId }}
+                  />
+                ) : undefined
+              }
             />
           </div>
         ) : (

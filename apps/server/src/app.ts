@@ -28,6 +28,7 @@ import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
+import { taskTools } from "./mcp/tools/task-tools.ts";
 import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
@@ -41,6 +42,7 @@ import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { statusRoutes } from "./routes/status.ts";
+import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
 import { dockerodeClient } from "./runtime/docker/client.ts";
 import { ContainerManager } from "./runtime/docker/containers.ts";
@@ -53,6 +55,8 @@ import { SpawnService } from "./spawning/spawn-service.ts";
 import { TerminateService } from "./spawning/terminate-service.ts";
 import { registerStatic } from "./static.ts";
 import { reconcile } from "./supervisor/reconcile.ts";
+import { TaskService } from "./tasks/task-service.ts";
+import { TaskStore } from "./tasks/task-store.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
@@ -81,6 +85,7 @@ declare module "fastify" {
     agentTokens: AgentTokens;
     spawner: SpawnService;
     terminator: TerminateService;
+    tasks: TaskService;
     reaper: Reaper;
     agentListener: { port: number; close(): Promise<void> };
   }
@@ -247,6 +252,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("spawner", spawner);
   const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
   app.decorate("terminator", terminator);
+  const taskStore = new TaskStore({ db: deps.db, clock: () => store.clock() });
+  const tasks = new TaskService({
+    db: deps.db,
+    store,
+    tasks: taskStore,
+    router,
+    runtimes,
+    bus,
+    log: app.log,
+  });
+  app.decorate("tasks", tasks);
   // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.
   const reaper = new Reaper({
     store,
@@ -287,6 +303,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(projectsRoutes);
   await app.register(templatesRoutes);
   await app.register(inboxRoutes);
+  await app.register(tasksRoutes);
   await app.register(messagesRoutes);
   await registerStatic(app, deps.webRoot);
   // The agent listener (spec §5.3) starts before boot reconciliation: step 6 can start agents, and Claude connects to
@@ -301,6 +318,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       runtimes,
       spawner,
       terminator,
+      tasks,
       log: app.log,
     });
   } catch (err) {
@@ -352,6 +370,7 @@ async function listenForAgents(
     runtimes: AgentRuntimes;
     spawner: SpawnPort;
     terminator: TerminatePort;
+    tasks: TaskService;
     log: FastifyInstance["log"];
   },
 ) {
@@ -371,6 +390,7 @@ async function listenForAgents(
     loadCaller: (id) => d.store.agentById(id),
     tools: (caller) => [
       sendMessageTool(d.router),
+      ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
       listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
       ...(maySpawn(caller)
         ? [

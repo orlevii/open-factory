@@ -37,5 +37,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("resync"), agent: z.string() }),
   z.object({ type: z.literal("supervisor"), running: z.number().int(), max: z.number().int() }),
   z.object({ type: z.literal("inbox_changed") }),
+  /** S8: after any task commit (create, change, comment); the list and an open detail page refetch when their key is listed. */
+  z.object({ type: z.literal("tasks_changed"), keys: z.array(z.string()) }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

@@ -4,11 +4,15 @@ import {
   type AnyEvent,
   anyEventSchema,
   type ErrorKind,
+  type MessageKind,
   type SessionEvent,
+  type TaskNotice,
+  taskKey,
 } from "@open-factory/shared";
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   gt,
@@ -47,6 +51,7 @@ const {
   turns,
   messages,
   inboxItems,
+  tasks,
   users,
 } = schema;
 type MessageRow = typeof messages.$inferSelect;
@@ -56,10 +61,13 @@ export type PendingRow = MessageRow & {
   fromSlug: string | null;
   subjectSlug: string | null;
   subjectDisplayName: string | null;
+  /** S8: the task a task message is about (`T-<number>`, its current title). */
+  taskNumber: number | null;
+  taskTitle: string | null;
 };
 export interface MessageLookup {
   id: string;
-  kind: "message" | "system" | "member_update" | "peer_joined" | "peer_left";
+  kind: MessageKind;
   from: string;
   to: string;
   state: "pending" | "delivered" | "rejected";
@@ -69,13 +77,21 @@ export interface MessageLookup {
 export interface InboxEntry {
   id: string;
   messageId: string;
-  from: { kind: "agent" | "factory"; name: string };
+  kind: "message" | "mention" | "task_event";
+  read: boolean;
+  from: { kind: "agent" | "human" | "factory"; name: string };
   about?: string;
   to: string;
   preview: string;
   urgent: boolean;
   createdAt: string;
-  link: { agentSlug: string; seq?: number };
+  /** The task a mention or task event is about (its current title). */
+  task?: { key: string; title: string };
+  /** A task event's notice, so the UI never parses the preview. */
+  fact?: "done" | "cancelled";
+  link:
+    | { kind: "session"; agentSlug: string; seq?: number }
+    | { kind: "task"; key: string; commentId?: string };
 }
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /** The pool or a caller's transaction. */
@@ -93,7 +109,8 @@ export class EventStore {
 
   private lastStamp = 0;
   /** Server-clock stamp, strictly increasing within this process so created order is insert order (spec §7.3). */
-  private stamp(): Date {
+  /** The one clock owner: `TaskStore` and the inbox read stamps share it. */
+  clock(): Date {
     const t = Math.max(Date.now(), this.lastStamp + 1);
     this.lastStamp = t;
     return new Date(t);
@@ -320,7 +337,7 @@ export class EventStore {
   }
   private deliverableWhere(debounceMs: number) {
     const cutoff = new Date(Date.now() - debounceMs);
-    return sql`(${messages.kind} in ('message', 'system') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+    return sql`(${messages.kind} in ('message', 'system', 'task_assigned', 'task_comment', 'task_update') or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
   /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
@@ -636,7 +653,7 @@ export class EventStore {
       body: m.body,
       urgent: m.urgent,
       fromToolUseId: m.fromToolUseId ?? null,
-      createdAt: this.stamp(),
+      createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);
   }
@@ -661,7 +678,38 @@ export class EventStore {
       subjectAgentId: m.subjectAgentId ?? null,
       notice: m.notice ?? null,
       body: m.body,
-      createdAt: this.stamp(),
+      createdAt: this.clock(),
+    });
+    return this.pendingRow(id, tx);
+  }
+  /**
+   * S8: a task message to an agent, pending until the runtime renders it. `task_assigned` and `task_update` are from
+   * the factory (no sender columns); a `task_comment` is from its author. Returns the joined row.
+   */
+  async createTaskMessage(
+    tx: Exec,
+    m: {
+      kind: "task_assigned" | "task_comment" | "task_update";
+      taskId: string;
+      commentId?: string;
+      notice?: TaskNotice;
+      from?: { userId: string } | { agentId: string };
+      toAgentId: string;
+      body: string;
+    },
+  ): Promise<PendingRow> {
+    const id = randomUUID();
+    await tx.insert(messages).values({
+      id,
+      kind: m.kind,
+      taskId: m.taskId,
+      commentId: m.commentId ?? null,
+      notice: m.notice ?? null,
+      ...(m.from && "userId" in m.from ? { fromUserId: m.from.userId } : {}),
+      ...(m.from && "agentId" in m.from ? { fromAgentId: m.from.agentId } : {}),
+      toAgentId: m.toAgentId,
+      body: m.body,
+      createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);
   }
@@ -671,31 +719,57 @@ export class EventStore {
    */
   async createHumanMessage(
     m: {
-      fromAgentId: string | null;
+      kind: "message" | "system" | "task_comment" | "task_update";
+      fromAgentId?: string | null;
+      /** A human author (a human's mention in a task comment). */
+      fromUserId?: string;
       notice?: string;
       subjectAgentId?: string;
-      kind: "message" | "system";
+      taskId?: string;
+      commentId?: string;
       to: { userId: string } | "all";
+      /** Never an addressee, however the row is addressed (the author of a comment that mentions `@humans`). */
+      exceptUserId?: string;
+      /** The inbox item's kind; `message` when not given. */
+      inboxKind?: "message" | "mention" | "task_event";
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
     },
     outer: Exec = this.db,
-  ): Promise<{ row: MessageRow; userIds: string[] }> {
+  ): Promise<{ row: MessageRow | undefined; userIds: string[] }> {
     return outer.transaction(async (tx) => {
-      if (m.kind === "system" ? !m.subjectAgentId : !m.fromAgentId)
+      // Per kind, the sender columns the schema's CHECK allows, said as a sentence before the database says it.
+      const authors = (m.fromAgentId ? 1 : 0) + (m.fromUserId ? 1 : 0);
+      if (m.kind === "system" ? !m.subjectAgentId : m.kind === "message" && !m.fromAgentId)
         throw new Error(
           "a human message needs a sender agent; a factory fact needs its subject agent",
         );
-      const now = this.stamp();
+      if (m.kind === "task_update" && (authors > 0 || m.subjectAgentId))
+        throw new Error("a task update has no sender and no subject");
+      if (m.kind === "task_comment" && authors !== 1)
+        throw new Error("a task comment needs exactly one author, an agent or a user");
+      if ((m.kind === "task_comment" || m.kind === "task_update") && !m.taskId)
+        throw new Error("a task message needs its task");
+      const targets =
+        m.to === "all"
+          ? await tx.select({ id: users.id }).from(users).orderBy(asc(users.id))
+          : [{ id: m.to.userId }];
+      const userIds = targets.map((u) => u.id).filter((id) => id !== m.exceptUserId);
+      // The author is the only human addressed: nothing is written.
+      if (targets.length && !userIds.length) return { row: undefined, userIds: [] };
+      const now = this.clock();
       const [row] = await tx
         .insert(messages)
         .values({
           id: randomUUID(),
           kind: m.kind,
-          fromAgentId: m.fromAgentId,
+          fromAgentId: m.fromAgentId ?? null,
+          fromUserId: m.fromUserId ?? null,
           notice: m.notice ?? null,
           subjectAgentId: m.subjectAgentId ?? null,
+          taskId: m.taskId ?? null,
+          commentId: m.commentId ?? null,
           toUserId: m.to === "all" ? null : m.to.userId,
           toAllHumans: m.to === "all",
           fromToolUseId: m.fromToolUseId ?? null,
@@ -707,17 +781,12 @@ export class EventStore {
         })
         .returning();
       if (!row) throw new Error("insert returned no row");
-      const targets =
-        m.to === "all"
-          ? await tx.select({ id: users.id }).from(users).orderBy(asc(users.id))
-          : [{ id: m.to.userId }];
-      const userIds = targets.map((u) => u.id);
       if (userIds.length)
         await tx.insert(inboxItems).values(
           userIds.map((userId) => ({
             id: randomUUID(),
             userId,
-            kind: "message" as const,
+            kind: m.inboxKind ?? ("message" as const),
             messageId: row.id,
             createdAt: now,
           })),
@@ -741,11 +810,14 @@ export class EventStore {
         fromSlug: fa.slug,
         subjectSlug: sa.slug,
         subjectDisplayName: sa.displayName,
+        taskNumber: tasks.number,
+        taskTitle: tasks.title,
       })
       .from(messages)
       .leftJoin(users, eq(users.id, messages.fromUserId))
       .leftJoin(fa, eq(fa.id, messages.fromAgentId))
-      .leftJoin(sa, eq(sa.id, messages.subjectAgentId));
+      .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
+      .leftJoin(tasks, eq(tasks.id, messages.taskId));
     return {
       where: async (w: SQL | undefined, order: SQL[] = []): Promise<PendingRow[]> => {
         const rows = await q.where(w).orderBy(...order);
@@ -791,7 +863,7 @@ export class EventStore {
         notice: m.notice,
         toAgentId: m.toAgentId,
         body: m.body,
-        createdAt: this.stamp(),
+        createdAt: this.clock(),
       })
       .returning();
     if (!row) throw new Error("insert returned no row");
@@ -940,15 +1012,20 @@ export class EventStore {
     return out;
   }
 
-  /** The user's inbox, newest first. Cursor is `created_at|id` in base64url (spec §11). */
+  /**
+   * The user's inbox, newest first. Cursor is `created_at|id` in base64url (spec §11). `unread` keeps only items not
+   * yet read (Home's panel).
+   */
   async inboxPage(
     userId: string,
     before?: string,
     limit = 50,
+    o: { unread?: boolean } = {},
   ): Promise<{ items: InboxEntry[]; nextCursor: string | null }> {
     const fa = alias(agents, "fa");
     const sa = alias(agents, "sa");
     const tu = alias(users, "tu");
+    const fu = alias(users, "fu");
     let cursor: SQL | undefined;
     if (before) {
       const [at, id] = Buffer.from(before, "base64url").toString().split("|");
@@ -960,39 +1037,73 @@ export class EventStore {
         item: inboxItems,
         m: messages,
         fromSlug: fa.slug,
+        fromHandle: fu.handle,
         subjectSlug: sa.slug,
         toHandle: tu.handle,
+        taskNumber: tasks.number,
+        taskTitle: tasks.title,
         preview: sql<string>`left(${messages.body}, 280)`,
         createdAtIso: sql<string>`to_char(${inboxItems.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
       .from(inboxItems)
       .innerJoin(messages, eq(messages.id, inboxItems.messageId))
       .leftJoin(fa, eq(fa.id, messages.fromAgentId))
+      .leftJoin(fu, eq(fu.id, messages.fromUserId))
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
       .leftJoin(tu, eq(tu.id, messages.toUserId))
-      .where(and(eq(inboxItems.userId, userId), cursor))
+      .leftJoin(tasks, eq(tasks.id, messages.taskId))
+      .where(
+        and(
+          eq(inboxItems.userId, userId),
+          cursor,
+          o.unread ? isNull(inboxItems.readAt) : undefined,
+        ),
+      )
       .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
       .limit(limit + 1);
     const page = rows.slice(0, limit);
     const senders = await this.senderEvents(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
-      const factory = r.m.kind === "system" || !r.fromSlug;
+      // By kind and sender columns: a human-authored mention is that human, not the factory.
+      const factory =
+        !r.fromHandle && (r.m.kind === "system" || r.m.kind === "task_update" || !r.fromSlug);
       const sender = senders.get(r.m.id);
       const agentSlug =
         sender?.agentSlug ?? (factory ? r.subjectSlug : r.fromSlug) ?? r.subjectSlug ?? "";
+      const task =
+        r.taskNumber !== null && r.taskTitle !== null
+          ? { key: taskKey(r.taskNumber), title: r.taskTitle }
+          : undefined;
+      const fact =
+        r.item.kind === "task_event" && (r.m.notice === "done" || r.m.notice === "cancelled")
+          ? r.m.notice
+          : undefined;
       items.push({
         id: r.item.id,
         messageId: r.m.id,
-        from: factory
-          ? { kind: "factory", name: "factory" }
-          : { kind: "agent", name: r.fromSlug ?? "" },
+        kind: r.item.kind,
+        read: r.item.readAt !== null,
+        from: r.fromHandle
+          ? { kind: "human", name: r.fromHandle }
+          : factory
+            ? { kind: "factory", name: "factory" }
+            : { kind: "agent", name: r.fromSlug ?? "" },
         ...(r.subjectSlug ? { about: r.subjectSlug } : {}),
         to: r.m.toAllHumans ? "@humans" : `@${r.toHandle ?? ""}`,
         preview: r.preview,
         urgent: r.m.urgent,
         createdAt: r.item.createdAt.toISOString(),
-        link: { agentSlug, ...(sender ? { seq: sender.seq } : {}) },
+        ...(task ? { task } : {}),
+        ...(fact ? { fact } : {}),
+        link:
+          task && r.item.kind !== "message"
+            ? {
+                kind: "task",
+                key: task.key,
+                ...(r.item.kind === "mention" && r.m.commentId ? { commentId: r.m.commentId } : {}),
+              }
+            : { kind: "session", agentSlug, ...(sender ? { seq: sender.seq } : {}) },
       });
     }
     const last = page.at(-1);
@@ -1001,5 +1112,57 @@ export class EventStore {
         ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
         : null;
     return { items, nextCursor };
+  }
+
+  /** The item becomes read (idempotent: a read item keeps its first `read_at`, nothing is ever un-read here). */
+  async markRead(userId: string, itemId: string): Promise<boolean> {
+    const rows = await this.db
+      .update(inboxItems)
+      .set({
+        readAt: sql`coalesce(${inboxItems.readAt}, ${this.clock().toISOString()}::timestamptz)`,
+      })
+      .where(and(eq(inboxItems.id, itemId), eq(inboxItems.userId, userId)))
+      .returning({ id: inboxItems.id });
+    return rows.length > 0;
+  }
+
+  /**
+   * Marks every unread item of the user created at or before `upTo` (an instant `inboxPage` minted) read with ONE
+   * stamp from the shared clock, so Undo can find exactly them. Items that arrived later stay unread.
+   */
+  async markAllRead(userId: string, upTo: string): Promise<{ readAt: string; count: number }> {
+    if (!isCursorInstant(upTo)) throw new InvalidCursorError();
+    const readAt = this.clock();
+    const rows = await this.db
+      .update(inboxItems)
+      .set({ readAt })
+      .where(
+        and(
+          eq(inboxItems.userId, userId),
+          isNull(inboxItems.readAt),
+          sql`${inboxItems.createdAt} <= ${upTo}::timestamptz`,
+        ),
+      )
+      .returning({ id: inboxItems.id });
+    return { readAt: readAt.toISOString(), count: rows.length };
+  }
+
+  /** Clears `read_at` on the user's items whose `read_at` equals exactly the stamp of one mark-all action. */
+  async undoReadAll(userId: string, readAt: string): Promise<{ count: number }> {
+    if (!isCursorInstant(readAt)) throw new InvalidCursorError();
+    const rows = await this.db
+      .update(inboxItems)
+      .set({ readAt: null })
+      .where(and(eq(inboxItems.userId, userId), sql`${inboxItems.readAt} = ${readAt}::timestamptz`))
+      .returning({ id: inboxItems.id });
+    return { count: rows.length };
+  }
+
+  async unreadCount(userId: string): Promise<number> {
+    const [r] = await this.db
+      .select({ n: count() })
+      .from(inboxItems)
+      .where(and(eq(inboxItems.userId, userId), isNull(inboxItems.readAt)));
+    return r?.n ?? 0;
   }
 }

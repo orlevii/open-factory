@@ -1,3 +1,5 @@
+import { inline } from "../messaging/inline.ts";
+
 export interface OrgEntry {
   slug: string;
   displayName: string;
@@ -8,12 +10,6 @@ export interface OrgEntry {
 
 /** Spec §10.3: each org list is capped; `list_peers` returns everyone. */
 export const ORG_LIST_CAP = 25;
-
-/** Display names and descriptions are user-controlled: one line, and no angle brackets, so they can't
- *  forge a `<factory-message>` envelope or start a heading/list line of their own. */
-function inline(text: string): string {
-  return text.replace(/[<>]/g, "").replace(/\s+/g, " ").trim();
-}
 
 /** S7 §11.1: an agent-written description is one line, in double quotes, with its own `"` made `'`, capped at 200. */
 export function quoteDescription(text: string): string {
@@ -121,6 +117,20 @@ function messagingSection(i: ClaudeMdInput): string[] {
   ];
 }
 
+function tasksSection(): string[] {
+  return [
+    "## Tasks",
+    "- Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.",
+    "- When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.",
+    "- Your text output is not a reply to a comment: answer with `comment_task` (or `send_message`), or nobody sees it.",
+    "- To ask a human about a task, comment on it mentioning `@handle` or `@humans`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
+    "- Mention an agent in a comment to bring it in: it receives the comment.",
+    "- Move your task to in progress when you start and to done when you finish: its creator and the agents waiting on it are told when it is done.",
+    "- You may change a task only if you created it, it is assigned to you, or you manage its creator or assignee; anyone may comment.",
+    "",
+  ];
+}
+
 export function buildClaudeMd(i: ClaudeMdInput): string {
   const spawner = i.kind === "ephemeral" ? i.spawner : null;
   const lines = [
@@ -144,12 +154,13 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     "",
     ...(spawner ? lifecycleSection(spawner.slug) : []),
     "## How messages reach you",
-    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is an agent\'s slug, a human\'s `@handle`, or `@factory`. An envelope may carry several `ids`, and `about` names the agent a factory note is about. The kinds are `message`, `system`, `member_update`, `peer_joined` and `peer_left`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood).',
+    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is an agent\'s slug, a human\'s `@handle`, or `@factory`. An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment` and `task_update`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes).',
     "",
     "Your whole session is visible to the humans who run this factory, so work in the open: say what you are doing and why.",
     "",
     ...orgSection(i),
     ...messagingSection(i),
+    ...tasksSection(),
     ...(i.spawning && !spawner ? spawningSection(i.spawning) : []),
     "## Your workspace",
     `- Your working directory is ${i.workdir}. It is yours; files you create there persist. Keep notes you want to carry forward in AGENTS.md: a CLAUDE.md you create in the working directory is not loaded.`,

@@ -217,6 +217,19 @@ export function AgentStrip({
       <Dot />
       <OrgSegment agent={agent} />
       <Dot />
+      {agent.openTasks > 0 && (
+        <>
+          {/* The count includes in-progress tasks; it is outside the status region, so nothing re-announces it. */}
+          <Link
+            to="/tasks"
+            search={{ assignee: agent.slug }}
+            className={`text-muted-foreground ${LINK_CLASS}`}
+          >
+            {agent.openTasks} open {agent.openTasks === 1 ? "task" : "tasks"}
+          </Link>
+          <Dot />
+        </>
+      )}
       {/* A deleted credential (S7: nulled on terminated agents) leaves no empty label. */}
       {agent.credential !== null && (
         <>

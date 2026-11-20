@@ -6,6 +6,7 @@ type Listener = (m: ServerMessage) => void;
 export class EventBus {
   private readonly byAgent = new Map<string, Set<Listener>>();
   private readonly all = new Set<Listener>();
+  private readonly byUser = new Map<string, Set<Listener>>();
 
   subscribe(agentSlug: string, fn: Listener): () => void {
     const s = this.byAgent.get(agentSlug) ?? new Set<Listener>();
@@ -23,6 +24,19 @@ export class EventBus {
     return () => {
       this.all.delete(fn);
     };
+  }
+  /** One user's sockets (S8 §11.4): a read change reaches that user's other tabs, nobody else's. */
+  subscribeUser(userId: string, fn: Listener): () => void {
+    const s = this.byUser.get(userId) ?? new Set<Listener>();
+    this.byUser.set(userId, s);
+    s.add(fn);
+    return () => {
+      s.delete(fn);
+      if (s.size === 0 && this.byUser.get(userId) === s) this.byUser.delete(userId);
+    };
+  }
+  publishToUser(userId: string, m: ServerMessage) {
+    for (const fn of this.byUser.get(userId) ?? []) fn(m);
   }
   /** Live listeners, per agent or (without a slug) on the broadcast channel. Used to check for leaks. */
   listenerCount(agentSlug?: string): number {

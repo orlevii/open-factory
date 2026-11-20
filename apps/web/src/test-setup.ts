@@ -21,3 +21,12 @@ if (!window.matchMedia) {
 
 // jsdom does not implement scrollTo; the router's scroll restoration calls it.
 window.scrollTo = () => {};
+
+// jsdom has no ResizeObserver; Radix Checkbox and Popover measure with it.
+if (!window.ResizeObserver) {
+  window.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}

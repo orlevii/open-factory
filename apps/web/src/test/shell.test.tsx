@@ -9,7 +9,7 @@ const ws = vi.hoisted(() => ({ onStatus: undefined as ((s: WsStatus) => void) | 
 vi.mock("@/lib/ws", () => ({
   connectWs: (opts: WsOptions) => {
     ws.onStatus = opts.onStatus;
-    return { close() {}, status: () => "connecting" };
+    return { close() {}, status: () => "connecting", send: () => true };
   },
 }));
 

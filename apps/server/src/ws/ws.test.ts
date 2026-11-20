@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
+import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -109,5 +110,310 @@ describe("DEV_WEB_ORIGIN gating", () => {
       expect(first).toMatchObject({ type: "hello" });
       ws.close();
     });
+  });
+});
+
+describe("agent subscriptions", () => {
+  let a: Awaited<ReturnType<typeof makeTestApp>>;
+  let s: Awaited<ReturnType<typeof signUp>>;
+  let wsUrl: string;
+  const driver = new FakeDriver();
+  beforeAll(async () => {
+    a = await makeTestApp({ harnessDriver: driver });
+    await a.seed();
+    s = await signUp(a.app);
+    await a.app.listen({ port: 0, host: "127.0.0.1" });
+    wsUrl = `ws://127.0.0.1:${(a.app.server.address() as AddressInfo).port}/api/ws`;
+  });
+  afterAll(() => a.close());
+
+  async function connect() {
+    const ws = new WebSocket(wsUrl, { headers: { cookie: s.cookie, origin: TEST_ORIGIN } });
+    const frames: Record<string, unknown>[] = [];
+    ws.on("message", (d) => frames.push(JSON.parse(String(d))));
+    await new Promise((r) => ws.once("open", r));
+    const waitFor = async (pred: (f: Record<string, unknown>) => boolean, count = 1) => {
+      for (let i = 0; i < 250; i++) {
+        if (frames.filter(pred).length >= count) return frames.filter(pred);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error(`timeout; got ${JSON.stringify(frames.map((f) => f.type))}`);
+    };
+    return { ws, frames, waitFor };
+  }
+  const seqs = (frames: Record<string, unknown>[]) =>
+    frames.filter((f) => f.type === "session_event").map((f) => (f.event as { seq: number }).seq);
+
+  test("subscribe replays from afterSeq, then streams live, with no gaps or duplicates", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    await rt?.sendMessage({
+      fromUserId: s.user.id,
+      fromHandle: s.user.handle,
+      body: "one",
+      urgent: false,
+    });
+    driver.last.emit(ev.session(), ev.turn(), ev.text("a"), ev.usage(), ev.end());
+    await rt?.settled(); // seq 1..7 exist
+    const c = await connect();
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 2 }));
+    // live events written while the replay is being read
+    await rt?.sendMessage({
+      fromUserId: s.user.id,
+      fromHandle: s.user.handle,
+      body: "two",
+      urgent: false,
+    });
+    driver.last.emit(ev.turn(), ev.text("b"), ev.usage(), ev.end());
+    await rt?.settled();
+    await c.waitFor((f) => f.type === "session_event", 10);
+    expect(seqs(c.frames)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(c.frames.some((f) => f.type === "queue")).toBe(true);
+    c.ws.close();
+  });
+
+  test("events committed before and after the replay read are each sent exactly once, in order", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const start = await a.app.store.lastSeq(rt.agent.id);
+    const store = a.app.store;
+    const original = store.after.bind(store);
+    // Deterministic race: while the subscriber is buffering, events land both before the DB read (so they are
+    // in the replay rows and in the buffer) and after it (buffer only), plus a burst left running concurrently.
+    const spy = vi.spyOn(store, "after").mockImplementationOnce(async (id, afterSeq, limit) => {
+      driver.last.emit(ev.turn(), ev.text("before-read"));
+      await rt.settled();
+      const rows = await original(id, afterSeq, limit);
+      driver.last.emit(ev.text("after-read"), ev.usage(), ev.end());
+      await rt.settled();
+      for (let i = 0; i < 20; i++) driver.last.emit(ev.text(`burst-${i}`));
+      return rows;
+    });
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: start - 1 }));
+      await c.waitFor((f) => f.type === "session_event", 1 + 2 + 3 + 20);
+      await rt.settled();
+      await new Promise((r) => setTimeout(r, 100));
+      const expected = Array.from({ length: 26 }, (_, i) => start + i);
+      expect(seqs(c.frames)).toEqual(expected);
+      expect(spy).toHaveBeenCalledTimes(1);
+      c.ws.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("agent_status reaches sockets that didn't subscribe", async () => {
+    const c = await connect();
+    const rt = await a.app.runtimes.bySlug("dev");
+    driver.last.emit(ev.turn());
+    await rt?.settled();
+    await c.waitFor((f) => f.type === "agent_status" && f.turnOpen === true);
+    c.ws.close();
+  });
+
+  async function until(cond: () => boolean) {
+    for (let i = 0; i < 250; i++) {
+      if (cond()) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error("condition never held");
+  }
+  type AsyncFn = (...args: unknown[]) => Promise<unknown>;
+  /** Holds the next call to `obj[key]` until the test calls `release()`; `started` resolves when it is entered. */
+  function hold(obj: object, key: string) {
+    const target = obj as Record<string, AsyncFn>;
+    const original = (target[key] as AsyncFn).bind(obj);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const spy = vi.spyOn(target, key).mockImplementationOnce(async (...args: unknown[]) => {
+      entered();
+      await gate;
+      return original(...args);
+    });
+    return { release, started, spy };
+  }
+  const devListeners = () => a.app.bus.listenerCount("dev");
+  const settle = () => new Promise((r) => setTimeout(r, 100));
+
+  test("unsubscribe stops live events and removes the listener", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const c = await connect();
+    c.ws.send(
+      JSON.stringify({
+        type: "subscribe",
+        agent: "dev",
+        afterSeq: await a.app.store.lastSeq(rt.agent.id),
+      }),
+    );
+    await c.waitFor((f) => f.type === "queue");
+    await settle();
+    expect(devListeners()).toBe(1);
+    c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+    await until(() => devListeners() === 0);
+    driver.last.emit(ev.text("after-unsubscribe"));
+    await rt.settled();
+    await settle();
+    expect(seqs(c.frames)).toEqual([]);
+    c.ws.close();
+  });
+
+  test("closing while the agent lookup is pending leaves no bus listener", async () => {
+    const allBefore = a.app.bus.listenerCount();
+    const h = hold(a.app.runtimes, "bySlug");
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      c.ws.close();
+      await until(() => a.app.bus.listenerCount() === allBefore);
+      h.release();
+      await settle();
+      expect(devListeners()).toBe(0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("an unsubscribe that arrives while the agent lookup is pending wins", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const h = hold(a.app.runtimes, "bySlug");
+    try {
+      const c = await connect();
+      c.ws.send(
+        JSON.stringify({
+          type: "subscribe",
+          agent: "dev",
+          afterSeq: await a.app.store.lastSeq(rt.agent.id),
+        }),
+      );
+      await h.started;
+      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+      await settle();
+      h.release();
+      await settle();
+      expect(devListeners()).toBe(0);
+      driver.last.emit(ev.text("after-early-unsubscribe"));
+      await rt.settled();
+      await settle();
+      expect(seqs(c.frames)).toEqual([]);
+      expect(c.frames.some((f) => f.type === "queue")).toBe(false);
+      c.ws.close();
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("closing during the replay leaves no bus listener", async () => {
+    const h = hold(a.app.store, "after");
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      expect(devListeners()).toBe(1);
+      c.ws.close();
+      await until(() => devListeners() === 0);
+      h.release();
+      await settle();
+      expect(devListeners()).toBe(0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("a resubscribe cancels the in-flight replay of the earlier subscribe", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const last = await a.app.store.lastSeq(rt.agent.id);
+    const h = hold(a.app.store, "after");
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: last }));
+      await c.waitFor((f) => f.type === "queue", 2);
+      await settle();
+      h.release();
+      await settle();
+      driver.last.emit(ev.text("after-resubscribe"));
+      await rt.settled();
+      await c.waitFor((f) => f.type === "session_event");
+      await settle();
+      expect(seqs(c.frames)).toEqual([last + 1]);
+      expect(devListeners()).toBe(1);
+      c.ws.close();
+      await until(() => devListeners() === 0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("the later of two subscribes wins even when its agent lookup finishes first", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no dev runtime");
+    const last = await a.app.store.lastSeq(rt.agent.id);
+    const h = hold(a.app.runtimes, "bySlug"); // holds only the first subscribe's lookup
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await h.started;
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: last }));
+      await c.waitFor((f) => f.type === "queue");
+      h.release();
+      await settle();
+      expect(seqs(c.frames)).toEqual([]);
+      expect(c.frames.filter((f) => f.type === "queue")).toHaveLength(1);
+      expect(devListeners()).toBe(1);
+      c.ws.close();
+      await until(() => devListeners() === 0);
+    } finally {
+      h.release();
+      h.spy.mockRestore();
+    }
+  });
+
+  test("a failure after registration unregisters and tells the client", async () => {
+    const spy = vi.spyOn(a.app.store, "lastSeq").mockRejectedValueOnce(new Error("db down"));
+    try {
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      await c.waitFor((f) => f.type === "error" && f.code === "internal_error");
+      await settle();
+      expect(devListeners()).toBe(0);
+      c.ws.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a gap over 1000 events gets resync instead of a replay", async () => {
+    const rt = await a.app.runtimes.bySlug("dev");
+    const id = rt?.agent.id ?? "";
+    for (let i = 0; i < 1001; i++)
+      await a.app.store.append(id, null, { type: "background_tasks", tasks: [] });
+    const c = await connect();
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+    await c.waitFor((f) => f.type === "resync");
+    expect(seqs(c.frames)).toEqual([]);
+    c.ws.close();
+  });
+
+  test("unknown agent", async () => {
+    const c = await connect();
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: "nope", afterSeq: 0 }));
+    await c.waitFor((f) => f.type === "error" && f.code === "agent_not_found");
+    c.ws.close();
   });
 });

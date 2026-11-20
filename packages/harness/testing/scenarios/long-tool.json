@@ -1,0 +1,9 @@
+{
+  "onUser": [
+    { "emit": { "fixture": "interrupt-then-message", "lines": [1, 3] } },
+    { "longTool": 30000 },
+    { "emit": { "fixture": "rate-limit-event-allowed", "lines": [3, 5] } }
+  ],
+  "onInterrupt": [{ "emit": { "fixture": "interrupt-then-message", "lines": [5, 7] } }],
+  "onCompact": [{ "emit": { "fixture": "manual-compact", "lines": [5, 11] } }]
+}

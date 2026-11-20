@@ -59,3 +59,14 @@ test("a second signal does not start a second shutdown", async () => {
   expect(step).toHaveBeenCalledTimes(1);
   expect(exit).toHaveBeenCalledTimes(1);
 });
+
+test("the default force-exit budget is 20 s (agents get 3 s + 10 s to stop)", async () => {
+  vi.useFakeTimers();
+  const exit = vi.fn();
+  const shutdown = createShutdown([() => new Promise(() => {})], { exit, log: () => {} });
+  void shutdown();
+  await vi.advanceTimersByTimeAsync(19_999);
+  expect(exit).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(exit).toHaveBeenCalledWith(1);
+});

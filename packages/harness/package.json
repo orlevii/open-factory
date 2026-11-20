@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./testing/index.ts"
+  },
+  "dependencies": {
+    "@open-factory/shared": "workspace:*"
   }
 }

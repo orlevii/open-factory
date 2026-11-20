@@ -1,0 +1,47 @@
+0.0s spawn pid=80719 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Filler block 1 for a context test. Do not analyze it; reply only with ACK1.\n\nuniform juliet zulu delta echo
+0.3s <- system/init
+2.3s <- rate_limit_event
+2.3s <- system/informational
+2.3s <- user
+3.5s <- system/model_refusal_no_fallback
+3.5s <- assistant
+3.5s <- result/success
+180.0s step error: timeout waiting {"type":"result","text":"ACK1"}
+180.0s -> {"type":"user","message":{"role":"user","content":"Filler block 2 for a context test. Do not analyze it; reply only with ACK2.\n\ntango oscar cloud ember novemb
+180.0s <- system/init
+180.0s <- system/status
+180.0s <- system/status
+181.6s <- system/informational
+181.6s <- user
+181.6s <- system/status
+181.6s <- system/status
+182.5s <- system/model_refusal_no_fallback
+182.5s <- assistant
+182.5s <- rate_limit_event
+182.5s <- result/success
+360.0s step error: timeout waiting {"type":"result","text":"ACK2"}
+360.0s -> {"type":"user","message":{"role":"user","content":"Filler block 3 for a context test. Do not analyze it; reply only with ACK3.\n\nwhiskey foxtrot papa lima ston
+360.0s <- system/init
+360.0s <- system/status
+361.4s <- system/status
+362.8s <- system/informational
+362.8s <- user
+362.8s <- system/status
+364.4s <- system/status
+365.3s <- system/model_refusal_no_fallback
+365.3s <- assistant
+365.3s <- result/success
+540.0s step error: timeout waiting {"type":"result","text":"ACK3"}
+540.0s -> {"type":"user","message":{"role":"user","content":"Filler block 4 for a context test. Do not analyze it; reply only with ACK4.\n\ngolf mike stone charlie harbor
+540.0s <- system/init
+540.0s <- system/status
+541.3s <- system/status
+542.8s <- system/informational
+542.8s <- user
+542.8s <- system/status
+543.9s <- rate_limit_event
+543.9s <- system/status
+544.9s <- system/model_refusal_no_fallback
+544.9s <- assistant
+544.9s <- result/success

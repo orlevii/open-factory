@@ -1,0 +1,59 @@
+0.0s spawn pid=92411 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Part 1 of a TypeScript declaration file, pasted for later reference. Do not analyze it now; reply only with A
+0.3s <- system/init
+1.4s <- assistant
+1.4s <- rate_limit_event
+1.4s <- result/success
+1.4s -> {"type":"user","message":{"role":"user","content":"Part 2 of a TypeScript declaration file, pasted for later reference. Do not analyze it now; reply only with A
+1.4s <- system/init
+1.4s <- system/status
+1.4s <- system/status
+2.3s <- assistant
+2.3s <- result/success
+2.3s -> {"type":"user","message":{"role":"user","content":"Part 3 of a TypeScript declaration file, pasted for later reference. Do not analyze it now; reply only with A
+2.3s <- system/init
+2.3s <- system/status
+10.3s <- system/status
+10.4s <- system/compact_boundary
+10.4s <- user
+12.7s <- system/thinking_tokens
+13.0s <- system/thinking_tokens
+13.0s <- assistant
+13.0s <- assistant
+13.2s <- result/success
+13.2s -> {"type":"user","message":{"role":"user","content":"Part 4 of a TypeScript declaration file, pasted for later reference. Do not analyze it now; reply only with A
+13.2s <- system/init
+13.2s <- system/status
+19.7s <- system/status
+19.7s <- system/compact_boundary
+19.7s <- user
+20.6s <- system/thinking_tokens
+20.7s <- system/thinking_tokens
+20.7s <- assistant
+20.8s <- assistant
+20.8s <- rate_limit_event
+20.8s <- result/success
+20.8s -> {"type":"user","message":{"role":"user","content":"Part 5 of a TypeScript declaration file, pasted for later reference. Do not analyze it now; reply only with A
+20.8s <- system/init
+20.8s <- system/status
+28.7s <- system/status
+28.7s <- system/compact_boundary
+28.7s <- user
+29.8s <- system/thinking_tokens
+30.1s <- system/thinking_tokens
+30.1s <- assistant
+30.2s <- assistant
+30.2s <- result/success
+30.2s -> {"type":"user","message":{"role":"user","content":"Reply with just the word FINAL."}}
+30.3s <- system/init
+30.3s <- system/status
+38.0s <- system/status
+38.0s <- system/compact_boundary
+38.0s <- user
+39.0s <- system/thinking_tokens
+39.0s <- system/thinking_tokens
+39.0s <- assistant
+39.0s <- assistant
+39.0s <- result/success
+39.0s close stdin
+39.5s exit code=0 sig=null

@@ -1,0 +1,22 @@
+0.0s spawn pid=19858 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Use the Bash tool with run_in_background=true to run exactly: sleep 8; echo BG-FINISHED-7731 . Do not wait fo
+0.3s <- system/init
+1.4s <- assistant tools=Bash
+1.8s <- rate_limit_event
+2.4s <- system/background_tasks_changed
+2.4s <- system/task_started
+2.4s <- user
+3.2s <- assistant
+3.4s <- assistant
+3.4s <- result/success
+10.4s <- system/task_updated
+10.4s <- system/task_notification
+10.4s <- system/background_tasks_changed
+10.5s <- system/init
+11.3s <- system/thinking_tokens
+11.7s <- system/thinking_tokens
+11.7s <- assistant
+11.7s <- assistant
+11.7s <- result/success
+33.4s close stdin
+33.9s exit code=0 sig=null

@@ -1,0 +1,47 @@
+0.0s spawn pid=33444 args=--model haiku --permission-mode auto
+0.0s -> {"type":"user","message":{"role":"user","content":"Do two things, then end your turn with a one-line reply. 1) Use the Bash tool with run_in_background=true to 
+1.7s <- system/init
+2.5s <- system/thinking_tokens
+2.9s <- system/thinking_tokens
+2.9s <- assistant
+3.3s <- assistant tools=Bash
+3.4s <- assistant tools=ToolSearch
+3.7s <- rate_limit_event
+4.2s <- system/background_tasks_changed
+4.2s <- system/task_started
+4.2s <- user
+4.2s <- user
+4.9s <- system/thinking_tokens
+5.7s <- system/thinking_tokens
+5.7s <- assistant
+5.9s <- assistant tools=Monitor
+6.3s <- system/background_tasks_changed
+6.3s <- system/task_started
+6.3s <- user
+7.1s <- assistant
+7.1s <- result/success
+7.1s <- system/init
+7.8s <- system/thinking_tokens
+7.9s <- system/thinking_tokens
+7.9s <- assistant
+8.2s <- assistant
+8.2s <- result/success
+10.1s shell: echo BEFORE; docker exec spike-dstop ps -eo pid,ppid,pgid,args | grep -E 'BGDONE|tick-' | grep -v grep | cut -c1-120 || true
+BEFORE
+    184       7     184 /usr/bin/zsh -c source /spike/cfg-fresh/shell-snapshots/snapsho
+    190       7     190 /usr/bin/zsh -c source /spike/cfg-fresh/shell-snapshots/snapsho
+
+11.0s shell: docker stop -t 10 spike-dstop
+spike-dstop
+
+11.0s <- system/task_notification
+11.0s <- system/task_notification
+11.0s <- system/task_updated
+11.0s <- system/background_tasks_changed
+11.0s <- system/task_updated
+11.0s <- system/background_tasks_changed
+11.0s exit code=143 sig=null
+11.0s shell: echo AFTER; docker ps -a --filter name=spike-dstop --format '{{.Names}} {{.Status}}'
+AFTER
+spike-dstop Exited (143) Less than a second ago
+

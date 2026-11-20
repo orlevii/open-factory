@@ -3,11 +3,12 @@ import { expect, test, vi } from "vitest";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
-vi.mock("@/lib/ws", () => ({ connectWs: () => ({ close() {}, status: () => "open" }) }));
+vi.mock("@/lib/ws", () => ({
+  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+}));
 
 test.each([
   ["/inbox", "Inbox", "Nothing in your inbox."],
-  ["/agents", "Agents", "No agents yet."],
   ["/tasks", "Tasks", "No tasks yet."],
   ["/templates", "Templates", "No templates yet."],
   ["/schedules", "Schedules", "No schedules yet."],

@@ -5,7 +5,9 @@ import { applyTheme, readPreference, setPreference, THEME_STORAGE_KEY } from "@/
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
-vi.mock("@/lib/ws", () => ({ connectWs: () => ({ close() {}, status: () => "open" }) }));
+vi.mock("@/lib/ws", () => ({
+  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+}));
 
 const realMatchMedia = window.matchMedia;
 function osPrefersDark(dark: boolean) {

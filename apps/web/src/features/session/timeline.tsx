@@ -1,0 +1,271 @@
+import { ArrowDown, CircleAlert } from "lucide-react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Button } from "@/components/ui/button";
+import { CopyLink } from "./copy-link";
+import type { Row } from "./rows";
+import { TimelineRow } from "./timeline-row";
+
+const NEAR_BOTTOM = 64;
+const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
+
+/** The only scrolling region: stick-to-bottom, "N new events", Load earlier with a scroll anchor,
+ *  deep-link centring and tint, and one tab stop with roving focus (UI design §4.3, §7). */
+export function Timeline(props: {
+  slug: string;
+  rows: Row[];
+  failedIds: Set<string>;
+  interruptedEnds: Set<number>;
+  highlightSeq?: number;
+  hasMoreBefore: boolean;
+  /** Resolves true when rows were prepended. */
+  onLoadEarlier(): Promise<boolean>;
+  earlierError: boolean;
+  footer: ReactNode;
+}) {
+  const { rows } = props;
+  const scroller = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const atBottom = useRef(true);
+  const prevLastKey = useRef<string | undefined>(undefined);
+  const anchor = useRef<{ height: number; top: number; firstKey?: string } | null>(null);
+  const centred = useRef(false);
+  const [unseen, setUnseen] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [activeKey, setActiveKey] = useState<string | undefined>();
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [highlight, setHighlight] = useState(props.highlightSeq);
+  const litKey = useMemo(
+    () => (highlight === undefined ? undefined : targetRowKey(rows, highlight)),
+    [rows, highlight],
+  );
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const prevIndex = rows.findIndex((r) => r.key === prevLastKey.current);
+    const appended = prevIndex < 0 ? 0 : rows.length - 1 - prevIndex;
+    prevLastKey.current = rows.at(-1)?.key;
+    const a = anchor.current;
+    if (a && rows[0]?.key !== a.firstKey) {
+      // Load earlier prepended: keep the first visible row where it was.
+      el.scrollTop = a.top + (el.scrollHeight - a.height);
+      anchor.current = null;
+      return;
+    }
+    if (litKey !== undefined && !centred.current) {
+      centred.current = true;
+      atBottom.current = false;
+      el.querySelector("[data-highlighted]")?.scrollIntoView?.({ block: "center" });
+      return;
+    }
+    if (atBottom.current)
+      el.scrollTop = el.scrollHeight; // instant: events arrive tens of times a minute
+    else if (appended > 0) setUnseen((n) => n + appended);
+  }, [rows, litKey]);
+
+  // Footer and async content (queued blocks, the Working line, highlighting, "Show all") change the
+  // height without changing rows: stay pinned while at the bottom.
+  useEffect(() => {
+    const el = scroller.current;
+    const content = log.current;
+    if (!el || !content || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (atBottom.current && !anchor.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
+
+  // One tab stop (UI design §7): links, buttons and scrollable plates inside rows leave the tab
+  // order; Enter on a row moves into it. Rows themselves and Copy link manage their own tabindex.
+  useEffect(() => {
+    const content = log.current;
+    if (!content) return;
+    const apply = () => {
+      for (const el of content.querySelectorAll<HTMLElement>(`[data-row-wrap] :is(${INTERACTIVE})`))
+        if (!el.hasAttribute("data-row") && !el.hasAttribute("data-copy-link"))
+          el.setAttribute("tabindex", "-1");
+    };
+    apply();
+    const mo = new MutationObserver(apply);
+    mo.observe(content, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, []);
+
+  // The tint stays until the user clicks somewhere other than the highlighted row.
+  useEffect(() => {
+    if (highlight === undefined) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const lit = scroller.current?.querySelector("[data-highlighted]");
+      if (!lit?.contains(e.target as Node)) setHighlight(undefined);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [highlight]);
+
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
+    if (atBottom.current) setUnseen(0);
+  };
+
+  const loadEarlier = async () => {
+    const el = scroller.current;
+    if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop, firstKey: rows[0]?.key };
+    setLoadingEarlier(true);
+    try {
+      if (!(await props.onLoadEarlier())) anchor.current = null; // nothing prepended
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active) return;
+    if (e.key === "Escape" && !active.hasAttribute("data-row")) {
+      const row = active.closest<HTMLElement>("[data-row]");
+      if (row) {
+        e.preventDefault();
+        row.focus();
+      }
+      return;
+    }
+    if (!active.hasAttribute("data-row")) return;
+    if (e.key === "Enter" && !active.matches("button,summary")) {
+      const inner = active.querySelector<HTMLElement>("a[href],button,summary,input");
+      if (inner) {
+        e.preventDefault();
+        inner.focus();
+      }
+      return;
+    }
+    const list = [...(log.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
+    const i = list.indexOf(active);
+    const go = (n: number) => {
+      e.preventDefault();
+      list[Math.max(0, Math.min(list.length - 1, n))]?.focus();
+    };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(list.length - 1);
+  };
+
+  // Roving tabindex: exactly one row is in the tab order; the first row until one is focused.
+  const tabKey =
+    activeKey !== undefined && hasKey(rows, activeKey, expanded) ? activeKey : rows[0]?.key;
+  const rowProps = (row: Row) => ({
+    "data-row": row.key,
+    tabIndex: row.key === tabKey ? 0 : -1,
+    onFocus: () => setActiveKey(row.key),
+  });
+  const toggle = (k: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+
+  return (
+    <div className="relative min-h-0 flex-1">
+      <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto px-4 py-4 md:px-6">
+        <div
+          ref={log}
+          role="log"
+          aria-label="Session"
+          aria-live="off"
+          onKeyDown={onKeyDown}
+          className="max-w-[52rem] space-y-3"
+        >
+          {props.hasMoreBefore && (
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
+                {loadingEarlier ? "Loading…" : "Load earlier"}
+              </Button>
+              {props.earlierError && (
+                <span className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
+                  <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
+                  Couldn't load earlier events.
+                </span>
+              )}
+            </div>
+          )}
+          {rows.map((row) => {
+            const lit = row.key === litKey;
+            return (
+              <div
+                key={row.key}
+                data-row-wrap
+                // one id per seq (a message_in with several envelopes renders several rows)
+                {...(row.kind !== "message" || row.key.endsWith(":0")
+                  ? { id: `event-${row.seq}` }
+                  : {})}
+                {...(lit ? { "data-highlighted": "true" } : {})}
+                className={`group relative rounded-md pr-8 ${row.kind === "message" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+              >
+                <TimelineRow
+                  row={row}
+                  expanded={expanded}
+                  toggle={toggle}
+                  rowProps={rowProps}
+                  failedIds={props.failedIds}
+                  interruptedEnds={props.interruptedEnds}
+                />
+                <CopyLink slug={props.slug} seq={row.seq} focusable={row.key === tabKey} />
+              </div>
+            );
+          })}
+          {props.footer}
+        </div>
+      </div>
+      {unseen > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="absolute right-4 bottom-3 border border-border bg-card md:right-6"
+          onClick={() => {
+            const el = scroller.current;
+            if (el) el.scrollTop = el.scrollHeight;
+            atBottom.current = true;
+            setUnseen(0);
+          }}
+        >
+          <ArrowDown aria-hidden="true" /> {unseen} new {unseen === 1 ? "event" : "events"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** Only rows that are mounted: children of collapsed tools are not. */
+const hasKey = (rows: Row[], key: string, expanded: Set<string>): boolean =>
+  rows.some(
+    (r) =>
+      r.key === key ||
+      (r.kind === "tool" && expanded.has(r.key) && hasKey(r.children, key, expanded)),
+  );
+
+const containsSeq = (rows: Row[], seq: number): boolean =>
+  rows.some((r) => r.seq === seq || (r.kind === "tool" && containsSeq(r.children, seq)));
+
+/** The row a deep link lands on: its own row, else the tool row holding it, else the nearest later
+ *  row (hidden events such as `usage` have none), else the last row. */
+function targetRowKey(rows: Row[], seq: number): string | undefined {
+  return (
+    rows.find((r) => r.seq === seq)?.key ??
+    rows.find((r) => r.kind === "tool" && containsSeq(r.children, seq))?.key ??
+    rows.find((r) => r.seq > seq)?.key ??
+    rows.at(-1)?.key
+  );
+}

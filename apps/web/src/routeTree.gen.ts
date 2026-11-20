@@ -16,10 +16,12 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppSchedulesRouteImport } from './routes/_app/schedules'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
-import { Route as AppTasksRouteImport } from './routes/_app/tasks'
 import { Route as AppAgentsIndexRouteImport } from './routes/_app/agents.index'
 import { Route as AppAgentsSlugRouteImport } from './routes/_app/agents.$slug'
 import { Route as AppAgentsNewRouteImport } from './routes/_app/agents.new'
+import { Route as AppTasksIndexRouteImport } from './routes/_app/tasks.index'
+import { Route as AppTasksKeyRouteImport } from './routes/_app/tasks.$key'
+import { Route as AppTasksNewRouteImport } from './routes/_app/tasks.new'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates.index'
 import { Route as AppTemplatesNameRouteImport } from './routes/_app/templates.$name'
 import { Route as AppTemplatesNewRouteImport } from './routes/_app/templates.new'
@@ -59,11 +61,6 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
-const AppTasksRoute = AppTasksRouteImport.update({
-  id: '/tasks',
-  path: '/tasks',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppAgentsIndexRoute = AppAgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
@@ -77,6 +74,21 @@ const AppAgentsSlugRoute = AppAgentsSlugRouteImport.update({
 const AppAgentsNewRoute = AppAgentsNewRouteImport.update({
   id: '/agents/new',
   path: '/agents/new',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTasksIndexRoute = AppTasksIndexRouteImport.update({
+  id: '/tasks/',
+  path: '/tasks/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTasksKeyRoute = AppTasksKeyRouteImport.update({
+  id: '/tasks/$key',
+  path: '/tasks/$key',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTasksNewRoute = AppTasksNewRouteImport.update({
+  id: '/tasks/new',
+  path: '/tasks/new',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
@@ -107,12 +119,14 @@ export interface FileRoutesByFullPath {
   '/inbox': typeof AppInboxRoute
   '/schedules': typeof AppSchedulesRoute
   '/settings': typeof AppSettingsRoute
-  '/tasks': typeof AppTasksRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
   '/agents/new': typeof AppAgentsNewRoute
+  '/tasks/$key': typeof AppTasksKeyRoute
+  '/tasks/new': typeof AppTasksNewRoute
   '/templates/$name': typeof AppTemplatesNameRoute
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents/': typeof AppAgentsIndexRoute
+  '/tasks/': typeof AppTasksIndexRoute
   '/templates/': typeof AppTemplatesIndexRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
 }
@@ -122,13 +136,15 @@ export interface FileRoutesByTo {
   '/inbox': typeof AppInboxRoute
   '/schedules': typeof AppSchedulesRoute
   '/settings': typeof AppSettingsRoute
-  '/tasks': typeof AppTasksRoute
   '/': typeof AppIndexRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
   '/agents/new': typeof AppAgentsNewRoute
+  '/tasks/$key': typeof AppTasksKeyRoute
+  '/tasks/new': typeof AppTasksNewRoute
   '/templates/$name': typeof AppTemplatesNameRoute
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents': typeof AppAgentsIndexRoute
+  '/tasks': typeof AppTasksIndexRoute
   '/templates': typeof AppTemplatesIndexRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
 }
@@ -140,13 +156,15 @@ export interface FileRoutesById {
   '/_app/inbox': typeof AppInboxRoute
   '/_app/schedules': typeof AppSchedulesRoute
   '/_app/settings': typeof AppSettingsRoute
-  '/_app/tasks': typeof AppTasksRoute
   '/_app/': typeof AppIndexRoute
   '/_app/agents/$slug': typeof AppAgentsSlugRoute
   '/_app/agents/new': typeof AppAgentsNewRoute
+  '/_app/tasks/$key': typeof AppTasksKeyRoute
+  '/_app/tasks/new': typeof AppTasksNewRoute
   '/_app/templates/$name': typeof AppTemplatesNameRoute
   '/_app/templates/new': typeof AppTemplatesNewRoute
   '/_app/agents/': typeof AppAgentsIndexRoute
+  '/_app/tasks/': typeof AppTasksIndexRoute
   '/_app/templates/': typeof AppTemplatesIndexRoute
   '/_app/agents/$slug_/edit': typeof AppAgentsSlugEditRoute
 }
@@ -159,12 +177,14 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/schedules'
     | '/settings'
-    | '/tasks'
     | '/agents/$slug'
     | '/agents/new'
+    | '/tasks/$key'
+    | '/tasks/new'
     | '/templates/$name'
     | '/templates/new'
     | '/agents/'
+    | '/tasks/'
     | '/templates/'
     | '/agents/$slug/edit'
   fileRoutesByTo: FileRoutesByTo
@@ -174,13 +194,15 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/schedules'
     | '/settings'
-    | '/tasks'
     | '/'
     | '/agents/$slug'
     | '/agents/new'
+    | '/tasks/$key'
+    | '/tasks/new'
     | '/templates/$name'
     | '/templates/new'
     | '/agents'
+    | '/tasks'
     | '/templates'
     | '/agents/$slug/edit'
   id:
@@ -191,13 +213,15 @@ export interface FileRouteTypes {
     | '/_app/inbox'
     | '/_app/schedules'
     | '/_app/settings'
-    | '/_app/tasks'
     | '/_app/'
     | '/_app/agents/$slug'
     | '/_app/agents/new'
+    | '/_app/tasks/$key'
+    | '/_app/tasks/new'
     | '/_app/templates/$name'
     | '/_app/templates/new'
     | '/_app/agents/'
+    | '/_app/tasks/'
     | '/_app/templates/'
     | '/_app/agents/$slug_/edit'
   fileRoutesById: FileRoutesById
@@ -259,13 +283,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/tasks': {
-      id: '/_app/tasks'
-      path: '/tasks'
-      fullPath: '/tasks'
-      preLoaderRoute: typeof AppTasksRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/agents/': {
       id: '/_app/agents/'
       path: '/agents'
@@ -285,6 +302,27 @@ declare module '@tanstack/react-router' {
       path: '/agents/new'
       fullPath: '/agents/new'
       preLoaderRoute: typeof AppAgentsNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/tasks/': {
+      id: '/_app/tasks/'
+      path: '/tasks'
+      fullPath: '/tasks/'
+      preLoaderRoute: typeof AppTasksIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/tasks/$key': {
+      id: '/_app/tasks/$key'
+      path: '/tasks/$key'
+      fullPath: '/tasks/$key'
+      preLoaderRoute: typeof AppTasksKeyRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/tasks/new': {
+      id: '/_app/tasks/new'
+      path: '/tasks/new'
+      fullPath: '/tasks/new'
+      preLoaderRoute: typeof AppTasksNewRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/templates/': {
@@ -322,13 +360,15 @@ interface AppRouteChildren {
   AppInboxRoute: typeof AppInboxRoute
   AppSchedulesRoute: typeof AppSchedulesRoute
   AppSettingsRoute: typeof AppSettingsRoute
-  AppTasksRoute: typeof AppTasksRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAgentsSlugRoute: typeof AppAgentsSlugRoute
   AppAgentsNewRoute: typeof AppAgentsNewRoute
+  AppTasksKeyRoute: typeof AppTasksKeyRoute
+  AppTasksNewRoute: typeof AppTasksNewRoute
   AppTemplatesNameRoute: typeof AppTemplatesNameRoute
   AppTemplatesNewRoute: typeof AppTemplatesNewRoute
   AppAgentsIndexRoute: typeof AppAgentsIndexRoute
+  AppTasksIndexRoute: typeof AppTasksIndexRoute
   AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
   AppAgentsSlugEditRoute: typeof AppAgentsSlugEditRoute
 }
@@ -337,13 +377,15 @@ const AppRouteChildren: AppRouteChildren = {
   AppInboxRoute: AppInboxRoute,
   AppSchedulesRoute: AppSchedulesRoute,
   AppSettingsRoute: AppSettingsRoute,
-  AppTasksRoute: AppTasksRoute,
   AppIndexRoute: AppIndexRoute,
   AppAgentsSlugRoute: AppAgentsSlugRoute,
   AppAgentsNewRoute: AppAgentsNewRoute,
+  AppTasksKeyRoute: AppTasksKeyRoute,
+  AppTasksNewRoute: AppTasksNewRoute,
   AppTemplatesNameRoute: AppTemplatesNameRoute,
   AppTemplatesNewRoute: AppTemplatesNewRoute,
   AppAgentsIndexRoute: AppAgentsIndexRoute,
+  AppTasksIndexRoute: AppTasksIndexRoute,
   AppTemplatesIndexRoute: AppTemplatesIndexRoute,
   AppAgentsSlugEditRoute: AppAgentsSlugEditRoute,
 }

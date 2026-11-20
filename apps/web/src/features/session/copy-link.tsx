@@ -12,12 +12,13 @@ type CopyState = "idle" | "copied" | "failed";
 /** Hover / focus-within icon on fine pointers; an always-visible ⋯ menu on touch (UI design §4.3).
  *  Feedback is inline (no toast): a check, or "Couldn't copy" (no clipboard over plain http). */
 export function CopyLink({
-  slug,
-  seq,
+  url,
+  label = "Copy link",
   focusable,
 }: {
-  slug: string;
-  seq: number;
+  /** The absolute URL to copy. */
+  url: string;
+  label?: string;
   focusable: boolean;
 }) {
   const [state, setState] = useState<CopyState>("idle");
@@ -27,7 +28,6 @@ export function CopyLink({
     return () => clearTimeout(t);
   }, [state]);
   const copy = () => {
-    const url = `${location.origin}/agents/${encodeURIComponent(slug)}?event=${seq}`;
     const write = navigator.clipboard?.writeText(url);
     if (!write) return setState("failed");
     write.then(
@@ -41,7 +41,7 @@ export function CopyLink({
         type="button"
         data-copy-link
         tabIndex={focusable ? 0 : -1}
-        aria-label={state === "copied" ? "Copied" : "Copy link"}
+        aria-label={state === "copied" ? "Copied" : label}
         onClick={copy}
         className="absolute top-1 right-0 hidden rounded-md p-1 text-muted-foreground group-focus-within:block group-hover:block hover:bg-accent hover:text-foreground pointer-coarse:hidden!"
       >
@@ -60,7 +60,7 @@ export function CopyLink({
           <Ellipsis aria-hidden="true" className="size-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={copy}>Copy link</DropdownMenuItem>
+          <DropdownMenuItem onSelect={copy}>{label}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {state === "failed" && (

@@ -29,12 +29,14 @@ afterEach(() => {
 const item = (n: number, o: Record<string, unknown> = {}) => ({
   id: `i${n}`,
   messageId: `m${n}`,
+  kind: "message",
+  read: false,
   from: { kind: "agent", name: "dev" },
   to: "@humans",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: new Date(2026, 10, 19, 14, 32).toISOString(),
-  link: { agentSlug: "dev", seq: 40 + n },
+  link: { kind: "session", agentSlug: "dev", seq: 40 + n },
   ...o,
 });
 
@@ -57,7 +59,7 @@ test("a factory item names what it is about; a row without seq links to the sess
           item(1, {
             from: { kind: "factory", name: "factory" },
             about: "ops",
-            link: { agentSlug: "ops" },
+            link: { kind: "session", agentSlug: "ops" },
           }),
         ],
         nextCursor: null,

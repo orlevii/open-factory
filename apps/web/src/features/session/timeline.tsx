@@ -235,7 +235,10 @@ export function Timeline(props: {
                   failedIds={props.failedIds}
                   interruptedEnds={props.interruptedEnds}
                 />
-                <CopyLink slug={props.slug} seq={row.seq} focusable={row.key === tabKey} />
+                <CopyLink
+                  url={`${location.origin}/agents/${encodeURIComponent(props.slug)}?event=${row.seq}`}
+                  focusable={row.key === tabKey}
+                />
               </div>
             );
           })}

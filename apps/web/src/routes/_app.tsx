@@ -44,7 +44,16 @@ function AppLayout() {
       onStatus: setStatus,
       onMessage: (m) => {
         // A message reached the humans: refetch the Inbox (only a mounted list actually fetches).
-        if (m.type === "inbox_changed") void qc.invalidateQueries({ queryKey: ["inbox"] });
+        if (m.type === "inbox_changed") {
+          void qc.invalidateQueries({ queryKey: ["inbox"] });
+          void qc.invalidateQueries({ queryKey: ["inbox-unread"] });
+        }
+        // S8: the list, an open detail page and the agents' open-task counts refetch (only mounted ones fetch).
+        if (m.type === "tasks_changed") {
+          void qc.invalidateQueries({ queryKey: ["tasks"] });
+          void qc.invalidateQueries({ queryKey: ["agents"] });
+          void qc.invalidateQueries({ queryKey: ["agent"] });
+        }
         for (const fn of listeners.current) fn(m);
       },
       onOpen: () => setOpenCount((n) => n + 1),

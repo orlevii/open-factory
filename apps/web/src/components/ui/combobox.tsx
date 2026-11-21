@@ -186,6 +186,8 @@ function Combobox({
   renderOption,
   renderValue,
   triggerClassName,
+  onOpen,
+  onBlur,
 }: {
   value: string
   onValueChange: (value: string) => void
@@ -201,6 +203,9 @@ function Combobox({
   renderOption?: (option: ComboOption) => React.ReactNode
   renderValue?: (value: string) => React.ReactNode
   triggerClassName?: string
+  /** Called each time the popover opens (for work that should wait for the first look). */
+  onOpen?: () => void
+  onBlur?: () => void
 }) {
   const [open, setOpen] = React.useState(false)
   // Once the filter is used, the popover's placement is frozen so it never flips while open: the side
@@ -217,7 +222,10 @@ function Combobox({
   const onOpenChange = (next: boolean) => {
     setOpen(next)
     // Reset on open, not on close, so a locked popover doesn't jump while it fades out.
-    if (next) setLock(undefined)
+    if (next) {
+      setLock(undefined)
+      onOpen?.()
+    }
   }
   const lockPlacement = () => {
     const content = contentRef.current
@@ -244,6 +252,7 @@ function Combobox({
           role="combobox"
           id={id}
           disabled={disabled}
+          onBlur={onBlur}
           aria-label={ariaLabel}
           aria-invalid={ariaInvalid}
           aria-describedby={ariaDescribedBy}

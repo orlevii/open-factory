@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { optionNames, pickOption } from "@/test/select-helpers";
+import { comboOptionNames, pickComboOption, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -36,9 +36,11 @@ const task = (n: number, o: Record<string, unknown> = {}) => ({
   ...o,
 });
 const page = (tasks: unknown[], nextCursor: string | null = null) => ({ tasks, nextCursor });
-const agents = () =>
+const agents = (_body?: unknown, url?: string) =>
   json({
-    agents: [agentSummary({ slug: "dev" }), agentSummary({ slug: "lead", displayName: "Lead" })],
+    agents: url?.includes("ended=only")
+      ? [agentSummary({ slug: "old", displayName: "Old", terminatedAt: "2026-11-01T00:00:00Z" })]
+      : [agentSummary({ slug: "dev" }), agentSummary({ slug: "lead", displayName: "Lead" })],
     more: false,
     running: { count: 0, max: 8 },
   });
@@ -94,16 +96,40 @@ test("the filters live in the URL: changing Status refetches with that status", 
   await pickOption(screen.getByLabelText("Status"), "Done");
   await waitFor(() => expect(router.state.location.search).toMatchObject({ status: "done" }));
   await waitFor(() => expect(tasksUrls(api).at(-1)).toBe("/api/tasks?limit=50&status=done"));
-  await pickOption(screen.getByLabelText("Assignee"), "Unassigned");
+  await pickComboOption(screen.getByLabelText("Assignee"), /^Unassigned/);
   await waitFor(() => expect(tasksUrls(api).at(-1)).toContain("unassigned=true"));
-  await pickOption(screen.getByLabelText("Created by"), "Me");
+  await pickComboOption(screen.getByLabelText("Created by"), /^Me$/);
   await waitFor(() => expect(tasksUrls(api).at(-1)).toContain("creator=me"));
-  expect(await optionNames(screen.getByLabelText("Created by"))).toEqual([
+  await pickComboOption(screen.getByLabelText("Assignee"), /Lead/);
+  await waitFor(() => expect(router.state.location.search).toMatchObject({ assignee: "lead" }));
+  expect(router.state.location.search).not.toHaveProperty("unassigned");
+  await pickComboOption(screen.getByLabelText("Assignee"), /^Anyone/);
+  await waitFor(() => expect(router.state.location.search).not.toHaveProperty("assignee"));
+});
+
+test("the assignee filter lists Anyone and Unassigned first, then live agents, then an Ended group", async () => {
+  mockApi({ "GET /api/agents?": agents, "GET /api/tasks?": () => json(page([task(1)])) });
+  renderApp("/tasks", alice);
+  await screen.findByRole("link", { name: /^T-1,/ });
+  const names = await comboOptionNames(screen.getByLabelText("Assignee"));
+  expect(names.map((n) => n.replace(/(@[\w-]+)+$/, "").trim())).toEqual([
     "Anyone",
-    "Me",
-    "Dev agent @dev",
-    "Lead @lead",
+    "Unassigned",
+    "Dev agent",
+    "Lead",
+    "Old",
   ]);
+  await userEvent.click(screen.getByLabelText("Assignee"));
+  expect(await screen.findByText("Ended")).toBeInTheDocument();
+});
+
+test("the creator filter lists Anyone and Me first, then agents", async () => {
+  mockApi({ "GET /api/agents?": agents, "GET /api/tasks?": () => json(page([task(1)])) });
+  renderApp("/tasks", alice);
+  await screen.findByRole("link", { name: /^T-1,/ });
+  const names = await comboOptionNames(screen.getByLabelText("Created by"));
+  expect(names.slice(0, 2)).toEqual(["Anyone", "Me"]);
+  expect(names.length).toBeGreaterThan(2);
 });
 
 test("filters from the URL are applied and an ended assignee shows while selected", async () => {

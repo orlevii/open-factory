@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { pickOption } from "@/test/select-helpers";
+import { pickComboOption, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
-import { zoneGroups } from "./timezone-select";
+import { zoneGroups, zoneOffset } from "./timezone-select";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -98,10 +98,7 @@ test("the preview updates on blur and zone change, not per keystroke, with 'your
   const cron = screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" });
   await userEvent.type(cron, "0 9 * * 1-5");
   expect(screen.queryByText(/^Next runs:/)).toBeNull(); // not per keystroke
-  await userEvent.selectOptions(
-    screen.getByRole("combobox", { name: /^Time zone, / }),
-    "Asia/Tokyo",
-  );
+  await pickComboOption(screen.getByRole("combobox", { name: /^Time zone, / }), "Asia/Tokyo");
   const text = (await screen.findByText(/^Next runs:/)).textContent ?? "";
   expect(text).toMatch(/^Next runs: \w{3} \d+ \w{3} 09:00 .*· .* · .* Asia\/Tokyo$/);
   expect(text).toContain("your time)");
@@ -201,4 +198,32 @@ test("a server field error maps to its field", async () => {
   await waitFor(() =>
     expect(screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" })).toHaveFocus(),
   );
+});
+
+test("the zone typeahead finds a zone by its city, keeps UTC and the current value, and matches the offset", async () => {
+  await openNew();
+  const trigger = screen.getByRole("combobox", { name: /^Time zone, / });
+  await userEvent.click(trigger);
+  await userEvent.keyboard("new york");
+  const hits = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  expect(hits).toContain("America/New_York");
+  expect(hits).not.toContain("Europe/Berlin");
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(trigger);
+  const all = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  expect(all).toContain("UTC");
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(trigger);
+  await userEvent.keyboard("gmt+9");
+  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toContain("Asia/Tokyo");
+});
+
+test("a zone's offset is computed once and cached", () => {
+  const spy = vi.spyOn(Intl, "DateTimeFormat");
+  const first = zoneOffset("Asia/Tokyo");
+  const calls = spy.mock.calls.length;
+  expect(zoneOffset("Asia/Tokyo")).toBe(first);
+  expect(spy.mock.calls.length).toBe(calls);
+  expect(first).toMatch(/GMT\+9/);
+  spy.mockRestore();
 });

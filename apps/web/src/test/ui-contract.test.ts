@@ -52,7 +52,6 @@ describe("form controls", () => {
     "components/ui/input.tsx",
     "components/ui/textarea.tsx",
     "components/ui/checkbox.tsx",
-    "components/native-select.tsx",
   ];
   for (const f of files) {
     test(`${f} uses the one base-layer focus ring`, () => {
@@ -108,12 +107,12 @@ describe("loading", () => {
 });
 
 describe("selects", () => {
-  test("NativeSelect is imported only by the timezone select", () => {
+  test("NativeSelect is gone", () => {
+    expect(existsSync(join(SRC, "components/native-select.tsx"))).toBe(false);
     const offenders = sourceFiles()
-      .filter((f) => !f.endsWith("components/native-select.tsx"))
-      .filter((f) => readFileSync(f, "utf8").includes("components/native-select"))
+      .filter((f) => /NativeSelect|components\/native-select/.test(readFileSync(f, "utf8")))
       .map((f) => f.replace(SRC, ""));
-    expect(offenders).toEqual(["/features/schedules/timezone-select.tsx"]);
+    expect(offenders).toEqual([]);
   });
 });
 

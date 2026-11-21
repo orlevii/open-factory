@@ -109,3 +109,14 @@ export function usePref<T>(
 
   return [value, set];
 }
+
+/** A pref's raw string for non-React code (null = absent). Reads the module cache, which stays valid
+ *  only while something is subscribed: hold `watchPrefs()` for as long as you read this. */
+export function readPref(key: string): string | null {
+  return readCell(key).value;
+}
+
+/** Keeps the cache fresh (one `storage` listener) for `readPref`; returns the release function. */
+export function watchPrefs(): () => void {
+  return subscribe(() => {});
+}

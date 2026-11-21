@@ -1,6 +1,6 @@
 import type { CredentialKind } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { Ellipsis, Loader2 } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import {
   type ComponentProps,
   type FormEvent,
@@ -10,6 +10,7 @@ import {
   useRef,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
@@ -157,7 +158,11 @@ export function SettingsSection({
       className="grid min-w-0 scroll-mt-6 grid-cols-[minmax(0,1fr)] gap-3"
     >
       <div className="grid gap-0.5">
-        <h2 id={`${id}-title`} tabIndex={-1} className="text-[0.8125rem] font-medium outline-none">
+        <h2
+          id={`${id}-title`}
+          tabIndex={-1}
+          className="text-[0.8125rem] font-medium outline-none" // ui-contract:allow programmatic focus target, not interactive
+        >
           {title}
         </h2>
         {description && <p className={`${smallClass} text-muted-foreground`}>{description}</p>}
@@ -277,7 +282,7 @@ export function InlineForm({
         </div>
         <div className="flex items-center gap-2">
           <Button type="submit" size="lg" aria-disabled={pending || undefined}>
-            {pending && <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />}
+            {pending && <Spinner />}
             {pending ? pendingLabel : submitLabel}
           </Button>
           <Button

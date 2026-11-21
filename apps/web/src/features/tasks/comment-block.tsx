@@ -31,7 +31,7 @@ export function CommentBlock({
       aria-label={`Comment from ${who}`}
       tabIndex={-1}
       {...(highlighted ? { "data-highlighted": "true" } : {})}
-      className={`group relative rounded-lg border border-border px-3 py-2 pr-9 outline-none ${highlighted ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+      className={`group relative rounded-lg border border-border px-3 py-2 pr-9 outline-none ${highlighted ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`} // ui-contract:allow programmatic focus target, not interactive
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
         {comment.author.kind === "agent" ? (

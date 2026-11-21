@@ -23,7 +23,7 @@ export function FormField({ name, label, error, help, prefix, className, ...inpu
             name={name}
             aria-invalid={a.invalid || undefined}
             aria-describedby={a.describedBy}
-            className={cn("h-9 bg-card dark:bg-card", prefix && "pl-7", className)}
+            className={cn("h-9", prefix && "pl-7", className)}
             {...input}
           />
         );

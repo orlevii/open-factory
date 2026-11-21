@@ -1,6 +1,7 @@
-import { CircleAlert, Loader2 } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Wordmark } from "@/components/wordmark";
 
 /** The auth page frame (UI design §4.1): a bare narrow column on the page background, no card. */
@@ -43,7 +44,7 @@ export function AuthCard(props: {
           )}
           {!props.hideSubmit && (
             <Button type="submit" className="h-9 w-full" disabled={props.submitting}>
-              {props.submitting && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
+              {props.submitting && <Spinner size="text" />}
               {props.submitting ? props.pendingLabel : props.submitLabel}
             </Button>
           )}

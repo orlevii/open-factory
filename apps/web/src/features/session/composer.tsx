@@ -67,7 +67,7 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
           ref={lineRef}
           data-readonly-line
           tabIndex={-1}
-          className="text-sm text-muted-foreground outline-none"
+          className="text-sm text-muted-foreground outline-none" // ui-contract:allow programmatic focus target, not interactive
         >
           This agent was terminated. Its session is read-only.
         </p>
@@ -180,7 +180,7 @@ export function Composer({
             [waitsForNewSession && waitHintId, urgent && hintId].filter(Boolean).join(" ") ||
             undefined
           }
-          className="max-h-[9rem] min-h-[3.5rem] resize-none bg-card md:max-h-[18rem] dark:bg-card"
+          className="max-h-[9rem] min-h-[3.5rem] resize-none md:max-h-[18rem]"
         />
         {waitsForNewSession && (
           <p

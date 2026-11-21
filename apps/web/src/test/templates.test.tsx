@@ -706,3 +706,21 @@ test("editor: the warm_window_minutes hint shows the live factory default", asyn
   const describedBy = textarea.getAttribute("aria-describedby")?.split(" ") ?? [];
   expect(describedBy).toContain((hint.closest("p") as HTMLElement).id);
 });
+
+test("Save reads 'Saving…' while the PUT is pending", async () => {
+  let release: () => void = () => {};
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "POST /api/templates/lead/validate": () => json({ issues: [] }),
+    "PUT /api/templates/lead/files/template.yaml": () =>
+      new Promise<Response>((resolve) => {
+        release = () => resolve(json({ hash: "h2", issues: [] }));
+      }),
+  });
+  renderApp("/templates/lead", alice);
+  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("button", { name: "Saving…" })).toBeInTheDocument();
+  await act(async () => release());
+  expect(await screen.findByText("Saved.")).toBeInTheDocument();
+});

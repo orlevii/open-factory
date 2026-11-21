@@ -47,7 +47,7 @@ function Table({
         {...(regionLabel ? { "aria-label": regionLabel } : { "aria-labelledby": id })}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs a tab stop.
         tabIndex={0}
-        className="overflow-x-auto rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="overflow-x-auto rounded-sm"
       >
         <table aria-labelledby={id} className="w-full border-collapse text-sm">
           <thead className="border-b">

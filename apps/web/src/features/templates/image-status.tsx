@@ -6,18 +6,25 @@ import {
   CircleDashed,
   CircleHelp,
   Download,
-  Loader2,
-  type LucideIcon,
   TriangleAlert,
 } from "lucide-react";
+import type { ComponentType } from "react";
+import { Spinner } from "@/components/ui/spinner";
 import { ago } from "@/features/settings/shared";
 import { cn } from "@/lib/utils";
 
 type Status = ImageStatus["status"];
 
 /** Spec §12.8 / §12.10: every status is an icon plus a word; orange only for a running build. */
-const META: Record<Status, { word: string; Icon: LucideIcon; tone: string }> = {
-  building: { word: "Building…", Icon: Loader2, tone: "text-signal motion-safe:animate-spin" },
+function BuildingIcon({ className }: { className?: string }) {
+  return <Spinner size="text" className={className} />;
+}
+
+const META: Record<
+  Status,
+  { word: string; Icon: ComponentType<{ className?: string }>; tone: string }
+> = {
+  building: { word: "Building…", Icon: BuildingIcon, tone: "text-signal" },
   failed: { word: "Build failed", Icon: CircleAlert, tone: "text-destructive" },
   out_of_date: { word: "Out of date", Icon: TriangleAlert, tone: "text-warning" },
   built: { word: "Built", Icon: CircleCheck, tone: "text-success" },

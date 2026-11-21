@@ -118,7 +118,7 @@ export function UsageChart({
           if (e.pointerType === "mouse") setSelected(null);
         }}
         onBlur={() => setSelected(null)}
-        className="relative w-full min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="relative w-full min-w-0 rounded-sm"
         style={{ minHeight: HEIGHT }}
       >
         {/* The layout width is the container's ("100%"), never the measured one, so the chart can shrink:

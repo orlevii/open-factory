@@ -163,7 +163,11 @@ test("Pause and Resume apply at once with their outcomes; Delete leaves the row 
   ).toBeInTheDocument();
   api.on("GET /api/schedules?", () => list([]));
   await u.click(screen.getByRole("button", { name: "Actions for S-3" }));
-  await u.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  expect(await screen.findByRole("menuitem", { name: "Delete" })).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await u.click(screen.getByRole("menuitem", { name: "Delete" }));
   expect(await screen.findByText("Deleted S-3.")).toBeInTheDocument();
   const undo = screen.getByRole("button", { name: "Undo" });
   await waitFor(() => expect(undo).toHaveFocus());

@@ -274,6 +274,10 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
     "aria-disabled",
     "true",
   );
+  expect(screen.getByRole("menuitem", { name: "Delete (used by @lead)" })).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
   await userEvent.keyboard("{Escape}");
 
   await userEvent.click(
@@ -456,6 +460,10 @@ test("projects: a middle-truncated path, grant wording, and Remove disabled with
   expect(screen.getByRole("menuitem", { name: "Remove (granted to @a)" })).toHaveAttribute(
     "aria-disabled",
     "true",
+  );
+  expect(screen.getByRole("menuitem", { name: "Remove (granted to @a)" })).toHaveAttribute(
+    "data-variant",
+    "destructive",
   );
 });
 

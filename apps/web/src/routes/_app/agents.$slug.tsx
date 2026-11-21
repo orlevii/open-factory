@@ -1,7 +1,8 @@
 import { ApiError } from "@open-factory/shared";
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
+import { rememberAgent } from "@/features/palette/recent";
 import { AgentDetailsSheet, useAgentDetailsPanel } from "@/features/session/agent-details";
 import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
 import { SessionView } from "@/features/session/session-view";
@@ -40,6 +41,7 @@ export const Route = createFileRoute("/_app/agents/$slug")({
     // open panel stays open across agents and the sheet swaps its content in place (U2 §8.1).
     const panel = useAgentDetailsPanel(slug);
     const [sheetHost, setSheetHost] = useState<HTMLDivElement | null>(null);
+    useEffect(() => rememberAgent(slug), [slug]);
     return (
       <>
         <SessionView

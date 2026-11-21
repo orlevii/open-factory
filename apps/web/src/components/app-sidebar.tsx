@@ -13,6 +13,7 @@ import {
   Monitor,
   Moon,
   Plus,
+  Search,
   Settings,
   Sun,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { isMac, Kbd } from "@/components/ui/kbd";
 import {
   Sidebar,
   SidebarContent,
@@ -47,6 +49,7 @@ import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
 import { useIsLiveAgent } from "@/features/agents/use-agent-index";
 import { useUnreadCount } from "@/features/inbox/api";
 import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
+import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -128,6 +131,30 @@ export function AppSidebar() {
         </Link>
       </SidebarHeader>
       <SidebarContent className="min-h-0 flex-col overflow-hidden">
+        {/* Opens the palette: a button, never active, with a rule under it (spec §10.2). */}
+        <SidebarGroup className="shrink-0 pb-0">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Search"
+                aria-label="Search"
+                aria-keyshortcuts={isMac() ? "Meta+K" : "Control+K"}
+                onPointerEnter={() => prefetchPaletteData(qc)}
+                onFocus={() => prefetchPaletteData(qc)}
+                onClick={() => {
+                  closeMobile();
+                  openPalette();
+                }}
+                className={cn("gap-2.5 transition-colors duration-150", isMobile ? "h-9" : "h-8")}
+              >
+                <Search aria-hidden="true" />
+                <span>Search</span>
+                <Kbd keys={["Mod", "K"]} className="ml-auto group-data-[collapsible=icon]:hidden" />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+        <SidebarSeparator className="group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:w-6" />
         <SidebarGroup className="shrink-0">
           <SidebarGroupContent>
             <nav aria-label="Main">

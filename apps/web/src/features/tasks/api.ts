@@ -118,6 +118,17 @@ export const postComment = (key: string, body: string) =>
     schema: taskCommentResponseSchema,
   });
 
+/** The palette's title search (spec §15.2): up to 20 matches in any status. `q` is already trimmed. */
+export const tasksSearchOptions = (q: string) =>
+  queryOptions({
+    queryKey: [...tasksQueryKey, "search", q] as const,
+    queryFn: () =>
+      apiFetch(`/api/tasks?${new URLSearchParams({ q, status: "all", limit: "20" })}`, {
+        schema: taskPageSchema,
+      }),
+    select: (page) => page.tasks,
+  });
+
 /** One request for the dependency editor's keys. */
 export const lookupTasks = (keys: string[]) =>
   apiFetch(`/api/tasks?status=all&keys=${encodeURIComponent(keys.join(","))}&limit=50`, {

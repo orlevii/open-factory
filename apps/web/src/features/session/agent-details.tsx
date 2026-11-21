@@ -2,7 +2,7 @@ import type { AgentSummary, AgentsUsage } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
-import { type ReactNode, type RefObject, useCallback, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,6 +22,7 @@ import { atPhrase, formatTime } from "./format";
 import { formatBy } from "./format-by";
 import { canPin, PinButton } from "./live-line";
 import { LINK_CLASS } from "./message-block";
+import { registerAgentDetailsOpener } from "./session-commands";
 import { Actor } from "./spawn-block";
 import { resetPhrase } from "./status-badge";
 import type { StopCrons } from "./stop-crons";
@@ -562,6 +563,7 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
     [setPref],
   );
   const toggle = useCallback(() => setOpen(!latest.current.open), [setOpen]);
+  useEffect(() => registerAgentDetailsOpener(() => setOpen(true)), [setOpen]);
   useShortcut(
     "]",
     () => {

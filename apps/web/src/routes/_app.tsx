@@ -7,6 +7,7 @@ import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { useInboxNotifier } from "@/features/inbox/notifications";
+import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
@@ -187,6 +188,7 @@ function AppLayout() {
           >
             <Outlet />
           </SidebarInset>
+          <CommandPalette />
         </SidebarProvider>
       </ShellContext.Provider>
     </WsContext.Provider>

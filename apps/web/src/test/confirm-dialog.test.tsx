@@ -166,6 +166,9 @@ test("desktop: a centered alert dialog that fits the viewport; a long name wraps
   const action = screen.getByRole("button", { name: `Delete ${SECRET}` });
   expect(action).toHaveClass("whitespace-normal", "[overflow-wrap:anywhere]");
   expect(action).not.toHaveClass("whitespace-nowrap");
+  // Button's base shrink-0 would keep the max-content width in the flex footer: the label never wraps.
+  expect(action).not.toHaveClass("shrink-0");
+  expect(action).toHaveClass("shrink", "min-w-0", "max-w-full");
 });
 
 test("desktop: while pending the action shows the pending label and a spinner, and Esc does nothing", async () => {

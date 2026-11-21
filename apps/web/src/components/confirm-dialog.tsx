@@ -24,9 +24,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 
 /** A button that carries a name wraps to two lines; it is never truncated (DESIGN.md → Overlays).
- *  The touch-height override keeps `pointer-coarse:h-9` from pinning a wrapped label to one line. */
+ *  `shrink min-w-0 max-w-full` undo Button's `shrink-0`, which held the max-content width in the flex footer;
+ *  the touch-height override keeps `pointer-coarse:h-9` from pinning a wrapped label to one line. */
 const ACTION_CLASS =
-  "whitespace-normal h-auto min-h-8 pointer-coarse:h-auto pointer-coarse:min-h-9 py-1.5 text-center [overflow-wrap:anywhere]";
+  "shrink min-w-0 max-w-full whitespace-normal h-auto min-h-8 pointer-coarse:h-auto pointer-coarse:min-h-9 py-1.5 text-center [overflow-wrap:anywhere]";
 /** Body, detail and error stacked; the error line takes no room while empty. */
 const MIDDLE_CLASS = "flex flex-col gap-3";
 

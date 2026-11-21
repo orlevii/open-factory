@@ -5,7 +5,7 @@
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (decisions 1–21; 7, 13 and 16–21 binding here), `docs/product/ui-review/status.md` (U3 table rows 1–12, file:line at `322075d`), `docs/product/ui-review/pr76-review.md` (the U3 items decision 15 hands over), the seven reviews in `docs/product/ui-review/` (chat.md is the main source), `docs/product/behavior/*.md`, `docs/product/architecture/harness-driver.md`, and the spike write-up `docs/product/architecture/claude-streaming-and-commands.md` with its traces in `docs/product/ui-review/u3-spikes/` (Claude Code 2.1.327).
 - **Builds on:** U1 (PRs #84–#88, decisions #77): the control system, `data-instant`, memoized timeline rows (`stabilizeRows`, `TimelineItem` + `itemPropsEqual`, memoized `Markdown`, rAF-batched frames), the send-key rule. U2 (PRs #95, #97–#101, decisions #89, leftovers #102): `AgentChip`, `AgentAvatar`, `MiddleTruncate`, `InlineOutcome`, `Kbd`, the one-line header and `LiveLine`, Agent details, the shortcut layer, `requestComposerFocus`.
 - **Followed by:** U4 (create flows and mobile). U4 owns the mobile composer layout and long-press on rows (Q25).
-- **Decision log:** GitHub issue "U3: Chat — decisions"; Q1–Q44 are the proxy's answers, D1–D6 tech-lead decisions.
+- **Decision log:** GitHub issue #103 "U3: Chat — decisions"; Q1–Q44 are the proxy's answers, D1–D6 tech-lead decisions.
 
 > `docs/product/` is gitignored. Paths into it are relative to the main checkout. Other paths are relative to the repo root; web paths are relative to `apps/web/src/` unless they start with `apps/` or `packages/`.
 
@@ -535,14 +535,14 @@ The header loses Stop (§6.1). It keeps the status badge and U2's one live fact;
 - Server: interrupt hold (second interrupt, publish edges, fallback event, 409 during compaction); cancel/restore incl. 403, 409s, ordering after later writes, audit log; `clientMessageId` dedupe; command validation (allowlist, refused built-ins, aliases, size), the raw line's exact bytes, `commandInFlight`, held-command Cancel; `initialize` timeout never blocking a send; the live loop's `retiredKeys` guard and 64 KiB cap; uploads (name sanitizing, symlinked `.factory` and `.factory/uploads`, `..`, sniffing, SVG/HTML/HEIC refusal, header-only dimensions and the 8000px cap, nosniff headers, size/sha256 check on GET, access, orphan sweep, `info/exclude` idempotence and worktrees).
 - Fixture replay: the spike streams through mapper → runtime → reducer (acceptance 18).
 
-## 19. Follow-up issues (opened with the decisions issue)
+## 19. Follow-up issues (opened with the decisions issue #103)
 
-1. Timeline virtualization (break L7): measure after PR4 on the 2,400-event dataset; numbers in the issue.
-2. Find in session (chat L4).
-3. `T-` task completion in composers (Q23).
-4. Mobile composer layout and row long-press → U4 (Q25).
-5. Attachments: PDFs and other file types, untested in the spike (Q37).
-6. Attachments in task comments and inbox replies (Q38).
+1. #104 Timeline virtualization (break L7): measure after PR4 on the 2,400-event dataset; numbers in the issue.
+2. #105 Find in session (chat L4).
+3. #106 `T-` task completion in composers (Q23).
+4. #107 Mobile composer layout and row long-press → U4 (Q25).
+5. #108 Attachments: PDFs and other file types, untested in the spike (Q37).
+6. #109 Attachments in task comments and inbox replies (Q38).
 
 ## 20. Delivery
 

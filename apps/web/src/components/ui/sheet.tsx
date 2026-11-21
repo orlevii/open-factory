@@ -4,6 +4,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import {
   Drawer,
+  DrawerBody,
   DrawerClose,
   DrawerContent,
   DrawerDescription,
@@ -38,7 +39,7 @@ function Sheet({
           {children}
         </Drawer>
       ) : (
-        <SheetPrimitive.Root data-slot="sheet" open={open} onOpenChange={onOpenChange}>
+        <SheetPrimitive.Root open={open} onOpenChange={onOpenChange}>
           {children}
         </SheetPrimitive.Root>
       )}
@@ -134,8 +135,10 @@ function SheetDescription({ className, ...props }: React.ComponentProps<typeof S
 }
 
 /** The scrolling region and a container: consumers lay out with `@sm`/`@lg`, never `@md` (the sheet is
- *  480px wide, so a container `@md` would read like the viewport breakpoint it is not). */
+ *  480px wide, so a container `@md` would read like the viewport breakpoint it is not). On a short desktop
+ *  viewport the whole panel scrolls instead; the drawer body always scrolls itself. */
 function SheetBody({ className, ...props }: React.ComponentProps<"div">) {
+  if (useMobile()) return <DrawerBody className={className} {...props} />;
   return (
     <div
       data-slot="sheet-body"

@@ -477,6 +477,57 @@ test("an unknown ?template= counts as unchosen", async () => {
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);
 });
 
+test("the template error waits for the list to close, not for focus moving into it", async () => {
+  mockWorld();
+  renderApp("/agents/new", alice);
+  await vi.waitFor(() => expect(field("Template")).toBeEnabled());
+  await userEvent.click(field("Template"));
+  await screen.findByRole("listbox");
+  expect(screen.queryByText("Choose a template.")).not.toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
+});
+
+test("choosing a template does not flash the error when the list closes", async () => {
+  mockWorld();
+  renderApp("/agents/new", alice);
+  await vi.waitFor(() => expect(field("Template")).toBeEnabled());
+  await pickOption(field("Template"), "lead");
+  expect(screen.queryByText("Choose a template.")).not.toBeInTheDocument();
+});
+
+test("the manager picker pads by depth, at most three levels, then marks deeper ones with └", async () => {
+  const chain = ["a", "b", "c", "d", "e", "f"];
+  const agents = chain.map((slug, depth) =>
+    agentSummary({
+      slug,
+      displayName: slug.toUpperCase(),
+      depth,
+      ...(depth ? { reportsTo: chain[depth - 1] } : {}),
+    }),
+  );
+  mockWorld({ agents });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  const select = field("Manager");
+  await vi.waitFor(() => expect(select).toBeEnabled());
+  await userEvent.click(select);
+  const listbox = await screen.findByRole("listbox");
+  const rows = chain.map((slug) => {
+    const item = within(listbox).getByRole("option", { name: new RegExp(`@${slug}$`) });
+    const name = item.querySelector<HTMLElement>("[style*=padding]");
+    return [name?.style.paddingInlineStart, name?.textContent];
+  });
+  expect(rows).toEqual([
+    ["0rem", "A"],
+    ["0.75rem", "B"],
+    ["1.5rem", "C"],
+    ["2.25rem", "D"],
+    ["2.25rem", "└ E"],
+    ["2.25rem", "└ F"],
+  ]);
+});
+
 test("a local template's summary says Unsandboxed", async () => {
   mockWorld();
   renderApp("/agents/new?template=lead", alice);

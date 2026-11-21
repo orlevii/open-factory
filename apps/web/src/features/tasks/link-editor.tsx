@@ -1,5 +1,6 @@
 import type { LinkInput } from "@open-factory/shared";
 import { CircleAlert, Plus, X } from "lucide-react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -74,6 +75,8 @@ export function LinkEditor({
   errors: Record<string, string | undefined>;
   onBlurRow(id: string): void;
 }) {
+  // Opening the kind list moves focus into it; that is not leaving the field, so no check until it closes.
+  const kindOpen = useRef(false);
   const patch = (id: string, p: Partial<LinkRow>) =>
     onChange(rows.map((r) => (r.id === id ? { ...r, ...p } : r)));
   return (
@@ -88,10 +91,13 @@ export function LinkEditor({
               <Select
                 value={r.kind}
                 onValueChange={(v) => patch(r.id, { kind: v as LinkRow["kind"] })}
+                onOpenChange={(open) => {
+                  kindOpen.current = open;
+                }}
               >
                 <SelectTrigger
                   aria-label={`Link ${i + 1} kind`}
-                  onBlur={() => onBlurRow(r.id)}
+                  onBlur={() => kindOpen.current || onBlurRow(r.id)}
                   className="w-24 shrink-0"
                 >
                   <SelectValue />

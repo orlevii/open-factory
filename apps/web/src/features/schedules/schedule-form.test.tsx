@@ -205,17 +205,25 @@ test("the zone typeahead finds a zone by its city, keeps UTC and the current val
   const trigger = screen.getByRole("combobox", { name: /^Time zone, / });
   await userEvent.click(trigger);
   await userEvent.keyboard("new york");
-  const hits = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  const hits = (await screen.findAllByRole("option")).map((o) =>
+    (o.textContent ?? "").replace(/, selected$/, ""),
+  );
   expect(hits).toContain("America/New_York");
   expect(hits).not.toContain("Europe/Berlin");
   await userEvent.keyboard("{Escape}");
   await userEvent.click(trigger);
-  const all = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  const all = (await screen.findAllByRole("option")).map((o) =>
+    (o.textContent ?? "").replace(/, selected$/, ""),
+  );
   expect(all).toContain("UTC");
   await userEvent.keyboard("{Escape}");
   await userEvent.click(trigger);
   await userEvent.keyboard("gmt+9");
-  expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toContain("Asia/Tokyo");
+  expect(
+    (await screen.findAllByRole("option")).map((o) =>
+      (o.textContent ?? "").replace(/, selected$/, ""),
+    ),
+  ).toContain("Asia/Tokyo");
 });
 
 test("a zone's offset is computed once and cached", () => {

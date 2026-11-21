@@ -117,9 +117,9 @@ AgentChip(props: { agent: AgentChipAgent } | { slug: string; name?: string },
 
 ### 5.3 Shell-level live state (D1)
 
-- `useAgentStatusFrames()` moves into `AppLayout` (`routes/_app.tsx`), mounted once; the five page-level calls (`session-view.tsx:43`, `home-agents`, `agents.index`, `agents.$slug_.edit`, `settings/factory-section`) are removed.
-- Frames for the agents list are coalesced: the hub listener queues `agent_status` frames and applies them in one `setQueriesData` per animation frame (a 100ms timeout while `document.hidden`), as U1 does for the timeline. The flush folds the batch per slug (the last frame wins), computes "enters terminated" against the state before the batch, patches the lists and each `["agent", slug]` detail once, and applies the newest `supervisor` frame. The patch keeps the identity of every unchanged agent object (a test pins it).
-- `useAgentIndex()`: a `select` that builds `Map<slug, AgentSummary>` once per list-data identity (memoized in a `WeakMap` keyed by the data array), shared by every per-row selector, so a frame costs O(n), not O(n²).
+- Status frames are applied once, at the shell: `AppLayout`'s existing `onMessage` (it renders the `WsContext` provider, so it can't call a hook that reads it) enqueues `agent_status` and `supervisor` frames into a module-level queue that `applyStatusFrames` flushes (`features/session/use-agent-status.ts` keeps the patch logic); the five page-level `useAgentStatusFrames()` calls (`session-view.tsx:43`, `home-agents`, `agents.index`, `agents.$slug_.edit`, `settings/factory-section`) are removed.
+- The queue flushes in one `setQueriesData` per animation frame (a 100ms timeout while `document.hidden`, and on `visibilitychange`), as U1 does for the timeline; `["agents"]` is invalidated at most once per batch. The flush folds the batch per slug (the last frame wins), computes "enters terminated" against the state before the batch, patches the lists and each `["agent", slug]` detail once, and applies the newest `supervisor` frame. The patch keeps the identity of every unchanged agent object (a test pins it).
+- `useAgentIndex()`: a slug → agent index built once per list-data identity (memoized in a `WeakMap` keyed by the data array) and read inside per-row `select`s, so a frame costs O(n), not O(n²). Selects never return a `Map` or `Set` (TanStack's structural sharing only keeps plain objects and arrays stable): counts are `Record`s, memberships `string[]`. Per-row selectors use `refetchOnMount: false`; the slug form of `AgentChip` reads the ended list from the cache only (never fetches it).
 
 ### 5.4 Per-browser preferences (D2)
 
@@ -170,20 +170,20 @@ The Agents row moves from second to last place so a long tree doesn't push Tasks
 3. Display name, `min-w-16 truncate`.
 4. At the end, only when non-zero: a collapsed manager's working count drawn as the working tooth + `tabular-nums` number (sr-only and tooltip "3 working"), then the unread count (`byAgent[slug]`, Q34: messages only). Both in one recipe: muted 13px `tabular-nums`, "99+" cap; the working count hides first when the row has no room.
 - Active row (its session open): `steel-hover` fill + the left tooth, as a nav row (Q3). An active working agent shows the left tooth and the badge tooth (recorded in §2.13).
-- Hover (fine pointer): a ⋯ (`SidebarMenuAction`, ghost 24px, `tabIndex={-1}`, `aria-label="Actions for <name>"`) replaces the counts instantly; it opens `AgentMenu context="sidebar"` (§8.4, PR2). Shift+F10 or the Context Menu key on a focused row opens the same menu. Right-click keeps the browser's own menu (Open in new tab, Copy link). Coarse pointers get no ⋯ (U4's long-press).
+- Hover (fine pointer): a ⋯ (ghost 24px, `tabIndex={-1}`, `aria-label="Actions for <name>"`) replaces the counts instantly; it opens `AgentMenu context="sidebar"` (§8.4, PR2). There is one `AgentMenu` instance for the whole tree, controlled by the target slug and anchored to the hovered or focused row; rows mount no Radix root of their own (the truncation tooltip mounts only once a pointer or focus finds the name truncated). Shift+F10 or the Context Menu key on a focused row opens the same menu. Right-click keeps the browser's own menu (Open in new tab, Copy link). Coarse pointers get no ⋯ (U4's long-press).
 - Click or Enter navigates to `/agents/$slug`; on mobile it closes the drawer. Intent preload as every link.
 - Tooltip only when the name is truncated (full name; with the manager past depth 4). The status word is sr-only text in the row.
 
 ### 6.4 Rendering and data (D4)
 
 - `features/agents/sidebar-tree.tsx`: `useAgentTreeShape()` selects `{ slug, displayName, reportsTo }[]` reduced to a string key, so the tree re-renders only when an agent is added, removed, renamed or moved.
-- `SidebarAgentRow = memo(({ slug, level, expanded, hasChildren, active, tabbable }) => …)` reads its agent from `useAgentIndex()` (§5.3) with a per-slug `select`.
+- `SidebarAgentRow = memo(({ slug, level, expanded, hasChildren, active, tabbable }) => …)` reads its agent from `useAgentIndex()` (§5.3) with a per-slug `select`. Rows are a plain `Link` with the menu-button classes: no `SidebarMenuButton`, no `useSidebar()` and no per-row tooltip; closing the mobile drawer is one delegated click handler on the list. `SidebarAgentTree` is `memo` with primitive props; callbacks passed to rows are stable.
 - `useWorkingCounts()` selects a `Map<slug, number>` of working descendants of collapsed managers with a content-equality check, so only rows whose count changed re-render.
 - `useUnreadByAgent(slug)` selects `byAgent[slug] ?? 0` from `["inbox-unread"]`.
 
 ### 6.5 Keyboard and semantics
 
-WAI-APG navigation treeview: `<nav aria-label="Agents">` wraps `<ul role="tree">`; each row is an `<a role="treeitem" aria-level aria-expanded? aria-current="page"? aria-owns?>` inside `<li role="none">`, children in `<ul role="group">`. Roving tabindex: one tab stop (the active row, else the first); ↓/↑, → (open or first child), ← (close or parent), Home/End, Enter follows the link, typeahead on display name. Focus ring inset.
+WAI-APG navigation treeview, rendered flat: `<nav aria-label="Agents">` wraps one `<ul role="tree">` of the visible rows in tree order; each row is an `<a role="treeitem" aria-level aria-setsize aria-posinset aria-expanded? aria-current="page"?>` inside `<li role="none">` (no nested `role="group"` lists, so the list renders without recursion). Roving tabindex: one tab stop (the active row, else the first); ↓/↑, → (open or first child), ← (close or parent), Home/End, Enter follows the link, typeahead on display name. Focus ring inset.
 
 ### 6.6 Collapsed rail (Q38) and mobile (Q23)
 

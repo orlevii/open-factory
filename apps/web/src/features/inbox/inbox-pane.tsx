@@ -245,7 +245,10 @@ function MentionThread({
   if (comments.length === 0) return <p className={muted}>This comment no longer exists.</p>;
   const now = new Date();
   return (
-    <div ref={list} className="grid gap-3 [&>[data-highlighted]]:scroll-mt-4">
+    <div
+      ref={list}
+      className="grid grid-cols-[minmax(0,1fr)] gap-3 [&>[data-highlighted]]:scroll-mt-4"
+    >
       {comments.map((c) => (
         <CommentBlock
           key={c.id}
@@ -350,7 +353,8 @@ function TaskContent({
     <>
       <Body>
         {task ? (
-          <div className="grid gap-4">
+          // One shrinkable track: a wide code block scrolls inside its comment, not the body sideways.
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
             <TaskHeader task={task} />
             {isMention ? (
               <MentionThread task={task} commentId={link.commentId} onReply={onReply} />

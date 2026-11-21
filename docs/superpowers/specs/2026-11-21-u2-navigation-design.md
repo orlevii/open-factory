@@ -1,11 +1,11 @@
 # U2 Navigation: Technical Design
 
 - **Date:** 2026-11-21
-- **Status:** revised after the self-review and five UI-lens reviews (Taste, Apple design, Emil design-eng, Motion, Break UI); owner-proxy (owner-u2) answered Q1–Q39. Low certainty and deviations for Or: §21.
+- **Status:** revised after the self-review and five UI-lens reviews (Taste, Apple design, Emil design-eng, Motion, Break UI); owner-proxy (owner-u2) answered Q1–Q40. Low certainty and deviations for Or: §21.
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (owner decisions 1–15, final), `docs/product/ui-review/status.md` (U2 backlog, file:line at `322075d`), the seven reviews in `docs/product/ui-review/` (paperclip.md is the main source), `docs/product/behavior/*.md`.
 - **Builds on:** U1 (`u1/5-perceived-speed`, PRs #84–#88, decisions issue #77): Sheet/Drawer/ConfirmDialog, the control system, `data-instant` and `stampInstant`, the avatar tokens, DESIGN.md as amended there.
 - **Followed by:** U3 chat (reuses `AgentChip` for speaker lines; owns Stop in the composer and Esc there), U4 create flows and mobile (turns New agent/task/schedule into sheets behind the same actions U2 binds).
-- **Decision log:** GitHub issue "U2: Navigation — decisions"; Q1–Q39 are the proxy's answers, D1–D14 tech-lead decisions.
+- **Decision log:** GitHub issue "U2: Navigation — decisions"; Q1–Q40 are the proxy's answers, D1–D14 tech-lead decisions.
 
 > `docs/product/` is gitignored. Paths into it are relative to the main checkout. Other paths are relative to the repo root; web paths are relative to `apps/web/src/` unless they start with `apps/` or `packages/`.
 
@@ -150,7 +150,7 @@ AgentChip(props: { agent: AgentChipAgent } | { slug: string; name?: string },
 
 `AppSidebar`: header (wordmark); in PR4 a "Search" button row (§10.2); the main nav **Inbox, Tasks, Templates, Schedules, Usage (PR3), Settings**; then the **Agents** row, which is both the nav row for `/agents` and the head of the tree: its label links to `/agents` (active there and on `/agents/new`, `/agents/$slug/edit`, `/agents/$slug/usage`, and on an ended agent's session), a chevron at its end collapses the whole tree (`of-tree-collapsed`), and a `+` (tooltip "New agent") links to `/agents/new`. The tree follows, taking the remaining height and scrolling on its own (`min-h-0 flex-1 overflow-y-auto`), then the footer (user menu; name and handle get a truncation-only tooltip, break L4).
 
-The Agents row moves from second to last place so a long tree doesn't push Tasks…Settings down. Fallback if the merged row proves awkward (Q39): a plain "Agents" nav row in its old place and the tree under a rule with no label, the `+` on the first tree line.
+The Agents row moves from second to last place so a long tree doesn't push Tasks…Settings down (Q40): only the tree region scrolls, and the Agents row is sticky at the top of that region so its chevron and `+` stay reachable. The collapsed rail keeps the same order: nav icons, a rule, then the rail's agents (§6.6). Fallback if the merged row proves awkward (Q39): a plain "Agents" nav row in its old place and the tree under a rule with no label, the `+` on the first tree line.
 
 ### 6.2 What it shows (Q2)
 
@@ -354,7 +354,7 @@ The pane is a flex column: a 48px header (from the list row, so it swaps at once
 ## 14. Templates and Images (PR6, Q18)
 
 - `templates.index.tsx` and a new `templates.images.tsx`: the header's title area holds a `SegmentedControl` "Templates | Images" (navigating; the h1 "Templates" stays visible from 25rem of header width, and below that becomes sr-only so the control takes its place); the actions slot holds New template (icon-only below 640px, with `aria-label` and tooltip).
-- `/templates#images` → `/templates/images` (`beforeLoad` on the index); `timeline-row.tsx:213` and the palette's Images entry link the new route. A template named `images` would be shadowed, as `new` already is: `images` joins the reserved template names in `packages/shared/src/templates.ts`.
+- `/templates#images` → `/templates/images` (`beforeLoad` on the index); `timeline-row.tsx:213` and the palette's Images entry link the new route. A template named `images` would be shadowed by the route, as one named `new` already is today (nothing reserves either): template creation (`POST /api/templates`) rejects the names `new` and `images` ("That name is reserved."); a folder created on disk with either name still lists, and its page is reachable only through the list's link, which encodes the name as `/templates/$name` — the dev checks which route wins and records it.
 - Image rows show status only; "Build log" (ghost, per row) opens `Sheet modal={false}` titled "<image> build log" (`[overflow-wrap:anywhere]`) with `BuildLog` streaming and Build in its footer; another row's "Build log" retargets it in place. The inline expanding log is removed.
 - The template page shows "avatar.svg ignored: over 256 KB" when the file exists but is too large.
 
@@ -521,6 +521,7 @@ PR3's Settings sub-nav uses `steel-selected`, which lands in PR5: PR3 renders it
 | Q37 | No input chord for `]` in U2 | 4 |
 | Q38 | The rail shows only active, unread and badge-worthy agents | **3** |
 | Q39 | The Agents nav row heads the tree (moved last) | **3** |
+| Q40 | Fixed nav first, then the sticky Agents row and its scrolling tree | 4 |
 
 Tech-lead decisions: D1 shell-level, coalesced status frames; D2 `usePref` over localStorage; D3 rem breakpoints; D4 per-row selectors over one index; D5 no "Mark all read" in the palette (confirmed Q28); D6 inbox click/Enter push, `j`/`k` replace (confirmed Q31); D7 no crossfade on pane or peek switches; D8 palette loaded eagerly; D9 a Search button row above the nav; D10 Agents page depth cap 8 with a depth marker; D11 no URL state for the task peek; D12 no custom right-click menu; D13 `avatarVersion` on the agent summary rather than the templates list; D14 Rate-limited has no header line fact (the badge says it).
 

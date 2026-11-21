@@ -21,7 +21,7 @@ export const Route = createFileRoute("/_app/settings")({ component: SettingsLayo
 function SettingsLayout() {
   const navigate = useNavigate();
   const current = useRouterState({
-    select: (s) => PAGES.find((p) => s.location.pathname.startsWith(p.to))?.to,
+    select: (s) => PAGES.find((p) => s.location.pathname.split("/")[2] === p.to.split("/")[2])?.to,
   });
   return (
     <>

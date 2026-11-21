@@ -754,7 +754,19 @@ test.each([
   await screen.findByRole("navigation", { name: "Settings" });
   await waitFor(() => expect(settingsCalls(api)).toEqual(expect.arrayContaining(expected)));
   await screen.findByRole("region");
-  expect([...new Set(settingsCalls(api))].sort()).toEqual([...expected].sort());
+  // Not deduplicated: the loader fetches, and the section skips its own mount fetch.
+  expect(settingsCalls(api).sort()).toEqual([...expected].sort());
+});
+
+test("a hover preload warms a list once; entering the page then reuses it", async () => {
+  const { api } = world({ credentials: [cred()] });
+  const { router } = renderApp("/settings/secrets", alice);
+  await section("Secrets");
+  api.calls.length = 0;
+  await router.preloadRoute({ to: "/settings/credentials" });
+  expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
+  await router.preloadRoute({ to: "/settings/credentials" });
+  expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
 });
 
 test("sub-nav lists the five pages; the current one is aria-current with medium weight", async () => {

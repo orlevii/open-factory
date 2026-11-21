@@ -477,9 +477,13 @@ Behavior-doc edits (§17) go with the PR named there. The whole-stack React revi
 | Q22 | Combobox pickers; live-only for assigning, ended in filters | 4 |
 | Q23 | Same tree in the mobile drawer | 4 |
 | Q24 | Panel instant ≥1280; timeline anchoring | 4 |
-| Q25–Q29 | See the decisions issue | — |
+| Q25 | Avatar badge only for working, queued, rate-limited, errored; StatusBadge elsewhere unchanged | 4 |
+| Q26 | Palette top-centre, modal, scrim, never animates; ladder row | 4 |
+| Q27 | Timeline and composer share one left-aligned 52rem column | 4 |
+| Q28 | No "Mark all read" in the palette | 5 |
+| Q29 | `GET /api/inbox/:id`, own items only, 404 otherwise; the list's pages don't change | 4 |
 
-Tech-lead decisions: D1 shell-level status frames; D2 `usePref` over localStorage; D3 rem breakpoints module; D4 per-row selectors; D5 "Mark all read" not in the palette (Q28 asks the proxy); D6 inbox selection by push navigation; D7 no crossfade when switching inbox items; D8 palette lazy-loaded; D9 sidebar "Search" row; D10 Agents page depth cap 8; D11 no URL state for the task peek; D12 the avatar status badge at rest draws nothing (Q25 asks the proxy).
+Tech-lead decisions: D1 shell-level status frames; D2 `usePref` over localStorage; D3 rem breakpoints module; D4 per-row selectors; D5 "Mark all read" not in the palette (confirmed Q28); D6 inbox selection by push navigation; D7 no crossfade when switching inbox items; D8 palette lazy-loaded; D9 sidebar "Search" row; D10 Agents page depth cap 8; D11 no URL state for the task peek; D12 the avatar status badge at rest draws nothing (confirmed Q25).
 
 ## 22. Risks
 

@@ -10,6 +10,7 @@ colors:
   plate-raised: "oklch(0.995 0.001 250)"
   steel-deep: "oklch(0.94 0.004 250)"
   steel-hover: "oklch(0.93 0.005 250)"
+  steel-selected: "oklch(0.9 0.006 250)"
   rule: "oklch(0.89 0.005 250)"
   float-edge: "oklch(0.80 0.006 255)"
   field-edge: "oklch(0.62 0.01 255)"
@@ -25,6 +26,7 @@ colors:
   night-rail: "oklch(0.17 0.006 255)"
   night-plate: "oklch(0.228 0.007 255)"
   night-rule: "oklch(0.305 0.008 255)"
+  night-selected: "oklch(0.31 0.008 255)"
   night-float-edge: "oklch(0.38 0.008 255)"
   night-text: "oklch(0.94 0.004 250)"
   night-muted: "oklch(0.72 0.008 250)"
@@ -246,7 +248,8 @@ Reading prose stays 14/22 for now; the reading size of the timeline, task bodies
 - The shell is a 240px sidebar, collapsible to icons, plus the content area. On mobile the sidebar becomes a left drawer, opened from its button.
 - Content gutters are 16px on mobile and 24px from `md` up.
 - **Agent details.** The session's details are a 320px column on the right, a plate with a 1px rule on its left edge and no shadow, opening with a 48px strip whose rule continues the page header's. From 1280px (80rem) it is open by default and remembered per browser; from 1024px it is the same column, closed on each visit; from 768px a peek sheet under the page header (the header stays usable); below, a bottom drawer. One header button and `]` toggle it everywhere, instantly at 1024px and up. When a column's width changes, the timeline keeps its place: pinned to the bottom if it was, else the top visible row stays put.
-- **Sub-navigation.** A section with several pages (Settings) has a 180px sub-nav left of its content; its current page takes the fill and medium weight (no tooth: the tooth stays on the sidebar row). When the content beside it would be narrower than 40rem, the sub-nav becomes a select above the content.
+- **Two panes.** From 1024px the Inbox is a 380px list beside a reading pane; below, rows navigate.
+- **Sub-navigation.** A section with several pages (Settings) has a 180px sub-nav left of its content; its current page takes the selected fill and medium weight (no tooth: the tooth stays on the sidebar row). When the content beside it would be narrower than 40rem, the sub-nav becomes a select above the content.
 - Dense by design. Trees, timelines and tables put a lot on one screen, so rhythm comes from rules and spacing, not boxes.
 
 ## Elevation & Depth
@@ -289,20 +292,21 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   | A quick pick or a fact about one control | Popover, menu or select, anchored to its trigger |
   | Jump to anything | Command palette (top centre, with a scrim) |
   | A create or edit form | Right sheet, 480px, with a scrim |
-  | A quick peek (Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px) |
+  | A quick peek (a task, Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px) |
   | Primary work you'd deep-link or keep open | A page |
   | A destructive, irreversible confirmation | Dialog |
   | Any sheet or dialog below `md` (48rem; 768px at the default text size) | A bottom drawer (Vaul); the nav is a left drawer; the command palette stays a top dialog |
 
-  Sheets stack at most one level (Add credential over New agent); the parent stays where it is under a second scrim. Dismissing a sheet never asks: a typed draft is kept, in memory for the tab, for the next open. A peek sheet does not dim or trap focus; the page behind stays usable and clicking it does not close the peek; Esc and Close dismiss it. In a bottom drawer the buttons are full-width and stacked, the action first and Cancel last at the bottom, where the thumb rests. A confirmation button that carries a name may wrap to two lines; it is never truncated. The scrim is plain black, 20% in light mode and 40% in dark; there is no blur, because there is no translucency anywhere in the system, so `prefers-reduced-transparency` has nothing to undo.
+  Sheets stack at most one level (Add credential over New agent); the parent stays where it is under a second scrim. Dismissing a sheet never asks: a typed draft is kept, in memory for the tab, for the next open. A peek sheet does not dim or trap focus; the page behind stays usable and clicking it does not close the peek; Esc and Close dismiss it. Opened from a list with the keyboard, focus stays in the list so `j`/`k` retarget it in place. A task peek opens only when the list keeps room beside it; otherwise the page opens. In a bottom drawer the buttons are full-width and stacked, the action first and Cancel last at the bottom, where the thumb rests. A confirmation button that carries a name may wrap to two lines; it is never truncated. The scrim is plain black, 20% in light mode and 40% in dark; there is no blur, because there is no translucency anywhere in the system, so `prefers-reduced-transparency` has nothing to undo.
 - **Toasts:** A toast appears only when the control that caused an outcome is gone (a submitted sheet, a deleted row), and carries Undo when the action can be undone. Otherwise feedback stays inline, next to the control.
 - **Composers:** Enter sends in every composer; Shift+Enter adds a line, ⌘/Ctrl+Enter also sends. On touch, Enter adds a line.
 - **Cards and panels:** a plate on the ground, a 1px rule edge and a 6px radius, with a 40px header strip that has its own rule. Cards are never nested. The Agent details column's strip is 48px, continuing the page header's line.
 - **Navigation:** sidebar rows are 32px (36px on touch). The active row gets the `steel-hover` fill plus the tooth, and the icon rail keeps the tooth. Nav labels are capitalised product nouns. The last nav row, **Agents**, heads the live agents as the reporting tree; its chevron collapses the tree and its `+` creates an agent. Agent rows are data rows that keep the agent's display name: chevron, avatar with its status badge, name, then a collapsed manager's working count (the tooth and a number, read as "N working") and the agent's unread messages. On an agent row the left tooth means only "you are here". Order is the tree's, never by activity. Roots start expanded and the rest collapsed; the user's toggles are remembered per browser; the open agent's managers expand for the visit only. While a live agent's session is open its row is the active row; an ended agent's session keeps the Agents row active. The collapsed rail shows only what needs a glance: the open agent, agents with unread messages, and agents working, queued, rate-limited or errored.
 - **Avatars:** 16px in pickers, the palette and inbox rows; 20px in the sidebar, lists and Agent details; 24px in the session header. Always decorative (`aria-hidden`); a name is beside it, or in the rail its tooltip. In lists a status badge is cut into the bottom-right corner, one shape per status, the same shapes `StatusBadge` uses: the tooth when working, an alert glyph when errored, a filled dot when rate-limited, a hollow ring when queued, nothing at rest. The session header's avatar carries no badge; the status badge beside it does.
+- **Selected rows:** a row shown in a pane or peek, or the current page of a sub-nav, takes `steel-selected`, one step deeper than hover, and keeps it under the pointer.
 - **Command palette:** ⌘K / Ctrl+K from anywhere. A floating layer at the top centre, 640px wide, with the popover look and the scrim; modal. It never animates, however it was opened. Groups: Agents, an exact task key, Go to, Actions, then Tasks: a group whose results arrive late sits last, so nothing above the highlight moves when it lands.
 - **Combobox:** a searchable pick (agents, time zones) looks exactly like a Select and opens a popover with a filter field at a fixed height. Arrow keys move the highlight; only Enter or a click commits.
-- **Keyboard shortcuts:** single keys never fire while typing in a field, inside a menu, list box or tree, or while a modal layer is open, and can be switched off in the shortcuts sheet. `g` then a letter goes to a section; `c` new task; `]` Agent details; `?` lists them all in a sheet.
+- **Keyboard shortcuts:** single keys never fire while typing in a field, inside a menu, list box or tree, or while a modal layer is open, and can be switched off in the shortcuts sheet. `g` then a letter goes to a section; `c` new task; `]` Agent details; `j`/`k` move through lists; `?` lists them all in a sheet.
 - **Key hints:** one `Kbd` style: Geist 12px, muted, on a plate with a rule; ⌘ on macOS, Ctrl elsewhere.
 - **Empty states and loading:** one plain line in muted text, with no illustration. Loading keeps the layout: static skeleton plates at the real row heights, never shimmering. A spinner always sits next to a pending label ("Terminating…"); under reduced motion the spinner stops and the label carries the meaning.
 - **Markdown** (`.prose-of`): headings in Archivo, code on a plate with a rule, link underlines that turn signal on hover, and mermaid diagrams always on a light plate.
@@ -314,7 +318,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 
 **Motion is feedback, not decoration.** The rules come from a review against Emil Kowalski's design-engineering principles (`emilkowalski/skills`, emil-design-eng), adopted where they fit a dense, live-updating Operate tool.
 
-- **Frequency decides.** Anything seen tens of times a day (nav changes, hovers, list updates) is instant or a colour-only change of 150ms at most. Keyboard-initiated actions never animate: ⌘B collapses the sidebar instantly, using `data-instant` on `<html>` for one frame, while a click animates. An overlay opened from the keyboard is stamped `data-instant` for that whole opening, so it appears and leaves at once; the one-frame `data-instant` on the root still covers keyboard-triggered transitions (⌘B) and now zeroes animations too. Live lists never reorder under the pointer: a re-sort waits until the pointer and focus leave the list, and never animates. Columns that change the page's layout (Agent details from 1024px, the settings sub-nav) appear instantly; only the sidebar's collapse animates. A peek retargeted to another item swaps its content in place, instantly; it never closes and reopens. A key that closes an overlay (Esc, `]`, `?`, Space on a peek) closes it at once, however it was opened. A disclosure chevron rotates only when its own chevron was clicked.
+- **Frequency decides.** Anything seen tens of times a day (nav changes, hovers, list updates) is instant or a colour-only change of 150ms at most. Keyboard-initiated actions never animate: ⌘B collapses the sidebar instantly, using `data-instant` on `<html>` for one frame, while a click animates. An overlay opened from the keyboard is stamped `data-instant` for that whole opening, so it appears and leaves at once; the one-frame `data-instant` on the root still covers keyboard-triggered transitions (⌘B) and now zeroes animations too. Live lists never reorder under the pointer: a re-sort waits until the pointer and focus leave the list, and never animates. Columns that change the page's layout (Agent details from 1024px, the settings sub-nav, the inbox pane) appear instantly; only the sidebar's collapse animates. A peek retargeted to another item swaps its content in place, instantly; it never closes and reopens. A key that closes an overlay (Esc, `]`, `?`, Space on a peek) closes it at once, however it was opened. A disclosure chevron rotates only when its own chevron was clicked. A selection moved from the keyboard (`j`/`k`, arrows) takes its fill at once; only pointer hover fades.
 - **Curves** (tokens in `styles.css`; the built-in CSS easings are too weak):
   - `--ease-out` `cubic-bezier(0.23, 1, 0.32, 1)`: anything entering, plus press feedback.
   - `--ease-in-out` `cubic-bezier(0.77, 0, 0.175, 1)`: movement on screen (the sidebar collapsing).

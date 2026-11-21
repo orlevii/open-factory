@@ -328,7 +328,11 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
   const names = useMemo(() => new Map(shape.map((r) => [r.slug, r.displayName])), [shape]);
   const positions = useMemo(() => {
     const siblings = new Map<string | null, string[]>();
-    for (const n of nodes) siblings.set(n.parent, [...(siblings.get(n.parent) ?? []), n.slug]);
+    for (const n of nodes) {
+      const list = siblings.get(n.parent);
+      if (list) list.push(n.slug);
+      else siblings.set(n.parent, [n.slug]);
+    }
     const out = new Map<string, [number, number]>();
     for (const list of siblings.values())
       list.forEach((s, i) => {
@@ -339,13 +343,15 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 
   const [stored, setStored] = usePref(EXPANDED_KEY, NO_STORED, parseStored, JSON.stringify);
   // Ancestors the user closed while they were revealed for this active agent; a new navigation reveals again.
-  const [dismissed, setDismissed] = useState<{ for?: string; slugs: ReadonlySet<string> }>({
-    slugs: NO_SET,
-  });
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(NO_SET);
+  const [dismissedFor, setDismissedFor] = useState(activeSlug);
+  if (dismissedFor !== activeSlug) {
+    setDismissedFor(activeSlug);
+    setDismissed(NO_SET);
+  }
   const revealed = useMemo<ReadonlySet<string>>(() => {
     if (!activeSlug) return NO_SET;
-    const skip = dismissed.for === activeSlug ? dismissed.slugs : NO_SET;
-    return new Set(ancestorsOf(nodes, activeSlug).filter((s) => !skip.has(s)));
+    return new Set(ancestorsOf(nodes, activeSlug).filter((s) => !dismissed.has(s)));
   }, [nodes, activeSlug, dismissed]);
   const visible = useMemo(() => visibleNodes(nodes, stored, revealed), [nodes, stored, revealed]);
 
@@ -374,20 +380,16 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
   const [menuSlug] = useState<string | null>(null);
 
   // Read by the stable toggle, so rows never see a new callback.
-  const latest = useRef({ nodes, bySlug, stored, revealed, activeSlug, setStored });
+  const latest = useRef({ nodes, bySlug, stored, revealed, setStored });
   useLayoutEffect(() => {
-    latest.current = { nodes, bySlug, stored, revealed, activeSlug, setStored };
+    latest.current = { nodes, bySlug, stored, revealed, setStored };
   });
   const toggle = useCallback((slug: string, via: Via) => {
-    const { nodes, bySlug, stored, revealed, activeSlug, setStored } = latest.current;
+    const { nodes, bySlug, stored, revealed, setStored } = latest.current;
     const node = bySlug.get(slug);
     if (!node?.hasChildren) return;
     const next = !isExpanded(node, stored, revealed);
-    if (!next && revealed.has(slug))
-      setDismissed((d) => ({
-        for: activeSlug,
-        slugs: new Set([...(d.for === activeSlug ? d.slugs : []), slug]),
-      }));
+    if (!next && revealed.has(slug)) setDismissed((d) => new Set([...d, slug]));
     setStored(pruneStored({ ...stored, [slug]: next }, new Set(nodes.map((n) => n.slug))));
     setPointerToggled(via === "pointer" ? slug : null);
   }, []);

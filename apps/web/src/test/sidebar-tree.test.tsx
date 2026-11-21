@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -58,6 +59,18 @@ const frame = (agent: string, status: Frame["status"]): Frame => ({
   restartWaitingOn: 0,
 });
 
+/** The tree's host: holds the active slug so a test can navigate. */
+const host = {
+  initial: undefined as string | undefined,
+  collapsedRail: false,
+  set: (_slug: string | undefined) => {},
+};
+function Host() {
+  const [active, setActive] = useState(host.initial);
+  host.set = setActive;
+  return <SidebarAgentTree activeSlug={active} collapsedRail={host.collapsedRail} />;
+}
+
 function setup({
   list = agents() as AgentSummary[] | null,
   byAgent = {} as Record<string, number>,
@@ -70,9 +83,9 @@ function setup({
     count: Object.values(byAgent).reduce((s, n) => s + n, 0),
     byAgent,
   });
-  const root = createRootRoute({
-    component: () => <SidebarAgentTree activeSlug={activeSlug} collapsedRail={collapsedRail} />,
-  });
+  host.initial = activeSlug;
+  host.collapsedRail = collapsedRail;
+  const root = createRootRoute({ component: Host });
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
@@ -88,7 +101,7 @@ function setup({
       </TooltipProvider>
     </QueryClientProvider>,
   );
-  return { qc, router };
+  return { qc, router, navigate: (slug: string | undefined) => act(() => host.set(slug)) };
 }
 
 /** Apply one frame and let the query cache notify (it batches on a 0ms timer). */
@@ -155,6 +168,17 @@ test("toggle persists; revealed ancestors don't", async () => {
   await userEvent.click(row("Bravo").querySelector("[data-chevron]") as HTMLElement);
   expect(screen.queryByRole("treeitem", { name: /^Charlie/ })).toBeNull();
   expect(JSON.parse(stored() as string)).toEqual({ b: false });
+});
+
+test("a new navigation reveals the active agent again, even back to one whose ancestor was closed", async () => {
+  const { navigate } = setup({ activeSlug: "c" });
+  await screen.findByRole("tree");
+  await userEvent.click(row("Bravo").querySelector("[data-chevron]") as HTMLElement);
+  expect(screen.queryByRole("treeitem", { name: /^Charlie/ })).toBeNull();
+  await navigate("a");
+  await navigate("c");
+  expect(row("Charlie")).toHaveAttribute("aria-current", "page");
+  expect(row("Bravo")).toHaveAttribute("aria-expanded", "true");
 });
 
 test("a user toggle writes only that slug, pruned to live agents", async () => {

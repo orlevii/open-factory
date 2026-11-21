@@ -1,8 +1,11 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { useAgentDetailsPanel } from "@/features/session/agent-details";
 import type { Row } from "@/features/session/rows";
 import { Timeline, type TimelineHandle } from "@/features/session/timeline";
+import { installShortcuts } from "@/lib/shortcuts";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 
 type RO = { cb: ResizeObserverCallback; targets: Element[] };
 const observers: RO[] = [];
@@ -222,4 +225,58 @@ test("while Load earlier is pending, a width change does not correct", () => {
   t.setRowTop(160);
   t.resize(480);
   expect(t.scroller.scrollTop).toBe(200);
+});
+
+/** The session page's wiring: the panel hook owns the timeline's handle, so `]` can anchor first. */
+function PanelTimeline() {
+  const panel = useAgentDetailsPanel("dev");
+  return (
+    <>
+      <p>{panel.open ? "details open" : "details closed"}</p>
+      <Timeline
+        ref={panel.timeline}
+        slug="dev"
+        rows={rows}
+        failedIds={new Set()}
+        interruptedEnds={new Set()}
+        hasMoreBefore={false}
+        onLoadEarlier={async () => false}
+        earlierError={false}
+        footer={null}
+      />
+    </>
+  );
+}
+
+test("] takes a fresh anchor before it toggles the in-flow panel, so the top row keeps its place", () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.installWidth(1440);
+  const off = installShortcuts();
+  try {
+    const view = render(<PanelTimeline />);
+    expect(view.getByText("details open")).toBeInTheDocument();
+    const scroller = view.container.querySelector<HTMLElement>(".overflow-y-auto") as HTMLElement;
+    const row = view.container.querySelector<HTMLElement>('[data-row="c"]') as HTMLElement;
+    Object.defineProperty(scroller, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 400, configurable: true });
+    scroller.getBoundingClientRect = () => ({ top: 0, left: 0, width: 600 }) as DOMRect;
+    let top = 30;
+    row.getBoundingClientRect = () => ({ top }) as DOMRect;
+    document.elementFromPoint = () => row;
+    scroller.scrollTop = 100;
+    scrolled(scroller);
+    top = 40; // the row moved with no scroll event, so the passive anchor is stale
+    fireEvent.keyDown(document.body, { key: "]" });
+    expect(view.getByText("details closed")).toBeInTheDocument();
+    top = 90; // the panel closed: the timeline widened and the row moved
+    const rec = observers.find((o) => o.targets.includes(scroller));
+    act(() => {
+      rec?.cb([{ target: scroller, contentRect: { width: 600 } } as never], {} as ResizeObserver);
+      rec?.cb([{ target: scroller, contentRect: { width: 900 } } as never], {} as ResizeObserver);
+    });
+    expect(scroller.scrollTop).toBe(150); // 100 + (90 - 40), not the stale 100 + (90 - 30)
+  } finally {
+    off();
+    window.matchMedia = original;
+  }
 });

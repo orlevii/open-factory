@@ -2,7 +2,7 @@ import type { AgentSummary, AgentsUsage } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
-import { type ReactNode, useCallback, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useRef, useState } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -25,6 +25,7 @@ import { LINK_CLASS } from "./message-block";
 import { Actor } from "./spawn-block";
 import { resetPhrase } from "./status-badge";
 import type { StopCrons } from "./stop-crons";
+import type { TimelineHandle } from "./timeline";
 
 export const RESTART_WHY =
   "The agent finishes its current turn and background tasks, then restarts with the new settings. Its session is kept. Its crons from this session stop, and it's told which, so it can recreate them.";
@@ -509,6 +510,9 @@ export type AgentDetailsPanel = {
   toggle: () => void;
   setOpen: (open: boolean) => void;
   mode: AgentDetailsMode;
+  /** The session's timeline: every open or close takes its scroll anchor first (spec §8.1, Q24),
+   *  whatever asked for it (`]`, the header toggle, the ⋯ menu, the panel's own close). */
+  timeline: RefObject<TimelineHandle | null>;
 };
 
 /** "closed" once the human closed Agent details at ≥1280px; it then stays closed there. */
@@ -545,9 +549,12 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
 
   const latest = useRef({ slug, open, xwide, fallback, mode });
   latest.current = { slug, open, xwide, fallback, mode };
+  const timeline = useRef<TimelineHandle>(null);
   const setOpen = useCallback(
     (next: boolean) => {
       const c = latest.current;
+      // Before the column resizes the timeline, so the top row keeps its place.
+      timeline.current?.captureAnchor();
       setState({ slug: c.slug, open: next, sheet: c.mode !== "inflow" });
       // Remembered only for the column where it is open by default (not a latched sheet).
       if (c.xwide && c.mode === "inflow") setPref(next ? "open" : "closed");
@@ -567,7 +574,7 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
     // The phone drawer is modal, and `]` still closes it (§8.1: at every width).
     { allowInModal: ownsDetails },
   );
-  return { open, toggle, setOpen, mode };
+  return { open, toggle, setOpen, mode, timeline };
 }
 
 /**

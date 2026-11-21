@@ -573,6 +573,8 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     renderApp("/agents", alice);
     const r = await rows();
     expect(within(r[8] as HTMLElement).queryByText(/└ \d+/)).not.toBeInTheDocument();
-    expect(within(r[11] as HTMLElement).getByText("└ 11")).toBeInTheDocument();
+    const marker = within(r[11] as HTMLElement).getByText("└ 11");
+    // One unbreakable token, so a narrow name cell can't wrap the number under the elbow.
+    expect(marker.textContent).not.toMatch(/[ \t\n]/);
   });
 });

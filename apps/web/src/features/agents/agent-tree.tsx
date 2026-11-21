@@ -198,8 +198,12 @@ export function AgentTree({
                   )}
                 >
                   {beyond && (
-                    <span aria-hidden="true" className="text-[0.8125rem] text-muted-foreground">
-                      └ {level}
+                    // A no-break space and no shrinking: the marker never wraps under the elbow.
+                    <span
+                      aria-hidden="true"
+                      className="shrink-0 whitespace-nowrap text-[0.8125rem] text-muted-foreground tabular-nums"
+                    >
+                      {`└\u00a0${level}`}
                     </span>
                   )}
                   <AgentChip agent={a} showSlug />

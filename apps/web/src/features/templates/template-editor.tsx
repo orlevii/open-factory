@@ -356,7 +356,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       <p className="text-sm text-muted-foreground">Not created</p>
                       <Button
                         id={`create-${f}`}
-                        variant="ghost"
+                        variant="outline"
                         onClick={() => {
                           patch(f, { started: true, content: OPTIONAL_SEED[f] ?? "" });
                           wanted.current = { file: f, line: 1 };
@@ -533,7 +533,6 @@ const TemplateHeader = memo(function TemplateHeader({
                 aria-describedby={headingId}
                 title="Fix the errors first"
                 onClick={(e) => e.preventDefault()}
-                className="cursor-not-allowed opacity-50"
               >
                 <UserPlus aria-hidden="true" data-icon="inline-start" />
                 <span className="max-md:sr-only">Create agent</span>

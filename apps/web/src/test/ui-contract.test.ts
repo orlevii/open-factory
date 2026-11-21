@@ -135,4 +135,19 @@ describe("disabled buttons", () => {
     );
     expect(offenders).toEqual([]);
   });
+  test("no Button carries its own opacity-50 outside components/ui", () => {
+    const offenders = sourceFiles()
+      .filter((f) => !f.includes("/components/ui/"))
+      .filter((f) => {
+        const src = readFileSync(f, "utf8");
+        return src
+          .split(/(?=<Button\b)/)
+          .slice(1)
+          .some((chunk) =>
+            /className=[^\n]*\bopacity-50/.test(chunk.split(/<\/Button>|\n\s*>\n/)[0]),
+          );
+      })
+      .map((f) => f.replace(SRC, ""));
+    expect(offenders).toEqual([]);
+  });
 });

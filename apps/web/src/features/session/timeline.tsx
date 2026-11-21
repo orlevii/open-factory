@@ -203,7 +203,7 @@ export function Timeline(props: {
         >
           {props.hasMoreBefore && (
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
+              <Button variant="outline" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
                 {loadingEarlier ? "Loading…" : "Load earlier"}
               </Button>
               {props.earlierError && (

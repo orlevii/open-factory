@@ -152,7 +152,7 @@ test("Re-sync 502 shows the plugin line and a collapsed Show output", async () =
   expect(within(details as HTMLElement).getByText("boom output")).toBeInTheDocument();
 });
 
-test("Archive is an ink ghost button and lands on the list with the Undo line", async () => {
+test("Archive is an outline button and lands on the list with the Undo line", async () => {
   const api = world({
     extra: {
       "POST /api/agents/lead/archive": () => {

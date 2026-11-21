@@ -214,7 +214,7 @@ test("'Agent details' is offered on a session page", async () => {
   expect(within(actions).getByRole("option", { name: "Agent details" })).toBeInTheDocument();
 });
 
-test("Go to includes Usage and each Settings page; Images links /templates#images", async () => {
+test("Go to includes Usage and each Settings page; Images links /templates/images", async () => {
   const { dialog, router } = await openFromInput();
   const goTo = within(dialog).getByRole("group", { name: "Go to" });
   const names = within(goTo)
@@ -231,8 +231,8 @@ test("Go to includes Usage and each Settings page; Images links /templates#image
     ]),
   );
   await userEvent.click(within(goTo).getByRole("option", { name: "Images" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe("/templates"));
-  expect(router.state.location.hash).toBe("images");
+  await waitFor(() => expect(router.state.location.pathname).toBe("/templates/images"));
+  expect(router.state.location.hash).toBe("");
 });
 
 test("the Search row opens it and shows the platform key hint", async () => {

@@ -212,7 +212,7 @@ function FixLink({
   // An unbuilt user image is built in Templates → Images (spec §10.1).
   if (fix === "image")
     return (
-      <Link to="/templates" hash="images" className={cls}>
+      <Link to="/templates/images" className={cls}>
         Open Templates → Images
       </Link>
     );

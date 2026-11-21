@@ -33,6 +33,7 @@ import { Route as AppTasksKeyRouteImport } from './routes/_app/tasks.$key'
 import { Route as AppTasksNewRouteImport } from './routes/_app/tasks.new'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates.index'
 import { Route as AppTemplatesNameRouteImport } from './routes/_app/templates.$name'
+import { Route as AppTemplatesImagesRouteImport } from './routes/_app/templates.images'
 import { Route as AppTemplatesNewRouteImport } from './routes/_app/templates.new'
 import { Route as AppAgentsSlugEditRouteImport } from './routes/_app/agents.$slug_.edit'
 import { Route as AppAgentsSlugUsageRouteImport } from './routes/_app/agents.$slug_.usage'
@@ -156,6 +157,11 @@ const AppTemplatesNameRoute = AppTemplatesNameRouteImport.update({
   path: '/templates/$name',
   getParentRoute: () => AppRoute,
 } as any)
+const AppTemplatesImagesRoute = AppTemplatesImagesRouteImport.update({
+  id: '/templates/images',
+  path: '/templates/images',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTemplatesNewRoute = AppTemplatesNewRouteImport.update({
   id: '/templates/new',
   path: '/templates/new',
@@ -191,6 +197,7 @@ export interface FileRoutesByFullPath {
   '/tasks/$key': typeof AppTasksKeyRoute
   '/tasks/new': typeof AppTasksNewRoute
   '/templates/$name': typeof AppTemplatesNameRoute
+  '/templates/images': typeof AppTemplatesImagesRoute
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents/': typeof AppAgentsIndexRoute
   '/schedules/': typeof AppSchedulesIndexRoute
@@ -218,6 +225,7 @@ export interface FileRoutesByTo {
   '/tasks/$key': typeof AppTasksKeyRoute
   '/tasks/new': typeof AppTasksNewRoute
   '/templates/$name': typeof AppTemplatesNameRoute
+  '/templates/images': typeof AppTemplatesImagesRoute
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents': typeof AppAgentsIndexRoute
   '/schedules': typeof AppSchedulesIndexRoute
@@ -248,6 +256,7 @@ export interface FileRoutesById {
   '/_app/tasks/$key': typeof AppTasksKeyRoute
   '/_app/tasks/new': typeof AppTasksNewRoute
   '/_app/templates/$name': typeof AppTemplatesNameRoute
+  '/_app/templates/images': typeof AppTemplatesImagesRoute
   '/_app/templates/new': typeof AppTemplatesNewRoute
   '/_app/agents/': typeof AppAgentsIndexRoute
   '/_app/schedules/': typeof AppSchedulesIndexRoute
@@ -278,6 +287,7 @@ export interface FileRouteTypes {
     | '/tasks/$key'
     | '/tasks/new'
     | '/templates/$name'
+    | '/templates/images'
     | '/templates/new'
     | '/agents/'
     | '/schedules/'
@@ -305,6 +315,7 @@ export interface FileRouteTypes {
     | '/tasks/$key'
     | '/tasks/new'
     | '/templates/$name'
+    | '/templates/images'
     | '/templates/new'
     | '/agents'
     | '/schedules'
@@ -334,6 +345,7 @@ export interface FileRouteTypes {
     | '/_app/tasks/$key'
     | '/_app/tasks/new'
     | '/_app/templates/$name'
+    | '/_app/templates/images'
     | '/_app/templates/new'
     | '/_app/agents/'
     | '/_app/schedules/'
@@ -520,6 +532,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTemplatesNameRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/templates/images': {
+      id: '/_app/templates/images'
+      path: '/templates/images'
+      fullPath: '/templates/images'
+      preLoaderRoute: typeof AppTemplatesImagesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/templates/new': {
       id: '/_app/templates/new'
       path: '/templates/new'
@@ -578,6 +597,7 @@ interface AppRouteChildren {
   AppTasksKeyRoute: typeof AppTasksKeyRoute
   AppTasksNewRoute: typeof AppTasksNewRoute
   AppTemplatesNameRoute: typeof AppTemplatesNameRoute
+  AppTemplatesImagesRoute: typeof AppTemplatesImagesRoute
   AppTemplatesNewRoute: typeof AppTemplatesNewRoute
   AppAgentsIndexRoute: typeof AppAgentsIndexRoute
   AppSchedulesIndexRoute: typeof AppSchedulesIndexRoute
@@ -599,6 +619,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppTasksKeyRoute: AppTasksKeyRoute,
   AppTasksNewRoute: AppTasksNewRoute,
   AppTemplatesNameRoute: AppTemplatesNameRoute,
+  AppTemplatesImagesRoute: AppTemplatesImagesRoute,
   AppTemplatesNewRoute: AppTemplatesNewRoute,
   AppAgentsIndexRoute: AppAgentsIndexRoute,
   AppSchedulesIndexRoute: AppSchedulesIndexRoute,

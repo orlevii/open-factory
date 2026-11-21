@@ -332,9 +332,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
               <Command.Item
                 key={g.id}
                 value={`go:${g.id}`}
-                onSelect={() =>
-                  leave(() => void navigate({ to: g.to, ...(g.hash ? { hash: g.hash } : {}) }))
-                }
+                onSelect={() => leave(() => void navigate({ to: g.to }))}
                 className={itemClass}
               >
                 {g.label}

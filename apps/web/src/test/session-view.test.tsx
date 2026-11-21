@@ -743,7 +743,7 @@ test("an error with fix image links to Templates → Images", async () => {
   renderApp("/agents/dev", alice);
   expect(await screen.findByRole("link", { name: "Open Templates → Images" })).toHaveAttribute(
     "href",
-    "/templates#images",
+    "/templates/images",
   );
 });
 

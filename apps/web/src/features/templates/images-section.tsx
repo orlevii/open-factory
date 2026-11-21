@@ -1,8 +1,7 @@
 import type { ImageItem } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "@tanstack/react-router";
 import { CircleAlert, TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildImage, imagesQueryOptions } from "./api";
 import { BuildLog } from "./build-log";
@@ -11,36 +10,12 @@ import { ImageStatusLabel } from "./image-status";
 const small = "text-[0.8125rem] leading-[1.125rem]";
 const code = "font-mono text-[0.8125rem]";
 
-/** Spec §12.8: one row per folder in `images/`, with its build actions and an inline log. */
+/** Spec §12.8, U2 §14: the Images view, one row per folder in `images/`, with its build actions. */
 export function ImagesSection() {
-  const { data, isError, isPending } = useQuery(imagesQueryOptions);
-  const hash = useLocation({ select: (l) => l.hash });
-
-  // #images (the header link, a start error's fix link): bring the section into view once its
-  // content is there, and move focus to its heading.
-  const handled = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (hash !== "images") {
-      handled.current = undefined;
-      return;
-    }
-    if (isPending || handled.current === hash) return;
-    handled.current = hash;
-    document.getElementById("images")?.scrollIntoView?.({ block: "start" });
-    document.getElementById("images-title")?.focus();
-  }, [hash, isPending]);
-
+  const { data, isError } = useQuery(imagesQueryOptions);
   return (
-    <section
-      id="images"
-      aria-labelledby="images-title"
-      className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3 scroll-mt-4"
-    >
-      <h2
-        id="images-title"
-        tabIndex={-1}
-        className="font-heading text-[0.9375rem] font-semibold focus-visible:outline-none" // ui-contract:allow programmatic focus target, not interactive
-      >
+    <section aria-labelledby="images-title" className="grid grid-cols-[minmax(0,1fr)] gap-3">
+      <h2 id="images-title" className="font-heading text-[0.9375rem] font-semibold">
         Images
       </h2>
       {isError && !data && (

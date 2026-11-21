@@ -34,7 +34,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   const row = await screen.findByRole("link", { name: /Dev agent/ });
   expect(row).toHaveAttribute("href", "/agents/dev");
   expect(within(row).getByText("Working")).toBeInTheDocument();
-  expect(within(row).getByText("dev")).toBeInTheDocument();
+  expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
   expect(within(row).getByText("developer")).toBeInTheDocument();
   expect(within(row).getByText("Unsandboxed")).toBeInTheDocument();
 });

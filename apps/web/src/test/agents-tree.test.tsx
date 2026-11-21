@@ -61,7 +61,7 @@ test("rows keep server order and indent the name cell by depth", async () => {
   expect(nameCell(links[0] as HTMLElement)?.style.paddingLeft).toBe("0px");
   expect(nameCell(links[1] as HTMLElement)?.style.paddingLeft).toBe("20px");
   expect(within(links[1] as HTMLElement).getByText("developer")).toBeInTheDocument();
-  expect(within(links[1] as HTMLElement).getByText("dev-1")).toBeInTheDocument();
+  expect(within(links[1] as HTMLElement).getAllByText("@dev-1").length).toBeGreaterThan(0);
 });
 
 test("a nested row says who it reports to, for screen readers", async () => {
@@ -73,12 +73,12 @@ test("a nested row says who it reports to, for screen readers", async () => {
   expect(within(links[0] as HTMLElement).queryByText(/reports to/)).not.toBeInTheDocument();
 });
 
-test("runtime badge: Unsandboxed for local, Docker for docker", async () => {
+test("runtime badge: Unsandboxed for local, nothing for docker", async () => {
   mockWorld({ agents: tree });
   renderApp("/agents", alice);
   const links = await rows();
   expect(within(links[0] as HTMLElement).getByText("Unsandboxed")).toBeInTheDocument();
-  expect(within(links[2] as HTMLElement).getByText("Docker")).toBeInTheDocument();
+  expect(within(links[2] as HTMLElement).queryByText("Docker")).not.toBeInTheDocument();
   expect(within(links[2] as HTMLElement).queryByText("Unsandboxed")).not.toBeInTheDocument();
 });
 
@@ -444,7 +444,7 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
     expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
     // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320.
-    expect(within(lead).getByText("lead").parentElement).toHaveClass("min-w-0", "flex-wrap");
+    expect(lead.querySelector(".basis-full")).toHaveClass("min-w-0", "flex-wrap");
     expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
       "md:col-start-3",
       "md:row-start-1",
@@ -512,5 +512,67 @@ describe("usage in the tree (S10 §12.1)", () => {
     await waitFor(() =>
       expect(api.calls.some((c) => c.url === "/api/usage/agents?window=rolling")).toBe(true),
     );
+  });
+});
+
+describe("Agents page identity and tree lines (U2 §7)", () => {
+  const A = (slug: string, over: Parameters<typeof agentSummary>[0] = {}) =>
+    agentSummary({ slug, displayName: slug, ...over });
+  const lines = (l: HTMLElement) => l.querySelectorAll("[data-tree-line]").length;
+
+  test("row starts with AgentChip (avatar, name, @slug)", async () => {
+    mockWorld({ agents: [A("lead", { displayName: "Team Lead" })] });
+    renderApp("/agents", alice);
+    const [row] = (await rows()) as [HTMLElement];
+    expect(row.querySelector("svg, img")).not.toBeNull();
+    expect(within(row).getByText("Team Lead")).toBeInTheDocument();
+    expect(within(row).getAllByText("@lead").length).toBeGreaterThan(0);
+  });
+
+  test("template shown only when it differs from the slug stem", async () => {
+    mockWorld({
+      agents: [A("dev-abcd", { template: "dev" }), A("lead", { template: "ceo" })],
+    });
+    renderApp("/agents", alice);
+    const [a, b] = (await rows()) as [HTMLElement, HTMLElement];
+    expect(within(a).queryByText("dev")).not.toBeInTheDocument();
+    expect(within(b).getByText("ceo")).toBeInTheDocument();
+  });
+
+  test("'Unsandboxed' only for local runtime; Docker never shown", async () => {
+    mockWorld({ agents: [A("a", { runtime: "local" }), A("b", { runtime: "docker" })] });
+    renderApp("/agents", alice);
+    const [a, b] = (await rows()) as [HTMLElement, HTMLElement];
+    expect(within(a).getByText("Unsandboxed")).toBeInTheDocument();
+    expect(within(b).queryByText("Unsandboxed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Docker")).not.toBeInTheDocument();
+  });
+
+  test("continuous tree lines: one line element per ancestor level with later siblings", async () => {
+    mockWorld({
+      agents: [
+        A("root"),
+        A("a", { reportsTo: "root" }),
+        A("a1", { reportsTo: "a" }),
+        A("a2", { reportsTo: "a" }),
+        A("b", { reportsTo: "root" }),
+        A("b1", { reportsTo: "b" }),
+      ],
+    });
+    renderApp("/agents", alice);
+    const r = await rows();
+    // root, a, a1, a2, b, b1: a1 sits under a, which has a later sibling (b); a2 too; b1's parent b is last.
+    expect(r.map((l) => lines(l))).toEqual([0, 0, 1, 1, 0, 0]);
+  });
+
+  test("rows deeper than the cap show a depth marker", async () => {
+    const chain = Array.from({ length: 12 }, (_, i) =>
+      A(i === 0 ? "n0" : `n${i}`, i === 0 ? {} : { reportsTo: `n${i - 1}` }),
+    );
+    mockWorld({ agents: chain });
+    renderApp("/agents", alice);
+    const r = await rows();
+    expect(within(r[8] as HTMLElement).queryByText(/└ \d+/)).not.toBeInTheDocument();
+    expect(within(r[11] as HTMLElement).getByText("└ 11")).toBeInTheDocument();
   });
 });

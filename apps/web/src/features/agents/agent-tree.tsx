@@ -1,6 +1,7 @@
 import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { RotateCw } from "lucide-react";
+import { AgentChip } from "@/components/agent-chip";
 import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
@@ -10,14 +11,24 @@ import { cn } from "@/lib/utils";
 
 /** Indentation per tree level inside the name cell; capped below `md` so names keep room. */
 const INDENT = 20;
+const DESKTOP_DEPTH_CAP = 8;
 const MOBILE_DEPTH_CAP = 3;
 
-function DockerBadge() {
-  return (
-    <span className="rounded-sm border border-border px-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-      Docker
-    </span>
-  );
+const slugStem = (s: string) => s.replace(/-[a-z0-9]{4}$/, "");
+
+/** For each row, which ancestor levels (1..level-1) have a later sibling, so their vertical line
+ *  continues through it. One backward pass: `later[j]` is whether a level-j row follows with no
+ *  shallower row between. */
+function continuations(levels: number[]): boolean[][] {
+  const later: boolean[] = [];
+  const out: boolean[][] = new Array(levels.length);
+  for (let i = levels.length - 1; i >= 0; i--) {
+    const l = levels[i] as number;
+    out[i] = Array.from({ length: Math.max(l - 1, 0) }, (_, k) => later[k + 1] === true);
+    later[l] = true;
+    later.length = l + 1;
+  }
+  return out;
 }
 
 /** At most one muted note after the name (S5 UI design §4), by priority. Plain text: no interactive
@@ -112,12 +123,15 @@ export function AgentTree({
     const m = !flat && a.reportsTo ? shown.get(a.reportsTo) : undefined;
     shown.set(a.slug, m === undefined ? 0 : m + 1);
   }
+  const cap = isMobile ? MOBILE_DEPTH_CAP : DESKTOP_DEPTH_CAP;
+  const continues = continuations(agents.map((a) => shown.get(a.slug) ?? 0));
   return (
     <ul aria-label="Agents" className="@container divide-y divide-border border-y border-border">
-      {agents.map((a) => {
+      {agents.map((a, i) => {
         const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
         const level = shown.get(a.slug) ?? 0;
-        const depth = Math.min(level, isMobile ? MOBILE_DEPTH_CAP : level);
+        const depth = Math.min(level, cap);
+        const beyond = level > cap;
         const ended = a.archivedAt !== null || a.status === "terminated";
         // Empty while usage is loading or failed; a dash once loaded without a row for this agent.
         const cost = usage ? usageCell(usage.get(a.slug), flat) : null;
@@ -155,18 +169,40 @@ export function AgentTree({
               </span>
               <span
                 data-depth={level}
-                className="min-w-0 flex-1"
+                className="relative min-w-0 flex-1"
                 style={{ paddingLeft: `${depth * INDENT}px` }}
               >
+                {/* Ancestor lines, one per level whose subtree continues past this row; they run
+                    through the row's padding so they read as one rule down the list. */}
+                {(continues[i] ?? []).map(
+                  (more, k) =>
+                    more &&
+                    k + 1 <= cap && (
+                      <span
+                        // biome-ignore lint/suspicious/noArrayIndexKey: the level is the identity
+                        key={k}
+                        data-tree-line
+                        aria-hidden="true"
+                        className="absolute -top-2 -bottom-2 w-px bg-border"
+                        style={{ left: `${(k + 1) * INDENT + 2}px` }}
+                      />
+                    ),
+                )}
                 <span
                   className={cn(
                     "relative flex min-w-0 items-baseline gap-2",
                     // The └ elbow: a 1px rule corner drawn just before a nested name.
                     level > 0 &&
+                      !beyond &&
                       "pl-3.5 before:absolute before:top-0 before:left-0.5 before:h-[0.6875rem] before:w-2 before:border-b before:border-l before:border-border",
                   )}
                 >
-                  <AgentName agent={a} />
+                  {beyond && (
+                    <span aria-hidden="true" className="text-[0.8125rem] text-muted-foreground">
+                      └ {level}
+                    </span>
+                  )}
+                  <AgentChip agent={a} showSlug />
                   {/* Inline, not a second line, so live updates never change the row height. It
                       gives way (truncates) before the name does. */}
                   {note && (
@@ -190,13 +226,10 @@ export function AgentTree({
               {/* A second line below md and in the two-line grid; grid cells in the full one. */}
               <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
                 <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
-                  {a.slug}
-                </span>
-                <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
-                  {a.template}
+                  {a.template !== slugStem(a.slug) ? a.template : null}
                 </span>
                 <span className="md:justify-self-end">
-                  {a.runtime === "local" ? <UnsandboxedBadge /> : <DockerBadge />}
+                  {a.runtime === "local" ? <UnsandboxedBadge /> : null}
                 </span>
               </span>
               {cost && (

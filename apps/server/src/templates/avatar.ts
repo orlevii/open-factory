@@ -18,9 +18,10 @@ const ABSENT: Opened = { kind: "absent" };
  * unsandboxed agents, so a link could expose any file: the path must `lstat` as a regular file that is not a symbolic
  * link, its realpath must sit inside the folder's realpath, and it is opened with `O_NOFOLLOW` and `fstat`ed on the
  * handle (regular, the same inode `lstat` saw, ≤ MAX_AVATAR_BYTES), so the file can't be swapped between the checks
- * and the read. Any failure counts as absent. The caller closes the handle.
+ * and the read. A file with more than one hard link is rejected too, and so is a folder whose realpath is outside the
+ * templates `root`. Any failure counts as absent. The caller closes the handle.
  */
-async function openAvatar(dir: string): Promise<Opened> {
+async function openAvatar(dir: string, root?: string): Promise<Opened> {
   const file = path.join(dir, AVATAR_FILE);
   let handle: FileHandle | undefined;
   try {
@@ -28,9 +29,12 @@ async function openAvatar(dir: string): Promise<Opened> {
     if (!l.isFile() || l.isSymbolicLink()) return ABSENT;
     const [realDir, realFile] = await Promise.all([realpath(dir), realpath(file)]);
     if (!realFile.startsWith(realDir + path.sep)) return ABSENT;
+    // The folder itself may be a link: with a templates root, its realpath must sit inside the root's realpath.
+    if (root !== undefined && !realDir.startsWith((await realpath(root)) + path.sep)) return ABSENT;
     handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const st = await handle.stat();
-    if (!st.isFile() || st.dev !== l.dev || st.ino !== l.ino) {
+    // nlink > 1: a hard link could alias a file outside the folder (links can't be told apart from the original).
+    if (!st.isFile() || st.nlink > 1 || st.dev !== l.dev || st.ino !== l.ino) {
       await handle.close();
       return ABSENT;
     }
@@ -48,16 +52,20 @@ async function openAvatar(dir: string): Promise<Opened> {
 /** `"<mtimeMs>-<size>"` of the template's avatar, or null when it is absent (any check failing) or too large. */
 export async function avatarStat(
   dir: string,
+  root?: string,
 ): Promise<{ version: string | null; tooLarge: boolean }> {
-  const o = await openAvatar(dir);
+  const o = await openAvatar(dir, root);
   if (o.kind !== "file") return { version: null, tooLarge: o.kind === "tooLarge" };
   await o.handle.close().catch(() => {});
   return { version: o.version, tooLarge: false };
 }
 
 /** The avatar's bytes, read from the same `O_NOFOLLOW` handle the checks ran on; null when absent or too large. */
-export async function readAvatar(dir: string): Promise<{ version: string; body: Buffer } | null> {
-  const o = await openAvatar(dir);
+export async function readAvatar(
+  dir: string,
+  root?: string,
+): Promise<{ version: string; body: Buffer } | null> {
+  const o = await openAvatar(dir, root);
   if (o.kind !== "file") return null;
   try {
     // Read at most one byte past the checked size: a file growing after the fstat is never read past the cap.

@@ -240,7 +240,7 @@ export class TemplateIndex {
       files,
       issues: row.issues,
       agents: agents.map((a) => a.slug).sort(),
-      avatar: await avatarStat(row.path),
+      avatar: await avatarStat(row.path, this.dir),
     };
   }
 

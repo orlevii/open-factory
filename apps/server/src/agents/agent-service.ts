@@ -256,7 +256,8 @@ export class AgentService {
             [
               t,
               nameSchema.safeParse(t).success
-                ? (await avatarStat(path.join(this.d.templates.dir, t))).version
+                ? (await avatarStat(path.join(this.d.templates.dir, t), this.d.templates.dir))
+                    .version
                 : null,
             ] as const,
         ),

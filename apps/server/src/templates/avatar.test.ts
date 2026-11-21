@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -55,4 +55,31 @@ test("a dangling symlink and a template dir that does not exist are absent", asy
   expect(await readAvatar(dir)).toBeNull();
   expect(await avatarStat(path.join(dir, "nope"))).toEqual({ version: null, tooLarge: false });
   expect(await readAvatar(path.join(dir, "nope"))).toBeNull();
+});
+
+test("a hard link inside the template folder is absent (nlink > 1), also after the other name is removed it is served again", async () => {
+  const dir = await tpl();
+  const outside = await tpl();
+  await writeFile(path.join(outside, "secret.svg"), "<svg>secret</svg>");
+  await link(path.join(outside, "secret.svg"), path.join(dir, "avatar.svg"));
+  expect(await avatarStat(dir)).toEqual({ version: null, tooLarge: false });
+  expect(await readAvatar(dir)).toBeNull();
+  await rm(path.join(outside, "secret.svg"));
+  expect((await avatarStat(dir)).version).not.toBeNull();
+});
+
+test("a template folder that is a symlink out of the templates root is absent", async () => {
+  const root = await tpl();
+  const elsewhere = await tpl();
+  await writeFile(path.join(elsewhere, "avatar.svg"), "<svg/>");
+  await symlink(elsewhere, path.join(root, "evil"));
+  await mkdir(path.join(root, "good"));
+  await writeFile(path.join(root, "good", "avatar.svg"), "<svg/>");
+  expect(await avatarStat(path.join(root, "evil"), root)).toEqual({
+    version: null,
+    tooLarge: false,
+  });
+  expect(await readAvatar(path.join(root, "evil"), root)).toBeNull();
+  expect((await avatarStat(path.join(root, "good"), root)).version).not.toBeNull();
+  expect(await readAvatar(path.join(root, "good"), root)).not.toBeNull();
 });

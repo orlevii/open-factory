@@ -90,7 +90,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
    */
   app.get("/api/templates/:name/avatar.svg", { schema: { params } }, async (req, reply) => {
     const row = await app.templates.scanOne(req.params.name);
-    const avatar = row ? await readAvatar(row.path) : null;
+    const avatar = row ? await readAvatar(row.path, app.templates.dir) : null;
     if (!avatar) throw new ApiError(404, "avatar_not_found", "This template has no avatar.");
     return reply
       .header("Content-Type", "image/svg+xml")

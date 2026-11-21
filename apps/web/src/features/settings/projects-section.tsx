@@ -270,7 +270,7 @@ function ChangePathForm({
 
 export function ProjectsSection() {
   const qc = useQueryClient();
-  const query = useQuery(projectsQueryOptions);
+  const query = useQuery({ ...projectsQueryOptions, refetchOnMount: false }); // the settings loader just fetched it;
   const { data } = query;
   // Only needed to name a spawned grantee's spawner; a failed list leaves the plain slugs.
   const { data: spawners } = useQuery({

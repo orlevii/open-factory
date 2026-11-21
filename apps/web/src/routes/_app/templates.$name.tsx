@@ -11,7 +11,8 @@ export const Route = createFileRoute("/_app/templates/$name")({
   loader: async ({ context, params, preload }) => {
     const opts = templateQueryOptions(params.name);
     try {
-      // A hover warms the cache once; the click within 5s reuses it (pr76 R2).
+      // A hover warms the cache once (ensureQueryData); a click always refetches, because templates are
+      // rescanned from disk (staleTime 0).
       await (preload
         ? context.queryClient.ensureQueryData(opts)
         : context.queryClient.fetchQuery(opts));

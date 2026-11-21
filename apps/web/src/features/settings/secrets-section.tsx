@@ -228,7 +228,7 @@ function deleteBody(users: string[]) {
 
 export function SecretsSection({ addSecret }: { addSecret?: string }) {
   const qc = useQueryClient();
-  const query = useQuery(secretsQueryOptions);
+  const query = useQuery({ ...secretsQueryOptions, refetchOnMount: false }); // the settings loader just fetched it;
   const { data } = query;
   const focusLater = useFocusLater();
   const [adding, setAdding] = useState(Boolean(addSecret));

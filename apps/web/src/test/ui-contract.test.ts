@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { SRC, sourceFiles } from "./ui-contract-files";
@@ -22,6 +22,17 @@ describe("styles.css", () => {
       /\[data-instant\],\s*\[data-instant\] \*\s*{[^}]*animation:\s*none !important/,
     );
   });
+});
+
+describe("overlay surfaces", () => {
+  for (const f of ["popover", "dropdown-menu", "tooltip", "select"]) {
+    const path = join(SRC, `components/ui/${f}.tsx`);
+    test.skipIf(!existsSync(path))(`${f}.tsx has no shadow and no slide-in`, () => {
+      const src = readFileSync(path, "utf8");
+      expect(src).not.toMatch(/\bshadow-/);
+      expect(src).not.toContain("slide-in-from-");
+    });
+  }
 });
 
 describe("form controls", () => {

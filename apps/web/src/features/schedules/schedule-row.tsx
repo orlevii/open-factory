@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatScheduleTime } from "./format";
@@ -122,7 +123,10 @@ export function ScheduleRow({
                   ) : (
                     <DropdownMenuItem onSelect={onPause}>Pause</DropdownMenuItem>
                   ))}
-                <DropdownMenuItem onSelect={onDelete}>Delete</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  Delete
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </span>

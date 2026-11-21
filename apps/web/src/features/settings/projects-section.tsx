@@ -11,6 +11,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { agentsQueryOptions } from "@/features/session/api";
@@ -414,7 +415,9 @@ export function ProjectsSection() {
                           >
                             Change path
                           </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
+                            variant="destructive"
                             disabled={Boolean(blocker) || removing === p.name}
                             // Focus goes back to ⋯ while it runs, then to the outcome's Undo.
                             onSelect={() => void remove(p)}

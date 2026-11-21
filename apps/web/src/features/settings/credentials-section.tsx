@@ -18,6 +18,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -523,7 +524,9 @@ export function CredentialsSection() {
                             >
                               {`Replace ${noun}`}
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
+                              variant="destructive"
                               disabled={Boolean(blocker)}
                               onSelect={() => {
                                 menuHandsOff.current = ""; // the dialog places focus

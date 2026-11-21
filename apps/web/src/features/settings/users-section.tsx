@@ -314,6 +314,7 @@ export function UsersSection() {
                           </DropdownMenuItem>
                         ) : (
                           <DropdownMenuItem
+                            variant="destructive"
                             disabled={Boolean(blocker)}
                             onSelect={() => {
                               menuHandsOff.current = true; // the dialog places focus

@@ -72,7 +72,7 @@ export interface SessionState {
 }
 
 const NONE: ReadonlySet<string> = new Set();
-const NO_CANCELLED: ReadonlyMap<string, CancelledEntry> = new Map();
+export const NO_CANCELLED: ReadonlyMap<string, CancelledEntry> = new Map();
 const NO_SENDING: readonly SendingBlock[] = [];
 /** A frames batch appending more events than this counts as a load: nothing in it fades. */
 const BULK = 10;
@@ -138,7 +138,9 @@ export type QueueViewEntry =
   | { kind: "item"; item: QueueItem; error?: string }
   | { kind: "cancelled"; id: string; entry: CancelledEntry };
 
-/** The queue as it renders: items without the ones you cancelled, each cancelled line at its place. */
+/** The queue as it renders: items without the ones you cancelled, each cancelled line at its place. A
+ *  cancel that failed shows its item again with the reason; if the item already left the queue (it was
+ *  delivered first), the reason keeps a line of its own. */
 export function queueView(
   queue: QueueItem[],
   cancelled: ReadonlyMap<string, CancelledEntry>,
@@ -150,8 +152,9 @@ export function queueView(
     items.push(c?.error ? { kind: "item", item, error: c.error } : { kind: "item", item });
   }
   if (cancelled.size === 0) return items;
+  const listed = new Set(queue.map((q) => q.id));
   const lines = [...cancelled]
-    .filter(([, c]) => !c.rolledBack && !c.dismissed)
+    .filter(([id, c]) => (c.rolledBack ? c.error !== undefined && !listed.has(id) : !c.dismissed))
     .sort(([, a], [, b]) => a.index - b.index);
   const out: QueueViewEntry[] = [];
   let l = 0;
@@ -335,7 +338,10 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
             agent: s.agent,
             turnEpoch: s.turnEpoch,
             // A reload of the same session (a resync) keeps your cancelled lines; leaving drops them.
-            cancelled: s.slug === a.detail.agent.slug ? s.cancelled : NO_CANCELLED,
+            cancelled:
+              s.slug === a.detail.agent.slug
+                ? pruneCancelled(s.cancelled, a.detail.queue)
+                : NO_CANCELLED,
             // ...and its sends in flight, which the reloaded queue may already hold.
             ...(s.slug === a.detail.agent.slug
               ? { sending: s.sending, awaiting: s.awaiting, landed: s.landed }

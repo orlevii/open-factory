@@ -7,7 +7,7 @@ import { TaskBadge } from "@/features/tasks/task-badge";
 import { formatResetTime } from "./format";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
-import { type CancelledEntry, queueView, type SendingBlock } from "./session-state";
+import { type CancelledEntry, NO_CANCELLED, queueView, type SendingBlock } from "./session-state";
 import { resetPhrase } from "./status-badge";
 
 /** Why queued messages aren't out yet (S5 UI design §3.6), or the error that holds them. */
@@ -30,7 +30,6 @@ const cancellable = (q: QueueItem, self: string | undefined) =>
   q.taskKey === undefined &&
   q.scheduleKey === undefined;
 
-const NO_CANCELLED: ReadonlyMap<string, CancelledEntry> = new Map();
 const NO_SENDING: readonly SendingBlock[] = [];
 /** U3 §13.2: "Sending…" only when the POST is slow (no flash under this). */
 const SLOW_SEND_MS = 400;
@@ -226,7 +225,9 @@ function OutgoingMessage({
 }
 
 /** "Message cancelled. Undo" in the message's place; after a failed Undo it says why, without Undo
- *  (the line stays under the pointer). Focus moves to Undo: the Cancel that had it is gone. */
+ *  (the line stays under the pointer). Focus moves to Undo: the Cancel that had it is gone; when an
+ *  error replaces Undo, to the line. Once restored there is no second Undo. A cancel that failed after
+ *  its item left the queue (delivered first) is this line with the reason. */
 function CancelledLine({
   id,
   entry,
@@ -241,14 +242,18 @@ function CancelledLine({
     <div className="pt-3">
       <InlineOutcome
         tone={failed ? "error" : "success"}
-        undo={failed || !onUndo ? undefined : () => onUndo(id, entry)}
+        undo={failed || entry.restored || !onUndo ? undefined : () => onUndo(id, entry)}
         focusOnMount
+        // Undo unmounts on an error or a restore: focus goes to the line instead of the page.
+        focusKey={failed ? `error:${entry.error}` : entry.restored ? "restored" : undefined}
       >
-        {failed
-          ? `Message cancelled. Couldn't undo: ${entry.error}`
-          : entry.inBox
-            ? "Message cancelled · back in the box."
-            : "Message cancelled."}
+        {entry.rolledBack
+          ? `Couldn't cancel: ${entry.error}`
+          : failed
+            ? `Message cancelled. Couldn't undo: ${entry.error}`
+            : entry.inBox
+              ? "Message cancelled · back in the box."
+              : "Message cancelled."}
       </InlineOutcome>
     </div>
   );

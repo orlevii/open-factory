@@ -209,3 +209,59 @@ test("a failed cancel shows the message again with the reason under it", () => {
   expect(screen.getByText("b")).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("Couldn't cancel: Already delivered.");
 });
+
+test("a cancel that lost the race (the frame already dropped the item) still says why", () => {
+  render(
+    <QueueItems
+      items={[msg({ id: "a", body: "a" })]}
+      cancelled={
+        new Map([
+          [
+            "b",
+            { item: msg({ id: "b" }), index: 1, error: "Already delivered.", rolledBack: true },
+          ],
+        ])
+      }
+      agent={agentSummary()}
+      self="alice"
+    />,
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent("Couldn't cancel: Already delivered.");
+  const block = document.querySelector("[data-message-block]") as Node;
+  expect(block.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("once restored, the line offers no second Undo", () => {
+  render(
+    <QueueItems
+      items={[]}
+      cancelled={new Map([["b", { item: msg({ id: "b" }), index: 0, restored: true }]])}
+      agent={agentSummary()}
+      self="alice"
+      onUndo={() => {}}
+    />,
+  );
+  expect(screen.getByText("Message cancelled.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+test("a failed restore moves focus from Undo to the error line", async () => {
+  vi.useRealTimers();
+  const entry = { item: msg({ id: "b" }), index: 0 };
+  const ui = (e: typeof entry & { error?: string }) => (
+    <QueueItems
+      items={[]}
+      cancelled={new Map([["b", e]])}
+      agent={agentSummary()}
+      self="alice"
+      onUndo={() => {}}
+    />
+  );
+  const { rerender } = render(ui(entry));
+  const undo = screen.getByRole("button", { name: "Undo" });
+  undo.focus();
+  rerender(ui({ ...entry, error: "This agent has ended." }));
+  const errorLine = within(screen.getByRole("alert")).getByText(/Couldn't undo/).parentElement;
+  await vi.waitFor(() => expect(errorLine).toHaveFocus());
+});

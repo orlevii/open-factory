@@ -783,3 +783,27 @@ test("a reload of the same session keeps the blocks; another session drops them"
   });
   expect(other.sending).toEqual([]);
 });
+
+test("cancel_failed after the frame already dropped the item keeps a line with the reason", () => {
+  let s = sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" });
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["a"]) }); // delivered first
+  s = sessionReducer(s, { type: "cancel_failed", id: "b", error: "Already delivered." });
+  expect(view(s)).toEqual(["a", "x:b!"]);
+  // Your next send clears it.
+  expect(view(sessionReducer(s, { type: "clear_cancelled" }))).toEqual(["a"]);
+});
+
+test("a reload that already lists a restored item drops its line", () => {
+  let s = sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" });
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["a"]) });
+  s = sessionReducer(s, { type: "restored", id: "b" });
+  expect(view(s)).toEqual(["a", "x:b"]);
+  s = sessionReducer(s, {
+    type: "loaded",
+    page: page([1]),
+    detail: { ...detail, queue: [qItem("a"), qItem("b")] },
+    mode: "latest",
+  });
+  expect(view(s)).toEqual(["a", "b"]);
+  expect(s.cancelled.size).toBe(0);
+});

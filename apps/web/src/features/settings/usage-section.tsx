@@ -2,7 +2,7 @@ import type { AgentUsageRow, CredentialsUsage, Totals, UsageDays } from "@open-f
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
-import { Fragment, type ReactNode, useId, useState } from "react";
+import { Fragment, type ReactNode, useId, useMemo, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,9 +12,8 @@ import { formatCost } from "@/features/usage/format";
 import { RangeFilter } from "@/features/usage/range-filter";
 import { UsageChart } from "@/features/usage/usage-chart";
 import { linkClass, td, tdNum, th, thNum } from "@/features/usage/usage-tables";
-import { KIND_LABEL } from "./credentials-section";
 import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
-import { SettingsSection, smallClass } from "./shared";
+import { KIND_LABEL, SettingsSection, smallClass } from "./shared";
 
 /** Below `md` the Agents table keeps only the agent and total columns, Credentials only name and cost. */
 const wide = "hidden md:table-cell";
@@ -112,21 +111,31 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
-  const [openSpawners, setOpenSpawners] = useState<ReadonlySet<string>>(new Set());
-  const [showIdle, setShowIdle] = useState(false);
-
-  // Spawned agents sit under their spawner (one level, S7); one whose spawner isn't listed stands alone.
+/** Spawned agents sit under their spawner (one level, S7); one whose spawner isn't listed stands
+ *  alone. Children keep only those with usage, sorted like the top level. */
+function groupAgents(agents: AgentUsageRow[]) {
   const listed = new Set(agents.map((a) => a.slug));
   const children = new Map<string, AgentUsageRow[]>();
   const tops: AgentUsageRow[] = [];
   for (const a of agents) {
     if (a.kind === "ephemeral" && a.spawnerSlug && listed.has(a.spawnerSlug)) {
-      children.set(a.spawnerSlug, [...(children.get(a.spawnerSlug) ?? []), a]);
+      if (a.total.turns === 0) continue;
+      const kids = children.get(a.spawnerSlug);
+      if (kids) kids.push(a);
+      else children.set(a.spawnerSlug, [a]);
     } else tops.push(a);
   }
+  for (const kids of children.values()) kids.sort(byTotal);
   const used = tops.filter((a) => a.total.turns > 0).sort(byTotal);
   const idle = tops.filter((a) => a.total.turns === 0).sort((a, b) => a.slug.localeCompare(b.slug));
+  return { used, idle, children };
+}
+
+function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
+  const [openSpawners, setOpenSpawners] = useState<ReadonlySet<string>>(new Set());
+  const [showIdle, setShowIdle] = useState(false);
+
+  const { used, idle, children } = useMemo(() => groupAgents(agents), [agents]);
   const toggle = (slug: string) =>
     setOpenSpawners((s) => {
       const next = new Set(s);
@@ -149,7 +158,7 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
       }
     >
       {used.map((a) => {
-        const kids = (children.get(a.slug) ?? []).filter((k) => k.total.turns > 0).sort(byTotal);
+        const kids = children.get(a.slug) ?? [];
         const open = openSpawners.has(a.slug);
         const noun = kids.length === 1 ? "spawned agent" : "spawned agents";
         return (

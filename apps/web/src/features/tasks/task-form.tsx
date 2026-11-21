@@ -45,10 +45,11 @@ export function TaskForm({ onSubmit }: { onSubmit(body: CreateTaskBody): Promise
   const setError = (f: Field, m: string | undefined) => setErrors((e) => ({ ...e, [f]: m }));
   const checkTitle = () => firstIssue(taskTitleSchema.safeParse(title));
   const checkBody = () => firstIssue(taskBodySchema.safeParse(body));
+  /** The dependency check; `undefined` when the lookup itself failed. */
   async function checkDeps() {
     const r = await checkDependencies(deps).catch(() => undefined);
     if (r) setResolved(r.resolved);
-    return r?.error;
+    return r;
   }
   const checkRows = (all: LinkRow[] = rows) => {
     const next: Record<string, string | undefined> = {};
@@ -66,23 +67,25 @@ export function TaskForm({ onSubmit }: { onSubmit(body: CreateTaskBody): Promise
     ev.preventDefault();
     if (pending) return;
     setFailed(false);
+    const checked = await checkDeps();
     const found: Errors = {
       title: checkTitle(),
       body: checkBody(),
-      dependsOn: await checkDeps(),
+      dependsOn: checked?.error,
       links: checkRows(),
     };
     setErrors(found);
     const first = FIELDS.find((f) => found[f]);
     if (first) return focus(first);
+    // The lookup failed: nothing to submit the keys from.
+    if (!checked) return setFailed(true);
     setPending(true);
     try {
-      const { keys } = await checkDependencies(deps);
       await onSubmit({
         title: title.trim(),
         body,
         ...(assignee ? { assignee } : {}),
-        dependsOn: keys,
+        dependsOn: checked.keys,
         links: rowsToInput(rows),
       });
     } catch (err) {
@@ -157,7 +160,7 @@ export function TaskForm({ onSubmit }: { onSubmit(body: CreateTaskBody): Promise
             setDeps(v);
             setError("dependsOn", undefined);
           }}
-          onBlur={() => void checkDeps().then((m) => setError("dependsOn", m))}
+          onBlur={() => void checkDeps().then((r) => setError("dependsOn", r?.error))}
         />
         <div className="grid gap-1">
           <LinkEditor

@@ -6,9 +6,9 @@ import { z } from "zod";
 import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
 import { mapAuthError, mapAuthFailure } from "@/components/auth-error";
 import { FormField } from "@/components/form-field";
+import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
-import { signUpStateQueryOptions } from "@/routes/sign-up";
 
 export const Route = createFileRoute("/sign-in")({
   beforeLoad: async ({ context }) => {

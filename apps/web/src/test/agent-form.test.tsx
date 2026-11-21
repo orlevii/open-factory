@@ -494,3 +494,33 @@ test("the template prefill never overwrites a field the user is in or has typed 
   expect(field("Slug").value).toBe("lead-one");
   expect(field("Description").value).toBe("Mine");
 });
+
+test("switching templates re-prefills only the fields the user hasn't edited", async () => {
+  const api = mockWorld({
+    templates: [templateSummary("lead"), templateSummary("writer")],
+    details: {
+      lead: templateDetail(templateConfig()),
+      writer: templateDetail(
+        templateConfig({ name: "writer", displayName: "Writer", description: "Writes docs" }),
+      ),
+    },
+    extra: { "POST /api/agents": () => new Promise<Response>(() => {}) },
+  });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Mine");
+  await userEvent.selectOptions(field("Template") as unknown as HTMLSelectElement, "writer");
+  await vi.waitFor(() => expect(field("Description").value).toBe("Writes docs"));
+  expect(field("Slug").value).toBe("writer");
+  expect(field("Display name").value).toBe("Mine");
+  await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  await vi.waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
+  expect(api.calls.find((c) => c.method === "POST")?.body).toMatchObject({
+    template: "writer",
+    slug: "writer",
+    displayName: "Mine",
+    description: "Writes docs",
+    credential: "work",
+  });
+});

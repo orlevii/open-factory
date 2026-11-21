@@ -15,16 +15,6 @@ vi.mock("mermaid", () => ({
   },
 }));
 
-// Shiki's Oniguruma WASM engine can't start under jsdom (its Blob has no .stream()),
-// so the highlighter is mocked here. The real lazy load is covered by the build.
-// An unknown language ("nope") rejects, as real Shiki does.
-vi.mock("shiki", () => ({
-  codeToHtml: vi.fn(async (code: string, opts: { lang: string }) => {
-    if (opts.lang === "nope") throw new Error("Language `nope` not found");
-    return `<pre class="shiki"><code>${code}</code></pre>`;
-  }),
-}));
-
 test("renders GFM tables and task lists", () => {
   render(<Markdown source={"| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n- [ ] todo"} />);
   expect(screen.getByRole("table")).toBeInTheDocument();
@@ -72,12 +62,11 @@ test("unlabeled fenced blocks render inside <pre>, inline code does not", () => 
 test("highlights code blocks once shiki loads", async () => {
   const { container } = render(<Markdown source={"```ts\nconst a = 1;\n```"} />);
   expect(container.querySelector("pre")).toBeInTheDocument();
-  await waitFor(() => expect(container.querySelector("pre.shiki")).toBeInTheDocument());
-  const { codeToHtml } = await import("shiki");
-  expect(codeToHtml).toHaveBeenCalledWith(
-    "const a = 1;",
-    expect.objectContaining({ lang: "ts", themes: { light: "github-light", dark: "github-dark" } }),
+  // Real Shiki (JavaScript regex engine) with both themes as CSS variables.
+  await waitFor(() =>
+    expect(container.querySelector("pre.shiki.github-light.github-dark")).toBeInTheDocument(),
   );
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("const a = 1;");
 });
 
 test("renders mermaid blocks with strict security", async () => {

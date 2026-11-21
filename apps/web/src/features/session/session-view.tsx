@@ -2,7 +2,7 @@ import type { AgentSummary } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, Pencil } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { NotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
@@ -226,14 +226,32 @@ function LoadError({ message, onRetry }: { message: string; onRetry(): void }) {
   );
 }
 
-/** Every outgoing `send_message` row, including those nested under a subagent's call. */
-const outgoingRows = (rows: Row[]): Extract<Row, { kind: "outgoing" }>[] =>
-  rows.flatMap((r) =>
-    r.kind === "outgoing" ? [r] : r.kind === "tool" ? outgoingRows(r.children) : [],
-  );
+type RowScan = {
+  /** Every outgoing `send_message` row, including those nested under a subagent's call. */
+  outgoing: Extract<Row, { kind: "outgoing" }>[];
+  highestSeq: number;
+  /** Top-level error rows only. */
+  errorCount: number;
+  lastError: Extract<Row, { kind: "error" }> | undefined;
+};
 
-const highestRowSeq = (rows: Row[]): number =>
-  rows.reduce((m, r) => Math.max(m, r.seq, r.kind === "tool" ? highestRowSeq(r.children) : 0), 0);
+/** What the announcer needs from the rows, in one walk rather than a scan per question. */
+function scanRows(rows: Row[]): RowScan {
+  const scan: RowScan = { outgoing: [], highestSeq: 0, errorCount: 0, lastError: undefined };
+  const walk = (list: Row[], top: boolean) => {
+    for (const r of list) {
+      if (r.seq > scan.highestSeq) scan.highestSeq = r.seq;
+      if (r.kind === "outgoing") scan.outgoing.push(r);
+      else if (r.kind === "tool") walk(r.children, false);
+      else if (top && r.kind === "error") {
+        scan.errorCount++;
+        scan.lastError = r;
+      }
+    }
+  };
+  walk(rows, true);
+  return scan;
+}
 
 /** Announces messages to the viewer, errors and status changes only (never every tool call, and
  *  not updates, peer events or messages between agents). */
@@ -264,13 +282,14 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
   const pendingAtLoad = useRef(new Set<number>());
   const announced = useRef(new Set<number>());
   const slug = agent?.slug;
+  const scan = useMemo(() => scanRows(rows), [rows]);
   useEffect(() => {
     if (!loaded) return;
     if (baseSeq.current === undefined) {
-      baseSeq.current = highestRowSeq(rows);
-      for (const r of outgoingRows(rows)) if (!r.result) pendingAtLoad.current.add(r.seq);
+      baseSeq.current = scan.highestSeq;
+      for (const r of scan.outgoing) if (!r.result) pendingAtLoad.current.add(r.seq);
     }
-    for (const r of outgoingRows(rows)) {
+    for (const r of scan.outgoing) {
       const to = parseSendResult(r.result)?.to;
       const toMe =
         to !== undefined && (to === "@humans" || (handle !== undefined && to === `@${handle}`));
@@ -280,9 +299,8 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
         setMsg(`@${slug} messaged you`);
       }
     }
-  }, [rows, loaded, handle, slug, setMsg]);
-  const errorCount = rows.filter((r) => r.kind === "error").length;
-  const lastError = rows.findLast((r): r is Extract<Row, { kind: "error" }> => r.kind === "error");
+  }, [scan, loaded, handle, slug, setMsg]);
+  const { errorCount, lastError } = scan;
   useEffect(() => {
     // The first render with rows (history load) announces nothing.
     if (prevErrors.current !== undefined && errorCount > prevErrors.current)

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -109,7 +109,11 @@ export function InboxRow({
     "aria-label": labelOf(item, time),
     "aria-describedby": previewId,
     onClick: () => onOpen(item),
-    onAuxClick: () => onOpen(item),
+    // Middle-click only: Chrome fires auxclick for the right button too, and opening the context
+    // menu must not mark the row read.
+    onAuxClick: (e: MouseEvent) => {
+      if (e.button === 1) onOpen(item);
+    },
     className: `${LINK_CLASS} grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
   } as const;
   const body = (

@@ -36,7 +36,8 @@ function NewAgent() {
             initial={{ template }}
             onSubmit={async (body) => {
               const agent = await createAgent(body);
-              await qc.invalidateQueries({ queryKey: ["agents"] });
+              // The lists refetch in the background; the session view needn't wait for them.
+              void qc.invalidateQueries({ queryKey: ["agents"] });
               await navigate({ to: "/agents/$slug", params: { slug: agent.slug } });
             }}
           />

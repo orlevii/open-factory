@@ -3,7 +3,7 @@ import { ArrowRight, CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { formatTime } from "./format";
-import { AgentLink, ClampedMarkdown, LINK_CLASS, useAgentNames } from "./message-block";
+import { AgentLink, ClampedMarkdown, LINK_CLASS, useAgentName } from "./message-block";
 import type { Row } from "./rows";
 import { denialText, ToolCallRow } from "./tool-call-row";
 
@@ -16,15 +16,25 @@ const sendResultSchema = z.object({
   note: z.string().optional(),
 });
 
+type SendResult = z.infer<typeof sendResultSchema>;
+
+/** Parsed results by event: a result event keeps its identity in the session's events map, so each
+ *  is parsed once rather than on every frame. */
+const parsedResults = new WeakMap<NonNullable<OutgoingRow["result"]>, SendResult | undefined>();
+
 /** The tool's success result (`{ id, to, status, note? }`), or undefined for an error or odd text. */
-export function parseSendResult(result: OutgoingRow["result"]) {
+export function parseSendResult(result: OutgoingRow["result"]): SendResult | undefined {
   if (!result || result.isError) return undefined;
+  if (parsedResults.has(result)) return parsedResults.get(result);
+  let sent: SendResult | undefined;
   try {
     const r = sendResultSchema.safeParse(JSON.parse(result.content));
-    return r.success ? r.data : undefined;
+    sent = r.success ? r.data : undefined;
   } catch {
-    return undefined;
+    sent = undefined;
   }
+  parsedResults.set(result, sent);
+  return sent;
 }
 
 const STATUS_TEXT: Record<string, string> = {
@@ -49,15 +59,15 @@ export function OutgoingMessage({
   onToggleCall(): void;
   rowProps: Record<string, unknown>;
 }) {
-  const names = useAgentNames();
   const input = row.call.input as { to: string; body: string; urgent?: unknown };
   const sent = parseSendResult(row.result);
   const target = sent?.to ?? input.to;
   const bare = target.replace(/^@/, "");
+  const activeName = useAgentName(bare);
   // A result names agents bare and humans `@handle`; an unanswered call is only the argument.
   const toAgent = sent
     ? !sent.to.startsWith("@")
-    : !target.startsWith("@") || (bare !== "humans" && !!names?.has(bare));
+    : !target.startsWith("@") || (bare !== "humans" && typeof activeName === "string");
   const recipient = `@${bare}`;
   const failed = row.result?.isError === true;
   return (

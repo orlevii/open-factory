@@ -6,7 +6,15 @@ import {
 } from "@open-factory/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -17,16 +25,10 @@ import { formatInboxTime } from "@/features/session/format";
 import { AgentLink, LINK_CLASS } from "@/features/session/message-block";
 import { formatCostEst } from "@/features/usage/format";
 import { sessionQueryOptions } from "@/lib/session";
-import {
-  type PatchTaskBody,
-  patchTask,
-  postComment,
-  taskDetailOptions,
-  tasksQueryKey,
-} from "./api";
+import { type PatchTaskBody, patchTask, taskDetailOptions, tasksQueryKey } from "./api";
 import { AssigneeMenu } from "./assignee-menu";
 import { authorMention } from "./comment-block";
-import { CommentComposer, notReachedLine } from "./comment-composer";
+import { CommentComposer, type CommentComposerHandle } from "./comment-composer";
 import { checkDependencies, DependencyEditor } from "./dependency-editor";
 import { checkLink, LinkEditor, type LinkRow, newLinkRow, rowsToInput } from "./link-editor";
 import { LinkList } from "./link-list";
@@ -124,46 +126,26 @@ export function TaskDetailView({
     session?.user && "handle" in session.user ? (session.user.handle as string) : undefined;
   const [announce, setAnnounce] = useState("");
 
+  // The PATCH answers with the whole task: it goes straight into the cache (a later refetch can't
+  // land under it), and the rest of the tasks cache refreshes without holding the editor open.
   const save = useMutation({
     mutationFn: (b: PatchTaskBody) => patchTask(taskKey, b),
-    onSuccess: async () => qc.invalidateQueries({ queryKey: tasksQueryKey }),
+    onSuccess: (r) => {
+      const detailKey = taskDetailOptions(taskKey).queryKey;
+      qc.setQueryData(detailKey, r.task);
+      void qc.invalidateQueries({
+        queryKey: tasksQueryKey,
+        predicate: (q) => !(q.queryKey[1] === "detail" && q.queryKey[2] === taskKey),
+      });
+    },
   });
   const saveTask: Save = async (b) => {
-    const r = await save.mutateAsync(b);
-    qc.setQueryData(taskDetailOptions(taskKey).queryKey, r.task);
+    await save.mutateAsync(b);
   };
 
-  // --- the comment composer (the draft lives here: a refetch never loses it, nor does Reply / ?comment=) ---
-  const [draft, setDraft] = useState("");
-  const [view, setView] = useState<"write" | "preview">("write");
-  const composer = useRef<HTMLTextAreaElement>(null);
-  const [posting, setPosting] = useState(false);
-  const [postFailed, setPostFailed] = useState(false);
-  const [notReached, setNotReached] = useState<string>();
-  const reply = (mention: string) => {
-    setView("write");
-    setDraft((d) => (d.startsWith(`${mention} `) ? d : `${mention} ${d}`));
-    // After the editor (re)mounts in Write: focus and scroll, instant.
-    requestAnimationFrame(() => {
-      composer.current?.focus();
-      composer.current?.scrollIntoView?.({ block: "nearest" });
-    });
-  };
-  async function post() {
-    if (posting || draft.trim() === "") return;
-    setPosting(true);
-    setPostFailed(false);
-    try {
-      const r = await postComment(taskKey, draft);
-      setDraft("");
-      setNotReached(notReachedLine(r.notReached));
-      await qc.invalidateQueries({ queryKey: tasksQueryKey });
-    } catch {
-      setPostFailed(true);
-    } finally {
-      setPosting(false);
-    }
-  }
+  // --- the comment composer owns its draft (a keystroke re-renders only it); Reply and ?comment= reach in ---
+  const composer = useRef<CommentComposerHandle>(null);
+  const reply = useCallback((mention: string) => composer.current?.reply(mention), []);
 
   // --- deep link: scroll, highlight and focus the comment once; prefill the reply for an agent's comment ---
   const [highlight, setHighlight] = useState<string>();
@@ -175,7 +157,7 @@ export function TaskDetailView({
     const c = task.activity.find((a) => a.type === "comment" && a.id === commentId);
     if (c?.type !== "comment") return setMissing(true);
     setHighlight(commentId);
-    if (c.author.kind === "agent") setDraft((d) => (d === "" ? `${authorMention(c.author)} ` : d));
+    if (c.author.kind === "agent") composer.current?.prefill(authorMention(c.author));
     requestAnimationFrame(() => {
       const el = document.getElementById(`comment-${commentId}`);
       el?.scrollIntoView?.({ block: "center" });
@@ -236,24 +218,7 @@ export function TaskDetailView({
             onReply={reply}
             notFoundLine={missing}
           />
-          <CommentComposer
-            value={draft}
-            onChange={setDraft}
-            onSubmit={() => void post()}
-            pending={posting}
-            failed={postFailed}
-            assignee={liveAssignee}
-            view={view}
-            onViewChange={setView}
-            textareaRef={composer}
-          />
-          <p
-            role="status"
-            aria-live="polite"
-            className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
-            {notReached}
-          </p>
+          <CommentComposer ref={composer} taskKey={task.key} assignee={liveAssignee} />
         </div>
       </div>
     </PageBody>
@@ -682,8 +647,9 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
   const [failed, setFailed] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
   const returnFocus = useReturnFocus(editing, edit);
-  const active = useQuery(agentsListQueryOptions("exclude"));
-  const ended = useQuery(agentsListQueryOptions("only"));
+  // The agent lists only check an @agent link while editing; the read view doesn't fetch them.
+  const active = useQuery({ ...agentsListQueryOptions("exclude"), enabled: editing });
+  const ended = useQuery({ ...agentsListQueryOptions("only"), enabled: editing });
   const known = useMemo(
     () =>
       active.data && ended.data

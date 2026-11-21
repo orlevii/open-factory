@@ -1,4 +1,5 @@
 import type { TaskActivity as Activity, TaskPrincipal } from "@open-factory/shared";
+import { memo } from "react";
 import { formatInboxTime } from "@/features/session/format";
 import { AgentLink } from "@/features/session/message-block";
 import { QuietLine } from "@/features/session/quiet-line";
@@ -58,8 +59,11 @@ function EventText({ e }: { e: Event }) {
   }
 }
 
-/** Comments and history, oldest first (UI design §7). */
-export function TaskActivity({
+/**
+ * Comments and history, oldest first (UI design §7). Memoized: the page re-renders on its own
+ * state (announcements, saves), and each comment renders markdown, so it waits for new items.
+ */
+export const TaskActivity = memo(function TaskActivity({
   taskKey,
   items,
   highlightedId,
@@ -106,4 +110,4 @@ export function TaskActivity({
       </ol>
     </section>
   );
-}
+});

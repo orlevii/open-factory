@@ -8,7 +8,16 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Loader2, Trash2, UserPlus } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
@@ -135,21 +144,33 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     el.scrollTop = Math.max(0, (j.line - 1) * lh - el.clientHeight / 2);
     el.scrollIntoView?.({ block: "nearest" });
   }
-  const attach = (f: TemplateFile) => (el: HTMLTextAreaElement | null) => {
-    refs.current[f] = el;
-    serveJump();
+  // One callback ref per file for the editor's lifetime: a fresh one each render would make React
+  // detach and re-attach the textarea (and serve the jump) on every keystroke. serveJump reads
+  // only refs, so the first render's copy stays correct.
+  const attachers = useRef(new Map<TemplateFile, (el: HTMLTextAreaElement | null) => void>());
+  const attach = (f: TemplateFile) => {
+    let cb = attachers.current.get(f);
+    if (!cb) {
+      cb = (el) => {
+        refs.current[f] = el;
+        serveJump();
+      };
+      attachers.current.set(f, cb);
+    }
+    return cb;
   };
   // biome-ignore lint/correctness/useExhaustiveDependencies: serve a request made on the active tab
   useEffect(serveJump, [jumpN]);
 
-  function jumpTo(file: TemplateIssue["file"], line: number) {
+  // Stable (setters and a ref only), so the memoized issues block skips keystroke renders.
+  const jumpTo = useCallback((file: TemplateIssue["file"], line: number) => {
     if (!(TEMPLATE_FILES as readonly string[]).includes(file)) return;
     const f = file as TemplateFile;
     setTab(f);
     if (f === "AGENTS.md") setMdView("write");
     wanted.current = { file: f, line };
     setJumpN((n) => n + 1);
-  }
+  }, []);
 
   function failed(f: TemplateFile, e: unknown, fallback: string) {
     if (e instanceof ApiError && e.status === 404) return setGone(true);
@@ -234,14 +255,22 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     }
   }
 
-  const errorCount = issues.filter((i) => i.severity === "error").length;
-  const filesWithErrors = new Set(issues.filter((i) => i.severity === "error").map((i) => i.file));
-  const title = template.config?.displayName ?? name;
+  // Issues change on a validate or save, not on a keystroke: split them up once per change.
+  const { errorCount, filesWithErrors, issuesByFile } = useMemo(() => {
+    const errors = issues.filter((i) => i.severity === "error");
+    return {
+      errorCount: errors.length,
+      filesWithErrors: new Set(errors.map((i) => i.file)),
+      issuesByFile: new Map(
+        TEMPLATE_FILES.map((f) => [f, sortIssues(issues.filter((i) => i.file === f))]),
+      ),
+    };
+  }, [issues]);
 
   if (gone) {
     return (
       <>
-        <PageHeader title={title} meta={<Mono>{name}</Mono>} />
+        <PageHeader title={template.config?.displayName ?? name} meta={<Mono>{name}</Mono>} />
         <PageBody>
           <div className="grid max-w-xl gap-3">
             <p role="alert" className="text-sm">
@@ -260,86 +289,21 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
 
   return (
     <>
-      <PageHeader
-        title={title}
-        meta={<Mono>{name}</Mono>}
-        actions={
-          <>
-            {errorCount > 0 ? (
-              <Button
-                variant="ghost"
-                aria-disabled="true"
-                aria-describedby={headingId}
-                title="Fix the errors first"
-                onClick={(e) => e.preventDefault()}
-                className="cursor-not-allowed opacity-50"
-              >
-                <UserPlus aria-hidden="true" data-icon="inline-start" />
-                <span className="max-md:sr-only">Create agent</span>
-              </Button>
-            ) : (
-              <Button variant="ghost" asChild>
-                <Link to="/agents/new" search={{ template: name }} title="Create agent">
-                  <UserPlus aria-hidden="true" data-icon="inline-start" />
-                  <span className="max-md:sr-only">Create agent</span>
-                </Link>
-              </Button>
-            )}
-            <Button variant="ghost" title="Delete template" onClick={() => setConfirmOpen(true)}>
-              <Trash2 aria-hidden="true" data-icon="inline-start" className="text-destructive" />
-              <span className="max-md:sr-only">Delete…</span>
-            </Button>
-          </>
-        }
+      <TemplateHeader
+        template={template}
+        errorCount={errorCount}
+        headingId={headingId}
+        onDelete={setConfirmOpen}
       />
-      <div className="flex min-h-8 flex-wrap items-center gap-x-2 border-b px-4 py-1 text-[0.8125rem] text-muted-foreground md:px-6">
-        {template.config && (
-          <span>{template.config.runtime === "docker" ? "Docker" : "Local"}</span>
-        )}
-        {template.config && <span aria-hidden="true">·</span>}
-        {template.imageStatus && (
-          <>
-            <ImageLine image={template.imageStatus} />
-            <span aria-hidden="true">·</span>
-          </>
-        )}
-        <span className="flex min-w-0 max-w-full font-mono">
-          <MiddleTruncate text={template.path} />
-        </span>
-        <span aria-hidden="true">·</span>
-        {template.agents.length === 0 ? (
-          <span>No agents</span>
-        ) : (
-          <span className="flex flex-wrap gap-x-1.5">
-            {template.agents.length === 1 ? "1 agent:" : `${template.agents.length} agents:`}
-            {template.agents.map((slug, i) => (
-              <Link
-                key={slug}
-                to="/agents/$slug"
-                params={{ slug }}
-                className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-              >
-                @{slug}
-                {i < template.agents.length - 1 ? "," : ""}
-              </Link>
-            ))}
-          </span>
-        )}
-      </div>
       <PageBody>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
           {issues.length > 0 && (
-            <section
-              aria-labelledby={headingId}
-              className="grid gap-2 rounded-lg border border-border bg-card p-3"
-            >
-              <h2 id={headingId} className="text-[0.8125rem] font-medium">
-                {errorCount > 0
-                  ? "This template can't be used until the errors are fixed."
-                  : "Warnings"}
-              </h2>
-              <IssueList issues={issues} onJump={jumpTo} />
-            </section>
+            <IssuesBlock
+              issues={issues}
+              errorCount={errorCount}
+              headingId={headingId}
+              onJump={jumpTo}
+            />
           )}
           <Tabs
             value={tab}
@@ -374,7 +338,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
             </TabsList>
             {TEMPLATE_FILES.map((f) => {
               const s = files[f];
-              const mine = sortIssues(issues.filter((i) => i.file === f));
+              const mine = issuesByFile.get(f) ?? [];
               const outcome = outcomes[f];
               const busy = isBusy(outcome);
               const canSave = isDirty(s) && !busy;
@@ -540,6 +504,117 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     </>
   );
 }
+
+/** The page header and the config line under it. Memoized: neither reads the files being edited,
+ *  so typing doesn't re-render them. */
+const TemplateHeader = memo(function TemplateHeader({
+  template,
+  errorCount,
+  headingId,
+  onDelete,
+}: {
+  template: TemplateDetail;
+  errorCount: number;
+  headingId: string;
+  onDelete: (open: boolean) => void;
+}) {
+  const name = template.name;
+  return (
+    <>
+      <PageHeader
+        title={template.config?.displayName ?? name}
+        meta={<Mono>{name}</Mono>}
+        actions={
+          <>
+            {errorCount > 0 ? (
+              <Button
+                variant="ghost"
+                aria-disabled="true"
+                aria-describedby={headingId}
+                title="Fix the errors first"
+                onClick={(e) => e.preventDefault()}
+                className="cursor-not-allowed opacity-50"
+              >
+                <UserPlus aria-hidden="true" data-icon="inline-start" />
+                <span className="max-md:sr-only">Create agent</span>
+              </Button>
+            ) : (
+              <Button variant="ghost" asChild>
+                <Link to="/agents/new" search={{ template: name }} title="Create agent">
+                  <UserPlus aria-hidden="true" data-icon="inline-start" />
+                  <span className="max-md:sr-only">Create agent</span>
+                </Link>
+              </Button>
+            )}
+            <Button variant="ghost" title="Delete template" onClick={() => onDelete(true)}>
+              <Trash2 aria-hidden="true" data-icon="inline-start" className="text-destructive" />
+              <span className="max-md:sr-only">Delete…</span>
+            </Button>
+          </>
+        }
+      />
+      <div className="flex min-h-8 flex-wrap items-center gap-x-2 border-b px-4 py-1 text-[0.8125rem] text-muted-foreground md:px-6">
+        {template.config && (
+          <span>{template.config.runtime === "docker" ? "Docker" : "Local"}</span>
+        )}
+        {template.config && <span aria-hidden="true">·</span>}
+        {template.imageStatus && (
+          <>
+            <ImageLine image={template.imageStatus} />
+            <span aria-hidden="true">·</span>
+          </>
+        )}
+        <span className="flex min-w-0 max-w-full font-mono">
+          <MiddleTruncate text={template.path} />
+        </span>
+        <span aria-hidden="true">·</span>
+        {template.agents.length === 0 ? (
+          <span>No agents</span>
+        ) : (
+          <span className="flex flex-wrap gap-x-1.5">
+            {template.agents.length === 1 ? "1 agent:" : `${template.agents.length} agents:`}
+            {template.agents.map((slug, i) => (
+              <Link
+                key={slug}
+                to="/agents/$slug"
+                params={{ slug }}
+                className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              >
+                @{slug}
+                {i < template.agents.length - 1 ? "," : ""}
+              </Link>
+            ))}
+          </span>
+        )}
+      </div>
+    </>
+  );
+});
+
+/** The template-wide issue list. Memoized like the header: it changes on a validate or save. */
+const IssuesBlock = memo(function IssuesBlock({
+  issues,
+  errorCount,
+  headingId,
+  onJump,
+}: {
+  issues: TemplateIssue[];
+  errorCount: number;
+  headingId: string;
+  onJump: (file: TemplateIssue["file"], line: number) => void;
+}) {
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="grid gap-2 rounded-lg border border-border bg-card p-3"
+    >
+      <h2 id={headingId} className="text-[0.8125rem] font-medium">
+        {errorCount > 0 ? "This template can't be used until the errors are fixed." : "Warnings"}
+      </h2>
+      <IssueList issues={issues} onJump={onJump} />
+    </section>
+  );
+});
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono text-[0.8125rem] text-muted-foreground">{children}</span>

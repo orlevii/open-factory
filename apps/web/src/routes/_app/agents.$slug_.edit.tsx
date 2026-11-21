@@ -71,10 +71,13 @@ function EditAgent() {
               initial={agent}
               onSubmit={async (body) => {
                 const saved = await updateAgent(slug, body);
-                await Promise.all([
-                  qc.invalidateQueries({ queryKey: ["agents"] }),
-                  qc.invalidateQueries({ queryKey: ["agent", slug] }),
-                ]);
+                // The response is the saved agent: show it now, and let the lists (and the
+                // detail's queue) catch up in the background rather than hold up "Saved.".
+                qc.setQueryData(agentDetailQueryOptions(slug).queryKey, (d) =>
+                  d ? { ...d, agent: saved } : d,
+                );
+                void qc.invalidateQueries({ queryKey: ["agents"] });
+                void qc.invalidateQueries({ queryKey: ["agent", slug] });
                 return saved;
               }}
             />

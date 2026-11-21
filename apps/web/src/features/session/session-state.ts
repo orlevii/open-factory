@@ -102,4 +102,9 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
 
 export const eventsInOrder = (s: SessionState) =>
   [...s.events.values()].sort((a, b) => a.seq - b.seq);
-export const highestSeq = (s: SessionState) => Math.max(0, ...s.events.keys());
+/** A plain loop: spreading a long session's keys into `Math.max` overflows the argument limit. */
+export const highestSeq = (s: SessionState) => {
+  let max = 0;
+  for (const seq of s.events.keys()) if (seq > max) max = seq;
+  return max;
+};

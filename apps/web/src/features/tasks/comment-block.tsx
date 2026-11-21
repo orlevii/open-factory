@@ -1,8 +1,9 @@
 import type { TaskActivity } from "@open-factory/shared";
+import { PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { CopyLink } from "@/features/session/copy-link";
 import { formatInboxTime } from "@/features/session/format";
-import { AgentLink, ClampedMarkdown } from "@/features/session/message-block";
+import { ClampedMarkdown } from "@/features/session/message-block";
 
 type Comment = Extract<TaskActivity, { type: "comment" }>;
 
@@ -34,13 +35,9 @@ export function CommentBlock({
       className={`group relative rounded-lg border border-border px-3 py-2 pr-9 outline-none ${highlighted ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`} // ui-contract:allow programmatic focus target, not interactive
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        {comment.author.kind === "agent" ? (
-          <span>
-            <AgentLink slug={comment.author.slug} name />
-          </span>
-        ) : (
-          <span className="font-mono text-foreground">{who}</span>
-        )}
+        <span data-comment-author className="flex min-w-0 text-foreground">
+          <PrincipalChip principal={comment.author} size={20} link />
+        </span>
         <time dateTime={comment.at} title={at.toLocaleString()} className="text-muted-foreground">
           {formatInboxTime(at, now)}
         </time>

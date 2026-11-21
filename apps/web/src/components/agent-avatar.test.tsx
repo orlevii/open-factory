@@ -1,0 +1,100 @@
+import { type AgentStatus, agentStatusSchema } from "@open-factory/shared";
+import { fireEvent, render } from "@testing-library/react";
+import { expect, test } from "vitest";
+import { AgentAvatar } from "./agent-avatar";
+
+test("draws the generated face, aria-hidden", () => {
+  const { container } = render(<AgentAvatar slug="lead" size={20} />);
+  expect(container.firstElementChild).toHaveAttribute("aria-hidden", "true");
+  expect(container.querySelector("svg")).not.toBeNull();
+});
+
+test("template override lies over the face and hides on error; a new version retries", () => {
+  const { container, rerender } = render(
+    <AgentAvatar slug="a" template="dev" avatarVersion="1-6" size={20} />,
+  );
+  const img = container.querySelector("img");
+  if (!img) throw new Error("no override img");
+  expect(img.getAttribute("src")).toBe("/api/templates/dev/avatar.svg?v=1-6");
+  expect(img).toHaveAttribute("decoding", "async");
+  fireEvent.error(img);
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("svg")).not.toBeNull();
+  rerender(<AgentAvatar slug="a" template="dev" avatarVersion="2-6" size={20} />);
+  expect(container.querySelector("img")).not.toBeNull();
+});
+
+test.each([
+  ["working", "working"],
+  ["errored", "errored"],
+  ["rate_limited", "rate_limited"],
+  ["queued", "queued"],
+])("badge shape for %s", (s) => {
+  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  expect(container.querySelector(`[data-status-mark="${s}"]`)).not.toBeNull();
+});
+
+test.each(["idle", "hibernated", "terminated"])("no badge at rest: %s", (s) => {
+  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  expect(container.querySelector("[data-status-mark]")).toBeNull();
+});
+
+test.each(["idle", "hibernated", "terminated"])("no badge hole at rest: %s", (s) => {
+  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  expect(container.querySelector(".of-avatar-cut")).toBeNull();
+});
+
+test.each(["working", "errored", "rate_limited", "queued"])("badge hole for %s", (s) => {
+  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  expect(container.querySelector(".of-avatar-cut")).not.toBeNull();
+});
+
+test("no badge hole without a status", () => {
+  const { container } = render(<AgentAvatar slug="a" size={20} />);
+  expect(container.querySelector(".of-avatar-cut")).toBeNull();
+});
+
+function px(v: string | null | undefined) {
+  return Number.parseFloat(v ?? "");
+}
+
+function badgeGeometry(container: HTMLElement) {
+  const mark = container.querySelector<HTMLElement | SVGElement>("[data-status-mark]");
+  const cut = container.querySelector<HTMLElement>(".of-avatar-cut");
+  if (!mark || !cut) throw new Error("no badge");
+  const w = px(mark.style.width || mark.getAttribute("width"));
+  const h = px(mark.style.height || mark.getAttribute("height"));
+  return {
+    w,
+    h,
+    box: px(cut.style.getPropertyValue("--mark")),
+    hole: px(cut.style.getPropertyValue("--hole")),
+  };
+}
+
+test.each([
+  [16, "rate_limited", 4, 4],
+  [20, "rate_limited", 6, 6],
+  [24, "rate_limited", 6, 6],
+  [16, "queued", 4, 4],
+  [20, "queued", 6, 6],
+  [16, "errored", 4, 4],
+  [20, "errored", 6, 6],
+  [24, "errored", 6, 6],
+  [16, "working", 4, 8],
+  [20, "working", 4, 8],
+  [24, "working", 6, 12],
+] as const)("size %i %s badge is %ix%i, its hole 2px larger", (size, status, w, h) => {
+  const { container } = render(<AgentAvatar slug="a" size={size} status={status} />);
+  const g = badgeGeometry(container);
+  expect([g.w, g.h]).toEqual([w, h]);
+  expect(g.box).toBe(Math.max(w, h));
+  expect(g.hole).toBe(g.box + 2);
+});
+
+test.each(agentStatusSchema.options)("%s: a hole exactly when there is a badge", (s) => {
+  // The hole and the mark are decided in two places; every status must agree.
+  const { container } = render(<AgentAvatar slug="a" size={20} status={s} />);
+  const mark = container.querySelector("[data-status-mark]") !== null;
+  expect(container.querySelector(".of-avatar-cut") !== null).toBe(mark);
+});

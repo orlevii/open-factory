@@ -90,11 +90,17 @@ export const inboxPageSchema = z.object({
   items: z.array(inboxItemSchema),
   nextCursor: z.string().nullable(),
 });
+export const inboxItemResponseSchema = z.object({ item: inboxItemSchema });
 export const readAllBodySchema = z.object({ upTo: z.string().min(1) });
 export const undoReadAllBodySchema = z.object({ readAt: z.string().min(1) });
 export const readAllResponseSchema = z.object({ readAt: z.string(), count: z.number().int() });
 export const undoReadAllResponseSchema = z.object({ count: z.number().int() });
-export const unreadCountSchema = z.object({ count: z.number().int().nonnegative() });
+export const unreadCountSchema = z.object({
+  count: z.number().int().nonnegative(),
+  byAgent: z.record(z.string(), z.number().int().nonnegative()).default({}),
+});
+export const readFromBodySchema = z.object({ upTo: z.string().min(1) });
+export const readFromResponseSchema = z.object({ marked: z.number().int(), readAt: z.string() });
 export const eventRefSchema = z.object({ agentSlug: z.string(), seq: z.number().int() });
 export const messageLookupSchema = z.object({
   id: z.string(),

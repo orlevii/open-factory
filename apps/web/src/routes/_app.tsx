@@ -5,6 +5,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { useConnectionLost } from "@/lib/connection";
@@ -63,6 +64,8 @@ function AppLayout() {
       onUnauthenticated: () => navigate({ to: "/sign-in" }),
       onStatus: setStatus,
       onMessage: (m) => {
+        // agent_status and supervisor frames are folded into the caches once per animation frame.
+        enqueueStatusFrame(qc, m);
         // A message reached the humans: refetch the Inbox (only a mounted list actually fetches).
         if (m.type === "inbox_changed") {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
@@ -98,8 +101,8 @@ function AppLayout() {
         }
         if (m.type === "agent_status") {
           // Before the first frame for an agent, the cached list or detail (fetched over REST) tells
-          // whether a turn was already open when the socket connected. Listeners run after this, so
-          // the cache still holds the state from before this frame.
+          // whether a turn was already open when the socket connected. The queued frame lands on a
+          // later animation frame, so the cache still holds the state from before it.
           const was = turnOpen.current.get(m.agent) ?? cachedTurnOpen(qc, m.agent);
           turnOpen.current.set(m.agent, m.turnOpen);
           // A 5 s window that further edges don't extend: a busy factory still refreshes.
@@ -126,7 +129,9 @@ function AppLayout() {
     });
     conn.current = connection;
     setStatus(connection.status());
+    const removeFlush = installStatusFrameFlush();
     return () => {
+      removeFlush();
       connection.close();
       conn.current = null;
       clearTimeout(usageTimer.current);

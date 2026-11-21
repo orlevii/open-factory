@@ -40,7 +40,7 @@ function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
   const active = useAgentName(slug);
   const needEnded = active === null;
   // Many links share this lookup as a timeline fills: one fetch serves them for a while, and a
-  // terminated frame invalidates it anyway (useAgentStatusFrames).
+  // terminated frame invalidates it anyway (status-frames.ts).
   const ended = useQuery({
     ...agentsListQueryOptions("only"),
     select: toEnded,

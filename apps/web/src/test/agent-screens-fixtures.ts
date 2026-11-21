@@ -56,6 +56,7 @@ export const templateDetail = (config: TemplateConfig | undefined, issues: unkno
     files: [],
     issues,
     agents: [],
+    avatar: { version: null, tooLarge: false },
   },
 });
 

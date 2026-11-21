@@ -54,6 +54,7 @@
   --color-avatar-6: var(--avatar-6);
   --color-avatar-7: var(--avatar-7);
   --color-avatar-8: var(--avatar-8);
+  --color-avatar-ink: var(--avatar-ink);
   --color-signal: var(--signal);
   --color-signal-text: var(--signal-text);
   --color-signal-foreground: var(--signal-foreground);
@@ -119,6 +120,7 @@
   --avatar-6: oklch(0.62 0.07 295);
   --avatar-7: oklch(0.62 0.07 320);
   --avatar-8: oklch(0.62 0.07 345);
+  --avatar-ink: oklch(0.2 0.008 255); /* ink drawn on every avatar fill, both themes */
 
   /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
   --signal: oklch(
@@ -200,6 +202,7 @@
   --avatar-6: oklch(0.7 0.07 295);
   --avatar-7: oklch(0.7 0.07 320);
   --avatar-8: oklch(0.7 0.07 345);
+  --avatar-ink: oklch(0.2 0.008 255);
 
   --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
   --signal-text: oklch(0.72 0.18 40);
@@ -273,7 +276,8 @@
   width: 6px;
   height: 12px;
   background: var(--signal);
-  clip-path: polygon(0 3.46px, 100% 0, 100% 100%, 0 100%);
+  /* 3.46px of 12px: the same slope at any size. */
+  clip-path: polygon(0 28.83%, 100% 0, 100% 100%, 0 100%);
 }
 
 @keyframes of-ignite {
@@ -598,4 +602,14 @@
   [data-vaul-drawer] {
     --initial-transform: 0px;
   }
+}
+
+/* Avatar with a status badge: punches a round hole (--hole across) centred on the badge's box
+   (--mark, its longest side) at the bottom-right. */
+.of-avatar-cut {
+  mask-image: radial-gradient(
+    circle at calc(100% - var(--mark) / 2) calc(100% - var(--mark) / 2),
+    transparent calc(var(--hole) / 2),
+    #000 calc(var(--hole) / 2)
+  );
 }

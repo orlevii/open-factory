@@ -29,7 +29,7 @@ export const agentsListQueryOptions = (ended: "exclude" | "only" = "exclude") =>
     },
   });
 
-/** Outside the ["agents"] prefix: every value under it is an agent array (useAgentStatusFrames). */
+/** Outside the ["agents"] prefix: every value under it is an agent array (status-frames.ts). */
 export const endedMoreQueryKey = ["ended-more"] as const;
 /** Filled by the ended list's fetch only (`skipToken`: it never fetches on its own). */
 export const endedMoreQueryOptions = queryOptions<boolean>({
@@ -38,7 +38,7 @@ export const endedMoreQueryOptions = queryOptions<boolean>({
   staleTime: Number.POSITIVE_INFINITY,
 });
 
-/** Running agents and the cap, live from the `supervisor` frame (folded in by useAgentStatusFrames). */
+/** Running agents and the cap, live from the `supervisor` frame (folded in by status-frames.ts). */
 export const runningQueryKey = ["supervisor"] as const;
 export const runningQueryOptions = queryOptions({
   queryKey: runningQueryKey,

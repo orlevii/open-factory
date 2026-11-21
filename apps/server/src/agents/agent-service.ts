@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
   type AgentSummary,
   type CreateAgentBody,
+  nameSchema,
   type PatchAgentBody,
   slugSchema,
   treeOrder,
@@ -14,6 +16,7 @@ import { isNameTaken } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
+import { avatarStat } from "../templates/avatar.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
@@ -245,6 +248,20 @@ export class AgentService {
     const projectsOf = new Map<string, string[]>();
     for (const g of grants)
       projectsOf.set(g.agentId, [...(projectsOf.get(g.agentId) ?? []), g.name]);
+    // U2 §15.3: one avatar check per distinct template, run live from disk (never cached across responses).
+    const avatarOf = new Map(
+      await Promise.all(
+        [...new Set(rows.map((r) => r.template))].map(
+          async (t) =>
+            [
+              t,
+              nameSchema.safeParse(t).success
+                ? (await avatarStat(path.join(this.d.templates.dir, t))).version
+                : null,
+            ] as const,
+        ),
+      ),
+    );
 
     return Promise.all(
       shown.map(async ({ row: r, depth }) => ({
@@ -258,6 +275,7 @@ export class AgentService {
         reports: reportCount.get(r.id) ?? 0,
         openTasks: openTasks.get(r.id) ?? 0,
         scheduleCount: scheduleCount.get(r.id) ?? 0,
+        avatarVersion: avatarOf.get(r.template) ?? null,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         grantsOverridden: r.grantsOverridden,

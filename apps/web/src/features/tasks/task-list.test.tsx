@@ -73,7 +73,7 @@ test("a row is one link with a complete name; status, assignee, blocked marker a
   expect(screen.getByRole("list", { name: "Tasks" })).toBeInTheDocument();
   const open = screen.getByRole("link", { name: /^T-41, Add usage export, Open, unassigned/ });
   expect(within(open).getAllByText("Unassigned").length).toBeGreaterThan(0);
-  expect(within(open).getByText("@lead")).toBeInTheDocument();
+  expect(within(open).getByText(/^(Lead|@lead)$/)).toBeInTheDocument();
   const ended = screen.getByRole("link", { name: /^T-40.*assigned to @gone \(terminated\)/ });
   expect(ended).toHaveTextContent("terminated");
 });
@@ -191,4 +191,46 @@ test("tasks_changed refetches without losing focus on a row; the header action l
   expect(screen.getByRole("link", { name: "New task" })).toHaveAttribute("href", "/tasks/new");
   const links = within(screen.getByRole("list", { name: "Tasks" })).getAllByRole("link");
   expect(links[0]).toHaveAttribute("href", "/tasks/T-1");
+});
+
+test("rows carry no nested anchors, even for an agent creator", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks?": () =>
+      json(
+        page([
+          task(41, {
+            assignee: { slug: "dev", displayName: "Dev" },
+            createdBy: { kind: "agent", slug: "lead" },
+          }),
+        ]),
+      ),
+  });
+  renderApp("/tasks", alice);
+  const row = await screen.findByRole("link", { name: /^T-41/ });
+  expect(row.querySelector("a")).toBeNull();
+});
+
+test("the assignee shows as a chip (avatar and name), a human creator as @handle without an avatar, an ended assignee keeps its mark", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks?": () =>
+      json(
+        page([
+          task(50, { assignee: { slug: "dev", displayName: "Dev" } }),
+          task(51, { assignee: { slug: "gone", displayName: "Gone", ended: "terminated" } }),
+        ]),
+      ),
+  });
+  renderApp("/tasks", alice);
+  const row = await screen.findByRole("link", { name: /^T-50/ });
+  const assignee = row.querySelector("[data-assignee]") as HTMLElement;
+  expect(assignee).toHaveTextContent(/Dev/);
+  expect(assignee.querySelector("svg")).not.toBeNull();
+  const created = within(row).getByText(/created by/);
+  expect(within(created).getByText("@or")).toBeInTheDocument();
+  expect(created.querySelector("svg")).toBeNull();
+  const ended = await screen.findByRole("link", { name: /^T-51/ });
+  expect(within(ended).getByText("Gone")).toBeInTheDocument();
+  expect(ended).toHaveTextContent("terminated");
 });

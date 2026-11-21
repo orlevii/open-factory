@@ -42,7 +42,8 @@ export function PageHeader({
                 ? "min-w-0 truncate"
                 : "shrink-0",
           )}
-          title={titleFromData ? title : undefined}
+          // Anything that truncates keeps its full value in title; a static title never truncates.
+          title={titleFromData || heading !== undefined ? title : undefined}
         >
           {heading ?? title}
         </h1>

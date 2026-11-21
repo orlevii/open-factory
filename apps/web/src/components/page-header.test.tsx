@@ -60,3 +60,19 @@ test("a static title never shrinks", () => {
   expect(h1).toHaveClass("shrink-0");
   expect(h1).not.toHaveClass("truncate");
 });
+
+test("a truncating custom heading keeps its full value in title", () => {
+  render(
+    <SidebarProvider>
+      <PageHeader title={SLUG} heading={<span className="font-mono">{SLUG}</span>} />
+    </SidebarProvider>,
+  );
+  const h1 = screen.getByRole("heading", { level: 1 });
+  expect(h1).toHaveClass("min-w-0", "truncate");
+  expect(h1).toHaveAttribute("title", SLUG);
+});
+
+test("a static title has no title attribute", () => {
+  const { h1 } = setup(false);
+  expect(h1).not.toHaveAttribute("title");
+});

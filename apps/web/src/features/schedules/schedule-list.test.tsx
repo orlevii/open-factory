@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -208,7 +209,7 @@ test("filters live in the URL; empty states, the cap line and the load error", a
   const u = userEvent.setup();
   const { router } = renderApp("/schedules", alice);
   expect(await screen.findByText("No schedules yet.")).toBeInTheDocument();
-  await u.selectOptions(await screen.findByLabelText("Target"), "dev");
+  await pickOption(await screen.findByLabelText("Target"), /@dev$/);
   await waitFor(() => expect(router.state.location.search).toMatchObject({ target: "dev" }));
   expect(await screen.findByText("No schedules match these filters.")).toBeInTheDocument();
   await u.click(screen.getByLabelText("Show done"));

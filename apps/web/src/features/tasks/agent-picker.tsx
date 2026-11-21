@@ -1,6 +1,13 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { NativeSelect } from "@/components/native-select";
+import {
+  ALL,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { agentsQueryOptions } from "@/features/session/api";
 
 type Agents = AgentSummary[];
@@ -25,7 +32,21 @@ export function useAssignableAgents() {
 export const agentOptionLabel = (a: { slug: string; displayName: string }) =>
   `@${a.slug} · ${a.displayName}`;
 
-/** The create form's picker: a native select, since nothing is sent until "Create task". "" is Unassigned. */
+/** An agent as a select option: the name, then a muted mono `@slug`. Shown in the closed trigger too. */
+export function AgentItem({ agent }: { agent: { slug: string; displayName: string } }) {
+  return (
+    <SelectItem value={agent.slug} textValue={agent.slug}>
+      {agent.displayName && (
+        <>
+          <span>{agent.displayName}</span>{" "}
+        </>
+      )}
+      <span className="text-muted-foreground font-mono">@{agent.slug}</span>
+    </SelectItem>
+  );
+}
+
+/** The create form's picker: nothing is sent until "Create task". "" is Unassigned (the ALL sentinel inside). */
 export function AgentPicker({
   id,
   value,
@@ -45,21 +66,19 @@ export function AgentPicker({
 }) {
   const { agents } = useAssignableAgents();
   return (
-    <NativeSelect
-      id={id}
-      value={value}
-      aria-describedby={describedBy}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">{placeholder}</option>
-      {extraOption && !agents.some((a) => a.slug === extraOption.value) && (
-        <option value={extraOption.value}>{extraOption.label}</option>
-      )}
-      {agents.map((a) => (
-        <option key={a.slug} value={a.slug}>
-          {agentOptionLabel(a)}
-        </option>
-      ))}
-    </NativeSelect>
+    <Select value={value || ALL} onValueChange={(v) => onChange(v === ALL ? "" : v)}>
+      <SelectTrigger id={id} aria-describedby={describedBy}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>{placeholder}</SelectItem>
+        {extraOption && !agents.some((a) => a.slug === extraOption.value) && (
+          <SelectItem value={extraOption.value}>{extraOption.label}</SelectItem>
+        )}
+        {agents.map((a) => (
+          <AgentItem key={a.slug} agent={a} />
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

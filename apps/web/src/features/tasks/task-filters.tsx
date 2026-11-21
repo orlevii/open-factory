@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { NativeSelect } from "@/components/native-select";
+import {
+  ALL,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { agentsQueryOptions } from "@/features/session/api";
+import { AgentItem } from "./agent-picker";
 import type { TaskFilters } from "./api";
 
 export const DEFAULT_FILTERS: TaskFilters = { status: "open_in_progress" };
@@ -30,7 +38,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 }
 
 /**
- * Three native selects (UI design §5). They only filter (no side effects), so changing on each arrow key is harmless.
+ * Three selects (UI design §5). They only filter (no side effects), so changing on each arrow key is harmless.
  * Values live in the URL; `onChange` receives the whole new filter set.
  */
 export function TaskFiltersBar({
@@ -42,67 +50,76 @@ export function TaskFiltersBar({
 }) {
   const { data: agents = [] } = useQuery(agentsQueryOptions);
   const slugs = agents.map((a) => a.slug);
-  const assignee = value.unassigned ? UNASSIGNED : (value.assignee ?? "");
-  const creator = value.creator ?? "";
+  const assignee = value.unassigned ? UNASSIGNED : (value.assignee ?? ALL);
+  const creator = value.creator ?? ALL;
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-end">
       <Field id="task-status" label="Status">
-        <NativeSelect
-          id="task-status"
+        <Select
           value={value.status}
-          onChange={(e) => onChange({ ...value, status: e.target.value as TaskFilters["status"] })}
+          onValueChange={(v) => onChange({ ...value, status: v as TaskFilters["status"] })}
         >
-          {STATUS_OPTIONS.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
-        </NativeSelect>
+          <SelectTrigger id="task-status">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_OPTIONS.map(([v, l]) => (
+              <SelectItem key={v} value={v}>
+                {l}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
       <Field id="task-assignee" label="Assignee">
-        <NativeSelect
-          id="task-assignee"
+        <Select
           value={assignee}
-          onChange={(e) => {
-            const v = e.target.value;
+          onValueChange={(v) =>
             onChange({
               ...value,
-              assignee: v && v !== UNASSIGNED ? v : undefined,
+              assignee: v !== ALL && v !== UNASSIGNED ? v : undefined,
               unassigned: v === UNASSIGNED ? true : undefined,
-            });
-          }}
+            })
+          }
         >
-          <option value="">Anyone</option>
-          <option value={UNASSIGNED}>Unassigned</option>
-          {/* An ended assignee is reachable through the URL only; it shows while selected. */}
-          {value.assignee && !slugs.includes(value.assignee) && (
-            <option value={value.assignee}>@{value.assignee}</option>
-          )}
-          {slugs.map((s) => (
-            <option key={s} value={s}>
-              @{s}
-            </option>
-          ))}
-        </NativeSelect>
+          <SelectTrigger id="task-assignee">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Anyone</SelectItem>
+            <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
+            {/* An ended assignee is reachable through the URL only; it shows while selected. */}
+            {value.assignee && !slugs.includes(value.assignee) && (
+              <AgentItem agent={{ slug: value.assignee, displayName: "" }} />
+            )}
+            {agents.map((a) => (
+              <AgentItem key={a.slug} agent={a} />
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
       <Field id="task-creator" label="Created by">
-        <NativeSelect
-          id="task-creator"
+        <Select
           value={creator}
-          onChange={(e) => onChange({ ...value, creator: e.target.value || undefined })}
+          onValueChange={(v) => onChange({ ...value, creator: v === ALL ? undefined : v })}
         >
-          <option value="">Anyone</option>
-          <option value="me">Me</option>
-          {/* A human `@handle` works in the URL and shows while selected. */}
-          {creator && creator !== "me" && !slugs.includes(creator) && (
-            <option value={creator}>{creator.startsWith("@") ? creator : `@${creator}`}</option>
-          )}
-          {slugs.map((s) => (
-            <option key={s} value={s}>
-              @{s}
-            </option>
-          ))}
-        </NativeSelect>
+          <SelectTrigger id="task-creator">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Anyone</SelectItem>
+            <SelectItem value="me">Me</SelectItem>
+            {/* A human `@handle` works in the URL and shows while selected. */}
+            {creator !== ALL && creator !== "me" && !slugs.includes(creator) && (
+              <SelectItem value={creator}>
+                {creator.startsWith("@") ? creator : `@${creator}`}
+              </SelectItem>
+            )}
+            {agents.map((a) => (
+              <AgentItem key={a.slug} agent={a} />
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
     </div>
   );

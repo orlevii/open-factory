@@ -31,6 +31,17 @@ test("always mounted: inert and without data-shown while hidden", () => {
   expect(pill()).toHaveAttribute("data-shown");
 });
 
+test("while it hides it keeps the last label shown (no flash to Jump to latest during the exit)", () => {
+  const view = render(<JumpPill shown speech={3} other={false} windowed={false} onJump={NOOP} />);
+  expect(pill()).toHaveAccessibleName("3 new messages");
+  // The jump clears the counts in the same commit that hides it.
+  view.rerender(<JumpPill shown={false} speech={0} other={false} windowed={false} onJump={NOOP} />);
+  expect(pill()).toHaveAccessibleName("3 new messages");
+  // Shown again, it says what is new now.
+  view.rerender(<JumpPill shown speech={0} other windowed={false} onJump={NOOP} />);
+  expect(pill()).toHaveAccessibleName("New output");
+});
+
 const msg = (seq: number, i = 0): Row =>
   ({
     key: `${seq}:${i}`,

@@ -1,5 +1,5 @@
 import { ArrowDown } from "lucide-react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { isSpeechRow, type Row } from "./rows";
 
 const NOTHING = { speech: 0, other: false } as const;
@@ -34,7 +34,8 @@ const label = (speech: number, other: boolean, windowed: boolean) =>
 
 /**
  * The one Jump to latest (U3 §8.2): always mounted so it can fade, centred on the 52rem column by
- * its parent. Hidden, it is `inert` and takes no pointer. Label changes are instant.
+ * its parent. Hidden, it is `inert` and takes no pointer. Label changes are instant while shown; while
+ * it hides it keeps the last label it showed, so the exit never flashes a new label or width.
  */
 export const JumpPill = memo(function JumpPill({
   shown,
@@ -49,6 +50,11 @@ export const JumpPill = memo(function JumpPill({
   windowed: boolean;
   onJump(): void;
 }) {
+  const now = label(speech, other, windowed);
+  // Adjusted during render (no effect): the label follows only while shown.
+  const [shownLabel, setShownLabel] = useState(now);
+  if (shown && shownLabel !== now) setShownLabel(now);
+  const text = shown ? now : shownLabel;
   return (
     <button
       type="button"
@@ -58,7 +64,7 @@ export const JumpPill = memo(function JumpPill({
       className="jump-pill absolute bottom-0 left-1/2 inline-flex h-8 w-max max-w-[calc(100%-2rem)] items-center gap-1.5 rounded-lg border border-float-edge bg-popover px-3 text-[0.8125rem] font-medium text-popover-foreground tabular-nums select-none hover:bg-muted"
     >
       <ArrowDown aria-hidden="true" className="size-4 shrink-0" />
-      <span className="truncate">{label(speech, other, windowed)}</span>
+      <span className="truncate">{text}</span>
     </button>
   );
 });

@@ -18,7 +18,7 @@ import {
 import { PrincipalChip } from "@/components/agent-chip";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
-import { PageBody, PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -182,7 +182,7 @@ function BodyPlates() {
   return (
     <div
       aria-hidden="true"
-      className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:col-start-1"
+      className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 @[45rem]/task:col-start-1"
     >
       {/* The markdown's line (1.375rem) and the paragraph's bottom margin (prose-sm: 1rem). */}
       <div className="pb-4">
@@ -195,7 +195,7 @@ function BodyPlates() {
   );
 }
 
-/** The task page body (UI design §7); the route wraps it with the header. */
+/** The task page body (UI design §7): the route adds the header and the page padding, the peek its sheet. */
 export function TaskDetailView({
   taskKey,
   commentId,
@@ -283,19 +283,20 @@ export function TaskDetailView({
   if (!task) return null;
   const liveAssignee = task.assignee && !task.assignee.ended ? task.assignee.slug : undefined;
   return (
-    <PageBody>
+    // A container (spec §12): two columns when the view itself is wide (the page), stacked in a peek.
+    <div className="@container/task min-w-0">
       <p role="status" aria-live="polite" className="sr-only">
         {announce}
       </p>
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 lg:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)] lg:grid-rows-[auto_auto_1fr]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 @[45rem]/task:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)] @[45rem]/task:grid-rows-[auto_auto_1fr]">
         <TitleBlock
           task={task}
           liveAssignee={liveAssignee}
           save={saveTask}
           disabled={placeholder}
         />
-        <aside className="contents min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:block">
-          <div className="order-2 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 lg:mb-0">
+        <aside className="contents min-w-0 @[45rem]/task:col-start-2 @[45rem]/task:row-span-3 @[45rem]/task:row-start-1 @[45rem]/task:block">
+          <div className="order-2 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 @[45rem]/task:mb-0">
             <StatusAndAssignee
               task={task}
               announce={setAnnounce}
@@ -312,7 +313,7 @@ export function TaskDetailView({
         ) : (
           <BodyBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
         )}
-        <div className="order-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:col-start-1">
+        <div className="order-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 @[45rem]/task:col-start-1">
           {placeholder ? (
             <Plates heights={ACTIVITY_PLATES} />
           ) : (
@@ -329,7 +330,7 @@ export function TaskDetailView({
           )}
         </div>
       </div>
-    </PageBody>
+    </div>
   );
 }
 
@@ -376,7 +377,7 @@ function TitleBlock({
     }
   }
   return (
-    <div className="order-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 lg:col-start-1">
+    <div className="order-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 @[45rem]/task:col-start-1">
       {editing ? (
         <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
           <Input
@@ -468,7 +469,7 @@ function BodyBlock({
     }
   }
   return (
-    <div className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:col-start-1">
+    <div className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 @[45rem]/task:col-start-1">
       {editing ? (
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           {/* Escape does not cancel here: it would discard a long draft. */}

@@ -28,7 +28,7 @@ export function AuthCard(props: {
     <main className="flex min-h-svh justify-center px-4 py-12 sm:items-center">
       <div className="w-full max-w-[22rem]">
         <Wordmark className="mb-10 h-6" />
-        <h1 className="mb-6 font-heading text-[1.375rem] leading-7 font-bold tracking-[-0.01em]">
+        <h1 className="mb-6 font-heading text-[1.375rem] leading-7 font-bold tracking-[-0.015em]">
           {props.title}
         </h1>
         <form onSubmit={submit} noValidate className="grid gap-4">

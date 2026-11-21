@@ -51,11 +51,20 @@ function makeComponents(newTabNoteId: string): Components {
 }
 
 /** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. Callers constrain the width. */
-export function Markdown({ source }: { source: string }) {
+export function Markdown({
+  source,
+  variant = "default",
+}: {
+  source: string;
+  /** "detail": inside a task body, comment or message, headings step down one size (a document never outranks its title). */
+  variant?: "default" | "detail";
+}) {
   const newTabNoteId = useId();
   const components = useMemo(() => makeComponents(newTabNoteId), [newTabNoteId]);
   return (
-    <div className="prose prose-sm prose-of max-w-none">
+    <div
+      className={`prose prose-sm prose-of max-w-none${variant === "detail" ? " prose-of-detail" : ""}`}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {source}
       </ReactMarkdown>

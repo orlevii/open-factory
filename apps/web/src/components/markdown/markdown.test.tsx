@@ -124,3 +124,10 @@ test("a code block switching to an unknown language drops the old highlight", as
   await waitFor(() => expect(container.querySelector("pre.shiki")).toBeNull());
   expect(container.querySelector("pre")).toHaveTextContent("other code");
 });
+
+test("variant detail wraps in .prose-of-detail, the default does not", () => {
+  const { container, rerender } = render(<Markdown source="# A" variant="detail" />);
+  expect(container.querySelector(".prose-of-detail")).not.toBeNull();
+  rerender(<Markdown source="# A" />);
+  expect(container.querySelector(".prose-of-detail")).toBeNull();
+});

@@ -216,10 +216,10 @@ export function ClampedMarkdown({
 }) {
   const [all, setAll] = useState(false);
   const lines = source.split("\n");
-  if (lines.length <= limit || all) return <Markdown source={source} />;
+  if (lines.length <= limit || all) return <Markdown source={source} variant="detail" />;
   return (
     <>
-      <Markdown source={lines.slice(0, limit).join("\n")} />
+      <Markdown source={lines.slice(0, limit).join("\n")} variant="detail" />
       <button
         type="button"
         onClick={(e) => {

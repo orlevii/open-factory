@@ -78,6 +78,13 @@
       "when": 1795193850098,
       "tag": "0010_bored_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795295099431,
+      "tag": "0011_clean_talisman",
+      "breakpoints": true
     }
   ]
 }

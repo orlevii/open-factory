@@ -76,7 +76,7 @@ export interface MessageLookup {
   kind: MessageKind;
   from: string;
   to: string;
-  state: "pending" | "delivered" | "rejected";
+  state: "pending" | "delivered" | "rejected" | "cancelled";
   recipientEvent?: { agentSlug: string; seq: number };
   senderEvent?: { agentSlug: string; seq: number };
   scheduleKey?: string;
@@ -730,6 +730,7 @@ export class EventStore {
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
+      clientMessageId?: string | null;
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -737,6 +738,7 @@ export class EventStore {
     await tx.insert(messages).values({
       id,
       kind: "message",
+      clientMessageId: m.clientMessageId ?? null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
       toAgentId: m.toAgentId,
       body: m.body,

@@ -301,3 +301,30 @@ test("bootWakes orders by deliverable rows only", async () => {
     .filter((i) => i === "a5" || i === "a6");
   expect(order).toEqual(["a6", "a5"]);
 });
+
+const CID = "7b1d7a0e-3f55-4d8e-9d0e-5a1f2c3b4d5e";
+test("a message row can be cancelled and carries a client id", async () => {
+  const m = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a3",
+    body: "hi",
+    urgent: false,
+    clientMessageId: CID,
+  });
+  await t.sql`update messages set state = 'cancelled' where id = ${m.id}`;
+  const row = await store.pendingRow(m.id);
+  expect(row.state).toBe("cancelled");
+  expect(row.clientMessageId).toBe(CID);
+});
+test("the same sender can't reuse a client id", async () => {
+  const send = (body: string) =>
+    store.createMessage({
+      from: { userId: "u2" },
+      toAgentId: "a4",
+      body,
+      urgent: false,
+      clientMessageId: CID,
+    });
+  await send("a");
+  await expect(send("b")).rejects.toThrow();
+});

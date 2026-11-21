@@ -78,14 +78,14 @@ export const TaskActivity = memo(function TaskActivity({
 }) {
   const now = new Date();
   return (
-    <section className="grid gap-3">
+    <section className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <h2 className="text-[0.8125rem] font-medium text-muted-foreground">Activity</h2>
       {notFoundLine && (
         <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
           Comment not found. Showing the task.
         </p>
       )}
-      <ol aria-label="Activity" className="grid gap-3">
+      <ol aria-label="Activity" className="grid grid-cols-[minmax(0,1fr)] gap-3">
         {items.map((a) => (
           <li key={a.id}>
             {a.type === "comment" ? (

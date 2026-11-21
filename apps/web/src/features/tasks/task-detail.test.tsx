@@ -637,11 +637,31 @@ test("layout: the grid cannot be widened by long content; every grid and aside c
   const grid = document.querySelector("aside")?.parentElement;
   expect(grid).toHaveClass(
     "grid-cols-[minmax(0,1fr)]",
-    "lg:grid-cols-[minmax(0,1fr)_minmax(14rem,17.5rem)]",
+    "lg:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)]",
   );
   const aside = grid?.querySelector(":scope > aside") as HTMLElement;
   expect(aside).toBeTruthy();
   const kids = [...(grid?.children ?? []), ...aside.children];
   expect(kids.length).toBeGreaterThan(4);
   for (const k of kids) expect(k).toHaveClass("min-w-0");
+  // A grid inside a column with an implicit (auto) track sizes it to its widest child's min-content (a
+  // 4-column table, a 40-char assignee), so every grid on the way down declares a shrinkable track.
+  const isGrid = (el: Element) => el.classList.contains("grid");
+  const inner = [...kids, ...kids.flatMap((k) => [...k.children])].filter(isGrid);
+  inner.push(...document.querySelectorAll("section"));
+  inner.push(screen.getByRole("list", { name: "Activity" }));
+  expect(inner.length).toBeGreaterThan(8);
+  for (const g of inner) expect(g).toHaveClass("grid-cols-[minmax(0,1fr)]");
+});
+
+test("layout: the Status and Assignee triggers truncate instead of widening the rail", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  const status = await screen.findByRole("button", { name: /^Status:/ });
+  const assignee = screen.getByRole("button", { name: /^Assignee:/ });
+  for (const b of [status, assignee]) {
+    expect(b).toHaveClass("w-full", "min-w-0");
+    expect(b.querySelector(".truncate")).not.toBeNull();
+  }
+  expect(within(assignee).getByText("@dev")).toHaveClass("min-w-0", "truncate");
 });

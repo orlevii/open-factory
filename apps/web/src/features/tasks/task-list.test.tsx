@@ -86,6 +86,11 @@ test("the filters live in the URL: changing Status refetches with that status", 
   const { router } = renderApp("/tasks", alice);
   await screen.findByRole("link", { name: /^T-1,/ });
   expect(tasksUrls(api)[0]).toBe("/api/tasks?limit=50");
+  // Three 13rem filters don't fit a 768px window with the sidebar open: the row wraps, and the page
+  // grid's one track can shrink below its content.
+  const bar = screen.getByLabelText("Status").closest(".md\\:w-52")?.parentElement as HTMLElement;
+  expect(bar).toHaveClass("md:flex-row", "md:flex-wrap");
+  expect(bar.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
   await pickOption(screen.getByLabelText("Status"), "Done");
   await waitFor(() => expect(router.state.location.search).toMatchObject({ status: "done" }));
   await waitFor(() => expect(tasksUrls(api).at(-1)).toBe("/api/tasks?limit=50&status=done"));

@@ -95,6 +95,15 @@ test("rows: validation state in words and agent counts", async () => {
   expect(screen.getByText("No agents")).toBeInTheDocument();
   expect(screen.getByText("2 agents")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/templates/lead");
+  // One line only on a wide list (its own width, not the window's: the sidebar takes 240px); below
+  // that the metadata is its own line and wraps.
+  const list = screen.getByRole("link", { name: /lead/ }).closest("ul") as HTMLElement;
+  expect(list).toHaveClass("@container");
+  // The page grid's one track can shrink, so a long images path can't widen the list with it.
+  expect(list.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
+  const meta = screen.getByText("No agents").parentElement as HTMLElement;
+  expect(meta).toHaveClass("min-w-0", "flex-wrap", "basis-full", "@min-[60rem]:contents");
+  expect(meta.className).not.toMatch(/(^| )md:/);
 });
 
 test("list: a failed load says so", async () => {

@@ -26,7 +26,7 @@ export function ScheduleFiltersBar({
   const { data: agents = [] } = useQuery(agentsQueryOptions);
   const slugs = agents.map((a) => a.slug);
   return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-end">
+    <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
       <div className="grid gap-1 md:w-52">
         <label
           htmlFor="schedule-target"

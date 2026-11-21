@@ -53,7 +53,7 @@ export function TaskFiltersBar({
   const assignee = value.unassigned ? UNASSIGNED : (value.assignee ?? ALL);
   const creator = value.creator ?? ALL;
   return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-end">
+    <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
       <Field id="task-status" label="Status">
         <Select
           value={value.status}

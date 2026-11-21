@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { queueItemSchema } from "./agents.ts";
 import { anyEventSchema } from "./events.ts";
 import { handleSchema, RESERVED_HANDLES } from "./handle.ts";
+import { readFromBodySchema, readFromResponseSchema, unreadCountSchema } from "./messaging.ts";
 import { isReservedSecretName } from "./names.ts";
 import { serverMessageSchema } from "./ws.ts";
 
@@ -86,4 +87,16 @@ test("process_started accepts the S6 wake reasons; mcp_unavailable parses", () =
     anyEventSchema.parse({ type: "process_started", resumed: true, reason: "member_updates" }),
   ).toBeTruthy();
   expect(anyEventSchema.parse({ type: "mcp_unavailable", status: "failed" })).toBeTruthy();
+});
+
+test("unread count carries byAgent and defaults it", () => {
+  expect(unreadCountSchema.parse({ count: 2 })).toEqual({ count: 2, byAgent: {} });
+  expect(unreadCountSchema.parse({ count: 2, byAgent: { ada: 2 } }).byAgent).toEqual({ ada: 2 });
+});
+
+test("read-from body and response", () => {
+  expect(readFromBodySchema.safeParse({ upTo: "" }).success).toBe(false);
+  expect(
+    readFromResponseSchema.parse({ marked: 1, readAt: "2026-11-21T00:00:00.000Z" }).marked,
+  ).toBe(1);
 });

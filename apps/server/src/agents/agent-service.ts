@@ -258,6 +258,7 @@ export class AgentService {
         reports: reportCount.get(r.id) ?? 0,
         openTasks: openTasks.get(r.id) ?? 0,
         scheduleCount: scheduleCount.get(r.id) ?? 0,
+        avatarVersion: null,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         grantsOverridden: r.grantsOverridden,

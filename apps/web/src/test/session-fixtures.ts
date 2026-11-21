@@ -44,6 +44,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   cronZone: "UTC",
   stopCronsPending: false,
   scheduleCount: 0,
+  avatarVersion: null,
   ...over,
 });
 

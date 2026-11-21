@@ -17,7 +17,7 @@ afterEach(() => vi.useRealTimers());
 
 /** Renders the rows the events produce; returns each top-level row's text. */
 function lines(events: AnyEvent[], spawned = false) {
-  const rows = buildRows(events.map((e) => se(e, null)));
+  const { rows } = buildRows(events.map((e) => se(e, null)));
   const { container } = render(
     <div>
       {rows.map((row) => (
@@ -249,4 +249,35 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
   expect(els[0]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
   expect(els[1]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
   expect(texts.join()).not.toContain("@factory");
+});
+
+// Turn footer copy (U3 §5.3)
+const footerLine = (over: Partial<Extract<import("./rows").Row, { kind: "turn_footer" }>> = {}) => {
+  const { container } = render(
+    <TimelineRow
+      slug="dev"
+      spawned={false}
+      row={{ kind: "turn_footer", seq: 1, key: "1", durationMs: 4000, costUsd: 0, ...over }}
+      expanded={new Set()}
+      toggle={() => {}}
+      rowProps={() => ({})}
+      failedIds={new Set()}
+      interruptedEnds={new Set()}
+    />,
+  );
+  return container.textContent;
+};
+test("footer copy", () =>
+  expect(footerLine({ durationMs: 133_000, toolCalls: 14, costUsd: 0.42 })).toBe(
+    "Worked 2m 13s · 14 tool calls · $0.42 est.",
+  ));
+test("zero parts and sub-cent cost are omitted; singular tool call", () => {
+  expect(footerLine({ toolCalls: 0, costUsd: 0.004 })).toBe("Worked 4s");
+  expect(footerLine({ toolCalls: 1 })).toBe("Worked 4s · 1 tool call");
+});
+test("self-started turns say what woke the agent", () => {
+  expect(footerLine({ durationMs: 12_000, origin: "task" })).toBe(
+    "Woke for a background task · 12s",
+  );
+  expect(footerLine({ durationMs: 12_000, origin: "cron" })).toBe("Woke for a cron · 12s");
 });

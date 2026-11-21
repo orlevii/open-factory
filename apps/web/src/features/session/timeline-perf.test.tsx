@@ -12,7 +12,7 @@ import { itemPropsEqual, type TimelineItemProps } from "./timeline-item";
 import { useSession } from "./use-session";
 
 /** Renders per row key (top-level `TimelineRow` calls only) and per `Markdown` call (spec §9, §13). */
-const count = vi.hoisted(() => ({ rows: new Map<string, number>(), markdown: 0 }));
+const count = vi.hoisted(() => ({ rows: new Map<string, number>(), markdown: 0, builds: 0 }));
 
 vi.mock("./timeline-row", async (orig) => {
   const m = await orig<typeof import("./timeline-row")>();
@@ -21,6 +21,16 @@ vi.mock("./timeline-row", async (orig) => {
     TimelineRow: (p: import("./timeline-row").TimelineRowProps) => {
       count.rows.set(p.row.key, (count.rows.get(p.row.key) ?? 0) + 1);
       return <m.TimelineRow {...p} />;
+    },
+  };
+});
+vi.mock("./rows", async (orig) => {
+  const m = await orig<typeof import("./rows")>();
+  return {
+    ...m,
+    buildRows: (...a: Parameters<typeof m.buildRows>) => {
+      count.builds++;
+      return m.buildRows(...a);
     },
   };
 });
@@ -74,9 +84,11 @@ vi.mock("./api", async (orig) => ({
 
 let commits = 0;
 let harnessRenders = 0;
+let seen: ReturnType<typeof useSession> | undefined;
 function Harness() {
   harnessRenders++;
   const s = useSession("dev");
+  seen = s;
   return (
     // A "nested-update" is a newly mounted Radix menu settling in a layout effect, not a second frame.
     <Profiler id="timeline" onRender={(_id, phase) => phase !== "nested-update" && commits++}>
@@ -120,6 +132,7 @@ async function setup() {
 const reset = () => {
   count.rows.clear();
   count.markdown = 0;
+  count.builds = 0;
   commits = 0;
   harnessRenders = 0;
 };
@@ -249,6 +262,7 @@ const child: Row = { kind: "text", seq: 4, text: "nested", key: "4" };
 const parent: Row = {
   kind: "tool",
   seq: 3,
+  at,
   call: { type: "tool_call", toolUseId: "tu", name: "Agent", input: {} },
   state: "running",
   children: [child],
@@ -282,4 +296,26 @@ test("itemPropsEqual: unrelated keys and fresh but equal sets are not a change",
   expect(itemPropsEqual(props(), props({ failedIds: new Set(["x"]) }))).toBe(true);
   expect(itemPropsEqual(props(), props({ row: { ...parent } }))).toBe(false);
   expect(itemPropsEqual(props(), props({ lit: true }))).toBe(false);
+});
+
+test("buildRows runs once per events change, not for status or queue frames; open reuses the rendered row", async () => {
+  await setup();
+  push({
+    type: "agent_status",
+    agent: "dev",
+    status: "working",
+    turnOpen: true,
+    restartPending: false,
+    restartWaitingOn: 0,
+  });
+  frame();
+  expect(count.builds).toBe(0);
+  const open = seen?.open;
+  expect(open?.newestOpenTool?.key).toBe("5");
+  expect(open?.newestOpenTool).toBe(seen?.rows.find((r) => r.key === "5"));
+  push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
+  frame();
+  expect(count.builds).toBe(1);
+  // The text row changed nothing the activity line reads: same open object.
+  expect(seen?.open).toBe(open);
 });

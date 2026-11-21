@@ -403,7 +403,8 @@ test("a deep link to a seq without its own row tints the nearest later row", asy
     json({ ...conversation(), hasMore: { before: false, after: false } });
   renderApp("/agents/dev?event=8", alice); // seq 8 is `usage`, not rendered
   await screen.findByText("Two entries.");
-  expect(document.getElementById("event-10")).toHaveAttribute("data-highlighted", "true");
+  // The turn's footer (the turn_end, seq 9) is the nearest later row.
+  expect(document.getElementById("event-9")).toHaveAttribute("data-highlighted", "true");
 });
 
 test("Copy link says so inline when the clipboard refuses", async () => {

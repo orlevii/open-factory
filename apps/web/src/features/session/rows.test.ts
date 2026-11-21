@@ -11,6 +11,7 @@ import {
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
+const rowsOf = (evs: SessionEvent[]): Row[] => buildRows(evs).rows;
 const e = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq: ++seq,
   agentSlug: "dev",
@@ -19,9 +20,9 @@ const e = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   event,
 });
 
-test("hidden types are dropped; text and messages become rows", () => {
+test("hidden types are dropped (a finished turn leaves its footer); text and messages become rows", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "process_started", resumed: false }, null),
     e(
       {
@@ -52,12 +53,12 @@ test("hidden types are dropped; text and messages become rows", () => {
     }),
     e({ type: "turn_end", isError: false, terminalReason: "completed", numTurns: 1 }),
   ]);
-  expect(rows.map((r) => r.kind)).toEqual(["quiet", "message", "message", "text"]);
+  expect(rows.map((r) => r.kind)).toEqual(["quiet", "message", "message", "text", "turn_footer"]);
 });
 
 test("a tool call pairs with its result; nested work goes under its parent", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "turn_started" }),
     e({ type: "tool_call", toolUseId: "p", name: "Task", input: { description: "research" } }),
     e({
@@ -80,23 +81,23 @@ test("a tool call pairs with its result; nested work goes under its parent", () 
 
 test("tool state: running while the turn is open; no_result after it ends; failed on isError", () => {
   seq = 0;
-  const open = buildRows([
+  const open = rowsOf([
     e({ type: "turn_started" }),
     e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
   ]);
   expect(open[0]).toMatchObject({ state: "running" });
-  const ended = buildRows([
+  const ended = rowsOf([
     e({ type: "turn_started" }),
     e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
     e({ type: "turn_end", isError: true, terminalReason: "aborted_tools", numTurns: 1 }),
   ]);
   expect(ended[0]).toMatchObject({ state: "no_result" });
-  const exited = buildRows([
+  const exited = rowsOf([
     e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
     e({ type: "exited", code: 1, signal: null, stderrTail: "", expected: false }, null),
   ]);
   expect(exited[0]).toMatchObject({ state: "no_result" });
-  const failed = buildRows([
+  const failed = rowsOf([
     e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
     e({ type: "tool_result", toolUseId: "a", content: "no", isError: true }),
   ]);
@@ -106,7 +107,7 @@ test("tool state: running while the turn is open; no_result after it ends; faile
 test("a result whose call is on an earlier page renders on its own", () => {
   seq = 10;
   expect(
-    buildRows([e({ type: "tool_result", toolUseId: "zz", content: "x", isError: false })])[0],
+    rowsOf([e({ type: "tool_result", toolUseId: "zz", content: "x", isError: false })])[0],
   ).toMatchObject({ kind: "orphan_result" });
 });
 
@@ -116,13 +117,13 @@ test("turn_end renders only when it is an error; delivery_failed ids are collect
     e({ type: "turn_end", isError: true, terminalReason: "aborted_tools", numTurns: 1 }),
     e({ type: "delivery_failed", messageIds: ["m1", "m2"], reason: "exited" }, null),
   ];
-  expect(buildRows(evs).map((r) => r.kind)).toEqual(["quiet", "quiet"]);
+  expect(rowsOf(evs).map((r) => r.kind)).toEqual(["quiet", "quiet"]);
   expect(deliveryFailedIds(evs)).toEqual(new Set(["m1", "m2"]));
 });
 
 test("compaction, error and denied events get their own rows", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({
       type: "compacted",
       trigger: "manual",
@@ -146,7 +147,7 @@ test("truncated fields on a call and its result merge, result fields prefixed", 
     ...e({ type: "tool_result", toolUseId: "a", content: "x", isError: false }),
     truncated: { content: 9 },
   };
-  const [row] = buildRows([call, res]);
+  const [row] = rowsOf([call, res]);
   expect(row).toMatchObject({
     kind: "tool",
     truncated: { "input.command": 5, "result.content": 9 },
@@ -155,7 +156,7 @@ test("truncated fields on a call and its result merge, result fields prefixed", 
 
 test("an orphan result with a known parent nests under that parent", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "turn_started" }),
     e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
     e({
@@ -173,7 +174,7 @@ test("an orphan result with a known parent nests under that parent", () => {
 
 test("a later turn_started makes an unpaired call no_result", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "turn_started" }, "t1"),
     e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }, "t1"),
     e({ type: "turn_started" }, "t2"),
@@ -202,7 +203,7 @@ test("a denial whose toolUseId matches a loaded call attaches to it; an unpaired
     reasonType: "rule",
     reason: "no",
   } as const;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "tool_call", toolUseId: "a", name: "Read", input: {} }),
     e(denial),
     e({ type: "tool_result", toolUseId: "a", content: "x", isError: true }),
@@ -216,7 +217,7 @@ test("a denial whose toolUseId matches a loaded call attaches to it; an unpaired
 
 test("a denial pairs with a nested call too", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
     e({ type: "tool_call", toolUseId: "c", name: "Bash", input: {}, parentToolUseId: "p" }),
     e({
@@ -242,7 +243,7 @@ test("spawn_agent and terminate_agent calls with the right shape pair with their
     reasonType: "rule",
     reason: "no",
   } as const;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "turn_started" }),
     e({ type: "tool_call", toolUseId: "s1", name: "mcp__factory__spawn_agent", input: spawnInput }),
     e({
@@ -300,7 +301,7 @@ test("spawn_agent and terminate_agent calls with the right shape pair with their
 
 test("an unanswered spawn after its turn ended is no longer open", () => {
   seq = 0;
-  const rows = buildRows([
+  const rows = rowsOf([
     e({ type: "turn_started" }),
     e({
       type: "tool_call",
@@ -326,10 +327,10 @@ test("stabilizing a rebuild of the same events returns the previous array", () =
     e({ type: "assistant_text", text: "hi" }),
     e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
   ];
-  const prev = buildRows(evs);
-  expect(stabilizeRows(prev, buildRows(evs))).toBe(prev);
-  const empty = buildRows([]);
-  expect(stabilizeRows(empty, buildRows([]))).toBe(empty);
+  const prev = rowsOf(evs);
+  expect(stabilizeRows(prev, rowsOf(evs))).toBe(prev);
+  const empty = rowsOf([]);
+  expect(stabilizeRows(empty, rowsOf([]))).toBe(empty);
 });
 
 test("appending an event reuses every previous row and adds the new one", () => {
@@ -339,8 +340,8 @@ test("appending an event reuses every previous row and adds the new one", () => 
     e({ type: "assistant_text", text: "a" }),
     e({ type: "assistant_text", text: "b" }),
   ];
-  const prev = buildRows(evs);
-  const next = stabilizeRows(prev, buildRows([...evs, e({ type: "assistant_text", text: "c" })]));
+  const prev = rowsOf(evs);
+  const next = stabilizeRows(prev, rowsOf([...evs, e({ type: "assistant_text", text: "c" })]));
   expect(next).not.toBe(prev);
   expect(next).toHaveLength(3);
   for (const [i, r] of prev.entries()) expect(next[i]).toBe(r);
@@ -361,8 +362,8 @@ test("an update_group whose envelopes array is rebuilt with the same elements is
       null,
     ),
   ];
-  const prev = buildRows(evs);
-  const next = buildRows(evs);
+  const prev = rowsOf(evs);
+  const next = rowsOf(evs);
   expect(prev[0]?.kind).toBe("update_group");
   expect(next[0]).not.toBe(prev[0]);
   expect(stabilizeRows(prev, next)).toBe(prev);
@@ -380,8 +381,8 @@ test("a tool row whose truncated object is rebuilt with the same values is reuse
       truncated: { content: 9 },
     },
   ];
-  const prev = buildRows(evs);
-  const next = buildRows(evs);
+  const prev = rowsOf(evs);
+  const next = rowsOf(evs);
   expect(toolRow(next[0]).truncated).not.toBe(toolRow(prev[0]).truncated);
   expect(stabilizeRows(prev, next)).toBe(prev);
 });
@@ -395,7 +396,7 @@ test("a later result, denial or truncated replaces the tool row but keeps its un
     e({ type: "tool_result", toolUseId: "c", content: "x", isError: false, parentToolUseId: "p" }),
     e({ type: "assistant_text", text: "sub", parentToolUseId: "p" }),
   ];
-  const prev = buildRows(base);
+  const prev = rowsOf(base);
   const later = [
     e({ type: "tool_result", toolUseId: "p", content: "done", isError: false }),
     e({
@@ -411,14 +412,14 @@ test("a later result, denial or truncated replaces the tool row but keeps its un
     },
   ];
   for (const ev of later) {
-    const next = stabilizeRows(prev, buildRows([...base, ev]));
+    const next = stabilizeRows(prev, rowsOf([...base, ev]));
     const [was, now] = [toolRow(prev[0]), toolRow(next[0])];
     expect(now).not.toBe(was);
     expect(now.children).toHaveLength(2);
     for (const [i, c] of was.children.entries()) expect(now.children[i]).toBe(c);
   }
   // The replaced rows carry the new fields, not the old ones.
-  const withEv = (ev: SessionEvent) => toolRow(stabilizeRows(prev, buildRows([...base, ev]))[0]);
+  const withEv = (ev: SessionEvent) => toolRow(stabilizeRows(prev, rowsOf([...base, ev]))[0]);
   expect(withEv(later[0] as SessionEvent).result).toBe(later[0]?.event);
   expect(withEv(later[1] as SessionEvent).denial).toBe(later[1]?.event);
   const t = withEv(later[2] as SessionEvent);
@@ -435,8 +436,8 @@ test("rows whose content really changed are never reused", () => {
     name: "mcp__factory__spawn_agent",
     input: { template: "tech-lead", description: "d", prompt: "Brief" },
   });
-  const open = buildRows([spawn]);
-  const closed = buildRows([spawn, e({ type: "turn_end", isError: false, numTurns: 1 })]);
+  const open = rowsOf([spawn]);
+  const closed = rowsOf([spawn, e({ type: "turn_end", isError: false, numTurns: 1 })]);
   expect(open[0]).toMatchObject({ kind: "spawn", turnOpen: true });
   expect(closed[0]).toMatchObject({ kind: "spawn", turnOpen: false });
   expect(stabilizeRows(open, closed)[0]).not.toBe(open[0]);
@@ -444,8 +445,8 @@ test("rows whose content really changed are never reused", () => {
 
   // A tool row going running -> no_result.
   const call = e({ type: "tool_call", toolUseId: "b", name: "Bash", input: {} });
-  const running = buildRows([call]);
-  const gone = buildRows([call, e({ type: "turn_end", isError: false, numTurns: 1 })]);
+  const running = rowsOf([call]);
+  const gone = rowsOf([call, e({ type: "turn_end", isError: false, numTurns: 1 })]);
   expect(toolRow(running[0]).state).toBe("running");
   expect(toolRow(gone[0]).state).toBe("no_result");
   expect(stabilizeRows(running, gone)[0]).not.toBe(running[0]);
@@ -461,8 +462,8 @@ test("rows whose content really changed are never reused", () => {
   });
   const one = e({ type: "message_in", messages: [env("u1")] } as never, null);
   const two = { ...one, event: { ...one.event, messages: [env("u1"), env("u2")] } } as SessionEvent;
-  const before = buildRows([one]);
-  const after = buildRows([two]);
+  const before = rowsOf([one]);
+  const after = rowsOf([two]);
   const grown = stabilizeRows(before, after)[0];
   expect(grown).not.toBe(before[0]);
   expect(grown).toMatchObject({ envelopes: [{ id: "u1" }, { id: "u2" }] });
@@ -476,4 +477,78 @@ test("stableSet keeps the previous set when the contents are equal", () => {
   const swapped = new Set(["a", "c"]);
   expect(stableSet(prev, swapped)).toBe(swapped);
   expect(stableSet(undefined, swapped)).toBe(swapped);
+});
+
+// Turn footer and the open turn (U3 §5.1, §5.3).
+const ts = (): SessionEvent => e({ type: "turn_started" });
+const toolCall = (id: string, name = "Bash", input: unknown = { command: "ls" }) =>
+  e({ type: "tool_call", toolUseId: id, name, input });
+const toolResult = (id: string) =>
+  e({ type: "tool_result", toolUseId: id, content: "ok", isError: false });
+const usageEv = (durationMs: number, costUsd: number) =>
+  e({
+    type: "usage",
+    model: "m",
+    inputTokens: 1,
+    outputTokens: 1,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd,
+    durationMs,
+    numTurns: 1,
+  });
+const turnEnd = (over: Partial<Extract<AnyEvent, { type: "turn_end" }>> = {}) =>
+  e({ type: "turn_end", isError: false, numTurns: 1, ...over });
+
+test("a non-error turn_end with its usage makes one footer row", () => {
+  const rows = rowsOf([ts(), toolCall("a"), toolResult("a"), usageEv(133_000, 0.42), turnEnd()]);
+  expect(rows.at(-1)).toMatchObject({
+    kind: "turn_footer",
+    durationMs: 133_000,
+    toolCalls: 1,
+    costUsd: 0.42,
+  });
+  expect(rows.filter((r) => r.kind === "turn_footer")).toHaveLength(1);
+});
+
+test("command turns, errored turns and turns without usage have no footer", () => {
+  const kinds = (evs: SessionEvent[]) => rowsOf(evs).map((r) => r.kind);
+  expect(kinds([ts(), usageEv(1000, 0), turnEnd({ command: "compact" })])).not.toContain(
+    "turn_footer",
+  );
+  expect(kinds([ts(), usageEv(1000, 0), turnEnd({ isError: true })])).toEqual(["quiet"]);
+  expect(kinds([ts(), turnEnd()])).toEqual([]);
+});
+
+test("toolCalls is omitted when the turn's start isn't loaded", () => {
+  const rows = rowsOf([toolCall("a"), usageEv(5000, 0), turnEnd()]);
+  const footer = rows.at(-1);
+  expect(footer?.kind).toBe("turn_footer");
+  expect(footer && "toolCalls" in footer).toBe(false);
+});
+
+test("cron and task-notification origins are tagged", () => {
+  const origin = (originKind: string) =>
+    rowsOf([ts(), usageEv(12_000, 0), turnEnd({ originKind })]).at(-1);
+  expect(origin("cron")).toMatchObject({ origin: "cron" });
+  expect(origin("task-notification")).toMatchObject({ origin: "task" });
+});
+
+test("open tracks the newest unresolved call of the open turn", () => {
+  const start = ts();
+  const a = toolCall("a");
+  const ra = toolResult("a");
+  const b = toolCall("b");
+  const agent = toolCall("s", "Agent", { description: "dig" });
+  const { open } = buildRows([start, a, ra, b, agent]);
+  expect(open?.newestOpenTool?.call.toolUseId).toBe("b");
+  expect(open?.openSubagents.map((r) => r.call.toolUseId)).toEqual(["s"]);
+  expect(buildRows([a, b]).open).toBeUndefined();
+  const closed = buildRows([start, toolCall("c"), turnEnd()]).open;
+  expect(closed?.newestOpenTool).toBeUndefined();
+});
+
+test("a tool row carries when it was called and when its result arrived", () => {
+  const [row] = rowsOf([toolCall("a"), toolResult("a")]);
+  expect(row).toMatchObject({ kind: "tool", at, resultAt: at });
 });

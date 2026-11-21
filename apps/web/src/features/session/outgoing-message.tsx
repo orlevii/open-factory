@@ -160,6 +160,7 @@ export function CallBlock({
   const toolRow: Extract<Row, { kind: "tool" }> = {
     kind: "tool",
     seq: row.seq,
+    at: row.at,
     call: row.call,
     ...(row.result ? { result: row.result } : {}),
     ...(row.denial ? { denial: row.denial } : {}),

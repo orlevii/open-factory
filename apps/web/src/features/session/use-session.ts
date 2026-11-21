@@ -23,7 +23,9 @@ import {
   buildRows,
   deliveryFailedIds,
   interruptedTurnEnds,
+  type OpenTurnRows,
   type Row,
+  stabilizeOpen,
   stabilizeRows,
   stableSet,
 } from "./rows";
@@ -58,8 +60,14 @@ function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) 
   }, [value]);
   return value;
 }
-const stableRows = (ev: SessionEvent[], prev: Row[] | undefined) =>
-  stabilizeRows(prev ?? [], buildRows(ev));
+type RowsView = { rows: Row[]; open: OpenTurnRows | undefined };
+/** One `buildRows` pass per events change: rows stabilized, `open` mapped onto the stabilized rows. */
+const stableRows = (ev: SessionEvent[], prev: RowsView | undefined): RowsView => {
+  const built = buildRows(ev);
+  const rows = stabilizeRows(prev?.rows ?? [], built.rows);
+  const open = stabilizeOpen(prev?.open, built.open, rows);
+  return prev && prev.rows === rows && prev.open === open ? prev : { rows, open };
+};
 const stableFailedIds = (ev: SessionEvent[], prev: ReadonlySet<string> | undefined) =>
   stableSet(prev, deliveryFailedIds(ev));
 const stableInterruptedEnds = (ev: SessionEvent[], prev: ReadonlySet<number> | undefined) =>
@@ -221,7 +229,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   // Already stable: only an event change produces a new array (status and queue frames keep it).
   const events = eventsInOrder(state);
   // Unchanged rows and equal sets keep their identity, so memoized timeline items skip (spec §9.3).
-  const rows = useStabilized(events, stableRows);
+  const { rows, open } = useStabilized(events, stableRows);
   const failedIds = useStabilized(events, stableFailedIds);
   const interruptedEnds = useStabilized(events, stableInterruptedEnds);
 
@@ -281,6 +289,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   return {
     state,
     rows,
+    open,
     failedIds,
     interruptedEnds,
     loadEarlier,

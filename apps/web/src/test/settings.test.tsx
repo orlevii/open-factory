@@ -824,10 +824,13 @@ test("sub-nav lists the five pages; the current one is aria-current with the sel
   // The current page takes the selected fill (one step past hover) and keeps it under the pointer.
   expect(current[0]).toHaveClass("bg-selected");
   expect(current[0]?.className).not.toMatch(/hover:bg-accent/);
+  // Its text is not muted: a muted class in the base would beat the active one by CSS order.
+  expect(current[0]).not.toHaveClass("text-muted-foreground");
   const users = links.find((l) => l.textContent === "Users");
   expect(users).not.toHaveClass("font-medium");
   expect(users).not.toHaveClass("bg-selected");
   expect(users?.className).toMatch(/hover:bg-accent/);
+  expect(users).toHaveClass("text-muted-foreground");
   await userEvent.click(within(nav).getByRole("link", { name: "Secrets" }));
   expect(await section("Secrets")).toBeInTheDocument();
   expect(within(nav).getByRole("link", { name: "Secrets" })).toHaveAttribute(

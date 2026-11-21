@@ -71,7 +71,7 @@ export function StatusBadge({
   size,
 }: ResetInput & { status: AgentStatus; size: "long" | "short" }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] whitespace-nowrap">
       <span aria-hidden="true" className="inline-flex size-3 items-center justify-center">
         {status === "working" ? (
           <span className="of-tooth" />

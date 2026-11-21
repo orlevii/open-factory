@@ -162,6 +162,7 @@ test("desktop: a centered alert dialog that fits the viewport; a long name wraps
   const dialog = screen.getByRole("alertdialog");
   expect(dialog).toHaveAttribute("data-slot", "alert-dialog-content");
   expect(dialog).toHaveClass("sm:max-w-md", "max-h-[calc(100svh-2rem)]");
+  expect(dialog).not.toHaveClass("sm:max-w-sm");
   const action = screen.getByRole("button", { name: `Delete ${SECRET}` });
   expect(action).toHaveClass("whitespace-normal", "[overflow-wrap:anywhere]");
   expect(action).not.toHaveClass("whitespace-nowrap");

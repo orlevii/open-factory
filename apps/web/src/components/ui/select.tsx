@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import { cn } from "cn"
 import { Select as SelectPrimitive } from "radix-ui"
@@ -17,6 +15,7 @@ function SelectGroup({ ...props }: React.ComponentProps<typeof SelectPrimitive.G
   return <SelectPrimitive.Group data-slot="select-group" {...props} />
 }
 
+// The native title (for truncated values) only works when children is a string; a node child gets none.
 function SelectValue({
   children,
   title,

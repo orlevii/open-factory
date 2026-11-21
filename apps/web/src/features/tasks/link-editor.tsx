@@ -108,7 +108,7 @@ export function LinkEditor({
                 value={r.title}
                 autoComplete="off"
                 onChange={(e) => patch(r.id, { title: e.target.value })}
-                className="h-9 w-full bg-card md:w-48 dark:bg-card max-md:order-last"
+                className="h-9 w-full md:w-48 max-md:order-last"
               />
               <Button
                 type="button"

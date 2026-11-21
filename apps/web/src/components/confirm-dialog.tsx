@@ -114,7 +114,7 @@ export function ConfirmDialog({
           }}
         >
           <DrawerHeader>
-            <DrawerTitle>{title}</DrawerTitle>
+            <DrawerTitle className="line-clamp-none">{title}</DrawerTitle>
           </DrawerHeader>
           <DrawerBody className={MIDDLE_CLASS}>
             <DrawerDescription className="[overflow-wrap:anywhere]">{body}</DrawerDescription>

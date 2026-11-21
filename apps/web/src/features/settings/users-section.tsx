@@ -396,7 +396,11 @@ export function UsersSection() {
           aria-disabled={creating || undefined}
           onClick={() => void create()}
         >
-          {creating ? <Spinner /> : <Plus aria-hidden="true" data-icon="inline-start" />}
+          {creating ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <Plus aria-hidden="true" data-icon="inline-start" />
+          )}
           Create invite link
         </Button>
       </div>

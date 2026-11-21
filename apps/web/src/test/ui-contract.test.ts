@@ -54,21 +54,19 @@ describe("form controls", () => {
 });
 
 describe("focus ring", () => {
-  const ALLOW = [/data-slot="(dropdown-menu|select)-item"/]; // menu/select items show focus as a fill
+  // Nothing hides the base 2px outline or swaps it for a ring halo, unless the line says why.
+  const BAD =
+    /(?<![\w-])(?:outline-none|outline-hidden|ring-3|ring-ring\/50|(?:[\w-]+:)*(?:focus-visible|has-focus-visible|focus-within|has-focus|focus):ring-\d|focus-within:ring-\[)/;
   test("no utility hides or replaces the focus ring", () => {
-    const offenders = sourceFiles().flatMap((f) => {
-      const text = readFileSync(f, "utf8");
-      return [...text.matchAll(/\b(outline-none|outline-hidden|ring-3|ring-ring\/50)\b/g)]
-        .filter((m) => {
-          const at = m.index ?? 0;
-          const line = text.slice(text.lastIndexOf("\n", at) + 1, text.indexOf("\n", at));
-          return (
-            !ALLOW.some((re) => re.test(text.slice(Math.max(0, at - 600), at))) &&
-            !line.includes("ui-contract:allow")
-          );
-        })
-        .map(() => f.replace(SRC, ""));
-    });
+    const offenders = sourceFiles().flatMap((f) =>
+      readFileSync(f, "utf8")
+        .split("\n")
+        .flatMap((line, i) =>
+          line.includes("ui-contract:allow") || !BAD.test(line)
+            ? []
+            : [`${f.replace(SRC, "")}:${i + 1}`],
+        ),
+    );
     expect(offenders).toEqual([]);
   });
 });

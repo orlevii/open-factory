@@ -180,7 +180,7 @@ export function Composer({
             [waitsForNewSession && waitHintId, urgent && hintId].filter(Boolean).join(" ") ||
             undefined
           }
-          className="max-h-[9rem] min-h-[3.5rem] resize-none bg-card md:max-h-[18rem] dark:bg-card"
+          className="max-h-[9rem] min-h-[3.5rem] resize-none md:max-h-[18rem]"
         />
         {waitsForNewSession && (
           <p

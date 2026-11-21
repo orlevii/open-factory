@@ -183,7 +183,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
             inputMode="numeric"
             aria-invalid={a.invalid || undefined}
             aria-describedby={a.describedBy}
-            className="h-9 w-28 bg-card tabular-nums dark:bg-card"
+            className="h-9 w-28 tabular-nums"
             value={v[f]}
             onChange={(e) => {
               const value = e.target.value;

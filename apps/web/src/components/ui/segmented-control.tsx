@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "cn";
 
 /** 2–4 short fixed choices as native radios (arrow keys and form semantics for free). Options from data,
  *  or more than four, belong in a Select (DESIGN.md → Form controls). */

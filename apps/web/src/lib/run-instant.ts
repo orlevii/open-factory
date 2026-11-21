@@ -2,6 +2,10 @@
 export function runInstant(fn: () => void) {
   const root = document.documentElement;
   root.dataset.instant = "";
-  fn();
-  requestAnimationFrame(() => requestAnimationFrame(() => delete root.dataset.instant));
+  try {
+    fn();
+  } finally {
+    // Cleared even if fn throws, or the root would stay instant (no transitions) for good.
+    requestAnimationFrame(() => requestAnimationFrame(() => delete root.dataset.instant));
+  }
 }

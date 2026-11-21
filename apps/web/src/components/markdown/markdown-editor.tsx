@@ -28,7 +28,7 @@ export function MarkdownEditor(props: {
       {...(view
         ? { value: view, onValueChange: (v: string) => onViewChange?.(v as "write" | "preview") }
         : { defaultValue: "write" })}
-      className="gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20"
+      className="gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
     >
       <TabsList
         variant="line"

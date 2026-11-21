@@ -11,7 +11,7 @@ function RadioGroupItem({ className, ...props }: React.ComponentProps<typeof Rad
     <RadioGroupPrimitive.Item
       data-slot="radio-group-item"
       className={cn(
-        "aspect-square size-4 shrink-0 rounded-full border border-input bg-card transition-colors data-checked:border-foreground disabled:cursor-not-allowed",
+        "aspect-square size-4 shrink-0 rounded-full border border-input bg-card transition-colors data-checked:border-foreground disabled:cursor-not-allowed disabled:border-input disabled:bg-muted disabled:text-muted-foreground data-disabled:*:*:bg-muted-foreground",
         className
       )}
       {...props}

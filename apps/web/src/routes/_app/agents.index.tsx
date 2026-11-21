@@ -169,7 +169,7 @@ function EndedFilter({ value }: { value: "exclude" | "only" }) {
       {options.map((o) => (
         <label
           key={o.value}
-          className="flex h-6 cursor-pointer items-center rounded-sm px-2 text-[0.8125rem] text-muted-foreground transition-[background-color,color] duration-150 hover:text-foreground has-checked:bg-sidebar-accent has-checked:text-foreground has-focus-visible:ring-2 has-focus-visible:ring-ring"
+          className="flex h-6 cursor-pointer items-center rounded-sm px-2 text-[0.8125rem] text-muted-foreground transition-[background-color,color] duration-150 hover:text-foreground has-checked:bg-sidebar-accent has-checked:text-foreground has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring"
         >
           <input
             type="radio"

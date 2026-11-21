@@ -238,11 +238,11 @@ export interface TimelineRowProps {
   /** The session's agent is a spawned one (no edit page). */
   spawned?: boolean;
   row: Row;
-  expanded: Set<string>;
+  expanded: ReadonlySet<string>;
   toggle(key: string): void;
   rowProps(row: Row): Record<string, unknown>;
-  failedIds: Set<string>;
-  interruptedEnds: Set<number>;
+  failedIds: ReadonlySet<string>;
+  interruptedEnds: ReadonlySet<number>;
 }
 
 export function TimelineRow(props: TimelineRowProps) {

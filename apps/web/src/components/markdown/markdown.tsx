@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
-import { useId, useMemo } from "react";
+import { memo, useId, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./code-block";
@@ -50,8 +50,11 @@ function makeComponents(newTabNoteId: string): Components {
   };
 }
 
-/** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. Callers constrain the width. */
-export function Markdown({
+const REMARK_PLUGINS = [remarkGfm];
+
+/** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. Callers constrain the width.
+ *  Memoized on `source` and `variant`: a parent re-render with the same props doesn't parse again. */
+export const Markdown = memo(function Markdown({
   source,
   variant = "default",
 }: {
@@ -65,7 +68,7 @@ export function Markdown({
     <div
       className={`prose prose-sm prose-of max-w-none${variant === "detail" ? " prose-of-detail" : ""}`}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
         {source}
       </ReactMarkdown>
       <span id={newTabNoteId} hidden>
@@ -73,4 +76,4 @@ export function Markdown({
       </span>
     </div>
   );
-}
+});

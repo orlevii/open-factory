@@ -2,6 +2,7 @@ import { ArrowDown, CircleAlert } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -9,9 +10,8 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { CopyLink } from "./copy-link";
 import type { Row } from "./rows";
-import { TimelineRow } from "./timeline-row";
+import { TimelineItem } from "./timeline-item";
 
 const NEAR_BOTTOM = 64;
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
@@ -22,8 +22,8 @@ export function Timeline(props: {
   slug: string;
   spawned?: boolean;
   rows: Row[];
-  failedIds: Set<string>;
-  interruptedEnds: Set<number>;
+  failedIds: ReadonlySet<string>;
+  interruptedEnds: ReadonlySet<number>;
   highlightSeq?: number;
   /** A `?message=` target: lights the row that holds this envelope rather than the event's first. */
   highlightMessageId?: string;
@@ -41,7 +41,7 @@ export function Timeline(props: {
   const anchor = useRef<{ height: number; top: number; firstKey?: string } | null>(null);
   const centred = useRef(false);
   const [unseen, setUnseen] = useState(0);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [highlight, setHighlight] = useState(props.highlightSeq);
@@ -159,36 +159,55 @@ export function Timeline(props: {
   // One tab stop (UI design §5, §7): links, buttons and scrollable plates inside a row are in the tab
   // order only while that row is the focused one (tabindex 0), so Tab walks its controls and then
   // leaves; every other row's controls are -1. Rows and Copy link manage their own tabindex.
+  // Work is proportional to the change (spec §9.7): the whole log once on mount, then only the nodes
+  // React adds, and on a tab-row change only the previous and the new tab row.
+  const tabKeyRef = useRef(tabKey);
+  const applyTo = useCallback((root: Element) => {
+    const sel = `[data-row-wrap] :is(${INTERACTIVE})`;
+    const set = (el: HTMLElement) => {
+      if (el.hasAttribute("data-row") || el.hasAttribute("data-copy-link")) return;
+      // Only a row's own content counts; the Copy link actions and tool plates stay at -1.
+      const owner = el.closest<HTMLElement>("[data-row]");
+      el.setAttribute("tabindex", owner?.dataset.row === tabKeyRef.current ? "0" : "-1");
+    };
+    if (root instanceof HTMLElement && root.matches(sel)) set(root);
+    for (const el of root.querySelectorAll<HTMLElement>(sel)) set(el);
+  }, []);
   useEffect(() => {
     const content = log.current;
     if (!content) return;
-    const apply = () => {
-      for (const el of content.querySelectorAll<HTMLElement>(
-        `[data-row-wrap] :is(${INTERACTIVE})`,
-      )) {
-        if (el.hasAttribute("data-row") || el.hasAttribute("data-copy-link")) continue;
-        // Only a row's own content counts; the Copy link actions and tool plates stay at -1.
-        const owner = el.closest<HTMLElement>("[data-row]");
-        el.setAttribute("tabindex", owner?.dataset.row === tabKey ? "0" : "-1");
-      }
-    };
-    apply();
-    const mo = new MutationObserver(apply);
+    applyTo(content);
+    // Only added nodes need a tabindex pass: nothing flips a control's interactivity in place.
+    const mo = new MutationObserver((records) => {
+      for (const rec of records)
+        for (const n of rec.addedNodes) if (n instanceof HTMLElement) applyTo(n);
+    });
     mo.observe(content, { childList: true, subtree: true });
     return () => mo.disconnect();
-  }, [tabKey]);
-  const rowProps = (row: Row) => ({
-    "data-row": row.key,
-    tabIndex: row.key === tabKey ? 0 : -1,
-    onFocus: () => setActiveKey(row.key),
-  });
-  const toggle = (k: string) =>
-    setExpanded((s) => {
-      const n = new Set(s);
-      if (n.has(k)) n.delete(k);
-      else n.add(k);
-      return n;
-    });
+  }, [applyTo]);
+  useLayoutEffect(() => {
+    const prev = tabKeyRef.current;
+    if (prev === tabKey) return;
+    tabKeyRef.current = tabKey;
+    const content = log.current;
+    if (!content) return;
+    for (const key of [prev, tabKey]) {
+      if (key === undefined) continue;
+      const row = content.querySelector(`[data-row="${CSS.escape(key)}"]`);
+      if (row) applyTo(row);
+    }
+  }, [tabKey, applyTo]);
+  const onRowFocus = useCallback((k: string) => setActiveKey(k), []);
+  const toggle = useCallback(
+    (k: string) =>
+      setExpanded((s) => {
+        const n = new Set(s);
+        if (n.has(k)) n.delete(k);
+        else n.add(k);
+        return n;
+      }),
+    [],
+  );
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -214,34 +233,22 @@ export function Timeline(props: {
               )}
             </div>
           )}
-          {rows.map((row, i) => {
-            const lit = row.key === litKey;
-            return (
-              <div
-                key={row.key}
-                data-row-wrap
-                // one id per seq (a message_in with several envelopes renders several rows)
-                {...(rows[i - 1]?.seq !== row.seq ? { id: `event-${row.seq}` } : {})}
-                {...(lit ? { "data-highlighted": "true" } : {})}
-                className={`group relative min-w-0 rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
-              >
-                <TimelineRow
-                  slug={props.slug}
-                  spawned={props.spawned}
-                  row={row}
-                  expanded={expanded}
-                  toggle={toggle}
-                  rowProps={rowProps}
-                  failedIds={props.failedIds}
-                  interruptedEnds={props.interruptedEnds}
-                />
-                <CopyLink
-                  url={`${location.origin}/agents/${encodeURIComponent(props.slug)}?event=${row.seq}`}
-                  focusable={row.key === tabKey}
-                />
-              </div>
-            );
-          })}
+          {rows.map((row, i) => (
+            <TimelineItem
+              key={row.key}
+              row={row}
+              slug={props.slug}
+              spawned={props.spawned}
+              lit={row.key === litKey}
+              firstOfSeq={rows[i - 1]?.seq !== row.seq}
+              tabKey={tabKey}
+              expanded={expanded}
+              failedIds={props.failedIds}
+              interruptedEnds={props.interruptedEnds}
+              toggle={toggle}
+              onRowFocus={onRowFocus}
+            />
+          ))}
           {props.footer}
         </div>
       </div>
@@ -265,7 +272,7 @@ export function Timeline(props: {
 }
 
 /** Only rows that are mounted: children of collapsed tools are not. */
-const hasKey = (rows: Row[], key: string, expanded: Set<string>): boolean =>
+const hasKey = (rows: Row[], key: string, expanded: ReadonlySet<string>): boolean =>
   rows.some(
     (r) =>
       r.key === key ||

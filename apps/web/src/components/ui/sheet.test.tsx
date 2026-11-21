@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, test, vi } from "vitest";
+import { shouldIgnore } from "@/lib/shortcuts";
 import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle, closeInstantly } from "./sheet";
@@ -209,6 +210,19 @@ test("modal sheets still render the overlay", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
   await screen.findByRole("dialog", { name: "Peek" });
   expect(document.querySelector("[data-slot=sheet-overlay]")).toBeInTheDocument();
+});
+
+test.each([
+  [false, false],
+  [true, true],
+])("shortcut layer: sheet modal=%s ignores keys inside it: %s", async (modal, ignored) => {
+  fakeMatchMedia.install(false);
+  render(<Peek modal={modal} />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  const panel = await screen.findByRole("dialog", { name: "Peek" });
+  const e = new KeyboardEvent("keydown", { key: "c", bubbles: true });
+  Object.defineProperty(e, "target", { value: panel });
+  expect(shouldIgnore(e)).toBe(ignored);
 });
 
 test("Esc close is instant (data-instant stamped on the content before closing)", async () => {

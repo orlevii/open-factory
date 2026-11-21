@@ -10,13 +10,18 @@ type Entry = { run: (e: KeyboardEvent) => void };
 const registry = new Map<string, Entry[]>();
 
 const IGNORED_TARGETS =
-  "input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=menu],[role=menubar],[role=listbox],[role=tree],[role=combobox],[role=textbox]";
-const MODAL = '[aria-modal="true"],[role="alertdialog"]';
+  "input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=menu],[role=menubar],[role=listbox],[role=tree],[role=grid],[role=radiogroup],[role=combobox],[role=textbox]";
+/** Radix's modal Dialog renders `role="dialog"` without `aria-modal`. Non-modal layers (a peek
+ *  sheet marks `data-modal="false"`, a popover is `popover-content`) leave the page usable. */
+const MODAL =
+  '[aria-modal="true"],[role="alertdialog"],[role="dialog"][data-state="open"]:not([data-modal="false"]):not([data-slot="popover-content"])';
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
 
 /** True when a key press must not trigger a shortcut: modifiers, IME, already handled, typing or
  *  navigating inside a field, menu, listbox or tree, a modal open, or the off switch. */
 export function shouldIgnore(e: KeyboardEvent): boolean {
-  if (e.ctrlKey || e.metaKey || e.isComposing || e.defaultPrevented) return true;
+  if (e.ctrlKey || e.metaKey || e.isComposing || e.keyCode === 229 || e.defaultPrevented)
+    return true;
   // Alt (Option) is fine when it produced a symbol such as `]`; Alt+letter is a browser/OS chord.
   if (e.altKey && /^[a-z0-9]$/i.test(e.key)) return true;
   if (readPref(SINGLE_KEYS_PREF) === "off") return true;
@@ -46,13 +51,20 @@ export function installShortcuts(win: Window = window): () => void {
   let pending: { key: string; at: number } | null = null;
   const release = watchPrefs();
   const onKeyDown = (e: KeyboardEvent) => {
-    if (shouldIgnore(e)) return;
+    // A held key and a bare modifier neither fire nor disturb a sequence in progress.
+    if (e.repeat || MODIFIER_KEYS.has(e.key)) return;
+    if (shouldIgnore(e)) {
+      pending = null;
+      return;
+    }
+    // Option+] on a US Mac types a symbol, not `]`: the physical key stands in.
+    const key = e.altKey && e.code === "BracketRight" ? "]" : e.key;
     const now = Date.now();
     const first = pending && now - pending.at <= SEQUENCE_MS ? pending.key : null;
     pending = null;
-    if (first && fire(`${first} ${e.key}`, e)) return;
-    if (hasSequenceStartingWith(e.key)) pending = { key: e.key, at: now };
-    fire(e.key, e);
+    if (first && fire(`${first} ${key}`, e)) return;
+    if (hasSequenceStartingWith(key)) pending = { key, at: now };
+    fire(key, e);
   };
   win.addEventListener("keydown", onKeyDown as EventListener);
   return () => {

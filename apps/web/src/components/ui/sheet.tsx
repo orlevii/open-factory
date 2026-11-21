@@ -121,6 +121,8 @@ function SheetContent({
       )}
       <SheetPrimitive.Content
         data-slot="sheet-content"
+        // The shortcut layer keeps working beside a non-modal peek.
+        data-modal={modal ? undefined : "false"}
         ref={stampedRef}
         className={cn(
           "fixed right-0 z-50 flex flex-col border-l border-float-edge bg-popover text-sm text-popover-foreground",

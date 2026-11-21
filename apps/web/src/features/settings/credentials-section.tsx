@@ -492,7 +492,7 @@ export function CredentialsSection() {
                       <>
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
                           aria-disabled={busy || undefined}
                           onClick={() => void verify(c)}

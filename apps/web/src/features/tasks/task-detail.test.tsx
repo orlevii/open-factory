@@ -189,6 +189,15 @@ test("an ended assignee shows muted above a 'Choose an agent…' trigger", async
   ).toBeInTheDocument();
 });
 
+test("Edit beside the title is an outline button (§6.3)", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  expect(await screen.findByRole("button", { name: "Edit title" })).toHaveAttribute(
+    "data-variant",
+    "outline",
+  );
+});
+
 test("title edit: focus goes into the input, Enter saves, Escape cancels, focus returns to Edit title", async () => {
   const api = world();
   api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "New title" }) }));

@@ -605,9 +605,10 @@ describe("U3 §6.4: cancel and restore a held message", () => {
     expect(res.json()).toEqual({
       item: expect.objectContaining({ id, body: "hold me", from: "@or6" }),
     });
+    // A second DELETE (another tab, a retry) is idempotent: 200 with the same item, never "already delivered".
     const again = await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
-    expect(again.statusCode).toBe(409);
-    expect(again.json().error.code).toBe("already_delivered");
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual({ item: expect.objectContaining({ id, body: "hold me" }) });
     expect((await call(or, "GET", `/api/messages/${id}`)).json()).toMatchObject({
       id,
       state: "cancelled",

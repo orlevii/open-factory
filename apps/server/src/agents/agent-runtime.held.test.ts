@@ -563,7 +563,7 @@ test("the sender cancels a held message; another user can't", async () => {
   expect(h.rt.live().status).not.toBe("errored"); // a refusal is not a job failure
 });
 
-test("a written message can't be cancelled (already_delivered), nor a cancelled one twice", async () => {
+test("a written message can't be cancelled (already_delivered); cancelling a cancelled one again is a no-op", async () => {
   await stopped();
   const [work] = (await h.t
     .sql`select id from messages where body = 'work' and to_agent_id = ${h.agentId}`) as unknown as {
@@ -576,7 +576,11 @@ test("a written message can't be cancelled (already_delivered), nor a cancelled 
   expect(await stateOf(work.id)).toBe("delivered");
   const b = await h.send("B");
   await h.rt.cancelQueued(b.id, "u1");
-  await expect(h.rt.cancelQueued(b.id, "u1")).rejects.toMatchObject({ code: "already_delivered" });
+  const frames = h.frames.length;
+  // A second tab's DELETE: idempotent, the same item, and no new queue frame (it was never delivered).
+  expect(await h.rt.cancelQueued(b.id, "u1")).toMatchObject({ id: b.id, kind: "message", body: "B" });
+  expect(h.frames.length).toBe(frames);
+  expect(await stateOf(b.id)).toBe("cancelled");
   expect(h.rt.live().status).not.toBe("errored");
 });
 

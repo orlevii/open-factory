@@ -619,14 +619,15 @@ export class AgentRuntime {
    * U3 §6.4 (Q26, D2): the sender withdraws a message nothing has written yet. Only their own `kind = 'message'` row
    * (`NotSenderError` otherwise), only while it is still in the queue (in flight, awaiting or written:
    * `AlreadyDeliveredError`), and the row changes only if it is still pending and unwritten. A wake already under way
-   * is left alone. Resolves to the cancelled item.
+   * is left alone. Resolves to the cancelled item; one already cancelled resolves to it again (idempotent).
    */
   cancelQueued(messageId: string, userId: string): Promise<QueueItem> {
     return this.apiJob(async () => {
-      assertSender(await this.d.store.messageRow(messageId), {
-        agentId: this.agent.id,
-        userId,
-      });
+      const row = await this.d.store.messageRow(messageId);
+      assertSender(row, { agentId: this.agent.id, userId });
+      // Already cancelled (a second tab, a retried DELETE): idempotent, the same item; it was never delivered.
+      if (row.state === "cancelled")
+        return this.itemOf(entryOf(await this.d.store.pendingRow(messageId)));
       const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === messageId);
       const entry = this.queue[at];
       if (!entry) throw new AlreadyDeliveredError();

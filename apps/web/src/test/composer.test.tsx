@@ -93,11 +93,26 @@ test("Send is disabled for whitespace; Urgent changes the label and hint, then r
   );
 });
 
-test("urgent while no turn is open says it sends normally", async () => {
+test("urgent while no turn is open sends normally: label Send, empty hint line", async () => {
   renderApp("/agents/dev", alice);
   await box();
   await userEvent.click(screen.getByRole("checkbox", { name: "Urgent" }));
-  expect(screen.getByText("No turn is running, so this sends normally.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  expect(screen.queryByText(/Interrupts the current turn/)).toBeNull();
+  expect(screen.queryByText(/No turn is running/)).toBeNull();
+});
+
+test("a 70 KB message is refused before sending, with the draft kept", async () => {
+  renderApp("/agents/dev", alice);
+  const input = await box();
+  const big = "é".repeat(36_000);
+  fireEvent.change(input, { target: { value: big } });
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This message is 71 KB; the limit is 64 KB. Shorten it to send.",
+  );
+  expect(posted).toEqual([]);
+  expect(input).toHaveValue(big);
 });
 
 test("503 clears the box (the message is queued); a 400 keeps the text and shows the error inline", async () => {
@@ -242,10 +257,11 @@ test("composer: text typed while the send is in flight is kept", async () => {
 });
 
 test("composer: the urgent hint sits under the composer row", async () => {
+  agentOver = { status: "working", turnOpen: true };
   renderApp("/agents/dev", alice);
   await box();
   await userEvent.click(screen.getByRole("checkbox", { name: "Urgent" }));
-  const hint = screen.getByText("No turn is running, so this sends normally.");
+  const hint = screen.getByText("Interrupts the current turn, then runs next.");
   const send = screen.getByRole("button", { name: "Send urgent" });
   expect(send.parentElement?.contains(hint)).toBe(false); // not squeezed into the button row
   expect(send.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ApiError } from "@open-factory/shared";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { SRC } from "@/test/ui-contract-files";
 
 beforeEach(() => {
   fakeMatchMedia.install(false);
@@ -182,6 +186,43 @@ test("desktop: while pending the action shows the pending label and a spinner, a
   await userEvent.keyboard("{Escape}");
   expect(onOpenChange).not.toHaveBeenCalled();
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+});
+
+/** Selectors of every styles.css rule that sets `animation: none` (jsdom does not cascade stylesheets). */
+function animationNoneSelectors() {
+  const css = readFileSync(join(SRC, "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...css.matchAll(/([^{};]+)\{([^{}]*)\}/g)]
+    .filter(([, , body]) => /animation:\s*none/.test(body ?? ""))
+    .flatMap(([, sel]) => (sel ?? "").split(",").map((x) => x.trim()));
+}
+
+test("keyboard-opened: the stamped dialog is instant, but the pending spinner inside it still turns", async () => {
+  const off = installInputModality();
+  try {
+    await userEvent.keyboard("{Enter}");
+    render(<Confirm onConfirm={held()} />);
+    const content = document.querySelector<HTMLElement>("[data-slot=alert-dialog-content]");
+    expect(content).toHaveAttribute("data-instant");
+    screen.getByRole("button", { name: `Delete ${SECRET}` }).focus();
+    await userEvent.keyboard("{Enter}");
+    const spinner = screen.getByRole("button", { name: "Deleting…" }).querySelector("svg");
+    if (!content || !spinner) throw new Error("missing content or spinner");
+    const selectors = animationNoneSelectors();
+    expect(selectors.length).toBeGreaterThan(0);
+    // The overlay's own enter/exit keyframes are suppressed...
+    expect(selectors.some((s) => content.matches(s))).toBe(true);
+    // ...but not its descendants' animations.
+    expect(selectors.filter((s) => spinner.matches(s))).toEqual([]);
+    // A root flag (⌘B, one frame) still freezes everything.
+    document.documentElement.dataset.instant = "";
+    try {
+      expect(selectors.some((s) => spinner.matches(s))).toBe(true);
+    } finally {
+      delete document.documentElement.dataset.instant;
+    }
+  } finally {
+    off();
+  }
 });
 
 test("mobile: a bottom drawer, the action first and Cancel last, Cancel focused", () => {

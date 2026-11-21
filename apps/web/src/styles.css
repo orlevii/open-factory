@@ -480,13 +480,18 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
-  /* Keyboard-initiated: a root flag for one frame (⌘B), or a stamp on an overlay for its whole opening. */
+  /* Keyboard-initiated: a root flag for one frame (⌘B), or a stamp on an overlay for its whole opening.
+     A stamped overlay drops its own enter/exit keyframes (they live on the stamped Content/Overlay node)
+     but not its descendants' animations, so a pending spinner inside it keeps turning. */
   [data-instant],
   [data-instant] * {
-    /* biome-ignore lint/complexity/noImportantStyles: must beat every component animation and transition. */
-    animation: none !important;
-    /* biome-ignore lint/complexity/noImportantStyles: as above. */
+    /* biome-ignore lint/complexity/noImportantStyles: must beat every component transition. */
     transition-duration: 0s !important;
+  }
+  [data-instant]:not(:root),
+  :root[data-instant] * {
+    /* biome-ignore lint/complexity/noImportantStyles: must beat every component animation. */
+    animation: none !important;
   }
   /* Reduced motion removes movement and keeps fades (fewer, gentler animations, not none):
      enter/exit keep their opacity but lose scale, slide and rotate; layout and press movement stop;

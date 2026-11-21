@@ -17,10 +17,21 @@ describe("styles.css", () => {
     );
     expect(outside).not.toMatch(/\.of-ignite\s*{[^}]*animation/);
   });
-  test("keyboard-opened overlays never animate", () => {
+  test("keyboard-opened overlays never animate, but what they contain still can", () => {
     expect(css).toMatch(
-      /\[data-instant\],\s*\[data-instant\] \*\s*{[^}]*animation:\s*none !important/,
+      /\[data-instant\]:not\(:root\),\s*:root\[data-instant\] \*\s*{[^}]*animation:\s*none !important/,
     );
+    expect(css).toMatch(
+      /\[data-instant\],\s*\[data-instant\] \*\s*{[^}]*transition-duration:\s*0s !important/,
+    );
+    // A stamped overlay must not freeze its descendants (a pending Spinner keeps turning).
+    const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{};]+){([^{}]*)}/g)];
+    const descendantFreeze = rules.filter(
+      ([, sel, body]) =>
+        /animation:\s*none/.test(body ?? "") &&
+        (sel ?? "").split(",").some((s) => /(^|[^\w)])\[data-instant\] \*/.test(s.trim())),
+    );
+    expect(descendantFreeze).toEqual([]);
   });
 });
 

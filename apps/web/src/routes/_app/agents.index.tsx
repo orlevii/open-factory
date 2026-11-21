@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { UndoArchiveLine } from "@/features/agents/agent-actions";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
@@ -164,29 +165,16 @@ function EndedFilter({ value }: { value: "exclude" | "only" }) {
     { value: "only", label: "Ended" },
   ] as const;
   return (
-    <fieldset className="ml-2 flex items-center gap-0.5 rounded-md border border-border p-0.5">
-      <legend className="sr-only">Show</legend>
-      {options.map((o) => (
-        <label
-          key={o.value}
-          className="flex h-6 cursor-pointer items-center rounded-sm px-2 text-[0.8125rem] text-muted-foreground transition-[background-color,color] duration-150 hover:text-foreground has-checked:bg-sidebar-accent has-checked:text-foreground has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring"
-        >
-          <input
-            type="radio"
-            name="ended-filter"
-            value={o.value}
-            checked={value === o.value}
-            onChange={() =>
-              void navigate({
-                to: "/agents",
-                search: o.value === "only" ? { ended: "only" } : {},
-              })
-            }
-            className="sr-only"
-          />
-          {o.label}
-        </label>
-      ))}
-    </fieldset>
+    <SegmentedControl
+      legend="Show"
+      name="ended-filter"
+      size="sm"
+      className="ml-2"
+      value={value}
+      options={options}
+      onChange={(v) =>
+        void navigate({ to: "/agents", search: v === "only" ? { ended: "only" } : {} })
+      }
+    />
   );
 }

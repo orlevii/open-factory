@@ -116,3 +116,13 @@ describe("selects", () => {
     expect(offenders).toEqual(["/features/schedules/timezone-select.tsx"]);
   });
 });
+
+describe("radios and checkboxes", () => {
+  test('type="radio" and type="checkbox" live only in the segmented control', () => {
+    const offenders = sourceFiles()
+      .filter((f) => !f.endsWith("components/ui/segmented-control.tsx"))
+      .filter((f) => /type=["']?(radio|checkbox)["']?/.test(readFileSync(f, "utf8")))
+      .map((f) => f.replace(SRC, ""));
+    expect(offenders).toEqual([]);
+  });
+});

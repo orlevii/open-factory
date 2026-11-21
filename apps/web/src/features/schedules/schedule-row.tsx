@@ -77,7 +77,7 @@ export function ScheduleRow({
             aria-label={accessibleName(s, now)}
             aria-describedby={`first-line-${s.key}`}
             data-schedule-key={s.key}
-            className="w-14 shrink-0 font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-transparent focus-visible:after:outline-3 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+            className="w-14 shrink-0 font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-transparent focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
           >
             {s.key}
           </Link>

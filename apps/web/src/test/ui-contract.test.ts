@@ -69,6 +69,16 @@ describe("focus ring", () => {
     );
     expect(offenders).toEqual([]);
   });
+  test("every outline width is the one 2px signal ring", () => {
+    // outline-3, outline-[3px], focus-visible:after:outline-1 ...; outline-offset-* is not a width.
+    const WIDTH = /(?<![\w-])(?:[\w-]+:)*-?outline-(?:(?!2(?![\w-]))\d+(?![\w-])|\[\d[^\]]*\])/;
+    const offenders = sourceFiles().flatMap((f) =>
+      readFileSync(f, "utf8")
+        .split("\n")
+        .flatMap((line, i) => (WIDTH.test(line) ? [`${f.replace(SRC, "")}:${i + 1}`] : [])),
+    );
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe("loading", () => {

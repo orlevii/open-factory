@@ -118,6 +118,15 @@ test("the pill scrolls to the bottom and re-pins; it hides", () => {
   expect(t.scroller.scrollTop).toBe(2000);
 });
 
+test("after the pill re-pins, focus is on the last row, not dropped to body", () => {
+  const t = setup();
+  t.scrollUp();
+  t.rerender([...t.base, text(3)]);
+  act(() => pill().focus());
+  fireEvent.click(pill());
+  expect(document.activeElement).toBe(document.querySelector('[data-row="3"]'));
+});
+
 test("windowed: always shown, counts the reducer's speech, and the click leaves the window", () => {
   const onLeaveWindow = vi.fn();
   const t = setup({ windowed: true, newSpeech: 0, onLeaveWindow });

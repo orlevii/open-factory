@@ -301,3 +301,39 @@ test("sending from the composer re-pins the agent's timeline", () => {
   act(() => repinTimeline("dev"));
   expect(scroller.scrollTop).toBe(2000);
 });
+
+test("focus in a tall row that still reaches into the view keeps it pinned; a row entirely above unpins", () => {
+  const t = setup();
+  const a = t.view.getByText("a").closest<HTMLElement>("[data-row]") as HTMLElement;
+  const b = t.view
+    .getByText("b", { exact: false })
+    .closest<HTMLElement>("[data-row]") as HTMLElement;
+  // The last row is 900px tall: its top is far above the viewport, its bottom inside it.
+  b.getBoundingClientRect = () => ({ top: -500, bottom: 400 }) as DOMRect;
+  act(() => b.focus());
+  expect(t.pinned()).toBe(true);
+  a.getBoundingClientRect = () => ({ top: -700, bottom: -500 }) as DOMRect;
+  act(() => a.focus());
+  expect(t.pinned()).toBe(false);
+});
+
+test("an anchor whose row was replaced is re-probed, so later growth is corrected again", () => {
+  const t = setup();
+  const a = t.view.getByText("a");
+  const b = t.view
+    .getByText("b", { exact: false })
+    .closest<HTMLElement>("[data-row]") as HTMLElement;
+  t.place(a, () => 300);
+  let posB = 400;
+  t.place(b, () => posB);
+  document.elementFromPoint = () => a;
+  t.scrollTo(200); // unpins, anchored on row a
+  a.remove(); // its row was replaced
+  document.elementFromPoint = () => b;
+  t.resize(1000); // nothing to measure against: probes row b (at 200) instead
+  expect(t.top()).toBe(200);
+  posB = 650; // content above b grew
+  t.resize(1250);
+  expect(b.getBoundingClientRect().top).toBe(200);
+  expect(t.top()).toBe(450);
+});

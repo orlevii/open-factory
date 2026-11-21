@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useMemo, useRef } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 /** Within this many px of the bottom counts as at the bottom (U3 §8.1). */
 const SLACK = 8;
@@ -39,7 +39,9 @@ export function useStickToBottom(
 ): StickToBottom {
   const pinned = useRef(true);
   const onChange = useRef(onPinChange);
-  onChange.current = onPinChange;
+  useLayoutEffect(() => {
+    onChange.current = onPinChange;
+  });
   const m = useRef({
     /** The scrollTop our own code last wrote, so its scroll event isn't read as the reader's. */
     lastWrittenTop: undefined as number | undefined,
@@ -88,7 +90,13 @@ export function useStickToBottom(
     const restore = () => {
       const sc = scroller.current;
       const a = m.anchor;
-      if (!sc || !a?.el.isConnected) return;
+      if (!sc || !a) return;
+      if (!a.el.isConnected) {
+        // Its row was replaced: nothing to measure against this time, but probe a fresh one so the
+        // next height change is corrected again.
+        captureAnchor();
+        return;
+      }
       const delta = a.el.getBoundingClientRect().top - a.top;
       if (!delta) return;
       write(sc, sc.scrollTop + delta);
@@ -175,10 +183,11 @@ export function useStickToBottom(
       if (e.isComposing) return;
       if (UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) unpin();
     };
-    // Focus entering a row above the viewport (Tab into the log, roving focus) is a look-up intent.
+    // Focus entering a row entirely above the viewport (Tab into the log, roving focus) is a
+    // look-up intent; a tall row that still reaches into the view (the last one) is not.
     const onFocusIn = (e: FocusEvent) => {
       const row = (e.target as Element | null)?.closest?.("[data-row]");
-      if (row && row.getBoundingClientRect().top < sc.getBoundingClientRect().top) unpin();
+      if (row && row.getBoundingClientRect().bottom < sc.getBoundingClientRect().top) unpin();
     };
     // Capture: runs before React's handlers, so the anchor is taken before the state change.
     const onClick = (e: MouseEvent) => {

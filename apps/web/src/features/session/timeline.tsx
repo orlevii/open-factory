@@ -62,7 +62,10 @@ export function Timeline(props: {
   // pill's counts derive from rows (U3 §8.2) and the rows layout effect sets no state.
   const [seenSeq, setSeenSeq] = useState<number>();
   const latestRows = useRef(rows);
-  latestRows.current = rows;
+  // Before the rows layout effect below, which may unpin (deep-link centring).
+  useLayoutEffect(() => {
+    latestRows.current = rows;
+  }, [rows]);
   const stick = useStickToBottom(scroller, log, (pinned) =>
     setSeenSeq(pinned ? undefined : maxSeq(latestRows.current)),
   );
@@ -100,10 +103,16 @@ export function Timeline(props: {
   const speech = windowed ? (props.newSpeech ?? 0) : arrived.speech;
   const other = !windowed && arrived.other;
   const onLeaveWindow = props.onLeaveWindow;
-  const onJump = useCallback(
-    () => (windowed ? onLeaveWindow?.() : stick.repin()),
-    [windowed, onLeaveWindow, stick],
-  );
+  const onJump = useCallback(() => {
+    if (windowed) {
+      onLeaveWindow?.();
+      return;
+    }
+    stick.repin();
+    // The pill goes inert as it hides: focus lands on the last row rather than dropping to body.
+    const rowEls = log.current?.querySelectorAll<HTMLElement>("[data-row]");
+    rowEls?.[rowEls.length - 1]?.focus({ preventScroll: true });
+  }, [windowed, onLeaveWindow, stick]);
 
   useImperativeHandle(
     props.ref,

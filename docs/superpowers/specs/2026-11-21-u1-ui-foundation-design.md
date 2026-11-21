@@ -1,11 +1,11 @@
 # U1 UI foundation: Technical Design
 
 - **Date:** 2026-11-21
-- **Status:** draft; owner-proxy (owner-u1) answered Q1–Q13 (Q5 and Q8 at certainty 3, for Or to review with screenshots); pending reviews
+- **Status:** revised after the self-review and five UI-lens reviews (Taste, Apple design, Emil design-eng, Motion, Break UI); owner-proxy (owner-u1) answered Q1–Q23. Low certainty, for Or: Q5 (3), Q8 (3), Q16 (2), Q18 (3), Q20 (3).
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (owner decisions 1–15, final), `docs/product/ui-review/status.md` (U1 backlog, file:line at `322075d`), `docs/product/ui-review/pr76-review.md` (R1–R5 and nits), the seven reviews in `docs/product/ui-review/`, `docs/product/behavior/*.md`.
 - **Builds on:** `main` at `322075d` (PR #76).
 - **Followed by:** U2 navigation, U3 chat, U4 create flows and mobile. U1 builds the primitives and the DESIGN.md rules they use; it builds none of their features.
-- **Decision log:** GitHub issue "U1: UI foundation — decisions"; question numbers (Q1–Q13) and tech-lead decisions (D1–D12) below refer to it.
+- **Decision log:** GitHub issue "U1: UI foundation — decisions"; question numbers (Q1–Q23) and tech-lead decisions (D1–D8) below refer to it.
 
 > `docs/product/` is gitignored. Paths into it are relative to the main checkout. All other paths are relative to the repo root; web paths are relative to `apps/web/src/` unless they start with `apps/`.
 
@@ -27,10 +27,10 @@ All run in default CI (`pnpm test`, `pnpm typecheck`, `pnpm lint`) unless marked
 2. **No sideways page.** A task with a 300-char unbroken URL in its body and in a comment, and a session message with an 11 KB single-line token, produce `scrollWidth <= clientWidth` on the page and on the timeline scroller at 390px and 1440px (jsdom cannot lay out: covered by class assertions in tests plus a manual check recorded in the PR at 320, 390, 768 with the sidebar open, 1440, and 200% text at 1024).
 3. **Header.** A long agent name never overlaps the status badge or the actions: the h1 truncates; meta and actions never shrink (class test + manual check at 390 and 1024). Templates header fits at 320 (manual).
 4. **Reduced motion.** Under `prefers-reduced-motion: reduce` the loading mark is lit and still; every spinner is static; skeletons never animate (CSS test for the layer order, manual DevTools check).
-5. **Controls.** No browser-blue control remains (`grep -rn 'type="radio"\|type="checkbox"' apps/web/src` returns only the inputs inside `SegmentedControl` and `RadioGroup`-free sites listed in §6.6); every focusable primitive shows the same 2px signal ring at a 2px offset; `NativeSelect` is used only by the timezone picker.
+5. **Controls.** No browser-blue control remains: `grep -rn 'type="radio"\|type="checkbox"' apps/web/src --include=*.tsx` (tests excluded) returns only `components/ui/segmented-control.tsx`; every focusable primitive shows the same 2px signal ring at a 2px offset; `NativeSelect` is used only by the timezone picker.
 6. **Overlays.** On desktop the sheet travels 100% of its width with no panel fade (250ms in on `--ease-drawer`, 200ms out on `--ease-out`), its scrim on the same timing; dialogs 150/100ms; menus, popovers and tooltips 100/75ms with no slide; no floating layer has a shadow; all floating layers carry the `--float-edge` border. Below 768px every `ConfirmDialog` renders as a Vaul bottom drawer and the mobile nav as a Vaul left drawer that a drag or flick dismisses. Keyboard-opened overlays don't animate (`data-instant` zeroes animations). Tests cover structure and data attributes; motion is a manual check recorded in the PR.
 7. **Timeline performance.** In a test session with 200 rows, an `agent_status` frame re-renders no `TimelineRow` and no `Markdown`; one appended `session_event` renders exactly one new row and one `Markdown`; ten frames delivered in one task commit once. Manual: a DevTools Performance recording on a 2,000-event session before and after, attached to the PR (frame time on an `agent_status` frame and on scroll).
-8. **Data layer.** `createQueryClient()` is used by the app and by `renderApp`; unit tests show 404, 400 and `ZodError` are not retried, 500, 408, 429 and `TypeError` are, and retries stop after 3; hovering a task, schedule or template link and then clicking sends one detail request, not two; a detail GET that started before a task save and resolves after it doesn't overwrite the saved task; a WebSocket reconnect invalidates every query; credentials, secrets, projects and templates list refetch on window focus.
+8. **Data layer.** `createQueryClient()` is used by the app and by `renderApp`; unit tests show 404, 400 and `ZodError` are not retried, 500, 408, 429 and `TypeError` are, and retries stop after 3; hovering a task or schedule link and then clicking sends one detail request, not two (templates: §10.2); a detail GET that started before a task save and resolves after it doesn't overwrite the saved task; a WebSocket reconnect invalidates every query; credentials, secrets, projects and templates list refetch on window focus.
 9. **Send keys.** Enter sends and Shift+Enter adds a newline in both the session composer and the task comment composer; ⌘/Ctrl+Enter also sends; on a coarse pointer Enter adds a newline; an IME-confirming Enter never sends.
 10. **Composer errors.** A message over 64 KB (UTF-8) is refused before any request with an inline line naming its size and the limit; a server validation error shows the issue's message without a schema path (server test on `errors.ts`).
 
@@ -75,6 +75,8 @@ Every U1 item in status.md, pr76-review.md and decisions 14–15, with where thi
 
 Deferred with a follow-up issue (§14): timeline virtualization (break L7), the sidebar collapse animation (motion M3, needs a recording), the reconnect strip's height animation (motion M4 second half, owned by no spec), optimistic single-field saves (U1 #16 last bullet, per Q3).
 
+status.md also lists the adaptive confirmation (as "bottom confirmations"), the mobile nav drawer and the manager-picker indent under U4 #1 and #4: U1 delivers those three (Q2, §6.5), and U4 builds on them.
+
 Correction to status.md: `features/agents/agent-actions.tsx:257,283,300` are `title` props of `ActionRow` that render an `<h3>`, not native tooltips. Only `template-editor.tsx:534,543,549` and `link-editor.tsx:118` are native `title`s.
 
 ## 5. Overlays
@@ -89,76 +91,95 @@ Correction to status.md: `features/agents/agent-actions.tsx:257,283,300` are `ti
 | Destructive confirmation | `ConfirmDialog` (API unchanged, internals swapped, Q2): `AlertDialog` (desktop) or bottom `Drawer` (< 768px) | all eight existing `ConfirmDialog` users, with no call-site diff |
 | Mobile navigation | `Drawer` left | `components/ui/sidebar.tsx` mobile branch |
 
-"Mobile" is `useIsMobile()` (`hooks/use-mobile.ts`, `max-width: 767px`), read once per render; an overlay that is open while the viewport crosses the breakpoint closes (its `onOpenChange(false)` fires) rather than swapping primitive under the user.
+"Mobile" is `useIsMobile()` (`hooks/use-mobile.ts`), whose query becomes `(width < 48rem)`, sharing one constant with the `md` breakpoint the desktop sidebar uses (`sidebar.tsx:216,237`). Today it is `max-width: 767px` in px while `md` is 48rem, so with a 24px browser font a 768–1151px window gets neither the desktop sidebar nor the nav drawer. Below, "768px" means 48rem at the default text size. An adaptive overlay (`Sheet`, `ConfirmDialog`) decides dialog-or-drawer **once, when it opens** (state captured on the closed → open edge, reset on close) and keeps that primitive until it closes. Crossing 768px while open (an iPad mini rotation at 744px, Split View, a window resize) changes nothing: both branches work at any width, a pending confirmation is never swapped mid-request, and a U4 form never loses its draft to a resize. Test: open, flip the mocked `matchMedia`, assert still open with the same role.
 
 ### 5.2 Shared floating-layer look (decision 11)
 
-- No `shadow-*` on any floating layer. Remove `shadow-md` from `popover.tsx:30` and `dropdown-menu.tsx:45`, `shadow-lg` from `dropdown-menu.tsx:246` and `sheet.tsx:65`.
+- No `shadow-*` on any floating layer. Remove `shadow-md` from `popover.tsx:30` and `dropdown-menu.tsx:45`, `shadow-lg` from `dropdown-menu.tsx:246` and `sheet.tsx:65`. The active tab in `tabs.tsx:63-65` also loses its shadow and takes the segmented-control look (§6.7). (The `shadow-*` in `sidebar.tsx:249,314,480` belong to the unused `floating` and `inset` variants and an `outline` menu-button variant that draws its border with a box-shadow; they are left alone.)
 - Edge: `border border-float-edge` replaces `ring-1 ring-foreground/10` on popover, dropdown content and sub-content, select content, alert dialog, sheet (its inner edge only) and drawer (its inner edge only). Tooltips stay inverted (`bg-foreground`) with no edge.
 - Surface: `bg-popover` (one plate step above `card`), as today.
-- Scrim: `bg-black/20` for sheet, dialog and drawer; no blur.
+- Scrim: `bg-black/20` in light mode and `dark:bg-black/40` in dark mode (Q19; 20% is near invisible over graphite), for sheet, dialog and drawer; no blur. Values confirmed in the Q8 screenshot pass.
+- Tokens: `styles.css` gains `--float-edge` in `:root`, the dark theme and the `prefers-contrast: more` block (there it moves to `field-edge`, ≥3.2:1), plus `--color-float-edge` in `@theme inline`. The avatar tokens (§12.1) are added in U1 too, so U2 only builds the component.
 
 ### 5.3 `Sheet` (`components/ui/sheet.tsx`, rewritten)
 
-One API for U4's forms and peeks: `Sheet` (`open`, `onOpenChange`), `SheetContent`, `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetBody`, `SheetFooter`, `SheetClose`. On desktop it renders the Radix Dialog right panel below; below 768px it renders the §5.4 bottom `Drawer` with the same slots (decision 1). The `side` prop is removed: the only left-side consumer, the mobile nav, moves to `Drawer` (§5.8). There is no separate "responsive" component (Q2: no parallel primitives).
+One API for U4's forms and peeks: `Sheet` (`open`, `onOpenChange`), `SheetContent`, `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetBody`, `SheetFooter`, `SheetClose`. On desktop it renders the Radix Dialog right panel below; below 768px it renders the §5.4 bottom `Drawer` with the same slots (decision 1), chosen at open (§5.1). The `side` prop is removed: the only left-side consumer, the mobile nav, moves to `Drawer` (§5.8). There is no separate "responsive" component (Q2: no parallel primitives).
 
 Desktop panel:
 
-- Panel: `fixed inset-y-0 right-0 w-full sm:w-[30rem] max-w-full flex flex-col bg-popover border-l border-float-edge`, `data-slot="sheet-content"`.
-- Motion: `data-open:animate-in data-open:slide-in-from-right duration-250 ease-(--ease-drawer)`, `data-closed:animate-out data-closed:slide-out-to-right data-closed:duration-200 data-closed:ease-(--ease-out)`. No fade on the panel. Reduced motion: the global override zeroes the translate; add `motion-reduce:data-open:fade-in-0 motion-reduce:data-closed:fade-out-0` so it fades instead of snapping.
-- Scrim: same durations and curves as the panel (`duration-250 ease-(--ease-drawer)`, `data-closed:duration-200 data-closed:ease-(--ease-out)`), opacity only.
-- Slots: `SheetHeader` (a 48px row: `SheetTitle` in Archivo 16/20 600 plus the close button, `border-b`), `SheetBody` (new: `flex-1 min-h-0 overflow-y-auto p-4`, `@container` so content lays out by the sheet's width, never the viewport's: break-ui "Redesign 1"), `SheetFooter` (`border-t p-4 flex justify-end gap-2`, never scrolls). `SheetDescription` stays.
+- Panel: `fixed inset-y-0 right-0 z-50 w-[min(30rem,100%)] flex flex-col bg-popover border-l border-float-edge`, `data-slot="sheet-content"`.
+- Motion: `data-open:animate-in data-open:slide-in-from-right duration-250 ease-(--ease-drawer)`, `data-closed:animate-out data-closed:slide-out-to-right data-closed:duration-200 data-closed:ease-(--ease-out)`. No fade on the panel. Reduced motion: the global override zeroes the translate; `motion-reduce:data-open:fade-in-0 motion-reduce:data-closed:fade-out-0` makes it fade instead of snapping (tested).
+- Scrim: same durations and curves as the panel, opacity only.
+- Slots: `SheetHeader` (`min-h-12 py-3 flex items-start gap-2 border-b px-4`: `SheetTitle` in Archivo 16/20 600, `min-w-0 flex-1 [overflow-wrap:anywhere] line-clamp-2`, titles come from data; the close button `shrink-0`), `SheetBody` (`flex-1 min-h-0 overflow-y-auto p-4`, `@container` so content lays out by the sheet's width, never the viewport's: break-ui "Redesign 1"; the inner width is ~448px, so consumers use `@sm`/`@lg` breakpoints, never `@md`, which a scrollbar would flip), `SheetFooter` (`border-t p-4 flex flex-wrap justify-end gap-2`, pinned; under `@media (max-height: 30rem)` the footer scrolls with the body so a 200%-text form above an iOS keyboard keeps a usable body). `SheetDescription` stays. `DrawerHeader`/`DrawerFooter` follow the same rules; drawer footers stack full-width buttons with the primary action first and Cancel last (Q14 applies to every bottom drawer).
 - Close: the header's ghost icon button, `aria-label="Close"`. Esc and the scrim close.
+- Focus: Radix moves focus into the panel on open (the first focusable element, or the content with `tabIndex={-1}` when a consumer passes `onOpenAutoFocus` to keep the keyboard down) and returns it to the trigger on close.
+- Peek mode (Q18): not built in U1. DESIGN.md records the rule now; U2 adds a `modal` prop to this same `Sheet` (passed through to Radix Dialog) with its first peek consumer.
 - The sheet asks nothing on dismiss (Q9). Keeping a typed draft is the consumer's job in U4: in memory for the tab (component state lifted above the sheet, or the query cache), not across a reload.
 - Stacking: a sheet opened from inside a sheet is allowed one level deep; the primitive doesn't enforce it, DESIGN.md does (U4 has the only stacked case).
 
 ### 5.4 `Drawer` (`components/ui/drawer.tsx`, new; Vaul)
 
 - Dependency: `vaul@1.1.2`, `pnpm --filter @open-factory/web add --save-exact vaul@1.1.2` (decision 8). It depends on `@radix-ui/react-dialog ^1.1.1`, which resolves to the `1.3.1` already in `pnpm-lock.yaml` (through `radix-ui`), so the only new package is `vaul` itself. No supply-chain setting changes.
-- Exports `Drawer` (Root, `direction` `"bottom" | "left"`), `DrawerContent`, `DrawerHeader`, `DrawerTitle`, `DrawerDescription`, `DrawerBody`, `DrawerFooter`, `DrawerClose`.
-- Bottom: `inset-x-0 bottom-0 max-h-[90svh] rounded-t-xl border-t border-float-edge bg-popover`, a 4×36px handle (`bg-border`, `aria-hidden`), bottom padding `max(1rem, env(safe-area-inset-bottom))`.
+- Exports `Drawer` (Root, `direction` `"bottom" | "left"`), `DrawerContent`, `DrawerHeader`, `DrawerTitle`, `DrawerDescription`, `DrawerBody`, `DrawerFooter`, `DrawerClose`. Content and overlay are `fixed z-50` and carry `data-slot="drawer-content"` / `data-slot="drawer-overlay"`.
+- Bottom: `inset-x-0 bottom-0 max-h-[90svh] rounded-t-xl border-t border-float-edge bg-popover`, a 4×36px handle (`bg-border`, `aria-hidden`), bottom padding `max(1rem, env(safe-area-inset-bottom))`. The surface runs edge to edge; its inner column is `mx-auto w-full max-w-lg`, so a 600–767px window doesn't stretch buttons across.
 - Left: `inset-y-0 left-0 w-(--sidebar-width) max-w-[85vw] border-r border-float-edge`.
-- Motion: Vaul animates open and close with CSS keyframes at 0.5s in an unlayered, runtime-injected stylesheet (verified in `vaul@1.1.2/dist/index.mjs`). Tailwind utilities live in `@layer utilities` and lose to it, so `styles.css` gets an **unlayered** block with higher specificity:
+- Focus: Vaul's Root defaults `autoFocus` to `false` and prevents Radix's open auto-focus (`vaul/dist/index.mjs`), which would leave focus on the trigger behind the scrim. The wrapper defaults `autoFocus` to `true`; its `onOpenAutoFocus` focuses the content (`tabIndex={-1}`) rather than the first input, so the iOS keyboard doesn't rise mid-slide; consumers can override (ConfirmDialog keeps Cancel's `autoFocus`). `onCloseAutoFocus` passes through. Tests assert `document.activeElement` is inside the drawer after open.
+- Motion: Vaul animates open and close with CSS keyframes at 0.5s from a `<style>` it appends to `<head>` when its module loads, after `styles.css`, unlayered. Tailwind utilities live in `@layer utilities` and lose to it, and an equal-specificity rule loses the tie on source order. So `styles.css` gets an **unlayered** block whose declarations are `!important` (an important declaration beats any normal one regardless of specificity or order) and whose selectors are also strictly more specific than Vaul's highest rule for each property, belt and braces (Vaul's: `[data-vaul-drawer]` (0,1,0) for duration, `[data-vaul-overlay][data-vaul-snap-points=false]` (0,2,0) for the overlay's duration, four-attribute selectors (0,4,0) for `animation-name`):
   ```css
-  /* Vaul's injected rules are unlayered; these outrank them by specificity (DESIGN.md → Motion). */
-  [data-vaul-drawer][data-slot="drawer-content"] { animation-duration: 250ms; animation-timing-function: var(--ease-drawer); }
-  [data-vaul-drawer][data-slot="drawer-content"][data-state="closed"] { animation-duration: 200ms; animation-timing-function: var(--ease-out); }
-  [data-vaul-overlay][data-slot="drawer-overlay"] { animation-duration: 250ms; animation-timing-function: var(--ease-drawer); }
-  [data-vaul-overlay][data-slot="drawer-overlay"][data-state="closed"] { animation-duration: 200ms; animation-timing-function: var(--ease-out); }
+  /* Vaul 1.1.2 (pinned) injects unlayered rules after this file: [data-vaul-drawer]{animation-duration:.5s},
+     [data-vaul-overlay][data-vaul-snap-points=false]{animation-duration:.5s}. These outrank them by
+     specificity (one more attribute each). Re-check on any Vaul upgrade; the guard test in drawer.test.tsx fails if
+     the attributes change. DESIGN.md → Motion. */
+  [data-vaul-drawer][data-slot="drawer-content"][data-state="open"] { animation-duration: 250ms !important; animation-timing-function: var(--ease-drawer) !important; }
+  [data-vaul-drawer][data-slot="drawer-content"][data-state="closed"] { animation-duration: 200ms !important; animation-timing-function: var(--ease-out) !important; }
+  [data-vaul-drawer][data-slot="drawer-content"][data-state="closed"][data-released] { animation-duration: 300ms !important; animation-timing-function: var(--ease-drawer) !important; } /* Q23 */
+  [data-vaul-overlay][data-slot="drawer-overlay"][data-state="open"] { animation-duration: 250ms !important; animation-timing-function: var(--ease-drawer) !important; }
+  [data-vaul-overlay][data-slot="drawer-overlay"][data-state="closed"] { animation-duration: 200ms !important; animation-timing-function: var(--ease-out) !important; }
   ```
-  Reduced motion: an unlayered `@media (prefers-reduced-motion: reduce)` rule sets `animation-name: of-fade-in` / `of-fade-out` on the drawer (opacity only). `data-instant`: `animation-duration: 0s` (§8.1) must also be unlayered for drawers.
-- Drag: Vaul's own 1:1 tracking, velocity dismissal (its threshold 0.4 px/ms) and 25% distance threshold. Its release snap-back is an inline 0.5s transition in its JS and stays (recorded in DESIGN.md as the accepted exception, Q11). Controls inside a drawer that must not start a drag get `data-vaul-no-drag`.
+  jsdom can't evaluate the cascade, so the manual 10%-speed check (§13) confirms the panel and scrim run together.
+- Reduced motion: no specificity contest. Vaul's slide keyframes animate from `var(--initial-transform, 100%)`, which its JS never sets; `@media (prefers-reduced-motion: reduce) { [data-vaul-drawer] { --initial-transform: 0px } }` turns the slide into a no-op (the keyframe still runs, so Presence still waits for it), and an inner wrapper of `DrawerContent` fades with `motion-reduce:animate-in motion-reduce:fade-in-0` / `motion-reduce:animate-out motion-reduce:fade-out-0`. Tested by class and variable presence.
+- Keyboard-opened drawers: the §8.1 stamp applies (`[data-instant] { animation: none }` in the base layer with `!important`; a layered `!important` beats Vaul's unlayered normal rules, so nothing more is needed).
+- Post-flick close (Q23): `onRelease` sets `data-released` on the content when a drag ends in a close, so that close runs 300ms on `--ease-drawer` instead of 200ms (a flick otherwise leaves ~5× faster than the finger). Vaul's other fixed 0.5s timers (`onAnimationEnd` cleanup, the 500ms drag lockout after open) stay; nothing in our code sequences on them.
+- Drag: Vaul's own 1:1 tracking. Its dismissal rule is not configurable: velocity measured as total distance over total drag time above 0.4 px/ms, or past 25% of the drawer's size; drags are ignored for 500ms after open. Its release snap-back is an inline 0.5s transition in its JS and stays (recorded in DESIGN.md as the accepted exception, Q11). Controls inside a drawer that must not start a drag get `data-vaul-no-drag`.
 - Interruptibility (Q11): open and close are keyframes, as with every Radix overlay; a scrim tap mid-open plays the exit from the end state. Drag is interruptible. Recorded in DESIGN.md with the reason.
-- Upgrade guard (Q11): the override block carries a comment naming the Vaul selectors it outranks (`[data-vaul-drawer]`, `[data-vaul-overlay]`) and the pinned version; a test renders an open `Drawer` and asserts the content still has `data-vaul-drawer` and `data-slot="drawer-content"` and that the injected Vaul stylesheet still contains `[data-vaul-drawer]` with `animation-duration:.5s`, so an upgrade that renames either fails CI.
-- Reduced motion (Q11): both the Radix sheet and the Vaul drawer drop the slide and keep a fade; tested for both (§13).
+- Upgrade guard (Q11): `drawer.test.tsx` renders an open `Drawer` and asserts the content has `data-vaul-drawer`, `data-slot="drawer-content"` and `data-state`, the overlay `data-vaul-overlay`, and that the injected Vaul `<style>` still contains `[data-vaul-drawer]{` with `animation-duration:.5s`, `[data-vaul-overlay][data-vaul-snap-points=false]{` and the `animation-name:slideFromBottom` / `slideFromLeft` rules keyed on `--initial-transform`; an upgrade that renames or re-scopes them fails CI. (Verified: Vaul's style lands in jsdom's `<head>`.)
 
 ### 5.5 `DropdownMenu` (`components/ui/dropdown-menu.tsx`)
 
 - Content and sub-content: `duration-100 ease-(--ease-out) data-closed:duration-75`, `fade-in-0 zoom-in-95` / `fade-out-0 zoom-out-95` only; remove every `data-[side=*]:slide-in-from-*-2`; keep `origin-(--radix-dropdown-menu-content-transform-origin)`; `motion-safe:` on the zoom (as `popover.tsx` does).
-- Remove `w-(--radix-dropdown-menu-trigger-width)` from the content base; call sites that relied on it (status and assignee menus in task detail, if any) set it explicitly. The plan lists them by grepping for `DropdownMenuContent`.
+- Remove `w-(--radix-dropdown-menu-trigger-width)` from the content base, which becomes `min-w-32 max-w-[min(var(--radix-dropdown-menu-content-available-width),20rem)]`; items wrap (`[overflow-wrap:anywhere]`). The task status and assignee menus (`tasks/assignee-menu.tsx:53` and the status menu) set the trigger width explicitly. A class test asserts the base `max-w-`.
+- Items: one floating-row height for menus and selects, 32px (`min-h-8 py-1.5`), `pointer-coarse:min-h-9`. Menu and select items show focus as the `accent` fill, not a ring: the one named exception to §6.1, because roving focus inside a list is a highlight.
 - Destructive items: every item that deletes, removes, revokes, disables, archives or terminates uses `variant="destructive"` and has a `DropdownMenuSeparator` above it. Known sites: `schedules/schedule-row.tsx:125` (Delete), `settings/credentials-section.tsx` (~523, Delete), `settings/projects-section.tsx` (~418, Remove), `settings/users-section.tsx` (~317, Disable); the plan re-greps.
 
 ### 5.6 `Tooltip` and `Popover`
 
 - `TooltipProvider`: `delayDuration = 400`, `skipDelayDuration = 300`.
-- `TooltipContent`: remove the four `slide-in-from-*-2`; `duration-100 ease-(--ease-out)`, closed `duration-75`; animate only on `data-[state=delayed-open]` (remove the `data-open:animate-in …` pair so `instant-open` never animates); keep `zoom-in-95` under `motion-safe:`.
+- `TooltipContent`: remove the four `slide-in-from-*-2`; `duration-100 ease-(--ease-out)`, closed `duration-75`; animate only on `data-[state=delayed-open]`; keep `zoom-in-95` under `motion-safe:`. The `data-open:animate-in …` pair is dead code (shadcn's `data-open:` matches only `data-state="open"`, which a tooltip never has) and is removed as cleanup; `instant-open` (neighbours, focus) already appears without animation.
 - `PopoverContent`: already right on timing; gains `data-closed:duration-75`, the `float-edge` border and loses `shadow-md`.
 
 ### 5.7 `AlertDialog` and `ConfirmDialog`
 
-- `alert-dialog.tsx:37,59`: content and overlay `duration-150 ease-(--ease-out)`, closed `duration-100`; content `motion-safe:zoom-in-[0.96]`, centered origin; `rounded-xl` → `rounded-lg` (6px, DESIGN.md Shapes); `float-edge` border.
-- `ConfirmDialog` (`components/confirm-dialog.tsx`) keeps its props and behaviour (pending holds it open, Cancel autofocus, inline error), so no caller changes (Q2). Its internals become adaptive: below 768px it renders `Drawer direction="bottom"` with `role="alertdialog"` on the content, `dismissible={!pending}`, outside taps ignored while pending, the title and body in the drawer header, the error line, then the destructive action full-width **last** and Cancel full-width above it (thumb reach). Title and body get `[overflow-wrap:anywhere]` (break-ui "Redesign 5": long names).
+- `alert-dialog.tsx:37,59`: content and overlay `duration-150 ease-(--ease-out)`, closed `duration-100`; content enters with `motion-safe:zoom-in-[0.96]` and fade, leaves with a plain 100ms fade (no zoom), centered origin; `rounded-xl` → `rounded-lg` (6px, DESIGN.md Shapes); `float-edge` border.
+- `ConfirmDialog` (`components/confirm-dialog.tsx`) keeps its props and behaviour (pending holds it open, Cancel autofocus, inline error), so no caller changes (Q2) except one: `pendingLabel` becomes **required** (Q16), and the seven callers without one get a present-participle label ("Terminating…", "Deleting…", "Disabling…", "Starting…", "Unpinning…"). Its internals become adaptive (chosen at open, §5.1): below md it renders `Drawer direction="bottom"` with `role="alertdialog"` on the content, `dismissible={!pending}`, outside taps ignored while pending; the drawer holds the title (header), the body and error line in a `DrawerBody` (`min-h-0 flex-1 overflow-y-auto`), then the footer: the destructive action full-width **first** and Cancel full-width **last**, at the bottom, focused on open (Q14: platform convention, the thumb rests on the safe action). On desktop the dialog is `sm:max-w-md`, `max-h-[calc(100svh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]` with the body scrolling and the footer pinned and `flex-wrap`. Buttons that carry a name may wrap (Q21): `whitespace-normal h-auto min-h-8 py-1.5 text-center [overflow-wrap:anywhere]`, never truncated. Title and body wrap with `[overflow-wrap:anywhere]` (break-ui "Redesign 5"). Tested with a 64-char secret name, a 40-char slug and 30 crons at 320×568 and at 1440×700 with 200% text (manual).
 - The spinner inside it is `<Spinner>` (§6.9).
 
 ### 5.8 Mobile navigation (Q2)
 
-`components/ui/sidebar.tsx`'s `isMobile` branch renders `Drawer direction="left"` in place of `Sheet`, keeping `data-sidebar="sidebar"`, `data-mobile="true"`, the sr-only title and description, and `openMobile` / `setOpenMobile`. ⌘B on mobile sets `data-instant` first, so it opens without animation (§8.1).
+`components/ui/sidebar.tsx`'s `isMobile` branch renders `Drawer direction="left"` in place of `Sheet`, keeping `data-sidebar="sidebar"`, `data-mobile="true"`, the sr-only title and description, and `openMobile` / `setOpenMobile`. The drawer is portaled outside the sidebar provider's wrapper, so it sets `--sidebar-width: 18rem` (`SIDEBAR_WIDTH_MOBILE`) inline and carries `bg-sidebar p-0 text-sidebar-foreground` itself. It opens from its button (or ⌘B), never by an edge swipe: the browser's back gesture owns the screen edge. ⌘B is keyboard-initiated, so it opens without animation (§8.1).
 
 ## 6. Controls
 
 ### 6.1 Focus ring (D5)
 
-One ring everywhere: the base-layer `:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }` (`styles.css`). Remove `focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50` from `button.tsx`, `input.tsx`, `textarea.tsx`, `checkbox.tsx`, and the `ring-2 ring-offset-2` from `native-select.tsx`; `has-[:focus-visible]:ring-2` on segmented labels becomes `has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring`. `outline-ring/50` in the base `*` rule is removed. Invalid state keeps `aria-invalid:border-destructive` only (no translucent halo). Increased contrast keeps its 3px ring.
+One ring everywhere: the base-layer `:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }` (`styles.css`). Every utility that suppresses or replaces it goes, because a utility beats the base layer (`outline-none` compiles to `outline-style: none` in `@layer utilities`; verified in Tailwind 4.3.5):
+
+- Primitives: remove `outline-none` and `focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50` from `button.tsx:7`, `input.tsx:10`, `textarea.tsx:9`, `checkbox.tsx:14`, `tabs.tsx:81`; remove `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2` from `native-select.tsx:8`; `outline-ring/50` in the base `*` rule goes.
+- Feature halos: remove the row-level `focus-visible:ring-3 … outline-none` at `agents/agent-tree.tsx:131`, `tasks/task-list.tsx:46`, `inbox/inbox-row.tsx:89`, `templates/template-list.tsx:48`, `templates/issue-list.tsx:60`, `usage/usage-tables.tsx:9,44`, `settings/usage-section.tsx:50`, `usage/usage-chart.tsx:121`, and `outline-hidden … focus-visible:ring-2` at `sidebar.tsx:409,429,474,561,674`. The plan re-greps all of `apps/web/src`.
+- Rows take the ring **inset**: `.of-row`, sidebar menu buttons and timeline rows use `outline-offset: -2px`, so the ring never spills over a divider or gets clipped by a scroller.
+- Segmented labels: `has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring`.
+- Exception: menu, select and (later) command items show focus as the `accent` fill (§5.5).
+- Invalid state keeps `aria-invalid:border-destructive` only (no translucent halo). Increased contrast keeps its 3px ring.
+- Test (§13): a source scan over all of `apps/web/src` (not only `components/ui`) fails on `ring-3`, `ring-ring/50`, `outline-none` and `outline-hidden` outside an allowlist of the menu/select item classes.
 
 ### 6.2 Heights
 
@@ -166,12 +187,13 @@ Controls are 32px (`h-8`) on fine pointers and 36px (`pointer-coarse:h-9`) on co
 
 ### 6.3 Button (`components/ui/button.tsx`) (Q6)
 
-- `default`: graphite, as today. Disabled: `disabled:bg-card disabled:text-muted-foreground disabled:border-input` with no opacity fade (never a faded graphite slab).
-- `outline` = the secondary style: `bg-card border-border hover:bg-muted`, dark `bg-card border-border`. Used for every standalone secondary action (Edit, Reply, Verify, Re-sync, Load earlier, Cancel in dialogs).
-- `ghost`: icon buttons and toolbar items only.
+- Disabled, all variants (Q17): one base style for both `disabled` and `aria-disabled="true"`: `bg-card border-border text-muted-foreground cursor-not-allowed`, no hover change, no press scale, no opacity fade (never a faded graphite slab, never heavier than an enabled outline button). The 20+ per-site `aria-disabled:opacity-50` patches (`confirm-dialog.tsx:80,87`, `settings/shared.tsx:279`, `settings/factory-section.tsx:230`, `agents/agent-form.tsx:554`, `templates/template-editor.tsx:438,463,532,674`, `templates.new.tsx:150`, `session/interrupt-button.tsx`, the recovery and agent-actions buttons; the plan re-greps) are deleted. A pending ConfirmDialog action keeps `aria-disabled` (so focus stays on it) but also carries `aria-busy="true"`, which exempts it from the disabled look: it stays destructive-styled with its spinner and pending label.
+- `default`: graphite, as today.
+- `outline` = the secondary style: `bg-card border-border hover:bg-muted`, dark `bg-card border-border`. Used for every standalone secondary action (Edit beside a title, Verify, Re-sync, Load earlier, Cancel in dialogs).
+- `ghost`: icon buttons, toolbar items, and actions repeated on every item of a list (Reply on each comment).
 - `destructive`: crimson text on a crimson 10% tint, as today.
 - `secondary` variant: removed (no call site uses it).
-- The plan audits the 78 `variant="ghost"` call sites: a button with a visible text label that is not in a toolbar becomes `outline`.
+- The plan audits the 78 `variant="ghost"` call sites: a **standalone** button with a visible text label that is not in a toolbar becomes `outline`. Repeated per-item actions (Reply on every comment card, per-row actions) stay ghost (Q17), so a thread isn't a column of boxes.
 
 ### 6.4 Input and Textarea
 
@@ -179,7 +201,7 @@ Controls are 32px (`h-8`) on fine pointers and 36px (`pointer-coarse:h-9`) on co
 
 ### 6.5 Select (`components/ui/select.tsx`, new) (Q12)
 
-Radix `Select` from `radix-ui`: `Select`, `SelectTrigger` (§6.2 height, `bg-card border-input`, chevron `ink-muted`), `SelectContent` (`position="popper"`, `min-w-(--radix-select-trigger-width)`, §5.2 look, §5.5 timings, `origin-(--radix-select-content-transform-origin)`), `SelectItem` (32px, graphite check), `SelectGroup`, `SelectLabel`, `SelectSeparator`. Radix forbids `""` as an item value: call sites with an "Any"/"All" option use a sentinel (`"__all"`) mapped at the boundary.
+Radix `Select` from `radix-ui`: `Select`, `SelectTrigger` (§6.2 height, `bg-card border-input`, chevron `ink-muted`), `SelectContent` (`position="popper"`, `min-w-(--radix-select-trigger-width)`, §5.2 look, §5.5 timings, `origin-(--radix-select-content-transform-origin)`), `SelectItem` (32px, graphite check), `SelectGroup`, `SelectLabel`, `SelectSeparator`. Content: `max-w-(--radix-select-content-available-width) max-h-(--radix-select-content-available-height)` with Radix's scroll buttons; items `min-h-8 py-1.5` and wrap. Trigger: `min-w-0`, the value truncates (with `title`), chevron `shrink-0`. Agent options set `textValue` to the slug so typeahead works despite "@" labels; the closed manager picker shows the name and a muted `@slug` as two spans so the slug truncates first. With 200+ agents a Select is still a long list: the cmdk follow-up (§14) covers agent pickers too. Radix forbids `""` as an item value: call sites with an "Any"/"All" option use a sentinel (`"__all"`) mapped at the boundary.
 
 Replaces `NativeSelect` in `tasks/task-filters.tsx`, `tasks/agent-picker.tsx`, `tasks/link-editor.tsx`, `agents/agent-form.tsx`, `schedules/schedule-filters.tsx`. `schedules/timezone-select.tsx` keeps a native `<select>` (≈400 zones; typeahead without search is worse) restyled to the shared height, fill, edge and ring; `NativeSelect` stays for that one use; a follow-up issue (§14) replaces it with the cmdk combobox when U2 adds cmdk. The manager picker in `agent-form.tsx` caps its indent at 3 levels and prefixes deeper levels with `└ ` (break M2 quick fix); the closed trigger shows the name without indentation.
 
@@ -191,43 +213,65 @@ Replaces `NativeSelect` in `tasks/task-filters.tsx`, `tasks/agent-picker.tsx`, `
 
 ### 6.7 SegmentedControl (`components/ui/segmented-control.tsx`, new)
 
-A `fieldset` of sr-only native radios with styled labels (the pattern `agents.index.tsx:172` and `usage/range-filter.tsx:19` already use, so arrow keys and form semantics come free). Track `bg-muted rounded-lg p-0.5`; segment `rounded-md px-2.5 text-[0.8125rem] text-muted-foreground`, selected `bg-card text-foreground border border-border`; `transition-[background-color,color] duration-150 ease-(--ease-out)`; sizes `sm` (h-7, filters) and `default` (h-8). Props: `legend` (sr-only), `name`, `value`, `options: {value, label}[]`, `onChange`. Replaces `agents.index.tsx:172`, `usage/range-filter.tsx:19`, `schedules/when-field.tsx:31-46`.
+A `fieldset` of sr-only native radios with styled labels (the pattern `agents.index.tsx:172` and `usage/range-filter.tsx:19` already use, so arrow keys and form semantics come free).
+
+- Track: `inline-flex rounded-lg bg-muted p-0.5`, height on the track: `h-8` (default) or `h-7` (`sm`, header filter bars only), both `pointer-coarse:h-9`. In dark mode the track is the ground (`dark:bg-background`), so the selected plate still steps lighter.
+- Segment: `h-full rounded-md border border-transparent px-2.5 text-sm text-muted-foreground`; selected `bg-card text-foreground border-border` (dark: `dark:bg-accent`); `transition-[background-color,color,border-color] duration-150 ease-(--ease-out)`. Unselected segments keep a transparent border so selection never shifts labels.
+- Props: `legend` and `legendVisible?` (`when-field` shows its "When" legend), `name`, `value`, `options: { value: string | number; label: ReactNode }[]`, `onChange(value)`; `range-filter` passes numbers (`UsageDays`).
+- `min-w-0 max-w-full`, labels `whitespace-nowrap`, a `block` prop for full width (`when-field`). Only for 2–4 short fixed labels; options from data, or more than 4, use a Select.
+- Replaces `agents.index.tsx:172`, `usage/range-filter.tsx:19`, `schedules/when-field.tsx:31-46`. The `Tabs` active trigger (`tabs.tsx:63-65`) takes the same selected look (no shadow).
 
 ### 6.8 Row hover and press
 
-A `.of-row` class in `@layer components`: `transition: background-color 150ms var(--ease-out)`; `@media (hover: hover) { .of-row:hover { background: var(--sidebar-accent) } }`; `.of-row:active { background: color-mix(in oklch, var(--sidebar-accent), var(--foreground) 6%) }`. No scale on full-width rows. Applied to `agents/agent-tree.tsx:131`, `tasks/task-list.tsx:46`, `inbox/inbox-row.tsx:89` (their `hover:bg-sidebar-accent` removed).
+A `.of-row` class in `@layer components`, one token, `--accent` (DESIGN.md's `steel-hover`, the same fill menus use):
+
+- `transition: background-color 150ms var(--ease-out)`.
+- `@media (hover: hover) and (pointer: fine) { .of-row:hover { background: var(--accent) } }`.
+- `.of-row:active { background: color-mix(in oklch, var(--accent), var(--foreground) 6%); transition-duration: 0ms }`: the press lands at once, the release eases back.
+- `@media (pointer: coarse) { .of-row:active { transition-delay: 80ms } }`, so a touch that starts a scroll doesn't flash the row.
+- Focus: the inset ring (§6.1). No scale on full-width rows.
+- Applied to `agents/agent-tree.tsx:131`, `tasks/task-list.tsx:46`, `inbox/inbox-row.tsx:89` (their `hover:bg-sidebar-accent` removed) and the Home agents rows (§7.1).
 
 ### 6.9 Spinner and Skeleton
 
-- `components/ui/spinner.tsx` (new): `Loader2`, `aria-hidden`, `motion-safe:animate-spin`, `size` `"text"` (3.5) or `"button"` (4). Static under reduced motion. Replaces bare `animate-spin` in `templates/template-editor.tsx:468,629`, `components/confirm-dialog.tsx:90`, `components/auth-card.tsx:46`, `routes/_app/templates.new.tsx:151`.
+- `components/ui/spinner.tsx` (new): `Loader2`, `aria-hidden`, `motion-safe:animate-spin`, `size` `"text"` (3.5) or `"button"` (4). Static under reduced motion (Q16, certainty 2: Or may prefer it keeps turning); a spinner always sits next to a pending label, which is what shows progress: ConfirmDialog's `pendingLabel` is required (§5.7) and template Save reads "Saving…" while pending. Replaces bare `animate-spin` in `templates/template-editor.tsx:468,629`, `components/confirm-dialog.tsx:90`, `components/auth-card.tsx:46`, `routes/_app/templates.new.tsx:151`.
 - `Skeleton`: static `bg-muted` plate; `animate-pulse` removed (DESIGN.md: skeletons are static plates, the loading mark is the only authored animation).
 
 ### 6.10 Type scale (decision 14, Q5)
 
-- Detail title (task, template, schedule): Archivo 20/28 (`text-[1.25rem] leading-[1.75rem]`), weight 650, tracking −0.015em. Applies at `tasks/task-detail.tsx:299` and the template and schedule detail titles (the plan locates them).
+- Detail title: the **task** title (`tasks/task-detail.tsx:299`) becomes Archivo 20/28 (`text-[1.25rem] leading-[1.75rem]`), weight 650, tracking −0.015em. Template and schedule pages have no in-body title (their title is the 16/20 PageHeader h1: `templates/template-editor.tsx:524`, `schedules/schedule-edit.tsx:126`), so they don't change.
 - Inside detail bodies and comments (task body, comments, timeline messages), markdown headings drop one step: h1 17, h2 15, h3 14, all 650. Implemented as a `.prose-of-detail` modifier on `Markdown`'s wrapper via a `variant="detail"` prop; standalone markdown (template README views) keeps 20/17/15.
-- Reading prose stays 14/22 (Q5). **Deferred to U3:** U3 decides the reading size (taste's 15/24) together with the timeline tiers; recorded in DESIGN.md and as a follow-up issue so it isn't lost.
+- Heading tracking (Q20): −0.015em at 20px, −0.01em at 15–17px, 0 at 14px (the demoted h3 included).
+- Reading prose stays 14/22 (Q5). **Deferred to U3:** U3 decides the reading size (taste's 15/24) together with the timeline tiers, and re-derives the demoted heading sizes with it (a 15px body would equal the h2); recorded in DESIGN.md and as a follow-up issue so it isn't lost.
 - The PR carries before/after screenshots of a task detail (Q5 is certainty 3; Or may retune the values).
 
 ## 7. Bugs and quick fixes
 
-### 7.1 Home Agents panel (Q10)
+### 7.1 Home Agents panel (Q10, Q15)
 
-`routes/_app/index.tsx:23`: the panel renders `HomeAgents` (new, `features/agents/home-agents.tsx`): up to 8 persistent, non-archived agents from the agents list query, taken from the existing agents list query (no new endpoint or field, Q10), ordered by the status it already carries: working → needs attention (errored, stuck, rate-limited, restart pending) → everything else (idle, queued, hibernated), then by display name; each row is a link to the agent's live session `/agents/$slug` with the existing `StatusBadge` indicator (tooth or dot plus its label for screen readers; never colour alone) and the display name (truncating, `title` with the full name), `.of-row`. Loading: three static skeleton rows. Empty: "No agents yet." plus a `Link` "New agent" to `/agents/new`. More than 8: a last line "+N more" linking `/agents`, so the panel never looks complete when it isn't.
+`routes/_app/index.tsx:23`: the panel renders `HomeAgents` (new, `features/agents/home-agents.tsx`):
+
+- Data: the existing agents list query; no new endpoint or field (Q10).
+- Which and in what order (Q15): persistent, non-archived agents; **needs attention** first (errored, stuck, rate-limited, restart pending), then **working**, then the rest (idle, queued, hibernated); within a group by display name, then slug (names aren't unique). Up to 8.
+- Stable under the pointer (Q15): while the pointer is over the panel or focus is inside it, the displayed order is frozen (status changes update rows in place); the new order applies on `pointerleave`/`focusout`, with no animation. Implemented by holding the last order in state and recomputing only when the panel isn't engaged. Tested.
+- Row: a link to the agent's live session `/agents/$slug`, `.of-row`: the `StatusBadge` with its **visible** short label (never colour alone; stuck and restart-pending show their own label, not idle's), the display name (truncating, `title` with the full name), a muted `@slug` that truncates first.
+- States: loading, three static skeleton rows; error, "Couldn't load agents."; empty, "No agents yet." plus a "New agent" link to `/agents/new`.
+- Overflow: when the cap cuts rows, a last line "All N agents" links `/agents`, so the panel never looks complete when it isn't.
+- Home's inbox row timestamp running past the card edge at 390 (`inbox/inbox-row.tsx:137`, `home--lively--390.png`): the row grid becomes `grid-cols-[minmax(0,1fr)_auto]`.
 
 ### 7.2 Overflow (break H1, H2)
 
-- `.prose-of :is(p, li, td, th, a, blockquote, :not(pre) > code) { overflow-wrap: anywhere }` in `styles.css`; `pre` and `.md-table` keep their own scroll.
+- `.prose-of :is(p, li, blockquote) { overflow-wrap: anywhere }` and `.prose-of :is(a, :not(pre) > code):not(td *, th *) { overflow-wrap: anywhere }` in `styles.css`; table cells get `overflow-wrap: break-word` only, because `anywhere` lowers a cell's min-content width so the table squeezes its columns (breaking "in_prog/ress") instead of overflowing into `.md-table`'s own scroll. `pre` and `.md-table` keep their own scroll. The §2.2 manual check adds a 4-column table at 390px.
 - `tasks/task-detail.tsx:202`: base `grid-cols-[minmax(0,1fr)]`; `min-w-0` on every direct grid child and the aside's children (`:204-211`, `:213`); `flex-1` on the title `h2` (`:299`); rail `lg:grid-cols-[minmax(0,1fr)_minmax(14rem,17.5rem)]` so 200% text doesn't starve the main column.
 - `session/timeline.tsx:202`: the log gets `min-w-0`, and each row wrap `min-w-0` so no row widens the scroller.
 
 ### 7.3 Page header (break H3, M7)
 
-`components/page-header.tsx`: the h1 is always `min-w-0 truncate` (not only with a custom heading); `meta` wrapper `shrink-0`; `actions` wrapper `ml-auto shrink-0`. `routes/_app/templates.index.tsx:29-41`: below `sm` the actions are icon buttons with `aria-label` and a tooltip (as Tasks' "+"); row metadata wraps (`flex-wrap min-w-0`).
+`components/page-header.tsx` (Q22): the header is an `@container`, and things give way in this order: (1) a mono slug or name inside `meta` truncates first (with `title`) and hides below a 32rem header width (`@max-[32rem]:hidden`); (2) a data-driven h1 (agent or task name) truncates down to a `min-w-16` floor (with `title`); (3) the status badge (`shrink-0 whitespace-nowrap`), a static h1 ("Templates") and the actions (`ml-auto shrink-0`) never shrink. The `meta` wrapper itself is `min-w-0`. Manual check: template header at 390 and at 768 with the sidebar open, Agents at 320, a session with an 80-char name at 390 and 1024. `routes/_app/templates.index.tsx:29-41`: below `sm` "+ New template" shortens to "+ New" (a visible label, because Radix tooltips don't open on touch) and the "Images" in-page link is hidden (the section is on the same page, below); row metadata wraps (`flex-wrap min-w-0`).
 
 ### 7.4 Loading mark (motion H1, L4)
 
-Move `.of-ignite` and its `@keyframes` into `@layer components` so the base-layer reduced-motion override applies. New keyframes: `0% { clip-path: inset(0 100% 0 0); opacity: 1 } 60% { clip-path: inset(0) } 85% { opacity: 1 } 100% { clip-path: inset(0); opacity: 0 }` (light, rest, dim, relight). Reduced motion: lit and still.
+The bug: `.of-ignite` (`styles.css:258-261`) is unlayered and beats the base-layer reduced-motion override (`:464`); moving it into a layer is not enough (Tailwind 4 orders `theme, base, components, utilities`). Fix, with no override at all: `.of-ignite { clip-path: inset(0) }` is the still, lit default, and the animation exists only inside `@media (prefers-reduced-motion: no-preference) { .of-ignite { animation: of-ignite 1.2s var(--ease-out) infinite } }`; the base-layer `.of-ignite { animation: none }` is deleted. New keyframes: `0% { clip-path: inset(0 100% 0 0); opacity: 1 } 60% { clip-path: inset(0) } 85% { opacity: 1 } 100% { clip-path: inset(0); opacity: 0 }` (light, rest, dim, relight). Test: the stylesheet declares the `of-ignite` animation only inside the `no-preference` media block.
 
 ### 7.5 Interrupt glyph (emil M5)
 
@@ -240,18 +284,23 @@ Move `.of-ignite` and its `@keyframes` into `@layer components` so the base-laye
 ### 7.7 Composer copy and errors (taste T-H4/T-L2, break M3, Q13)
 
 - `session/composer.tsx:204-213`: the button reads "Send urgent" only when `urgent && agent.turnOpen`, else "Send"; the hint shows only when `urgent && agent.turnOpen` ("Interrupts the current turn, then runs next."). The checkbox stays.
-- Before posting, the composer checks the same limit the server enforces, from one source: `MAX_BODY_BYTES` exported by `packages/shared/src/agents.ts` (used by `sendMessageBodySchema`), `new TextEncoder().encode(text.trim()).length > MAX_BODY_BYTES` → no request; inline error "This message is {n} KB. The limit is 64 KB." (`n` rounded up). The draft stays.
+- The label swap and the hint must not move the layout when `turnOpen` flips by itself: both labels are stacked in one grid cell (the inactive one `invisible`), and the hint line is reserved (empty, same height) while Urgent is checked.
+- Before posting, the composer checks the same limit the server enforces, from one source: `MAX_BODY_BYTES` exported by `packages/shared/src/agents.ts` (used by `sendMessageBodySchema`), `new TextEncoder().encode(text.trim()).length > MAX_BODY_BYTES` → no request; inline error "This message is {n} KB; the limit is 64 KB. Shorten it to send." with `n = Math.ceil(bytes / 1024)`. The draft stays.
 - `apps/server/src/errors.ts:39`, once at the error boundary so every validation error benefits (Q13): `message` is the first issue's `issue.message` (the schemas already write them as sentences, e.g. "Message is larger than 64 KB"), falling back to "Invalid request", never `err.message` (which carries the instance path, `body/body …`). `fields` unchanged. Server test covers a body-schema and a params-schema failure.
 
 ### 7.8 Send keys (decision 15, D1)
 
-One helper, `lib/send-key.ts`: `isSendKey(e)` is true for Enter without Shift (or with ⌘/Ctrl), false while composing (`isComposing` or `keyCode 229`), false for plain Enter on a coarse pointer (⌘/Ctrl+Enter still sends there). Used by `session/composer.tsx:150-156` and `tasks/comment-composer.tsx:113`. The comment helper line names the keys ("Enter to post, Shift+Enter for a new line").
+One helper, `lib/send-key.ts`: `isSendKey(e)` is true for Enter without Shift (or with ⌘/Ctrl), false while composing (`isComposing` or `keyCode 229`), false for plain Enter on a coarse pointer (⌘/Ctrl+Enter still sends there). Used by `session/composer.tsx:150-156` and `tasks/comment-composer.tsx:113`. On fine pointers only, the comment helper line ends with "Enter to post." (merged into the existing "Goes to @… and anyone you @mention." line, not a second line); on touch, where Enter adds a line, nothing is added.
 
 ## 8. Motion polish (U1 #15)
 
 ### 8.1 Keyboard rule (motion L3)
 
-`:root[data-instant] *` also sets `animation-duration: 0s !important` (in the base layer), and the unlayered Vaul block repeats it for `[data-vaul-drawer]` and `[data-vaul-overlay]`.
+Today only ⌘B sets `data-instant` (on `<html>`, for one frame: `sidebar.tsx:104-107`), and it zeroes transitions only. Two changes:
+
+- **Overlays stamp themselves.** `lib/input-modality.ts` records the last input modality with capture-phase `keydown` and `pointerdown` listeners on `document` (installed once in `main.tsx`). Every overlay content (dropdown, popover, select, alert dialog, sheet, drawer) reads it once when it opens; if the opening was keyboard-initiated it renders with `data-instant` on itself and on its scrim for that whole opening. The base layer gets `[data-instant], [data-instant] * { animation: none !important; transition-duration: 0s !important }`: no flag is removed mid-animation, so nothing replays or freezes. Esc-close of a keyboard-opened overlay is instant too, since the stamp lasts until unmount.
+- **The global flag stays for transitions.** `runInstant(fn)` is extracted from `sidebar.tsx:104` into `lib/run-instant.ts` (sets `data-instant` on `<html>` for one frame) and keeps serving ⌘B's sidebar collapse and the Enter-toggled chevrons (§8.4). It also zeroes `animation-duration` now (motion L3), which matters only for the ⌘B mobile drawer; that drawer also gets the per-overlay stamp, so the global flag never has to cover a running keyframe.
+- Tests: open a menu with Enter and assert `data-instant` on its content; open it with a click and assert it is absent.
 
 ### 8.2 Pending screen (motion L5, emil H1)
 
@@ -274,15 +323,16 @@ Remove `transition-[width,height,padding]` from `sidebarMenuButtonVariants` (`si
 Goal: work per WebSocket frame is proportional to what changed, not to the session's length.
 
 1. **Events memo.** `use-session.ts:118`: `useMemo(() => eventsInOrder(state.events), [state.events])` (`eventsInOrder` takes the map). An `agent_status` or `queue` frame keeps `state.events`' identity, so `events`, `rows`, `failedIds` and `interruptedEnds` aren't rebuilt.
-2. **Stable rows.** `rows.ts` gets `stabilizeRows(prev: Row[], next: Row[]): Row[]`: for each next row, if the previous build had a row with the same `key` whose fields are all reference-equal (event objects are immutable and keep identity in the map) and whose `children` stabilize to the same array, the previous object is reused. `use-session` keeps the previous rows in a ref. The same for `failedIds` and `interruptedEnds`: the previous `Set` is returned when its contents are equal.
-3. **Memoized items.** `timeline.tsx` renders each row through `TimelineItem = memo(...)`, which owns the wrap `div`, `TimelineRow` and `CopyLink`. Props are stable: `toggle` and the row focus handler are `useCallback`s; `rowProps` is replaced by `tabKey` plus a stable `onRowFocus(key)`; `lit` is a boolean. The comparator compares `row` by identity and, for the row and its descendant keys, `expanded.has(k)`, `tabKey === k`, and the row's own entries of `failedIds` and `interruptedEnds`, so toggling one tool row re-renders only that row. `TimelineRow` itself is unchanged apart from receiving those props.
-4. **Markdown.** `components/markdown/markdown.tsx`: `const REMARK_PLUGINS = [remarkGfm]` at module scope; `export const Markdown = memo(function Markdown(...))` (props: `source`, `variant`).
-5. **One commit per frame.** `use-session.ts`: the WS listener ignores frames for other agents (they never touch this state), pushes this agent's frames into a ref queue and schedules one flush with `requestAnimationFrame` (a `setTimeout(…, 100)` while `document.hidden`, since rAF pauses in background tabs); the flush dispatches `{ type: "frames", messages }`, which the reducer folds with the existing `frame` case. Pending frames flush synchronously before a `loaded`/`earlier` dispatch is processed (the queue is drained first), and the scheduled callback is cancelled on unmount or slug change.
-6. **Tabindex pass.** `timeline.tsx:162-179`: the `MutationObserver` handles only `addedNodes` subtrees; the full pass runs on mount and when `tabKey` changes.
+2. **Cheaper reducer.** `session-state.ts:47-51` copies the whole map per event and `:103-104` re-sorts all events per change. The `frames` fold (step 6) copies the map once per batch, and `eventsInOrder` becomes incremental: the hook keeps the previous ordered array and, when every new seq is above the previous maximum (the live case), appends instead of re-sorting; any other change (Load earlier, resync, a load) sorts once.
+3. **Stable rows.** `rows.ts` gets `stabilizeRows(prev: Row[], next: Row[]): Row[]`: for each next row, the previous object with the same `key` is reused when every field is equal, comparing event objects by reference (they are immutable and keep identity in the map), arrays element by element (`update_group.envelopes` is rebuilt on every build, `rows.ts:157-158`), plain objects shallowly (the tool row's `truncated`, `rows.ts:231-235`), and `children` recursively (reused when every child is reused and the length matches). `use-session` keeps the previous rows in a ref. `failedIds` and `interruptedEnds` return the previous `Set` when their contents are equal.
+4. **Memoized items.** `timeline.tsx` renders each row through `TimelineItem = memo(...)`, which owns the wrap `div`, `TimelineRow` and `CopyLink`. Props: `row`, `slug`, `spawned`, `lit` (boolean), `firstOfSeq` (boolean: whether the wrapper carries `id="event-<seq>"`, which today depends on the previous row, `timeline.tsx:224`), `tabKey`, `expanded`, `failedIds`, `interruptedEnds`, and stable callbacks (`toggle` and `onRowFocus(key)` are `useCallback`s; `rowProps` is replaced by `tabKey` plus `onRowFocus`). The comparator compares `row` by identity, the scalar props by value, and, for the row **and all its descendants**, `expanded.has(k)`, `tabKey === k`, `failedIds` membership of their message ids, and `interruptedEnds` membership of their seqs. So toggling one tool row, or moving focus, re-renders only the rows involved. `TimelineRow` itself is unchanged apart from receiving those props.
+5. **Markdown.** `components/markdown/markdown.tsx`: `const REMARK_PLUGINS = [remarkGfm]` at module scope; `export const Markdown = memo(function Markdown(...))` (props: `source`, `variant`).
+6. **One commit per frame.** `use-session.ts`: the WS listener ignores frames for other agents (they never touch this state), pushes this agent's frames into a ref queue and schedules one flush with `requestAnimationFrame` (a `setTimeout(…, 100)` while `document.hidden`, since rAF pauses in background tabs); the flush dispatches `{ type: "frames", messages }`, which the reducer folds with the existing `frame` logic. Before **any** local dispatch (`loaded`, `earlier`, `queued`, `agent`, `reset`) the queue is flushed synchronously first, so order is preserved. The scheduled callback is cancelled on unmount and on slug change.
+7. **Tabindex pass.** `timeline.tsx:162-179`: the `MutationObserver` handles only `addedNodes` subtrees; the full pass runs on mount and when `tabKey` changes.
 
-Tests (§13) count renders with a `vi.mock` of `Markdown` and of `TimelineRow` wrapped in counters.
+Tests (§13) count renders with a `vi.mock` of `Markdown` and of `TimelineRow` wrapped in counters, including positive cases (a tool result arriving re-renders exactly that tool row; a `delivery_failed` re-renders exactly the affected message row).
 
-Virtualization is out (Q4): follow-up issue, decided by the recording in §2.7.
+Virtualization is out (Q4): follow-up issue with its trigger, decided by the recording in §2.7.
 
 ## 10. Data layer (PR #76 follow-ups, decision 15)
 
@@ -296,11 +346,11 @@ export function shouldRetry(count: number, error: unknown): boolean
 export function createQueryClient(overrides?: DefaultOptions): QueryClient
 // queries: { staleTime: 30_000, retry: shouldRetry, ...overrides?.queries }
 ```
-`main.tsx` and `test/render-app.tsx` both call it; tests pass `{ queries: { retry: false } }`. `ZodError` is zod v4's classic `ZodError` (what `schema.parse` throws in `apiFetch`). Unit tests for `shouldRetry` and the default `staleTime`.
+`main.tsx` and `test/render-app.tsx` both call it; tests pass `{ queries: { retry: false } }` and nothing else, so integration tests now run with the production `staleTime: 30_000`. Tests that break because of it are fixed by asserting the real behaviour (e.g. invalidating explicitly), never by overriding `staleTime` back to 0. `ZodError` is zod v4's classic `ZodError` (what `schema.parse` throws in `apiFetch`). Unit tests for `shouldRetry` and the default `staleTime`.
 
 ### 10.2 Preload-aware loaders (R2)
 
-`routes/_app/tasks.$key.tsx:15`, `schedules.$key.tsx:11`, `templates.$name.tsx:13`: `loader: ({ context, params, preload }) => preload ? qc.ensureQueryData(opts) : qc.fetchQuery({ ...opts, staleTime: 0 })`, with the existing `notFound` mapping in both branches. Test: a preload followed by navigation sends one request when the preload's data is under the query's fresh window. (Note: with `staleTime: 0` on navigation a click shortly after a hover still refetches; to make the click reuse the hover's fetch, the navigation branch uses `staleTime: 5_000` (pr76 R2 option 2). The spec takes `5_000`.)
+`routes/_app/tasks.$key.tsx:15`, `schedules.$key.tsx:11`, `templates.$name.tsx:13`: `loader: ({ context, params, preload }) => preload ? qc.ensureQueryData(opts) : qc.fetchQuery({ ...opts, staleTime: 5_000 })`, with the existing `notFound` mapping in both branches: a click within 5s of the hover reuses the hover's fetch (pr76 R2 option 2), an older one refetches. Test (tasks and schedules): hover then click sends one detail request. Templates are exempt from that count: `TemplatePage`'s `useQuery(templateQueryOptions)` keeps `staleTime: 0` on purpose (the editor needs a current `baseHash`, `templates/api.ts:29`), so a navigation fetches in the loader and again on mount, as today; the preload branch still stops the hover from fetching twice.
 
 ### 10.3 Task save race (R3)
 
@@ -315,9 +365,9 @@ export function createQueryClient(overrides?: DefaultOptions): QueryClient
 
 1. `schedules/schedule-form.tsx:117-127`: functional `setV`; the preview computed from the same merge helper.
 2. `components/markdown/code-block.tsx:20-27`: keep the previous HTML only while the language is unchanged; on a language change render the new code as plain text until its highlight resolves; update `code-block.test.tsx`.
-3. `components/markdown/highlight.ts:96`: `console` → `shellsession`; add aliases `ps1`/`powershell`, `hcl`/`terraform`, `proto`, `env` → `dotenv`, each verified to load under the JS regex engine.
-4. `highlight.ts:143`: attach `.catch` once, inside the `??=` branch.
-5. `hooks/use-mobile.ts:15`: one module-level `MediaQueryList`, created lazily; `getServerSnapshot` removed.
+3. `components/markdown/highlight.ts:50`: `console` → `shellsession`; add aliases `ps1`/`powershell`, `hcl`/`terraform`, `proto`, `env` → `dotenv`, each verified to load under the JS regex engine.
+4. `highlight.ts:97`: attach `.catch` once, inside the `??=` branch.
+5. `hooks/use-mobile.ts:15`: cache the `MediaQueryList` per `window.matchMedia` function identity (re-created when a test installs a new fake `matchMedia`), so `test/use-mobile.test.ts` and the desktop/mobile overlay tests keep working; `getServerSnapshot` removed.
 6. `tasks/task-detail.tsx:651-652`: Save in the link editor disabled until the agent lists are known; the lists prefetch when Edit is clicked.
 7. `tasks/task-detail.tsx:222`: `CommentComposer` gets the route's `taskKey` (one source).
 8. `agents/agent-form.tsx:176-184`: `slow` derived as `pending && pluginCount > 0 && timerFired`, no state reset in an effect.
@@ -325,8 +375,10 @@ export function createQueryClient(overrides?: DefaultOptions): QueryClient
 
 ## 11. Perceived speed (U1 #16, Q3)
 
-- **Detail placeholders.** The session header and strip render from the agents-list cache (`AgentSummary` is the same type in the list and in `AgentDetail.agent`) while `useSession` loads; the task detail header renders the `TaskSummary` from the tasks-list cache (key, title, status, assignee) while the detail loads, via `placeholderData` that fills only the summary fields and renders the body area as a static skeleton.
-- **Static skeletons** replace `return null` at `routes/_app/agents.index.tsx:124,151` (rows at the real row height).
+- **Loaders don't block on cached summaries.** Today the session loader awaits `ensureQueryData(agentDetail)` (`agents.$slug.tsx:16`) and the task loader awaits `fetchQuery` (`tasks.$key.tsx:15`), so a page only renders once its detail is in, and after 400ms the user sees `AppPending` even when the list already knows the name and status. Change: when the list cache holds the summary (`AgentSummary` in `["agents", …]`, `TaskSummary` in the tasks list), the loader starts the fetch without awaiting it (`void qc.prefetchQuery(opts)`, the R2 branch otherwise unchanged); it awaits only when nothing is cached, which keeps the `notFound` mapping for unknown keys. The page maps a later `*_not_found` error to `ResourceNotFound` itself.
+- **Session:** the header and strip render from `state.agent ?? summaryFromListCache(slug)` while `useSession` loads; the timeline area shows static skeleton rows.
+- **Task detail:** `useQuery(taskDetailOptions)` gets `placeholderData` built from the `TaskSummary` (key, title, status, assignee); the body and activity areas render static skeleton plates until the real detail arrives (`isPlaceholderData`), and nothing editable is enabled from placeholder data.
+- **Static skeletons** replace `return null` while loading at `routes/_app/agents.index.tsx:124` (`EmptyAgents`, a one-line plate at the line's height). `:151` (`RunningCount`) stays: it is a trailing inline count with no layout to hold.
 - **AppPending inside the shell:** §8.2.
 - **Optimistic single-field saves:** follow-up issue (Q3).
 
@@ -350,7 +402,7 @@ Exact text for the dev to apply. Section names refer to DESIGN.md as of `322075d
 
 ### 12.4 Typography → Hierarchy (table rows)
 
-Add after "Page title": `| Detail title (task, template, schedule) | Archivo | 20 / 28 | 650 |`. Replace the markdown row with: `| Markdown h1 / h2 / h3 | Archivo | 20 / 17 / 15 (in a detail body or comment: 17 / 15 / 14) | 650 |`. After the table: "Reading prose stays 14/22 for now; the reading size of the timeline, task bodies and comments is decided with U3's timeline tiers." Add under Named Rules: "**A document never outranks its title.** Inside a detail body or a comment, markdown headings drop one step. Tracking is −0.015em at 20px."
+Add after "Page title": `| Detail title (task, template, schedule) | Archivo | 20 / 28 | 650 |`. Replace the markdown row with: `| Markdown h1 / h2 / h3 | Archivo | 20 / 17 / 15 (in a detail body or comment: 17 / 15 / 14) | 650 |`. After the table: "Reading prose stays 14/22 for now; the reading size of the timeline, task bodies and comments is decided with U3's timeline tiers." Add under Named Rules: "**A document never outranks its title.** Inside a detail body or a comment, markdown headings drop one step." Replace "Tracking scales with size. Headings are tightened (−0.01em)." with "**Tracking scales with size.** −0.015em at 20px and above, −0.01em at 15–17px, 0 at 14px and below (Body, labels and a demoted h3)." (Q20)
 
 ### 12.5 Elevation & Depth (replace the paragraph)
 
@@ -358,9 +410,9 @@ Add after "Page title": `| Detail title (task, template, schedule) | Archivo | 2
 
 ### 12.6 Components (new bullets and replacements)
 
-- **Buttons** (replace): "Primary is a graphite fill with steel text (inverted in dark mode); disabled, it becomes a plate with a field-edge border and muted text, never a faded fill. Secondary is `outline`: a plate with a rule edge, for every standalone secondary action. Ghost is only for icon buttons and toolbar items. Danger uses crimson. Buttons name their action. Controls are 32px tall on fine pointers and 36px on touch."
+- **Buttons** (replace): "Primary is a graphite fill with steel text (inverted in dark mode); disabled (any variant), a button becomes a plate with a rule border and muted text, never a faded fill and never heavier than an enabled button. Secondary is `outline`: a plate with a rule edge, for every standalone secondary action. Ghost is for icon buttons, toolbar items and actions repeated on every item of a list (Reply on each comment). Danger uses crimson. Buttons name their action. Controls are 32px tall on fine pointers and 36px on touch."
 - **Form controls** (new): "Select, radio, checkbox, segmented control and inputs share one height, one plate fill, the `field-edge` boundary and one focus ring (2px signal, offset 2px). Checked boxes and radios are graphite. A segmented control is a steel-deep track whose selected segment is a raised plate. Native selects are used only where search beats a list (the timezone picker)."
-- **Rows** (new): "Linked rows take the `steel-hover` fill on hover (fine pointers only, 150ms colour) and a 6% deeper fill while pressed. Full-width rows never scale."
+- **Rows** (new): "Linked rows take the `steel-hover` fill on hover (fine pointers only, 150ms colour) and a 6% deeper fill the instant they are pressed (on touch after 80ms, so a scroll doesn't flash them). Full-width rows never scale. Rows, sidebar items and timeline rows take the focus ring inset (offset −2px), so it never spills over a divider. Menu and select items show focus as the `steel-hover` fill instead of a ring."
 - **Overlays** (new, replaces the Scrim bullet): the ladder table:
 
   | Need | Surface |
@@ -369,24 +421,35 @@ Add after "Page title": `| Detail title (task, template, schedule) | Archivo | 2
   | A create or edit form, or a quick peek | Right sheet, 480px, with a scrim |
   | Primary work you'd deep-link or keep open | A page |
   | A destructive, irreversible confirmation | Dialog |
-  | Any sheet or dialog on a phone (< 768px) | A bottom drawer (Vaul); the nav is a left drawer |
+  | Any sheet or dialog below `md` (48rem; 768px at the default text size) | A bottom drawer (Vaul); the nav is a left drawer |
 
-  Followed by: "Sheets stack at most one level (Add credential over New agent); the parent stays where it is under a second scrim. Dismissing a sheet never asks: a typed draft is kept, in memory for the tab, for the next open. In a confirmation drawer the destructive action is last and full-width, with Cancel above it. The scrim is a plain 20% black; there is no blur."
+  Followed by: "Sheets stack at most one level (Add credential over New agent); the parent stays where it is under a second scrim. Dismissing a sheet never asks: a typed draft is kept, in memory for the tab, for the next open. A peek sheet does not dim or trap focus; the page behind stays usable; Esc and Close dismiss it. In a bottom drawer the buttons are full-width and stacked, the action first and Cancel last at the bottom, where the thumb rests. A confirmation button that carries a name may wrap to two lines; it is never truncated. The scrim is plain black, 20% in light mode and 40% in dark; there is no blur."
 - **Toasts** (new): "A toast appears only when the control that caused an outcome is gone (a submitted sheet, a deleted row), and carries Undo when the action can be undone. Otherwise feedback stays inline, next to the control."
 - **Composers** (new): "Enter sends in every composer; Shift+Enter adds a line, ⌘/Ctrl+Enter also sends. On touch, Enter adds a line."
-- **Empty states and loading** (append): "Loading keeps the layout: static skeleton plates at the real row heights, never shimmering. Spinners stop under reduced motion; the pending label carries the meaning."
+- **Empty states and loading** (append): "Loading keeps the layout: static skeleton plates at the real row heights, never shimmering. A spinner always sits next to a pending label (\"Terminating…\"); under reduced motion the spinner stops and the label carries the meaning."
 
 ### 12.7 Motion (replace "Durations", amend others)
 
-- **Durations:** "Press feedback 150ms. Menus, popovers, selects and tooltips 100ms in, 75ms out. Dialogs 150ms in, 100ms out. Sheets and drawers 250ms in on `--ease-drawer` and 200ms out on `--ease-out`, travelling 100% of their own size with no panel fade, the scrim on the same timing. The sidebar 200ms. Exits are faster than entries. Nothing else runs over 300ms."
+- **Durations:** "Press feedback 150ms. A disclosure chevron rotates over 150ms on `--ease-out`; the content it reveals never animates. Menus, popovers, selects and tooltips 100ms in, 75ms out. Dialogs 150ms in (from 96%), 100ms out (fade only). Sheets and drawers 250ms in on `--ease-drawer` and 200ms out on `--ease-out`, travelling 100% of their own size with no panel fade, the scrim on the same timing. The sidebar 200ms. Exits are faster than entries. Nothing else runs over 300ms."
 - **Popovers** (replace): "Menus, popovers, selects and tooltips scale from their trigger (`--radix-*-transform-origin`) from 95% with a fade, with no directional slide. Tooltips wait 400ms the first time, then neighbours open instantly (skip delay 300ms) with no animation. Dialogs scale from 96% at the centre."
-- **Keyboard rule** (append to Frequency): "`data-instant` zeroes animations as well as transitions, so a keyboard-opened overlay appears at once."
+- **Keyboard rule** (append to Frequency): "An overlay opened from the keyboard is stamped `data-instant` for that whole opening, so it appears and leaves at once; the one-frame `data-instant` on the root still covers keyboard-triggered transitions (⌘B) and now zeroes animations too."
 - **Reduced motion** (append): "Sheets and drawers fade instead of sliding."
-- **Gesture UI** (append): "Drawers use Vaul (pinned exactly): 1:1 drag, flick to dismiss. Its release snap-back is a CSS transition hard-coded at 0.5s on `--ease-drawer`, not a spring: the accepted exception to the spring rule and a known gap against the 300ms ceiling. Opening and closing sheets, drawers and dialogs are keyframes and can't be reversed mid-flight; only a drag can. A 250ms window is rarely interrupted, and owning presence and focus logic to change that isn't worth it."
+- **Gesture UI** (append): "Drawers use Vaul (pinned exactly): 1:1 drag, flick to dismiss (Vaul measures velocity over the whole drag: above 0.4 px/ms, or past 25% of the drawer, it closes; drags are ignored for 500ms after open). After a flick the drawer leaves on the drawer curve over 300ms. Its release snap-back is a CSS transition hard-coded at 0.5s on `--ease-drawer`, not a spring: the accepted exception to the spring rule and a known gap against the 300ms ceiling. Opening and closing sheets, drawers and dialogs are keyframes and can't be reversed mid-flight; only a drag can. A 250ms window is rarely interrupted, and owning presence and focus logic to change that isn't worth it."
+- **Curves** (append): "Linear only for constant rotation (the spinner)."
+- **Frequency** (append, Q15): "Live lists never reorder under the pointer: a re-sort waits until the pointer and focus leave the list, and never animates."
 - **Performance** (new bullet): "Motion is only as smooth as the main thread: the timeline commits at most once per frame, and unchanged rows don't re-render."
 - **Deliberately not used** (append): "Animated status: dots change colour over 150ms; the working tooth never pulses."
 
-### 12.8 Do's and Don'ts
+### 12.8 Lines that would otherwise contradict the amendments
+
+- Overview, point 1: "so the warm orange is the only temperature on screen" → "so the warm orange is the only warm interface colour (identity hues appear only inside avatars)".
+- Shapes → The pitch, point 3: "Each pass takes 1.2s: it lights over the first ~0.8s on `--ease-out`, then rests lit." → "Each 1.2s pass lights the roofline over the first ~0.7s on `--ease-out`, rests lit, then dims before it relights."
+- Layout: "On mobile the sidebar becomes a sheet." → "On mobile the sidebar becomes a left drawer, opened from its button."
+- Components → Browser surfaces: "the caret and checkbox accent are signal" → "the caret is signal; checkboxes are graphite".
+- Motion → Curves: "`--ease-drawer` … the mobile sheet sliding in" → "sheets and drawers sliding in".
+- Motion → Deliberately not used: "Springs and the Motion library, until something can be dragged." → "Springs and the Motion library. Drawers can be dragged now, through Vaul's CSS transitions (see Gesture UI); Motion waits for drag-to-reorder."
+
+### 12.9 Do's and Don'ts
 
 - Don't: replace "toasts or modals for routine tasks" with "toasts for outcomes whose control is still on screen, or centered modals for anything but a destructive confirmation".
 - Don't: add "Don't give a floating layer a shadow; use the plate step and `float-edge`."
@@ -395,12 +458,12 @@ Add after "Page title": `| Detail title (task, template, schedule) | Archivo | 2
 
 TDD per change; Vitest + Testing Library (jsdom) for web, the existing server test setup for `errors.ts`.
 
-- **Primitives:** render tests for `Sheet`, `Drawer`, `ConfirmDialog` (desktop and mobile via a mocked `matchMedia`); the Vaul upgrade guard (§5.4); reduced-motion classes on the Radix sheet and the Vaul drawer (fade kept, slide dropped): slots, roles (`dialog`, `alertdialog`), close paths (Esc, scrim, Close), pending holds the confirmation open, button order on mobile, `data-slot` attributes the CSS keys on. `Select`, `RadioGroup`, `SegmentedControl`: keyboard selection and `onChange`; the sentinel mapping.
-- **Class contracts:** a small test asserts that no file under `components/ui` contains `shadow-`, `slide-in-from-` on menus/tooltips, or `ring-3`; and that `styles.css` defines `.of-ignite` inside `@layer components` and the unlayered Vaul block.
+- **Primitives:** render tests for `Sheet`, `Drawer`, `ConfirmDialog` (desktop and mobile via a mocked `matchMedia`); the primitive locked at open across a breakpoint flip (§5.1); focus inside the drawer after open (§5.4); the keyboard stamp (§8.1); the Vaul upgrade guard (§5.4); reduced-motion classes and `--initial-transform` on the Radix sheet and the Vaul drawer (fade kept, slide dropped): slots, roles (`dialog`, `alertdialog`), close paths (Esc, scrim, Close), pending holds the confirmation open, button order on mobile, `data-slot` attributes the CSS keys on. `Select`, `RadioGroup`, `SegmentedControl`: keyboard selection and `onChange`; the sentinel mapping.
+- **Class contracts:** a source-scan test asserts: no `shadow-` in the floating-layer primitives (`popover`, `dropdown-menu`, `select`, `sheet`, `drawer`, `alert-dialog`, `tooltip`, `tabs`); no `slide-in-from-` in menus, popovers, selects or tooltips; no `ring-3`, `ring-ring/50`, `outline-none` or `outline-hidden` anywhere in `apps/web/src` outside the menu/select item allowlist (§6.1); `styles.css` has the `of-ignite` animation only inside `@media (prefers-reduced-motion: no-preference)` and the unlayered Vaul block with its `[data-state]` selectors.
 - **Bugs:** Home (agents, ordering, "+N more", empty, loading); page header classes; composer 64 KB and copy; `isSendKey` table test; comment composer Enter; server validation message.
 - **Timeline:** render counts (§9), `stabilizeRows` unit tests (reuse on unchanged, replace on changed result, children), reducer `frames` fold, rAF batching with Vitest fake timers (`toFake: ["requestAnimationFrame"]`), tabindex on added nodes.
 - **Data layer:** §2.8.
-- **Manual, recorded in the PR:** before/after task detail (Q5); a menu over a plate in light and dark (Q8, to tune `--float-edge`); the avatar hues side by side at 24px in both themes (Q7); the overflow matrix (§2.2), header at 390/1024 and Templates at 320, reduced-motion checks, overlay motion in Chrome at normal and 10% animation speed, Vaul drag on a phone-sized touch emulation, the before/after Performance recording (§2.7), light and dark screenshots of the new controls.
+- **Manual, recorded in the PR:** before/after task detail (Q5); a menu over a plate in light and dark (Q8, to tune `--float-edge`, and the dark scrim); the avatar hues side by side at 24px in both themes next to the 6px status dots (Q7; hue 120 against the warning ochre in particular); the Vaul drawer and its scrim at 10% animation speed (they must run together), and ⌘B on mobile at 10% (no replayed slide); the break-ui stress data (`seed-worst.mjs` in `/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/`, against a clone DB, never the shared one): 40-char slugs, a 64-char secret, 30 crons, 214 agents in the manager Select and assignee menu, duplicate display names, Agents at 320, the browser font at 24px with a 1024px window; Performance recordings with 4× CPU throttling, including the sidebar collapse and the pending loading mark; the overflow matrix (§2.2), header at 390/1024 and Templates at 320, reduced-motion checks, overlay motion in Chrome at normal and 10% animation speed, Vaul drag on a phone-sized touch emulation, the before/after Performance recording (§2.7), light and dark screenshots of the new controls.
 
 ## 14. Follow-up issues
 
@@ -408,8 +471,8 @@ TDD per change; Vitest + Testing Library (jsdom) for web, the existing server te
 2. Sidebar collapse: transform-based container if a recording on a 500-row session drops below 60fps (motion M3).
 3. Reconnect strip height animation (motion M4 second half; owned by no spec).
 4. Optimistic single-field saves: task status and assignee, inbox mark-read, schedule pause/resume, pin (emil H1 last bullet). Deferred because they touch every mutation and interact with R3's cancel-before-write (§10.3); one focused change (decision 14 allows deferral with a reason).
-5. Prose reading size 15/24 (taste T-M2), decided in U3 with the timeline tiers.
-6. Timezone picker: replace the native select with the cmdk combobox once U2 adds cmdk (Q12).
+5. Prose reading size 15/24 (taste T-M2), decided in U3 with the timeline tiers; the demoted heading sizes (17/15/14) are re-derived with it.
+6. Searchable pickers: replace the native timezone select (Q12) and the agent pickers (manager, assignee, agent filter: 200+ agents is a long Radix Select) with the cmdk combobox once U2 adds cmdk.
 
 ## 15. Risks
 

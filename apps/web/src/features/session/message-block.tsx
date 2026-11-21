@@ -125,8 +125,10 @@ export function MessageBlock(props: {
     late?: boolean | undefined;
     firings?: number | undefined;
   };
+  /** U3 §6.4: Cancel on a held message you sent, at the end of the sender line. */
+  action?: ReactNode;
 }) {
-  const { from, system, body, urgent, at, queued, failed, badge, scheduled } = props;
+  const { from, system, body, urgent, at, queued, failed, badge, scheduled, action } = props;
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -188,6 +190,7 @@ export function MessageBlock(props: {
             {formatTime(at)}
           </time>
         ) : null}
+        {action && <span className="ml-auto">{action}</span>}
       </div>
       {notes.length > 0 && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">

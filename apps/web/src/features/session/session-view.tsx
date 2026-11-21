@@ -1,4 +1,4 @@
-import type { AgentSummary } from "@open-factory/shared";
+import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, PanelRight } from "lucide-react";
@@ -27,12 +27,13 @@ import {
   runningQueryOptions,
   summaryFromAgentsList,
 } from "./api";
-import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
+import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
+import type { CancelledEntry } from "./session-state";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
@@ -55,6 +56,29 @@ export function SessionView({
   sheetHost: HTMLElement | null;
 }) {
   const s = useSession(slug, eventSeq, messageId);
+  const { data: me } = useQuery(sessionQueryOptions);
+  // Cancel puts the message back into an empty box; Undo takes it out again if untouched (U3 §6.4).
+  const composerRef = useRef<ComposerHandle>(null);
+  const { cancelItem, undoCancel } = s;
+  const onCancel = useCallback(
+    (item: QueueItem) => {
+      const body = item.body ?? "";
+      const inBox = composerRef.current?.putBackIfEmpty(body) ?? false;
+      cancelItem(
+        item,
+        inBox,
+        inBox ? () => composerRef.current?.clearIfUnchanged(body) : undefined,
+      );
+    },
+    [cancelItem],
+  );
+  const onUndo = useCallback(
+    (id: string, entry: CancelledEntry) => {
+      const body = entry.item.body ?? "";
+      undoCancel(id, entry.inBox ? () => composerRef.current?.clearIfUnchanged(body) : undefined);
+    },
+    [undoCancel],
+  );
   useReadFrom(slug, s.state.ordered.at(-1)?.at);
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -257,11 +281,13 @@ export function SessionView({
             onLeaveWindow={leaveWindow}
             footer={
               <>
-                {s.rows.length === 0 && s.state.queue.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    {archived ? "No messages yet." : "No messages yet. Send the first one below."}
-                  </p>
-                )}
+                {s.rows.length === 0 &&
+                  s.state.queue.length === 0 &&
+                  s.state.cancelled.size === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      {archived ? "No messages yet." : "No messages yet. Send the first one below."}
+                    </p>
+                  )}
                 {/* Time order under the last row: now, then next (U3 §5.2). */}
                 {agent.turnOpen && !s.state.windowed && (
                   <TurnActivity
@@ -270,7 +296,14 @@ export function SessionView({
                     turnKey={String(s.state.turnEpoch)}
                   />
                 )}
-                <QueueItems items={s.state.queue} agent={agent} />
+                <QueueItems
+                  items={s.state.queue}
+                  agent={agent}
+                  cancelled={s.state.cancelled}
+                  self={me?.user.handle}
+                  onCancel={onCancel}
+                  onUndo={onUndo}
+                />
               </>
             }
           />
@@ -296,12 +329,14 @@ export function SessionView({
           <TerminatedComposer slug={slug} notice={raceNotice} />
         ) : (
           <Composer
+            ref={composerRef}
             slug={slug}
             agent={agent}
             turnEpoch={s.state.turnEpoch}
             // A send before the session loads would be lost when the load replaces the queue.
             waiting={!loaded}
             onQueued={s.onQueued}
+            onSent={s.clearCancelled}
             onTerminated={(notice) => {
               setRaceNotice(notice);
               void s.refreshAgent();

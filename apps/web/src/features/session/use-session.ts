@@ -18,7 +18,14 @@ import {
   useState,
 } from "react";
 import { useWs } from "@/lib/ws-context";
-import { agentDetailQueryOptions, fetchEvents, fetchMessage } from "./api";
+import {
+  agentDetailQueryOptions,
+  cancelQueued,
+  fetchEvents,
+  fetchMessage,
+  restoreQueued,
+} from "./api";
+import { NETWORK_ERROR } from "./composer";
 import {
   buildRows,
   deliveryFailedIds,
@@ -41,6 +48,8 @@ const asApiError = (e: unknown) =>
   e instanceof ApiError
     ? e
     : new ApiError(0, "network_error", e instanceof Error ? e.message : String(e));
+
+const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
 
 /** HTTP pages + WS subscription + dedup by seq + queue + status + the deep-link window. */
 /** Why `?message=` couldn't jump to the message (UI design §2.5); rendered by the session view so the
@@ -291,6 +300,32 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     [dispatch],
   );
 
+  // U3 §6.4: Cancel and Undo. `onFailed`/`onRestored` run in the same step as the state change, so
+  // the composer's box and the queue change in one commit.
+  const cancelItem = useCallback(
+    (item: QueueItem, inBox: boolean, onFailed?: () => void) => {
+      dispatch({ type: "cancel", id: item.id, inBox });
+      cancelQueued(slug, item.id).catch((e: unknown) => {
+        onFailed?.();
+        dispatch({ type: "cancel_failed", id: item.id, error: failureText(e) });
+      });
+    },
+    [slug, dispatch],
+  );
+  const undoCancel = useCallback(
+    (id: string, onRestored?: () => void) => {
+      restoreQueued(slug, id).then(
+        () => {
+          onRestored?.();
+          dispatch({ type: "restored", id });
+        },
+        (e: unknown) => dispatch({ type: "restore_failed", id, error: failureText(e) }),
+      );
+    },
+    [slug, dispatch],
+  );
+  const clearCancelled = useCallback(() => dispatch({ type: "clear_cancelled" }), [dispatch]);
+
   return {
     state,
     rows,
@@ -301,6 +336,9 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     earlierError,
     retry,
     onQueued,
+    cancelItem,
+    undoCancel,
+    clearCancelled,
     setAgent,
     refreshAgent,
     missingEvent,

@@ -1,7 +1,14 @@
 import type { AgentDetail, EventsPage, SessionEvent } from "@open-factory/shared";
 import { expect, test, vi } from "vitest";
 import { agentSummary } from "@/test/session-fixtures";
-import { eventsInOrder, highestSeq, initialSessionState, sessionReducer } from "./session-state";
+import {
+  eventsInOrder,
+  highestSeq,
+  initialSessionState,
+  queueView,
+  type SessionState,
+  sessionReducer,
+} from "./session-state";
 
 const ev = (seq: number): SessionEvent => ({
   seq,
@@ -562,4 +569,98 @@ test("a windowed view counts speech in newSpeech: messages, agent text and sends
   expect(s.newSpeech).toBe(3);
   // A reload starts the count again.
   expect(loaded({}, "window").newSpeech).toBe(0);
+});
+
+// U3 §6.4: Cancel a held message, with Undo.
+const queueFrame = (ids: string[]) =>
+  ({ type: "queue", agent: "dev", items: ids.map(qItem) }) as const;
+const withQueue = (ids: string[]) =>
+  sessionReducer(
+    sessionReducer(initialSessionState, {
+      type: "loaded",
+      page: page([1]),
+      detail,
+      mode: "latest",
+    }),
+    { type: "frame", message: queueFrame(ids) },
+  );
+/** What the queue renders: item ids, and `x:<id>` for a cancelled line (`!` when it says why). */
+const view = (s: SessionState) =>
+  queueView(s.queue, s.cancelled).map((v) =>
+    v.kind === "item"
+      ? `${v.item.id}${v.error ? `!${v.error}` : ""}`
+      : `x:${v.id}${v.entry.error ? "!" : ""}${v.entry.inBox ? "+box" : ""}`,
+  );
+
+test("cancel takes the item off and puts the line in its place, in one step", () => {
+  let s = withQueue(["a", "b", "c"]);
+  s = sessionReducer(s, { type: "cancel", id: "b", inBox: true });
+  expect(view(s)).toEqual(["a", "x:b+box", "c"]);
+  expect(s.cancelled.get("b")?.item.body).toBe("b");
+});
+
+test("the cancelled line is the same whichever of the DELETE response and the queue frame comes first", () => {
+  const cancelled = sessionReducer(withQueue(["a", "b", "c"]), { type: "cancel", id: "b" });
+  // A frame still listing it (the server hadn't cancelled yet), then the one without it.
+  const stale = sessionReducer(cancelled, { type: "frame", message: queueFrame(["a", "b", "c"]) });
+  expect(view(stale)).toEqual(["a", "x:b", "c"]);
+  const fresh = sessionReducer(stale, { type: "frame", message: queueFrame(["a", "c"]) });
+  expect(view(fresh)).toEqual(["a", "x:b", "c"]);
+  // Nothing to do for the 200: the optimistic step already showed it.
+  expect(
+    view(sessionReducer(cancelled, { type: "frame", message: queueFrame(["a", "c"]) })),
+  ).toEqual(["a", "x:b", "c"]);
+});
+
+test("a failed cancel rolls back: the item is back with the reason under it", () => {
+  let s = sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" });
+  s = sessionReducer(s, { type: "cancel_failed", id: "b", error: "Already delivered" });
+  expect(view(s)).toEqual(["a", "b!Already delivered"]);
+});
+
+test("Undo: the restored item and the line's removal land in one step, frame first or response first", () => {
+  const base = sessionReducer(sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" }), {
+    type: "frame",
+    message: queueFrame(["a"]),
+  });
+  // The frame with the item comes before the 204: the item stays hidden behind the line until then.
+  const frameFirst = sessionReducer(base, { type: "frame", message: queueFrame(["a", "b"]) });
+  expect(view(frameFirst)).toEqual(["a", "x:b"]);
+  const done1 = sessionReducer(frameFirst, { type: "restored", id: "b" });
+  expect(view(done1)).toEqual(["a", "b"]);
+  expect(done1.cancelled.size).toBe(0);
+  // The 204 comes first: the line stays until the frame brings the item back.
+  const responseFirst = sessionReducer(base, { type: "restored", id: "b" });
+  expect(view(responseFirst)).toEqual(["a", "x:b"]);
+  const done2 = sessionReducer(responseFirst, { type: "frame", message: queueFrame(["a", "b"]) });
+  expect(view(done2)).toEqual(["a", "b"]);
+  expect(done2.cancelled.size).toBe(0);
+});
+
+test("a failed restore keeps the line and says why", () => {
+  let s = sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" });
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["a"]) });
+  s = sessionReducer(s, { type: "restore_failed", id: "b", error: "This agent has ended" });
+  expect(view(s)).toEqual(["a", "x:b!"]);
+  expect(s.cancelled.get("b")?.error).toBe("This agent has ended");
+});
+
+test("the line goes on your next send, and survives a reload of the same session", () => {
+  let s = sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" });
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["a"]) });
+  const reloaded = sessionReducer(s, {
+    type: "loaded",
+    page: page([1]),
+    detail: { ...detail, queue: [qItem("a")] },
+    mode: "latest",
+  });
+  expect(view(reloaded)).toEqual(["a", "x:b"]);
+  s = sessionReducer(s, { type: "clear_cancelled" });
+  expect(view(s)).toEqual(["a"]);
+});
+
+test("a second cancel of the same item, or of one not queued, changes nothing", () => {
+  const s = sessionReducer(withQueue(["a"]), { type: "cancel", id: "a" });
+  expect(sessionReducer(s, { type: "cancel", id: "a" })).toBe(s);
+  expect(sessionReducer(s, { type: "cancel", id: "zz" })).toBe(s);
 });

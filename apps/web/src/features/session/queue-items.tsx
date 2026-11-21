@@ -1,9 +1,12 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { Clock } from "lucide-react";
+import { InlineOutcome } from "@/components/inline-outcome";
+import { Button } from "@/components/ui/button";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { formatResetTime } from "./format";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
+import { type CancelledEntry, queueView } from "./session-state";
 import { resetPhrase } from "./status-badge";
 
 /** Why queued messages aren't out yet (S5 UI design §3.6), or the error that holds them. */
@@ -12,6 +15,21 @@ function heldReason(agent: AgentSummary): string | undefined {
   if (agent.status === "queued") return "waiting for a free slot";
   return agent.lastError;
 }
+
+/** A held message's own reason wins over the agent's status (U3 §6.3). */
+const messageReason = (q: QueueItem, fallback: string | undefined) =>
+  q.waitReason === "stopping" ? "stopping the turn" : fallback;
+
+/** Cancel is for a plain message you sent: never another sender's, a task comment or a scheduled
+ *  row (U3 §6.4, Q26, D2). */
+const cancellable = (q: QueueItem, self: string | undefined) =>
+  q.kind === "message" &&
+  self !== undefined &&
+  q.from === `@${self}` &&
+  q.taskKey === undefined &&
+  q.scheduleKey === undefined;
+
+const NO_CANCELLED: ReadonlyMap<string, CancelledEntry> = new Map();
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -54,18 +72,40 @@ function HeldLine({ item, agent }: { item: QueueItem; agent: AgentSummary }) {
   );
 }
 
-/** Pending items, drawn only from `queue` frames (never inferred), at full opacity. */
-export function QueueItems({ items, agent }: { items: QueueItem[]; agent: AgentSummary }) {
+/** Pending items, drawn only from `queue` frames (never inferred), at full opacity, with the lines of
+ *  the ones you cancelled in their place (U3 §6.4). */
+export function QueueItems({
+  items,
+  agent,
+  cancelled = NO_CANCELLED,
+  self,
+  onCancel,
+  onUndo,
+}: {
+  items: QueueItem[];
+  agent: AgentSummary;
+  cancelled?: ReadonlyMap<string, CancelledEntry>;
+  /** The viewer's handle: their own held messages offer Cancel. */
+  self?: string;
+  onCancel?: (item: QueueItem) => void;
+  onUndo?: (id: string, entry: CancelledEntry) => void;
+}) {
   const reason = heldReason(agent);
-  const peerChanges = items
-    .filter((q) => q.kind === "held" && q.waitReason === "ride_along")
-    .reduce((n, q) => n + (q.count ?? 1), 0);
-  const firstPeer = items.find((q) => q.kind === "held" && q.waitReason === "ride_along");
+  const view = queueView(items, cancelled);
+  let peerChanges = 0;
+  let firstPeer: QueueItem | undefined;
+  for (const v of view) {
+    if (v.kind !== "item" || v.item.kind !== "held" || v.item.waitReason !== "ride_along") continue;
+    peerChanges += v.item.count ?? 1;
+    firstPeer ??= v.item;
+  }
   return (
     <>
-      {items.map((q) =>
-        q.kind === "held" ? (
-          q.waitReason === "ride_along" ? (
+      {view.map((v) => {
+        if (v.kind === "cancelled") return <CancelledLine key={v.id} {...v} onUndo={onUndo} />;
+        const q = v.item;
+        if (q.kind === "held")
+          return q.waitReason === "ride_along" ? (
             q === firstPeer && (
               <QuietLine key={q.id} icon={<Clock aria-hidden="true" />}>
                 {plural(peerChanges, "peer change", "peer changes")} waiting
@@ -73,35 +113,78 @@ export function QueueItems({ items, agent }: { items: QueueItem[]; agent: AgentS
             )
           ) : (
             <HeldLine key={q.id} item={q} agent={agent} />
-          )
-        ) : q.kind === "message" || q.kind === "notice" ? (
-          <div key={q.id} className="pt-3">
-            <MessageBlock
-              from={q.from}
-              system={q.kind === "notice" || (q.taskKey !== undefined && q.from === "@factory")}
-              body={q.body ?? ""}
-              urgent={q.urgent}
-              queued={{ reason }}
-              {...(q.scheduleKey
-                ? { scheduled: { key: q.scheduleKey, late: q.late ?? false, firings: q.firings } }
-                : {})}
-              badge={
-                q.taskKey ? (
-                  <TaskBadge
-                    taskKey={q.taskKey}
-                    title={q.taskTitle}
-                    link={{ comment: q.commentId }}
-                  />
-                ) : undefined
-              }
-            />
-          </div>
-        ) : (
+          );
+        if (q.kind === "message" || q.kind === "notice")
+          return (
+            <div key={q.id} className="pt-3">
+              <MessageBlock
+                from={q.from}
+                system={q.kind === "notice" || (q.taskKey !== undefined && q.from === "@factory")}
+                body={q.body ?? ""}
+                urgent={q.urgent}
+                queued={{ reason: messageReason(q, reason) }}
+                {...(q.scheduleKey
+                  ? { scheduled: { key: q.scheduleKey, late: q.late ?? false, firings: q.firings } }
+                  : {})}
+                badge={
+                  q.taskKey ? (
+                    <TaskBadge
+                      taskKey={q.taskKey}
+                      title={q.taskTitle}
+                      link={{ comment: q.commentId }}
+                    />
+                  ) : undefined
+                }
+                action={
+                  onCancel && cancellable(q, self) ? (
+                    <Button type="button" variant="ghost" size="xs" onClick={() => onCancel(q)}>
+                      Cancel
+                    </Button>
+                  ) : undefined
+                }
+              />
+              {v.error && (
+                <div className="pt-1">
+                  <InlineOutcome tone="error">Couldn't cancel: {v.error}</InlineOutcome>
+                </div>
+              )}
+            </div>
+          );
+        return (
           <QuietLine key={q.id} icon={<Clock aria-hidden="true" />}>
             Compact queued until the turn ends{q.focus ? `: ${q.focus}` : ""}
           </QuietLine>
-        ),
-      )}
+        );
+      })}
     </>
+  );
+}
+
+/** "Message cancelled. Undo" in the message's place; after a failed Undo it says why, without Undo
+ *  (the line stays under the pointer). Focus moves to Undo: the Cancel that had it is gone. */
+function CancelledLine({
+  id,
+  entry,
+  onUndo,
+}: {
+  id: string;
+  entry: CancelledEntry;
+  onUndo?: (id: string, entry: CancelledEntry) => void;
+}) {
+  const failed = entry.error !== undefined;
+  return (
+    <div className="pt-3">
+      <InlineOutcome
+        tone={failed ? "error" : "success"}
+        undo={failed || !onUndo ? undefined : () => onUndo(id, entry)}
+        focusOnMount
+      >
+        {failed
+          ? `Message cancelled. Couldn't undo: ${entry.error}`
+          : entry.inBox
+            ? "Message cancelled · back in the box."
+            : "Message cancelled."}
+      </InlineOutcome>
+    </div>
   );
 }

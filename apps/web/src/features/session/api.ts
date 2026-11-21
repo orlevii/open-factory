@@ -90,6 +90,20 @@ export const postMessage = (slug: string, body: string, urgent: boolean) =>
     schema: queueItemResponseSchema,
   }).then((r) => r.item);
 
+/** U3 §6.4: withdraw a held message you sent; resolves to the cancelled item. */
+export const cancelQueued = (slug: string, messageId: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}`, {
+    method: "DELETE",
+    schema: queueItemResponseSchema,
+  }).then((r) => r.item);
+
+/** U3 §6.4: Undo of a cancel (204); the restored item arrives in the next `queue` frame. */
+export const restoreQueued = (slug: string, messageId: string) =>
+  apiFetch(
+    `/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}/restore`,
+    { method: "POST", body: {}, schema: z.unknown() },
+  ).then(() => undefined);
+
 export const postCompact = (slug: string, focus?: string) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/compact`, {
     method: "POST",

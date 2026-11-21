@@ -1,6 +1,15 @@
 import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
-import { type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type Ref,
+  useCallback,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
@@ -92,7 +101,16 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
   );
 }
 
+/** What the session does to the box around a Cancel and its Undo (U3 §6.4, Q31). */
+export type ComposerHandle = {
+  /** Puts `text` in the box when it is empty; true when it did. */
+  putBackIfEmpty(text: string): boolean;
+  /** Empties the box only if it still holds exactly `text`. */
+  clearIfUnchanged(text: string): void;
+};
+
 export function Composer({
+  ref,
   slug,
   agent,
   turnEpoch,
@@ -101,6 +119,7 @@ export function Composer({
   onSent,
   onTerminated,
 }: {
+  ref?: Ref<ComposerHandle>;
   slug: string;
   agent: AgentSummary;
   /** The session's turn epoch: Stop resets on every turn edge (U3 §6.1). Without one (the inbox
@@ -145,6 +164,21 @@ export function Composer({
     agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
   useEffect(() => writeDraft(slug, text), [slug, text]);
   useEffect(() => registerComposerFocus(slug, () => boxRef.current?.focus()), [slug]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      putBackIfEmpty(next) {
+        // The DOM value is the box as it is now (state may not have committed yet).
+        if ((boxRef.current?.value ?? "").trim() !== "") return false;
+        setText(next);
+        return true;
+      },
+      clearIfUnchanged(sent) {
+        setText((cur) => (cur === sent ? "" : cur));
+      },
+    }),
+    [],
+  );
   const empty = text.trim() === "";
   const shownError = error ?? stopError;
 

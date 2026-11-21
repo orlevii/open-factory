@@ -1,5 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 
@@ -90,4 +92,120 @@ test("a peer group held during an open turn is the peer line, never an update li
   expect(line("3 updates from @dev waiting for this turn to end")).toBeInTheDocument();
   expect(screen.getByText("2 peer changes waiting")).toBeInTheDocument();
   expect(screen.queryByText(/updates? from @b/)).toBeNull();
+});
+
+const msg = (o: Record<string, unknown>) =>
+  ({ kind: "message", from: "@alice", body: "hello", createdAt: local(13, 59), ...o }) as never;
+
+test("a held message during a Stop says so, preferring its waitReason over the agent's status", () => {
+  render(
+    <QueueItems
+      items={[
+        msg({ id: "m1", waitReason: "stopping" }),
+        msg({ id: "n1", kind: "notice", waitReason: "stopping" }),
+      ]}
+      agent={agentSummary({ status: "rate_limited", rateLimitedUntil: local(14, 30) })}
+    />,
+  );
+  expect(screen.getAllByText("Not delivered yet: stopping the turn")).toHaveLength(2);
+});
+
+test("Cancel only on your own held messages: not others', task comments, scheduled or notices", async () => {
+  const onCancel = vi.fn();
+  vi.useRealTimers();
+  // A router so the task comment's badge can resolve its link.
+  renderInRouter(
+    <QueueItems
+      items={[
+        msg({ id: "mine", body: "mine" }),
+        msg({ id: "theirs", from: "@bob", body: "theirs" }),
+        msg({ id: "task", taskKey: "T-1", body: "task" }),
+        msg({ id: "sched", scheduleKey: "daily", body: "sched" }),
+        msg({ id: "note", kind: "notice", body: "note" }),
+      ]}
+      agent={agentSummary()}
+      self="alice"
+      onCancel={onCancel}
+    />,
+  );
+  const cancels = await screen.findAllByRole("button", { name: "Cancel" });
+  expect(cancels).toHaveLength(1);
+  const block = cancels[0]?.closest("[data-message-block]") as HTMLElement;
+  expect(within(block).getByText("mine")).toBeInTheDocument();
+  await userEvent.click(cancels[0] as HTMLElement);
+  expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ id: "mine" }));
+});
+
+test("a cancelled message shows the line in its place with Undo; back in the box when it moved there", async () => {
+  vi.useRealTimers();
+  const onUndo = vi.fn();
+  const b = msg({ id: "b", body: "b" });
+  const c = msg({ id: "c", body: "c" });
+  const { rerender } = render(
+    <QueueItems
+      items={[msg({ id: "a", body: "a" }), c]}
+      cancelled={new Map([["b", { item: b, index: 1 }]])}
+      agent={agentSummary()}
+      self="alice"
+      onUndo={onUndo}
+    />,
+  );
+  const line = screen.getByText("Message cancelled.");
+  const blocks = document.querySelectorAll("[data-message-block]");
+  expect(
+    (blocks[0] as Node).compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    line.compareDocumentPosition(blocks[1] as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(onUndo).toHaveBeenCalledWith("b", expect.objectContaining({ index: 1 }));
+  rerender(
+    <QueueItems
+      items={[c]}
+      cancelled={new Map([["b", { item: b, index: 0, inBox: true }]])}
+      agent={agentSummary()}
+      self="alice"
+      onUndo={onUndo}
+    />,
+  );
+  expect(screen.getByText("Message cancelled · back in the box.")).toBeInTheDocument();
+});
+
+test("a failed restore keeps the line, says why and drops Undo", () => {
+  render(
+    <QueueItems
+      items={[]}
+      cancelled={
+        new Map([["b", { item: msg({ id: "b" }), index: 0, error: "This agent has ended." }]])
+      }
+      agent={agentSummary()}
+      self="alice"
+      onUndo={() => {}}
+    />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Message cancelled. Couldn't undo: This agent has ended.",
+  );
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+test("a failed cancel shows the message again with the reason under it", () => {
+  render(
+    <QueueItems
+      items={[msg({ id: "b", body: "b" })]}
+      cancelled={
+        new Map([
+          [
+            "b",
+            { item: msg({ id: "b" }), index: 0, error: "Already delivered.", rolledBack: true },
+          ],
+        ])
+      }
+      agent={agentSummary()}
+      self="alice"
+    />,
+  );
+  expect(screen.getByText("b")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't cancel: Already delivered.");
 });

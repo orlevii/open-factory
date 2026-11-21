@@ -108,7 +108,7 @@ const COUNT = "text-[0.8125rem] tabular-nums text-muted-foreground";
 
 /** The menu-button recipe of `components/ui/sidebar.tsx`, on a plain link (no `useSidebar()`). */
 const ROW =
-  "@container relative flex h-8 w-full items-center gap-2 overflow-hidden rounded-md pr-2 text-left text-sm transition-colors duration-150 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-offset-[-2px] active:bg-sidebar-accent active:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground pointer-coarse:h-9";
+  "relative flex h-8 w-full items-center gap-2 overflow-hidden rounded-md pr-2 text-left text-sm transition-colors duration-150 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-offset-[-2px] active:bg-sidebar-accent active:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground pointer-coarse:h-9";
 
 type Via = "pointer" | "keyboard";
 
@@ -198,33 +198,38 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           size={20}
           status={agent.status}
         />
-        <TruncTooltip
-          text={managerName ? `${name} · reports to ${managerName}` : name}
-          className="min-w-16"
+        {/* The name and the working count share one line box that clips a second line: when the
+            name at its minimum and the count no longer fit, the count wraps out of sight first. */}
+        <span
+          data-name-line=""
+          className="flex h-5 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden"
         >
-          <AgentName agent={agent} />
-        </TruncTooltip>
-        <span className="sr-only">, {statusLabel(agent.status, "short")}</span>
-        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          <TruncTooltip
+            text={managerName ? `${name} · reports to ${managerName}` : name}
+            className="min-w-16 grow basis-16"
+          >
+            <AgentName agent={agent} />
+          </TruncTooltip>
+          <span className="sr-only">, {statusLabel(agent.status, "short")}</span>
           {working > 0 ? (
             <HoverTip
               text={`${working} working`}
-              className={cn("inline-flex items-center gap-0.5 @max-[12rem]:hidden", COUNT)}
+              className={cn("inline-flex shrink-0 items-center gap-0.5", COUNT)}
             >
               <span aria-hidden="true" className="of-tooth scale-75" />
               <span aria-hidden="true">{countText(working)}</span>
               <span className="sr-only">{working} working</span>
             </HoverTip>
           ) : null}
-          {unread > 0 ? (
-            <>
-              <span aria-hidden="true" className={COUNT}>
-                {countText(unread)}
-              </span>
-              <span className="sr-only">, {unread} unread</span>
-            </>
-          ) : null}
         </span>
+        {unread > 0 ? (
+          <>
+            <span aria-hidden="true" className={cn("shrink-0", COUNT)}>
+              {countText(unread)}
+            </span>
+            <span className="sr-only">, {unread} unread</span>
+          </>
+        ) : null}
       </Link>
     </li>
   );

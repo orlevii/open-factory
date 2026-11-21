@@ -262,12 +262,16 @@ test("unread count from byAgent, working count hides first when narrow", async (
   expect(within(row("Alpha")).getByText("3")).toBeInTheDocument();
   expect(within(row("Bravo")).getByText("99+")).toBeInTheDocument();
   expect(row("Alpha")).toHaveAccessibleName(/3 unread/);
-  // The row is a size container; the working count gives way before the unread count does.
+  // The working count gives way only to the name's minimum, never to the row's indent: it shares a
+  // wrapping line with the name and drops out of sight when both no longer fit. No container query
+  // on the indented row, and the unread count stays outside that line.
   const working = within(row("Bravo")).getByText("1 working", { selector: ".sr-only" })
     .parentElement as HTMLElement;
-  expect(row("Bravo").className).toMatch(/@container/);
-  expect(working.className).toMatch(/@max-\[[^\]]+\]:hidden/);
-  expect(within(row("Bravo")).getByText("99+").className).not.toMatch(/hidden/);
+  expect(`${row("Bravo").className} ${working.className}`).not.toMatch(/@container|@max-/);
+  const line = working.closest("[data-name-line]");
+  expect(line).not.toBeNull();
+  expect(line).toContainElement(within(row("Bravo")).getByText("Bravo"));
+  expect(line).not.toContainElement(within(row("Bravo")).getByText("99+"));
 });
 
 test("empty: 'No agents yet.' with New agent link", async () => {

@@ -810,3 +810,35 @@ test("an open task whose refetch says it no longer exists shows Task not found",
   await act(() => queryClient.invalidateQueries({ queryKey: ["tasks", "detail", "T-42"] }));
   expect(await screen.findByRole("heading", { name: "Task not found." })).toBeInTheDocument();
 });
+
+test("a human creator and comment author show as @handle without an avatar; an agent author shows its avatar", async () => {
+  world(() =>
+    detail({
+      activity: [
+        {
+          type: "comment",
+          id: "c1",
+          author: { kind: "user", handle: "or" },
+          body: "human words",
+          at: at(9, 20),
+        },
+        {
+          type: "comment",
+          id: "c2",
+          author: { kind: "agent", slug: "dev" },
+          body: "agent words",
+          at: at(9, 21),
+        },
+      ],
+    }),
+  );
+  renderApp("/tasks/T-42", alice);
+  const human = await screen.findByRole("article", { name: "Comment from @or" });
+  expect(within(human).getByText("@or")).toBeInTheDocument();
+  expect(human.querySelector("[data-comment-author] svg")).toBeNull();
+  const agent = screen.getByRole("article", { name: "Comment from @dev" });
+  expect(agent.querySelector("[data-comment-author] svg")).not.toBeNull();
+  const created = document.querySelector("[data-created-by]") as HTMLElement;
+  expect(created).toHaveTextContent("@or");
+  expect(created.querySelector("svg")).toBeNull();
+});

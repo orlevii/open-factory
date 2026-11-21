@@ -2,6 +2,7 @@ import type { TaskSummary } from "@open-factory/shared";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
@@ -11,17 +12,21 @@ import { type TaskFilters, tasksListOptions } from "./api";
 import { BlockedMarker, STATUS, StatusLabel } from "./status-label";
 import { isDefault } from "./task-filters";
 
-const who = (c: TaskSummary["createdBy"]) => (c.kind === "agent" ? `@${c.slug}` : `@${c.handle}`);
-
 function Assignee({ t }: { t: TaskSummary }) {
   if (!t.assignee) return <span className="text-muted-foreground">Unassigned</span>;
+  const chip = <AgentChip slug={t.assignee.slug} name={t.assignee.displayName} size={20} />;
   if (t.assignee.ended)
     return (
-      <span className="text-muted-foreground">
-        <span className="font-mono">@{t.assignee.slug}</span> · {t.assignee.ended}
+      <span data-assignee className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+        {chip}
+        <span className="shrink-0">· {t.assignee.ended}</span>
       </span>
     );
-  return <span className="font-mono text-foreground">@{t.assignee.slug}</span>;
+  return (
+    <span data-assignee className="flex min-w-0 text-foreground">
+      {chip}
+    </span>
+  );
 }
 
 function label(t: TaskSummary) {
@@ -68,7 +73,9 @@ function Row({ t, now }: { t: TaskSummary; now: Date }) {
               </>
             )}
             <span className="max-md:hidden">
-              created by <span className="font-mono">{who(t.createdBy)}</span>
+              <span className="inline-flex items-center gap-1.5 align-middle">
+                created by <PrincipalChip principal={t.createdBy} size={20} />
+              </span>
             </span>
             <span aria-hidden="true" className="max-md:hidden">
               ·

@@ -668,6 +668,9 @@ test("Build log opens a non-modal side panel that streams the build; another row
   const log = within(sheet).getByRole("log");
   expect(await within(sheet).findByText(/step 1/)).toBeInTheDocument();
   expect(section.contains(log)).toBe(false);
+  // The page keeps the panel's width clear while it is open (where there is room), so the rows' actions
+  // stay under the pointer; the CSS applies it only from 54rem of view (browser-verified).
+  expect(section).toHaveAttribute("data-log-open");
 
   // Frames stream into the open panel.
   emit({ type: "image_build", name: "broken", state: "building" });
@@ -697,6 +700,7 @@ test("Build log opens a non-modal side panel that streams the build; another row
   await userEvent.click(within(sheet).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(within(row("fresh")).getByRole("button", { name: "Build log" })).toHaveFocus();
+  expect(section).not.toHaveAttribute("data-log-open");
 });
 
 test("Images section: Rebuild stays rendered but aria-disabled while building; none without a Dockerfile", async () => {

@@ -34,49 +34,59 @@ export function ImagesSection() {
     [],
   );
   return (
-    <section aria-labelledby="images-title" className="grid grid-cols-[minmax(0,1fr)] gap-3">
-      <h2 id="images-title" className="font-heading text-[0.9375rem] font-semibold">
-        Images
-      </h2>
-      {isError && !data && (
-        <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
-          <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-          Couldn't load images.
-        </p>
-      )}
-      {data?.images.some((i) => i.status === "unknown") && (
-        <p className={`flex items-start gap-1.5 ${small}`}>
-          <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
-          Docker isn't reachable. Check that the daemon is running and the server can reach its
-          socket.
-        </p>
-      )}
-      {data && data.images.length === 0 && (
-        <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-          No images yet. Add a Dockerfile at{" "}
-          <code className={code}>{`${data.imagesDir}/<name>/Dockerfile`}</code>, starting FROM{" "}
-          <code className={code}>{data.baseImage}</code>.
-        </p>
-      )}
-      {data && data.images.length > 0 && (
-        <ul ref={list} className="divide-y divide-border border-y border-border">
-          {data.images.map((i) => (
-            <ImageRow key={i.name} item={i} onOpenLog={setLogFor} />
-          ))}
-        </ul>
-      )}
-      {data && (
-        <p className={`${small} text-muted-foreground`}>
-          Agents use a rebuilt image from their next start.
-        </p>
-      )}
-      <BuildLogSheet
-        name={logFor}
-        images={data?.images ?? NO_IMAGES}
-        onClose={closeLog}
-        trigger={trigger}
-      />
-    </section>
+    // While the log is open the view keeps the panel's 30rem clear, so every row's Build and Build log
+    // stay under the pointer (retarget by click). Only where 24rem of list is left beside it (the task
+    // peek's rule); narrower, the panel overlays. The container is the wrapper, so the padding can't
+    // feed back into the query. No transition: the panel slides, the list doesn't.
+    <div className="@container">
+      <section
+        aria-labelledby="images-title"
+        data-log-open={logFor !== null || undefined}
+        className="grid grid-cols-[minmax(0,1fr)] gap-3 @[54rem]:data-log-open:pr-[30rem]"
+      >
+        <h2 id="images-title" className="font-heading text-[0.9375rem] font-semibold">
+          Images
+        </h2>
+        {isError && !data && (
+          <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+            <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
+            Couldn't load images.
+          </p>
+        )}
+        {data?.images.some((i) => i.status === "unknown") && (
+          <p className={`flex items-start gap-1.5 ${small}`}>
+            <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
+            Docker isn't reachable. Check that the daemon is running and the server can reach its
+            socket.
+          </p>
+        )}
+        {data && data.images.length === 0 && (
+          <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            No images yet. Add a Dockerfile at{" "}
+            <code className={code}>{`${data.imagesDir}/<name>/Dockerfile`}</code>, starting FROM{" "}
+            <code className={code}>{data.baseImage}</code>.
+          </p>
+        )}
+        {data && data.images.length > 0 && (
+          <ul ref={list} className="divide-y divide-border border-y border-border">
+            {data.images.map((i) => (
+              <ImageRow key={i.name} item={i} onOpenLog={setLogFor} />
+            ))}
+          </ul>
+        )}
+        {data && (
+          <p className={`${small} text-muted-foreground`}>
+            Agents use a rebuilt image from their next start.
+          </p>
+        )}
+        <BuildLogSheet
+          name={logFor}
+          images={data?.images ?? NO_IMAGES}
+          onClose={closeLog}
+          trigger={trigger}
+        />
+      </section>
+    </div>
   );
 }
 

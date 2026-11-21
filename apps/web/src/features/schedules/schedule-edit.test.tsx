@@ -5,7 +5,6 @@ import { afterEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
-import { previewText } from "./run-preview";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({ push: (_m: ServerMessage) => {} }));
@@ -204,23 +203,29 @@ test("live: a server change to the timing refreshes the Next runs preview", asyn
   await waitFor(() => expect(screen.getByText(/^Next runs:/).textContent).not.toBe(before));
 });
 
-test("live: the preview is the summary of the merged value (edited cron kept, server zone taken)", async () => {
-  const api = mockApi(common(sched()));
-  renderApp("/schedules/S-3", alice);
-  const cron = (await screen.findByLabelText("Repeats", {
-    selector: "input:not([type=radio])",
-  })) as HTMLInputElement;
-  await userEvent.clear(cron);
-  await userEvent.type(cron, "30 8 * * *");
-  await userEvent.tab(); // blur: the preview reads the edited cron
-  api.on("GET /api/schedules/S-3", detail(sched({ timezone: "Asia/Tokyo", body: "Other" })));
-  act(() => ws.push({ type: "schedules_changed" }));
-  const expected = previewText({
-    mode: "repeats",
-    cron: "30 8 * * *",
-    local: "",
-    zone: "Asia/Tokyo",
-  });
-  await waitFor(() => expect(screen.getByText(/^Next runs:/).textContent).toBe(expected));
-  expect(cron.value).toBe("30 8 * * *");
+test("live: the preview is the summary of the merged value (edited cron kept, untouched zone and message follow the server)", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+  try {
+    const api = mockApi(common(sched()));
+    renderApp("/schedules/S-3", alice);
+    const cron = (await screen.findByLabelText("Repeats", {
+      selector: "input:not([type=radio])",
+    })) as HTMLInputElement;
+    await userEvent.clear(cron);
+    await userEvent.type(cron, "30 8 * * *");
+    await userEvent.tab(); // blur: the preview reads the edited cron
+    api.on("GET /api/schedules/S-3", detail(sched({ timezone: "Asia/Tokyo", body: "Other" })));
+    act(() => ws.push({ type: "schedules_changed" }));
+    await waitFor(() =>
+      expect((screen.getByLabelText("Message") as HTMLTextAreaElement).value).toBe("Other"),
+    );
+    // Literal runs of the edited cron in the server's zone; "your time" depends on the machine's zone.
+    expect(screen.getByText(/^Next runs:/).textContent).toMatch(
+      /^Next runs: Sun 22 Nov 08:30( \(.+ your time\))? · Mon 23 Nov 08:30 · Tue 24 Nov 08:30 Asia\/Tokyo$/,
+    );
+    expect(cron.value).toBe("30 8 * * *");
+  } finally {
+    vi.useRealTimers();
+  }
 });

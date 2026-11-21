@@ -692,9 +692,14 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
       {editing ? (
         <div className="grid gap-2">
           <LinkEditor rows={rows} onChange={setRows} errors={errors} onBlurRow={() => check()} />
+          {(active.isError || ended.isError) && (
+            <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+              Couldn't load agents, so @agent links aren't checked here.
+            </p>
+          )}
           <EditorButtons
             pending={pending}
-            saveDisabled={known === undefined}
+            saveDisabled={active.isPending || ended.isPending}
             onSave={() => void commit()}
             onCancel={close}
             failed={failed}

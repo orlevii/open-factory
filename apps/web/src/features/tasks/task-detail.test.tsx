@@ -364,14 +364,22 @@ test("links editor: the agent lists load on the Edit click and Save waits for th
   });
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
-  const listFetches = () => api.calls.filter((c) => c.url.startsWith("/api/agents?")).length;
-  expect(listFetches()).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   await waitFor(() => expect(releases.length).toBe(2));
   await act(async () => {
     for (const r of releases) r();
   });
   await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+});
+
+test("links editor: when an agent list fails Save is not locked and the editor says so", async () => {
+  const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
+  api.on("GET /api/agents?", () => json({ error: { code: "x", message: "boom" } }, 500));
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail() }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  expect(await screen.findByText(/Couldn't load agents/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
 
 test("no assignee: the helper says only mentions are notified", async () => {

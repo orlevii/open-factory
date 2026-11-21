@@ -1,4 +1,4 @@
-import type { AgentStatus } from "@open-factory/shared";
+import { type AgentStatus, agentStatusSchema } from "@open-factory/shared";
 import { fireEvent, render } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { AgentAvatar } from "./agent-avatar";
@@ -90,4 +90,11 @@ test.each([
   expect([g.w, g.h]).toEqual([w, h]);
   expect(g.box).toBe(Math.max(w, h));
   expect(g.hole).toBe(g.box + 2);
+});
+
+test.each(agentStatusSchema.options)("%s: a hole exactly when there is a badge", (s) => {
+  // The hole and the mark are decided in two places; every status must agree.
+  const { container } = render(<AgentAvatar slug="a" size={20} status={s} />);
+  const mark = container.querySelector("[data-status-mark]") !== null;
+  expect(container.querySelector(".of-avatar-cut") !== null).toBe(mark);
 });

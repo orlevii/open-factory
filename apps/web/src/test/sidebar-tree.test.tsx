@@ -268,8 +268,11 @@ test("unread count from byAgent, working count hides first when narrow", async (
   const working = within(row("Bravo")).getByText("1 working", { selector: ".sr-only" })
     .parentElement as HTMLElement;
   expect(`${row("Bravo").className} ${working.className}`).not.toMatch(/@container|@max-/);
-  const line = working.closest("[data-name-line]");
+  const line = working.closest<HTMLElement>("[data-name-line]");
   expect(line).not.toBeNull();
+  // The mechanism: a second line exists and is clipped.
+  expect(line?.className).toMatch(/\bflex-wrap\b/);
+  expect(line?.className).toMatch(/\boverflow-hidden\b/);
   expect(line).toContainElement(within(row("Bravo")).getByText("Bravo"));
   expect(line).not.toContainElement(within(row("Bravo")).getByText("99+"));
 });

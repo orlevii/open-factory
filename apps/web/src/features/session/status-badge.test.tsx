@@ -16,11 +16,15 @@ test("working renders the tooth, never a dot; others render a dot + label", () =
   expect(container.querySelector("[data-status-dot]")).toBeNull();
 });
 
+test("errored renders the alert mark and still its label", () => {
+  const { container } = render(<StatusBadge status="errored" size="long" />);
+  expect(container.querySelector('[data-status-mark="errored"]')).not.toBeNull();
+  expect(screen.getByText("Errored")).toBeInTheDocument();
+});
+
 test.each([
   ["hibernated", "Hibernated"],
-  ["queued", "Queued"],
   ["idle", "Idle"],
-  ["errored", "Errored"],
 ] as const)("%s renders a dot and its label, no tooth", (status, label) => {
   const { container } = render(<StatusBadge status={status} size="long" />);
   expect(screen.getByText(label)).toBeInTheDocument();

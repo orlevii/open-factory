@@ -32,6 +32,11 @@ export function useAssignableAgents() {
 export const agentOptionLabel = (a: { slug: string; displayName: string }) =>
   `@${a.slug} · ${a.displayName}`;
 
+/** The muted mono `@slug` that follows a name in agent options and triggers. */
+export const Slug = ({ slug }: { slug: string }) => (
+  <span className="text-muted-foreground font-mono">@{slug}</span>
+);
+
 /** An agent as a select option: the name, then a muted mono `@slug`. Shown in the closed trigger too. */
 export function AgentItem({ agent }: { agent: { slug: string; displayName: string } }) {
   return (
@@ -41,7 +46,7 @@ export function AgentItem({ agent }: { agent: { slug: string; displayName: strin
           <span>{agent.displayName}</span>{" "}
         </>
       )}
-      <span className="text-muted-foreground font-mono">@{agent.slug}</span>
+      <Slug slug={agent.slug} />
     </SelectItem>
   );
 }
@@ -64,11 +69,12 @@ export function AgentPicker({
   /** An agent that isn't assignable (archived) but is the current value: kept as an option while selected. */
   extraOption?: { value: string; label: string } | undefined;
 }) {
-  const { agents } = useAssignableAgents();
+  const { agents, isPending } = useAssignableAgents();
   return (
     <Select value={value || ALL} onValueChange={(v) => onChange(v === ALL ? "" : v)}>
       <SelectTrigger id={id} aria-describedby={describedBy}>
-        <SelectValue />
+        {/* While the agents load, the chosen slug stands in for the missing option text. */}
+        <SelectValue>{isPending && value ? `@${value}` : undefined}</SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={ALL}>{placeholder}</SelectItem>

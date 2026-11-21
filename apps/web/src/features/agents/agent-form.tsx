@@ -34,6 +34,7 @@ import {
   projectsQueryOptions,
   secretsQueryOptions,
 } from "@/features/settings/api";
+import { Slug } from "@/features/tasks/agent-picker";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 
 const FIELDS = [
@@ -245,6 +246,16 @@ export function AgentForm(props: Props) {
     focusAfterPending.current = undefined;
   }, [pending]);
   const blur = (f: Field) => setErrors((e) => ({ ...e, [f]: check(f, shown) }));
+  // Opening a Radix Select moves focus into its list, so the trigger blurs on open. The template
+  // validates when its list closes (this effect sees the chosen value), not while it is open.
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const templateOpened = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the list closes
+  useEffect(() => {
+    if (templateOpen || !templateOpened.current) return;
+    templateOpened.current = false;
+    blur("template");
+  }, [templateOpen]);
   const focusFirst = (e: Errors) => {
     const first = FIELDS.find((f) => e[f]);
     if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
@@ -410,6 +421,10 @@ export function AgentForm(props: Props) {
                   disabled={!templates.data}
                   value={values.template}
                   onValueChange={(v) => set("template", v)}
+                  onOpenChange={(open) => {
+                    setTemplateOpen(open);
+                    if (open) templateOpened.current = true;
+                  }}
                 >
                   <SelectTrigger
                     id={a.id}
@@ -417,9 +432,11 @@ export function AgentForm(props: Props) {
                     aria-describedby={[a.describedBy, config ? "template-summary" : undefined]
                       .filter(Boolean)
                       .join(" ")}
-                    onBlur={() => blur("template")}
+                    onBlur={() => !templateOpen && blur("template")}
                   >
-                    <SelectValue placeholder={templates.data ? "Choose a template" : "Loading…"} />
+                    <SelectValue placeholder="Choose a template">
+                      {templates.data ? undefined : values.template || "Loading…"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {templates.data?.templates.map((t) => (
@@ -504,8 +521,7 @@ export function AgentForm(props: Props) {
                     `@${values.reportsTo} (archived)`
                   ) : (
                     <>
-                      <span>{selectedManager?.displayName}</span>{" "}
-                      <span className="text-muted-foreground font-mono">@{values.reportsTo}</span>
+                      <span>{selectedManager?.displayName}</span> <Slug slug={values.reportsTo} />
                     </>
                   )}
                 </SelectValue>
@@ -516,8 +532,7 @@ export function AgentForm(props: Props) {
                     <SelectItem value={ALL}>No manager (reports to the humans)</SelectItem>
                     {managerOptions.map((m) => (
                       <SelectItem key={m.slug} value={m.slug} textValue={m.slug}>
-                        <ManagerName depth={m.depth} name={m.displayName} />{" "}
-                        <span className="text-muted-foreground font-mono">@{m.slug}</span>
+                        <ManagerName depth={m.depth} name={m.displayName} /> <Slug slug={m.slug} />
                       </SelectItem>
                     ))}
                     {managerMissing && (
@@ -555,7 +570,9 @@ export function AgentForm(props: Props) {
                   aria-describedby={a.describedBy}
                   onBlur={() => blur("credential")}
                 >
-                  <SelectValue placeholder={credentials.data ? undefined : "Loading…"} />
+                  <SelectValue>
+                    {credentials.data ? undefined : shown.credential || "Loading…"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {credentials.data?.map((c) => (

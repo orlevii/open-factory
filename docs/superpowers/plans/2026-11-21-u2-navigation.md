@@ -889,7 +889,22 @@ test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", ()
 
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat(web): one page per Settings section`.
 
-### Task 28: Web: Settings redirects and link updates
+### Task 28: Web: top-level Usage page and its nav row
+
+Implements §9 (`/usage`, "By credential", Usage nav row); spec §2.5 nav order. Builds on `features/settings/usage-section.tsx`, `features/usage/*`.
+
+**Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**Files:**
+- Create: `apps/web/src/routes/_app/usage.tsx` (`validateSearch: { days: 7|30|90 = 30 }`, loader warms `dailyUsageQuery`, `agentsUsageQuery`, `credentialsUsageQuery`)
+- Modify: `apps/web/src/features/settings/usage-section.tsx` (heading "By credential"; navigation to `/usage` with `days`)
+- Modify: `apps/web/src/components/app-sidebar.tsx` (Usage row between Schedules and Settings, icon `ChartColumn`)
+- Test: `apps/web/src/test/usage-page.test.tsx`, `apps/web/src/test/shell.test.tsx`
+
+- [ ] **Step 1:** Failing tests: `/usage` renders "Usage", the range control changes `?days=`; the per-credential heading reads "By credential" and the app has one "Credentials" heading (on `/settings/credentials`); nav order Inbox, Tasks, Templates, Schedules, Usage, Settings, then Agents.
+- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat(web): Usage is a top-level page`.
+
+### Task 29: Web: Settings redirects and link updates
 
 Implements §9 (`settings.index`, links). 
 
@@ -913,24 +928,9 @@ test.each([
 ])("%s → %s", async (from, to) => {});
 test("in-app links point at the new routes", () => { /* render prerequisites with no credential: link href /settings/credentials */ });
 ```
-(`/usage` exists after Task 29; order Task 29 before running this test file, or stub the `/usage` assertion to `router.state.location.pathname`.)
+(`/usage` exists from Task 28.)
 
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat(web): old Settings links redirect to the new pages`.
-
-### Task 29: Web: top-level Usage page and its nav row
-
-Implements §9 (`/usage`, "By credential", Usage nav row); spec §2.5 nav order. Builds on `features/settings/usage-section.tsx`, `features/usage/*`.
-
-**Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
-
-**Files:**
-- Create: `apps/web/src/routes/_app/usage.tsx` (`validateSearch: { days: 7|30|90 = 30 }`, loader warms `dailyUsageQuery`, `agentsUsageQuery`, `credentialsUsageQuery`)
-- Modify: `apps/web/src/features/settings/usage-section.tsx` (heading "By credential"; navigation to `/usage` with `days`)
-- Modify: `apps/web/src/components/app-sidebar.tsx` (Usage row between Schedules and Settings, icon `ChartColumn`)
-- Test: `apps/web/src/test/usage-page.test.tsx`, `apps/web/src/test/shell.test.tsx`
-
-- [ ] **Step 1:** Failing tests: `/usage` renders "Usage", the range control changes `?days=`; the per-credential heading reads "By credential" and the app has one "Credentials" heading (on `/settings/credentials`); nav order Inbox, Tasks, Templates, Schedules, Usage, Settings, then Agents.
-- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat(web): Usage is a top-level page`.
 
 ### Task 30: PR3 docs, verify and open
 

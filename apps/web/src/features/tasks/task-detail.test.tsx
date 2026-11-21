@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -293,7 +294,7 @@ test("composer: disabled while empty, Ctrl-Enter posts, Posting…, the draft st
   const send = await screen.findByRole("button", { name: "Comment" });
   expect(send).toBeDisabled();
   const box = screen.getByRole("textbox", { name: "Comment" });
-  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
+  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention. Enter to post.");
   await userEvent.type(box, "hello @nobody");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
@@ -386,8 +387,34 @@ test("no assignee: the helper says only mentions are notified", async () => {
   world(() => detail({ assignee: null }));
   renderApp("/tasks/T-42", alice);
   expect(
-    await screen.findByText("No assignee: only the people and agents you @mention are notified."),
+    await screen.findByText(
+      "No assignee: only the people and agents you @mention are notified. Enter to post.",
+    ),
   ).toBeInTheDocument();
+});
+
+test("comment composer: Enter posts once, Shift+Enter adds a line", async () => {
+  fakeMatchMedia.install(false);
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a{Shift>}{Enter}{/Shift}b");
+  expect(box).toHaveValue("a\nb");
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(box).toHaveValue(""));
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+});
+
+test("comment composer: on a coarse pointer the helper drops 'Enter to post.' and Enter adds a line", async () => {
+  fakeMatchMedia.install(false, { coarse: true });
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
+  await userEvent.type(box, "a{Enter}b");
+  expect(box).toHaveValue("a\nb");
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
 test("?comment=<id> of an agent's comment: highlighted, focused, composer prefilled; of a human's: no prefill; unknown: a muted line", async () => {

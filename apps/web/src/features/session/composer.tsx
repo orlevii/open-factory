@@ -4,6 +4,7 @@ import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { isSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
 import { postMessage } from "./api";
 
@@ -22,7 +23,6 @@ const writeDraft = (slug: string, v: string) => {
     /* private mode */
   }
 };
-const coarse = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 
@@ -157,9 +157,7 @@ export function Composer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // keyCode 229: Safari fires the IME-confirming Enter after compositionend.
-    const composing = e.nativeEvent.isComposing || e.keyCode === 229;
-    if (e.key !== "Enter" || e.shiftKey || composing || coarse()) return;
+    if (!isSendKey(e.nativeEvent)) return;
     e.preventDefault();
     void send();
   };

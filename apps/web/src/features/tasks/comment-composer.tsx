@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type Ref, useImperativeHandle, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
+import { isCoarsePointer, isSendKey } from "@/lib/send-key";
 import { postComment, taskDetailOptions, tasksQueryKey } from "./api";
 
 const REASON: Record<string, string> = {
@@ -96,9 +97,10 @@ export function CommentComposer({
     }
   }
   const empty = draft.trim() === "";
-  const helper = assignee
+  const who = assignee
     ? `Goes to @${assignee} and anyone you @mention.`
     : "No assignee: only the people and agents you @mention are notified.";
+  const helper = isCoarsePointer() ? who : `${who} Enter to post.`;
   return (
     <>
       <div className="grid gap-2">
@@ -112,9 +114,9 @@ export function CommentComposer({
           view={view}
           onViewChange={setView}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !empty && !posting) {
+            if (isSendKey(e.nativeEvent)) {
               e.preventDefault();
-              void post();
+              if (!empty && !posting) void post();
             }
           }}
         />

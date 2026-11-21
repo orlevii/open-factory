@@ -255,6 +255,8 @@ export function SessionView({
           <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
             {s.messageNotice.kind === "rejected" ? (
               <RejectedReason to={s.messageNotice.to} viewed={agent} />
+            ) : s.messageNotice.kind === "cancelled" ? (
+              "You cancelled this message."
             ) : (
               "Message not found. Showing the latest."
             )}

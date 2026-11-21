@@ -55,7 +55,10 @@ const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK
 /** HTTP pages + WS subscription + dedup by seq + queue + status + the deep-link window. */
 /** Why `?message=` couldn't jump to the message (UI design §2.5); rendered by the session view so the
  *  recipient's `@slug` can be mono. */
-export type MessageNotice = { kind: "rejected"; to: string } | { kind: "not_found" };
+export type MessageNotice =
+  | { kind: "rejected"; to: string }
+  | { kind: "cancelled" }
+  | { kind: "not_found" };
 
 /** Derives a value from `input`, letting `compute` reuse the previous committed result (spec §9.3);
  *  recomputed only when `input` changes. The ref is written after commit, never during render, and no
@@ -140,6 +143,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
               setMessageSeq(around);
             } else if (m.state === "rejected") {
               setMessageNotice({ kind: "rejected", to: m.to });
+            } else if (m.state === "cancelled") {
+              setMessageNotice({ kind: "cancelled" }); // U3 §6.4
             }
           } catch (e) {
             if (e instanceof ApiError && e.code === "message_not_found")

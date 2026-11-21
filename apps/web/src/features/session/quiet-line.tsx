@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
+import { runInstant } from "@/lib/run-instant";
 
 const LINE =
   "flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0";
@@ -30,7 +31,12 @@ export function QuietLine({
     );
   return (
     <details className="group">
-      <summary {...rowProps} className={`${LINE} cursor-pointer list-none`}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is the native disclosure button. */}
+      <summary
+        {...rowProps}
+        onClick={instantOnKeyboard}
+        className={`${LINE} cursor-pointer list-none`}
+      >
         <ChevronRight
           aria-hidden="true"
           className="size-3.5 shrink-0 transition-transform duration-150 ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
@@ -40,6 +46,15 @@ export function QuietLine({
       <CodePlate>{detail}</CodePlate>
     </details>
   );
+}
+
+/**
+ * A <summary> click handler: a keyboard toggle (Enter/Space, click detail 0) opens without the chevron's
+ * transition. The <details> toggles as the click's default action, right after this handler, so the
+ * open state lands inside the instant frames.
+ */
+export function instantOnKeyboard(e: MouseEvent) {
+  if (e.detail === 0) runInstant(() => {});
 }
 
 /** Code-styled plate for tool input/output, summaries and stderr: capped at 24rem with its own scroll. */

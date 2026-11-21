@@ -261,6 +261,24 @@ test("keepFocus: opening leaves focus where it was; returnFocus decides where fo
   await vi.waitFor(() => expect(document.getElementById("row")).toHaveFocus());
 });
 
+test("mobile: returnFocus decides where focus goes when the drawer closes", async () => {
+  fakeMatchMedia.install(true);
+  render(<Peek returnFocus={() => document.getElementById("row")} />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  await vi.waitFor(() =>
+    expect(document.querySelector("[data-slot=drawer-content]")).toBeInTheDocument(),
+  );
+  await userEvent.keyboard("{Escape}");
+  // Vaul animates the drawer out with a keyframe jsdom never runs: end it, so the content unmounts.
+  const content = document.querySelector("[data-slot=drawer-content]") as HTMLElement;
+  const end = new Event("animationend", { bubbles: true });
+  Object.defineProperty(end, "animationName", { value: getComputedStyle(content).animationName });
+  act(() => {
+    content.dispatchEvent(end);
+  });
+  await vi.waitFor(() => expect(document.getElementById("row")).toHaveFocus());
+});
+
 test("without keepFocus, opening moves focus into the sheet", async () => {
   fakeMatchMedia.install(false);
   render(<Peek />);

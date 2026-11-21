@@ -78,7 +78,7 @@ function SheetContent({
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   width?: keyof typeof WIDTH;
   inset?: keyof typeof INSET;
-  /** Where focus goes on close (a non-modal Radix close only focuses its trigger ref). */
+  /** Where focus goes on close, sheet or drawer (a close without a trigger leaves it on <body>). */
   returnFocus?: () => HTMLElement | null;
   /** Opening leaves focus where it was (a peek opened by a key on a list). */
   keepFocus?: boolean;
@@ -94,13 +94,22 @@ function SheetContent({
     [ref],
   );
   const stampedRef = useStampedRef(composed);
+  const closeAutoFocus = (e: Event) => {
+    onCloseAutoFocus?.(e);
+    if (e.defaultPrevented) return;
+    const target = returnFocus?.();
+    if (target) {
+      e.preventDefault();
+      target.focus();
+    }
+  };
   if (mobile) {
     return (
       <DrawerContent
         ref={ref}
         className={className}
         onOpenAutoFocus={onOpenAutoFocus}
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={closeAutoFocus}
         onEscapeKeyDown={onEscapeKeyDown}
         onInteractOutside={onInteractOutside}
         onFocusOutside={onFocusOutside}
@@ -137,15 +146,7 @@ function SheetContent({
           onOpenAutoFocus?.(e);
           if (keepFocus) e.preventDefault();
         }}
-        onCloseAutoFocus={(e) => {
-          onCloseAutoFocus?.(e);
-          if (e.defaultPrevented) return;
-          const target = returnFocus?.();
-          if (target) {
-            e.preventDefault();
-            target.focus();
-          }
-        }}
+        onCloseAutoFocus={closeAutoFocus}
         onEscapeKeyDown={(e) => {
           onEscapeKeyDown?.(e);
           contentRef.current?.setAttribute("data-instant", "");

@@ -168,7 +168,9 @@ test("deep link loads a window around the event and highlights it", async () => 
     }),
   );
   expect(screen.queryByText("Later")).not.toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: /Jump to latest · 1 new/ })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "1 new message" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("a windowed view subscribes from the agent's lastSeq, not the highest seq on screen", async () => {
@@ -200,10 +202,11 @@ test("Jump to latest leaves the window and loads the newest page", async () => {
     json({ ...conversation(), hasMore: { before: true, after: true } });
   const { router } = renderApp("/agents/dev?event=5", alice);
   await screen.findByText("Two entries.");
-  await userEvent.click(await screen.findByRole("button", { name: /Jump to latest · 0 new/ }));
+  await userEvent.click(await screen.findByRole("button", { name: "Jump to latest" }));
   await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
+  // The newest page is pinned: the pill stays mounted, hidden.
   await vi.waitFor(() =>
-    expect(screen.queryByRole("button", { name: /Jump to latest/ })).not.toBeInTheDocument(),
+    expect(document.querySelector(".jump-pill")).not.toHaveAttribute("data-shown"),
   );
   expect(document.querySelector("[data-highlighted]")).not.toBeInTheDocument();
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
@@ -313,7 +316,9 @@ test("window mode: a reconnect resubscribes after the newest counted seq and doe
     expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 12 }),
   );
   live(12, { type: "assistant_text", text: "b" }); // replay
-  expect(await screen.findByRole("button", { name: "Jump to latest · 2 new" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "2 new messages" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("a resync while windowed reloads the same window", async () => {
@@ -325,7 +330,9 @@ test("a resync while windowed reloads the same window", async () => {
   expect(arounds()).toBe(1);
   act(() => ws.onMessage?.({ type: "resync", agent: "dev" }));
   await vi.waitFor(() => expect(arounds()).toBe(2));
-  expect(await screen.findByRole("button", { name: /Jump to latest/ })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Jump to latest" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("Load earlier prepends without a new-events pill; a failure says so and a later success clears it", async () => {
@@ -348,7 +355,7 @@ test("Load earlier prepends without a new-events pill; a failure says so and a l
   await userEvent.click(screen.getByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("Earlier text")).toBeInTheDocument();
   expect(screen.queryByText("Couldn't load earlier events.")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /new event/ })).not.toBeInTheDocument();
+  expect(document.querySelector(".jump-pill")).not.toHaveAttribute("data-shown");
   expect(screen.queryByRole("button", { name: "Load earlier" })).not.toBeInTheDocument();
 });
 
@@ -363,9 +370,13 @@ test("scrolled up, live rows are counted into the pill (singular, then plural)",
   scroller.scrollTop = 100; // the reader scrolls up
   fireEvent.scroll(scroller);
   live(11, { type: "assistant_text", text: "one" });
-  expect(await screen.findByRole("button", { name: "1 new event" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "1 new message" })).toHaveAttribute(
+    "data-shown",
+  );
   live(12, { type: "assistant_text", text: "two" });
-  expect(await screen.findByRole("button", { name: "2 new events" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "2 new messages" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("pinned to the bottom, a content resize (queued block, working line) keeps it pinned", async () => {

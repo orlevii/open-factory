@@ -143,6 +143,22 @@ export function isSendMessageCall(e: Ev<"tool_call">): boolean {
   return !!i && typeof i.to === "string" && typeof i.body === "string";
 }
 
+/** Speech: what a reader scrolled away from is waiting for (U3 §8.2): a message, an outgoing
+ *  message, or the agent's text. */
+export function isSpeechRow(row: Row): boolean {
+  return row.kind === "message" || row.kind === "outgoing" || row.kind === "text";
+}
+
+const NOT_SPEECH = new Set(["member_update", "peer_joined", "peer_left"]);
+
+/** The top-level speech rows one event becomes: a windowed view counts events, not rows. */
+export function speechCount(e: AnyEvent): number {
+  if (e.type === "message_in") return e.messages.filter((m) => !NOT_SPEECH.has(m.kind)).length;
+  if (e.type === "assistant_text") return e.parentToolUseId ? 0 : 1;
+  if (e.type === "tool_call") return !e.parentToolUseId && isSendMessageCall(e) ? 1 : 0;
+  return 0;
+}
+
 export const SPAWN_AGENT_TOOL = "mcp__factory__spawn_agent";
 export const TERMINATE_AGENT_TOOL = "mcp__factory__terminate_agent";
 

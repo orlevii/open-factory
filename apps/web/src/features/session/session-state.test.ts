@@ -524,3 +524,42 @@ test("a new load starts with no handoffs", () => {
   expect(s2.handedOff.size).toBe(0);
   expect(s2.liveAfter).toBe(10);
 });
+
+test("a windowed view counts speech in newSpeech: messages, agent text and sends, not tools or member updates", () => {
+  const s0 = loaded({}, "window");
+  const msgIn = (kinds: string[]): SessionEvent["event"] =>
+    ({
+      type: "message_in",
+      messages: kinds.map((kind, i) => ({
+        id: `m${i}`,
+        from: "@or",
+        kind,
+        urgent: false,
+        body: "x",
+      })),
+    }) as SessionEvent["event"];
+  const s = sessionReducer(
+    s0,
+    frames([
+      sessionEvent(20, { type: "assistant_text", text: "hi" }),
+      sessionEvent(21, msgIn(["message", "member_update"])),
+      sessionEvent(22, {
+        type: "tool_call",
+        toolUseId: "t1",
+        name: "mcp__factory__send_message",
+        input: { to: "@or", body: "done" },
+      } as SessionEvent["event"]),
+      sessionEvent(23, {
+        type: "tool_call",
+        toolUseId: "t2",
+        name: "Bash",
+        input: {},
+      } as SessionEvent["event"]),
+      sessionEvent(24, turnEnd()),
+    ]),
+  );
+  expect(s.newWhileAway).toBe(5);
+  expect(s.newSpeech).toBe(3);
+  // A reload starts the count again.
+  expect(loaded({}, "window").newSpeech).toBe(0);
+});

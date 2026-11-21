@@ -108,6 +108,11 @@ export function SessionView({
   useEffect(() => {
     if (failed && sheetOpen) closePanel(false);
   }, [failed, sheetOpen, closePanel]);
+  // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
+  const leaveWindow = useCallback(
+    () => void navigate({ to: "/agents/$slug", params: { slug }, search: {} }),
+    [navigate, slug],
+  );
   // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.
   if (s.error?.code === "agent_not_found")
     return (
@@ -249,6 +254,9 @@ export function SessionView({
             hasMoreBefore={s.state.hasMoreBefore}
             onLoadEarlier={s.loadEarlier}
             earlierError={s.earlierError}
+            windowed={s.state.windowed}
+            newSpeech={s.state.newSpeech}
+            onLeaveWindow={leaveWindow}
             footer={
               <>
                 {s.rows.length === 0 && s.state.queue.length === 0 && (
@@ -270,18 +278,6 @@ export function SessionView({
           />
         ) : (
           <TimelineSkeleton />
-        )}
-        {s.state.windowed && (
-          <div className="flex shrink-0 justify-center py-2">
-            <Button
-              variant="outline"
-              size="sm"
-              // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
-              onClick={() => void navigate({ to: "/agents/$slug", params: { slug }, search: {} })}
-            >
-              Jump to latest · {s.state.newWhileAway} new
-            </Button>
-          </div>
         )}
         <div role="status" aria-live="polite" className="sr-only">
           {announce}

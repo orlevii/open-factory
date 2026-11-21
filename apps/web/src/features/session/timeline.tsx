@@ -1,4 +1,4 @@
-import { ArrowDown, CircleAlert } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -12,6 +12,8 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { runInstantOn } from "@/lib/run-instant";
+import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
@@ -23,7 +25,7 @@ export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor
 
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
-/** The only scrolling region: stick-to-bottom, "N new events", Load earlier with a scroll anchor,
+/** The only scrolling region: stick-to-bottom, Jump to latest, Load earlier with a scroll anchor,
  *  deep-link centring and tint, and one tab stop with roving focus (UI design §4.3, §7). */
 export function Timeline(props: {
   ref?: Ref<TimelineHandle>;
@@ -44,16 +46,26 @@ export function Timeline(props: {
   onLoadEarlier(): Promise<boolean>;
   earlierError: boolean;
   footer: ReactNode;
+  /** An older window (deep link): the Jump pill always shows and leaves it (U3 §8.2). */
+  windowed?: boolean;
+  /** The speech that arrived while windowed (the reducer counts it: those rows aren't appended). */
+  newSpeech?: number;
+  /** Navigates to the newest page. Stable: the pill is memoized. */
+  onLeaveWindow?(): void;
 }) {
   const { rows, liveAfter = Number.POSITIVE_INFINITY, handedOff = NO_KEYS } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
-  const prevLastKey = useRef<string | undefined>(undefined);
+  const pillLayer = useRef<HTMLDivElement>(null);
   const centred = useRef(false);
-  const [unseen, setUnseen] = useState(0);
-  const stick = useStickToBottom(scroller, log, (pinned) => {
-    if (pinned) setUnseen(0);
-  });
+  // The highest seq on screen when the view unpinned; undefined while pinned. A primitive, so the
+  // pill's counts derive from rows (U3 §8.2) and the rows layout effect sets no state.
+  const [seenSeq, setSeenSeq] = useState<number>();
+  const latestRows = useRef(rows);
+  latestRows.current = rows;
+  const stick = useStickToBottom(scroller, log, (pinned) =>
+    setSeenSeq(pinned ? undefined : maxSeq(latestRows.current)),
+  );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -68,12 +80,10 @@ export function Timeline(props: {
     [rows, highlight, props.highlightMessageId],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every rows commit (the height changed).
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const prevIndex = rows.findIndex((r) => r.key === prevLastKey.current);
-    const appended = prevIndex < 0 ? 0 : rows.length - 1 - prevIndex;
-    prevLastKey.current = rows.at(-1)?.key;
     if (litKey !== undefined && !centred.current) {
       centred.current = true;
       stick.unpin();
@@ -83,8 +93,17 @@ export function Timeline(props: {
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-    if (!stick.pinned.current && appended > 0) setUnseen((n) => n + appended);
   }, [rows, litKey, stick]);
+
+  const arrived = useMemo(() => arrivedSince(rows, seenSeq, handedOff), [rows, seenSeq, handedOff]);
+  const windowed = props.windowed ?? false;
+  const speech = windowed ? (props.newSpeech ?? 0) : arrived.speech;
+  const other = !windowed && arrived.other;
+  const onLeaveWindow = props.onLeaveWindow;
+  const onJump = useCallback(
+    () => (windowed ? onLeaveWindow?.() : stick.repin()),
+    [windowed, onLeaveWindow, stick],
+  );
 
   useImperativeHandle(
     props.ref,
@@ -148,7 +167,13 @@ export function Timeline(props: {
     if (e.key === "ArrowDown") go(i + 1);
     else if (e.key === "ArrowUp") go(i - 1);
     else if (e.key === "Home") go(0);
-    else if (e.key === "End") go(list.length - 1);
+    else if (e.key === "End") {
+      // The last loaded row, and follow again; it never leaves a window (the pill alone does).
+      go(list.length - 1);
+      const layer = pillLayer.current;
+      if (layer) runInstantOn(layer, stick.repin);
+      else stick.repin();
+    }
   };
 
   // Roving tabindex: exactly one row is in the tab order; the first row until one is focused.
@@ -251,18 +276,27 @@ export function Timeline(props: {
           {props.footer}
         </div>
       </div>
-      {unseen > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute right-4 bottom-3 border border-border bg-card md:right-6"
-          onClick={stick.repin}
-        >
-          <ArrowDown aria-hidden="true" /> {unseen} new {unseen === 1 ? "event" : "events"}
-        </Button>
-      )}
+      {/* Centred on the 52rem column, not the scroller. */}
+      <div ref={pillLayer} className="pointer-events-none absolute inset-x-0 bottom-3 px-4 md:px-6">
+        <div className="relative max-w-[52rem]">
+          <JumpPill
+            shown={windowed || speech > 0 || other}
+            speech={speech}
+            other={other}
+            windowed={windowed}
+            onJump={onJump}
+          />
+        </div>
+      </div>
     </div>
   );
+}
+
+/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq. */
+function maxSeq(rows: Row[]): number {
+  let max = 0;
+  for (const r of rows) if (r.seq > max) max = r.seq;
+  return max;
 }
 
 /** Only rows that are mounted: children of collapsed tools are not. */

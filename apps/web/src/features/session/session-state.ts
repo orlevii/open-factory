@@ -6,6 +6,7 @@ import type {
   ServerMessage,
   SessionEvent,
 } from "@open-factory/shared";
+import { speechCount } from "./rows";
 
 export interface SessionState {
   slug: string | undefined;
@@ -16,6 +17,8 @@ export interface SessionState {
   /** true while showing an older window (deep link): live events are counted, not appended */
   windowed: boolean;
   newWhileAway: number;
+  /** The speech among `newWhileAway` (messages, agent text, sends): the Jump pill's count (U3 §8.2). */
+  newSpeech: number;
   /** Highest seq already accounted for while windowed (starts at the detail's lastSeq), so a
    *  reconnect's replay is not counted twice and the resubscribe starts after it. */
   maxSeenSeq: number;
@@ -44,6 +47,7 @@ export const initialSessionState: SessionState = {
   hasMoreBefore: false,
   windowed: false,
   newWhileAway: 0,
+  newSpeech: 0,
   maxSeenSeq: 0,
   queue: [],
   agent: undefined,
@@ -190,7 +194,12 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         if (s.events.has(m.event.seq)) return s;
         if (s.windowed) {
           if (m.event.seq <= s.maxSeenSeq) return s;
-          return { ...s, newWhileAway: s.newWhileAway + 1, maxSeenSeq: m.event.seq };
+          return {
+            ...s,
+            newWhileAway: s.newWhileAway + 1,
+            newSpeech: s.newSpeech + speechCount(m.event.event),
+            maxSeenSeq: m.event.seq,
+          };
         }
         const { added, fresh } = withFresh(s, [m.event]);
         return applyLive({ ...s, ...added }, fresh);

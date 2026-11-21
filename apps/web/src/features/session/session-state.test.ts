@@ -384,3 +384,143 @@ test("a frames batch of already-held events returns the same state", () => {
   const s = loadedLatest();
   expect(sessionReducer(s, { type: "frames", messages: [liveFrame(8), liveFrame(9)] })).toBe(s);
 });
+
+// U3 §8.3, §5.3: handoffs, liveAfter and the one-commit turn end.
+const at = "2026-11-21T10:00:00.000Z";
+const sessionEvent = (seq: number, event: SessionEvent["event"]): SessionEvent => ({
+  seq,
+  agentSlug: "dev",
+  turnId: "t1",
+  at,
+  event,
+});
+const messageIn = (...ids: string[]): SessionEvent["event"] => ({
+  type: "message_in",
+  messages: ids.map((id) => ({ id, from: "@or", kind: "message", urgent: false, body: id })),
+});
+const turnEnd = (): SessionEvent["event"] => ({ type: "turn_end", isError: false, numTurns: 1 });
+const loaded = (
+  o: { queue?: AgentDetail["queue"]; agent?: Partial<AgentDetail["agent"]>; seqs?: number[] } = {},
+  mode: "latest" | "window" = "latest",
+) =>
+  sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: page(o.seqs ?? [7, 8, 9], { before: false, after: mode === "window" }),
+    detail: { agent: agentSummary(o.agent), queue: o.queue ?? [], lastSeq: 9 },
+    mode,
+  });
+const frames = (events: SessionEvent[]) => ({
+  type: "frames" as const,
+  messages: events.map((event) => ({ type: "session_event" as const, agent: "dev", event })),
+});
+
+test("a message_in matching a queue item removes it in the same step and marks the row handed off", () => {
+  const s1 = sessionReducer(
+    loaded({ queue: [qItem("m8"), qItem("m9")] }),
+    frames([sessionEvent(10, messageIn("m7", "m9"))]),
+  );
+  expect(s1.queue.map((q) => q.id)).toEqual(["m8"]);
+  expect(s1.handedOff.has("10:1")).toBe(true);
+  expect(s1.handedOff.has("10:0")).toBe(false);
+  // A single frame does the same.
+  const s2 = sessionReducer(loaded({ queue: [qItem("m9")] }), {
+    type: "frame",
+    message: { type: "session_event", agent: "dev", event: sessionEvent(10, messageIn("m9")) },
+  });
+  expect(s2.queue).toEqual([]);
+  expect(s2.handedOff.has("10:0")).toBe(true);
+});
+
+test("a merged envelope's ids hand off every matching queue item", () => {
+  const ev10 = sessionEvent(10, {
+    type: "message_in",
+    messages: [
+      { id: "m1", ids: ["m1", "m2"], from: "@or", kind: "message", urgent: false, body: "x" },
+    ],
+  });
+  const s = sessionReducer(loaded({ queue: [qItem("m1"), qItem("m2")] }), frames([ev10]));
+  expect(s.queue).toEqual([]);
+  expect(s.handedOff.has("10:0")).toBe(true);
+});
+
+test("applying a live turn_end closes the turn in the same step", () => {
+  const s0 = loaded({ agent: { turnOpen: true, turnStartedAt: at, status: "working" } });
+  const s = sessionReducer(s0, frames([sessionEvent(20, turnEnd())]));
+  expect(s.agent?.turnOpen).toBe(false);
+  expect(s.agent?.turnStartedAt).toBeUndefined();
+  expect(s.turnEpoch).toBe(s0.turnEpoch + 1);
+});
+
+test("a loaded turn_end never flips turnOpen", () => {
+  const s = sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: { events: [sessionEvent(5, turnEnd())], hasMore: { before: false, after: false } },
+    detail: { agent: agentSummary({ turnOpen: true, turnStartedAt: at }), queue: [], lastSeq: 9 },
+    mode: "latest",
+  });
+  expect(s.agent?.turnOpen).toBe(true);
+  // Nor does an earlier page.
+  const e = sessionReducer(s, {
+    type: "earlier",
+    page: { events: [sessionEvent(2, turnEnd())], hasMore: { before: false, after: false } },
+  });
+  expect(e.agent?.turnOpen).toBe(true);
+});
+
+test("a windowed view's live turn_end only counts", () => {
+  const s0 = loaded({ agent: { turnOpen: true, turnStartedAt: at } }, "window");
+  const s = sessionReducer(s0, frames([sessionEvent(20, turnEnd())]));
+  expect(s.agent?.turnOpen).toBe(true);
+  expect(s.newWhileAway).toBe(1);
+});
+
+test("a status frame without turnStartedAt or compacting clears them", () => {
+  const s0 = loaded({ agent: { turnOpen: true, turnStartedAt: at, compacting: true } });
+  const s = sessionReducer(s0, {
+    type: "frame",
+    message: { type: "agent_status", agent: "dev", status: "idle", turnOpen: false, ...noRestart },
+  });
+  expect(s.agent?.turnStartedAt).toBeUndefined();
+  expect(s.agent?.compacting).toBeUndefined();
+});
+
+test("liveAfter moves on load, caught_up and visible", () => {
+  let s = loaded();
+  expect(s.liveAfter).toBe(9);
+  s = sessionReducer(s, frames([sessionEvent(10, { type: "assistant_text", text: "a" })]));
+  expect(s.liveAfter).toBe(9);
+  s = sessionReducer(s, { type: "caught_up" });
+  expect(s.liveAfter).toBe(10);
+  s = sessionReducer(s, frames([sessionEvent(11, { type: "assistant_text", text: "b" })]));
+  expect(s.liveAfter).toBe(10);
+  s = sessionReducer(s, { type: "visible" });
+  expect(s.liveAfter).toBe(11);
+  // Nothing new: the same state, so React bails out.
+  expect(sessionReducer(s, { type: "visible" })).toBe(s);
+});
+
+test("a commit appending more than 10 rows is not live", () => {
+  const text = (seq: number) => sessionEvent(seq, { type: "assistant_text", text: `${seq}` });
+  const ten = sessionReducer(loaded(), frames(Array.from({ length: 10 }, (_, i) => text(10 + i))));
+  expect(ten.liveAfter).toBe(9);
+  const eleven = sessionReducer(
+    loaded(),
+    frames(Array.from({ length: 11 }, (_, i) => text(10 + i))),
+  );
+  expect(eleven.liveAfter).toBe(20);
+});
+
+test("a new load starts with no handoffs", () => {
+  const s1 = sessionReducer(
+    loaded({ queue: [qItem("m9")] }),
+    frames([sessionEvent(10, messageIn("m9"))]),
+  );
+  const s2 = sessionReducer(s1, {
+    type: "loaded",
+    page: page([7, 8, 9, 10]),
+    detail,
+    mode: "latest",
+  });
+  expect(s2.handedOff.size).toBe(0);
+  expect(s2.liveAfter).toBe(10);
+});

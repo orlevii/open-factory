@@ -151,6 +151,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         }
         page ??= await fetchEvents(slug);
         dispatch({ type: "loaded", page, detail, mode });
+        // Everything held is caught up: nothing loaded fades (U3 §8.3; PR4 adds the live `reset`).
+        dispatch({ type: "caught_up" });
         setError(undefined);
         setLoadedAt(Date.now());
       } catch (e) {
@@ -191,10 +193,12 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   );
   // The timer kind is picked when the first frame arrives: a tab hidden before its rAF fires would
   // hold the frames until it is shown again, and one shown again need not wait out the 100ms. Either
-  // way, a visibility change commits what is pending.
+  // way, a visibility change commits what is pending. Coming back also moves `liveAfter` in the
+  // same commit: rows committed while hidden never got a style pass and must not all fade (U3 §8.3).
   useEffect(() => {
     const onVisibility = () => {
       if (scheduled.current) flush();
+      if (!document.hidden) dispatchRaw({ type: "visible" });
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);

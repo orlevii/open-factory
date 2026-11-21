@@ -9,6 +9,8 @@ export type TimelineItemProps = {
   spawned?: boolean;
   /** The deep-link tint is on this row. */
   lit: boolean;
+  /** Arrived by a live frame and replaces nothing on screen: it fades in once (U3 §8.3). */
+  live: boolean;
   /** The first row of its seq carries `id="event-<seq>"` (a message_in can render several rows). */
   firstOfSeq: boolean;
   tabKey: string | undefined;
@@ -33,6 +35,7 @@ export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): bool
     a.slug !== b.slug ||
     a.spawned !== b.spawned ||
     a.lit !== b.lit ||
+    a.live !== b.live ||
     a.firstOfSeq !== b.firstOfSeq ||
     a.toggle !== b.toggle ||
     a.onRowFocus !== b.onRowFocus
@@ -64,6 +67,7 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       data-row-wrap
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
       {...(p.lit ? { "data-highlighted": "true" } : {})}
+      {...(p.live ? { "data-live": "" } : {})}
       className={`group relative min-w-0 rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
     >
       <TimelineRow

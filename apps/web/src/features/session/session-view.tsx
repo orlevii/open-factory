@@ -242,6 +242,8 @@ export function SessionView({
             rows={s.rows}
             failedIds={s.failedIds}
             interruptedEnds={s.interruptedEnds}
+            liveAfter={s.state.liveAfter}
+            handedOff={s.state.handedOff}
             highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
             highlightMessageId={eventSeq === undefined ? messageId : undefined}
             hasMoreBefore={s.state.hasMoreBefore}

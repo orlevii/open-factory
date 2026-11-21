@@ -16,6 +16,7 @@ import type { Row } from "./rows";
 import { TimelineItem } from "./timeline-item";
 
 const NEAR_BOTTOM = 64;
+const NO_KEYS: ReadonlySet<string> = new Set();
 /** What a toggle that resizes the timeline calls first (spec §8.1). */
 export type TimelineHandle = { captureAnchor(): void };
 
@@ -30,6 +31,10 @@ export function Timeline(props: {
   rows: Row[];
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
+  /** Rows above this seq arrived live (U3 §8.3); omitted, nothing is live. */
+  liveAfter?: number;
+  /** Row keys that replace something on screen: never live. */
+  handedOff?: ReadonlySet<string>;
   highlightSeq?: number;
   /** A `?message=` target: lights the row that holds this envelope rather than the event's first. */
   highlightMessageId?: string;
@@ -39,7 +44,7 @@ export function Timeline(props: {
   earlierError: boolean;
   footer: ReactNode;
 }) {
-  const { rows } = props;
+  const { rows, liveAfter = Number.POSITIVE_INFINITY, handedOff = NO_KEYS } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -295,6 +300,7 @@ export function Timeline(props: {
               slug={props.slug}
               spawned={props.spawned}
               lit={row.key === litKey}
+              live={row.seq > liveAfter && row.kind !== "turn_footer" && !handedOff.has(row.key)}
               firstOfSeq={rows[i - 1]?.seq !== row.seq}
               tabKey={tabKey}
               expanded={expanded}

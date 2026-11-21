@@ -25,7 +25,17 @@ export interface SessionState {
    *  turn edge still sees a close and a reopen that were folded into one commit (spec §9.6). */
   turnEpoch: number;
   needsReload: boolean;
+  /** Row keys that replace something that was on screen (a queue item a `message_in` delivered):
+   *  they never fade (U3 §8.3). */
+  handedOff: ReadonlySet<string>;
+  /** Rows above this seq arrived by a live frame and fade in; moved on load, on catching up, when the
+   *  tab comes back and by a frames batch that appends more than 10 events (U3 §8.3). */
+  liveAfter: number;
 }
+
+const NONE: ReadonlySet<string> = new Set();
+/** A frames batch appending more events than this counts as a load: nothing in it fades. */
+const BULK = 10;
 
 export const initialSessionState: SessionState = {
   slug: undefined,
@@ -39,6 +49,8 @@ export const initialSessionState: SessionState = {
   agent: undefined,
   turnEpoch: 0,
   needsReload: false,
+  handedOff: NONE,
+  liveAfter: 0,
 };
 
 export type SessionAction =
@@ -51,6 +63,10 @@ export type SessionAction =
   | { type: "queued"; item: QueueItem }
   /** A fresh summary from a response or a refetch (S7: terminate, pin, the termination fields). */
   | { type: "agent"; agent: AgentSummary }
+  /** Everything held so far is caught up (after a load; PR4 adds the subscribe's `reset` frame). */
+  | { type: "caught_up" }
+  /** The tab became visible: rows committed while hidden never got a style pass, so none fades. */
+  | { type: "visible" }
   | { type: "reset" };
 
 const bySeq = (a: SessionEvent, b: SessionEvent) => a.seq - b.seq;
@@ -61,6 +77,14 @@ function withEvents(
   s: Pick<SessionState, "events" | "ordered">,
   evs: SessionEvent[],
 ): Pick<SessionState, "events" | "ordered"> {
+  return withFresh(s, evs).added;
+}
+
+/** `withEvents`, also returning the events that were new. */
+function withFresh(
+  s: Pick<SessionState, "events" | "ordered">,
+  evs: SessionEvent[],
+): { added: Pick<SessionState, "events" | "ordered">; fresh: SessionEvent[] } {
   let events: Map<number, SessionEvent> | undefined;
   const fresh: SessionEvent[] = [];
   for (const e of evs) {
@@ -69,14 +93,49 @@ function withEvents(
     events.set(e.seq, e);
     fresh.push(e);
   }
-  if (!events) return { events: s.events, ordered: s.ordered };
+  if (!events) return { added: { events: s.events, ordered: s.ordered }, fresh };
   const max = s.ordered.at(-1)?.seq ?? 0;
   const sortedFresh = fresh.length > 1 ? fresh.sort(bySeq) : fresh;
   const ordered =
     (sortedFresh[0]?.seq ?? 0) > max
       ? s.ordered.concat(sortedFresh)
       : [...events.values()].sort(bySeq);
-  return { events, ordered };
+  return { added: { events, ordered }, fresh: sortedFresh };
+}
+
+const topSeq = (s: Pick<SessionState, "ordered">) => s.ordered.at(-1)?.seq ?? 0;
+
+/** What newly appended live events do besides becoming rows (U3 §8.3, §5.3), in the same step: a
+ *  `message_in` takes the queue items it delivered off the queue and its rows are handed off; a
+ *  `turn_end` closes the turn, so the activity line goes as its footer arrives. Only events above
+ *  `liveAfter` count: never loaded, earlier, resync or windowed pages. */
+function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
+  let next = s;
+  for (const se of fresh) {
+    if (se.seq <= s.liveAfter) continue;
+    const e = se.event;
+    if (e.type === "message_in" && next.queue.length > 0) {
+      let handedOff: Set<string> | undefined;
+      let queue = next.queue;
+      for (const [i, m] of e.messages.entries()) {
+        const ids = new Set(m.ids ?? [m.id]);
+        ids.add(m.id);
+        const kept = queue.filter(
+          (q) =>
+            !ids.has(q.id) &&
+            !(m.clientMessageId !== undefined && q.clientMessageId === m.clientMessageId),
+        );
+        if (kept.length === queue.length) continue;
+        queue = kept;
+        handedOff ??= new Set(next.handedOff);
+        handedOff.add(`${se.seq}:${i}`);
+      }
+      if (handedOff) next = { ...next, queue, handedOff };
+    } else if (e.type === "turn_end" && next.agent?.turnOpen) {
+      next = withAgent(next, { ...next.agent, turnOpen: false, turnStartedAt: undefined });
+    }
+  }
+  return next;
 }
 
 /** The state with `agent` replaced, counting a `turnOpen` change in `turnEpoch`. */
@@ -103,6 +162,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
           // the epoch carries across loads, so a reload never makes it repeat a value
           agent: s.agent,
           turnEpoch: s.turnEpoch,
+          liveAfter: a.page.events.reduce((m, e) => Math.max(m, e.seq), 0),
         },
         a.detail.agent,
       );
@@ -117,6 +177,11 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return { ...s, queue: [...s.queue, a.item] };
     case "agent":
       return s.agent && a.agent.slug === s.slug ? withAgent(s, a.agent) : s;
+    case "caught_up":
+    case "visible": {
+      const top = topSeq(s);
+      return top > s.liveAfter ? { ...s, liveAfter: top } : s;
+    }
     case "frame": {
       const m = a.message;
       if (!("agent" in m) || m.agent !== s.slug) return s;
@@ -127,13 +192,21 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
           if (m.event.seq <= s.maxSeenSeq) return s;
           return { ...s, newWhileAway: s.newWhileAway + 1, maxSeenSeq: m.event.seq };
         }
-        return { ...s, ...withEvents(s, [m.event]) };
+        const { added, fresh } = withFresh(s, [m.event]);
+        return applyLive({ ...s, ...added }, fresh);
       }
       if (m.type === "queue") return { ...s, queue: m.items };
       if (m.type === "agent_status" && s.agent) {
         const { type: _t, agent: _a, ...rest } = m;
-        // `lastError` is set explicitly so a frame without it clears the previous one (absent means cleared).
-        return withAgent(s, { ...s.agent, ...rest, lastError: m.lastError });
+        // Fields a frame may leave out are set explicitly, so a frame without one clears it (absent
+        // means cleared): a spread would keep a stale turn start or compaction.
+        return withAgent(s, {
+          ...s.agent,
+          ...rest,
+          lastError: m.lastError,
+          turnStartedAt: m.turnStartedAt,
+          compacting: m.compacting,
+        });
       }
       if (m.type === "resync") return { ...s, needsReload: true };
       return s;
@@ -143,12 +216,16 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       // else goes through the single-frame logic above, in order.
       let next = s;
       let pending: SessionEvent[] = [];
+      let appended = 0;
       const drain = () => {
         if (pending.length === 0) return;
-        const added = withEvents(next, pending);
+        const { added, fresh } = withFresh(next, pending);
         pending = [];
         // A batch of already-held events (a reconnect replay) keeps the state, so React bails out.
-        if (added.events !== next.events) next = { ...next, ...added };
+        if (added.events !== next.events) {
+          appended += fresh.length;
+          next = applyLive({ ...next, ...added }, fresh);
+        }
       };
       for (const m of a.messages) {
         if (m.type === "session_event" && m.agent === next.slug && !next.windowed) {
@@ -159,6 +236,8 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         next = sessionReducer(next, { type: "frame", message: m });
       }
       drain();
+      // A batch this large reads as a load: nothing in it fades.
+      if (appended > BULK) next = { ...next, liveAfter: Math.max(next.liveAfter, topSeq(next)) };
       return next;
     }
   }

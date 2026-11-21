@@ -148,6 +148,8 @@ function Harness() {
         rows={s.rows}
         failedIds={s.failedIds}
         interruptedEnds={s.interruptedEnds}
+        liveAfter={s.state.liveAfter}
+        handedOff={s.state.handedOff}
         hasMoreBefore={false}
         onLoadEarlier={async () => false}
         earlierError={false}
@@ -222,6 +224,35 @@ test("an agent_status frame renders no row and no markdown", async () => {
   frame();
   expect(count.rows.size).toBe(0);
   expect(count.markdown).toBe(0);
+});
+
+test("a queue frame renders no row and no markdown", async () => {
+  await setup();
+  push({ type: "queue", agent: "dev", items: [] });
+  push({
+    type: "queue",
+    agent: "dev",
+    items: [{ id: "q1", kind: "message", body: "next", urgent: false, from: "@or", createdAt: at }],
+  });
+  frame();
+  expect(count.rows.size).toBe(0);
+  expect(count.markdown).toBe(0);
+});
+
+test("a live row is marked live; the tab coming back re-renders only rows that were live", async () => {
+  await setup();
+  push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
+  frame();
+  const wrap = () => document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]");
+  expect(wrap()).toHaveAttribute("data-live");
+  expect(document.querySelectorAll("[data-row-wrap][data-live]")).toHaveLength(1);
+  reset();
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(wrap()).not.toHaveAttribute("data-live");
+  // Only the row whose flag flipped; the 200 loaded rows stay put.
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
 });
 
 test("one appended assistant text renders exactly one new row and one markdown", async () => {
@@ -324,6 +355,7 @@ const props = (over: Partial<TimelineItemProps> = {}): TimelineItemProps => ({
   row: parent,
   slug: "dev",
   lit: false,
+  live: false,
   firstOfSeq: true,
   tabKey: "1",
   expanded: new Set(),

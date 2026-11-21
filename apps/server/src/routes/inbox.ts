@@ -2,6 +2,8 @@ import {
   inboxPageSchema,
   readAllBodySchema,
   readAllResponseSchema,
+  readFromBodySchema,
+  readFromResponseSchema,
   undoReadAllBodySchema,
   undoReadAllResponseSchema,
   unreadCountSchema,
@@ -66,6 +68,29 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
       try {
         const r = await app.store.markAllRead(userId, req.body.upTo);
         if (r.count) app.bus.publishToUser(userId, { type: "inbox_changed" });
+        return r;
+      } catch (err) {
+        if (err instanceof InvalidCursorError) throw new FieldError("upTo", "Not a valid time.");
+        throw err;
+      }
+    },
+  );
+
+  app.post(
+    "/api/inbox/read-from/:slug",
+    {
+      schema: {
+        params: z.object({ slug: z.string().min(1).max(64) }),
+        body: readFromBodySchema,
+        response: { 200: readFromResponseSchema },
+      },
+    },
+    async (req) => {
+      const userId = userOf(req);
+      try {
+        const r = await app.store.markReadFrom(userId, req.params.slug, req.body.upTo);
+        if (!r) throw new ApiError(404, "agent_not_found", "No such agent");
+        if (r.marked) app.bus.publishToUser(userId, { type: "inbox_changed" });
         return r;
       } catch (err) {
         if (err instanceof InvalidCursorError) throw new FieldError("upTo", "Not a valid time.");

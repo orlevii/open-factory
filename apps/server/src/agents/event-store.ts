@@ -1292,6 +1292,41 @@ export class EventStore {
     return { readAt: readAt.toISOString(), count: rows.length };
   }
 
+  /**
+   * Marks the user's unread `message` items sent by the agent `slug`, created at or before `upTo`, read with one
+   * stamp. `null` for an unknown slug. Mentions, task events and items from other senders are untouched.
+   */
+  async markReadFrom(
+    userId: string,
+    slug: string,
+    upTo: string,
+  ): Promise<{ marked: number; readAt: string } | null> {
+    if (!isCursorInstant(upTo)) throw new InvalidCursorError();
+    const agent = await this.agentBySlug(slug);
+    if (!agent) return null;
+    const readAt = this.clock();
+    const rows = await this.db
+      .update(inboxItems)
+      .set({ readAt })
+      .where(
+        and(
+          eq(inboxItems.userId, userId),
+          isNull(inboxItems.readAt),
+          eq(inboxItems.kind, "message"),
+          sql`${inboxItems.createdAt} <= ${upTo}::timestamptz`,
+          inArray(
+            inboxItems.messageId,
+            this.db
+              .select({ id: messages.id })
+              .from(messages)
+              .where(eq(messages.fromAgentId, agent.id)),
+          ),
+        ),
+      )
+      .returning({ id: inboxItems.id });
+    return { marked: rows.length, readAt: readAt.toISOString() };
+  }
+
   /** Clears `read_at` on the user's items whose `read_at` equals exactly the stamp of one mark-all action. */
   async undoReadAll(userId: string, readAt: string): Promise<{ count: number }> {
     if (!isCursorInstant(readAt)) throw new InvalidCursorError();

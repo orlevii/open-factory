@@ -279,6 +279,39 @@ test("read-all marks up to upTo (a newer item stays unread) and Undo restores ex
   expect((await post("/api/inbox/read-all", { upTo: "garbage" })).statusCode).toBe(400);
 });
 
+test("read-from marks that agent's unread messages up to upTo, idempotent, user-scoped", async () => {
+  await aCalls("toolu_r1", { to: "@or", body: "one" });
+  const sam = (await signUp(h.app, { handle: "sam" })).cookie;
+  const upTo = new Date().toISOString();
+  const readFrom = (c: string, slug = "ada", body: object = { upTo }) =>
+    post(`/api/inbox/read-from/${slug}`, body, c);
+  // Another user's call neither marks nor leaks into my items.
+  expect((await readFrom(sam)).json().marked).toBe(0);
+  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({ ada: 1 });
+  expect((await readFrom(cookie)).json().marked).toBe(1);
+  expect((await readFrom(cookie)).json().marked).toBe(0);
+  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({});
+  expect((await readFrom(cookie, "nobody")).statusCode).toBe(404);
+  expect((await readFrom(cookie, "ada", { upTo: "yesterday" })).statusCode).toBe(400);
+  // A message after upTo stays unread.
+  await new Promise((r) => setTimeout(r, 5));
+  await aCalls("toolu_r2", { to: "@or", body: "later" });
+  expect((await readFrom(cookie)).json().marked).toBe(0);
+  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({ ada: 1 });
+});
+
+test("read-from publishes inbox_changed only when it marked something", async () => {
+  await aCalls("toolu_r1", { to: "@or", body: "one" });
+  const orId = ((await get("/api/me")).json() as { id: string }).id;
+  let n = 0;
+  h.app.bus.subscribeUser(orId, (m) => m.type === "inbox_changed" && n++);
+  const upTo = new Date().toISOString();
+  await post("/api/inbox/read-from/ada", { upTo });
+  expect(n).toBe(1);
+  await post("/api/inbox/read-from/ada", { upTo });
+  expect(n).toBe(1);
+});
+
 test("read changes reach the reading user's sockets only; new items reach everyone", async () => {
   const { or, agent, sam } = await actors();
   const orId = or.userId;
@@ -303,6 +336,7 @@ test.each([
   ["POST", "/api/inbox/x/read"],
   ["POST", "/api/inbox/read-all"],
   ["POST", "/api/inbox/read-all/undo"],
+  ["POST", "/api/inbox/read-from/ada"],
 ] as const)("%s %s: a live agent token gets 401", async (method, path) => {
   const r = await h.app.inject({
     method,

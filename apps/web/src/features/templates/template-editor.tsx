@@ -17,6 +17,7 @@ import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
 import {
   buildImage,
@@ -523,28 +524,46 @@ const TemplateHeader = memo(function TemplateHeader({
         actions={
           <>
             {errorCount > 0 ? (
-              <Button
-                variant="ghost"
-                aria-disabled="true"
-                aria-describedby={headingId}
-                title="Fix the errors first"
-                onClick={(e) => e.preventDefault()}
-              >
-                <UserPlus aria-hidden="true" data-icon="inline-start" />
-                <span className="max-md:sr-only">Create agent</span>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    aria-disabled="true"
+                    aria-describedby={headingId}
+                    onClick={(e) => e.preventDefault()}
+                  >
+                    <UserPlus aria-hidden="true" data-icon="inline-start" />
+                    <span className="max-md:sr-only">Create agent</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Fix the errors first</TooltipContent>
+              </Tooltip>
             ) : (
-              <Button variant="ghost" asChild>
-                <Link to="/agents/new" search={{ template: name }} title="Create agent">
-                  <UserPlus aria-hidden="true" data-icon="inline-start" />
-                  <span className="max-md:sr-only">Create agent</span>
-                </Link>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" asChild>
+                    <Link to="/agents/new" search={{ template: name }}>
+                      <UserPlus aria-hidden="true" data-icon="inline-start" />
+                      <span className="max-md:sr-only">Create agent</span>
+                    </Link>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Create agent</TooltipContent>
+              </Tooltip>
             )}
-            <Button variant="ghost" title="Delete template" onClick={() => onDelete(true)}>
-              <Trash2 aria-hidden="true" data-icon="inline-start" className="text-destructive" />
-              <span className="max-md:sr-only">Delete…</span>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" onClick={() => onDelete(true)}>
+                  <Trash2
+                    aria-hidden="true"
+                    data-icon="inline-start"
+                    className="text-destructive"
+                  />
+                  <span className="max-md:sr-only">Delete…</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete template</TooltipContent>
+            </Tooltip>
           </>
         }
       />

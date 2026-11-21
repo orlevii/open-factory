@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export type LinkRow = { id: string; kind: LinkInput["kind"]; target: string; title: string };
 
@@ -128,16 +129,20 @@ export function LinkEditor({
                 onChange={(e) => patch(r.id, { title: e.target.value })}
                 className="h-9 w-full md:w-48 max-md:order-last"
               />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove link ${i + 1}`}
-                title="Remove link"
-                onClick={() => onChange(rows.filter((x) => x.id !== r.id))}
-              >
-                <X aria-hidden="true" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove link ${i + 1}`}
+                    onClick={() => onChange(rows.filter((x) => x.id !== r.id))}
+                  >
+                    <X aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Remove link</TooltipContent>
+              </Tooltip>
             </div>
             {err && (
               <p

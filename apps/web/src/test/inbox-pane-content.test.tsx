@@ -191,7 +191,8 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
     ).toEqual({ body: "On it", urgent: false }),
   );
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
-  expect(within(p).getByRole("checkbox", { name: "Urgent" })).toBeInTheDocument();
+  // The session's composer, keys and reserved hint line included (U3 §6.2).
+  expect(p.querySelector("[data-composer-hint]")).not.toBeNull();
 });
 
 test("without seq the excerpt is the latest 7 events, with no highlight", async () => {

@@ -156,7 +156,7 @@ test("the overlay sits below the header: Stop and the toggle stay clickable", as
   expect(sheet).toHaveClass("top-12");
   expect(sheet).not.toHaveAttribute("aria-modal");
   // Still in the accessibility tree (a modal would hide the page behind).
-  expect(screen.getByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
   await userEvent.click(toggle());
   await waitFor(() => expect(container()).toBeNull());
 });

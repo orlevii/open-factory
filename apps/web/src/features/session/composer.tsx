@@ -1,13 +1,13 @@
 import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
-import { isSendKey } from "@/lib/send-key";
-import { cn } from "@/lib/utils";
+import { isCoarsePointer, isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { postMessage } from "./api";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
+import { StopButton, type StopHandle } from "./stop-button";
 
 const draftKey = (slug: string) => `of-draft:${slug}`;
 const readDraft = (slug: string) => {
@@ -95,6 +95,7 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
 export function Composer({
   slug,
   agent,
+  turnEpoch,
   waiting = false,
   onQueued,
   onSent,
@@ -102,6 +103,9 @@ export function Composer({
 }: {
   slug: string;
   agent: AgentSummary;
+  /** The session's turn epoch: Stop resets on every turn edge (U3 §6.1). Without one (the inbox
+   *  pane, which holds no session state) the composer shows no Stop. */
+  turnEpoch?: number;
   /** The session is still loading: typing works, sending waits. */
   waiting?: boolean;
   /** Called with the 202 queue item (the session inserts it locally while disconnected). */
@@ -112,14 +116,29 @@ export function Composer({
   onTerminated?: (notice: string) => void;
 }) {
   const [text, setText] = useState(() => readDraft(slug));
-  const [urgent, setUrgent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // A failed Stop, on the composer's error line; it belongs to that turn (reset on its edge).
+  const [stopError, setStopError] = useState<string | undefined>();
+  const [errorEpoch, setErrorEpoch] = useState(turnEpoch);
+  if (errorEpoch !== turnEpoch) {
+    setErrorEpoch(turnEpoch);
+    setStopError(undefined);
+  }
+  const onStopError = useCallback(
+    (e: unknown) =>
+      setStopError(
+        e === undefined
+          ? undefined
+          : `Couldn't stop: ${e instanceof ApiError ? e.message : NETWORK_ERROR}`,
+      ),
+    [],
+  );
+  const stopRef = useRef<StopHandle>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   const hintId = `${id}-hint`;
   const boxId = `${id}-box`;
-  const urgentId = `${id}-urgent`;
   const waitHintId = `${id}-wait`;
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
@@ -127,15 +146,14 @@ export function Composer({
   useEffect(() => writeDraft(slug, text), [slug, text]);
   useEffect(() => registerComposerFocus(slug, () => boxRef.current?.focus()), [slug]);
   const empty = text.trim() === "";
-  const urgentNow = urgent && agent.turnOpen;
+  const shownError = error ?? stopError;
 
-  async function send() {
+  async function send(urgent = false) {
     if (empty || sending || waiting) return;
     const sent = text;
     // Clear only what was sent: anything typed while the POST was in flight stays.
     const accepted = () => {
       setText((cur) => (cur.startsWith(sent) ? cur.slice(sent.length) : cur));
-      setUrgent(false);
       onSent?.();
     };
     const bytes = new TextEncoder().encode(sent.trim()).length;
@@ -166,10 +184,21 @@ export function Composer({
     }
   }
 
+  // U3 §6.2, in order: IME guard, Esc, ⌥Enter, Enter. PR5 adds the menu, command mode and recall.
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!isSendKey(e.nativeEvent)) return;
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
+      if (e.nativeEvent.defaultPrevented) return;
+      if (!stopRef.current?.stop()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const urgent = isUrgentSendKey(e.nativeEvent);
+    if (!urgent && !isSendKey(e.nativeEvent)) return;
     e.preventDefault();
-    void send();
+    void send(urgent);
   };
 
   return (
@@ -181,7 +210,7 @@ export function Composer({
         void send();
       }}
     >
-      <div className="max-w-[52rem]">
+      <div className="@container max-w-[52rem]">
         <label htmlFor={boxId} className="sr-only">
           Message to {agent.displayName}
         </label>
@@ -197,8 +226,9 @@ export function Composer({
           placeholder={`Message ${agent.displayName}`}
           rows={2}
           aria-describedby={
-            [waitsForNewSession && waitHintId, urgent && hintId].filter(Boolean).join(" ") ||
-            undefined
+            [waitsForNewSession && waitHintId, agent.turnOpen && hintId]
+              .filter(Boolean)
+              .join(" ") || undefined
           }
           className="max-h-[9rem] min-h-[3.5rem] resize-none md:max-h-[18rem]"
         />
@@ -210,51 +240,52 @@ export function Composer({
             Messages wait until a new session is started.
           </p>
         )}
-        <div className="mt-2 flex items-center justify-end gap-3">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id={urgentId}
-              checked={urgent}
-              onCheckedChange={(v) => setUrgent(v === true)}
+        {/* Send stays right-anchored; Stop appears to its left while a turn is open. */}
+        <div className="mt-2 flex items-center justify-end gap-2">
+          {agent.turnOpen && turnEpoch !== undefined && (
+            <StopButton
+              ref={stopRef}
+              slug={slug}
+              turnOpen={agent.turnOpen}
+              turnEpoch={turnEpoch}
+              compacting={agent.compacting === true}
+              onError={onStopError}
             />
-            <label htmlFor={urgentId} className="text-[0.8125rem]">
-              Urgent
-            </label>
-          </div>
-          <Button
-            type="submit"
-            disabled={empty || sending || waiting}
-            aria-label={urgentNow ? "Send urgent" : "Send"}
-          >
-            <span className="grid">
-              <span className={cn("[grid-area:1/1]", urgentNow && "invisible")}>Send</span>
-              <span
-                className={cn("[grid-area:1/1]", !urgentNow && "invisible")}
-                aria-hidden={!urgentNow}
-              >
-                Send urgent
-              </span>
-            </span>
+          )}
+          <Button type="submit" disabled={empty || sending || waiting}>
+            Send
           </Button>
         </div>
-        {urgent && (
-          <p
-            id={hintId}
-            className="mt-2 min-h-[1.125rem] text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
-            {agent.turnOpen ? "Interrupts the current turn, then runs next." : null}
-          </p>
-        )}
-        {error && (
+        {/* Height reserved whether or not a turn is open: the composer never resizes at a turn edge. */}
+        <p
+          id={hintId}
+          data-composer-hint
+          className="mt-2 min-h-5 truncate text-[0.8125rem] leading-5 text-muted-foreground"
+        >
+          {agent.turnOpen ? <UrgentHint /> : null}
+        </p>
+        {shownError && (
           <p
             role="alert"
             className="mt-2 flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
           >
             <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-            {error}
+            {shownError}
           </p>
         )}
       </div>
     </form>
+  );
+}
+
+/** "Arrives at the agent's next step. ⌥↵ to interrupt instead." (Alt off Apple platforms; on touch, where
+ *  there is no ⌥Enter, it points at Stop). U3 §6.2. */
+function UrgentHint() {
+  if (isCoarsePointer()) return <>Arrives at the agent's next step. Stop first to interrupt.</>;
+  return (
+    <>
+      Arrives at the agent's next step.{" "}
+      <Kbd keys={[isMac() ? "⌥" : "Alt", "↵"]} className="align-middle" /> to interrupt instead.
+    </>
   );
 }

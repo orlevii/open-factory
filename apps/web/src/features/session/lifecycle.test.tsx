@@ -55,18 +55,28 @@ const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) 
   });
 const composer = () => screen.getByRole("textbox", { name: "Message to Dev agent" });
 
-test("errored: Restart and Start a new session replace Compact/Interrupt", async () => {
+test("errored: Restart and Start a new session replace Compact/Stop", async () => {
   world({ status: "errored", errorKind: "resume", lastError: "Resume failed" });
   await open();
   expect(screen.getByRole("button", { name: "Restart" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start a new session" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
-  // Leaving Errored brings Compact and Interrupt back and removes both recovery actions.
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
+  // Leaving Errored for an open turn brings Stop (in the composer) and removes both recovery actions.
   frame({ status: "working", turnOpen: true });
-  expect(await screen.findByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Start a new session" })).not.toBeInTheDocument();
+});
+
+test("the header has no Stop: it lives in the composer, left of Send (U3 §6.1, §14)", async () => {
+  world({ status: "working", turnOpen: true });
+  await open();
+  const header = screen.getByRole("banner");
+  expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
+  const form = composer().closest("form");
+  expect(form).not.toBeNull();
+  expect(within(form as HTMLElement).getByRole("button", { name: "Stop" })).toBeInTheDocument();
 });
 
 test("a crash offers Restart only", async () => {

@@ -558,7 +558,7 @@ test("connected: the queue frame is authoritative, so no local row is added", as
 
 // --- S4 additions (UI design §4.4) ---
 
-test("header: avatar without badge, name, StatusBadge, one live fact, Stop only while turnOpen, ⋯", async () => {
+test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (it is in the composer), ⋯", async () => {
   routes["/api/agents/dev"] = () =>
     json(
       detail({
@@ -588,7 +588,8 @@ test("header: avatar without badge, name, StatusBadge, one live fact, Stop only 
     .getAllByRole("status")
     .filter((s) => s.textContent);
   expect(facts.map((f) => f.textContent)).toEqual(["Restarts when idle"]);
-  expect(within(header).getByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "Actions for Dev agent" })).toBeInTheDocument();
   // Edit, Compact and Terminate live in the ⋯ menu now.
   expect(within(header).queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
@@ -603,7 +604,7 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const header = screen.getByRole("banner");
-  expect(within(header).queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
@@ -681,7 +682,7 @@ test("restart pending arrives by frame; a frame clears it", async () => {
   await vi.waitFor(() => expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument());
 });
 
-test("archived: the composer is replaced by a line linking the edit page; no Compact or Interrupt", async () => {
+test("archived: the composer is replaced by a line linking the edit page; no Compact or Stop", async () => {
   routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
@@ -694,7 +695,7 @@ test("archived: the composer is replaced by a line linking the edit page; no Com
   );
   expect(screen.queryByRole("textbox", { name: /Message to/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
 });
 
@@ -849,11 +850,11 @@ test("the log and each row wrap can shrink, so no row widens the scroller", asyn
   for (const w of wraps) expect(w).toHaveClass("min-w-0");
 });
 
-test("the Interrupt button uses the stop glyph", async () => {
+test("the Stop button uses the stop glyph", async () => {
   routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  const icon = screen.getByRole("button", { name: /Interrupt/ }).querySelector("svg");
+  const icon = screen.getByRole("button", { name: "Stop" }).querySelector("svg");
   expect(icon).toHaveClass("lucide-circle-stop");
 });
 

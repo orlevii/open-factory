@@ -28,7 +28,6 @@ import {
   summaryFromAgentsList,
 } from "./api";
 import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
-import { InterruptButton } from "./interrupt-button";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
@@ -183,7 +182,6 @@ export function SessionView({
           actions={
             <SessionActions
               agent={agent}
-              turnEpoch={s.state.turnEpoch}
               archived={archived}
               panel={panel}
               onRestartError={setRestartError}
@@ -300,6 +298,7 @@ export function SessionView({
           <Composer
             slug={slug}
             agent={agent}
+            turnEpoch={s.state.turnEpoch}
             // A send before the session loads would be lost when the load replaces the queue.
             waiting={!loaded}
             onQueued={s.onQueued}
@@ -467,7 +466,6 @@ function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
 
 function SessionActions({
   agent,
-  turnEpoch,
   archived,
   panel,
   actionsMenu,
@@ -476,7 +474,6 @@ function SessionActions({
   onAgent,
 }: {
   agent: AgentSummary;
-  turnEpoch: number;
   archived: boolean;
   panel: AgentDetailsPanel;
   actionsMenu: ReactNode;
@@ -485,16 +482,13 @@ function SessionActions({
   onAgent(a: AgentSummary): void;
 }) {
   // Edit, Compact, Stop crons and Terminate are in the ⋯ menu (U2 §8.2); the header keeps what
-  // can't wait: Pin, Stop, Restart. A terminated agent's session is read-only for good.
+  // can't wait: Pin, Restart. Stop sits in the composer, where the turn is (U3 §6.1, §14). A
+  // terminated agent's session is read-only for good.
   const live = !archived && agent.status !== "terminated";
   return (
     <>
       {agent.status === "terminated" && canPin(agent) && (
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
-      )}
-      {/* Stop only while a turn is open: it is the one thing to reach for then. */}
-      {live && agent.turnOpen && (
-        <InterruptButton slug={agent.slug} turnOpen={agent.turnOpen} turnEpoch={turnEpoch} />
       )}
       {live && <RecoveryActions agent={agent} onError={onRestartError} />}
       <Tooltip>

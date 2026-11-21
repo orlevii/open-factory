@@ -76,7 +76,9 @@ export function useAgentTreeShape(): TreeNode[] {
   return useMemo(() => (key ? buildTree(parseShape(key)) : []), [key]);
 }
 
-/** Mounts its Radix tooltip only once a pointer finds it, so rows carry no tooltip root at rest. */
+/** Mounts its Radix tooltip only while a pointer is over it, so rows carry no tooltip root at rest.
+ *  It unmounts on pointer leave, not on close: Radix closes on pointer down, and dropping the trigger
+ *  then would swallow the click meant for the row's link. */
 function HoverTip({
   text,
   className,
@@ -88,13 +90,17 @@ function HoverTip({
 }) {
   const [armed, setArmed] = useState(false);
   const span = (
-    <span onPointerEnter={() => setArmed(true)} className={className}>
+    <span
+      onPointerEnter={() => setArmed(true)}
+      onPointerLeave={() => setArmed(false)}
+      className={className}
+    >
       {children}
     </span>
   );
   if (!armed) return span;
   return (
-    <Tooltip open onOpenChange={(open) => !open && setArmed(false)}>
+    <Tooltip defaultOpen>
       <TooltipTrigger asChild>{span}</TooltipTrigger>
       <TooltipContent>{text}</TooltipContent>
     </Tooltip>
@@ -236,7 +242,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
 const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: boolean }) {
   const agent = useAgent(slug);
   const unread = useUnreadByAgent(slug);
-  // The Radix tooltip mounts only once a pointer enters the link, so rail rows carry no root at rest.
+  // The Radix tooltip mounts only while a pointer is over the link, so rail rows carry no root at
+  // rest. It unmounts on leave, not on close (Radix closes on pointer down; see HoverTip).
   const [tip, setTip] = useState(false);
   if (!agent) return null;
   const status = statusLabel(agent.status, "short");
@@ -248,6 +255,7 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
         data-active={active || undefined}
         aria-current={active ? "page" : undefined}
         onPointerEnter={() => setTip(true)}
+        onPointerLeave={() => setTip(false)}
         className="relative flex size-8 items-center justify-center rounded-md hover:bg-sidebar-accent data-active:bg-sidebar-accent"
       >
         {active ? (
@@ -273,8 +281,8 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
           {unread > 0 ? `, ${unread} unread` : ""}
         </span>
         {tip ? (
-          <Tooltip open onOpenChange={(open) => !open && setTip(false)}>
-            {/* Over the whole link (last, so on top): leaving it anywhere closes the tooltip. */}
+          <Tooltip defaultOpen>
+            {/* Over the whole link (last, so on top), so the whole link anchors the tooltip. */}
             <TooltipTrigger asChild>
               <span aria-hidden="true" className="absolute inset-0" />
             </TooltipTrigger>

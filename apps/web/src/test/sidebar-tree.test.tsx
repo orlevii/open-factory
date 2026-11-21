@@ -316,3 +316,29 @@ test("collapsed rail: the whole link is the tooltip's trigger, mounted only on h
   fireEvent.pointerEnter(link);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(/Alpha · @a · /);
 });
+
+test("a click through the rail's open tooltip still follows the link", async () => {
+  const { router } = setup({
+    list: agents({ a: { status: "working" }, c: { status: "working" } }),
+    collapsedRail: true,
+  });
+  const rail = await screen.findByRole("navigation", { name: "Agents" });
+  const link = within(rail).getByRole("link", { name: /Alpha/ });
+  fireEvent.pointerEnter(link);
+  await screen.findByRole("tooltip");
+  const trigger = link.querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
+  await userEvent.click(trigger);
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a"));
+});
+
+test("a click on a collapsed manager's working count follows the row's link", async () => {
+  const { router } = setup({ list: agents({ c: { status: "working" } }) });
+  await screen.findByRole("tree");
+  const count = within(row("Bravo")).getByText("1 working", { selector: ".sr-only" })
+    .parentElement as HTMLElement;
+  fireEvent.pointerEnter(count);
+  await screen.findByRole("tooltip");
+  const trigger = row("Bravo").querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
+  await userEvent.click(trigger);
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b"));
+});

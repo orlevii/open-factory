@@ -39,10 +39,10 @@ export function InviteReveal({ link, onDone }: { link: string; onDone(): void })
           onFocus={(e) => e.currentTarget.select()}
           className="font-mono text-[0.8125rem] md:text-[0.8125rem]"
         />
-        <Button type="button" variant="outline" size="sm" onClick={copyLink}>
+        <Button type="button" variant="ghost" size="sm" onClick={copyLink}>
           Copy
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onDone}>
+        <Button type="button" variant="ghost" size="sm" onClick={onDone}>
           Done
         </Button>
       </div>

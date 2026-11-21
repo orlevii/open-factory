@@ -399,7 +399,7 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
           <Button
             id="secrets-add"
             type="button"
-            variant="outline"
+            variant="ghost"
             onClick={() => {
               setOutcome(undefined);
               setAdding(true);

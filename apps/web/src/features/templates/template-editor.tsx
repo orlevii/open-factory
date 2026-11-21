@@ -352,7 +352,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       <p className="text-sm text-muted-foreground">Not created</p>
                       <Button
                         id={`create-${f}`}
-                        variant="outline"
+                        variant="ghost"
                         onClick={() => {
                           patch(f, { started: true, content: OPTIONAL_SEED[f] ?? "" });
                           wanted.current = { file: f, line: 1 };

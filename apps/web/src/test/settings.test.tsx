@@ -266,6 +266,11 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
     "data-variant",
     "outline",
   );
+  // Decision 20: a section-header action sits inside its section, so it is ghost.
+  expect(within(region).getByRole("button", { name: "Add credential" })).toHaveAttribute(
+    "data-variant",
+    "ghost",
+  );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
     "/agents/lead",

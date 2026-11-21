@@ -152,6 +152,39 @@ describe("disabled buttons", () => {
   });
 });
 
+describe("secondary buttons", () => {
+  // Decision 20: outline is only for page- or header-level standalone actions; actions inside a
+  // section (section-header adds, inline-form Cancels, empty-state links) are ghost. A new outline
+  // site is a deliberate choice: add it here with the reason.
+  const OUTLINE: Record<string, number> = {
+    "components/confirm-dialog.tsx": 1, // Cancel in a dialog
+    "components/route-states.tsx": 1, // Go to Home on the error page
+    "features/agents/agent-actions.tsx": 3, // Re-sync, Restore, Archive: the agent's page actions
+    "features/inbox/inbox-list.tsx": 1, // Load earlier
+    "features/session/timeline.tsx": 1, // Load earlier
+    "features/session/session-view.tsx": 1, // Jump to latest
+    "features/settings/credentials-section.tsx": 1, // Verify
+    "features/tasks/task-detail.tsx": 1, // Edit beside the title
+    "features/tasks/task-list.tsx": 1, // Load more
+    "features/tasks/status-menu.tsx": 1, // a select-like field trigger, not an action
+    "features/tasks/assignee-menu.tsx": 1, // a select-like field trigger, not an action
+    "features/tasks/task-form.tsx": 1, // Cancel of the New task page
+    "features/schedules/schedule-form.tsx": 1, // Cancel of the schedule page
+  };
+  test("outline buttons appear only at the page-level sites named here", () => {
+    const counts = Object.fromEntries(
+      sourceFiles()
+        .filter((f) => !f.includes("/components/ui/"))
+        .map((f) => [
+          f.replace(`${SRC}/`, ""),
+          (readFileSync(f, "utf8").match(/variant="outline"/g) ?? []).length,
+        ])
+        .filter(([, n]) => n),
+    );
+    expect(counts).toEqual(OUTLINE);
+  });
+});
+
 describe("native tooltips", () => {
   test("no title= on a Button or Link outside components/ui (ui-contract:allow with a reason where it is not a tooltip)", () => {
     const offenders = sourceFiles()

@@ -90,7 +90,7 @@ export function ProjectGrantPicker({
       )}
       {custom && (
         <div>
-          <Button type="button" variant="outline" size="sm" onClick={onUseDefault}>
+          <Button type="button" variant="ghost" size="sm" onClick={onUseDefault}>
             Use template default
           </Button>
         </div>

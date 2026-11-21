@@ -198,6 +198,13 @@ test("Edit beside the title is an outline button (§6.3)", async () => {
   );
 });
 
+test("an inline editor's Cancel is ghost: it acts inside the section (decision 20)", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveAttribute("data-variant", "ghost");
+});
+
 test("title edit: focus goes into the input, Enter saves, Escape cancels, focus returns to Edit title", async () => {
   const api = world();
   api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "New title" }) }));

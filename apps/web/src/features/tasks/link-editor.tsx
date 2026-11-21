@@ -157,7 +157,7 @@ export function LinkEditor({
         );
       })}
       <div>
-        <Button type="button" variant="outline" onClick={() => onChange([...rows, newLinkRow()])}>
+        <Button type="button" variant="ghost" onClick={() => onChange([...rows, newLinkRow()])}>
           <Plus aria-hidden="true" data-icon="inline-start" />
           Add link
         </Button>

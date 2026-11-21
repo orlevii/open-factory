@@ -87,6 +87,13 @@ export function SessionView({
   const selfTerminating = useRef(false);
   // The loaded status only: a stale list summary turning into the real status isn't a transition.
   const status = loaded?.status;
+  // A failed Restart belongs to that Errored spell: leaving it clears the notice (adjusted during
+  // render on the status edge, no effect).
+  const [noticeStatus, setNoticeStatus] = useState(status);
+  if (status !== noticeStatus) {
+    setNoticeStatus(status);
+    if (status !== "errored") setRestartError(undefined);
+  }
   const prevStatus = useRef(status);
   useEffect(() => {
     const was = prevStatus.current;
@@ -94,6 +101,14 @@ export function SessionView({
     if (status !== "terminated" || was === undefined || was === "terminated") return;
     if (!selfTerminating.current) focusReadOnly(false);
   }, [status]);
+  // An agent that couldn't load has no details: an open sheet would stay empty (the error states
+  // have no toggle), so it closes.
+  const failed = s.error?.code === "agent_not_found" || (!loaded && !!s.error);
+  const sheetOpen = panel.open && panel.mode !== "inflow";
+  const closePanel = panel.setOpen;
+  useEffect(() => {
+    if (failed && sheetOpen) closePanel(false);
+  }, [failed, sheetOpen, closePanel]);
   // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.
   if (s.error?.code === "agent_not_found")
     return (
@@ -181,6 +196,7 @@ export function SessionView({
                   context="session"
                   stop={stop}
                   onOpenDetails={() => panel.setOpen(true)}
+                  detailsTakeFocus={panel.mode !== "inflow"}
                   onTerminateStart={() => {
                     selfTerminating.current = true;
                   }}

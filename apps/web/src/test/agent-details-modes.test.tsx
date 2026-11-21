@@ -146,3 +146,42 @@ test("switching agents keeps an open panel open (≥1024) and retargets the over
   // The same sheet node: its content swapped in place, it never closed and reopened.
   expect(container()).toBe(sheet);
 });
+
+test("at 900px, Agent details from the ⋯ menu moves focus into the opened sheet", async () => {
+  await visit(900);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Actions for Dev agent" }));
+  await user.click(await screen.findByRole("menuitem", { name: /^Agent details/ }));
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  await waitFor(() => expect(container()?.contains(document.activeElement)).toBe(true));
+  // And it stays there once the menu has finished closing.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(container()?.contains(document.activeElement)).toBe(true);
+});
+
+test("closing a sheet that stayed open across 1280px doesn't remember 'closed' for the column", async () => {
+  const { viewport } = await visit(900);
+  await userEvent.click(toggle());
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  act(() => viewport.set(1440));
+  // Latched: still the sheet until it closes.
+  expect(modeOf(container())).toBe("overlay");
+  await userEvent.click(toggle());
+  await waitFor(() => expect(modeOf(container())).not.toBe("overlay"));
+  expect(localStorage.getItem("of-agent-details")).not.toBe("closed");
+});
+
+test("an open sheet closes when the next agent fails to load, rather than staying empty", async () => {
+  vi.unstubAllGlobals();
+  mockApi({
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/agents/dev/events?": () => json(conversation()),
+    "GET /api/agents/lead": () => json({ error: { code: "internal", message: "Boom." } }, 500),
+  });
+  const app = await visit(900);
+  await userEvent.click(toggle());
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  await act(() => app.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await screen.findByText(/Couldn't load this session/);
+  await waitFor(() => expect(container()).toBeNull());
+});

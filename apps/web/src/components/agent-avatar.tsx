@@ -180,6 +180,7 @@ export const AgentAvatar = memo(function AgentAvatar({
   const badge = status && MARKED.has(status) ? badgeFor(status, size) : null;
   return (
     <span
+      data-agent-avatar
       aria-hidden="true"
       className="relative inline-block shrink-0"
       style={{ width: size, height: size }}

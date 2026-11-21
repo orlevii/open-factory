@@ -179,9 +179,16 @@ test("Now lists every waiting task with its start, and the crons with Stop crons
 });
 
 test("Now: restart pending explains itself with Why", async () => {
+  const plural = setup({ agent: agentSummary({ restartPending: true, restartWaitingOn: 2 }) });
+  expect(within(await section("Now")).getByText(/Restarts when idle/).textContent).toContain(
+    "Restarts when idle to apply changes (waiting on 2 background tasks)",
+  );
+  plural.unmount();
   setup({ agent: agentSummary({ restartPending: true, restartWaitingOn: 1 }) });
   const now = within(await section("Now"));
-  expect(now.getByText(/Restarts when idle/)).toBeInTheDocument();
+  expect(now.getByText(/Restarts when idle/).textContent).toContain(
+    "(waiting on 1 background task)",
+  );
   await userEvent.click(now.getByRole("button", { name: "Why does it restart?" }));
   expect(await screen.findByText(/finishes its current turn/)).toBeInTheDocument();
 });
@@ -372,6 +379,23 @@ test("Runtime: a deleted credential leaves no empty row; a disabled local runtim
   const rt = await section("Runtime");
   expect(rt.textContent).not.toContain("Credential");
   expect(rt.textContent).toContain("Unsandboxed · disabled on this factory");
+});
+
+test("Runtime: a disabled local runtime explains itself in a Why popover (distinct label, one paragraph)", async () => {
+  setup({
+    agent: agentSummary({ runtime: "local", runtimeDisabled: "disabled", restartPending: true }),
+  });
+  const rt = within(await section("Runtime"));
+  await userEvent.click(rt.getByRole("button", { name: "Why is the local runtime disabled?" }));
+  const pop = await screen.findByText(/An operator has to allow unsandboxed agents/);
+  expect(pop.textContent).toBe(
+    "An operator has to allow unsandboxed agents by setting FACTORY_ALLOW_LOCAL_RUNTIME=true. Until then this agent can't start.",
+  );
+  expect(within(pop).getByText("FACTORY_ALLOW_LOCAL_RUNTIME=true")).toHaveClass("font-mono");
+  expect(pop.tagName).toBe("P");
+  expect(pop.parentElement?.children).toHaveLength(1);
+  // The restart Why has its own name.
+  expect(screen.getByRole("button", { name: "Why does it restart?" })).toBeInTheDocument();
 });
 
 test("Org: a spawned agent says 'Spawned by'; a root has No manager", async () => {

@@ -337,6 +337,28 @@ test("interrupt: not offered while no turn is open", async () => {
   expect(posted).toEqual([]);
 });
 
+test("interrupt: when the turn closes under a focused Stop, focus goes to the composer", async () => {
+  agentOver = { status: "working", turnOpen: true };
+  renderApp("/agents/dev", alice);
+  const input = await box();
+  interrupt().focus();
+  status(false);
+  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull());
+  await vi.waitFor(() => expect(input).toHaveFocus());
+});
+
+test("interrupt: a turn closing doesn't move focus that wasn't on Stop", async () => {
+  agentOver = { status: "working", turnOpen: true };
+  renderApp("/agents/dev", alice);
+  await box();
+  const menu = screen.getByRole("button", { name: "Actions for Dev agent" });
+  menu.focus();
+  status(false);
+  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull());
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  expect(menu).toHaveFocus();
+});
+
 test("interrupt: re-enables when the turn closes and a new one opens", async () => {
   agentOver = { status: "working", turnOpen: true };
   renderApp("/agents/dev", alice);

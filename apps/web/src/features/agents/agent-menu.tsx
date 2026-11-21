@@ -28,6 +28,7 @@ export function AgentMenu({
   context,
   stop,
   onOpenDetails,
+  detailsTakeFocus = false,
   onTerminateStart = () => {},
   onTerminated = () => {},
   triggerClassName,
@@ -36,6 +37,8 @@ export function AgentMenu({
   context: "session" | "sidebar";
   stop?: StopCrons;
   onOpenDetails?: () => void;
+  /** Agent details opens as a sheet that takes focus: the menu hands focus over, as for Compact…. */
+  detailsTakeFocus?: boolean;
   onTerminateStart?: () => void;
   onTerminated?: (a: AgentSummary, ok: boolean) => void;
   triggerClassName?: string;
@@ -43,7 +46,9 @@ export function AgentMenu({
   const slug = agent.slug;
   const trigger = useRef<HTMLButtonElement>(null);
   const [compactOpen, setCompactOpen] = useState(false);
-  const [compactPending, setCompactPending] = useState(false);
+  // An item that opens an overlay taking focus (Compact…, Agent details as a sheet): the menu's
+  // close must not return focus to ⋯.
+  const [handoff, setHandoff] = useState(false);
   const [terminateOpen, setTerminateOpen] = useState(false);
   const session = context === "session";
   const archived = agent.archivedAt !== null;
@@ -70,11 +75,12 @@ export function AgentMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
-          // Compact… opens a popover anchored on the ⋯ button: focus belongs to it, not back here.
+          // Compact… opens a popover anchored on the ⋯ button, and Agent details may open a sheet:
+          // focus belongs to them, not back here.
           onCloseAutoFocus={(e) => {
-            if (compactPending) {
+            if (handoff) {
               e.preventDefault();
-              setCompactPending(false);
+              setHandoff(false);
             }
           }}
         >
@@ -86,7 +92,13 @@ export function AgentMenu({
             </DropdownMenuItem>
           )}
           {session && (
-            <DropdownMenuItem onSelect={() => onOpenDetails?.()}>
+            <DropdownMenuItem
+              onSelect={() => {
+                if (!detailsTakeFocus) return onOpenDetails?.();
+                setHandoff(true);
+                requestAnimationFrame(() => onOpenDetails?.());
+              }}
+            >
               Agent details
               <DropdownMenuShortcut>
                 <Kbd keys={["]"]} />
@@ -96,7 +108,7 @@ export function AgentMenu({
           {canCompact && (
             <DropdownMenuItem
               onSelect={() => {
-                setCompactPending(true);
+                setHandoff(true);
                 requestAnimationFrame(() => setCompactOpen(true));
               }}
             >

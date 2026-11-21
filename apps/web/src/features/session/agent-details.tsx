@@ -98,6 +98,18 @@ export function Why({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+/** Why a local agent can't start here (S5 UI design §3.2): Agent details' Runtime row and a
+ *  timeline error with `fix: "runtime"` both offer it. */
+export function LocalRuntimeWhy() {
+  return (
+    <Why label="Why is the local runtime disabled?">
+      An operator has to allow unsandboxed agents by setting{" "}
+      <code className="font-mono">FACTORY_ALLOW_LOCAL_RUNTIME=true</code>. Until then this agent
+      can't start.
+    </Why>
+  );
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="grid gap-2 border-b border-border px-4 py-3 text-[0.8125rem] leading-[1.125rem]">
@@ -417,11 +429,14 @@ function Runtime({ agent }: { agent: AgentSummary }) {
         )}
       </dl>
       {agent.runtime === "local" && (
-        <p>
-          Unsandboxed
-          {agent.runtimeDisabled && (
-            <span className="text-muted-foreground"> · disabled on this factory</span>
-          )}
+        <p className="flex flex-wrap items-center gap-x-1.5">
+          <span>
+            Unsandboxed
+            {agent.runtimeDisabled && (
+              <span className="text-muted-foreground"> · disabled on this factory</span>
+            )}
+          </span>
+          {agent.runtimeDisabled && <LocalRuntimeWhy />}
         </p>
       )}
     </Section>
@@ -530,8 +545,8 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
     (next: boolean) => {
       const c = latest.current;
       setState({ slug: c.slug, open: next, sheet: c.mode !== "inflow" });
-      // Remembered only where it is open by default.
-      if (c.xwide) setPref(next ? "open" : "closed");
+      // Remembered only for the column where it is open by default (not a latched sheet).
+      if (c.xwide && c.mode === "inflow") setPref(next ? "open" : "closed");
     },
     [setPref],
   );

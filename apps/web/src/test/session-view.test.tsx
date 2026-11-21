@@ -526,8 +526,10 @@ test("header: avatar without badge, name, StatusBadge, one live fact, Stop only 
   const header = screen.getByRole("banner");
   expect(within(header).getByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   // The avatar is decorative and carries no status badge (the badge beside it does).
-  expect(header.querySelector("[aria-hidden=true] svg")).not.toBeNull();
-  expect(header.querySelector(".of-avatar-cut")).toBeNull();
+  const avatar = header.querySelector("[data-agent-avatar]");
+  expect(avatar).not.toBeNull();
+  expect(avatar).toHaveAttribute("aria-hidden", "true");
+  expect(avatar?.querySelector(".of-avatar-cut")).toBeNull();
   expect(within(header).getAllByText("Working").length).toBeGreaterThan(0);
   // One fact only: restart pending beats the waiting task.
   const facts = within(header)
@@ -554,6 +556,25 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
   expect(header.contains(alert)).toBe(false);
+  // Leaving Errored clears it: a later error doesn't bring back the old failure.
+  const frame = (status: "idle" | "errored") =>
+    act(() =>
+      ws.onMessage?.({
+        type: "agent_status",
+        agent: "dev",
+        status,
+        turnOpen: false,
+        restartPending: false,
+        restartWaitingOn: 0,
+      }),
+    );
+  frame("idle");
+  await vi.waitFor(() => expect(screen.queryByText(/Couldn't restart/)).not.toBeInTheDocument());
+  frame("errored");
+  await vi.waitFor(() =>
+    expect(within(header).getByRole("button", { name: "Restart" })).toBeInTheDocument(),
+  );
+  expect(screen.queryByText(/Couldn't restart/)).not.toBeInTheDocument();
 });
 
 test("header: a terminated agent's Pin is its own button, outside the live line", async () => {

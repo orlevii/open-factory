@@ -4,6 +4,7 @@ import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucid
 import type { ReactNode } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
+import { LocalRuntimeWhy } from "./agent-details";
 import { CompactionMarker } from "./compaction-marker";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
@@ -205,8 +206,9 @@ function FixLink({
         Edit the agent
       </Link>
     );
-  // Agent details' Runtime says the local runtime is off (S5 UI design §3.2): no link.
-  if (fix === "runtime") return null;
+  // Nothing to link to: an operator has to allow the local runtime (S5 UI design §3.2). The row
+  // explains how, as Agent details' Runtime row does.
+  if (fix === "runtime") return <LocalRuntimeWhy />;
   // An unbuilt user image is built in Templates → Images (spec §10.1).
   if (fix === "image")
     return (

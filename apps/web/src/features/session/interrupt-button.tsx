@@ -51,7 +51,6 @@ export function InterruptButton({ slug, turnOpen }: { slug: string; turnOpen: bo
           <Button
             variant="ghost"
             aria-disabled={!enabled}
-            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:text-inherit aria-disabled:active:scale-100 dark:aria-disabled:hover:bg-transparent"
             onClick={() => {
               if (enabled) void interrupt();
             }}

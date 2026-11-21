@@ -170,7 +170,7 @@ export function ScheduleList({
     ) : (
       <div className="grid justify-items-start gap-2">
         <EmptyState text="No schedules match these filters." />
-        <Button variant="ghost" onClick={() => onChange({})}>
+        <Button variant="outline" onClick={() => onChange({})}>
           Clear filters
         </Button>
       </div>

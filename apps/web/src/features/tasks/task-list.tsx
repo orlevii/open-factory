@@ -114,7 +114,7 @@ export function TaskList({
       return (
         <div className="grid justify-items-start gap-2">
           <EmptyState text="No open tasks." />
-          <Button variant="ghost" onClick={() => onChange({ status: "all" })}>
+          <Button variant="outline" onClick={() => onChange({ status: "all" })}>
             Show all tasks
           </Button>
         </div>
@@ -124,7 +124,7 @@ export function TaskList({
     return (
       <div className="grid justify-items-start gap-2">
         <EmptyState text="No tasks match these filters." />
-        <Button variant="ghost" onClick={() => onChange({ status: "open_in_progress" })}>
+        <Button variant="outline" onClick={() => onChange({ status: "open_in_progress" })}>
           Clear filters
         </Button>
       </div>
@@ -154,7 +154,7 @@ export function TaskList({
       ) : (
         q.hasNextPage && (
           <Button
-            variant="ghost"
+            variant="outline"
             className="w-full"
             onClick={loadMore}
             disabled={q.isFetchingNextPage}

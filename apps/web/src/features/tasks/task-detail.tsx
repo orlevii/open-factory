@@ -106,7 +106,7 @@ function EditorButtons({
         <Button type="button" onClick={onSave} disabled={pending || saveDisabled}>
           {pending ? "Saving…" : "Save"}
         </Button>
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
           Cancel
         </Button>
       </div>

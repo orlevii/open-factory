@@ -126,3 +126,13 @@ describe("radios and checkboxes", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("disabled buttons", () => {
+  test("no per-site disabled patches; the Button base style owns the disabled look", () => {
+    const BAD = /aria-disabled:(?:opacity-50|hover:bg-transparent)/;
+    const offenders = sourceFiles().filter(
+      (f) => !f.includes("components/ui/sidebar.tsx") && BAD.test(readFileSync(f, "utf8")),
+    );
+    expect(offenders).toEqual([]);
+  });
+});

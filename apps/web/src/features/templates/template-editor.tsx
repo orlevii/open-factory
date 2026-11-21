@@ -437,7 +437,6 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                         <Button
                           variant="ghost"
                           aria-disabled={!isDirty(s) || undefined}
-                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => {
                             if (!isDirty(s)) return;
                             setOutcome(f, undefined);
@@ -462,7 +461,6 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                         </Button>
                         <Button
                           aria-disabled={!canSave || undefined}
-                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => canSave && save$()}
                         >
                           {outcome?.tone === "pending" && outcome.kind === "saving" && <Spinner />}
@@ -674,7 +672,6 @@ function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]
           variant="ghost"
           size="xs"
           aria-disabled={disabled || undefined}
-          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
           onClick={() => !disabled && void build()}
         >
           Build

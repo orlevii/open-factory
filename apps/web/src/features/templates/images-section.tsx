@@ -115,7 +115,6 @@ function ImageRow({ item }: { item: ImageItem }) {
               variant="ghost"
               size="sm"
               aria-disabled={building || undefined}
-              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
               onClick={() => !building && void build()}
             >
               {exists ? "Rebuild" : "Build"}

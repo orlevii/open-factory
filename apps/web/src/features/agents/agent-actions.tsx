@@ -259,8 +259,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
           action={
             <Button
               type="button"
-              variant="ghost"
-              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              variant="outline"
               aria-disabled={Boolean(busy) || resyncBlocked || undefined}
               onClick={() => void resync()}
             >
@@ -285,8 +284,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
           action={
             <Button
               type="button"
-              variant="ghost"
-              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              variant="outline"
               aria-disabled={Boolean(busy) || undefined}
               onClick={() => void restore()}
             >
@@ -302,8 +300,7 @@ export function AgentActions({ agent }: { agent: AgentSummary }) {
           action={
             <Button
               type="button"
-              variant="ghost"
-              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              variant="outline"
               aria-disabled={Boolean(busy) || undefined}
               onClick={() => void archive()}
             >

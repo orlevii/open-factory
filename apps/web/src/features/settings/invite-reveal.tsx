@@ -42,7 +42,7 @@ export function InviteReveal({ link, onDone }: { link: string; onDone(): void })
         <Button type="button" variant="outline" size="sm" onClick={copyLink}>
           Copy
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+        <Button type="button" variant="outline" size="sm" onClick={onDone}>
           Done
         </Button>
       </div>

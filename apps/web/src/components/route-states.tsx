@@ -64,7 +64,7 @@ export function RouteError({ error }: ErrorComponentProps) {
         <Button className="h-9" onClick={() => void router.invalidate()}>
           Retry
         </Button>
-        <Button className="h-9" variant="ghost" asChild>
+        <Button className="h-9" variant="outline" asChild>
           <Link to="/">Go to Home</Link>
         </Button>
       </div>

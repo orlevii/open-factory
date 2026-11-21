@@ -287,7 +287,7 @@ export function InlineForm({
           </Button>
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="lg"
             aria-disabled={pending || undefined}
             onClick={() => !pending && onCancel()}

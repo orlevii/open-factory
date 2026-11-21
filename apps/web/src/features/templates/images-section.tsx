@@ -1,18 +1,38 @@
 import type { ImageItem } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { buildImage, imagesQueryOptions } from "./api";
 import { BuildLog } from "./build-log";
 import { ImageStatusLabel } from "./image-status";
 
 const small = "text-[0.8125rem] leading-[1.125rem]";
 const code = "font-mono text-[0.8125rem]";
+const NO_IMAGES: readonly ImageItem[] = [];
 
-/** Spec §12.8, U2 §14: the Images view, one row per folder in `images/`, with its build actions. */
+/** Spec §12.8, U2 §14: the Images view, one row per folder in `images/`, with its build actions; the
+ *  build log opens in a side panel. */
 export function ImagesSection() {
   const { data, isError } = useQuery(imagesQueryOptions);
+  const [logFor, setLogFor] = useState<string | null>(null);
+  const list = useRef<HTMLUListElement>(null);
+  const closeLog = useCallback(() => setLogFor(null), []);
+  const trigger = useCallback(
+    (name: string) =>
+      [...(list.current?.querySelectorAll<HTMLElement>("[data-build-log-for]") ?? [])].find(
+        (el) => el.dataset.buildLogFor === name,
+      ) ?? null,
+    [],
+  );
   return (
     <section aria-labelledby="images-title" className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <h2 id="images-title" className="font-heading text-[0.9375rem] font-semibold">
@@ -39,9 +59,9 @@ export function ImagesSection() {
         </p>
       )}
       {data && data.images.length > 0 && (
-        <ul className="divide-y divide-border border-y border-border">
+        <ul ref={list} className="divide-y divide-border border-y border-border">
           {data.images.map((i) => (
-            <ImageRow key={i.name} item={i} />
+            <ImageRow key={i.name} item={i} onOpenLog={setLogFor} />
           ))}
         </ul>
       )}
@@ -50,31 +70,72 @@ export function ImagesSection() {
           Agents use a rebuilt image from their next start.
         </p>
       )}
+      <BuildLogSheet
+        name={logFor}
+        images={data?.images ?? NO_IMAGES}
+        onClose={closeLog}
+        trigger={trigger}
+      />
     </section>
   );
 }
 
-function ImageRow({ item }: { item: ImageItem }) {
-  const [open, setOpen] = useState(false);
+/** One build action for a row and the log panel's footer: Build or Rebuild, rendered while building
+ *  too (aria-disabled), so a focused button keeps focus as the status flips. */
+function useBuildAction(item: ImageItem) {
   const [error, setError] = useState<string>();
-  const logId = `image-log-${item.name}`;
-  const exists = item.status === "built" || item.status === "out_of_date" || !!item.builtAt;
-  // Rendered while building too (aria-disabled), so a focused Build keeps focus as the status flips.
-  const canBuild = item.status !== "no_dockerfile";
   const building = item.status === "building";
-  const hasLog = item.status === "building" || !!item.lastBuild;
-
-  const build = async () => {
+  const exists = item.status === "built" || item.status === "out_of_date" || !!item.builtAt;
+  const start = async () => {
+    if (building) return;
     setError(undefined);
-    // Open first: the panel subscribes to the build's frames before they can arrive.
-    setOpen(true);
     try {
       await buildImage(item.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  return {
+    can: item.status !== "no_dockerfile",
+    building,
+    label: exists ? "Rebuild" : "Build",
+    start,
+    error,
+  };
+}
 
+function BuildButton({ action }: { action: ReturnType<typeof useBuildAction> }) {
+  if (!action.can) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      aria-disabled={action.building || undefined}
+      onClick={() => void action.start()}
+    >
+      {action.label}
+    </Button>
+  );
+}
+
+function BuildError({ text }: { text: string | undefined }) {
+  if (!text) return null;
+  return (
+    <p role="alert" className={`flex items-center gap-1.5 ${small} text-destructive`}>
+      <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+      {text}
+    </p>
+  );
+}
+
+const ImageRow = memo(function ImageRow({
+  item,
+  onOpenLog,
+}: {
+  item: ImageItem;
+  onOpenLog(name: string): void;
+}) {
+  const action = useBuildAction(item);
   return (
     <li className="grid grid-cols-[minmax(0,1fr)] gap-2 px-2 py-2">
       <div className="flex min-h-7 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
@@ -89,40 +150,79 @@ function ImageRow({ item }: { item: ImageItem }) {
           <span className={`${small} text-muted-foreground`}>Used by {item.usedBy.join(", ")}</span>
         )}
         <span className="ml-auto flex gap-2">
-          {canBuild && (
+          <BuildButton action={action} />
+          {(action.can || item.lastBuild) && (
             <Button
               variant="ghost"
               size="sm"
-              aria-disabled={building || undefined}
-              onClick={() => !building && void build()}
+              data-build-log-for={item.name}
+              onClick={() => onOpenLog(item.name)}
             >
-              {exists ? "Rebuild" : "Build"}
-            </Button>
-          )}
-          {(hasLog || open) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-expanded={open}
-              aria-controls={open ? logId : undefined}
-              onClick={() => setOpen((o) => !o)}
-            >
-              View log
+              Build log
             </Button>
           )}
         </span>
       </div>
-      {error && (
-        <p role="alert" className={`flex items-center gap-1.5 ${small} text-destructive`}>
-          <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-          {error}
-        </p>
-      )}
-      {open && (
-        <div id={logId}>
-          <BuildLog name={item.name} item={item} />
-        </div>
-      )}
+      <BuildError text={action.error} />
     </li>
+  );
+});
+
+/**
+ * Spec §14: the build log in a peek. A non-modal sheet (the rows and the shortcut layer stay live) that
+ * stays mounted while `name` changes: another row's Build log retargets it in place, and only the body
+ * is keyed, so the new image's log never starts from the last one's lines. `null` closes it (the last
+ * image stays shown while it leaves); focus returns to that image's Build log button.
+ */
+function BuildLogSheet({
+  name,
+  images,
+  onClose,
+  trigger,
+}: {
+  name: string | null;
+  images: readonly ImageItem[];
+  onClose(): void;
+  trigger(name: string): HTMLElement | null;
+}) {
+  const [shown, setShown] = useState(name);
+  if (name !== null && name !== shown) setShown(name);
+  const item = shown === null ? undefined : images.find((i) => i.name === shown);
+  return (
+    <Sheet
+      open={name !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      modal={false}
+    >
+      <SheetContent
+        aria-describedby={undefined}
+        returnFocus={() => (shown === null ? null : trigger(shown))}
+      >
+        {shown !== null && (
+          <>
+            <SheetHeader>
+              <SheetTitle>{shown} build log</SheetTitle>
+            </SheetHeader>
+            <SheetBody key={shown}>
+              <BuildLog name={shown} item={item} />
+            </SheetBody>
+            {item && <BuildLogFooter key={`${shown}-footer`} item={item} />}
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function BuildLogFooter({ item }: { item: ImageItem }) {
+  const action = useBuildAction(item);
+  if (!action.can) return null;
+  return (
+    <SheetFooter className="items-center">
+      <BuildError text={action.error} />
+      <BuildButton action={action} />
+    </SheetFooter>
   );
 }

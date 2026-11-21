@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -7,9 +7,14 @@ import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+const ws = vi.hoisted(() => ({ onMessage: undefined as ((m: unknown) => void) | undefined }));
 vi.mock("@/lib/ws", () => ({
-  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+  connectWs: (opts: { onMessage?(m: unknown): void }) => {
+    ws.onMessage = opts.onMessage;
+    return { close() {}, status: () => "open", send: () => true };
+  },
 }));
+const emit = (m: unknown) => act(() => ws.onMessage?.(m));
 afterEach(() => vi.unstubAllGlobals());
 
 const summary = (
@@ -537,7 +542,14 @@ test("list: the Image column shows each status as an icon and a word, plus the i
   expect(screen.getByText("pw")).toHaveClass("font-mono");
 });
 
-test("Images section: rows with status, Used by, Build/Rebuild, View log only when a log is held; the note", async () => {
+const brokenBuild = {
+  state: "failed",
+  finishedAt: new Date().toISOString(),
+  durationMs: 1000,
+  error: "boom",
+};
+
+test("Images section: rows show status, Used by, Build/Rebuild and Build log, never an inline log; the note", async () => {
   const api = mockApi({
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
     "GET /api/images": () =>
@@ -549,16 +561,7 @@ test("Images section: rows with status, Used by, Build/Rebuild, View log only wh
           usedBy: ["lead", "dev"],
         }),
         img({ name: "fresh", status: "not_built" }),
-        img({
-          name: "broken",
-          status: "failed",
-          lastBuild: {
-            state: "failed",
-            finishedAt: new Date().toISOString(),
-            durationMs: 1000,
-            error: "boom",
-          },
-        }),
+        img({ name: "broken", status: "failed", lastBuild: brokenBuild }),
       ]),
     "POST /api/images/fresh/build": () => json({ state: "building" }, 202),
     "GET /api/images/fresh/log": () => json({ state: null, lines: [] }),
@@ -570,18 +573,81 @@ test("Images section: rows with status, Used by, Build/Rebuild, View log only wh
   await within(section).findByText("Built 2 hours ago");
   expect(within(row("playwright")).getByText("Used by lead, dev")).toBeInTheDocument();
   expect(within(row("playwright")).getByRole("button", { name: "Rebuild" })).toBeInTheDocument();
-  expect(within(row("playwright")).queryByRole("button", { name: "View log" })).toBeNull();
   expect(within(row("fresh")).getByRole("button", { name: "Build" })).toBeInTheDocument();
-  expect(within(row("broken")).getByRole("button", { name: "View log" })).toBeInTheDocument();
+  for (const n of ["playwright", "fresh", "broken"])
+    expect(within(row(n)).getByRole("button", { name: "Build log" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "View log" })).toBeNull();
   expect(
     within(section).getByText("Agents use a rebuilt image from their next start."),
   ).toBeInTheDocument();
 
   await userEvent.click(within(row("fresh")).getByRole("button", { name: "Build" }));
-  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
-    true,
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
+      true,
+    ),
   );
-  expect(await within(row("fresh")).findByRole("log")).toBeInTheDocument();
+  // A row's Build doesn't grow a log under the row, or open the panel.
+  expect(screen.queryByRole("log")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("Build log opens a non-modal side panel that streams the build; another row's Build log retargets it; Build in its footer", async () => {
+  const api = mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () =>
+      imagesList([
+        img({ name: "broken", status: "failed", lastBuild: brokenBuild }),
+        img({ name: "fresh", status: "not_built" }),
+      ]),
+    "GET /api/images/broken/log": () => json({ state: "failed", lines: ["step 1", "boom"] }),
+    "GET /api/images/fresh/log": () => json({ state: null, lines: [] }),
+    "POST /api/images/fresh/build": () => json({ state: "building" }, 202),
+  });
+  renderApp("/templates/images", alice);
+  const section = await screen.findByRole("region", { name: "Images" });
+  const row = (name: string) =>
+    within(section).getByText(name, { selector: "[data-image-name]" }).closest("li") as HTMLElement;
+  await within(section).findByText("fresh", { selector: "[data-image-name]" });
+
+  const brokenTrigger = within(row("broken")).getByRole("button", { name: "Build log" });
+  await userEvent.click(brokenTrigger);
+  const sheet = await screen.findByRole("dialog", { name: "broken build log" });
+  // A peek, not a modal: no scrim, the shortcut layer stays live, the rows stay usable.
+  expect(sheet).toHaveAttribute("data-modal", "false");
+  expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull();
+  const log = within(sheet).getByRole("log");
+  expect(await within(sheet).findByText(/step 1/)).toBeInTheDocument();
+  expect(section.contains(log)).toBe(false);
+
+  // Frames stream into the open panel.
+  emit({ type: "image_build", name: "broken", state: "building" });
+  emit({ type: "image_build", name: "broken", state: "building", lines: ["Step 1/2 : FROM base"] });
+  await waitFor(() =>
+    expect(within(sheet).getByRole("log")).toHaveTextContent("Step 1/2 : FROM base"),
+  );
+
+  // Another row's Build log retargets the same panel node.
+  await userEvent.click(within(row("fresh")).getByRole("button", { name: "Build log" }));
+  expect(await screen.findByRole("dialog", { name: "fresh build log" })).toBe(sheet);
+  // The body is keyed by image: a fresh log, not the last image's lines.
+  await waitFor(() =>
+    expect(within(sheet).getByRole("log")).toHaveAccessibleName("Build log for fresh"),
+  );
+  expect(within(sheet).getByRole("log")).not.toHaveTextContent("Step 1/2");
+
+  // Build in the footer starts this image's build.
+  await userEvent.click(within(sheet).getByRole("button", { name: "Build" }));
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
+      true,
+    ),
+  );
+
+  // Closing returns focus to the row whose log was shown.
+  await userEvent.click(within(sheet).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(row("fresh")).getByRole("button", { name: "Build log" })).toHaveFocus();
 });
 
 test("Images section: Rebuild stays rendered but aria-disabled while building; none without a Dockerfile", async () => {

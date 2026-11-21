@@ -27,6 +27,7 @@ import { stringify } from "yaml";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
+import { avatarStat } from "./avatar.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
@@ -239,6 +240,7 @@ export class TemplateIndex {
       files,
       issues: row.issues,
       agents: agents.map((a) => a.slug).sort(),
+      avatar: await avatarStat(row.path),
     };
   }
 

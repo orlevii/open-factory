@@ -106,6 +106,26 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
   expect((await svc.list("exclude")).agents.map((x) => x.slug)).toEqual(["lead", "dev-1"]);
 });
 
+test("summaries carry the template avatarVersion", async () => {
+  const avatar = path.join(home, "templates/lead/avatar.svg");
+  const versions = async () =>
+    (await svc.list("exclude")).agents
+      .filter((a) => a.template === "lead")
+      .map((a) => a.avatarVersion);
+  expect(await versions()).toEqual([null, null]);
+  writeFileSync(avatar, "<svg/>");
+  const [v, w] = await versions();
+  expect(v).toMatch(/^\d+-6$/);
+  expect(w).toBe(v);
+  expect((await svc.summary("dev-1")).avatarVersion).toBe(v);
+  rmSync(avatar);
+  symlinkSync(path.join(home, "templates/lead/AGENTS.md"), avatar);
+  expect(await versions()).toEqual([null, null]);
+  rmSync(avatar);
+  expect(await versions()).toEqual([null, null]);
+  expect((await svc.summary("lead")).avatarVersion).toBeNull();
+});
+
 test.each([
   ["slug taken", { slug: "lead" }, { code: "slug_taken" }],
   ["reserved slug", { slug: "humans" }, { code: "validation_error" }],

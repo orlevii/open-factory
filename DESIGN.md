@@ -292,7 +292,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   | A quick pick or a fact about one control | Popover, menu or select, anchored to its trigger |
   | Jump to anything | Command palette (top centre, with a scrim) |
   | A create or edit form | Right sheet, 480px, with a scrim |
-  | A quick peek (a task, Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px) |
+  | A quick peek (a task, a build log, Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px) |
   | Primary work you'd deep-link or keep open | A page |
   | A destructive, irreversible confirmation | Dialog |
   | Any sheet or dialog below `md` (48rem; 768px at the default text size) | A bottom drawer (Vaul); the nav is a left drawer; the command palette stays a top dialog |

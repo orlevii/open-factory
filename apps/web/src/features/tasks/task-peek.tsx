@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TaskDetailView } from "./task-detail";
 
+/** F6 from the list: onto the peek's Open link (the content itself if it isn't rendered). */
+export function focusTaskPeek(content: HTMLElement | null) {
+  (content?.querySelector<HTMLElement>("[data-peek-open]") ?? content)?.focus();
+}
+
 /** A field inside the peek owns Esc (the title edit cancels; the description keeps its draft). */
 const FIELD = "input,textarea,[contenteditable]:not([contenteditable=false])";
 
@@ -50,7 +55,7 @@ export function TaskPeek({
             <SheetHeader className="items-center">
               <SheetTitle className="font-mono text-sm font-normal">{shown}</SheetTitle>
               <Button variant="ghost" size="sm" asChild>
-                <Link to="/tasks/$key" params={{ key: shown }} search={{}}>
+                <Link to="/tasks/$key" params={{ key: shown }} search={{}} data-peek-open="">
                   Open
                 </Link>
               </Button>

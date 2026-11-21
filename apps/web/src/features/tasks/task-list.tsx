@@ -47,6 +47,13 @@ function roomToPeek(list: HTMLElement): boolean {
   return list.clientWidth >= PEEK_MIN_REM * rem;
 }
 
+/** The list's row for a task (the peek's close returns focus to it), if it is shown. */
+export function findTaskRow(key: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `ul[data-task-list] a[data-task-key="${CSS.escape(key)}"]`,
+  );
+}
+
 /** The page's one task peek, as the list drives it. */
 export type TaskPeekControl = {
   /** The task shown, or null when closed. */
@@ -225,6 +232,7 @@ export function TaskList({
       <ul
         ref={list}
         aria-label="Tasks"
+        data-task-list=""
         onKeyDown={onKeyDown}
         className="border-y border-border [overflow-anchor:auto]"
       >

@@ -221,6 +221,16 @@ test("Esc inside the peek's editors leaves the peek open: the description draft 
   expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
 });
 
+test("changing the filters closes the peek", async () => {
+  const app = await visit(1200);
+  const r2 = row("T-2") as HTMLElement;
+  r2.focus();
+  space(r2);
+  await screen.findByRole("dialog", { name: "T-2" });
+  await act(async () => void app.router.navigate({ to: "/tasks", search: { status: "all" } }));
+  await waitFor(() => expect(peek()).toBeNull());
+});
+
 test("a plain click and Enter open the task's page; no peek", async () => {
   const app = await visit(1200);
   fireEvent.click(row("T-2") as HTMLElement);

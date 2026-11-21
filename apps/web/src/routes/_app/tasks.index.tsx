@@ -7,11 +7,8 @@ import { Button } from "@/components/ui/button";
 import { closeInstantly } from "@/components/ui/sheet";
 import type { TaskFilters } from "@/features/tasks/api";
 import { TaskFiltersBar } from "@/features/tasks/task-filters";
-import { TaskList, type TaskPeekControl } from "@/features/tasks/task-list";
-import { TaskPeek } from "@/features/tasks/task-peek";
-
-const FOCUSABLE =
-  "a[href],button:not([disabled]),input,textarea,select,[tabindex]:not([tabindex='-1'])";
+import { findTaskRow, TaskList, type TaskPeekControl } from "@/features/tasks/task-list";
+import { focusTaskPeek, TaskPeek } from "@/features/tasks/task-peek";
 
 const STATUSES = ["open_in_progress", "open", "in_progress", "done", "cancelled", "all"] as const;
 
@@ -37,15 +34,19 @@ function TasksPage() {
   };
   // One peek per page (spec §5.2), not in the URL (D11).
   const [peekKey, setPeekKey] = useState<string | null>(null);
+  // New filters, a new list: the peek closes rather than show a task the list may no longer have.
+  const filtersKey = JSON.stringify(filters);
+  const [peekFilters, setPeekFilters] = useState(filtersKey);
+  if (peekFilters !== filtersKey) {
+    setPeekFilters(filtersKey);
+    setPeekKey(null);
+  }
   const peekContent = useRef<HTMLDivElement>(null);
   const peek: TaskPeekControl = {
     key: peekKey,
     show: setPeekKey,
     close: () => closeInstantly(peekContent.current, () => setPeekKey(null)),
-    focus: () => {
-      const el = peekContent.current;
-      (el?.querySelector<HTMLElement>(FOCUSABLE) ?? el)?.focus();
-    },
+    focus: () => focusTaskPeek(peekContent.current),
   };
   const onChange = (next: TaskFilters) =>
     void navigate({
@@ -83,9 +84,7 @@ function TasksPage() {
         taskKey={peekKey}
         onClose={() => setPeekKey(null)}
         contentRef={peekContent}
-        returnFocus={(key) =>
-          document.querySelector<HTMLElement>(`ul[aria-label="Tasks"] a[data-task-key="${key}"]`)
-        }
+        returnFocus={findTaskRow}
       />
     </>
   );

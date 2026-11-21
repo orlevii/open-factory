@@ -60,7 +60,6 @@ test("window mode counts live events instead of appending them", () => {
     message: { type: "session_event", agent: "dev", event: ev(10) },
   });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([3, 4, 5]);
-  expect(s.newWhileAway).toBe(1);
 });
 
 test("earlier pages prepend; status, queue and resync frames", () => {
@@ -128,7 +127,7 @@ const frame = (
     : never,
 ) => ({ type: "frame", message }) as const;
 
-test("loaded replaces everything, including needsReload and newWhileAway; reset clears", () => {
+test("loaded replaces everything, including needsReload; reset clears", () => {
   let s = sessionReducer(initialSessionState, {
     type: "loaded",
     page: page([3, 4], { before: false, after: true }),
@@ -137,12 +136,10 @@ test("loaded replaces everything, including needsReload and newWhileAway; reset 
   });
   s = sessionReducer(s, frame({ type: "session_event", agent: "dev", event: ev(20) }));
   s = sessionReducer(s, frame({ type: "resync", agent: "dev" }));
-  expect(s.newWhileAway).toBe(1);
   expect(s.needsReload).toBe(true);
   s = sessionReducer(s, { type: "loaded", page: page([7, 8, 9]), detail, mode: "latest" });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([7, 8, 9]);
   expect(s.needsReload).toBe(false);
-  expect(s.newWhileAway).toBe(0);
   expect(s.windowed).toBe(false);
   expect(sessionReducer(s, { type: "reset" })).toBe(initialSessionState);
 });
@@ -161,7 +158,6 @@ test("window mode ignores an already-present live event without counting it", ()
     mode: "window",
   });
   s = sessionReducer(s, frame({ type: "session_event", agent: "dev", event: ev(4) }));
-  expect(s.newWhileAway).toBe(0);
 });
 
 test("an agent_status frame without lastError clears the previous one", () => {
@@ -213,7 +209,6 @@ test("window mode counts each live seq once, even when a reconnect replays it", 
   s = frame(11);
   s = frame(10); // replayed after a reconnect
   s = frame(11);
-  expect(s.newWhileAway).toBe(2);
   expect(s.maxSeenSeq).toBe(11);
 });
 
@@ -336,7 +331,6 @@ test("a frames batch mixes status, queue and window counting like single frames"
   const batched = sessionReducer(s, { type: "frames", messages });
   const single = messages.reduce((acc, m) => sessionReducer(acc, frame(m)), s);
   expect(batched).toEqual(single);
-  expect(batched.newWhileAway).toBe(2);
   expect(batched.ordered).toBe(s.ordered);
 });
 
@@ -493,7 +487,6 @@ test("a windowed view's live turn_end only counts", () => {
   const s0 = loaded({ agent: { turnOpen: true, turnStartedAt: at } }, "window");
   const s = sessionReducer(s0, frames([sessionEvent(20, turnEnd())]));
   expect(s.agent?.turnOpen).toBe(true);
-  expect(s.newWhileAway).toBe(1);
 });
 
 test("a status frame without turnStartedAt or compacting clears them", () => {
@@ -580,7 +573,6 @@ test("a windowed view counts speech in newSpeech: messages, agent text and sends
       sessionEvent(24, turnEnd()),
     ]),
   );
-  expect(s.newWhileAway).toBe(5);
   expect(s.newSpeech).toBe(3);
   // A reload starts the count again.
   expect(loaded({}, "window").newSpeech).toBe(0);
@@ -835,4 +827,17 @@ test("a reload that already lists a restored item drops its line", () => {
   });
   expect(view(s)).toEqual(["a", "b"]);
   expect(s.cancelled.size).toBe(0);
+});
+
+test("an Undo the server delivers at once leaves no cancelled line (frames before the 204)", () => {
+  let s = withQueue(["m1"]);
+  s = sessionReducer(s, { type: "cancel", id: "m1", inBox: true });
+  s = sessionReducer(s, { type: "frame", message: queueFrame([]) });
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["m1"]) });
+  s = sessionReducer(s, { type: "frame", message: queueFrame([]) });
+  s = sessionReducer(s, frames([sessionEvent(10, messageIn("m1"))]));
+  expect(s.cancelled.size).toBe(0);
+  s = sessionReducer(s, { type: "restored", id: "m1" });
+  expect(s.cancelled.size).toBe(0);
+  expect(view(s)).toEqual([]);
 });

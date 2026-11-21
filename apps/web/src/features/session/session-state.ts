@@ -45,8 +45,7 @@ export interface SessionState {
   hasMoreBefore: boolean;
   /** true while showing an older window (deep link): live events are counted, not appended */
   windowed: boolean;
-  newWhileAway: number;
-  /** The speech among `newWhileAway` (messages, agent text, sends): the Jump pill's count (U3 §8.2). */
+  /** Speech (messages, agent text, sends) seen while windowed: the Jump pill's count (U3 §8.2). */
   newSpeech: number;
   /** Highest seq already accounted for while windowed (starts at the detail's lastSeq), so a
    *  reconnect's replay is not counted twice and the resubscribe starts after it. */
@@ -89,7 +88,6 @@ export const initialSessionState: SessionState = {
   ordered: [],
   hasMoreBefore: false,
   windowed: false,
-  newWhileAway: 0,
   newSpeech: 0,
   maxSeenSeq: 0,
   queue: [],
@@ -293,6 +291,19 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
   for (const se of fresh) {
     if (se.seq <= s.liveAfter) continue;
     const e = se.event;
+    if (e.type === "message_in" && next.cancelled.size > 0) {
+      // A delivered message is never cancelled: an Undo the server delivers at once publishes its
+      // frames (queue, message_in) before the 204, so the line would otherwise outlive it.
+      let cancelled: Map<string, CancelledEntry> | undefined;
+      for (const m of e.messages) {
+        for (const id of [m.id, ...(m.ids ?? [])]) {
+          if (!(cancelled ?? next.cancelled).has(id)) continue;
+          cancelled ??= new Map(next.cancelled);
+          cancelled.delete(id);
+        }
+      }
+      if (cancelled) next = { ...next, cancelled };
+    }
     if (e.type === "message_in" && (next.queue.length > 0 || next.sending.length > 0)) {
       let handedOff: Set<string> | undefined;
       let queue = next.queue;
@@ -457,7 +468,6 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
           if (m.event.seq <= s.maxSeenSeq) return s;
           return {
             ...s,
-            newWhileAway: s.newWhileAway + 1,
             newSpeech: s.newSpeech + speechCount(m.event.event),
             maxSeenSeq: m.event.seq,
           };

@@ -1,4 +1,5 @@
 import type { AnyEvent } from "@open-factory/shared";
+import { ChevronRight } from "lucide-react";
 import { formatTokens } from "./format";
 import { CodePlate } from "./quiet-line";
 
@@ -20,9 +21,13 @@ export function CompactionMarker({
   );
   if (!event.summary) return <div {...rowProps}>{line}</div>;
   return (
-    <details>
-      <summary {...rowProps} className="cursor-pointer list-none">
-        {line}
+    <details className="group">
+      <summary {...rowProps} className="flex cursor-pointer list-none items-center gap-1.5">
+        <ChevronRight
+          aria-hidden="true"
+          className="size-3.5 text-muted-foreground shrink-0 transition-transform duration-150 ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
+        />
+        <span className="min-w-0 flex-1">{line}</span>
       </summary>
       <CodePlate>{event.summary}</CodePlate>
     </details>

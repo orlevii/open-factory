@@ -106,7 +106,7 @@ function Chevron({ open }: { open: boolean }) {
     <ChevronRight
       aria-hidden="true"
       data-icon="inline-start"
-      className={`transition-transform duration-150 motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
+      className={`transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
     />
   );
 }

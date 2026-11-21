@@ -221,7 +221,13 @@ test("one renderOption draws every non-trigger row; id, disabled and describedby
   );
 });
 
-test("disabled blocks opening", async () => {
-  const { trigger } = setup({ disabled: true });
+test("disabled cannot be opened by click or keyboard", async () => {
+  const { trigger, onValueChange } = setup({ disabled: true });
   expect(trigger).toBeDisabled();
+  await userEvent.click(trigger);
+  expect(screen.queryByRole("listbox")).toBeNull();
+  trigger.focus();
+  await userEvent.keyboard("{Enter}{ArrowDown} ");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(onValueChange).not.toHaveBeenCalled();
 });

@@ -193,6 +193,35 @@ test("an ended assignee shows muted above a 'Choose an agent…' trigger", async
   ).toBeInTheDocument();
 });
 
+test("an ended assignee can still be unassigned", async () => {
+  const api = world(() =>
+    detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }),
+  );
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ assignee: null }) }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: "Assignee: Choose an agent…" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: "Unassigned" }));
+  await waitFor(() => expect(patches(api).at(-1)?.body).toEqual({ assignee: null }));
+});
+
+test("Escape and clicking away leave the assignee unchanged", async () => {
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const trigger = await screen.findByRole("combobox", { name: "Assignee: @dev" });
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("{ArrowDown}{Escape}");
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  await userEvent.click(document.body);
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  expect(patches(api)).toHaveLength(0);
+  expect(trigger).toHaveAccessibleName("Assignee: @dev");
+});
+
 test("Edit beside the title is an outline button (§6.3)", async () => {
   world();
   renderApp("/tasks/T-42", alice);
@@ -697,6 +726,9 @@ test("layout: the Status and Assignee triggers truncate instead of widening the 
     expect(b).toHaveClass("w-full", "min-w-0");
   }
   expect(status.querySelector(".truncate")).not.toBeNull();
+  // The picker's value sits in a direct span the trigger truncates (`[&>span]:truncate`).
+  expect(assignee.querySelector(":scope > span")).toHaveTextContent("@dev");
+  expect(assignee.className).toContain("[&>span]:truncate");
 });
 
 /** The list row of T-42, as the tasks list caches it. */

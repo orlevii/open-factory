@@ -371,7 +371,9 @@ export function AgentForm(props: Props) {
   // Who can manage: persistent agents (a spawned agent never manages). On Edit the agent and everything
   // under it are left out, because picking one of them would make a cycle.
   const editing = agent?.slug;
-  const canManage = useMemo(() => {
+  // The excluded slugs, joined: a status frame rebuilds the list but not this key, so `canManage` keeps
+  // its identity and the picker's options are not rebuilt.
+  const excludedKey = (() => {
     const list = activeAgents.data ?? [];
     const excluded = new Set<string>(editing ? [editing] : []);
     let grew = editing !== undefined;
@@ -384,8 +386,12 @@ export function AgentForm(props: Props) {
         }
       }
     }
+    return [...excluded].sort().join("\n");
+  })();
+  const canManage = useMemo(() => {
+    const excluded = new Set(excludedKey ? excludedKey.split("\n") : []);
     return (a: AgentOpt) => a.kind === "persistent" && !excluded.has(a.slug);
-  }, [activeAgents.data, editing]);
+  }, [excludedKey]);
   const managerMissing =
     values.reportsTo !== "" &&
     activeAgents.data !== undefined &&

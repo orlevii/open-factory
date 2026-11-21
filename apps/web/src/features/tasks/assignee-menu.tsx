@@ -41,7 +41,8 @@ export function AssigneeMenu({
         value={ended ? ENDED : current}
         renderValue={ended ? chooseAgent : undefined}
         onValueChange={(next) => {
-          if (next === current) return;
+          // An ended assignee has no live current value, so Unassigned (null) is a real change.
+          if (!ended && next === current) return;
           onCommit(next);
         }}
       />

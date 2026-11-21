@@ -108,22 +108,18 @@ function ComboList({
   // "None" and Enter would commit it. While the highlight is cmdk's own (no arrow or pointer move since the
   // last keystroke), a fixed row is swapped for the best real match.
   const moved = React.useRef(false)
-  const bestMatch = (query: string) => {
-    let best: { key: string; score: number } | undefined
-    for (const o of options) {
-      if (o.fixed || o.disabled) continue
-      const score = filter(itemKey(o), query, [o.label, ...(o.keywords ?? [])])
-      if (score > 0 && (!best || score > best.score)) best = { key: itemKey(o), score }
-    }
-    return best?.key
-  }
   // Two steps (the fixed key lands in state first, then the swap) so cmdk, which only follows a changed
   // `value` prop, is told again each time it re-highlights the fixed row.
   React.useEffect(() => {
     if (moved.current || !search || !highlight.startsWith(FIXED)) return
-    const best = bestMatch(search)
-    if (best) setHighlight(best)
-  })
+    let best: { key: string; score: number } | undefined
+    for (const o of options) {
+      if (o.fixed || o.disabled) continue
+      const score = filter(itemKey(o), search, [o.label, ...(o.keywords ?? [])])
+      if (score > 0 && (!best || score > best.score)) best = { key: itemKey(o), score }
+    }
+    if (best) setHighlight(best.key)
+  }, [highlight, search, options])
   const item = (o: ComboOption) => (
     <ComboItem
       key={itemKey(o)}

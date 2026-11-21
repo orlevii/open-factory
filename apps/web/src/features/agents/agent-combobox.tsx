@@ -7,14 +7,13 @@ import { useAgent } from "@/features/agents/use-agent-index";
 import { agentsListQueryOptions } from "@/features/session/api";
 
 /** The only fields the picker reads. Status frames change none of them, so the list isn't rebuilt. */
-export type AgentOpt = Pick<AgentSummary, "slug" | "displayName" | "kind" | "reportsTo" | "depth">;
+export type AgentOpt = Pick<AgentSummary, "slug" | "displayName" | "kind" | "reportsTo">;
 
 const project = (a: AgentSummary): AgentOpt => ({
   slug: a.slug,
   displayName: a.displayName,
   kind: a.kind,
   reportsTo: a.reportsTo,
-  depth: a.depth,
 });
 const isLive = (a: AgentSummary) => !a.archivedAt && !a.terminatedAt;
 

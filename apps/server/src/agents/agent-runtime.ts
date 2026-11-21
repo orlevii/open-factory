@@ -365,6 +365,8 @@ export class AgentRuntime {
   private started = false; // session_started seen for this process
   private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
+  /** U3 §5.2: when the open turn's `turn_started` was stored (ISO); set and cleared with `openTurnId`. */
+  private turnStartedAt: string | undefined;
   /** The credential the live process was launched with (`reload()` may move the agent since); cleared on exit. */
   private procCredentialId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
@@ -637,6 +639,7 @@ export class AgentRuntime {
       this.publishQueue();
       await this.wakeInline("compact");
       await this.flush();
+      this.publishStatus(); // a compaction written now shows at once (U3 §6.1)
       return this.itemOf(entry);
     });
   }
@@ -1368,11 +1371,15 @@ export class AgentRuntime {
     runtimeDisabled?: string;
     image?: string;
     pulling?: boolean;
+    turnStartedAt?: string;
+    compacting?: boolean;
   } {
     const pause = this.slots.pauseOf(this.agent.id);
     return {
       status: this.status(),
       turnOpen: Boolean(this.openTurnId),
+      ...(this.openTurnId && this.turnStartedAt ? { turnStartedAt: this.turnStartedAt } : {}),
+      compacting: this.compactInFlight,
       ...(pause
         ? { rateLimitedUntil: pause.until.toISOString(), rateLimitExact: pause.exact }
         : {}),
@@ -2292,7 +2299,7 @@ export class AgentRuntime {
         this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.turnKinds = [];
-        await this.append(this.openTurnId, e);
+        this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
         break;
       case "usage":
         this.lastUsage = e;
@@ -2327,6 +2334,7 @@ export class AgentRuntime {
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
           await this.attemptSucceeded();
         this.openTurnId = undefined;
+        this.turnStartedAt = undefined;
         // Held rows pending at this turn boundary are due at once, unless the turn only read updates (S6 §8.1).
         this.dueAtTurnEnd = this.held.some(isUpdate) && !updateOnly;
         this.lastActivityAt = Date.now();
@@ -2478,6 +2486,7 @@ export class AgentRuntime {
     // Notices go ahead of rolled-back batches (spec §9.5); a stable partition keeps each group in order.
     this.queue = [...this.queue.filter(isNotice), ...this.queue.filter((e) => !isNotice(e))];
     this.openTurnId = undefined;
+    this.turnStartedAt = undefined;
     this.releaseHold();
     this.compactInFlight = false;
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).

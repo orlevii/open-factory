@@ -739,6 +739,43 @@ test("with the tasks list cached, the page shows the title and status at once; n
   expect(screen.queryByText(/commented$/)).not.toBeInTheDocument();
 });
 
+test("the stand-in holds the layout of the empty detail: the side sections with a plate per line, the body with its Edit row", async () => {
+  // Plates at the empty state's row heights, so a task with nothing in them doesn't move when the
+  // detail lands (a phone stacks Activity under the side sections).
+  const { release } = cachedListWorld();
+  renderApp("/tasks", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Plan the billing migration/ }));
+  await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" });
+  const side = document.querySelector("aside .order-4") as HTMLElement;
+  const sections = [...side.querySelectorAll("section")];
+  expect(sections.map((s) => s.querySelector("h3")?.textContent)).toEqual([
+    "Depends on",
+    "Blocks",
+    "Links",
+    "Created by",
+  ]);
+  const plates = (s: Element) =>
+    [...s.querySelectorAll("[data-slot=skeleton]")].map((p) => p.className.match(/\bh-\S+/)?.[0]);
+  // "None" lines, the Edit buttons (h-6) and the Created by line (1.125rem).
+  expect(sections.map(plates)).toEqual([
+    ["h-[1lh]", "h-6"],
+    ["h-[1lh]"],
+    ["h-[1lh]", "h-6"],
+    ["h-[1.125rem]"],
+  ]);
+  const body = document.querySelector("main .order-3") as HTMLElement;
+  expect(body.lastElementChild?.querySelector("[data-slot=skeleton]")).toHaveClass("h-6");
+
+  release(json(detail({ body: "" })));
+  expect(await screen.findByRole("button", { name: "Edit dependencies" })).toBeInTheDocument();
+  expect([...side.querySelectorAll("section h3")].map((h) => h.textContent)).toEqual([
+    "Depends on",
+    "Blocks",
+    "Links",
+    "Created by",
+  ]);
+});
+
 test("with the tasks list cached, a task that turns out not to exist shows Task not found", async () => {
   const { release } = cachedListWorld();
   renderApp("/tasks", alice);

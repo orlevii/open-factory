@@ -65,8 +65,8 @@ function SenderLine({ item }: { item: InboxItem }) {
   );
 }
 
-/** Line two: the task (`T-6 · title`) or, for a message, the recipient. Truncates. */
-function ContextLine({ item }: { item: InboxItem }) {
+/** Line two: the task (`T-6 · title`) or, for a message, the recipient unless it is the viewer. Truncates. */
+function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undefined }) {
   const tone = item.read ? "text-muted-foreground" : "text-foreground";
   if (item.task)
     return (
@@ -74,7 +74,7 @@ function ContextLine({ item }: { item: InboxItem }) {
         <TaskBadge taskKey={item.task.key} title={item.task.title} />
       </span>
     );
-  if (item.kind === "message")
+  if (item.kind === "message" && !(viewer && item.to === `@${viewer}`))
     return <span className={`min-w-0 truncate font-mono ${tone}`}>→ {item.to}</span>;
   return null;
 }
@@ -99,17 +99,28 @@ const LINK_CLASS =
   "of-row flex min-h-[4.5rem] flex-col justify-center gap-0.5 py-2 pr-2 pl-0 text-sm";
 
 /**
- * One inbox row (shared with Home's panel): a single link, two lines, an ink dot in a fixed slot when unread.
- * Opening it (click, Cmd/Ctrl-click, middle-click via `onAuxClick`, Enter) calls `onOpen` and then follows the link.
+ * One inbox row (shared with Home's panel): a single link, three lines, an ink dot in a fixed slot when unread.
+ * Opening it (click, Cmd/Ctrl-click, middle-click via `onAuxClick`, Enter) calls `onOpen`, which may
+ * `preventDefault` to select the row instead of following the link.
  */
 export const InboxRow = memo(function InboxRow({
   item,
   now,
   onOpen,
+  selected = false,
+  selectable = false,
+  viewer,
 }: {
   item: InboxItem;
   now: Date;
-  onOpen(item: InboxItem): void;
+  onOpen(item: InboxItem, e: MouseEvent): void;
+  /** The reading pane shows this row. */
+  selected?: boolean;
+  /** A plain click selects rather than navigates, so the link's target isn't preloaded on hover or focus
+   *  (a j/k sweep would otherwise start a loader per row). */
+  selectable?: boolean;
+  /** The viewer's handle: a message to them doesn't repeat "→ @them". */
+  viewer?: string;
 }) {
   const at = new Date(item.createdAt);
   const time = formatInboxTime(at, now);
@@ -119,11 +130,13 @@ export const InboxRow = memo(function InboxRow({
     "data-inbox-id": item.id,
     "aria-label": labelOf(item, time),
     "aria-describedby": previewId,
-    onClick: () => onOpen(item),
+    "aria-current": selected ? ("true" as const) : undefined,
+    preload: selectable ? (false as const) : undefined,
+    onClick: (e: MouseEvent) => onOpen(item, e),
     // Middle-click only: Chrome fires auxclick for the right button too, and opening the context
     // menu must not mark the row read.
     onAuxClick: (e: MouseEvent) => {
-      if (e.button === 1) onOpen(item);
+      if (e.button === 1) onOpen(item, e);
     },
     className: `${LINK_CLASS} grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
   } as const;
@@ -152,7 +165,7 @@ export const InboxRow = memo(function InboxRow({
             {time}
           </time>
         </span>
-        <ContextLine item={item} />
+        <ContextLine item={item} viewer={viewer} />
         <span
           id={previewId}
           className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}

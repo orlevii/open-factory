@@ -1,5 +1,6 @@
 import {
   apiFetch,
+  inboxItemResponseSchema,
   type inboxItemSchema,
   inboxPageSchema,
   readAllResponseSchema,
@@ -10,6 +11,7 @@ import {
 import {
   type InfiniteData,
   infiniteQueryOptions,
+  type QueryClient,
   queryOptions,
   useInfiniteQuery,
   useQuery,
@@ -17,6 +19,8 @@ import {
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { z } from "zod";
+import { fetchEvents } from "@/features/session/api";
+import { taskDetailOptions } from "@/features/tasks/api";
 
 export type InboxItem = z.infer<typeof inboxItemSchema>;
 type Page = z.infer<typeof inboxPageSchema>;
@@ -45,6 +49,36 @@ export const inboxQueryOptions = infiniteQueryOptions({
 
 /** The Inbox as one infinite query keyed `["inbox"]`; `inbox_changed` invalidates it. */
 export const useInbox = () => useInfiniteQuery(inboxQueryOptions);
+
+/** One item, for a `?item=` outside the loaded pages (the list's pages don't change). */
+export const inboxItemOptions = (id: string) =>
+  queryOptions({
+    queryKey: [...inboxQueryKey, "item", id] as const,
+    queryFn: () =>
+      apiFetch(`/api/inbox/${encodeURIComponent(id)}`, { schema: inboxItemResponseSchema }).then(
+        (r) => r.item,
+      ),
+  });
+
+/** The reading pane's excerpt of a session: 7 events around `seq`, or the latest 7 without one. */
+export const EXCERPT_LIMIT = 7;
+export const excerptOptions = (slug: string, seq: number | undefined) =>
+  queryOptions({
+    queryKey: ["agent", slug, "excerpt", seq ?? "latest"] as const,
+    queryFn: () =>
+      fetchEvents(
+        slug,
+        seq === undefined ? { limit: EXCERPT_LIMIT } : { around: seq, limit: EXCERPT_LIMIT },
+      ),
+  });
+
+/** Warms what the reading pane shows for `item`: the session excerpt at its target, or its task. */
+export function prefetchPane(qc: QueryClient, item: InboxItem) {
+  const link = item.link;
+  void (link.kind === "session"
+    ? qc.prefetchQuery(excerptOptions(link.agentSlug, link.seq))
+    : qc.prefetchQuery(taskDetailOptions(link.key)));
+}
 
 /** Home's panel: the 5 newest unread items. */
 export const homeInboxQueryOptions = queryOptions({
@@ -155,10 +189,13 @@ export function useInboxCache() {
  */
 export function useOpenItem() {
   const cache = useInboxCache();
-  return (item: InboxItem) => {
-    if (item.read) return;
-    const ids = new Set([item.id]);
-    cache.setRead(ids, true, -1, [item]);
-    postRead(item.id).catch(() => cache.setRead(ids, false, +1, [item]));
-  };
+  return useCallback(
+    (item: InboxItem) => {
+      if (item.read) return;
+      const ids = new Set([item.id]);
+      cache.setRead(ids, true, -1, [item]);
+      postRead(item.id).catch(() => cache.setRead(ids, false, +1, [item]));
+    },
+    [cache],
+  );
 }

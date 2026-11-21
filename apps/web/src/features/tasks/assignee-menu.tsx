@@ -60,7 +60,8 @@ export function AssigneeMenu({
           >
             <DropdownMenuRadioItem value={UNASSIGNED}>Unassigned</DropdownMenuRadioItem>
             {agents.map((a) => (
-              <DropdownMenuRadioItem key={a.slug} value={a.slug}>
+              // Typeahead matches the slug as typed ("dev-042"), as the Selects do, not "@dev-042".
+              <DropdownMenuRadioItem key={a.slug} value={a.slug} textValue={a.slug}>
                 {agentOptionLabel(a)}
               </DropdownMenuRadioItem>
             ))}

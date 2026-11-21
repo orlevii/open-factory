@@ -8,15 +8,17 @@ const Ctx = React.createContext<{ direction: Direction; released: boolean }>({ d
 
 /** Vaul drawer (DESIGN.md → Overlays, Gesture UI). Focus moves in on open (Vaul's default would leave it
  *  behind the scrim); a drag that ends in a close leaves on the drawer curve (data-released). */
-function Drawer({ direction = "bottom", autoFocus = true, onRelease, open, ...props }:
+function Drawer({ direction = "bottom", autoFocus = true, onRelease, onOpenChange, open, ...props }:
   React.ComponentProps<typeof Vaul.Root> & { direction?: Direction }) {
   const [released, setReleased] = React.useState(false);
+  // Controlled: a fresh opening clears the mark during render. Uncontrolled: onOpenChange(true) does.
   const [prevOpen, setPrevOpen] = React.useState(open);
   if (open !== prevOpen) { setPrevOpen(open); if (open) setReleased(false); }
   const ctx = React.useMemo(() => ({ direction, released }), [direction, released]);
   return (
     <Ctx.Provider value={ctx}>
       <Vaul.Root data-slot="drawer" direction={direction} autoFocus={autoFocus} open={open}
+        onOpenChange={(next) => { if (next) setReleased(false); onOpenChange?.(next); }}
         onRelease={(e, stillOpen) => { if (!stillOpen) setReleased(true); onRelease?.(e, stillOpen); }}
         {...props} />
     </Ctx.Provider>
@@ -46,7 +48,8 @@ function DrawerContent({ className, children, onOpenAutoFocus, ref, ...props }: 
           "group fixed z-50 flex flex-col bg-popover text-sm text-popover-foreground",
           direction === "bottom"
             ? "inset-x-0 bottom-0 max-h-[90svh] rounded-t-xl border-t border-float-edge pb-[max(1rem,env(safe-area-inset-bottom))]"
-            : "inset-y-0 left-0 w-(--sidebar-width) max-w-[85vw] border-r border-float-edge",
+            : // The portal sits in <body>, outside sidebar-wrapper: fall back to SIDEBAR_WIDTH (16rem).
+              "inset-y-0 left-0 w-[var(--sidebar-width,16rem)] max-w-[85vw] border-r border-float-edge",
           className,
         )}
         {...props}

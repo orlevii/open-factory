@@ -181,8 +181,10 @@ function Now({
     rows.push({
       key: "terminated",
       node: (
-        <div className="flex flex-wrap items-center gap-x-2">
-          <span data-terminated-text>
+        // The sentence fills its line and each action starts its own (Pin's outcome line sits
+        // between them), so the ghost buttons are pulled back by their padding to line up with it.
+        <div className="flex flex-wrap items-center gap-x-2 [&>button]:-ml-2">
+          <span data-terminated-text className="basis-full">
             {endedSentence(agent, now)}
             {`${workspace ? ` ${workspace}` : ""}${stuck}`}
           </span>

@@ -273,6 +273,29 @@ test("Now: a terminated agent shows when it ended and offers Pin", async () => {
   expect(now.getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
 });
 
+test("Now: the terminated row's actions each start a line, pulled back to the sentence's edge", async () => {
+  // jsdom has no layout: this checks the structure; the browser pass checks the alignment.
+  mockApi({});
+  setup({
+    agent: agentSummary({
+      status: "terminated",
+      kind: "ephemeral",
+      terminatedAt: minutesAgo(10),
+      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
+    }),
+  });
+  const now = within(await section("Now"));
+  const sentence = now.getByText(/^Terminated/);
+  // The sentence fills its line, so no action sits beside it.
+  expect(sentence).toHaveClass("basis-full");
+  for (const name of ["Pin workspace", "What's kept?"]) {
+    const button = now.getByRole("button", { name });
+    // Every action is a direct item of the row the ghost-padding pull-back applies to.
+    expect(button.parentElement).toBe(sentence.parentElement);
+  }
+  expect(sentence.parentElement?.className).toMatch(/\[&>button\]:-ml-2/);
+});
+
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
   const reports = Array.from({ length: 10 }, (_, i) =>
     agentSummary({ slug: `r${i}`, displayName: `Report ${i}`, reportsTo: "lead" }),

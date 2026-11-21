@@ -183,6 +183,7 @@ function Combobox({
   "aria-describedby": ariaDescribedBy,
   id,
   disabled,
+  pending,
   renderOption,
   renderValue,
   triggerClassName,
@@ -199,6 +200,9 @@ function Combobox({
   "aria-describedby"?: string | undefined
   id?: string | undefined
   disabled?: boolean | undefined
+  /** A commit is saving: the trigger reads as disabled and won't open, but stays focusable, so the
+   *  focus the closing popover hands back isn't dropped on <body> (a disabled button can't take it). */
+  pending?: boolean | undefined
   /** One row renderer for every option (a stable function, not a closure per option); defaults to the label. */
   renderOption?: (option: ComboOption) => React.ReactNode
   renderValue?: (value: string) => React.ReactNode
@@ -220,6 +224,7 @@ function Combobox({
   const shown = empty ? placeholder : renderValue ? renderValue(value) : (selected?.label ?? value)
 
   const onOpenChange = (next: boolean) => {
+    if (next && pending) return
     setOpen(next)
     // Reset on open, not on close, so a locked popover doesn't jump while it fades out.
     if (next) {
@@ -252,6 +257,8 @@ function Combobox({
           role="combobox"
           id={id}
           disabled={disabled}
+          aria-disabled={pending || undefined}
+          aria-busy={pending || undefined}
           onBlur={onBlur}
           aria-label={ariaLabel}
           aria-invalid={ariaInvalid}

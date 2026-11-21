@@ -182,6 +182,41 @@ test("Assignee picker: typeahead matches the slug, arrows only move the highligh
   await waitFor(() => expect(patches(api)[0]?.body).toEqual({ assignee: "qa" }));
 });
 
+test("focus stays on the assignee picker while a change saves and after it lands", async () => {
+  const api = world();
+  let land = () => {};
+  api.on(
+    "PATCH /api/tasks/T-42",
+    () =>
+      new Promise<Response>((resolve) => {
+        land = () =>
+          resolve(json({ task: detail({ assignee: { slug: "qa", displayName: "QA" } }) }));
+      }),
+  );
+  renderApp("/tasks/T-42", alice);
+  const trigger = await screen.findByRole("combobox", { name: "Assignee: @dev" });
+  trigger.focus();
+  await userEvent.keyboard("{Enter}");
+  await userEvent.type(await screen.findByRole("combobox", { name: "Search" }), "qa");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: /QA/ })).toHaveAttribute("aria-selected", "true"),
+  );
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(patches(api)).toHaveLength(1));
+  // Pending: the popover has closed and handed focus back to its trigger, which can't open again.
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  const busy = screen.getByRole("combobox", { name: "Assignee: @qa" });
+  expect(busy).toHaveFocus();
+  expect(busy).toHaveAttribute("aria-disabled", "true");
+  await userEvent.keyboard("{Enter}");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  act(() => land());
+  expect(await screen.findByText("Assigned to @qa")).toBeInTheDocument();
+  const settled = screen.getByRole("combobox", { name: "Assignee: @qa" });
+  expect(settled).toHaveFocus();
+  expect(settled).not.toHaveAttribute("aria-disabled");
+});
+
 test("an ended assignee shows muted above a 'Choose an agent…' trigger", async () => {
   world(() => detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }));
   renderApp("/tasks/T-42", alice);

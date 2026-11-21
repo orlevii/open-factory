@@ -16,11 +16,14 @@ export function AssigneeMenu({
   value,
   onCommit,
   disabled,
+  pending,
 }: {
   value: TaskAgentRef | null;
   /** A slug, or null to unassign. */
   onCommit(next: string | null): void;
   disabled?: boolean;
+  /** The last pick is saving: the picker won't open again yet, but keeps focus. */
+  pending?: boolean;
 }) {
   const ended = value?.ended;
   const current = value && !ended ? value.slug : null;
@@ -37,6 +40,7 @@ export function AssigneeMenu({
         scope="live"
         fixed={UNASSIGNED}
         disabled={disabled}
+        pending={pending}
         triggerClassName="w-full min-w-0"
         value={ended ? ENDED : current}
         renderValue={ended ? chooseAgent : undefined}

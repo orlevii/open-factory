@@ -74,6 +74,7 @@ export function AgentCombobox({
   renderValue: renderValueOverride,
   id,
   disabled,
+  pending,
   triggerClassName,
   "aria-label": ariaLabel,
   "aria-invalid": ariaInvalid,
@@ -91,6 +92,8 @@ export function AgentCombobox({
   renderValue?: (value: string) => ReactNode;
   id?: string;
   disabled?: boolean;
+  /** A commit is saving: blocks opening but keeps the trigger focusable (see Combobox). */
+  pending?: boolean;
   triggerClassName?: string;
   "aria-label": string;
   "aria-invalid"?: boolean | undefined;
@@ -138,6 +141,7 @@ export function AgentCombobox({
       aria-describedby={ariaDescribedBy}
       id={id}
       disabled={disabled}
+      pending={pending}
       triggerClassName={triggerClassName}
       renderOption={order === "tree" ? renderIndented : renderPlain}
       renderValue={renderValue}

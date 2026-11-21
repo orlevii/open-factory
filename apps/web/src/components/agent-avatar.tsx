@@ -140,6 +140,9 @@ export function StatusMark({
 
 const HOLE = 8;
 
+/** Statuses that draw a badge; the rest (idle, hibernated, terminated) draw nothing and cut no hole. */
+const MARKED: ReadonlySet<AgentStatus> = new Set(["working", "errored", "rate_limited", "queued"]);
+
 export const AgentAvatar = memo(function AgentAvatar({
   slug,
   template,
@@ -157,7 +160,7 @@ export const AgentAvatar = memo(function AgentAvatar({
     template && avatarVersion
       ? `/api/templates/${encodeURIComponent(template)}/avatar.svg?v=${encodeURIComponent(avatarVersion)}`
       : null;
-  const mark = status ? <StatusMark status={status} size={4} fit /> : null;
+  const mark = status && MARKED.has(status) ? <StatusMark status={status} size={4} fit /> : null;
   return (
     <span
       aria-hidden="true"

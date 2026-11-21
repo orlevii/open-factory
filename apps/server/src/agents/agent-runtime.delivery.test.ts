@@ -265,6 +265,20 @@ test("the 10 s fallback appends interrupt_unconfirmed, then sends the held messa
   expect(rt.queueItems()).toEqual([]);
 });
 
+test("a hold ended by the turn's result never appends interrupt_unconfirmed afterwards", async () => {
+  await makeRuntime({ realHold: true });
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" });
+  await send("steer");
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["steer"]);
+  await vi.advanceTimersByTimeAsync(20_000);
+  await rt.settled();
+  expect(await types()).not.toContain("interrupt_unconfirmed");
+});
+
 test("interrupt during a compaction is 409 compacting and writes nothing", async () => {
   await startedIdle();
   await rt.compact({ byHandle: "or" });

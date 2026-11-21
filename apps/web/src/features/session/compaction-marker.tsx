@@ -1,7 +1,7 @@
 import type { AnyEvent } from "@open-factory/shared";
 import { ChevronRight } from "lucide-react";
 import { formatTokens } from "./format";
-import { CodePlate } from "./quiet-line";
+import { CodePlate, instantOnKeyboard } from "./quiet-line";
 
 /** A full-width rule with a centred label; expandable to the summary when there is one. */
 export function CompactionMarker({
@@ -22,7 +22,12 @@ export function CompactionMarker({
   if (!event.summary) return <div {...rowProps}>{line}</div>;
   return (
     <details className="group">
-      <summary {...rowProps} className="flex cursor-pointer list-none items-center gap-1.5">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is the native disclosure button. */}
+      <summary
+        {...rowProps}
+        onClick={instantOnKeyboard}
+        className="flex cursor-pointer list-none items-center gap-1.5"
+      >
         <ChevronRight
           aria-hidden="true"
           className="size-3.5 text-muted-foreground shrink-0 transition-transform duration-150 ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"

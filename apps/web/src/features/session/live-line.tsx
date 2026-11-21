@@ -9,6 +9,15 @@ export type LiveFact = {
   title?: string;
 };
 
+function firstLine(text: string): string {
+  return (
+    text
+      .split("\n")
+      .find((l) => l.trim() !== "")
+      ?.trim() ?? text
+  );
+}
+
 function terminatedText(agent: AgentSummary, now: Date): string {
   const by = agent.terminatedBy ? formatBy(agent.terminatedBy) : null;
   const who =
@@ -51,7 +60,7 @@ export function liveFact(
   if (agent.status === "errored" && agent.lastError)
     return {
       kind: "errored",
-      text: agent.lastError.split("\n", 1)[0] ?? "",
+      text: firstLine(agent.lastError),
       title: agent.lastError,
     };
   const queued = queuedText(agent, ctx.slotsMax);

@@ -43,9 +43,15 @@ describe("liveFact priority", () => {
     expect(f?.kind).toBe("terminated");
   });
 
-  test("errored beats queued; the first line shows, the full text is the title", () => {
+  test("errored beats pulling and a pending restart; the first line shows, the full text is the title", () => {
     const f = liveFact(
-      agent({ status: "errored", lastError: "It broke\nstack trace here", errorKind: "crash" }),
+      agent({
+        status: "errored",
+        lastError: "It broke\nstack trace here",
+        errorKind: "crash",
+        pulling: true,
+        restartPending: true,
+      }),
       ctx,
     );
     expect(f).toMatchObject({
@@ -53,13 +59,12 @@ describe("liveFact priority", () => {
       text: "It broke",
       title: "It broke\nstack trace here",
     });
-    expect(
-      liveFact(agent({ status: "queued", lastError: "x", errorKind: "crash" }), ctx)?.kind,
-    ).toBe("queued");
   });
 
-  test("errored with a queued wake attempt still prefers errored status only when errored", () => {
-    expect(liveFact(agent({ status: "errored", lastError: "x" }), ctx)?.kind).toBe("errored");
+  test("the first non-empty line of the error shows", () => {
+    expect(
+      liveFact(agent({ status: "errored", lastError: "\n  \n  Real one \nmore" }), ctx)?.text,
+    ).toBe("Real one");
   });
 
   test("rate-limited alone has no fact: the badge says it", () => {

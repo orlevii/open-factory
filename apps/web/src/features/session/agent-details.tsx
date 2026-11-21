@@ -601,6 +601,13 @@ export function AgentDetailsSheet({
         aria-describedby={undefined}
         className="bg-card"
         returnFocus={() => document.getElementById(AGENT_DETAILS_TOGGLE_ID)}
+        // A non-modal peek: closed while focus is elsewhere on the page (Esc in the composer), focus
+        // stays there rather than jumping to the toggle. Only focus that was inside goes back to it.
+        onCloseAutoFocus={(e) => {
+          const at = document.activeElement;
+          const inside = document.getElementById(AGENT_DETAILS_ID)?.contains(at);
+          if (at && at !== document.body && !inside) e.preventDefault();
+        }}
       >
         {/* The dialog's name; the visible strip inside repeats it as a heading. */}
         <SheetTitle className="sr-only">Agent details</SheetTitle>

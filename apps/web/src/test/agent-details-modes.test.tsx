@@ -193,6 +193,31 @@ test("at 900px, Agent details from the ⋯ menu moves focus into the opened shee
   expect(container()?.contains(document.activeElement)).toBe(true);
 });
 
+test("at 900px, Esc in the composer closes the peek and leaves focus in the composer", async () => {
+  await visit(900);
+  const user = userEvent.setup();
+  await user.click(toggle());
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  await user.click(box);
+  expect(box).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(container()).toBeNull());
+  await new Promise((r) => setTimeout(r, 50));
+  expect(box).toHaveFocus();
+});
+
+test("at 900px, closing the peek from inside it returns focus to the toggle", async () => {
+  await visit(900);
+  const user = userEvent.setup();
+  await user.click(toggle());
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  (container()?.querySelector("button, [tabindex]") as HTMLElement).focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(container()).toBeNull());
+  await waitFor(() => expect(toggle()).toHaveFocus());
+});
+
 test("closing a sheet that stayed open across 1280px doesn't remember 'closed' for the column", async () => {
   const { viewport } = await visit(900);
   await userEvent.click(toggle());

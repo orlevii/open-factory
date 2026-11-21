@@ -404,3 +404,20 @@ test("right-click keeps the browser's own menu", async () => {
   expect(fireEvent.contextMenu(row("Alpha"))).toBe(true);
   expect(screen.queryByRole("menu")).toBeNull();
 });
+
+test("the menu keeps its place over the row while it closes", async () => {
+  setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  const el = rowEl("a") as HTMLElement;
+  el.getBoundingClientRect = () => new DOMRect(12, 34, 200, 32);
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  await screen.findByRole("menu");
+  const standIn = () => document.querySelector<HTMLElement>("[data-menu-stand-in]");
+  expect(standIn()?.style.top).toBe("34px");
+  await user.keyboard("{Escape}");
+  // Closed: the stand-in still sits where the row was, so the exit animation doesn't jump.
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(standIn()?.style.top).toBe("34px");
+  expect(standIn()?.style.left).toBe("12px");
+});

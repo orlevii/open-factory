@@ -169,6 +169,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         aria-setsize={setsize}
         aria-posinset={posinset}
         aria-expanded={hasChildren ? expanded : undefined}
+        aria-keyshortcuts="Shift+F10"
         aria-current={active ? "page" : undefined}
         tabIndex={tabbable ? 0 : -1}
         className={ROW}
@@ -250,6 +251,11 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           data-row-more=""
           className="of-row-more size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-border hover:text-sidebar-accent-foreground"
           onPointerDown={(e) => e.preventDefault()}
+          // Middle-click must not follow the enclosing link.
+          onAuxClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();

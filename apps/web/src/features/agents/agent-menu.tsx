@@ -1,7 +1,7 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -68,8 +68,16 @@ export function AgentMenu({
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
 
-  // Measured while open: the menu follows the row it was opened on, which may have scrolled.
-  const rect = anchored?.open ? anchored.anchor?.getBoundingClientRect() : undefined;
+  // The row's box, measured when the menu opens and kept through the close, so the menu stays
+  // over its row while it fades out (the page is scroll-locked while it is open).
+  const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number }>();
+  const open = anchored?.open;
+  const anchorEl = anchored?.anchor;
+  useLayoutEffect(() => {
+    if (!open || !anchorEl) return;
+    const { top, left, width, height } = anchorEl.getBoundingClientRect();
+    setRect({ top, left, width, height });
+  }, [open, anchorEl]);
   return (
     <>
       <DropdownMenu open={anchored?.open} onOpenChange={anchored?.onOpenChange}>

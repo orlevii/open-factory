@@ -31,6 +31,9 @@ export const NETWORK_ERROR = "Can't reach the server. Check that it's running, t
 /** U3 §13.2: a send not answered in this long is aborted; it may still land, so a retry reuses its id. */
 export const SEND_TIMEOUT_MS = 15_000;
 export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
+/** The box no longer holds the unconfirmed text (typed over, or edited), so there is no Retry. */
+export const UNCONFIRMED_EDITED =
+  "Couldn't confirm the send. It may still arrive; check before sending again.";
 const NO_LANDED: ReadonlySet<string> = new Set();
 
 /** A send whose POST aborted: the box got `sent` back (as `box`, after `before`). */
@@ -214,7 +217,9 @@ export function Composer({
     [setText, draft],
   );
   const empty = text.trim() === "";
-  const shownError = error ?? stopError;
+  const retryable = unconfirmed !== undefined && text === unconfirmed.sent;
+  const shownError =
+    error === UNCONFIRMED && !retryable ? UNCONFIRMED_EDITED : (error ?? stopError);
 
   /** The text goes back in the box after anything typed since; returns what the box then holds. */
   const putBack = (sent: string) => {
@@ -390,7 +395,7 @@ export function Composer({
           >
             <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
             {shownError}
-            {shownError === UNCONFIRMED && unconfirmed && text === unconfirmed.sent && (
+            {shownError === UNCONFIRMED && (
               <Button type="button" variant="ghost" size="xs" onClick={() => void send()}>
                 Retry
               </Button>

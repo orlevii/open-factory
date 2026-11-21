@@ -137,6 +137,18 @@ test("while compacting the hint says the message arrives after it (no ⌥↵ pro
   expect(document.querySelector("[data-composer-hint] kbd")).toBeNull();
 });
 
+test("a 409 compacting on Stop resets the button, which then reads Compacting…", async () => {
+  reply = (url) =>
+    url.endsWith("/interrupt")
+      ? json({ error: { code: "compacting", message: "Compacting" } }, 409)
+      : json({}, 202);
+  const { update } = setup(working());
+  await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+  await tick();
+  update(working({ compacting: true }), 1);
+  expect(screen.getByRole("button", { name: "Compacting…" })).toBeInTheDocument();
+});
+
 test("Stop resets from Stopping… when stopEpoch changes within the same turn (unconfirmed stop)", async () => {
   const { update } = setup(working());
   await userEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -592,6 +604,10 @@ test("after an abort, text typed meanwhile makes Enter send under a new id, and 
   });
   expect(box).toHaveValue("typed meanwhile\nfirst part");
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't confirm the send. It may still arrive; check before sending again.",
+  );
+  expect(screen.getByRole("alert")).not.toHaveTextContent("Retry");
   fireEvent.keyDown(box, { key: "Enter" });
   expect(messageSends()[1]?.clientMessageId).not.toBe(messageSends()[0]?.clientMessageId);
 });

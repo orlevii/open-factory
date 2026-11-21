@@ -51,7 +51,12 @@ export function StopButton({
     setPending(true);
     onError(undefined);
     postInterrupt(slug).catch((e: unknown) => {
-      if (e instanceof ApiError && e.status === 409) return;
+      if (e instanceof ApiError && e.status === 409) {
+        // The turn already ended: its edge resets Stop. A compaction never ends that way, and the
+        // status frame already says "Compacting…", so the spinner has nothing to wait for.
+        if (e.code === "compacting") setPending(false);
+        return;
+      }
       setPending(false);
       onError(e);
     });

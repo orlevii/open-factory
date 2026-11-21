@@ -59,7 +59,10 @@ function SenderLine({ item }: { item: InboxItem }) {
     <>
       <Sender item={item} />
       {item.urgent && (
-        <span className={`shrink-0 rounded-sm border border-border px-1.5 ${muted}`}>Urgent</span>
+        // 16px of text inside the border: the badge fits line one's 18px.
+        <span className={`shrink-0 rounded-sm border border-border px-1.5 leading-4 ${muted}`}>
+          Urgent
+        </span>
       )}
     </>
   );
@@ -95,8 +98,10 @@ function labelOf(item: InboxItem, time: string): string {
   return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
 }
 
-const LINK_CLASS =
-  "of-row flex min-h-[4.5rem] flex-col justify-center gap-0.5 py-2 pr-2 pl-0 text-sm";
+// A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it
+// (a two-line row's line one grew to 27px): `content-center` keeps the track at its content and
+// centres it, so line one is always one 18px line with the time on the name's baseline.
+const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
 
 /**
  * One inbox row (shared with Home's panel): a single link, three lines, an ink dot in a fixed slot when unread.
@@ -138,7 +143,7 @@ export const InboxRow = memo(function InboxRow({
     onAuxClick: (e: MouseEvent) => {
       if (e.button === 1) onOpen(item, e);
     },
-    className: `${LINK_CLASS} grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
+    className: `${LINK_CLASS} grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
   } as const;
   const body = (
     <>

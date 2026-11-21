@@ -30,6 +30,7 @@ The four spec self-contradictions found while planning (§2.3, §12.4, §12.5, �
   - Tooltip delay 400ms, skip 300ms.
   - Composer size error: `This message is {n} KB; the limit is 64 KB. Shorten it to send.` with `n = Math.ceil(bytes / 1024)`.
   - Home: `No agents yet.`, `New agent`, `Couldn't load agents.`, `All {N} agents`.
+- **Keyboard stamp (B1):** overlay Content and Overlay nodes compose the module-level ref callback `stampInstant` (`lib/input-modality.ts`). Radix and Vaul mount those nodes once per opening, so the check runs per opening: if the last input was the keyboard, the node gets `data-instant` for that opening. Never read modality in `useState`/`useMemo` inside a wrapper component: wrappers such as `PopoverContent` stay mounted while closed, so a mount-time read would be fixed at page load.
 - **Mobile** means `useIsMobile()` with the query `(width < 48rem)` (Task 6). Adaptive overlays decide dialog-or-drawer once per opening (`useLatchedMobile`, Task 8).
 - **No shadow** on any floating layer; no `outline-none` / `outline-hidden` / `ring-3` / `ring-ring/50` anywhere in `apps/web/src` outside the menu/select item allowlist (enforced by `src/test/ui-contract.test.ts`, created in Task 2 and extended later).
 - **Manual checks** are recorded in the PR, never claimed without evidence. Stress data comes from `seed-worst.mjs` in `/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/`, run only against a cloned database, never the shared one.
@@ -38,7 +39,7 @@ The four spec self-contradictions found while planning (§2.3, §12.4, §12.5, �
 
 **New:**
 - `apps/web/src/lib/query-client.ts` (+ `.test.ts`): `shouldRetry`, `createQueryClient`.
-- `apps/web/src/lib/input-modality.ts` (+ `.test.ts`): last input modality, `useKeyboardOpened`.
+- `apps/web/src/lib/input-modality.ts` (+ `.test.ts`): last input modality, the `stampInstant` ref callback and `useStampedRef`.
 - `apps/web/src/lib/run-instant.ts`: one-frame root `data-instant`.
 - `apps/web/src/lib/send-key.ts` (+ `.test.ts`): `isSendKey`.
 - `apps/web/src/hooks/use-latched-mobile.ts` (+ `.test.tsx`).
@@ -412,7 +413,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/test/use-mobile.test.ts` (extend), `components/markdown/code-block.test.tsx` (update), `components/markdown/highlight.test.ts` (new)
 
 **Interfaces:**
-- Produces: `MOBILE_QUERY = "(width < 48rem)"` exported from `hooks/use-mobile.ts`; `useIsMobile(): boolean` (unchanged signature).
+- Produces: `MOBILE_QUERY = "(width < 48rem)"` and `isMobileNow(): boolean` (a plain read of the cached list, for open-edge checks) exported from `hooks/use-mobile.ts`; `useIsMobile(): boolean` (unchanged signature).
 
 - [ ] **Step 1: Failing tests.**
   - `use-mobile.test.ts`: the hook calls `matchMedia` with `"(width < 48rem)"`; installing a new fake `matchMedia` between two renders makes the hook read the new one (cache keyed on the function identity); `matchMedia` is called once per render cycle, not once per consumer render (spy count with two consumers).
@@ -439,11 +440,12 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     return () => m.removeEventListener("change", onChange);
   }
   const getSnapshot = () => mql().matches;
+export const isMobileNow = getSnapshot;
   export function useIsMobile() {
     return useSyncExternalStore(subscribe, getSnapshot);
   }
   ```
-  `highlight.ts`: `console: "shellsession"`, add `ps1`/`powershell` → `powershell`, `hcl`/`terraform` → `hcl` (Shiki ids exist: verified), `proto`, `env` → `dotenv`; move `.catch` inside the `??=` initializer. `code-block.tsx`: store `{ lang, html }`; render the stored html only when `stored.lang === lang`, otherwise `<pre><code>{code}</code></pre>` until the new highlight resolves.
+  `highlight.ts`: every grammar loader stays a literal `import("shiki/langs/<id>.mjs")` call, as the existing loaders are (`highlight.ts:5-`) in the map (never a template string), so Vite can split the chunks; `console: "shellsession"`, add `ps1`/`powershell` → `powershell`, `hcl`/`terraform` → `hcl` (Shiki ids exist: verified), `proto`, `env` → `dotenv`; move `.catch` inside the `??=` initializer. `code-block.tsx`: store `{ lang, html }`; render the stored html only when `stored.lang === lang`, otherwise `<pre><code>{code}</code></pre>` until the new highlight resolves.
 
 - [ ] **Step 4: Green** (incl. `src/test/shell.test.tsx`, which exercises the sidebar on mobile), typecheck, lint. **Step 5: Commit** `fix(web): rem-based phone breakpoint; highlighter aliases; code blocks never show stale code`.
 
@@ -460,17 +462,17 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `features/schedules/schedule-form.test.tsx` (extend), `features/tasks/task-detail.test.tsx`, `test/agent-form.test.tsx`, `features/tasks/comment-composer.test.tsx` (extend or create)
 
 - [ ] **Step 1: Failing tests.**
-  - Schedule form: after a server sync, the preview text equals the expected human summary for the merged value (assert the exact string, not just "changed").
+  - Schedule form: after a server sync, the preview text equals the expected human summary for the merged value (assert the exact string, not just "changed"); a field the user edited survives a sync, a field they didn't takes the server value (M6, `prevBase` captured before reassignment).
   - Link editor: right after clicking Edit links, Save is disabled until the agent lists resolve; the lists' fetch starts on the Edit click.
   - Comment composer: type "a", post (held), type "b" while posting, resolve: the draft is "ab" (not cleared); with no typing during the post the draft clears.
-  - Agent form: the "slow" line appears only when pending with plugins after the timer, and disappears on settle, with no effect-driven reset (behavioural test; keep the existing ones green).
+  - Agent form: the "slow" line appears only when pending with plugins after the timer and disappears on settle; submit, go slow, fail, resubmit → the line is absent until the new attempt's timer fires (M5).
 
 - [ ] **Step 2: Red.**
 
 - [ ] **Step 3: Implement.**
-  - `schedule-form.tsx`: a pure `mergeServer(prev, server)` helper; the effect calls `setV((prev) => mergeServer(prev, server))`; the preview uses `mergeServer(v, server)` in render.
-  - `task-detail.tsx`: `<CommentComposer taskKey={taskKey} …>` (route param); link editor: `const known = useQuery(...)`; `onClick` of Edit links calls `void qc.prefetchQuery(agentListsOptions)`; Save `disabled={known === undefined}`.
-  - `agent-form.tsx`: `const [timerFired, setTimerFired] = useState(false)` set by a timeout started when pending begins (cleared in the effect cleanup); `const slow = pending && pluginCount > 0 && timerFired;` (no reset effect).
+  - `schedule-form.tsx`: a pure `mergeServer(prev, prevBase, server)` helper. The sync effect captures `const prevBase = base.current` **before** reassigning `base.current = server`, then calls `setV((prev) => mergeServer(prev, prevBase, server))` (functional update, pr76 nit). The preview is derived in render from `v`; no extra state.
+  - `task-detail.tsx`: `<CommentComposer taskKey={taskKey} …>` (route param); link editor: `const known = useQuery(...)`; `onClick` of Edit links calls `void qc.prefetchQuery(agentListsOptions)`; Save `disabled={known.data === undefined}`.
+  - `agent-form.tsx`: a submit-attempt counter `attempt` (incremented in the submit handler); `const [firedFor, setFiredFor] = useState<number | null>(null)`; an effect keyed on `[pending, attempt]` starts the timeout that calls `setFiredFor(attempt)` and clears it on cleanup; `const slow = pending && pluginCount > 0 && firedFor === attempt;`. A resubmit starts unflagged, with no reset effect.
   - `comment-composer.tsx:87`: `setDraft((cur) => (cur === posted ? "" : cur.startsWith(posted) ? cur.slice(posted.length) : cur));`.
 
 - [ ] **Step 4: Green**, typecheck, lint. **Step 5: Commit** `fix(web): #76 nits (schedule sync, link editor, comment draft, agent form)`.
@@ -490,7 +492,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Modify: `apps/web/src/main.tsx` (install once), `apps/web/src/components/ui/sidebar.tsx:95-110` (use `runInstant`)
 
 **Interfaces:**
-- Produces: `installInputModality(doc?: Document): () => void`; `lastInputModality(): "keyboard" | "pointer"`; `useKeyboardOpened(): boolean` (read once at mount); `runInstant(fn: () => void): void`; `useLatchedMobile(open: boolean): boolean`.
+- Produces: `installInputModality(doc?: Document): () => void`; `lastInputModality(): "keyboard" | "pointer"`; `stampInstant(node: HTMLElement | null): void` (a stable module-level ref callback); `useStampedRef<T extends HTMLElement>(ref?: React.Ref<T>): React.RefCallback<T>` (composes a consumer's ref with `stampInstant`, stable across renders); `runInstant(fn: () => void): void`; `useLatchedMobile(open: boolean): boolean`.
 
 - [ ] **Step 1: Failing tests.**
 
@@ -498,7 +500,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 // lib/input-modality.test.ts
 import { renderHook } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { installInputModality, lastInputModality, useKeyboardOpened } from "./input-modality";
+import { installInputModality, lastInputModality, stampInstant } from "./input-modality";
 
 let off = () => {};
 afterEach(() => off());
@@ -511,13 +513,17 @@ test("records the last input", () => {
   expect(lastInputModality()).toBe("pointer");
 });
 
-test("useKeyboardOpened reads once at mount", () => {
+test("stampInstant stamps a node that mounts after keyboard input, and only then", () => {
   off = installInputModality();
   document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  const { result, rerender } = renderHook(() => useKeyboardOpened());
+  const a = document.createElement("div");
+  stampInstant(a);
+  expect(a).toHaveAttribute("data-instant");
   document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-  rerender();
-  expect(result.current).toBe(true);
+  const b = document.createElement("div");
+  stampInstant(b);
+  expect(b).not.toHaveAttribute("data-instant");
+  stampInstant(null); // unmount: no throw
 });
 ```
 
@@ -542,7 +548,7 @@ test("keeps the primitive chosen at open until it closes", () => {
 
 ```ts
 // lib/input-modality.ts
-import { useState } from "react";
+import { type Ref, type RefCallback, type RefObject, useCallback } from "react";
 
 let last: "keyboard" | "pointer" = "pointer";
 
@@ -565,10 +571,23 @@ export function installInputModality(doc: Document = document): () => void {
 
 export const lastInputModality = () => last;
 
-/** For overlay content, which mounts once per opening: whether this opening came from the keyboard. */
-export function useKeyboardOpened(): boolean {
-  const [keyboard] = useState(() => last === "keyboard");
-  return keyboard;
+/** Ref callback for overlay Content/Overlay nodes. Radix and Vaul mount those nodes once per opening, so
+ *  this runs per opening: a keyboard-opened overlay is stamped `data-instant` for that whole opening
+ *  (DESIGN.md → Motion → Frequency). Module-level, hence stable: React never re-calls it on re-render. */
+export function stampInstant(node: HTMLElement | null) {
+  if (node && last === "keyboard") node.setAttribute("data-instant", "");
+}
+
+/** Composes a consumer's ref with `stampInstant`; stable while `ref` is. */
+export function useStampedRef<T extends HTMLElement>(ref?: Ref<T>): RefCallback<T> {
+  return useCallback(
+    (node: T | null) => {
+      stampInstant(node);
+      if (typeof ref === "function") return ref(node);
+      if (ref) (ref as RefObject<T | null>).current = node;
+    },
+    [ref],
+  );
 }
 ```
 
@@ -586,24 +605,24 @@ export function runInstant(fn: () => void) {
 ```ts
 // hooks/use-latched-mobile.ts
 import { useState } from "react";
-import { useIsMobile } from "./use-mobile";
+import { isMobileNow } from "./use-mobile"; // a plain read of the cached MediaQueryList (Task 6)
 
 /** Dialog or drawer is decided when an overlay opens and kept until it closes (spec §5.1): a resize or
  *  rotation never swaps the primitive under a pending request or a draft. */
 export function useLatchedMobile(open: boolean): boolean {
-  const isMobile = useIsMobile();
   const [prevOpen, setPrevOpen] = useState(open);
-  const [latched, setLatched] = useState(isMobile);
-  // Adjusting state on a prop edge during render (no effect): the open render already uses the new value.
+  const [latched, setLatched] = useState(isMobileNow);
+  // Read the media query only on the closed → open edge, not by subscribing, so a closed overlay never
+  // re-renders on a resize. State adjusted on a prop edge during render (no effect).
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open) setLatched(isMobile);
+    if (open) setLatched(isMobileNow());
   }
   // Kept after close too, so the exit animation plays on the primitive that opened.
   return latched;
 }
 ```
-  Add to the test: after closing, flipping `matchMedia` doesn't change the value until the next open.
+  Add to the test: after closing, flipping `matchMedia` doesn't change the value until the next open, and a closed host doesn't re-render on the flip (render counter).
   `test/fake-match-media.ts`:
 ```ts
 type Listener = (e: MediaQueryListEvent) => void;
@@ -715,15 +734,15 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 - [ ] **Step 1: Failing tests.**
   - Contract: `popover.tsx`, `dropdown-menu.tsx`, `tooltip.tsx` contain no `shadow-` and no `slide-in-from-`; dropdown content contains `max-w-[min(var(--radix-dropdown-menu-content-available-width),20rem)]` and no `w-(--radix-dropdown-menu-trigger-width)`; popover and dropdown contain `border-float-edge` and `data-closed:duration-75`.
-  - `overlay-timing.test.tsx`: after `installInputModality()`, opening a `DropdownMenu` with Enter on its trigger renders content with `data-instant`; opening it with a click renders none. Same for `Popover`.
+  - `overlay-timing.test.tsx`, **per opening** (B1): after `installInputModality()`, open a `DropdownMenu` with Enter on its trigger → content has `data-instant`; close it (Escape); open it again with a click → content has **no** `data-instant`; close; open with Enter again → stamped. Same sequence for `Popover`.
   - Tooltip: `TooltipProvider` defaults `delayDuration` 400 and `skipDelayDuration` 300 (render a provider with a trigger; with fake timers the content is absent at 399ms and present at 400ms after hover).
   - Each destructive item renders with `data-variant="destructive"` (one test per settings section where a menu exists; schedule-row test).
 
 - [ ] **Step 2: Red.**
 
 - [ ] **Step 3: Implement.**
-  - `PopoverContent`: `const instant = useKeyboardOpened();` → `data-instant={instant ? "" : undefined}`; classes: replace `shadow-md ring-1 ring-foreground/10` with `border border-float-edge`; add `data-closed:duration-75`.
-  - `DropdownMenuContent` and `SubContent`: `min-w-32 max-w-[min(var(--radix-dropdown-menu-content-available-width),20rem)] … rounded-lg border border-float-edge bg-popover p-1 … duration-100 ease-(--ease-out) data-closed:duration-75 data-open:animate-in data-open:fade-in-0 motion-safe:data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 motion-safe:data-closed:zoom-out-95` (no `shadow-*`, no `slide-in-from-*`, no trigger width); `data-instant` stamp as for Popover. Items: `min-h-8 py-1.5 pointer-coarse:min-h-9 [overflow-wrap:anywhere]`, keep `outline-hidden` with the trailing `// ui-contract:allow focus is a fill` comment, focus fill `focus:bg-accent`.
+  - `PopoverContent`: `ref={useStampedRef(ref)}` on `PopoverPrimitive.Content` (the wrapper stays mounted while closed; the Content node mounts per opening); classes: replace `shadow-md ring-1 ring-foreground/10` with `border border-float-edge`; add `data-closed:duration-75`.
+  - `DropdownMenuContent` and `SubContent`: `min-w-32 max-w-[min(var(--radix-dropdown-menu-content-available-width),20rem)] … rounded-lg border border-float-edge bg-popover p-1 … duration-100 ease-(--ease-out) data-closed:duration-75 data-open:animate-in data-open:fade-in-0 motion-safe:data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 motion-safe:data-closed:zoom-out-95` (no `shadow-*`, no `slide-in-from-*`, no trigger width); `ref={useStampedRef(ref)}` on Content and SubContent, as for Popover. Items: `min-h-8 py-1.5 pointer-coarse:min-h-9 [overflow-wrap:anywhere]`, keep `outline-hidden` with the trailing `// ui-contract:allow focus is a fill` comment, focus fill `focus:bg-accent`.
   - Tooltip: `delayDuration = 400`, add `skipDelayDuration = 300`; content classes: remove the four `slide-in-from-*-2` and the dead `data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95`; `duration-100 ease-(--ease-out) data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 motion-safe:data-[state=delayed-open]:zoom-in-95 data-closed:duration-75 data-closed:animate-out data-closed:fade-out-0`.
   - Destructive items: `<DropdownMenuSeparator />` then `<DropdownMenuItem variant="destructive" …>`.
   - Assignee and status menus: `className="w-(--radix-dropdown-menu-trigger-width)"` on their `DropdownMenuContent`.
@@ -788,7 +807,7 @@ test("content is a floating layer without shadow", async () => {
 
 - [ ] **Step 3: Implement.** `test-setup.ts`: add `Element.prototype.hasPointerCapture ??= () => false; Element.prototype.setPointerCapture ??= () => {}; Element.prototype.releasePointerCapture ??= () => {};`. `select.tsx` on `import { Select as SelectPrimitive } from "radix-ui"`:
   - `SelectTrigger`: `flex h-8 pointer-coarse:h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-card px-2.5 text-sm data-placeholder:text-muted-foreground aria-invalid:border-destructive disabled:cursor-not-allowed disabled:text-muted-foreground [&>span]:truncate`, a `ChevronDown` `shrink-0 text-muted-foreground`; `SelectValue` passes `title` when the value is text.
-  - `SelectContent`: `position="popper"`, `sideOffset={4}`, classes `z-50 min-w-(--radix-select-trigger-width) max-w-(--radix-select-content-available-width) max-h-(--radix-select-content-available-height) origin-(--radix-select-content-transform-origin) overflow-hidden rounded-lg border border-float-edge bg-popover p-1 text-popover-foreground duration-100 ease-(--ease-out) data-closed:duration-75 data-open:animate-in data-open:fade-in-0 motion-safe:data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0`, with `SelectPrimitive.ScrollUpButton`/`ScrollDownButton`, `data-instant` from `useKeyboardOpened()`.
+  - `SelectContent`: `position="popper"`, `sideOffset={4}`, classes `z-50 min-w-(--radix-select-trigger-width) max-w-(--radix-select-content-available-width) max-h-(--radix-select-content-available-height) origin-(--radix-select-content-transform-origin) overflow-hidden rounded-lg border border-float-edge bg-popover p-1 text-popover-foreground duration-100 ease-(--ease-out) data-closed:duration-75 data-open:animate-in data-open:fade-in-0 motion-safe:data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0`, with `SelectPrimitive.ScrollUpButton`/`ScrollDownButton`, and `ref={useStampedRef(ref)}` on `SelectPrimitive.Content`. Add a per-opening stamp test (Enter-opened stamped; reopened by click not stamped).
   - `SelectItem`: `relative flex min-h-8 pointer-coarse:min-h-9 w-full cursor-default items-center gap-2 rounded-md py-1.5 pr-8 pl-2 text-sm outline-hidden select-none [overflow-wrap:anywhere] focus:bg-accent data-disabled:pointer-events-none data-disabled:text-muted-foreground` (comment `// ui-contract:allow focus is a fill`), a graphite `Check` in `SelectPrimitive.ItemIndicator`.
   - `export const ALL = "__all";` with a doc comment: Radix forbids `""` as an item value.
 
@@ -1034,7 +1053,7 @@ test("the override block is unlayered, !important and keyed on data-state", asyn
 // components/ui/drawer.tsx
 import * as React from "react";
 import { Drawer as Vaul } from "vaul";
-import { useKeyboardOpened } from "@/lib/input-modality";
+import { stampInstant, useStampedRef } from "@/lib/input-modality";
 import { cn } from "@/lib/utils";
 
 type Direction = "bottom" | "left";
@@ -1047,8 +1066,9 @@ function Drawer({ direction = "bottom", autoFocus = true, onRelease, open, ...pr
   const [released, setReleased] = React.useState(false);
   const [prevOpen, setPrevOpen] = React.useState(open);
   if (open !== prevOpen) { setPrevOpen(open); if (open) setReleased(false); }
+  const ctx = React.useMemo(() => ({ direction, released }), [direction, released]);
   return (
-    <Ctx.Provider value={{ direction, released }}>
+    <Ctx.Provider value={ctx}>
       <Vaul.Root data-slot="drawer" direction={direction} autoFocus={autoFocus} open={open}
         onRelease={(e, stillOpen) => { if (!stillOpen) setReleased(true); onRelease?.(e, stillOpen); }}
         {...props} />
@@ -1056,17 +1076,17 @@ function Drawer({ direction = "bottom", autoFocus = true, onRelease, open, ...pr
   );
 }
 
-function DrawerContent({ className, children, onOpenAutoFocus, ...props }: React.ComponentProps<typeof Vaul.Content>) {
+function DrawerContent({ className, children, onOpenAutoFocus, ref, ...props }: React.ComponentProps<typeof Vaul.Content>) {
   const { direction, released } = React.useContext(Ctx);
-  const instant = useKeyboardOpened();
+  const stampedRef = useStampedRef(ref);
   return (
     <Vaul.Portal>
-      <Vaul.Overlay data-slot="drawer-overlay" data-instant={instant ? "" : undefined}
+      <Vaul.Overlay data-slot="drawer-overlay" ref={stampInstant}
         className="fixed inset-0 z-50 bg-black/20 dark:bg-black/40" />
       <Vaul.Content
         data-slot="drawer-content"
+        ref={stampedRef}
         data-released={released ? "" : undefined}
-        data-instant={instant ? "" : undefined}
         tabIndex={-1}
         onOpenAutoFocus={(e) => {
           onOpenAutoFocus?.(e);
@@ -1131,7 +1151,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Modify: `components/ui/sidebar.tsx:16` (imports), `:185-210` (mobile branch), `:409` (group label), `:474` (menu button variants)
 - Test: `apps/web/src/test/shell.test.tsx` (extend)
 
-- [ ] **Step 1: Failing test:** on mobile (`fakeMatchMedia.install(true)`), clicking the sidebar trigger opens `[data-slot=drawer-content]` with `data-sidebar="sidebar"` and `data-mobile="true"`, the nav links inside, `style` containing `--sidebar-width: 18rem`, class `bg-sidebar`; Escape closes it; ⌘B toggles it and the content carries `data-instant` when opened by ⌘B. Contract: `sidebar.tsx` no longer contains `transition-[width,height,padding]` or `transition-[margin,opacity]`.
+- [ ] **Step 1: Failing test:** on mobile (`fakeMatchMedia.install(true)`), clicking the sidebar trigger opens `[data-slot=drawer-content]` with `data-sidebar="sidebar"` and `data-mobile="true"`, the nav links inside, `style` containing `--sidebar-width: 18rem`, class `bg-sidebar`; Escape closes it; ⌘B toggles it and the content carries `data-instant` when opened by ⌘B; after closing, opening it again with a click carries none (per-opening stamp, B1). Contract: `sidebar.tsx` no longer contains `transition-[width,height,padding]` or `transition-[margin,opacity]`.
 
 - [ ] **Step 2: Red.**
 
@@ -1168,7 +1188,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Create: `apps/web/src/components/ui/sheet.test.tsx`
 
 **Interfaces:**
-- Consumes: `Drawer*` (Task 15), `useLatchedMobile` (Task 8), `useKeyboardOpened` (Task 8).
+- Consumes: `Drawer*` (Task 15), `useLatchedMobile` (Task 8), `stampInstant`/`useStampedRef` (Task 8).
 - Produces: `Sheet` (`open`, `onOpenChange`, `children`), `SheetContent` (`onOpenAutoFocus?`), `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetBody`, `SheetFooter`, `SheetClose`. No `side` prop: its only left-side consumer, the sidebar, already moved to `Drawer` in Task 16, so nothing else imports the old API (`grep -rn "components/ui/sheet" apps/web/src` shows no caller before this task).
 
 - [ ] **Step 1: Failing test.**
@@ -1242,8 +1262,9 @@ const SheetCtx = React.createContext<{ mobile: boolean }>({ mobile: false });
  *  bottom drawer below md. The choice is made per opening (spec §5.1). Dismissing never asks. */
 function Sheet({ open, onOpenChange, children }: { open: boolean; onOpenChange(o: boolean): void; children: React.ReactNode }) {
   const mobile = useLatchedMobile(open);
+  const ctx = React.useMemo(() => ({ mobile }), [mobile]);
   return (
-    <SheetCtx.Provider value={{ mobile }}>
+    <SheetCtx.Provider value={ctx}>
       {mobile ? (
         <Drawer open={open} onOpenChange={onOpenChange} direction="bottom">{children}</Drawer>
       ) : (
@@ -1253,15 +1274,15 @@ function Sheet({ open, onOpenChange, children }: { open: boolean; onOpenChange(o
   );
 }
 
-function SheetContent({ className, children, ...props }: React.ComponentProps<typeof SheetPrimitive.Content>) {
+function SheetContent({ className, children, ref, ...props }: React.ComponentProps<typeof SheetPrimitive.Content>) {
   const { mobile } = React.useContext(SheetCtx);
-  const instant = useKeyboardOpened();
-  if (mobile) return <DrawerContent className={className} {...props}>{children}</DrawerContent>;
+  const stampedRef = useStampedRef(ref);
+  if (mobile) return <DrawerContent ref={ref} className={className} {...props}>{children}</DrawerContent>;
   return (
     <SheetPrimitive.Portal>
-      <SheetPrimitive.Overlay data-slot="sheet-overlay" data-instant={instant ? "" : undefined}
+      <SheetPrimitive.Overlay data-slot="sheet-overlay" ref={stampInstant}
         className="fixed inset-0 z-50 bg-black/20 dark:bg-black/40 duration-250 ease-(--ease-drawer) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-200 data-closed:ease-(--ease-out)" />
-      <SheetPrimitive.Content data-slot="sheet-content" data-instant={instant ? "" : undefined}
+      <SheetPrimitive.Content data-slot="sheet-content" ref={stampedRef}
         className={cn(
           "fixed inset-y-0 right-0 z-50 flex w-[min(30rem,100%)] flex-col border-l border-float-edge bg-popover text-sm text-popover-foreground",
           "duration-250 ease-(--ease-drawer) data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right data-closed:duration-200 data-closed:ease-(--ease-out)",
@@ -1293,7 +1314,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/test/confirm-dialog.test.tsx` (extend)
 
 **Interfaces:**
-- Consumes: `Drawer*`, `useLatchedMobile`, `Spinner`, `useKeyboardOpened`.
+- Consumes: `Drawer*`, `useLatchedMobile`, `Spinner`, `stampInstant`/`useStampedRef`.
 - Produces: `ConfirmDialog` props unchanged except `pendingLabel: string` is now **required**.
 
 - [ ] **Step 1: Failing tests** (in `test/confirm-dialog.test.tsx`):
@@ -1305,7 +1326,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - [ ] **Step 2: Red.**
 
 - [ ] **Step 3: Implement.**
-  - `alert-dialog.tsx`: overlay `bg-black/20 dark:bg-black/40 duration-150 ease-(--ease-out) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-100`; content `rounded-lg border border-float-edge … duration-150 ease-(--ease-out) data-open:animate-in data-open:fade-in-0 motion-safe:data-open:zoom-in-[0.96] data-closed:animate-out data-closed:fade-out-0 data-closed:duration-100` (no `zoom-out`, no `ring-*`, no `rounded-xl`), `data-instant` from `useKeyboardOpened()`.
+  - `alert-dialog.tsx`: overlay `bg-black/20 dark:bg-black/40 duration-150 ease-(--ease-out) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-100`; content `rounded-lg border border-float-edge … duration-150 ease-(--ease-out) data-open:animate-in data-open:fade-in-0 motion-safe:data-open:zoom-in-[0.96] data-closed:animate-out data-closed:fade-out-0 data-closed:duration-100` (no `zoom-out`, no `ring-*`, no `rounded-xl`), `ref={useStampedRef(ref)}` on Content and `ref={stampInstant}` on Overlay. Per-opening stamp test as in Task 11.
   - `confirm-dialog.tsx` (keeps the pending/error logic; render split):
 
 ```tsx
@@ -1368,7 +1389,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 - [ ] **Step 2: Red.**
 
-- [ ] **Step 3: Implement.** Replace each `<NativeSelect>` with `Select`/`SelectTrigger`/`SelectValue`/`SelectContent`/`SelectItem`, keeping `id`/`aria-label`/`aria-describedby`/`aria-invalid` on the trigger. Agent options: `<SelectItem value={a.slug} textValue={a.slug}><span>{a.displayName}</span> <span className="text-muted-foreground font-mono">@{a.slug}</span></SelectItem>`. Manager indent: `const indent = (depth: number) => depth <= 3 ? " ".repeat(depth * 2) : " ".repeat(6) + "└ "` applied inside the item only (never in the trigger, which renders the selected agent's name and slug spans).
+- [ ] **Step 3: Implement.** Replace each `<NativeSelect>` with `Select`/`SelectTrigger`/`SelectValue`/`SelectContent`/`SelectItem`, keeping `id`/`aria-label`/`aria-describedby`/`aria-invalid` on the trigger. Agent options: `<SelectItem value={a.slug} textValue={a.slug}><span>{a.displayName}</span> <span className="text-muted-foreground font-mono">@{a.slug}</span></SelectItem>`. Manager indent: padding, not spaces (plain spaces collapse in HTML): `<span style={{ paddingInlineStart: `${Math.min(depth, 3) * 0.75}rem` }}>{depth > 3 && "└ "}{name}</span>` inside the item only (never in the trigger, which renders the selected agent's name and slug spans).
 
 - [ ] **Step 4: Green**, whole web suite, typecheck, lint. **Step 5: Commit** `feat(web): Radix Select replaces native selects (timezone excepted)`.
 
@@ -1483,16 +1504,30 @@ export function orderHomeAgents(agents: AgentSummary[]) {
 
 export function HomeAgents() {
   const q = useQuery(agentsQueryOptions);
-  const [engaged, setEngaged] = useState(false);
+  // Two flags: the pointer leaving while focus stays inside (or the reverse) must not unfreeze.
+  const [hovered, setHovered] = useState(false);
+  const [focusWithin, setFocusWithin] = useState(false);
+  // The frozen slug order, captured in the handler that engages the panel (never set during render).
+  const [frozen, setFrozen] = useState<string[] | null>(null);
   const live = useMemo(() => (q.data ? orderHomeAgents(q.data) : undefined), [q.data]);
-  // The order shown is frozen while the pointer or focus is inside (DESIGN.md: live lists never reorder
-  // under the pointer); rows still update in place from the live data.
-  const [order, setOrder] = useState<string[]>();
-  if (!engaged && live && (order === undefined || !sameOrder(order, live))) setOrder(live.map((a) => a.slug));
-  …render rows from `order` mapped through a slug → agent map from `live` (dropping slugs that left)…
+  const engage = () => setFrozen((f) => f ?? live?.map((a) => a.slug) ?? null);
+  const release = (stillHovered: boolean, stillFocused: boolean) => {
+    if (!stillHovered && !stillFocused) setFrozen(null);
+  };
+  // Shown order: the frozen slugs mapped onto live data (rows update in place), slugs that left dropped,
+  // new slugs appended at the end; the live order when not frozen. Hovering before data arrives leaves
+  // `frozen` null, so rows still render once data lands.
+  const shown = useMemo(() => {
+    if (!live) return undefined;
+    if (!frozen) return live;
+    const bySlug = new Map(live.map((a) => [a.slug, a]));
+    const known = new Set(frozen);
+    return frozen.flatMap((slug) => bySlug.get(slug) ?? []).concat(live.filter((a) => !known.has(a.slug)));
+  }, [live, frozen]);
+  // …render the first 8 of `shown`, and "All {N} agents" when `shown.length > 8`…
 }
 ```
-  Panel container: `onPointerEnter={() => setEngaged(true)} onPointerLeave={() => setEngaged(false)} onFocus={() => setEngaged(true)} onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setEngaged(false)}`. Row: `<Link to="/agents/$slug" params={{ slug }} className="of-row flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5">` with `<StatusBadge status={a.status} size="short" … />` (shrink-0), the name `min-w-0 truncate` with `title`, `@slug` `min-w-0 truncate font-mono text-muted-foreground`. `StatusBadge`/`statusLabel` know only `AgentStatus`, so a stuck or restart-pending agent gets a second visible short label after the badge: `<span className="shrink-0 text-[0.8125rem] text-warning-text">Stuck</span>` (use `text-muted-foreground` if no warning text token exists) or "Restart pending", mirroring `agent-tree.tsx:149`; the test asserts the label text, not only the dot. `index.tsx:23`: `<HomeAgents />`. `inbox-row.tsx:137`: the row wrapper becomes `grid grid-cols-[minmax(0,1fr)_auto] gap-2`.
+  Panel container: `onPointerEnter={() => { setHovered(true); engage(); }}`, `onPointerLeave={() => { setHovered(false); release(false, focusWithin); }}`, `onFocus={() => { setFocusWithin(true); engage(); }}`, `onBlur={(e) => { if (e.currentTarget.contains(e.relatedTarget as Node)) return; setFocusWithin(false); release(hovered, false); }}`. Extra tests: the pointer leaving while focus stays inside keeps the order frozen; an agent appearing while frozen is appended last; hovering before the query resolves still renders rows when it does. Row: `<Link to="/agents/$slug" params={{ slug }} className="of-row flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5">` with `<StatusBadge status={a.status} size="short" … />` (shrink-0), the name `min-w-0 truncate` with `title`, `@slug` `min-w-0 truncate font-mono text-muted-foreground`. `StatusBadge`/`statusLabel` know only `AgentStatus`, so a stuck or restart-pending agent gets a second visible short label after the badge: `<span className="shrink-0 text-[0.8125rem] text-warning-text">Stuck</span>` (use `text-muted-foreground` if no warning text token exists) or "Restart pending", mirroring `agent-tree.tsx:149`; the test asserts the label text, not only the dot. `index.tsx:23`: `<HomeAgents />`. `inbox-row.tsx:137`: the row wrapper becomes `grid grid-cols-[minmax(0,1fr)_auto] gap-2`.
 
 - [ ] **Step 4: Green** (+ `test/empty-states.test.tsx`), typecheck, lint. **Step 5: Commit** `fix(web): Home lists real agents, needs-attention first, stable under the pointer`.
 
@@ -1618,7 +1653,14 @@ test.each([
 
 - [ ] **Step 3: Implement.**
 ```ts
-export const isCoarsePointer = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+let coarseCache: { fn: typeof window.matchMedia; mql: MediaQueryList } | undefined;
+/** One cached MediaQueryList per matchMedia function (tests install fresh fakes), not one per keystroke. */
+export const isCoarsePointer = () => {
+  if (typeof window.matchMedia !== "function") return false;
+  if (coarseCache?.fn !== window.matchMedia)
+    coarseCache = { fn: window.matchMedia, mql: window.matchMedia("(pointer: coarse)") };
+  return coarseCache.mql.matches;
+};
 /** Enter sends everywhere; Shift+Enter adds a line; ⌘/Ctrl+Enter also sends; on touch, plain Enter adds a line;
  *  an IME-confirming Enter never sends (Safari fires it as keyCode 229). DESIGN.md → Composers. */
 export function isSendKey(e: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "ctrlKey" | "keyCode" | "isComposing">, coarse = isCoarsePointer()): boolean {
@@ -1649,8 +1691,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Produces: `SessionState.ordered: SessionEvent[]`; action `{ type: "frames"; messages: ServerMessage[] }`; `eventsInOrder(s) => s.ordered`; `Markdown = memo(...)` with `REMARK_PLUGINS` at module scope.
 
 - [ ] **Step 1: Failing tests.**
-  - Reducer: appending live events above the max keeps the earlier entries' array prefix identical (`next.ordered.slice(0, n)` elements `===`) and never calls `Array.prototype.sort` (spy); an `earlier` page sorts once; a `frames` batch of three `session_event`s copies the map once (spy on `Map` constructor calls via a wrapper or assert one new map identity) and equals three single `frame` dispatches; an `agent_status` frame keeps `state.events` and `state.ordered` identical.
-  - Batching (fake timers, `vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"] })`): ten frames delivered synchronously produce one render (count with a `useSession` consumer's render counter) after `vi.advanceTimersToNextFrame()`; frames for another agent schedule nothing; with `document.hidden` stubbed true the flush comes after 100ms; a local `queued` dispatch flushes pending frames first (order preserved); unmount cancels the pending frame.
+  - Reducer: appending a **single** live event above the max keeps the earlier entries' array prefix identical (`next.ordered.slice(0, n)` elements `===`) and never calls `Array.prototype.sort` (spy; multi-event batches may sort the fresh slice only); a batch carrying the same seq twice inserts it once (`ordered` has no duplicate seq, `events.size` grows by one); an `earlier` page sorts once; a `frames` batch of three `session_event`s copies the map once (spy on `Map` constructor calls via a wrapper or assert one new map identity) and equals three single `frame` dispatches; an `agent_status` frame keeps `state.events` and `state.ordered` identical.
+  - Batching (fake timers, `vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"] })`): ten frames delivered **across separate tasks** (each pushed from its own `await Promise.resolve()` turn, as a real socket delivers them) produce one render (count with a `useSession` consumer's render counter) after `vi.advanceTimersToNextFrame()`; frames for another agent schedule nothing; with `document.hidden` stubbed true the flush comes after 100ms; a local `queued` dispatch flushes pending frames first (order preserved); unmount cancels the pending frame.
   - Markdown: re-rendering the parent with the same `source` doesn't call `ReactMarkdown` again (mock `react-markdown` with a counting component).
 
 - [ ] **Step 2: Red.**
@@ -1662,17 +1704,21 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 export interface SessionState { /* … */ events: Map<number, SessionEvent>; ordered: SessionEvent[]; /* … */ }
 
 /** Adds events; the ordered array is appended when every new seq is above the current max (the live
- *  case), else sorted once. */
+ *  case), else sorted once. A seq repeated within one batch (a reconnect replay) is inserted once. */
 function withEvents(s: Pick<SessionState, "events" | "ordered">, evs: SessionEvent[]) {
-  const fresh = evs.filter((e) => !s.events.has(e.seq));
-  if (fresh.length === 0) return { events: s.events, ordered: s.ordered };
-  const events = new Map(s.events);
-  for (const e of fresh) events.set(e.seq, e);
+  let events: Map<number, SessionEvent> | undefined;
+  const fresh: SessionEvent[] = [];
+  for (const e of evs) {
+    if ((events ?? s.events).has(e.seq)) continue; // already held, or earlier in this batch
+    events ??= new Map(s.events);
+    events.set(e.seq, e);
+    fresh.push(e);
+  }
+  if (!events) return { events: s.events, ordered: s.ordered };
   const max = s.ordered.at(-1)?.seq ?? 0;
   const sortedFresh = fresh.length > 1 ? [...fresh].sort((a, b) => a.seq - b.seq) : fresh;
-  const ordered = sortedFresh[0].seq > max
-    ? s.ordered.concat(sortedFresh)
-    : [...events.values()].sort((a, b) => a.seq - b.seq);
+  const ordered =
+    sortedFresh[0].seq > max ? s.ordered.concat(sortedFresh) : [...events.values()].sort((a, b) => a.seq - b.seq);
   return { events, ordered };
 }
 
@@ -1728,7 +1774,7 @@ useEffect(
   [ws, slug, flush],
 );
 useEffect(() => () => { scheduled.current?.(); scheduled.current = null; queue.current = []; }, [slug]);
-const events = useMemo(() => eventsInOrder(state), [state.ordered]); // biome: depend on state.ordered only
+const events = state.ordered; // already stable: only event changes produce a new array
 ```
   Note: `useReducer`'s `dispatch` is replaced by the wrapper everywhere in the hook (`loaded`, `earlier`, `queued`, `agent`, `reset`).
 
@@ -1755,14 +1801,14 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `features/session/rows.test.ts` (extend)
 
 **Interfaces:**
-- Produces: `stabilizeRows(prev: readonly Row[], next: Row[]): Row[]`; `stableSet<T>(prev: Set<T> | undefined, next: Set<T>): Set<T>`.
+- Produces: `stabilizeRows(prev: readonly Row[], next: Row[]): Row[]`; `stableSet<T>(prev: ReadonlySet<T> | undefined, next: ReadonlySet<T>): ReadonlySet<T>`.
 
 - [ ] **Step 1: Failing tests.**
   - Building rows twice from the same events and stabilizing returns the previous array (`toBe`).
   - Appending one event: every previous row object is reused (`toBe`) and the new row is new.
   - An `update_group` whose `envelopes` array is rebuilt with the same elements is reused.
   - A tool row whose `truncated` object is rebuilt with the same values is reused.
-  - A tool result arriving replaces that tool row (new object) and keeps its unchanged children (`toBe` per child).
+  - A tool result, a denial or a `truncated` object arriving later replaces that tool row (new object) and keeps its unchanged children (`toBe` per child), whichever field changed (M2).
   - `stableSet(prev, new Set(prev))` returns `prev`; a set with a new member returns the new one.
 
 - [ ] **Step 2: Red.**
@@ -1785,23 +1831,22 @@ function sameValue(a: unknown, b: unknown): boolean {
   return false;
 }
 
+/** Children first (spec §9.3): a tool row whose result, denial or `truncated` arrives later is a new
+ *  object, but it still carries its stabilized children, so unchanged child rows keep their identity.
+ *  A seq repeated within one batch is inserted once upstream (Task 29), so keys are unique here. */
 function stabilizeRow(old: Row, row: Row): Row {
+  if (old === row) return old;
   if (old.kind !== row.kind) return row;
-  const o = old as Record<string, unknown>;
-  const r = row as Record<string, unknown>;
-  const keys = Object.keys(r);
-  if (keys.length !== Object.keys(o).length) return row;
-  let children: Row[] | undefined;
-  for (const k of keys) {
-    if (k === "children") {
-      children = stabilizeRows(o.children as Row[], r.children as Row[]);
-      continue;
-    }
-    if (!sameValue(o[k], r[k])) return children === undefined && row.kind === "tool"
-      ? { ...row, children: stabilizeRows((old as Extract<Row, { kind: "tool" }>).children, row.children) } as Row
-      : row;
+  let base = row;
+  if (row.kind === "tool" && old.kind === "tool") {
+    const children = stabilizeRows(old.children, row.children);
+    if (children !== row.children) base = { ...row, children };
   }
-  if (children !== undefined && children !== o.children) return { ...row, children } as Row;
+  const o = old as Record<string, unknown>;
+  const r = base as Record<string, unknown>;
+  const keys = Object.keys(r);
+  if (keys.length !== Object.keys(o).length) return base;
+  for (const k of keys) if (!sameValue(o[k], r[k])) return base;
   return old;
 }
 
@@ -1819,7 +1864,7 @@ export function stabilizeRows(prev: readonly Row[], next: Row[]): Row[] {
   return same ? (prev as Row[]) : out;
 }
 
-export function stableSet<T>(prev: Set<T> | undefined, next: Set<T>): Set<T> {
+export function stableSet<T>(prev: ReadonlySet<T> | undefined, next: ReadonlySet<T>): ReadonlySet<T> {
   if (prev && prev.size === next.size) {
     for (const x of next) if (!prev.has(x)) return next;
     return prev;
@@ -1827,15 +1872,24 @@ export function stableSet<T>(prev: Set<T> | undefined, next: Set<T>): Set<T> {
   return next;
 }
 ```
-  Simplify `stabilizeRow`'s early return during implementation if the reviewer prefers (the requirement: a changed field yields a new row object that still carries stabilized `children`). `use-session.ts`:
+  `use-session.ts` (a small helper keeps the previous value without writing refs inside `useMemo`):
 ```ts
-const prevRows = useRef<Row[]>([]);
-const rows = useMemo(() => (prevRows.current = stabilizeRows(prevRows.current, buildRows(events))), [events]);
-const prevFailed = useRef<Set<string>>();
-const failedIds = useMemo(() => (prevFailed.current = stableSet(prevFailed.current, deliveryFailedIds(events))), [events]);
-// interruptedEnds the same way
+/** Derives a value from `input`, letting `compute` reuse the previous result; recomputed only when
+ *  `input` changes. State on an input edge during render, no ref writes in render. */
+function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) => V): V {
+  const [memo, setMemo] = useState<{ input: I; value: V } | undefined>(undefined);
+  if (memo === undefined || memo.input !== input) {
+    const value = compute(input, memo?.value);
+    setMemo({ input, value });
+    return value;
+  }
+  return memo.value;
+}
+const rows = useStabilized(events, (ev, prev: Row[] | undefined) => stabilizeRows(prev ?? [], buildRows(ev)));
+const failedIds = useStabilized(events, (ev, prev: ReadonlySet<string> | undefined) => stableSet(prev, deliveryFailedIds(ev)));
+const interruptedEnds = useStabilized(events, (ev, prev: ReadonlySet<number> | undefined) => stableSet(prev, interruptedTurnEnds(ev)));
 ```
-  (Writing a ref inside `useMemo` is acceptable here because the memo is pure with respect to its inputs; the reviewer checks it against `vercel-react-best-practices` and may move it to a small `useStable(prev => …)` helper.)
+  (Any ref the implementation still needs is typed `useRef<T | undefined>(undefined)`, never `useRef<T>()`, which React 19's types reject.)
 
 - [ ] **Step 4: Green**, typecheck, lint. **Step 5: Commit** `fix(web): unchanged timeline rows keep their identity`.
 
@@ -1894,6 +1948,9 @@ function subtree(row: Row, out: Row[] = []): Row[] {
 export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
   if (a.row !== b.row || a.slug !== b.slug || a.spawned !== b.spawned || a.lit !== b.lit ||
       a.firstOfSeq !== b.firstOfSeq || a.toggle !== b.toggle || a.onRowFocus !== b.onRowFocus) return false;
+  // Identity fast path: same shared sets and the same tab row, so nothing per-row can differ.
+  if (a.expanded === b.expanded && a.failedIds === b.failedIds && a.interruptedEnds === b.interruptedEnds &&
+      a.tabKey === b.tabKey) return true;
   for (const r of subtree(a.row)) {
     if (a.expanded.has(r.key) !== b.expanded.has(r.key)) return false;
     if ((a.tabKey === r.key) !== (b.tabKey === r.key)) return false;
@@ -1916,25 +1973,25 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
         slug={p.slug}
         spawned={p.spawned}
         row={row}
-        expanded={p.expanded as Set<string>}
+        expanded={p.expanded}
         toggle={p.toggle}
         rowProps={(r) => ({ "data-row": r.key, tabIndex: r.key === p.tabKey ? 0 : -1, onFocus: () => p.onRowFocus(r.key) })}
-        failedIds={p.failedIds as Set<string>}
-        interruptedEnds={p.interruptedEnds as Set<number>}
+        failedIds={p.failedIds}
+        interruptedEnds={p.interruptedEnds}
       />
       <CopyLink url={`${location.origin}/agents/${encodeURIComponent(p.slug)}?event=${row.seq}`} focusable={row.key === p.tabKey} />
     </div>
   );
 }, itemPropsEqual);
 ```
-  `timeline.tsx`: `const toggle = useCallback((k: string) => setExpanded(…), [])`; `const onRowFocus = useCallback((k: string) => setActiveKey(k), [])`; the map renders `<TimelineItem key={row.key} row={row} lit={row.key === litKey} firstOfSeq={rows[i - 1]?.seq !== row.seq} tabKey={tabKey} … />`. (`rowProps` inside `TimelineItem` is created per render of that item only; `TimelineRow` is not memoized itself, so that's fine.)
+  `TimelineRow`'s and `Timeline`'s props change from `Set` to `ReadonlySet` (no casts). `timeline.tsx`: `const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())` (lazy init); `const toggle = useCallback((k: string) => setExpanded(…), [])`; `const onRowFocus = useCallback((k: string) => setActiveKey(k), [])`; the map renders `<TimelineItem key={row.key} row={row} lit={row.key === litKey} firstOfSeq={rows[i - 1]?.seq !== row.seq} tabKey={tabKey} … />`. (`rowProps` inside `TimelineItem` is created per render of that item only; `TimelineRow` is not memoized itself, so that's fine.)
   MutationObserver (`:162-179`): split `apply` into `applyTo(root: ParentNode)`; run `applyTo(content)` on mount/`tabKey` change; the observer callback runs `applyTo` on each `addedNodes` element only:
 ```ts
 const mo = new MutationObserver((records) => {
   for (const rec of records) for (const n of rec.addedNodes) if (n instanceof HTMLElement) applyTo(n);
 });
 ```
-  where `applyTo` also handles `n` itself matching the selector.
+  where `applyTo` also handles `n` itself matching the selector. On a `tabKey` change, re-apply only to the previous and the new tab row (`content.querySelector(`[data-row="${CSS.escape(key)}"]`)`, the previous key kept in a ref), not the whole log; the full pass runs on mount only.
 
 - [ ] **Step 4: Green** (+ the whole session suite: `test/session-view.test.tsx`, deep-link and roving focus tests), typecheck, lint. **Step 5: Commit** `fix(web): timeline rows re-render only when they change`.
 
@@ -1976,6 +2033,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - With nothing cached, the route still awaits and an unknown slug still shows not-found.
   - Task: with the tasks list cached and the detail held, `/tasks/T-1` shows the title and status at once, the body area shows `[data-slot=skeleton]` plates, and the status/assignee menus and Edit buttons are disabled; a later `task_not_found` renders `ResourceNotFound`.
   - Agents page: while prerequisites load, `EmptyAgents` renders a one-line skeleton (not nothing).
+  - `useSession` on a plain visit: the detail and the events request are both in flight before either resolves; with `?event=` the events request starts only after the target resolves.
 
 - [ ] **Step 2: Red.**
 
@@ -1988,11 +2046,11 @@ loader: async ({ context, params, preload }) => {
     void qc.prefetchQuery(opts); // the page renders from the list's summary meanwhile (spec §11)
     return;
   }
-  try { await (preload ? qc.ensureQueryData(opts) : qc.ensureQueryData(opts)); }
+  try { await qc.ensureQueryData(opts); }
   catch (e) { if (e instanceof ApiError && e.code === "agent_not_found") throw notFound(); }
 },
 ```
-  Task loader: the same shape around Task 4's branch. `SessionView`: `const agent = state.agent ?? summaryFromAgentsList(qc, slug);` for the header and strip; when `state.agent` is undefined and `error` is `agent_not_found`, render `ResourceNotFound`. `TaskDetailView`: `useQuery({ ...taskDetailOptions(key), placeholderData: () => toPlaceholder(taskSummaryFromList(qc, key)) })` where `toPlaceholder` fills the summary fields and leaves body/comments/activity empty; while `isPlaceholderData`, render static `Skeleton` plates for the body and activity and pass `disabled` to the editing controls.
+  Task loader: the same shape around Task 4's branch. `useSession.load` (`features/session/use-session.ts:42-80`): on a plain visit (no `?event=`, no `?message=`) it fetches the agent detail and the latest events page with `Promise.all` instead of one after the other; with `?event=` or `?message=` the window depends on resolving the target first (spec §11), so that path stays sequential. `SessionView`: `const agent = state.agent ?? summaryFromAgentsList(qc, slug);` for the header and strip (a deliberate non-reactive read of the list cache during render; comment it as such: `useSession`'s state takes over as soon as it loads); when `state.agent` is undefined and `error` is `agent_not_found`, render `ResourceNotFound`. `TaskDetailView`: `useQuery({ ...taskDetailOptions(key), placeholderData: () => toPlaceholder(taskSummaryFromList(qc, key)) })` (the list-cache read inside `placeholderData` is likewise non-reactive by design; comment it) where `toPlaceholder` fills the summary fields and leaves body/comments/activity empty; while `isPlaceholderData`, render static `Skeleton` plates for the body and activity and pass `disabled` to the editing controls.
 
 - [ ] **Step 4: Green**, whole web suite, typecheck, lint. **Step 5: Commit** `fix(web): session and task pages render from the list cache while their detail loads`.
 
@@ -2006,7 +2064,7 @@ loader: async ({ context, params, preload }) => {
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
-- [ ] **Step 1: React review.** A fresh reviewer invokes `vercel-react-best-practices` and checks the whole React diff (`git diff origin/main...HEAD -- apps/web`) against it: re-renders (stable props into memoized components, no inline objects into `TimelineItem`, no context values recreated per render in `Sheet`/`Drawer` providers: wrap them in `useMemo`), effects that should be derived state, waterfalls in loaders, list keys, bundle size (Vaul is the only new import; check it isn't pulled into the initial chunk unnecessarily: the sidebar imports it, so it is, and that's accepted), and `useSyncExternalStore` usage. Fix findings in a separate commit.
+- [ ] **Step 1: React review.** A fresh reviewer invokes `vercel-react-best-practices` and checks the whole React diff (`git diff origin/main...HEAD -- apps/web`) against it: re-renders (stable props into memoized components, no inline objects into `TimelineItem`, no context values recreated per render in `Sheet`/`Drawer` providers: wrap them in `useMemo`), effects that should be derived state, waterfalls in loaders, list keys, bundle size (Vaul is the only new import; check it isn't pulled into the initial chunk unnecessarily: the sidebar imports it, so it is, and that's accepted), and `useSyncExternalStore` usage. It also confirms each plan-review finding landed: B1 (the keyboard stamp is the `stampInstant` ref callback on Content/Overlay, checked per opening, never read in a wrapper's state), M1 (a repeated seq in one batch is inserted once), M2 (`stabilizeRow` stabilizes children first), M3 (Home: separate hover and focus flags, frozen in handlers, new slugs appended), M4 (`useSession.load` parallel on a plain visit), M5 (agent-form slow keyed to the attempt), M6 (schedule-form captures `prevBase` first, preview derived in render). Fix findings in a separate commit.
 - [ ] **Step 2: Spec coverage review.** Walk spec §2 (acceptance criteria) and §4 (checklist) item by item and point to the commit and test for each. Anything missing becomes a fix commit, not a PR note.
 - [ ] **Step 3: Verify for real.** From a clean clone of the branch: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, then the dev loop (`pnpm compose up -d`, `pnpm dev`) and click through Home, Agents, a session, a task, Templates, Schedules, Settings on desktop and at 390. Record what ran and the output.
 - [ ] **Step 4: Manual checks, recorded for the PR** (screenshots and recordings attached or linked in the PR):

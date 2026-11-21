@@ -164,6 +164,20 @@ test("Assignee: Enter on an item assigns it and says so; a failed commit reverts
   await waitFor(() => expect(patches(api).at(-1)?.body).toEqual({ assignee: null }));
 });
 
+test("Assignee menu typeahead matches the slug without a leading @, and never assigns by itself", async () => {
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const trigger = await screen.findByRole("button", { name: "Assignee: @dev" });
+  trigger.focus();
+  await userEvent.keyboard("{Enter}");
+  await screen.findByRole("menuitemradio", { name: "@qa · QA" });
+  await userEvent.keyboard("qa");
+  await waitFor(() =>
+    expect(screen.getByRole("menuitemradio", { name: "@qa · QA" })).toHaveFocus(),
+  );
+  expect(patches(api)).toHaveLength(0);
+});
+
 test("an ended assignee shows muted above a 'Choose an agent…' trigger", async () => {
   world(() => detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }));
   renderApp("/tasks/T-42", alice);

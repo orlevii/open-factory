@@ -135,6 +135,9 @@ components:
   sheet:
     backgroundColor: "{colors.plate-raised}"
     width: "480px"
+  panel:
+    backgroundColor: "{colors.plate}"
+    width: "320px"
   sidebar:
     backgroundColor: "{colors.steel-deep}"
     width: "240px"
@@ -242,11 +245,12 @@ Reading prose stays 14/22 for now; the reading size of the timeline, task bodies
 - A 4px grid. Controls are 32px tall on desktop and 36px on touch, and the page header is 48px.
 - The shell is a 240px sidebar, collapsible to icons, plus the content area. On mobile the sidebar becomes a left drawer, opened from its button.
 - Content gutters are 16px on mobile and 24px from `md` up.
+- **Agent details.** The session's details are a 320px column on the right, a plate with a 1px rule on its left edge and no shadow, opening with a 48px strip whose rule continues the page header's. From 1280px (80rem) it is open by default and remembered per browser; from 1024px it is the same column, closed on each visit; from 768px a peek sheet under the page header (the header stays usable); below, a bottom drawer. One header button and `]` toggle it everywhere, instantly at 1024px and up. When a column's width changes, the timeline keeps its place: pinned to the bottom if it was, else the top visible row stays put.
 - Dense by design. Trees, timelines and tables put a lot on one screen, so rhythm comes from rules and spacing, not boxes.
 
 ## Elevation & Depth
 
-Flat. Depth comes from stacked plates, not shadows: the steel ground, then a plate on it, then a floating layer. A plate is lighter than the ground and edged with a 1px `rule`. Floating layers (popover, menu, select, sheet, dialog, drawer) are one step lighter again and edged with `float-edge`, a 1px border stronger than `rule` so a menu over a plate of the same lightness still has an edge in light mode. Sheets, dialogs and drawers add the scrim (20% black in light mode, 40% in dark). In dark mode, layers step lighter as they rise, and the rail steps darker. Nothing has a shadow.
+Flat. Depth comes from stacked plates, not shadows: the steel ground, then a plate on it, then a floating layer. A plate is lighter than the ground and edged with a 1px `rule`. Floating layers (popover, menu, select, sheet, dialog, drawer) are one step lighter again and edged with `float-edge`, a 1px border stronger than `rule` so a menu over a plate of the same lightness still has an edge in light mode. Modal sheets, dialogs and drawers add the scrim; peek sheets do not (20% black in light mode, 40% in dark). In dark mode, layers step lighter as they rise, and the rail steps darker. Nothing has a shadow.
 
 ## Shapes
 
@@ -282,15 +286,16 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   | Need | Surface |
   |---|---|
   | A quick pick or a fact about one control | Popover, menu or select, anchored to its trigger |
-  | A create or edit form, or a quick peek | Right sheet, 480px, with a scrim |
+  | A create or edit form | Right sheet, 480px, with a scrim |
+  | A quick peek (Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px) |
   | Primary work you'd deep-link or keep open | A page |
   | A destructive, irreversible confirmation | Dialog |
   | Any sheet or dialog below `md` (48rem; 768px at the default text size) | A bottom drawer (Vaul); the nav is a left drawer |
 
-  Sheets stack at most one level (Add credential over New agent); the parent stays where it is under a second scrim. Dismissing a sheet never asks: a typed draft is kept, in memory for the tab, for the next open. A peek sheet does not dim or trap focus; the page behind stays usable; Esc and Close dismiss it. In a bottom drawer the buttons are full-width and stacked, the action first and Cancel last at the bottom, where the thumb rests. A confirmation button that carries a name may wrap to two lines; it is never truncated. The scrim is plain black, 20% in light mode and 40% in dark; there is no blur, because there is no translucency anywhere in the system, so `prefers-reduced-transparency` has nothing to undo.
+  Sheets stack at most one level (Add credential over New agent); the parent stays where it is under a second scrim. Dismissing a sheet never asks: a typed draft is kept, in memory for the tab, for the next open. A peek sheet does not dim or trap focus; the page behind stays usable and clicking it does not close the peek; Esc and Close dismiss it. In a bottom drawer the buttons are full-width and stacked, the action first and Cancel last at the bottom, where the thumb rests. A confirmation button that carries a name may wrap to two lines; it is never truncated. The scrim is plain black, 20% in light mode and 40% in dark; there is no blur, because there is no translucency anywhere in the system, so `prefers-reduced-transparency` has nothing to undo.
 - **Toasts:** A toast appears only when the control that caused an outcome is gone (a submitted sheet, a deleted row), and carries Undo when the action can be undone. Otherwise feedback stays inline, next to the control.
 - **Composers:** Enter sends in every composer; Shift+Enter adds a line, ⌘/Ctrl+Enter also sends. On touch, Enter adds a line.
-- **Cards and panels:** a plate on the ground, a 1px rule edge and a 6px radius, with a 40px header strip that has its own rule. Cards are never nested.
+- **Cards and panels:** a plate on the ground, a 1px rule edge and a 6px radius, with a 40px header strip that has its own rule. Cards are never nested. The Agent details column's strip is 48px, continuing the page header's line.
 - **Navigation:** sidebar rows are 32px (36px on touch). The active row gets the `steel-hover` fill plus the tooth, and the icon rail keeps the tooth. Nav labels are capitalised product nouns. The last nav row, **Agents**, heads the live agents as the reporting tree; its chevron collapses the tree and its `+` creates an agent. Agent rows are data rows that keep the agent's display name: chevron, avatar with its status badge, name, then a collapsed manager's working count (the tooth and a number, read as "N working") and the agent's unread messages. On an agent row the left tooth means only "you are here". Order is the tree's, never by activity. Roots start expanded and the rest collapsed; the user's toggles are remembered per browser; the open agent's managers expand for the visit only. While a live agent's session is open its row is the active row; an ended agent's session keeps the Agents row active. The collapsed rail shows only what needs a glance: the open agent, agents with unread messages, and agents working, queued, rate-limited or errored.
 - **Avatars:** 16px in pickers, the palette and inbox rows; 20px in the sidebar, lists and Agent details; 24px in the session header. Always decorative (`aria-hidden`); a name is beside it, or in the rail its tooltip. In lists a status badge is cut into the bottom-right corner, one shape per status, the same shapes `StatusBadge` uses: the tooth when working, an alert glyph when errored, a filled dot when rate-limited, a hollow ring when queued, nothing at rest. The session header's avatar carries no badge; the status badge beside it does.
 - **Empty states and loading:** one plain line in muted text, with no illustration. Loading keeps the layout: static skeleton plates at the real row heights, never shimmering. A spinner always sits next to a pending label ("Terminating…"); under reduced motion the spinner stops and the label carries the meaning.
@@ -303,7 +308,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 
 **Motion is feedback, not decoration.** The rules come from a review against Emil Kowalski's design-engineering principles (`emilkowalski/skills`, emil-design-eng), adopted where they fit a dense, live-updating Operate tool.
 
-- **Frequency decides.** Anything seen tens of times a day (nav changes, hovers, list updates) is instant or a colour-only change of 150ms at most. Keyboard-initiated actions never animate: ⌘B collapses the sidebar instantly, using `data-instant` on `<html>` for one frame, while a click animates. An overlay opened from the keyboard is stamped `data-instant` for that whole opening, so it appears and leaves at once; the one-frame `data-instant` on the root still covers keyboard-triggered transitions (⌘B) and now zeroes animations too. Live lists never reorder under the pointer: a re-sort waits until the pointer and focus leave the list, and never animates.
+- **Frequency decides.** Anything seen tens of times a day (nav changes, hovers, list updates) is instant or a colour-only change of 150ms at most. Keyboard-initiated actions never animate: ⌘B collapses the sidebar instantly, using `data-instant` on `<html>` for one frame, while a click animates. An overlay opened from the keyboard is stamped `data-instant` for that whole opening, so it appears and leaves at once; the one-frame `data-instant` on the root still covers keyboard-triggered transitions (⌘B) and now zeroes animations too. Live lists never reorder under the pointer: a re-sort waits until the pointer and focus leave the list, and never animates. Columns that change the page's layout (Agent details from 1024px) appear instantly; only the sidebar's collapse animates. A peek retargeted to another item swaps its content in place, instantly; it never closes and reopens. A key that closes an overlay (Esc, `]`, Space on a peek) closes it at once, however it was opened. A disclosure chevron rotates only when its own chevron was clicked.
 - **Curves** (tokens in `styles.css`; the built-in CSS easings are too weak):
   - `--ease-out` `cubic-bezier(0.23, 1, 0.32, 1)`: anything entering, plus press feedback.
   - `--ease-in-out` `cubic-bezier(0.77, 0, 0.175, 1)`: movement on screen (the sidebar collapsing).

@@ -308,7 +308,7 @@ function TitleBlock({
           </h2>
           <Button
             ref={edit}
-            variant="ghost"
+            variant="outline"
             size="xs"
             aria-label="Edit title"
             className="shrink-0"

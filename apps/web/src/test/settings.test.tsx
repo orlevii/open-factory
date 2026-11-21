@@ -261,6 +261,11 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
   expect(row(region, "work")).toHaveTextContent("Used by @lead");
   expect(row(region, "old")).toHaveTextContent("Last check failed: Claude rejected this token.");
   expect(row(region, "old")).toHaveTextContent("Not used · archived: @c");
+  // §6.3 names Verify as a secondary (outline) action; the icon-only menu trigger stays ghost.
+  expect(within(row(region, "work")).getByRole("button", { name: "Verify" })).toHaveAttribute(
+    "data-variant",
+    "outline",
+  );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
     "/agents/lead",

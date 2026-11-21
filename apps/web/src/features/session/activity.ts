@@ -8,7 +8,8 @@ export type ActivityKind =
   | "subagents"
   | "thinking"
   | "text"
-  | "working";
+  | "working"
+  | "compacting";
 export type Activity = { kind: ActivityKind; tool?: string; target?: string; more?: number };
 
 /** The live state's parts the activity reads (PR4's `LiveState` satisfies it; PR1 passes nothing). */
@@ -19,6 +20,8 @@ export type ActivityLive = {
 };
 
 export const WORKING: Activity = { kind: "working" };
+/** A compaction is running: it isn't a tool call or a reply, and it can't be interrupted (D5). */
+export const COMPACTING: Activity = { kind: "compacting" };
 
 const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
 const SEARCH_TOOLS = new Set(["Grep", "Glob"]);

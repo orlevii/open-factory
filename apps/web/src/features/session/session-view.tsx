@@ -297,6 +297,7 @@ export function SessionView({
                     open={s.open}
                     startedAt={agent.turnStartedAt}
                     turnKey={String(s.state.turnEpoch)}
+                    compacting={agent.compacting === true}
                   />
                 )}
                 <QueueItems

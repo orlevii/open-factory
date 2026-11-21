@@ -5,22 +5,32 @@ import {
   type Activity,
   type ActivityLive,
   activityKey,
+  COMPACTING,
   deriveActivity,
   formatTarget,
   WORKING,
 } from "./activity";
 import { formatDuration } from "./format";
 import type { OpenTurnRows } from "./rows";
+import { ROW_GUTTER } from "./timeline-item";
 
 /** Time elapsed since `since`, ticking on whole seconds; paused while the tab is hidden and recomputed
- *  at once when it returns. Its own state, so nothing else re-renders per tick. */
+ *  at once when it returns (or `since` changes), never as a second render on mount. Its own state, so
+ *  nothing else re-renders per tick. An unparseable `since` renders nothing (never "NaNs"). */
 export const Elapsed = memo(function Elapsed({ since }: { since: string }) {
   const visible = useDocumentVisible();
   const start = Date.parse(since);
+  const valid = !Number.isNaN(start);
   const [now, setNow] = useState(Date.now);
+  // What the state was last computed for: the mount's initial state already is, so no catch-up render.
+  const synced = useRef({ visible, start });
   useEffect(() => {
-    if (!visible) return;
-    setNow(Date.now());
+    if (!visible || !valid) {
+      synced.current.visible = visible;
+      return;
+    }
+    if (synced.current.visible !== visible || synced.current.start !== start) setNow(Date.now());
+    synced.current = { visible, start };
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       const t = Date.now();
@@ -30,7 +40,8 @@ export const Elapsed = memo(function Elapsed({ since }: { since: string }) {
     const t0 = Date.now();
     timer = setTimeout(tick, 1000 - (Math.max(0, t0 - start) % 1000));
     return () => clearTimeout(timer);
-  }, [visible, start]);
+  }, [visible, start, valid]);
+  if (!valid) return null;
   return <span className="shrink-0 tabular-nums">{formatDuration(now - start)}</span>;
 });
 
@@ -48,13 +59,19 @@ const PLAIN: Partial<Record<Activity["kind"], string>> = {
   thinking: "Thinking",
   text: "Writing a reply",
   working: "Working",
+  compacting: "Compacting",
 };
 
-/** The label in parts: a fixed prefix, a truncating target (code for tools) and a fixed suffix. */
+/** Tools whose target is a file path: only these middle-truncate (keeping the file name). */
+const PATH_TOOLS = new Set(["Read", "Edit", "MultiEdit", "NotebookEdit", "Write"]);
+
+/** The label in parts: a fixed prefix, a truncating target (code for tools; a path middle-truncates,
+ *  anything else, a command or a description, end-truncates) and a fixed suffix. */
 function labelParts(a: Activity): {
   prefix?: string;
   target?: string;
   code?: boolean;
+  path?: boolean;
   suffix?: string;
 } {
   const plain = PLAIN[a.kind];
@@ -64,7 +81,8 @@ function labelParts(a: Activity): {
     return { prefix: "Subagents: ", target: a.target, suffix: ` and ${a.more} more` };
   const tool = a.tool ?? "";
   const verb = VERB[tool];
-  if (verb && a.target) return { prefix: `${verb} `, target: a.target, code: true };
+  if (verb && a.target)
+    return { prefix: `${verb} `, target: a.target, code: true, path: PATH_TOOLS.has(tool) };
   // An MCP tool reads "server · tool"; any other tool its name.
   return { target: a.target ?? tool, code: true };
 }
@@ -78,12 +96,12 @@ export const ActivityLine = memo(function ActivityLine({
   activity: Activity;
   startedAt?: string;
 }) {
-  const { prefix, target, code, suffix } = labelParts(activity);
+  const { prefix, target, code, path, suffix } = labelParts(activity);
   const full = `${prefix ?? ""}${target ?? ""}${suffix ?? ""}`;
   return (
     <p
       data-activity-line
-      className="flex h-6 min-w-0 items-center text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+      className={`flex h-6 min-w-0 items-center ${ROW_GUTTER} text-[0.8125rem] leading-[1.125rem] text-muted-foreground`}
     >
       <span
         aria-hidden="true"
@@ -99,11 +117,14 @@ export const ActivityLine = memo(function ActivityLine({
       )}
       <span data-activity-label title={full} className="flex min-w-0 items-baseline">
         {prefix !== undefined && <span className="shrink-0 whitespace-pre">{prefix}</span>}
-        {target !== undefined && (
-          <span className={`flex min-w-0 ${code ? "font-mono" : ""}`}>
-            <MiddleTruncate text={target} />
-          </span>
-        )}
+        {target !== undefined &&
+          (path ? (
+            <span className={`flex min-w-0 ${code ? "font-mono" : ""}`}>
+              <MiddleTruncate text={target} />
+            </span>
+          ) : (
+            <span className={`min-w-0 truncate ${code ? "font-mono" : ""}`}>{target}</span>
+          ))}
         {suffix !== undefined && <span className="shrink-0 whitespace-pre">{suffix}</span>}
       </span>
     </p>
@@ -169,12 +190,15 @@ export const TurnActivity = memo(function TurnActivity({
   live,
   startedAt,
   turnKey,
+  compacting = false,
 }: {
   open: OpenTurnRows | undefined;
   live?: ActivityLive;
   startedAt?: string;
   turnKey: string;
+  /** A compaction is running: the line reads "Compacting" whatever the rows say. */
+  compacting?: boolean;
 }) {
   const activity = useFallbackHold(useActivity(open, live), turnKey);
-  return <ActivityLine activity={activity} startedAt={startedAt} />;
+  return <ActivityLine activity={compacting ? COMPACTING : activity} startedAt={startedAt} />;
 });

@@ -63,6 +63,10 @@ function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean 
   return true;
 }
 
+/** The rows' right gutter (room for Copy link): everything under the rows that should line up with them
+ *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
+export const ROW_GUTTER = "pr-8";
+
 /** One timeline entry: the wrap (deep-link id, tint, live fade), the row and its Copy link. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   const { row } = p;
@@ -72,7 +76,7 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
     >
       <ItemContent {...p} />
     </div>

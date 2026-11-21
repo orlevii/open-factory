@@ -173,7 +173,7 @@ export function SessionView({
       {s.state.windowed && (
         <div className="flex shrink-0 justify-center py-2">
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
             onClick={() => void navigate({ to: "/agents/$slug", params: { slug }, search: {} })}

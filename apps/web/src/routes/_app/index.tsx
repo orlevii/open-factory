@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { EmptyState } from "@/components/empty-state";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { HomeAgents } from "@/features/agents/home-agents";
 import { HomeInbox } from "@/features/inbox/home-inbox";
 
 export const Route = createFileRoute("/_app/")({
@@ -20,7 +20,7 @@ function Dashboard() {
             <HomeInbox />
           </Panel>
           <Panel id="panel-agents" title="Agents" to="/agents" linkLabel="Open agents">
-            <EmptyState text="No agents yet." />
+            <HomeAgents />
           </Panel>
         </div>
       </PageBody>

@@ -82,3 +82,8 @@ test("the list query's q is trimmed, non-empty and at most 200 characters", () =
   expect(taskListQuerySchema.safeParse({ q: "   " }).success).toBe(false);
   expect(taskListQuerySchema.safeParse({ q: "a".repeat(201) }).success).toBe(false);
 });
+
+test("the list query's q rejects a NUL byte (Postgres text parameters cannot hold one)", () => {
+  expect(taskListQuerySchema.safeParse({ q: "a\u0000b" }).success).toBe(false);
+  expect(taskListQuerySchema.safeParse({ q: "\u0000" }).success).toBe(false);
+});

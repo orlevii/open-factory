@@ -159,6 +159,11 @@ test("GET /api/tasks?q validates: empty is 400, over 200 characters is 400", asy
   expect((await call("GET", `/api/tasks?q=${"a".repeat(200)}`)).statusCode).toBe(200);
 });
 
+test("GET /api/tasks?q with a NUL byte is 400, not a Postgres error", async () => {
+  expect((await call("GET", "/api/tasks?q=%00")).statusCode).toBe(400);
+  expect((await call("GET", "/api/tasks?q=a%00b")).statusCode).toBe(400);
+});
+
 test("GET /api/tasks: Agent details' query (assignee, limit 5, default status) lists open and in-progress only", async () => {
   await create({ title: "one", assignee: "dev" });
   await create({ title: "two", assignee: "dev" });

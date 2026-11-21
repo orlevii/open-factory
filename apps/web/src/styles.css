@@ -112,13 +112,13 @@
 
   /* avatar hues (identity colours, eight steps round the wheel) */
   --avatar-1: oklch(0.62 0.07 120);
-  --avatar-2: oklch(0.62 0.07 165);
-  --avatar-3: oklch(0.62 0.07 210);
-  --avatar-4: oklch(0.62 0.07 255);
-  --avatar-5: oklch(0.62 0.07 300);
-  --avatar-6: oklch(0.62 0.07 345);
-  --avatar-7: oklch(0.62 0.07 30);
-  --avatar-8: oklch(0.62 0.07 75);
+  --avatar-2: oklch(0.62 0.07 180);
+  --avatar-3: oklch(0.62 0.07 205);
+  --avatar-4: oklch(0.62 0.07 230);
+  --avatar-5: oklch(0.62 0.07 270);
+  --avatar-6: oklch(0.62 0.07 295);
+  --avatar-7: oklch(0.62 0.07 320);
+  --avatar-8: oklch(0.62 0.07 345);
 
   /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
   --signal: oklch(
@@ -193,13 +193,13 @@
   --float-edge: oklch(0.38 0.008 255);
 
   --avatar-1: oklch(0.7 0.07 120);
-  --avatar-2: oklch(0.7 0.07 165);
-  --avatar-3: oklch(0.7 0.07 210);
-  --avatar-4: oklch(0.7 0.07 255);
-  --avatar-5: oklch(0.7 0.07 300);
-  --avatar-6: oklch(0.7 0.07 345);
-  --avatar-7: oklch(0.7 0.07 30);
-  --avatar-8: oklch(0.7 0.07 75);
+  --avatar-2: oklch(0.7 0.07 180);
+  --avatar-3: oklch(0.7 0.07 205);
+  --avatar-4: oklch(0.7 0.07 230);
+  --avatar-5: oklch(0.7 0.07 270);
+  --avatar-6: oklch(0.7 0.07 295);
+  --avatar-7: oklch(0.7 0.07 320);
+  --avatar-8: oklch(0.7 0.07 345);
 
   --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
   --signal-text: oklch(0.72 0.18 40);

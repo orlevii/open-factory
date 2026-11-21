@@ -15,16 +15,17 @@ const ev = (seq: number): SessionEvent => ({
   at: "2026-11-18T00:00:00.000Z",
   event: { type: "turn_started" },
 });
-const detail: AgentDetail = { agent: agentSummary(), queue: [], lastSeq: 3 };
+const detail: AgentDetail = { agent: agentSummary(), queue: [], lastSeq: 4 };
 
 vi.mock("./api", () => ({
   agentDetailQueryOptions: (slug: string) => ({
     queryKey: ["agent", slug],
     queryFn: async () => detail,
   }),
-  fetchEvents: async () => ({
-    events: [ev(1), ev(2), ev(3)],
-    hasMore: { before: false, after: false },
+  // The latest page is 2..4; the page before it is 1.
+  fetchEvents: async (_slug: string, q: { before?: number } = {}) => ({
+    events: q.before ? [ev(1)] : [ev(2), ev(3), ev(4)],
+    hasMore: { before: !q.before, after: false },
   }),
   fetchMessage: async () => {
     throw new Error("unused");
@@ -56,11 +57,11 @@ async function setup(status: WsStatus = "open") {
   );
   let renders = 0;
   const hook = renderHook(
-    () => {
+    ({ slug }: { slug: string }) => {
       renders++;
-      return useSession("dev");
+      return useSession(slug);
     },
-    { wrapper },
+    { wrapper, initialProps: { slug: "dev" } },
   );
   await waitFor(() => expect(hook.result.current.state.ordered).toHaveLength(3));
   // Fake the frame clock only once the (promise-driven) load has settled.
@@ -82,7 +83,7 @@ afterEach(() => {
 test("ten frames delivered across separate tasks commit once, on the next frame", async () => {
   const { hook, push, renders } = await setup();
   const before = renders();
-  for (let seq = 4; seq < 14; seq++) {
+  for (let seq = 5; seq < 15; seq++) {
     await Promise.resolve();
     push(frame(seq));
   }
@@ -93,14 +94,14 @@ test("ten frames delivered across separate tasks commit once, on the next frame"
   });
   expect(renders()).toBe(before + 1);
   expect(hook.result.current.state.ordered.map((e) => e.seq)).toEqual([
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
   ]);
 });
 
 test("frames for another agent schedule nothing", async () => {
   const { push, renders } = await setup();
   const before = renders();
-  push(frame(4, "other"));
+  push(frame(5, "other"));
   expect(vi.getTimerCount()).toBe(0);
   act(() => {
     vi.advanceTimersToNextFrame();
@@ -111,7 +112,7 @@ test("frames for another agent schedule nothing", async () => {
 test("a hidden tab flushes after 100ms instead of waiting for a frame", async () => {
   const { hook, push } = await setup();
   vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-  push(frame(4));
+  push(frame(5));
   act(() => {
     vi.advanceTimersByTime(99);
   });
@@ -141,7 +142,7 @@ test("a local queued dispatch flushes pending frames first, keeping their order"
 
 test("unmount cancels the pending frame", async () => {
   const { hook, push } = await setup();
-  push(frame(4));
+  push(frame(5));
   expect(vi.getTimerCount()).toBe(1);
   hook.unmount();
   expect(vi.getTimerCount()).toBe(0);
@@ -150,7 +151,7 @@ test("unmount cancels the pending frame", async () => {
 test("a frame that changes no row keeps the rows and sets' identity (spec §9.3)", async () => {
   const { hook, push } = await setup();
   const { rows, failedIds, interruptedEnds } = hook.result.current;
-  push(frame(4)); // a hidden event: new events, same rows
+  push(frame(5)); // a hidden event: new events, same rows
   act(() => {
     vi.advanceTimersToNextFrame();
   });
@@ -158,4 +159,59 @@ test("a frame that changes no row keeps the rows and sets' identity (spec §9.3)
   expect(hook.result.current.rows).toBe(rows);
   expect(hook.result.current.failedIds).toBe(failedIds);
   expect(hook.result.current.interruptedEnds).toBe(interruptedEnds);
+});
+
+test("a slug change cancels the pending frame and drops the old slug's frames", async () => {
+  const { hook, push } = await setup();
+  const cancel = vi.spyOn(globalThis, "cancelAnimationFrame");
+  const request = vi.spyOn(globalThis, "requestAnimationFrame");
+  push(frame(5));
+  expect(request).toHaveBeenCalledTimes(1);
+  hook.rerender({ slug: "other" });
+  expect(cancel).toHaveBeenCalledTimes(1);
+  push(frame(6)); // still "dev": the listener now ignores it
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test("loaded flushes pending frames first, so the load's page replaces them", async () => {
+  const { hook, push } = await setup();
+  push(frame(5));
+  await act(() => hook.result.current.retry());
+  // Applied after the load, the stale frame would have appended 5 to the fresh page.
+  expect(hook.result.current.state.ordered.map((e) => e.seq)).toEqual([2, 3, 4]);
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(hook.result.current.state.ordered.map((e) => e.seq)).toEqual([2, 3, 4]);
+});
+
+test("earlier flushes pending frames first", async () => {
+  const { hook, push, renders } = await setup();
+  push(frame(5));
+  await act(() => hook.result.current.loadEarlier());
+  expect(hook.result.current.state.ordered.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+  expect(vi.getTimerCount()).toBe(0);
+  const after = renders();
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(renders()).toBe(after);
+});
+
+test("a visibility change commits pending frames at once", async () => {
+  const { hook, push } = await setup();
+  push(frame(5)); // visible: waits for a frame
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(hook.result.current.state.ordered).toHaveLength(4);
+  expect(vi.getTimerCount()).toBe(0);
+  push(frame(6)); // hidden: waits 100ms
+  hidden.mockReturnValue(false);
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(hook.result.current.state.ordered).toHaveLength(5);
+  expect(vi.getTimerCount()).toBe(0);
 });

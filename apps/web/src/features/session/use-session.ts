@@ -173,6 +173,16 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     },
     [slug],
   );
+  // The timer kind is picked when the first frame arrives: a tab hidden before its rAF fires would
+  // hold the frames until it is shown again, and one shown again need not wait out the 100ms. Either
+  // way, a visibility change commits what is pending.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (scheduled.current) flush();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [flush]);
 
   // (Re)subscribe after every load and every socket (re)open. A windowed view only counts new
   // events, so it subscribes from the agent's lastSeq (spec §10), or after the newest seq it has

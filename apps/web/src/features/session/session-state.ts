@@ -21,6 +21,9 @@ export interface SessionState {
   maxSeenSeq: number;
   queue: QueueItem[];
   agent: AgentSummary | undefined;
+  /** Bumped on every `agent.turnOpen` change the reducer applies, so a consumer that resets on a
+   *  turn edge still sees a close and a reopen that were folded into one commit (spec §9.6). */
+  turnEpoch: number;
   needsReload: boolean;
 }
 
@@ -34,6 +37,7 @@ export const initialSessionState: SessionState = {
   maxSeenSeq: 0,
   queue: [],
   agent: undefined,
+  turnEpoch: 0,
   needsReload: false,
 };
 
@@ -75,21 +79,33 @@ function withEvents(
   return { events, ordered };
 }
 
+/** The state with `agent` replaced, counting a `turnOpen` change in `turnEpoch`. */
+const withAgent = (s: SessionState, agent: AgentSummary | undefined): SessionState => ({
+  ...s,
+  agent,
+  turnEpoch: s.turnEpoch + (s.agent?.turnOpen === agent?.turnOpen ? 0 : 1),
+});
+
 export function sessionReducer(s: SessionState, a: SessionAction): SessionState {
   switch (a.type) {
     case "reset":
       return initialSessionState;
     case "loaded":
-      return {
-        ...initialSessionState,
-        slug: a.detail.agent.slug,
-        ...withEvents(initialSessionState, a.page.events),
-        hasMoreBefore: a.page.hasMore.before,
-        windowed: a.mode === "window" && a.page.hasMore.after,
-        maxSeenSeq: a.detail.lastSeq,
-        queue: a.detail.queue,
-        agent: a.detail.agent,
-      };
+      return withAgent(
+        {
+          ...initialSessionState,
+          slug: a.detail.agent.slug,
+          ...withEvents(initialSessionState, a.page.events),
+          hasMoreBefore: a.page.hasMore.before,
+          windowed: a.mode === "window" && a.page.hasMore.after,
+          maxSeenSeq: a.detail.lastSeq,
+          queue: a.detail.queue,
+          // the epoch carries across loads, so a reload never makes it repeat a value
+          agent: s.agent,
+          turnEpoch: s.turnEpoch,
+        },
+        a.detail.agent,
+      );
     case "earlier":
       return {
         ...s,
@@ -100,7 +116,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       if (s.queue.some((q) => q.id === a.item.id)) return s;
       return { ...s, queue: [...s.queue, a.item] };
     case "agent":
-      return s.agent && a.agent.slug === s.slug ? { ...s, agent: a.agent } : s;
+      return s.agent && a.agent.slug === s.slug ? withAgent(s, a.agent) : s;
     case "frame": {
       const m = a.message;
       if (!("agent" in m) || m.agent !== s.slug) return s;
@@ -117,7 +133,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       if (m.type === "agent_status" && s.agent) {
         const { type: _t, agent: _a, ...rest } = m;
         // `lastError` is set explicitly so a frame without it clears the previous one (absent means cleared).
-        return { ...s, agent: { ...s.agent, ...rest, lastError: m.lastError } };
+        return withAgent(s, { ...s.agent, ...rest, lastError: m.lastError });
       }
       if (m.type === "resync") return { ...s, needsReload: true };
       return s;
@@ -129,8 +145,10 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       let pending: SessionEvent[] = [];
       const drain = () => {
         if (pending.length === 0) return;
-        next = { ...next, ...withEvents(next, pending) };
+        const added = withEvents(next, pending);
         pending = [];
+        // A batch of already-held events (a reconnect replay) keeps the state, so React bails out.
+        if (added.events !== next.events) next = { ...next, ...added };
       };
       for (const m of a.messages) {
         if (m.type === "session_event" && m.agent === next.slug && !next.windowed) {

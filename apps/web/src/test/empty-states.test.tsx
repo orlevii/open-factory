@@ -28,10 +28,11 @@ test("the dashboard shows the Inbox and Agents panels, each empty", async () => 
   mockApi({
     "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 0 }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   renderApp("/", alice);
   expect(await screen.findByText("Nothing unread.")).toBeInTheDocument();
-  expect(screen.getByText("No agents yet.")).toBeInTheDocument();
+  expect(await screen.findByText("No agents yet.")).toBeInTheDocument();
 });
 
 test("the sidebar links every section in order", async () => {

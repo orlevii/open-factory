@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -129,7 +130,7 @@ test("creating sends the task and opens it; the button reads Creating… meanwhi
   });
   const { router } = renderApp("/tasks/new", alice);
   await userEvent.type(await screen.findByLabelText("Title"), "  Plan  ");
-  await userEvent.selectOptions(screen.getByLabelText("Assignee"), "@dev · Dev");
+  await pickOption(await screen.findByLabelText("Assignee"), /Dev\s+@dev/);
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   expect(await screen.findByRole("button", { name: "Creating…" })).toBeDisabled();
   release();

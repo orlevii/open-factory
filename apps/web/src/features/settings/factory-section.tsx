@@ -209,7 +209,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
       {conflict && dirty && (
         <div role="status" className={`${smallClass} flex items-center gap-2`}>
           <span>These settings were changed elsewhere.</span>
-          <Button type="button" variant="outline" size="sm" onClick={reload}>
+          <Button type="button" variant="ghost" size="sm" onClick={reload}>
             Reload
           </Button>
         </div>

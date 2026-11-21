@@ -8,9 +8,6 @@ import { postRestart } from "./api";
 import { focusComposer, NETWORK_ERROR } from "./composer";
 import { NewSessionDialog } from "./new-session-dialog";
 
-const DISABLED =
-  "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:text-inherit aria-disabled:active:scale-100 dark:aria-disabled:hover:bg-transparent";
-
 /**
  * Restart and Start a new session: the buttons show only while Errored, in place of Compact and
  * Interrupt. Mounted for every status, so an open dialog survives the status frame that a confirmed
@@ -110,7 +107,6 @@ function RestartButton({ slug }: { slug: string }) {
           <Button
             variant="ghost"
             aria-disabled={pending || undefined}
-            className={DISABLED}
             onClick={() => {
               if (!pending) void restart();
             }}

@@ -1,5 +1,6 @@
 import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { runInstant } from "@/lib/run-instant";
 import { formatBytes } from "./format";
 import { CodePlate } from "./quiet-line";
 import type { Row } from "./rows";
@@ -60,13 +61,17 @@ export function ToolCallRow({
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={onToggle}
+        onClick={(e) => {
+          // A keyboard-triggered click (Enter/Space) has detail 0: it toggles without the transition.
+          if (e.detail === 0) runInstant(onToggle);
+          else onToggle();
+        }}
         {...rowProps}
         className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm hover:bg-accent"
       >
         <ChevronRight
           aria-hidden="true"
-          className={`size-4 shrink-0 ${expanded ? "rotate-90" : ""}`}
+          className={`size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
         />
         <span className="shrink-0 font-mono">{row.call.name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] text-muted-foreground">

@@ -188,7 +188,7 @@ export function AgentTree({
                 )}
               </span>
               {/* A second line below md and in the two-line grid; grid cells in the full one. */}
-              <span className="flex basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 md:min-w-0 @min-[54rem]:contents">
+              <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
                 <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
                   {a.slug}
                 </span>

@@ -1,9 +1,11 @@
-import { type AgentSummary, ApiError, type QueueItem } from "@open-factory/shared";
+import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { isSendKey } from "@/lib/send-key";
+import { cn } from "@/lib/utils";
 import { postMessage } from "./api";
 
 const draftKey = (slug: string) => `of-draft:${slug}`;
@@ -21,7 +23,6 @@ const writeDraft = (slug: string, v: string) => {
     /* private mode */
   }
 };
-const coarse = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 
@@ -118,6 +119,7 @@ export function Composer({
     agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
   useEffect(() => writeDraft(slug, text), [slug, text]);
   const empty = text.trim() === "";
+  const urgentNow = urgent && agent.turnOpen;
 
   async function send() {
     if (empty || sending) return;
@@ -127,6 +129,13 @@ export function Composer({
       setText((cur) => (cur.startsWith(sent) ? cur.slice(sent.length) : cur));
       setUrgent(false);
     };
+    const bytes = new TextEncoder().encode(sent.trim()).length;
+    if (bytes > MAX_BODY_BYTES) {
+      setError(
+        `This message is ${Math.ceil(bytes / 1024)} KB; the limit is 64 KB. Shorten it to send.`,
+      );
+      return;
+    }
     setSending(true);
     setError(undefined);
     try {
@@ -148,9 +157,7 @@ export function Composer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // keyCode 229: Safari fires the IME-confirming Enter after compositionend.
-    const composing = e.nativeEvent.isComposing || e.keyCode === 229;
-    if (e.key !== "Enter" || e.shiftKey || composing || coarse()) return;
+    if (!isSendKey(e.nativeEvent)) return;
     e.preventDefault();
     void send();
   };
@@ -172,7 +179,10 @@ export function Composer({
           ref={boxRef}
           id={boxId}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(undefined);
+          }}
           onKeyDown={onKeyDown}
           placeholder={`Message ${agent.displayName}`}
           rows={2}
@@ -201,15 +211,28 @@ export function Composer({
               Urgent
             </label>
           </div>
-          <Button type="submit" disabled={empty || sending}>
-            {urgent ? "Send urgent" : "Send"}
+          <Button
+            type="submit"
+            disabled={empty || sending}
+            aria-label={urgentNow ? "Send urgent" : "Send"}
+          >
+            <span className="grid">
+              <span className={cn("[grid-area:1/1]", urgentNow && "invisible")}>Send</span>
+              <span
+                className={cn("[grid-area:1/1]", !urgentNow && "invisible")}
+                aria-hidden={!urgentNow}
+              >
+                Send urgent
+              </span>
+            </span>
           </Button>
         </div>
         {urgent && (
-          <p id={hintId} className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-            {agent.turnOpen
-              ? "Interrupts the current turn, then runs next."
-              : "No turn is running, so this sends normally."}
+          <p
+            id={hintId}
+            className="mt-2 min-h-[1.125rem] text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+          >
+            {agent.turnOpen ? "Interrupts the current turn, then runs next." : null}
           </p>
         )}
         {error && (

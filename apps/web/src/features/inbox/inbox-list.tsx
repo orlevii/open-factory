@@ -63,7 +63,7 @@ export function InboxList() {
       ) : (
         q.hasNextPage && (
           <div>
-            <Button variant="ghost" onClick={loadEarlier} disabled={q.isFetchingNextPage}>
+            <Button variant="outline" onClick={loadEarlier} disabled={q.isFetchingNextPage}>
               Load earlier
             </Button>
           </div>

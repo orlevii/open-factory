@@ -81,11 +81,12 @@ export function SessionView({
       )}
       <PageHeader
         title={agent.displayName}
+        titleFromData
         heading={<AgentName agent={agent} />}
         documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
         meta={
           <>
-            <span className="max-md:hidden">
+            <span className="shrink-0 max-md:hidden">
               <StatusBadge
                 status={agent.status}
                 rateLimitedUntil={agent.rateLimitedUntil}
@@ -93,7 +94,7 @@ export function SessionView({
                 size="long"
               />
             </span>
-            <span className="md:hidden">
+            <span className="shrink-0 md:hidden">
               <StatusBadge status={agent.status} size="short" />
             </span>
           </>
@@ -173,7 +174,7 @@ export function SessionView({
       {s.state.windowed && (
         <div className="flex shrink-0 justify-center py-2">
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
             onClick={() => void navigate({ to: "/agents/$slug", params: { slug }, search: {} })}

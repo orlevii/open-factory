@@ -732,3 +732,20 @@ test("a resume error no longer names the interim reset script", async () => {
   expect(document.body.textContent).not.toMatch(/agent:reset-session|stop the server/);
   expect(document.body.textContent).not.toMatch(/seed:dev-agent/);
 });
+
+test("the log and each row wrap can shrink, so no row widens the scroller", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
+  const log = screen.getByRole("log", { name: "Session" });
+  expect(log).toHaveClass("min-w-0");
+  const wraps = log.querySelectorAll("[data-row-wrap]");
+  expect(wraps.length).toBeGreaterThan(0);
+  for (const w of wraps) expect(w).toHaveClass("min-w-0");
+});
+
+test("the Interrupt button uses the stop glyph", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const icon = screen.getByRole("button", { name: /Interrupt/ }).querySelector("svg");
+  expect(icon).toHaveClass("lucide-circle-stop");
+});

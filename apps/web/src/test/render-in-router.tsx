@@ -14,7 +14,13 @@ export function renderInRouter(ui: ReactNode) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([stub("/tasks/$key"), stub("/tasks"), stub("/agents/$slug")]),
+    routeTree: root.addChildren([
+      stub("/tasks/$key"),
+      stub("/tasks"),
+      stub("/agents/$slug"),
+      stub("/agents"),
+      stub("/agents/new"),
+    ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(<RouterProvider router={router} />);

@@ -30,7 +30,7 @@ function TemplatesPage() {
         title="Templates"
         actions={
           <>
-            <Button variant="ghost" asChild>
+            <Button variant="ghost" asChild className="max-sm:hidden">
               <Link to="/templates" hash="images">
                 Images
               </Link>
@@ -38,14 +38,15 @@ function TemplatesPage() {
             <Button variant="ghost" asChild>
               <Link to="/templates/new">
                 <Plus aria-hidden="true" data-icon="inline-start" />
-                New template
+                <span className="max-sm:hidden">New template</span>
+                <span className="sm:hidden">New</span>
               </Link>
             </Button>
           </>
         }
       />
       <PageBody>
-        <div className="grid gap-4">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
           <div role="status" aria-live="polite" className="empty:hidden">
             {deleted && <InlineOutcome tone="success">Deleted {deleted}.</InlineOutcome>}
           </div>

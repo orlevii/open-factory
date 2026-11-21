@@ -1,8 +1,16 @@
 import type { LinkInput } from "@open-factory/shared";
 import { CircleAlert, Plus, X } from "lucide-react";
-import { NativeSelect } from "@/components/native-select";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export type LinkRow = { id: string; kind: LinkInput["kind"]; target: string; title: string };
 
@@ -68,6 +76,8 @@ export function LinkEditor({
   errors: Record<string, string | undefined>;
   onBlurRow(id: string): void;
 }) {
+  // Opening the kind list moves focus into it; that is not leaving the field, so no check until it closes.
+  const kindOpen = useRef(false);
   const patch = (id: string, p: Partial<LinkRow>) =>
     onChange(rows.map((r) => (r.id === id ? { ...r, ...p } : r)));
   return (
@@ -79,19 +89,28 @@ export function LinkEditor({
         return (
           <div key={r.id} className="grid gap-1">
             <div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
-              <NativeSelect
-                aria-label={`Link ${i + 1} kind`}
+              <Select
                 value={r.kind}
-                onChange={(e) => patch(r.id, { kind: e.target.value as LinkRow["kind"] })}
-                onBlur={() => onBlurRow(r.id)}
-                className="w-24 shrink-0"
+                onValueChange={(v) => patch(r.id, { kind: v as LinkRow["kind"] })}
+                onOpenChange={(open) => {
+                  kindOpen.current = open;
+                }}
               >
-                {KINDS.map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </NativeSelect>
+                <SelectTrigger
+                  aria-label={`Link ${i + 1} kind`}
+                  onBlur={() => kindOpen.current || onBlurRow(r.id)}
+                  className="w-24 shrink-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map(([v, l]) => (
+                    <SelectItem key={v} value={v}>
+                      {l}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
                 aria-label={`Link ${i + 1} target`}
                 aria-invalid={err ? true : undefined}
@@ -110,16 +129,20 @@ export function LinkEditor({
                 onChange={(e) => patch(r.id, { title: e.target.value })}
                 className="h-9 w-full md:w-48 max-md:order-last"
               />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove link ${i + 1}`}
-                title="Remove link"
-                onClick={() => onChange(rows.filter((x) => x.id !== r.id))}
-              >
-                <X aria-hidden="true" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove link ${i + 1}`}
+                    onClick={() => onChange(rows.filter((x) => x.id !== r.id))}
+                  >
+                    <X aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Remove link</TooltipContent>
+              </Tooltip>
             </div>
             {err && (
               <p

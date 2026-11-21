@@ -199,11 +199,11 @@ export function Timeline(props: {
           aria-label="Session"
           aria-live="off"
           onKeyDown={onKeyDown}
-          className="max-w-[52rem] space-y-3"
+          className="max-w-[52rem] min-w-0 space-y-3"
         >
           {props.hasMoreBefore && (
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
+              <Button variant="outline" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
                 {loadingEarlier ? "Loading…" : "Load earlier"}
               </Button>
               {props.earlierError && (
@@ -223,7 +223,7 @@ export function Timeline(props: {
                 // one id per seq (a message_in with several envelopes renders several rows)
                 {...(rows[i - 1]?.seq !== row.seq ? { id: `event-${row.seq}` } : {})}
                 {...(lit ? { "data-highlighted": "true" } : {})}
-                className={`group relative rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+                className={`group relative min-w-0 rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
               >
                 <TimelineRow
                   slug={props.slug}

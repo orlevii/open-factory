@@ -15,8 +15,15 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
-import { NativeSelect } from "@/components/native-select";
 import { Button } from "@/components/ui/button";
+import {
+  ALL,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { agentsListQueryOptions } from "@/features/agents/api";
@@ -27,6 +34,7 @@ import {
   projectsQueryOptions,
   secretsQueryOptions,
 } from "@/features/settings/api";
+import { Slug } from "@/features/tasks/agent-picker";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 
 const FIELDS = [
@@ -52,8 +60,13 @@ type Values = {
 };
 
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
-/** Indentation inside <option>: ordinary spaces collapse there. */
-const indent = (depth: number) => " ".repeat(depth * 4);
+/** Reporting-line depth as padding (plain spaces collapse in HTML): 0.75rem a level, three levels at most, then a `└ `. */
+const ManagerName = ({ depth, name }: { depth: number; name: string }) => (
+  <span style={{ paddingInlineStart: `${Math.min(depth, 3) * 0.75}rem` }}>
+    {depth > 3 && "└ "}
+    {name}
+  </span>
+);
 const linkClass =
   "text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
 
@@ -233,6 +246,16 @@ export function AgentForm(props: Props) {
     focusAfterPending.current = undefined;
   }, [pending]);
   const blur = (f: Field) => setErrors((e) => ({ ...e, [f]: check(f, shown) }));
+  // Opening a Radix Select moves focus into its list, so the trigger blurs on open. The template
+  // validates when its list closes (this effect sees the chosen value), not while it is open.
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const templateOpened = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the list closes
+  useEffect(() => {
+    if (templateOpen || !templateOpened.current) return;
+    templateOpened.current = false;
+    blur("template");
+  }, [templateOpen]);
   const focusFirst = (e: Errors) => {
     const first = FIELDS.find((f) => e[f]);
     if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
@@ -368,6 +391,7 @@ export function AgentForm(props: Props) {
     }
     return list.filter((a) => !excluded.has(a.slug));
   }, [activeAgents.data, editing]);
+  const selectedManager = managerOptions.find((a) => a.slug === values.reportsTo);
   const managerMissing =
     values.reportsTo !== "" &&
     activeAgents.data !== undefined &&
@@ -393,32 +417,35 @@ export function AgentForm(props: Props) {
           <FieldShell name="template" label="Template" error={errors.template}>
             {(a) => (
               <div className="grid gap-1.5">
-                <NativeSelect
-                  id={a.id}
-                  aria-invalid={a.invalid || undefined}
-                  aria-describedby={[a.describedBy, config ? "template-summary" : undefined]
-                    .filter(Boolean)
-                    .join(" ")}
+                <Select
                   disabled={!templates.data}
                   value={values.template}
-                  onChange={(e) => set("template", e.target.value)}
-                  onBlur={() => blur("template")}
+                  onValueChange={(v) => set("template", v)}
+                  onOpenChange={(open) => {
+                    setTemplateOpen(open);
+                    if (open) templateOpened.current = true;
+                  }}
                 >
-                  {!templates.data ? (
-                    <option value="">Loading…</option>
-                  ) : (
-                    <>
-                      <option value="" disabled>
-                        Choose a template
-                      </option>
-                      {templates.data.templates.map((t) => (
-                        <option key={t.name} value={t.name} disabled={t.errors > 0}>
-                          {t.errors > 0 ? `${t.name} (has errors)` : t.name}
-                        </option>
-                      ))}
-                    </>
-                  )}
-                </NativeSelect>
+                  <SelectTrigger
+                    id={a.id}
+                    aria-invalid={a.invalid || undefined}
+                    aria-describedby={[a.describedBy, config ? "template-summary" : undefined]
+                      .filter(Boolean)
+                      .join(" ")}
+                    onBlur={() => !templateOpen && blur("template")}
+                  >
+                    <SelectValue placeholder="Choose a template">
+                      {templates.data ? undefined : values.template || "Loading…"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.data?.templates.map((t) => (
+                      <SelectItem key={t.name} value={t.name} disabled={t.errors > 0}>
+                        {t.errors > 0 ? `${t.name} (has errors)` : t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 {config && (
                   <TemplateSummary
                     config={config}
@@ -474,32 +501,49 @@ export function AgentForm(props: Props) {
         </FieldShell>
         <FieldShell name="reportsTo" label="Manager" error={errors.reportsTo}>
           {(a) => (
-            <NativeSelect
-              id={a.id}
-              aria-invalid={a.invalid || undefined}
-              aria-describedby={a.describedBy}
+            <Select
               disabled={!activeAgents.data}
-              value={values.reportsTo}
-              onChange={(e) => set("reportsTo", e.target.value)}
+              value={values.reportsTo || ALL}
+              onValueChange={(v) => set("reportsTo", v === ALL ? "" : v)}
             >
-              {!activeAgents.data ? (
-                <option value={values.reportsTo}>Loading…</option>
-              ) : (
-                <>
-                  <option value="">No manager (reports to the humans)</option>
-                  {managerOptions.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {`${indent(m.depth)}${m.displayName} (@${m.slug})`}
-                    </option>
-                  ))}
-                  {managerMissing && (
-                    <option value={values.reportsTo} disabled>
-                      {`@${values.reportsTo} (archived)`}
-                    </option>
+              <SelectTrigger
+                id={a.id}
+                aria-invalid={a.invalid || undefined}
+                aria-describedby={a.describedBy}
+              >
+                {/* Explicit content: the trigger shows the name and slug, never the item's indent. */}
+                <SelectValue>
+                  {!activeAgents.data ? (
+                    "Loading…"
+                  ) : values.reportsTo === "" ? (
+                    "No manager (reports to the humans)"
+                  ) : managerMissing ? (
+                    `@${values.reportsTo} (archived)`
+                  ) : (
+                    <>
+                      <span>{selectedManager?.displayName}</span> <Slug slug={values.reportsTo} />
+                    </>
                   )}
-                </>
-              )}
-            </NativeSelect>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {activeAgents.data && (
+                  <>
+                    <SelectItem value={ALL}>No manager (reports to the humans)</SelectItem>
+                    {managerOptions.map((m) => (
+                      <SelectItem key={m.slug} value={m.slug} textValue={m.slug}>
+                        <ManagerName depth={m.depth} name={m.displayName} /> <Slug slug={m.slug} />
+                      </SelectItem>
+                    ))}
+                    {managerMissing && (
+                      <SelectItem value={values.reportsTo} disabled>
+                        {`@${values.reportsTo} (archived)`}
+                      </SelectItem>
+                    )}
+                  </>
+                )}
+              </SelectContent>
+            </Select>
           )}
         </FieldShell>
         {noCredentials ? (
@@ -515,25 +559,29 @@ export function AgentForm(props: Props) {
         ) : (
           <FieldShell name="credential" label="Credential" error={errors.credential}>
             {(a) => (
-              <NativeSelect
-                id={a.id}
-                aria-invalid={a.invalid || undefined}
-                aria-describedby={a.describedBy}
+              <Select
                 disabled={!credentials.data}
                 value={shown.credential}
-                onChange={(e) => set("credential", e.target.value)}
-                onBlur={() => blur("credential")}
+                onValueChange={(v) => set("credential", v)}
               >
-                {!credentials.data ? (
-                  <option value={shown.credential}>Loading…</option>
-                ) : (
-                  credentials.data.map((c) => (
-                    <option key={c.name} value={c.name}>
+                <SelectTrigger
+                  id={a.id}
+                  aria-invalid={a.invalid || undefined}
+                  aria-describedby={a.describedBy}
+                  onBlur={() => blur("credential")}
+                >
+                  <SelectValue>
+                    {credentials.data ? undefined : shown.credential || "Loading…"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {credentials.data?.map((c) => (
+                    <SelectItem key={c.name} value={c.name}>
                       {`${c.name}: ${KIND_LABEL[c.kind]}`}
-                    </option>
-                  ))
-                )}
-              </NativeSelect>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </FieldShell>
         )}
@@ -549,12 +597,7 @@ export function AgentForm(props: Props) {
       <div className="grid gap-2">
         <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
         <div>
-          <Button
-            type="submit"
-            size="lg"
-            aria-disabled={pending || noCredentials || undefined}
-            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-          >
+          <Button type="submit" size="lg" aria-disabled={pending || noCredentials || undefined}>
             {pending && <Spinner />}
             {pending
               ? create

@@ -1,6 +1,13 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { NativeSelect } from "@/components/native-select";
+import {
+  ALL,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { agentsQueryOptions } from "@/features/session/api";
 
 type Agents = AgentSummary[];
@@ -25,7 +32,26 @@ export function useAssignableAgents() {
 export const agentOptionLabel = (a: { slug: string; displayName: string }) =>
   `@${a.slug} · ${a.displayName}`;
 
-/** The create form's picker: a native select, since nothing is sent until "Create task". "" is Unassigned. */
+/** The muted mono `@slug` that follows a name in agent options and triggers. */
+export const Slug = ({ slug }: { slug: string }) => (
+  <span className="text-muted-foreground font-mono">@{slug}</span>
+);
+
+/** An agent as a select option: the name, then a muted mono `@slug`. Shown in the closed trigger too. */
+export function AgentItem({ agent }: { agent: { slug: string; displayName: string } }) {
+  return (
+    <SelectItem value={agent.slug} textValue={agent.slug}>
+      {agent.displayName && (
+        <>
+          <span>{agent.displayName}</span>{" "}
+        </>
+      )}
+      <Slug slug={agent.slug} />
+    </SelectItem>
+  );
+}
+
+/** The create form's picker: nothing is sent until "Create task". "" is Unassigned (the ALL sentinel inside). */
 export function AgentPicker({
   id,
   value,
@@ -43,23 +69,22 @@ export function AgentPicker({
   /** An agent that isn't assignable (archived) but is the current value: kept as an option while selected. */
   extraOption?: { value: string; label: string } | undefined;
 }) {
-  const { agents } = useAssignableAgents();
+  const { agents, isPending } = useAssignableAgents();
   return (
-    <NativeSelect
-      id={id}
-      value={value}
-      aria-describedby={describedBy}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">{placeholder}</option>
-      {extraOption && !agents.some((a) => a.slug === extraOption.value) && (
-        <option value={extraOption.value}>{extraOption.label}</option>
-      )}
-      {agents.map((a) => (
-        <option key={a.slug} value={a.slug}>
-          {agentOptionLabel(a)}
-        </option>
-      ))}
-    </NativeSelect>
+    <Select value={value || ALL} onValueChange={(v) => onChange(v === ALL ? "" : v)}>
+      <SelectTrigger id={id} aria-describedby={describedBy}>
+        {/* While the agents load, the chosen slug stands in for the missing option text. */}
+        <SelectValue>{isPending && value ? `@${value}` : undefined}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>{placeholder}</SelectItem>
+        {extraOption && !agents.some((a) => a.slug === extraOption.value) && (
+          <SelectItem value={extraOption.value}>{extraOption.label}</SelectItem>
+        )}
+        {agents.map((a) => (
+          <AgentItem key={a.slug} agent={a} />
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

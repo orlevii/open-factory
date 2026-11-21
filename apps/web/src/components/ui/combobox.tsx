@@ -154,8 +154,11 @@ function Combobox({
   triggerClassName?: string
 }) {
   const [open, setOpen] = React.useState(false)
-  // The side the popover opened on, locked once the filter is used so it never flips while open.
-  const [side, setSide] = React.useState<Side>()
+  // Once the filter is used, the popover's placement is frozen so it never flips while open: the side
+  // it landed on, plus how far collision shift had moved it along the trigger (as an alignment offset,
+  // since locking turns collision handling, flip and shift alike, off).
+  const [lock, setLock] = React.useState<{ side: Side; offset: number }>()
+  const triggerRef = React.useRef<HTMLButtonElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
 
   const selected = options.find((o) => o.value === value)
@@ -164,12 +167,17 @@ function Combobox({
 
   const onOpenChange = (next: boolean) => {
     setOpen(next)
-    if (!next) setSide(undefined)
+    // Reset on open, not on close, so a locked popover doesn't jump while it fades out.
+    if (next) setLock(undefined)
   }
-  const lockSide = () => {
-    if (side) return
-    const placed = contentRef.current?.getAttribute("data-side")
-    if (placed) setSide(placed as Side)
+  const lockPlacement = () => {
+    const content = contentRef.current
+    const side = content?.getAttribute("data-side") as Side | null | undefined
+    if (lock || !content || !side) return
+    const c = content.getBoundingClientRect()
+    const t = triggerRef.current?.getBoundingClientRect()
+    const along = side === "top" || side === "bottom" ? "left" : "top"
+    setLock({ side, offset: t ? c[along] - t[along] : 0 })
   }
   // A key that closes an overlay closes it at once (DESIGN.md → Motion).
   const stampInstant = () => contentRef.current?.setAttribute("data-instant", "")
@@ -189,6 +197,14 @@ function Combobox({
           data-slot="combobox-trigger"
           data-placeholder={empty ? "" : undefined}
           className={cn(selectTriggerClass, triggerClassName)}
+          // Like a Select, an arrow key opens it (the input-modality listener stamps it instant).
+          onKeyDown={(e) => {
+            if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault()
+              onOpenChange(true)
+            }
+          }}
+          ref={triggerRef}
         >
           <span>{shown}</span>
           <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -197,8 +213,9 @@ function Combobox({
       <PopoverContent
         ref={contentRef}
         align="start"
-        side={side}
-        avoidCollisions={!side}
+        side={lock?.side}
+        alignOffset={lock?.offset ?? 0}
+        avoidCollisions={!lock}
         onEscapeKeyDown={stampInstant}
         className="w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] gap-0 p-0"
       >
@@ -207,7 +224,7 @@ function Combobox({
           value={value}
           emptyText={emptyText}
           onCommit={commit}
-          onSearch={lockSide}
+          onSearch={lockPlacement}
         />
       </PopoverContent>
     </Popover>

@@ -168,3 +168,33 @@ test("keyboard-opened popover is stamped data-instant", async () => {
   await vi.waitFor(() => expect(content()).not.toBeNull());
   expect(content()).not.toHaveAttribute("data-instant");
 });
+
+const rect = (left: number, top: number, width: number, height: number) =>
+  ({ left, top, width, height, x: left, y: top, right: left + width, bottom: top + height, toJSON() {} }) as DOMRect;
+const translateX = (el: HTMLElement) => /translate\(([-\d.]+)px/.exec(el.style.transform)?.[1];
+
+test("locking the side keeps the popover's horizontal place (a shifted popover doesn't snap back)", async () => {
+  const { trigger } = setup();
+  vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(300, 0, 100, 32));
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  const c = content() as HTMLElement;
+  const wrapper = c.parentElement as HTMLElement;
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("300"));
+  // Simulate collision shift having moved the open popover 60px left to stay in the viewport.
+  vi.spyOn(c, "getBoundingClientRect").mockReturnValue(rect(240, 36, 384, 330));
+  await userEvent.keyboard("a");
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("240"));
+});
+
+test("ArrowDown or ArrowUp on the closed trigger opens it, stamped data-instant, without committing", async () => {
+  const { trigger, onValueChange } = setup();
+  for (const key of ["{ArrowDown}", "{ArrowUp}"]) {
+    trigger.focus();
+    await userEvent.keyboard(key);
+    await vi.waitFor(() => expect(content()).toHaveAttribute("data-instant"));
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(content()).toBeNull());
+  }
+  expect(onValueChange).not.toHaveBeenCalled();
+});

@@ -396,7 +396,7 @@ Add colors `steel-selected` (light) and `night-selected` (dark) with the values 
     backgroundColor: "{colors.plate}"
     width: "320px"
 ```
-Correct `sidebar.width` to `"256px"` (the code's `16rem`; DESIGN.md said 240) and Layout's "240px sidebar" to "256px".
+No change to `sidebar.width` or Layout: the shell is 240px (`_app.tsx` sets `--sidebar-width: 15rem`; the 16rem default in `ui/sidebar.tsx` is overridden), which DESIGN.md already says.
 
 ### 16.2 Colors → Agent identity (PR1)
 
@@ -488,12 +488,12 @@ PR3's Settings sub-nav uses `steel-selected`, which lands in PR5: PR3 renders it
 **Decided by Or's delegate (decisions.md rows 16–21; Or delegated the open calls to the team lead, who decided on UI/UX practice and Emil's design principles):**
 - Q34 yes (row 16): opening an agent's session marks that agent's unread messages to you read, with the safeguards of §15.1 (server-side by sender, `upTo`, never from a loader, only while visible). Reason: a badge that opening the conversation doesn't clear reads as a bug.
 - Q17 drop Home (row 17): `/` → `/inbox`; the Home page is deleted (§13). Reason: "Needs you" duplicates the Inbox and "Live now" duplicates the sidebar tree.
-- Q32 tooth + number (row 18), "N working" as accessible name and tooltip. Reason: the words don't fit a 256px row with a name.
+- Q32 tooth + number (row 18), "N working" as accessible name and tooltip. Reason: the words don't fit a 240px row with a name.
 - Q4 full opacity (row 19). Reason: spawned-ness is shown by nesting and the "· ab12" suffix; a lower opacity would read as disabled.
 - Row 20: ghost for in-section actions, outline for page/header-level ones, so Agent details' "Edit agent" is outline. Row 21 (disabled buttons keep their variant's shape) is fixed in U1.
 
 **Deviations from the decisions' literal text (now decided):**
-- Q32: decision 2's "1 working" is drawn as the working tooth plus a number (accessible name "1 working"), because the words don't fit a 256px row with a name.
+- Q32: decision 2's "1 working" is drawn as the working tooth plus a number (accessible name "1 working"), because the words don't fit a 240px row with a name.
 - Q34: opening an agent's session marks that agent's unread messages read (an inbox.md change).
 - Q17: decision 14's "Home redesign" is resolved by removing Home.
 - Q30: Agent details is in-flow (not an overlay) at 1024–1279, closed by default there, per decision 5's "closed below 1280".

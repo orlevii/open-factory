@@ -137,7 +137,7 @@ components:
     width: "480px"
   sidebar:
     backgroundColor: "{colors.steel-deep}"
-    width: "256px"
+    width: "240px"
   nav-item-active:
     backgroundColor: "{colors.steel-hover}"
     textColor: "{colors.graphite-ink}"
@@ -240,7 +240,7 @@ Reading prose stays 14/22 for now; the reading size of the timeline, task bodies
 ## Layout
 
 - A 4px grid. Controls are 32px tall on desktop and 36px on touch, and the page header is 48px.
-- The shell is a 256px sidebar, collapsible to icons, plus the content area. On mobile the sidebar becomes a left drawer, opened from its button.
+- The shell is a 240px sidebar, collapsible to icons, plus the content area. On mobile the sidebar becomes a left drawer, opened from its button.
 - Content gutters are 16px on mobile and 24px from `md` up.
 - Dense by design. Trees, timelines and tables put a lot on one screen, so rhythm comes from rules and spacing, not boxes.
 

@@ -31,7 +31,11 @@ export function ImagesSection() {
   }, [hash, isPending]);
 
   return (
-    <section id="images" aria-labelledby="images-title" className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3 scroll-mt-4">
+    <section
+      id="images"
+      aria-labelledby="images-title"
+      className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3 scroll-mt-4"
+    >
       <h2
         id="images-title"
         tabIndex={-1}

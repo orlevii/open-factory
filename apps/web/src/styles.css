@@ -545,3 +545,38 @@
     transition: background-color 150ms var(--ease-out);
   }
 }
+
+/* Vaul drawer timing. At the end of the file, OUTSIDE any @layer.
+   Vaul 1.1.2 (pinned exactly) appends unlayered rules to <head> after this file:
+   [data-vaul-drawer]{animation-duration:.5s}, [data-vaul-overlay][data-vaul-snap-points=false]{animation-duration:.5s}
+   and four-attribute animation-name selectors. Our declarations are !important, so they win.
+   Re-check on any Vaul upgrade; drawer.test.tsx's guard fails if these attributes or rules change.
+   DESIGN.md → Motion → Durations, Gesture UI. */
+/* biome-ignore-start lint/complexity/noImportantStyles: must beat Vaul's injected rules. */
+[data-vaul-drawer][data-slot="drawer-content"][data-state="open"] {
+  animation-duration: 250ms !important;
+  animation-timing-function: var(--ease-drawer) !important;
+}
+[data-vaul-drawer][data-slot="drawer-content"][data-state="closed"] {
+  animation-duration: 200ms !important;
+  animation-timing-function: var(--ease-out) !important;
+}
+[data-vaul-drawer][data-slot="drawer-content"][data-state="closed"][data-released] {
+  animation-duration: 300ms !important;
+  animation-timing-function: var(--ease-drawer) !important;
+}
+[data-vaul-overlay][data-slot="drawer-overlay"][data-state="open"] {
+  animation-duration: 250ms !important;
+  animation-timing-function: var(--ease-drawer) !important;
+}
+[data-vaul-overlay][data-slot="drawer-overlay"][data-state="closed"] {
+  animation-duration: 200ms !important;
+  animation-timing-function: var(--ease-out) !important;
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: must beat Vaul's injected rules. */
+/* Reduced motion: Vaul's slide starts from var(--initial-transform, 100%), which its JS never sets. */
+@media (prefers-reduced-motion: reduce) {
+  [data-vaul-drawer] {
+    --initial-transform: 0px;
+  }
+}

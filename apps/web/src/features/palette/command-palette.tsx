@@ -88,12 +88,12 @@ const AGENT_ROWS = 50;
 type AgentRows = { rows: RankedAgent[]; cut: boolean };
 
 /** Reads the cached lists once (no subscription: a status frame never re-renders or reorders the
- *  palette) and ranks them for `query`. */
-function rankFromCache(qc: QueryClient, query: string): AgentRows {
+ *  palette) and ranks them for `query`. `recent` is read once per opening by the caller. */
+function rankFromCache(qc: QueryClient, query: string, recent: string[]): AgentRows {
   const cached = qc.getQueryData<AgentSummary[]>(agentsListQueryOptions("exclude").queryKey) ?? [];
   const live = cached.filter(isLive);
   const ended = qc.getQueryData<AgentSummary[]>(agentsListQueryOptions("only").queryKey) ?? [];
-  const ranked = rankAgents(query, live, ended, readRecentAgents(), treeOrderOf(cached));
+  const ranked = rankAgents(query, live, ended, recent, treeOrderOf(cached));
   if (ranked.length <= AGENT_ROWS) return { rows: ranked, cut: false };
   let room = AGENT_ROWS - ranked.filter((r) => r.strong).length;
   const rows = ranked.filter((r) => r.strong || room-- > 0);
@@ -173,7 +173,9 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
   const onSession = useRouterState({ select: (s) => SESSION_PATH.test(s.location.pathname) });
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
-  const [{ rows: agents, cut }, setAgents] = useState(() => rankFromCache(qc, ""));
+  // localStorage is parsed once per opening, not on each keystroke.
+  const [recent] = useState(readRecentAgents);
+  const [{ rows: agents, cut }, setAgents] = useState(() => rankFromCache(qc, "", recent));
   const latestQuery = useRef("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // ⇧ on the committing Enter or click: open the session and focus its composer.
@@ -187,18 +189,18 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
     if (qc.getQueryData(opts.queryKey)) return;
     let live = true;
     qc.ensureQueryData(opts).then(
-      () => live && setAgents(rankFromCache(qc, latestQuery.current)),
+      () => live && setAgents(rankFromCache(qc, latestQuery.current, recent)),
       () => {},
     );
     return () => {
       live = false;
     };
-  }, [qc]);
+  }, [qc, recent]);
 
   const onQuery = (value: string) => {
     setQuery(value);
     latestQuery.current = value;
-    setAgents(rankFromCache(qc, value));
+    setAgents(rankFromCache(qc, value, recent));
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setDebounced(value.trim()), SEARCH_DEBOUNCE_MS);
   };

@@ -176,6 +176,24 @@ test("agents: live first, ended after with 'Ended'; Enter opens the session; ⇧
   expect(options(third)[0]).toContain("@dev");
 });
 
+test("the recent agents are read once per opening, not on each keystroke", async () => {
+  localStorage.setItem("of-recent-agents", JSON.stringify(["devops"]));
+  const getItem = vi.spyOn(Storage.prototype, "getItem");
+  const recentReads = () => getItem.mock.calls.filter(([k]) => k === "of-recent-agents").length;
+  try {
+    const { dialog, input } = await openFromInput();
+    // The empty query lists them.
+    await waitFor(() => expect(options(dialog)[0]).toContain("@devops"));
+    const atOpen = recentReads();
+    expect(atOpen).toBeGreaterThan(0);
+    await userEvent.type(input, "dev");
+    await waitFor(() => expect(options(dialog)[0]).toContain("@dev"));
+    expect(recentReads()).toBe(atOpen);
+  } finally {
+    getItem.mockRestore();
+  }
+});
+
 test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async () => {
   const { dialog } = await openFromInput();
   const actions = within(dialog).getByRole("group", { name: "Actions" });

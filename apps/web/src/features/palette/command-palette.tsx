@@ -14,6 +14,8 @@ import { AgentChip } from "@/components/agent-chip";
 import { isMac } from "@/components/ui/kbd";
 import { agentsListQueryOptions, endedMoreQueryKey } from "@/features/session/api";
 import { openAgentDetails, requestComposerFocus } from "@/features/session/session-commands";
+import { openShortcutsSheet } from "@/features/shortcuts/sheet-store";
+import { newTask } from "@/features/tasks/actions";
 import { lookupTasks, tasksSearchOptions } from "@/features/tasks/api";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { setPreference } from "@/lib/theme";
@@ -92,8 +94,6 @@ function rankFromCache(qc: QueryClient, query: string): AgentRows {
 }
 
 const matches = (label: string, q: string) => q === "" || label.toLowerCase().includes(q);
-
-const ACTION_ROWS = ACTIONS.filter((a) => a.kind !== "shortcuts"); // the sheet lands with the shortcut bindings
 
 const groupClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground";
@@ -220,9 +220,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
 
   const endedMore = agents.some((a) => a.ended) && qc.getQueryData<boolean>(endedMoreQueryKey);
   const goTo = GO_TO.filter((g) => matches(g.label, lower));
-  const actions = ACTION_ROWS.filter(
-    (a) => (!a.sessionOnly || onSession) && matches(a.label, lower),
-  );
+  const actions = ACTIONS.filter((a) => (!a.sessionOnly || onSession) && matches(a.label, lower));
 
   /** Closes the palette, then runs `go`. `after` runs once the dialog has let go of focus (in its
    *  close hand-off, so nothing it focuses is taken back); null returns focus to where ⌘K was
@@ -245,7 +243,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
       case "navigate":
         return leave(() => void navigate({ to: a.to as string }));
       case "new-task":
-        return leave(() => void navigate({ to: "/tasks/new" }));
+        return leave(() => newTask(navigate));
       case "agent-details":
         // Opened after the close hand-off: a peek sheet doesn't trap focus, so the dialog's focus
         // return would otherwise pull focus back out of it.
@@ -257,7 +255,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
       case "theme-dark":
         return commit(() => setPreference("dark"), null);
       case "shortcuts":
-        return;
+        return commit(NOTHING, openShortcutsSheet);
     }
   };
 

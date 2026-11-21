@@ -19,3 +19,14 @@ test("Mod is ⌘ on a Mac and Ctrl elsewhere", () => {
   render(<Kbd keys={["Mod", "K"]} />);
   expect(screen.getByText("Ctrl")).toBeInTheDocument();
 });
+
+test("platform comes from userAgentData when the browser has it", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "macOS" }, configurable: true });
+  try {
+    render(<Kbd keys={["Mod"]} />);
+    expect(screen.getByText("⌘")).toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(navigator, "userAgentData");
+  }
+});

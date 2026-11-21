@@ -9,6 +9,7 @@ import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/s
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
+import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { installShortcuts } from "@/lib/shortcuts";
@@ -189,6 +190,7 @@ function AppLayout() {
             <Outlet />
           </SidebarInset>
           <CommandPalette />
+          <GlobalShortcuts />
         </SidebarProvider>
       </ShellContext.Provider>
     </WsContext.Provider>

@@ -94,44 +94,40 @@ function usePaneItem(id: string, loaded: InboxItem | undefined) {
   return { item, gone, failed: !item && !gone && fetched.isError };
 }
 
-/** Marks an item read (also its single-item copy, so a second call doesn't count it again). */
-function useMarkRead() {
-  const open = useOpenItem();
-  const qc = useQueryClient();
-  return useCallback(
-    (item: InboxItem) => {
-      open(item);
-      qc.setQueryData(inboxItemOptions(item.id).queryKey, (i) => i && { ...i, read: true });
-    },
-    [open, qc],
-  );
-}
-
 /** Sending a reply marks the item read at once. */
 function useMarkReplied(item: InboxItem) {
-  const markRead = useMarkRead();
-  return useCallback(() => markRead(item), [markRead, item]);
+  const open = useOpenItem();
+  return useCallback(() => open(item), [open, item]);
 }
 
 /**
  * The dwell (spec §11.1): an unread item is read once it has been shown for INBOX_DWELL_MS, however
- * it came to be shown (j/k, a deep link, Back/Forward). Moving on first (the pane remounts per item)
- * cancels it; a click, Enter or Space has already read it, which cancels it too.
+ * it came to be shown (j/k, a deep link, Back/Forward). It fires at most once per shown item (the
+ * pane remounts per item): moving on or unmounting first cancels it; so does the item turning read
+ * while shown (a click, Enter or Space turns the cached row read at once). An item that turns
+ * unread again while shown (a failed read rolled back, an Undo of Mark all read) is left unread.
  */
 function useDwellRead(item: InboxItem | undefined) {
-  const markRead = useMarkRead();
+  const open = useOpenItem();
   const latest = useRef(item);
   useEffect(() => {
     latest.current = item;
   }, [item]);
-  const unread = item !== undefined && !item.read;
+  const done = useRef(false);
+  const shown = item !== undefined;
+  const unread = shown && !item.read;
   useEffect(() => {
-    if (!unread) return;
+    if (!shown || done.current) return;
+    if (!unread) {
+      done.current = true;
+      return;
+    }
     const timer = setTimeout(() => {
-      if (latest.current) markRead(latest.current);
+      done.current = true;
+      if (latest.current) open(latest.current);
     }, INBOX_DWELL_MS);
     return () => clearTimeout(timer);
-  }, [unread, markRead]);
+  }, [shown, unread, open]);
 }
 
 /** A message: the session excerpt at its target, and the composer to that session. */

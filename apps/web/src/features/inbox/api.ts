@@ -152,6 +152,10 @@ export function useInboxCache() {
     return {
       setRead(ids: Set<string>, read: boolean, delta: number, items?: InboxItem[]) {
         flipRows((i) => ids.has(i.id), read);
+        // The reading pane's own copy of an item outside the loaded pages, when there is one: it
+        // turns (and, on a failed read, turns back) with the rows.
+        for (const id of ids)
+          qc.setQueryData(inboxItemOptions(id).queryKey, (i) => i && { ...i, read });
         const byAgent: Record<string, number> = {};
         for (const i of items ?? []) {
           const from = fromAgent(i);

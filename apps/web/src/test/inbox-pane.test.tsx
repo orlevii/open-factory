@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { inboxItemOptions } from "@/features/inbox/api";
 import { INBOX_DWELL_MS } from "@/lib/timing";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
@@ -312,4 +313,57 @@ test("an item Back restores is read after the dwell; one shown for less is not",
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i3/read"]));
   await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 2));
   expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i3/read"]);
+});
+
+const fail = () => json({ error: { code: "x", message: "x" } }, 500);
+const readsOf = (id: string) => reads().filter((c) => c.url === `/api/inbox/${id}/read`).length;
+
+test("a failed dwell read is not retried while the item stays shown", async () => {
+  api.on("POST /api/inbox/i2/read", fail);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  await visit(1280, "/inbox?item=i2");
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS));
+  await waitFor(() => expect(readsOf("i2")).toBe(1));
+  // The rollback turns the row unread again; the dwell doesn't re-arm.
+  await waitFor(() => expect(row("i2")?.getAttribute("aria-label")).toMatch(/^Unread/));
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 3));
+  expect(readsOf("i2")).toBe(1);
+});
+
+test("a failed dwell read restores the pane's own copy of an item outside the loaded pages", async () => {
+  const i9 = item(9);
+  api.on("GET /api/inbox/i9", () => json({ item: i9 }));
+  api.on("POST /api/inbox/i9/read", fail);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const app = await visit(1280, "/inbox?item=i9");
+  const copy = () => app.queryClient.getQueryData(inboxItemOptions("i9").queryKey);
+  await waitFor(() => expect(copy()).toBeDefined());
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS));
+  await waitFor(() => expect(readsOf("i9")).toBe(1));
+  await waitFor(() => expect(copy()?.read).toBe(false));
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 3));
+  expect(readsOf("i9")).toBe(1);
+});
+
+test("Undo of Mark all read leaves the shown item unread: the dwell doesn't read it again", async () => {
+  let server = items.map((i) => ({ ...i }));
+  api.on("GET /api/inbox?", () => json({ items: server, nextCursor: null }));
+  api.on("POST /api/inbox/read-all", () => {
+    server = server.map((i) => ({ ...i, read: true }));
+    return json({ readAt: "2026-11-19T15:00:00.123Z", count: 5 });
+  });
+  api.on("POST /api/inbox/read-all/undo", () => {
+    server = server.map((i) => ({ ...i, read: false }));
+    return json({ count: 5 });
+  });
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  await visit(1280, "/inbox?item=i2");
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS));
+  await waitFor(() => expect(readsOf("i2")).toBe(1));
+  fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(row("i2")?.getAttribute("aria-label")).toMatch(/^Unread/));
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 2));
+  expect(readsOf("i2")).toBe(1);
+  expect(row("i2")?.getAttribute("aria-label")).toMatch(/^Unread/);
 });

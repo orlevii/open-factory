@@ -80,12 +80,15 @@ function SideSection({
 /** Save / Cancel row of an inline editor. */
 function EditorButtons({
   pending,
+  saveDisabled = false,
   onSave,
   onCancel,
   failed,
   hint,
 }: {
   pending: boolean;
+  /** Save waits for something besides the request in flight. */
+  saveDisabled?: boolean;
   onSave(): void;
   onCancel(): void;
   failed: string | undefined;
@@ -100,7 +103,7 @@ function EditorButtons({
         </p>
       )}
       <div className="flex items-center gap-2">
-        <Button type="button" onClick={onSave} disabled={pending}>
+        <Button type="button" onClick={onSave} disabled={pending || saveDisabled}>
           {pending ? "Saving…" : "Save"}
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
@@ -220,7 +223,7 @@ export function TaskDetailView({
             onReply={reply}
             notFoundLine={missing}
           />
-          <CommentComposer ref={composer} taskKey={task.key} assignee={liveAssignee} />
+          <CommentComposer ref={composer} taskKey={taskKey} assignee={liveAssignee} />
         </div>
       </div>
     </PageBody>
@@ -642,6 +645,7 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
 }
 
 function LinksSection({ task, save }: { task: Detail; save: Save }) {
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<LinkRow[]>([]);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
@@ -690,6 +694,7 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
           <LinkEditor rows={rows} onChange={setRows} errors={errors} onBlurRow={() => check()} />
           <EditorButtons
             pending={pending}
+            saveDisabled={known === undefined}
             onSave={() => void commit()}
             onCancel={close}
             failed={failed}
@@ -704,6 +709,9 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
               variant="ghost"
               size="xs"
               onClick={() => {
+                // The lists start loading on the click, not on the next render.
+                void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+                void qc.prefetchQuery(agentsListQueryOptions("only"));
                 setRows(
                   task.links.map((l) =>
                     newLinkRow({

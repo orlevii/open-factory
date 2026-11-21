@@ -310,6 +310,70 @@ test("composer: disabled while empty, Ctrl-Enter posts, Posting…, the draft st
   expect(box).toHaveValue("");
 });
 
+const posted = (body: string) =>
+  json(
+    {
+      comment: {
+        type: "comment",
+        id: `c-${body}`,
+        author: { kind: "user", handle: "alice" },
+        body,
+        at: at(15, 0),
+      },
+      deliveredTo: [],
+      mentionedHumans: [],
+      notReached: [],
+    },
+    201,
+  );
+
+test("composer: text typed while a post is in flight survives it; the posted part goes", async () => {
+  const api = world();
+  let release: () => void = () => {};
+  api.on("POST /api/tasks/T-42/comments", async () => {
+    await new Promise<void>((r) => (release = r));
+    return posted("a");
+  });
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await screen.findByRole("button", { name: "Posting…" });
+  await userEvent.type(box, "b");
+  await act(async () => release());
+  await screen.findByRole("button", { name: "Comment" });
+  expect(box).toHaveValue("b");
+});
+
+test("composer: with nothing typed during the post the draft clears", async () => {
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await waitFor(() => expect(box).toHaveValue(""));
+});
+
+test("links editor: the agent lists load on the Edit click and Save waits for them", async () => {
+  const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
+  const releases: (() => void)[] = [];
+  api.on("GET /api/agents?", async () => {
+    await new Promise<void>((r) => releases.push(r));
+    return agents();
+  });
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  const listFetches = () => api.calls.filter((c) => c.url.startsWith("/api/agents?")).length;
+  expect(listFetches()).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await waitFor(() => expect(releases.length).toBe(2));
+  await act(async () => {
+    for (const r of releases) r();
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+});
+
 test("no assignee: the helper says only mentions are notified", async () => {
   world(() => detail({ assignee: null }));
   renderApp("/tasks/T-42", alice);

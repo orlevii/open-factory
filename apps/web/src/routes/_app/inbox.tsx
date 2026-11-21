@@ -57,9 +57,10 @@ function InboxPage() {
   const header = (
     <PageHeader title="Inbox" actions={<MarkAllReadButton state={state} buttonRef={button} />} />
   );
-  // One grid item: the line's two live regions shouldn't each take a gap.
+  // The live regions stay mounted (so the outcome is announced), but take room only with a line
+  // in them: no empty strip above the list.
   const outcome = (
-    <div>
+    <div className={state.outcome ? "pb-4" : undefined}>
       <MarkAllReadOutcome state={state} lastReadAt={lastReadAt} />
     </div>
   );
@@ -69,7 +70,7 @@ function InboxPage() {
         {header}
         <div className="flex min-h-0 flex-1">
           <div className="w-[23.75rem] shrink-0 overflow-y-auto border-r border-border">
-            <div className="grid gap-4 py-4">
+            <div className="py-4">
               <div className="px-4">{outcome}</div>
               <InboxList selectedId={itemId} onSelect={onSelect} />
             </div>
@@ -82,10 +83,8 @@ function InboxPage() {
     <>
       {header}
       <PageBody>
-        <div className="grid gap-4">
-          {outcome}
-          <InboxList />
-        </div>
+        {outcome}
+        <InboxList />
       </PageBody>
     </>
   );

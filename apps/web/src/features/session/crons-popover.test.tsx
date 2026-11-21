@@ -1,3 +1,4 @@
+import type { AgentSummary } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -12,7 +13,19 @@ import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest"
 import { browserZone } from "@/features/schedules/format";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
-import { AgentStrip } from "./agent-strip";
+import { CronsSegment } from "./crons-popover";
+import { CronsStopLayer, useStopCrons } from "./stop-crons";
+
+/** The segment as Agent details shows it, with the session view's Stop crons state and layer. */
+function Segment({ agent }: { agent: AgentSummary }) {
+  const stop = useStopCrons(agent);
+  return (
+    <>
+      <CronsSegment agent={agent} stop={stop} />
+      <CronsStopLayer agent={agent} stop={stop} />
+    </>
+  );
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -53,7 +66,7 @@ function strip(over: Record<string, unknown> = {}) {
   const root = createRootRoute({
     component: () => (
       <div>
-        <AgentStrip agent={agent} />
+        <Segment agent={agent} />
         <div id="composer">
           <textarea aria-label="composer" />
         </div>
@@ -131,9 +144,9 @@ test("Stop closes the popover, opens the confirmation with Cancel focused, then 
   expect(await screen.findByText("Stopped @dev's crons.")).toBeInTheDocument();
 });
 
-test("the confirmation's focus return does nothing once the strip has unmounted", async () => {
+test("the confirmation's focus return does nothing once the segment has unmounted", async () => {
   mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
-  // A composer outside the strip's tree, standing in for the next page's (or the next test's).
+  // A composer outside the segment's tree, standing in for the next page's (or the next test's).
   const other = document.body.appendChild(document.createElement("div"));
   other.id = "composer";
   const textarea = other.appendChild(document.createElement("textarea"));
@@ -146,7 +159,7 @@ test("the confirmation's focus return does nothing once the strip has unmounted"
     within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Stop 2 crons" }),
   );
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  // Radix calls onCloseAutoFocus on a timer after the dialog unmounts, and the strip defers the
+  // Radix calls onCloseAutoFocus on a timer after the dialog unmounts, and the hook defers the
   // focus to the next frame: both land after this unmount.
   unmount();
   await new Promise((r) => setTimeout(r, 0));
@@ -190,20 +203,4 @@ test("a pending stop is announced as pending; no_crons and stopping count as don
   // Leave nothing modal behind: an open Radix dialog would hide the next test's page from the queries.
   await u.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-});
-
-test("the schedules link shows from one up, singular at one, links to the target, and is hidden below md", async () => {
-  strip({ scheduleCount: 2 });
-  const link = await screen.findByRole("link", { name: "2 schedules" });
-  expect(link).toHaveAttribute("href", "/schedules?target=dev");
-  expect(link.className).toContain("max-md:hidden");
-});
-test("a single schedule reads '1 schedule'; none shows no link", async () => {
-  strip({ scheduleCount: 1 });
-  expect(await screen.findByRole("link", { name: "1 schedule" })).toBeInTheDocument();
-});
-test("no schedules, no link", async () => {
-  strip({ scheduleCount: 0 });
-  await screen.findAllByText("dev");
-  expect(screen.queryByRole("link", { name: /schedule/ })).toBeNull();
 });

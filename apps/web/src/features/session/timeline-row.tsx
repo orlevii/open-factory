@@ -205,7 +205,7 @@ function FixLink({
         Edit the agent
       </Link>
     );
-  // The strip's disabled segment explains the runtime gate (S5 UI design §3.2): no link.
+  // Agent details' Runtime says the local runtime is off (S5 UI design §3.2): no link.
   if (fix === "runtime") return null;
   // An unbuilt user image is built in Templates → Images (spec §10.1).
   if (fix === "image")

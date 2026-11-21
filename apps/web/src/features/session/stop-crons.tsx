@@ -16,21 +16,23 @@ export type StopCrons = {
   returnFocus(): void;
 };
 
-/** The Stop crons state, held by the strip: the segment unmounts once the crons are gone, the dialog and outcome must not. */
-export function useStopCrons(agent: AgentSummary): StopCrons {
+/** The Stop crons state, held by the session view (U2 §8.4): Agent details' segment and the ⋯ menu
+ *  open it, and both can unmount while the dialog and outcome must not. `undefined` until the
+ *  session has an agent. */
+export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
   const [popover, setPopover] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [outcome, setOutcome] = useState<{ text: string; key: number } | undefined>();
   const trigger = useRef<HTMLButtonElement>(null);
   // The outcome belongs to the crons it stopped: clear it when new ones appear (0 to above 0).
-  const count = agent.crons.length;
+  const count = agent?.crons.length ?? 0;
   const prev = useRef(count);
   useEffect(() => {
     if (prev.current === 0 && count > 0) setOutcome(undefined);
     prev.current = count;
   }, [count]);
   // Radix calls onCloseAutoFocus on a timer after the dialog unmounts, and the focus waits a frame
-  // more: by then the strip may be gone (navigated away), and the composer found is another page's.
+  // more: by then the view may be gone (navigated away), and the composer found is another page's.
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -39,7 +41,8 @@ export function useStopCrons(agent: AgentSummary): StopCrons {
     };
   }, []);
   function returnFocus() {
-    // Back to the strip's button, or to the composer once it is gone (the crons stopped).
+    // Back to the segment's button, or to the composer once it is gone (the crons stopped or the
+    // panel closed).
     requestAnimationFrame(() => {
       if (!mounted.current) return;
       if (trigger.current?.isConnected) trigger.current.focus();
@@ -47,6 +50,7 @@ export function useStopCrons(agent: AgentSummary): StopCrons {
     });
   }
   async function run() {
+    if (!agent) return;
     try {
       const r = await stopCrons(agent.slug);
       setOutcome({
@@ -65,7 +69,8 @@ export function useStopCrons(agent: AgentSummary): StopCrons {
   return { popover, setPopover, confirm, setConfirm, outcome, trigger, run, returnFocus };
 }
 
-/** The confirmation and the announced outcome, mounted by the strip so they outlive the segment. */
+/** The confirmation and the announced outcome, mounted once by the session view so they outlive the
+ *  segment and the menu. */
 export function CronsStopLayer({ agent, stop }: { agent: AgentSummary; stop: StopCrons }) {
   return (
     <>

@@ -2,22 +2,28 @@ import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
 import { agentTasksOptions } from "@/features/tasks/api";
 import { STATUS } from "@/features/tasks/status-label";
 import { formatCost } from "@/features/usage/format";
+import { MOBILE, useMedia, WIDE, XWIDE } from "@/lib/breakpoints";
+import { usePref } from "@/lib/prefs";
+import { useShortcut } from "@/lib/shortcuts";
 import { agentsListQueryOptions } from "./api";
 import { CronsSegment } from "./crons-popover";
-import { formatTime } from "./format";
+import { atPhrase, formatTime } from "./format";
+import { formatBy } from "./format-by";
+import { canPin, PinButton } from "./live-line";
 import { LINK_CLASS } from "./message-block";
+import { Actor } from "./spawn-block";
 import { resetPhrase } from "./status-badge";
 import type { StopCrons } from "./stop-crons";
-import { endedSentence, PinToggle, WhatsKept, workspaceSentence } from "./terminated-strip";
 
 export const RESTART_WHY =
   "The agent finishes its current turn and background tasks, then restarts with the new settings. Its session is kept. Its crons from this session stop, and it's told which, so it can recreate them.";
@@ -26,6 +32,52 @@ const MAX_REPORTS = 8;
 const MAX_WORK = 5;
 /** Past this many characters a description is likely to need the 3-line clamp; jsdom has no layout, so this is a length guess. */
 const CLAMP_CHARS = 140;
+
+export const WHATS_KEPT =
+  "The session history stays here for good. The workspace (its files and Claude config) is deleted 3 days after it was terminated, unless you pin it. Worktrees and branches it made in projects are never deleted.";
+
+/** "Terminated by @lead today at 14:32." or, for the inactivity TTL, "Terminated on … after 3 days
+ *  without activity." */
+export function endedSentence(agent: AgentSummary, now: Date): ReactNode {
+  const when = atPhrase(new Date(agent.terminatedAt ?? 0), now);
+  const by = agent.terminatedBy;
+  if (!by) return `Terminated ${when}.`;
+  if (formatBy(by).kind === "ttl") return `Terminated ${when} after 3 days without activity.`;
+  return (
+    <>
+      Terminated by <Actor by={by} /> {when}.
+    </>
+  );
+}
+
+/** What became of the workspace; `undefined` when there is nothing to say. */
+export function workspaceSentence(agent: AgentSummary, now: Date): string | undefined {
+  if (agent.workspaceDeletedAt)
+    return `Workspace deleted ${atPhrase(new Date(agent.workspaceDeletedAt), now)}.`;
+  if (agent.workspacePinned) return "Workspace pinned.";
+  const grace = agent.workspaceGraceEndsAt;
+  if (!grace) return undefined;
+  const ends = new Date(grace);
+  // The sweep runs every 10 minutes and retries a failing deletion: past the grace it is "due".
+  if (ends.getTime() <= now.getTime())
+    return `Workspace due for deletion since ${atPhrase(ends, now).replace(/^on /, "")} unless you pin it.`;
+  return `Workspace will be deleted ${atPhrase(ends, now)} unless you pin it.`;
+}
+
+export function WhatsKept() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="xs">
+          What's kept?
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 text-[0.8125rem] leading-[1.125rem]">
+        <p>{WHATS_KEPT}</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const waitingText = (n: number) =>
   n > 0 ? ` (waiting on ${n} background ${n === 1 ? "task" : "tasks"})` : "";
@@ -114,17 +166,15 @@ function Now({
     const stuck = agent.stuck
       ? " Its container couldn't be removed; the factory keeps retrying."
       : "";
-    const canPin =
-      !agent.workspaceDeletedAt && (agent.workspacePinned || !!agent.workspaceGraceEndsAt);
     rows.push({
       key: "terminated",
       node: (
         <div className="flex flex-wrap items-center gap-x-2">
-          <span>
+          <span data-terminated-text>
             {endedSentence(agent, now)}
             {`${workspace ? ` ${workspace}` : ""}${stuck}`}
           </span>
-          {canPin && <PinToggle agent={agent} onAgent={onAgent} />}
+          {canPin(agent) && <PinButton agent={agent} onAgent={onAgent} />}
           <WhatsKept />
         </div>
       ),
@@ -433,5 +483,96 @@ export function AgentDetails({
         </div>
       )}
     </div>
+  );
+}
+
+export type AgentDetailsMode = "inflow" | "overlay" | "drawer";
+export type AgentDetailsPanel = {
+  open: boolean;
+  toggle: () => void;
+  setOpen: (open: boolean) => void;
+  mode: AgentDetailsMode;
+};
+
+/** "closed" once the human closed Agent details at ≥1280px; it then stays closed there. */
+export const AGENT_DETAILS_PREF = "of-agent-details";
+/** The in-flow column's and the sheet's id, for the header toggle's `aria-controls`. */
+export const AGENT_DETAILS_ID = "agent-details";
+export const AGENT_DETAILS_TOGGLE_ID = "agent-details-toggle";
+const parseOpenPref = (raw: string) => (raw === "open" || raw === "closed" ? raw : undefined);
+
+/**
+ * Where Agent details shows and whether it is open (U2 §8.1). ≥1280: in-flow, open unless the human
+ * closed it there (remembered); 1024–1279: in-flow, closed on each visit; 768–1023: a peek sheet
+ * under the header; below, the bottom drawer. Called once per session page, above the per-agent
+ * view, so an open panel stays open when the human switches agents; a closed one starts each agent
+ * at its width's default. A sheet opened below 1024px stays a sheet until it closes (the U1 latch).
+ * `]` toggles it while the page is mounted.
+ */
+export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
+  const xwide = useMedia(XWIDE);
+  const wide = useMedia(WIDE);
+  const mobile = useMedia(MOBILE);
+  const [pref, setPref] = usePref<"open" | "closed">(AGENT_DETAILS_PREF, "open", parseOpenPref);
+  const [state, setState] = useState<{ slug: string; open: boolean; sheet: boolean } | null>(null);
+  const byWidth: AgentDetailsMode = wide ? "inflow" : mobile ? "drawer" : "overlay";
+  const fallback = xwide && pref === "open";
+  // Derived, never reset by an effect: the state applies to its own slug, or follows to the next one
+  // while open.
+  const carried = state !== null && (state.slug === slug || state.open);
+  const open = carried ? state.open : fallback;
+  const latched = open && carried && state.sheet && byWidth === "inflow";
+  const mode: AgentDetailsMode = latched ? "overlay" : byWidth;
+
+  const latest = useRef({ slug, open, xwide, fallback, mode });
+  latest.current = { slug, open, xwide, fallback, mode };
+  const setOpen = useCallback(
+    (next: boolean) => {
+      const c = latest.current;
+      setState({ slug: c.slug, open: next, sheet: c.mode !== "inflow" });
+      // Remembered only where it is open by default.
+      if (c.xwide) setPref(next ? "open" : "closed");
+    },
+    [setPref],
+  );
+  const toggle = useCallback(() => setOpen(!latest.current.open), [setOpen]);
+  useShortcut("]", () => {
+    const c = latest.current;
+    // A key that closes an overlay closes it at once, however it opened (§16.8).
+    if (c.open && c.mode !== "inflow")
+      closeInstantly(document.getElementById(AGENT_DETAILS_ID), () => setOpen(false));
+    else toggle();
+  });
+  return { open, toggle, setOpen, mode };
+}
+
+/**
+ * The 768–1023 peek sheet and the phone drawer. It lives above the per-agent view (which remounts
+ * for each agent), so switching agents swaps its content in place: the view portals `AgentDetails`
+ * into the node handed to `onHost`.
+ */
+export function AgentDetailsSheet({
+  panel,
+  onHost,
+}: {
+  panel: AgentDetailsPanel;
+  onHost: (node: HTMLDivElement | null) => void;
+}) {
+  return (
+    <Sheet open={panel.open && panel.mode !== "inflow"} onOpenChange={panel.setOpen} modal={false}>
+      <SheetContent
+        id={AGENT_DETAILS_ID}
+        width="panel"
+        inset="below-header"
+        keepFocus={false}
+        aria-describedby={undefined}
+        className="bg-card"
+        returnFocus={() => document.getElementById(AGENT_DETAILS_TOGGLE_ID)}
+      >
+        {/* The dialog's name; the visible strip inside repeats it as a heading. */}
+        <SheetTitle className="sr-only">Agent details</SheetTitle>
+        <div ref={onHost} className="flex min-h-0 flex-1 flex-col" />
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -69,13 +69,14 @@ type Props = {
   agent?: AgentSummary;
   usage?: AgentUsageRow | null | undefined;
   onClose?: () => void;
+  slotsMax?: number;
   seed?: (qc: QueryClient) => void;
 };
 
-function Harness({ agent, usage, onClose }: Omit<Props, "seed">) {
+function Harness({ agent, usage, onClose, slotsMax }: Omit<Props, "seed">) {
   const a = agent ?? agentSummary();
   const stop: StopCrons = useStopCrons(a);
-  return <AgentDetails agent={a} stop={stop} usage={usage} onClose={onClose} />;
+  return <AgentDetails agent={a} stop={stop} usage={usage} onClose={onClose} slotsMax={slotsMax} />;
 }
 
 function setup(props: Props = {}) {
@@ -85,7 +86,12 @@ function setup(props: Props = {}) {
     component: () => (
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <Harness agent={props.agent} usage={props.usage} onClose={props.onClose} />
+          <Harness
+            agent={props.agent}
+            usage={props.usage}
+            onClose={props.onClose}
+            slotsMax={props.slotsMax}
+          />
         </TooltipProvider>
       </QueryClientProvider>
     ),
@@ -186,6 +192,62 @@ test("Now: the queued and rate-limited details", async () => {
   first.unmount();
   setup({ agent: agentSummary({ pulling: true }) });
   expect(within(await section("Now")).getByText("Pulling the image…")).toBeInTheDocument();
+});
+
+test("Now: the queued detail waits for the cap, and reads in the singular for one slot", async () => {
+  const unknown = setup({ agent: agentSummary({ status: "queued" }) });
+  await screen.findByRole("heading", { name: "Agent details" });
+  expect(screen.queryByText(/Queued:/)).toBeNull();
+  unknown.unmount();
+  const many = setup({ agent: agentSummary({ status: "queued" }), slotsMax: 8 });
+  expect(
+    within(await section("Now")).getByText("Queued: all 8 slots are in use."),
+  ).toBeInTheDocument();
+  many.unmount();
+  setup({ agent: agentSummary({ status: "queued" }), slotsMax: 1 });
+  expect(
+    within(await section("Now")).getByText("Queued: the only slot is in use."),
+  ).toBeInTheDocument();
+});
+
+test("Now: the rate-limited detail names the credential in mono and its reset time", async () => {
+  const until = new Date(NOW.getTime() + 3_600_000);
+  setup({
+    agent: agentSummary({
+      status: "rate_limited",
+      credential: "work",
+      rateLimitedUntil: until.toISOString(),
+      rateLimitExact: false,
+    }),
+  });
+  const paused = within(await section("Now")).getByText(/^Paused:/);
+  expect(paused.textContent).toMatch(
+    /^Paused: credential work is rate-limited, retrying at .+\. Messages wait until then\.$/,
+  );
+  expect(within(paused).getByText("work")).toHaveClass("font-mono");
+});
+
+test("Now: an errored agent shows its last error in full", async () => {
+  setup({ agent: agentSummary({ status: "errored", lastError: "It broke\nat line 2" }) });
+  const now = within(await section("Now"));
+  expect(now.getByText(/It broke/).textContent).toBe("It broke\nat line 2");
+});
+
+test("Now: a terminated agent shows no queued, paused or restart row (an end state)", async () => {
+  mockApi({});
+  setup({
+    agent: agentSummary({
+      status: "terminated",
+      kind: "ephemeral",
+      terminatedAt: minutesAgo(10),
+      restartPending: true,
+      rateLimitedUntil: minutesAgo(-30),
+      pulling: true,
+    }),
+    slotsMax: 8,
+  });
+  const now = await section("Now");
+  expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);
 });
 
 test("Now: a terminated agent shows when it ended and offers Pin", async () => {
@@ -301,6 +363,23 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
   const docker = within(await section("Runtime"));
   expect(docker.getByText("node:22")).toBeInTheDocument();
   expect(docker.queryByText("Unsandboxed")).toBeNull();
+});
+
+test("Runtime: a deleted credential leaves no empty row; a disabled local runtime says so", async () => {
+  setup({
+    agent: agentSummary({ runtime: "local", credential: null, runtimeDisabled: "disabled" }),
+  });
+  const rt = await section("Runtime");
+  expect(rt.textContent).not.toContain("Credential");
+  expect(rt.textContent).toContain("Unsandboxed · disabled on this factory");
+});
+
+test("Org: a spawned agent says 'Spawned by'; a root has No manager", async () => {
+  const first = setup({ agent: agentSummary({ kind: "ephemeral", reportsTo: "lead" }) });
+  expect(within(await section("Org")).getByText("Spawned by")).toBeInTheDocument();
+  first.unmount();
+  setup({ agent: agentSummary({ reportsTo: null }) });
+  expect(within(await section("Org")).getByText("No manager")).toBeInTheDocument();
 });
 
 test("Edit agent is an outline button for a persistent, unarchived agent only", async () => {

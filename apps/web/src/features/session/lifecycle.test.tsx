@@ -54,7 +54,6 @@ const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) 
     ...over,
   });
 const composer = () => screen.getByRole("textbox", { name: "Message to Dev agent" });
-const strip = () => document.querySelector("[data-agent-strip]") as HTMLElement;
 
 test("errored: Restart and Start a new session replace Compact/Interrupt", async () => {
   world({ status: "errored", errorKind: "resume", lastError: "Resume failed" });
@@ -240,15 +239,16 @@ test("announcer and document title follow status frames; a no-op until change sa
   expect(document.title).toBe("Errored · Dev agent · Open Factory");
 });
 
-test("strip: queued detail uses the slot cap from the agents list; Pulling the image… wins", async () => {
+test("header: the queued fact uses the slot cap from the agents list; Pulling the image… wins", async () => {
   world({ status: "queued", runtime: "docker" });
   await open();
-  expect(await within(strip()).findByText("Queued: all 8 slots are in use.")).toBeInTheDocument();
+  const header = screen.getByRole("banner");
+  expect(await within(header).findByText("All 8 slots are in use.")).toBeInTheDocument();
   push({ type: "supervisor", running: 6, max: 6 });
-  expect(await within(strip()).findByText("Queued: all 6 slots are in use.")).toBeInTheDocument();
+  expect(await within(header).findByText("All 6 slots are in use.")).toBeInTheDocument();
   frame({ status: "queued", pulling: true });
-  expect(await within(strip()).findByText("Pulling the image…")).toBeInTheDocument();
-  expect(within(strip()).queryByText(/slots are in use/)).not.toBeInTheDocument();
+  expect(await within(header).findByText("Pulling the image…")).toBeInTheDocument();
+  expect(within(header).queryByText(/slots are in use/)).not.toBeInTheDocument();
 });
 
 test("queued blocks: rate-limited (fallback) and waiting for a free slot", async () => {

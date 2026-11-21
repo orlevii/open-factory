@@ -1,6 +1,14 @@
-import type { AgentSummary } from "@open-factory/shared";
+import { type AgentSummary, ApiError } from "@open-factory/shared";
+import { Pin, PinOff } from "lucide-react";
+import { useState } from "react";
+import { InlineOutcome } from "@/components/inline-outcome";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { setWorkspacePin } from "./api";
+import { NETWORK_ERROR } from "./composer";
 import { formatInboxTime, formatResetTime, formatTime } from "./format";
 import { formatBy } from "./format-by";
+import { UnpinDialog } from "./unpin-dialog";
 
 export type LiveFact = {
   kind: "terminated" | "errored" | "queued" | "restart" | "waiting" | "crons";
@@ -90,5 +98,103 @@ export function LiveLine({ fact }: { fact: LiveFact | null }) {
     >
       {fact.text}
     </span>
+  );
+}
+
+export type PinOutcome = { tone: "success" | "error"; text: string };
+
+/** Whether a terminated agent's workspace can still be pinned or unpinned. */
+export const canPin = (agent: AgentSummary) =>
+  !agent.workspaceDeletedAt && (agent.workspacePinned === true || !!agent.workspaceGraceEndsAt);
+
+/**
+ * Pin / Unpin workspace (S7 UI design §5.3): one button whose label swaps (focus stays on it). Pin,
+ * and Unpin within the grace, act at once; Unpin after the grace confirms. In the header it is its
+ * own `shrink-0` action, never inside the truncating live line, and hands its outcome to the
+ * header's notice row (`onOutcome`); elsewhere the outcome shows on its own line below it.
+ */
+export function PinButton({
+  agent,
+  onAgent,
+  onOutcome,
+  header = false,
+}: {
+  agent: AgentSummary;
+  /** A fresh summary from the pin/unpin response. */
+  onAgent?: ((a: AgentSummary) => void) | undefined;
+  /** Where the outcome goes instead of the line below the button. */
+  onOutcome?: (o: PinOutcome | undefined) => void;
+  /** The header's size: the label hides below md, a tooltip names it. */
+  header?: boolean;
+}) {
+  const pinned = agent.workspacePinned === true;
+  const [pending, setPending] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [own, setOwn] = useState<PinOutcome>();
+  const setOutcome = onOutcome ?? setOwn;
+  const graceOver =
+    agent.workspaceGraceEndsAt !== undefined &&
+    Date.now() >= Date.parse(agent.workspaceGraceEndsAt);
+
+  const request = async (pin: boolean) => {
+    const a = await setWorkspacePin(agent.slug, pin);
+    onAgent?.(a);
+    setOutcome({ tone: "success", text: pin ? "Workspace pinned." : "Workspace unpinned." });
+  };
+  async function act(pin: boolean) {
+    setPending(true);
+    setOutcome(undefined);
+    try {
+      await request(pin);
+    } catch (e) {
+      setOutcome({ tone: "error", text: e instanceof ApiError ? e.message : NETWORK_ERROR });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const label = pinned ? "Unpin workspace" : "Pin workspace";
+  const button = (
+    <Button
+      data-pin-toggle
+      variant="ghost"
+      size={header ? "default" : "xs"}
+      className={header ? "shrink-0" : undefined}
+      aria-disabled={pending || undefined}
+      onClick={() => {
+        if (pending) return;
+        if (pinned && graceOver) {
+          setOutcome(undefined);
+          setConfirm(true);
+        } else void act(!pinned);
+      }}
+    >
+      {pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+      <span className={header ? "max-md:sr-only" : undefined}>{label}</span>
+    </Button>
+  );
+  return (
+    <>
+      {header ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{button}</TooltipTrigger>
+          <TooltipContent className="md:hidden">{label}</TooltipContent>
+        </Tooltip>
+      ) : (
+        button
+      )}
+      {!onOutcome && (
+        // Its own line: empty, a zero-height row that adds no gap.
+        <div className="basis-full">
+          <InlineOutcome tone={own?.tone}>{own?.text}</InlineOutcome>
+        </div>
+      )}
+      <UnpinDialog
+        slug={agent.slug}
+        open={confirm}
+        onOpenChange={setConfirm}
+        onConfirm={() => request(false)}
+      />
+    </>
   );
 }

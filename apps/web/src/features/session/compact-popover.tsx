@@ -74,11 +74,15 @@ export function CompactPopover({
       <PopoverContent
         align="end"
         className="w-72"
-        // No PopoverTrigger when anchored, so Radix has nothing to return focus to: send it to the anchor.
+        // No PopoverTrigger when anchored, so Radix has nothing to return focus to: send it to the
+        // anchor, unless something already took it (the read-only line, when the agent was
+        // terminated while it was open).
         onCloseAutoFocus={
           anchor
             ? (e) => {
                 e.preventDefault();
+                const at = document.activeElement;
+                if (at && at !== document.body && at.isConnected) return;
                 anchor.current?.focus();
               }
             : undefined

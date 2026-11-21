@@ -36,7 +36,7 @@ export function resetPhrase({
     : { bare: `until ${time}`, joined: ` until ${time}` };
 }
 
-/** Long label for the session header and strip: rate-limited carries the reset time. */
+/** Long label for the session header and Agent details: rate-limited carries the reset time. */
 export function statusLabel(
   status: AgentStatus,
   size: "long" | "short",

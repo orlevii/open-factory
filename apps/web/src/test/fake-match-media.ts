@@ -29,4 +29,35 @@ export const fakeMatchMedia = {
       },
     };
   },
+  /** A viewport `px` wide (1rem = 16px): `(width >= 64rem)`-style queries answer from it. */
+  installWidth(px: number) {
+    const state = { px };
+    const listeners = new Set<Listener>();
+    const answer = (query: string) => {
+      const m = /\(width\s*(>=|<=|<|>)\s*([\d.]+)(rem|px)\)/.exec(query);
+      if (!m) return false;
+      const v = Number(m[2]) * (m[3] === "rem" ? 16 : 1);
+      const w = state.px;
+      return m[1] === ">=" ? w >= v : m[1] === "<=" ? w <= v : m[1] === "<" ? w < v : w > v;
+    };
+    window.matchMedia = ((query: string) =>
+      ({
+        get matches() {
+          return answer(query);
+        },
+        media: query,
+        onchange: null,
+        addEventListener: (_: string, l: Listener) => listeners.add(l),
+        removeEventListener: (_: string, l: Listener) => listeners.delete(l),
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    return {
+      set(next: number) {
+        state.px = next;
+        for (const l of [...listeners]) l({ matches: false } as MediaQueryListEvent);
+      },
+    };
+  },
 };

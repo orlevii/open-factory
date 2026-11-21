@@ -27,7 +27,7 @@ function CronRow({ c, now }: { c: LiveCron; now: Date }) {
   );
 }
 
-/** The strip's "2 crons" (UI design §4.2): a text button that opens a popover listing the live crons with Stop crons. */
+/** Agent details' "2 crons" (UI design §4.2): a text button that opens a popover listing the live crons with Stop crons. */
 export function CronsSegment({ agent, stop }: { agent: AgentSummary; stop: StopCrons }) {
   const crons = agent.crons;
   const n = crons.length || agent.waitingOn.crons;

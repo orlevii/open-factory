@@ -1,32 +1,41 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CircleAlert, Pencil } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CircleAlert, PanelRight } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AgentAvatar } from "@/components/agent-avatar";
+import { InlineOutcome } from "@/components/inline-outcome";
 import { PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
 import { agentsUsageQuery } from "@/features/usage/api";
 import { sessionQueryOptions } from "@/lib/session";
-import { AgentStrip } from "./agent-strip";
+import {
+  AGENT_DETAILS_ID,
+  AGENT_DETAILS_TOGGLE_ID,
+  AgentDetails,
+  type AgentDetailsPanel,
+} from "./agent-details";
 import {
   agentDetailQueryOptions,
   agentsListQueryOptions,
   runningQueryOptions,
   summaryFromAgentsList,
 } from "./api";
-import { CompactPopover } from "./compact-popover";
 import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
+import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
-import { TerminateButton } from "./terminate-button";
+import { CronsStopLayer, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
@@ -35,20 +44,26 @@ export function SessionView({
   slug,
   eventSeq,
   messageId,
+  panel,
+  sheetHost,
 }: {
   slug: string;
   eventSeq?: number;
   messageId?: string;
+  /** Agent details' state, held above this view so it outlives a switch of agent. */
+  panel: AgentDetailsPanel;
+  /** The peek sheet's (or drawer's) body while it is mounted: Agent details is portalled into it. */
+  sheetHost: HTMLElement | null;
 }) {
   const s = useSession(slug, eventSeq, messageId);
   useReadFrom(slug, s.state.ordered.at(-1)?.at);
   const navigate = useNavigate();
   const qc = useQueryClient();
   const loaded = s.state.agent;
-  // Until the session has loaded, the header and strip render from the cached list's summary (spec
-  // §11; the route didn't wait for the detail), or on a cold load from the detail the route did wait
-  // for (useSession reads it again for its lastSeq). Deliberate non-reactive cache reads during
-  // render: useSession's state takes over as soon as it loads.
+  // Until the session has loaded, the header and Agent details render from the cached list's
+  // summary (spec §11; the route didn't wait for the detail), or on a cold load from the detail the
+  // route did wait for (useSession reads it again for its lastSeq). Deliberate non-reactive cache
+  // reads during render: useSession's state takes over as soon as it loads.
   const agent =
     loaded ??
     summaryFromAgentsList(qc, slug) ??
@@ -61,6 +76,11 @@ export function SessionView({
   const usageRows = useQuery(agentsUsageQuery("rolling7"));
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
   const [raceNotice, setRaceNotice] = useState<string>();
+  // The header's actions report here, in a notice row under it: a failed Restart, a Pin outcome.
+  const [restartError, setRestartError] = useState<string>();
+  const [pinOutcome, setPinOutcome] = useState<PinOutcome>();
+  // Stop crons belongs to the session (U2 §8.4): Agent details and the ⋯ menu both open it.
+  const stop = useStopCrons(agent);
   // Terminated while viewing (S7 UI design §5.3): by the spawner, another human or the TTL, never
   // by this human's own confirmed Terminate (that focuses Pin workspace when the dialog closes).
   // Open popovers and dialogs close as their controls unmount; focus goes to the read-only line.
@@ -90,158 +110,218 @@ export function SessionView({
   const working = agent.status === "working";
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";
+  const errored = agent.status === "errored";
+  const usage = usageRows.data
+    ? (usageRows.data.agents.find((r) => r.slug === agent.slug) ?? null)
+    : undefined;
+  const details = (onClose?: () => void) => (
+    <AgentDetails
+      agent={agent}
+      stop={stop}
+      usage={usage}
+      slotsMax={running.data?.max}
+      onAgent={s.setAgent}
+      onClose={onClose}
+    />
+  );
+  const inflow = panel.mode === "inflow" && panel.open;
   return (
-    <div className="flex h-svh min-h-0 flex-col">
-      {!archived && !terminated && (
-        <a
-          href="#composer"
-          className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-10 focus:rounded-md focus:bg-popover focus:px-3 focus:py-2 focus:text-sm"
-        >
-          Skip to composer
-        </a>
-      )}
-      <PageHeader
-        title={agent.displayName}
-        titleFromData
-        heading={<AgentName agent={agent} />}
-        documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
-        meta={
-          <>
-            <span className="shrink-0 max-md:hidden">
-              <StatusBadge
-                status={agent.status}
-                rateLimitedUntil={agent.rateLimitedUntil}
-                rateLimitExact={agent.rateLimitExact}
-                size="long"
-              />
-            </span>
-            <span className="shrink-0 md:hidden">
-              <StatusBadge status={agent.status} size="short" />
-            </span>
-          </>
-        }
-        actions={
-          <SessionActions
-            agent={agent}
-            turnEpoch={s.state.turnEpoch}
-            archived={archived}
-            onTerminateStart={() => {
-              selfTerminating.current = true;
-            }}
-            onTerminated={(a, ok) => {
-              selfTerminating.current = ok;
-              if (ok) s.setAgent(a);
-            }}
-          />
-        }
-      />
-      <AgentStrip
-        agent={agent}
-        slotsMax={running.data?.max}
-        usage={
-          usageRows.data
-            ? (usageRows.data.agents.find((r) => r.slug === agent.slug) ?? null)
-            : undefined
-        }
-        onAgent={s.setAgent}
-      />
-      {s.missingEvent !== undefined && (
-        <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
-          Event {s.missingEvent} isn't in this session. Showing the latest.
-        </p>
-      )}
-      {s.messageNotice && (
-        <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
-          {s.messageNotice.kind === "rejected" ? (
-            <RejectedReason to={s.messageNotice.to} viewed={agent} />
-          ) : (
-            "Message not found. Showing the latest."
-          )}
-        </p>
-      )}
-      {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
-      {loaded ? (
-        <Timeline
-          slug={slug}
-          spawned={agent.kind === "ephemeral"}
-          rows={s.rows}
-          failedIds={s.failedIds}
-          interruptedEnds={s.interruptedEnds}
-          highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
-          highlightMessageId={eventSeq === undefined ? messageId : undefined}
-          hasMoreBefore={s.state.hasMoreBefore}
-          onLoadEarlier={s.loadEarlier}
-          earlierError={s.earlierError}
-          footer={
+    <div className="flex h-svh min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {!archived && !terminated && (
+          <a
+            href="#composer"
+            className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-10 focus:rounded-md focus:bg-popover focus:px-3 focus:py-2 focus:text-sm"
+          >
+            Skip to composer
+          </a>
+        )}
+        <PageHeader
+          title={agent.displayName}
+          titleFromData
+          leading={
+            <AgentAvatar
+              slug={agent.slug}
+              template={agent.template}
+              avatarVersion={agent.avatarVersion}
+              size={24}
+            />
+          }
+          heading={<AgentName agent={agent} />}
+          titleClassName="max-w-[45%]"
+          documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
+          meta={
             <>
-              {s.rows.length === 0 && s.state.queue.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  {archived ? "No messages yet." : "No messages yet. Send the first one below."}
-                </p>
-              )}
-              <QueueItems items={s.state.queue} agent={agent} />
-              {working && (
-                <p
-                  data-working-line
-                  className="flex h-6 items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="inline-flex size-3 items-center justify-center"
-                  >
-                    <span className="of-tooth" />
-                  </span>
-                  Working
-                </p>
-              )}
+              <span className="shrink-0 max-md:hidden">
+                <StatusBadge
+                  status={agent.status}
+                  rateLimitedUntil={agent.rateLimitedUntil}
+                  rateLimitExact={agent.rateLimitExact}
+                  size="long"
+                />
+              </span>
+              <span className="shrink-0 md:hidden">
+                <StatusBadge status={agent.status} size="short" />
+              </span>
+              <LiveLine fact={liveFact(agent, { slotsMax: running.data?.max, now: new Date() })} />
             </>
           }
+          actions={
+            <SessionActions
+              agent={agent}
+              turnEpoch={s.state.turnEpoch}
+              archived={archived}
+              panel={panel}
+              onRestartError={setRestartError}
+              onPinOutcome={setPinOutcome}
+              onAgent={s.setAgent}
+              actionsMenu={
+                <AgentMenu
+                  agent={agent}
+                  context="session"
+                  stop={stop}
+                  onOpenDetails={() => panel.setOpen(true)}
+                  onTerminateStart={() => {
+                    selfTerminating.current = true;
+                  }}
+                  onTerminated={(a, ok) => {
+                    selfTerminating.current = ok;
+                    if (ok) s.setAgent(a);
+                  }}
+                />
+              }
+            />
+          }
         />
-      ) : (
-        <TimelineSkeleton />
-      )}
-      {s.state.windowed && (
-        <div className="flex shrink-0 justify-center py-2">
-          <Button
-            variant="outline"
-            size="sm"
-            // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
-            onClick={() => void navigate({ to: "/agents/$slug", params: { slug }, search: {} })}
+        {errored && restartError && (
+          <p
+            role="alert"
+            className="flex shrink-0 items-center gap-1.5 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-destructive md:px-6"
           >
-            Jump to latest · {s.state.newWhileAway} new
-          </Button>
+            <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+            <span className="min-w-0">Couldn't restart: {restartError}</span>
+          </p>
+        )}
+        {terminated && (
+          // Mounted while terminated (before it fills) so the outcome is announced.
+          <div className="shrink-0 px-4 md:px-6">
+            <InlineOutcome tone={pinOutcome?.tone}>{pinOutcome?.text}</InlineOutcome>
+          </div>
+        )}
+        <CronsStopLayer agent={agent} stop={stop} />
+        {s.missingEvent !== undefined && (
+          <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
+            Event {s.missingEvent} isn't in this session. Showing the latest.
+          </p>
+        )}
+        {s.messageNotice && (
+          <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
+            {s.messageNotice.kind === "rejected" ? (
+              <RejectedReason to={s.messageNotice.to} viewed={agent} />
+            ) : (
+              "Message not found. Showing the latest."
+            )}
+          </p>
+        )}
+        {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
+        {loaded ? (
+          <Timeline
+            slug={slug}
+            spawned={agent.kind === "ephemeral"}
+            rows={s.rows}
+            failedIds={s.failedIds}
+            interruptedEnds={s.interruptedEnds}
+            highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
+            highlightMessageId={eventSeq === undefined ? messageId : undefined}
+            hasMoreBefore={s.state.hasMoreBefore}
+            onLoadEarlier={s.loadEarlier}
+            earlierError={s.earlierError}
+            footer={
+              <>
+                {s.rows.length === 0 && s.state.queue.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {archived ? "No messages yet." : "No messages yet. Send the first one below."}
+                  </p>
+                )}
+                <QueueItems items={s.state.queue} agent={agent} />
+                {working && (
+                  <p
+                    data-working-line
+                    className="flex h-6 items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="inline-flex size-3 items-center justify-center"
+                    >
+                      <span className="of-tooth" />
+                    </span>
+                    Working
+                  </p>
+                )}
+              </>
+            }
+          />
+        ) : (
+          <TimelineSkeleton />
+        )}
+        {s.state.windowed && (
+          <div className="flex shrink-0 justify-center py-2">
+            <Button
+              variant="outline"
+              size="sm"
+              // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
+              onClick={() => void navigate({ to: "/agents/$slug", params: { slug }, search: {} })}
+            >
+              Jump to latest · {s.state.newWhileAway} new
+            </Button>
+          </div>
+        )}
+        <div role="status" aria-live="polite" className="sr-only">
+          {announce}
         </div>
-      )}
-      <div role="status" aria-live="polite" className="sr-only">
-        {announce}
+        {archived ? (
+          <p className="shrink-0 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-6">
+            This agent is archived.{" "}
+            <Link
+              to="/agents/$slug/edit"
+              params={{ slug }}
+              className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
+            >
+              Restore it
+            </Link>{" "}
+            to send messages.
+          </p>
+        ) : terminated ? (
+          <TerminatedComposer slug={slug} notice={raceNotice} />
+        ) : (
+          <Composer
+            slug={slug}
+            agent={agent}
+            // A send before the session loads would be lost when the load replaces the queue.
+            waiting={!loaded}
+            onQueued={s.onQueued}
+            onTerminated={(notice) => {
+              setRaceNotice(notice);
+              void s.refreshAgent();
+            }}
+          />
+        )}
       </div>
-      {archived ? (
-        <p className="shrink-0 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-6">
-          This agent is archived.{" "}
-          <Link
-            to="/agents/$slug/edit"
-            params={{ slug }}
-            className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
-          >
-            Restore it
-          </Link>{" "}
-          to send messages.
-        </p>
-      ) : terminated ? (
-        <TerminatedComposer slug={slug} notice={raceNotice} />
-      ) : (
-        <Composer
-          slug={slug}
-          agent={agent}
-          // A send before the session loads would be lost when the load replaces the queue.
-          waiting={!loaded}
-          onQueued={s.onQueued}
-          onTerminated={(notice) => {
-            setRaceNotice(notice);
-            void s.refreshAgent();
-          }}
-        />
+      {inflow && (
+        <aside
+          id={AGENT_DETAILS_ID}
+          aria-label="Agent details"
+          className="flex min-h-0 w-80 shrink-0 flex-col border-l border-border bg-card"
+        >
+          {details()}
+        </aside>
       )}
+      {/* Kept while the sheet's node exists, so its exit animation still shows the content. */}
+      {sheetHost &&
+        createPortal(
+          details(() => panel.setOpen(false)),
+          sheetHost,
+        )}
     </div>
   );
 }
@@ -386,52 +466,51 @@ function SessionActions({
   agent,
   turnEpoch,
   archived,
-  onTerminateStart,
-  onTerminated,
+  panel,
+  actionsMenu,
+  onRestartError,
+  onPinOutcome,
+  onAgent,
 }: {
   agent: AgentSummary;
   turnEpoch: number;
   archived: boolean;
-  onTerminateStart(): void;
-  onTerminated(a: AgentSummary, ok: boolean): void;
+  panel: AgentDetailsPanel;
+  actionsMenu: ReactNode;
+  onRestartError(message: string | undefined): void;
+  onPinOutcome(o: PinOutcome | undefined): void;
+  onAgent(a: AgentSummary): void;
 }) {
-  const slug = agent.slug;
-  // A spawned agent has no Edit (its settings are inherited, S7 UI design §5.2) but has Terminate.
-  const spawned = agent.kind === "ephemeral";
-  // A terminated agent's session is read-only for good: no actions at all (§5.3).
+  // Edit, Compact, Stop crons and Terminate are in the ⋯ menu (U2 §8.2); the header keeps what
+  // can't wait: Pin, Stop, Restart. A terminated agent's session is read-only for good.
   const live = !archived && agent.status !== "terminated";
   return (
     <>
-      {!spawned && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" asChild>
-              <Link to="/agents/$slug/edit" params={{ slug }}>
-                <Pencil aria-hidden="true" />
-                <span className="max-md:sr-only">Edit</span>
-              </Link>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className="md:hidden">Edit</TooltipContent>
-        </Tooltip>
+      {agent.status === "terminated" && canPin(agent) && (
+        <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
       )}
-      {/* An archived agent has no process: nothing to compact or interrupt (UI design §4.4). While
-          errored, the recovery actions replace them, so the header never holds more than two. */}
-      {live && agent.status !== "errored" && (
-        <>
-          <CompactPopover slug={slug} />
-          <InterruptButton slug={slug} turnOpen={agent.turnOpen} turnEpoch={turnEpoch} />
-        </>
+      {/* Stop only while a turn is open: it is the one thing to reach for then. */}
+      {live && agent.turnOpen && (
+        <InterruptButton slug={agent.slug} turnOpen={agent.turnOpen} turnEpoch={turnEpoch} />
       )}
-      {live && <RecoveryActions agent={agent} />}
-      {/* A 1px rule (16px tall) keeps Terminate apart from Interrupt's Square; the row's gap is the
-          8px margin. */}
-      {spawned && live && (
-        <span data-action-divider aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
-      )}
-      {spawned && (
-        <TerminateButton agent={agent} onStart={onTerminateStart} onTerminated={onTerminated} />
-      )}
+      {live && <RecoveryActions agent={agent} onError={onRestartError} />}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            id={AGENT_DETAILS_TOGGLE_ID}
+            variant="ghost"
+            size="icon"
+            aria-label="Agent details"
+            aria-expanded={panel.open}
+            aria-controls={AGENT_DETAILS_ID}
+            onClick={panel.toggle}
+          >
+            <PanelRight aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Agent details</TooltipContent>
+      </Tooltip>
+      {actionsMenu}
     </>
   );
 }

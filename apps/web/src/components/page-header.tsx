@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 export function PageHeader({
   title,
   heading,
+  leading,
+  titleClassName,
   documentTitle,
   meta,
   actions,
@@ -15,6 +17,10 @@ export function PageHeader({
   title: string;
   /** The h1's content when it needs more than the plain title (a spawned agent's kept " · ab12"). */
   heading?: ReactNode;
+  /** Before the h1, outside it (the session's avatar). */
+  leading?: ReactNode;
+  /** Extra h1 classes (the session caps its name at 45% of the header). */
+  titleClassName?: string;
   documentTitle?: string;
   meta?: ReactNode;
   actions?: ReactNode;
@@ -29,6 +35,7 @@ export function PageHeader({
     <>
       <header className="@container flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">
         <SidebarTrigger className="-ml-1.5" />
+        {leading}
         <h1
           className={cn(
             "font-heading text-base leading-5 font-semibold tracking-[-0.01em]",
@@ -41,6 +48,7 @@ export function PageHeader({
               : heading !== undefined
                 ? "min-w-0 truncate"
                 : "shrink-0",
+            titleClassName,
           )}
           // Anything that truncates keeps its full value in title; a static title never truncates.
           title={titleFromData || heading !== undefined ? title : undefined}

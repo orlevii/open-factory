@@ -1,6 +1,8 @@
 import { ApiError } from "@open-factory/shared";
 import { createFileRoute, notFound } from "@tanstack/react-router";
+import { useState } from "react";
 import { z } from "zod";
+import { AgentDetailsSheet, useAgentDetailsPanel } from "@/features/session/agent-details";
 import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
 import { SessionView } from "@/features/session/session-view";
 
@@ -34,13 +36,22 @@ export const Route = createFileRoute("/_app/agents/$slug")({
   component: function SessionRoute() {
     const { slug } = Route.useParams();
     const { event, message } = Route.useSearch();
+    // Agent details' state and its sheet live here, above the per-agent view the key remounts, so an
+    // open panel stays open across agents and the sheet swaps its content in place (U2 §8.1).
+    const panel = useAgentDetailsPanel(slug);
+    const [sheetHost, setSheetHost] = useState<HTMLDivElement | null>(null);
     return (
-      <SessionView
-        key={`${slug}:${event ?? ""}:${message ?? ""}`}
-        slug={slug}
-        eventSeq={event}
-        messageId={message}
-      />
+      <>
+        <SessionView
+          key={`${slug}:${event ?? ""}:${message ?? ""}`}
+          slug={slug}
+          eventSeq={event}
+          messageId={message}
+          panel={panel}
+          sheetHost={sheetHost}
+        />
+        <AgentDetailsSheet panel={panel} onHost={setSheetHost} />
+      </>
     );
   },
 });

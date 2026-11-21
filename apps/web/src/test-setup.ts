@@ -5,7 +5,12 @@ import { afterEach } from "vitest";
 afterEach(() => {
   cleanup();
   // Drafts (the session and comment composers) live in sessionStorage: no test inherits another's.
-  sessionStorage.clear();
+  // A test that left a throwing storage stubbed (private mode) must not fail here.
+  try {
+    sessionStorage.clear();
+  } catch {
+    /* stubbed to throw */
+  }
 });
 
 // The first render in a file loads the whole route tree; on a slow CI runner that can pass the 1 s default.

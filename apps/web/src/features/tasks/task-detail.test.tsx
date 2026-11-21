@@ -486,6 +486,31 @@ test("composer: with nothing typed during the post the draft clears", async () =
   await waitFor(() => expect(box).toHaveValue(""));
 });
 
+test("composer: a throwing sessionStorage (private mode) neither breaks typing nor posting", async () => {
+  const blocked = () => {
+    throw new DOMException("blocked", "SecurityError");
+  };
+  vi.stubGlobal("sessionStorage", {
+    getItem: blocked,
+    setItem: blocked,
+    removeItem: blocked,
+    clear: blocked,
+    key: blocked,
+    length: 0,
+  });
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("hello"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "hello");
+  expect(box).toHaveValue("hello");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await waitFor(() => expect(box).toHaveValue(""));
+  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/tasks/T-42/comments")).toBe(
+    true,
+  );
+});
+
 test("links editor: the agent lists load on the Edit click and Save waits for them", async () => {
   const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
   const releases: (() => void)[] = [];

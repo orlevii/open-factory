@@ -32,9 +32,12 @@ export function PageHeader({
         <h1
           className={cn(
             "font-heading text-base leading-5 font-semibold tracking-[-0.01em]",
-            // Give-way order: meta slug, then a data title (to a floor), then nothing else shrinks.
+            // Give-way order: the meta slug (it never takes room from the title), then a data title (to a
+            // floor), then nothing else shrinks.
+            // Below a 22rem header the floor drops to 2rem: at 320px a long name, the Hibernated badge and
+            // three icon actions don't fit beside a 4rem floor, and the actions would leave the screen.
             titleFromData
-              ? "min-w-16 truncate"
+              ? "min-w-16 truncate @max-[22rem]:min-w-8"
               : heading !== undefined
                 ? "min-w-0 truncate"
                 : "shrink-0",
@@ -43,7 +46,9 @@ export function PageHeader({
         >
           {heading ?? title}
         </h1>
-        {meta && <div className="flex min-w-0 shrink-[3] items-center gap-2">{meta}</div>}
+        {/* No box of its own: the badge and slug are the header's items, so a truncating title can't
+            squeeze a wrapper to 0px under a shrink-0 badge (the actions would paint over it). */}
+        {meta && <div className="contents">{meta}</div>}
         {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
       </header>
       {shell && <ReconnectStrip lost={shell.connectionLost} />}
@@ -51,13 +56,17 @@ export function PageHeader({
   );
 }
 
-/** A mono name inside `meta`: the first thing to give way (truncates, then hides on a narrow header). */
+/**
+ * A mono name inside `meta`: the first thing to give way, strictly. A zero basis that grows up to its own width
+ * means it only takes the room the title and badge leave, so it truncates to nothing before the title shrinks.
+ * It hides on a narrow header.
+ */
 export function HeaderSlug({ value }: { value: string }) {
   return (
     <span
       data-slot="header-slug"
       title={value}
-      className="min-w-0 truncate font-mono text-muted-foreground @max-[32rem]:hidden"
+      className="min-w-0 max-w-max grow basis-0 truncate font-mono text-muted-foreground @max-[32rem]:hidden"
     >
       {value}
     </span>

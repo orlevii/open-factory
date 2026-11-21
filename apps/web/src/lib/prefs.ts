@@ -31,6 +31,8 @@ function readRaw(key: string): string | null {
 
 function subscribe(l: () => void) {
   if (!attached) {
+    // Nothing listened while unsubscribed, so anything cached may be stale.
+    raw.clear();
     window.addEventListener("storage", onStorage);
     attached = true;
   }
@@ -40,6 +42,7 @@ function subscribe(l: () => void) {
     if (listeners.size === 0) {
       window.removeEventListener("storage", onStorage);
       attached = false;
+      raw.clear();
     }
   };
 }
@@ -63,7 +66,8 @@ export function usePref<T>(
     () => null,
   );
 
-  // Memoized on the raw string only; parse/fallback are read through the ref so inline functions don't bust it.
+  // Memoized on the raw string (and key) only; parse/fallback are read through the ref so inline functions don't bust it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` re-derives the value when only the key changes.
   const value = useMemo(() => {
     if (stored === null) return latest.current.fallback;
     try {
@@ -71,7 +75,7 @@ export function usePref<T>(
     } catch {
       return latest.current.fallback;
     }
-  }, [stored]);
+  }, [stored, key]);
 
   const set = useCallback(
     (v: T) => {

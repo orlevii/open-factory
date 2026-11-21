@@ -64,3 +64,13 @@ test("usePref keeps a stable setter and a stable parsed value across rerenders",
   expect(result.current[0]).toBe(value);
   expect(result.current[1]).toBe(set);
 });
+
+test("usePref reads the current value after every subscriber left and another tab wrote", () => {
+  localStorage.setItem("of-r", "1");
+  const first = renderHook(() => usePref("of-r", false, parseBool, ser));
+  expect(first.result.current[0]).toBe(true);
+  first.unmount();
+  localStorage.setItem("of-r", "0");
+  const second = renderHook(() => usePref("of-r", false, parseBool, ser));
+  expect(second.result.current[0]).toBe(false);
+});

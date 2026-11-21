@@ -806,7 +806,7 @@ test("a hover preload warms a list once; entering the page then reuses it", asyn
   expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
 });
 
-test("sub-nav lists the five pages; the current one is aria-current with medium weight", async () => {
+test("sub-nav lists the five pages; the current one is aria-current with the selected fill and medium weight", async () => {
   world();
   renderApp("/settings/projects", alice);
   const nav = await screen.findByRole("navigation", { name: "Settings" });
@@ -821,7 +821,13 @@ test("sub-nav lists the five pages; the current one is aria-current with medium 
   const current = links.filter((l) => l.getAttribute("aria-current") === "page");
   expect(current.map((l) => l.textContent)).toEqual(["Projects"]);
   expect(current[0]).toHaveClass("font-medium");
-  expect(links.find((l) => l.textContent === "Users")).not.toHaveClass("font-medium");
+  // The current page takes the selected fill (one step past hover) and keeps it under the pointer.
+  expect(current[0]).toHaveClass("bg-selected");
+  expect(current[0]?.className).not.toMatch(/hover:bg-accent/);
+  const users = links.find((l) => l.textContent === "Users");
+  expect(users).not.toHaveClass("font-medium");
+  expect(users).not.toHaveClass("bg-selected");
+  expect(users?.className).toMatch(/hover:bg-accent/);
   await userEvent.click(within(nav).getByRole("link", { name: "Secrets" }));
   expect(await section("Secrets")).toBeInTheDocument();
   expect(within(nav).getByRole("link", { name: "Secrets" })).toHaveAttribute(

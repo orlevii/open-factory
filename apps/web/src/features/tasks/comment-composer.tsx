@@ -42,9 +42,12 @@ export function CommentComposer({
   ref,
   taskKey,
   assignee,
+  onPosted,
 }: {
   ref: Ref<CommentComposerHandle>;
   taskKey: string;
+  /** After the server took the comment (the reading pane marks its item read). */
+  onPosted?: () => void;
   /** The current live assignee's slug, for the helper line. */
   assignee: string | undefined;
 }) {
@@ -89,6 +92,7 @@ export function CommentComposer({
       // Keep what was typed while the post was in flight.
       setDraft((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length) : cur));
       setNotReached(notReachedLine(r.notReached));
+      onPosted?.();
       void qc.invalidateQueries({ queryKey: tasksQueryKey });
     } catch {
       setFailed(true);

@@ -53,6 +53,17 @@ function queryObject(url: string): Record<string, string | string[]> {
   return out;
 }
 
+/** Answers 400 as the server does when the request's JSON body fails the route's schema (the real
+ *  one, from `@open-factory/shared`). */
+export const validBody =
+  (schema: z.ZodType, h: Handler): Handler =>
+  (body, url) => {
+    const r = schema.safeParse(body);
+    return r.success
+      ? h(body, url)
+      : json({ error: { code: "validation_error", message: r.error.message } }, 400);
+  };
+
 /** Answers 400 as the server does when the request's query fails the route's schema (the real one,
  *  from `@open-factory/shared`), so a test cannot pass with a URL the server would refuse. */
 export const validQuery =

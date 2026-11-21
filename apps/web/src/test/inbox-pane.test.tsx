@@ -6,6 +6,7 @@ import { INBOX_DWELL_MS } from "@/lib/timing";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { detail } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -54,6 +55,26 @@ beforeEach(() => {
   api = mockApi({
     "GET /api/inbox?": () => json({ items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 5, byAgent: {} }),
+    // The agents list loads once (sidebar, chips); unanswered, every new observer would retry it.
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/tasks/T-7": () =>
+      json({
+        key: "T-7",
+        title: "Seven",
+        status: "open",
+        assignee: null,
+        blockedBy: [],
+        createdBy: { kind: "user", handle: "alice" },
+        updatedAt: at(0),
+        body: "",
+        createdAt: at(0),
+        dependsOn: [],
+        blocks: [],
+        links: [],
+        activity: [],
+        usage: null,
+      }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   for (const i of items) api.on(`POST /api/inbox/${i.id}/read`, () => json({ ok: true }));
 });
@@ -204,14 +225,21 @@ test("a j/k sweep prefetches only once the selection rests", async () => {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j" });
     await act(async () => vi.advanceTimersByTime(50));
   }
-  expect(api.calls.slice(start).filter((c) => c.method === "GET")).toHaveLength(0);
+  // The pane loads what it shows (i2, i3, i4 and their agent); nothing for a neighbour yet.
+  const shown = ["around=42", "/api/tasks/T-7", "around=44", "/api/agents/dev"];
+  const during = api.calls.slice(start).filter((c) => c.method === "GET");
+  expect(
+    during.filter((c) => !shown.some((s) => c.url.endsWith(s) || c.url.includes(`${s}&`))),
+  ).toEqual([]);
   await act(async () => vi.advanceTimersByTime(200));
   const after = api.calls.slice(start).map((c) => c.url);
   // Resting on i4: its neighbours are i3 (task T-7) and i5 (seq 45).
   expect(after).toEqual(
     expect.arrayContaining(["/api/tasks/T-7", "/api/agents/dev/events?around=45&limit=7"]),
   );
-  expect(after.filter((u) => u.includes("around=42") || u.includes("around=43"))).toHaveLength(0);
+  // What a passed-over item loaded while shown is never fetched again by a prefetch.
+  const gets = after.filter((_, n) => api.calls[start + n]?.method === "GET");
+  expect(gets.filter((u, n) => gets.indexOf(u) !== n)).toEqual([]);
 });
 
 test("a message row's context line hides the recipient when it is the viewer", async () => {

@@ -97,6 +97,7 @@ export function Composer({
   agent,
   waiting = false,
   onQueued,
+  onSent,
   onTerminated,
 }: {
   slug: string;
@@ -105,6 +106,8 @@ export function Composer({
   waiting?: boolean;
   /** Called with the 202 queue item (the session inserts it locally while disconnected). */
   onQueued?: (item: QueueItem) => void;
+  /** The server took the message (queued, or queued while its start failed). */
+  onSent?: () => void;
   /** A send that raced a termination (`409 agent_terminated`), with the sentence that says so. */
   onTerminated?: (notice: string) => void;
 }) {
@@ -133,6 +136,7 @@ export function Composer({
     const accepted = () => {
       setText((cur) => (cur.startsWith(sent) ? cur.slice(sent.length) : cur));
       setUrgent(false);
+      onSent?.();
     };
     const bytes = new TextEncoder().encode(sent.trim()).length;
     if (bytes > MAX_BODY_BYTES) {

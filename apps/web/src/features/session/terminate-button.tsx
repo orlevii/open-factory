@@ -1,6 +1,6 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { CircleX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { postTerminate } from "./api";
@@ -17,22 +17,41 @@ export function TerminateButton({
   agent,
   onStart,
   onTerminated,
+  open: controlledOpen,
+  onOpenChange,
+  returnFocusTo,
 }: {
   agent: AgentSummary;
   /** Called when the human confirms, before the request: the view then knows the end is its own. */
   onStart(): void;
   onTerminated(agent: AgentSummary, ok: boolean): void;
+  /** Controlled dialog, with no button of its own: the agent menu's Terminate… item opens it. */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
+  /** Where focus goes when the dialog closes without terminating (the menu's ⋯ button). */
+  returnFocusTo?: RefObject<HTMLElement | null>;
 }) {
+  const controlled = controlledOpen !== undefined;
   const slug = agent.slug;
   const terminated = agent.status === "terminated";
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const onOpenChangeNow = useRef(onOpenChange);
+  onOpenChangeNow.current = onOpenChange;
+  const setOpen = (o: boolean) => {
+    setOwnOpen(o);
+    onOpenChange?.(o);
+  };
   const confirming = useRef(false);
   const done = useRef(false);
   // The latest state, for a request that settles after a terminated frame re-rendered the view.
   const terminatedNow = useRef(terminated);
   terminatedNow.current = terminated;
   useEffect(() => {
-    if (terminated && !confirming.current && !done.current) setOpen(false);
+    if (terminated && !confirming.current && !done.current) {
+      setOwnOpen(false);
+      onOpenChangeNow.current?.(false);
+    }
   }, [terminated]);
 
   async function confirm() {
@@ -59,7 +78,7 @@ export function TerminateButton({
 
   return (
     <>
-      {!terminated && (
+      {!terminated && !controlled && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" aria-label={`Terminate @${slug}`} onClick={() => setOpen(true)}>
@@ -77,7 +96,13 @@ export function TerminateButton({
         onConfirm={confirm}
         onCloseAutoFocus={(e) => {
           // The trigger is gone once terminated: focus moves on instead (§5.2, §5.3).
-          if (!done.current && !terminated) return;
+          if (!done.current && !terminated) {
+            if (controlled) {
+              e.preventDefault();
+              returnFocusTo?.current?.focus();
+            }
+            return;
+          }
           e.preventDefault();
           focusReadOnly(done.current);
         }}

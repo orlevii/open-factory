@@ -5,9 +5,10 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCost } from "@/features/usage/format";
-import { CronsSegment, CronsStopLayer, type StopCrons, useStopCrons } from "./crons-popover";
+import { CronsSegment } from "./crons-popover";
 import { LINK_CLASS } from "./message-block";
 import { resetPhrase } from "./status-badge";
+import { CronsStopLayer, type StopCrons, useStopCrons } from "./stop-crons";
 import { TerminatedSegment } from "./terminated-strip";
 
 const Dot = () => <span aria-hidden="true">·</span>;

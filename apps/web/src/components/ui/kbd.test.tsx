@@ -30,3 +30,25 @@ test("platform comes from userAgentData when the browser has it", () => {
     Reflect.deleteProperty(navigator, "userAgentData");
   }
 });
+
+test("a non-Mac userAgentData wins over a Mac navigator.platform", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "Windows" }, configurable: true });
+  try {
+    render(<Kbd keys={["Mod"]} />);
+    expect(screen.getByText("Ctrl")).toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(navigator, "userAgentData");
+  }
+});
+
+test("an empty userAgentData platform falls back to navigator.platform", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "" }, configurable: true });
+  try {
+    render(<Kbd keys={["Mod"]} />);
+    expect(screen.getByText("⌘")).toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(navigator, "userAgentData");
+  }
+});

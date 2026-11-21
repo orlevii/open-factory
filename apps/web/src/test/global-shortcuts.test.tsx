@@ -118,8 +118,23 @@ test("the Single-key shortcuts switch turns them off, persists, and the sheet st
   expect(localStorage.getItem("of-single-keys")).toBe("off");
   press("c");
   expect(router.state.location.pathname).toBe("/inbox");
-  await userEvent.click(sw);
-  expect(sw).toBeChecked();
+  // With the switch off, ? and g sequences do nothing either, and the palette still opens the sheet.
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(sheet()).toBeNull());
+  press("?", { shiftKey: true });
+  press("g");
+  press("t");
+  act(() => {});
+  expect(sheet()).toBeNull();
+  expect(router.state.location.pathname).toBe("/inbox");
+  fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+  const palette = await screen.findByRole("dialog", { name: "Search" });
+  await userEvent.click(within(palette).getByRole("option", { name: "Keyboard shortcuts" }));
+  const reopened = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+  const sw2 = within(reopened).getByRole("switch", { name: "Single-key shortcuts" });
+  expect(sw2).not.toBeChecked();
+  await userEvent.click(sw2);
+  expect(sw2).toBeChecked();
   press("c");
   await waitFor(() => expect(router.state.location.pathname).toBe("/tasks/new"));
 });
@@ -128,12 +143,15 @@ test("none of them fire while typing in an input", async () => {
   const { router } = await shell();
   const input = document.createElement("input");
   document.body.append(input);
-  input.focus();
-  for (const k of ["c", "?"]) fireEvent.keyDown(input, { key: k });
-  fireEvent.keyDown(input, { key: "g" });
-  fireEvent.keyDown(input, { key: "t" });
-  act(() => {});
-  expect(router.state.location.pathname).toBe("/inbox");
-  expect(sheet()).toBeNull();
-  input.remove();
+  try {
+    input.focus();
+    for (const k of ["c", "?"]) fireEvent.keyDown(input, { key: k });
+    fireEvent.keyDown(input, { key: "g" });
+    fireEvent.keyDown(input, { key: "t" });
+    act(() => {});
+    expect(router.state.location.pathname).toBe("/inbox");
+    expect(sheet()).toBeNull();
+  } finally {
+    input.remove();
+  }
 });

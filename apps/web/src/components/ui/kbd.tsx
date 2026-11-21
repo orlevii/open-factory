@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 export const isMac = () => {
   if (typeof navigator === "undefined") return false;
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  return /mac|iphone|ipad|ios/i.test(nav.userAgentData?.platform ?? navigator.platform);
+  return /mac|iphone|ipad|ios/i.test(nav.userAgentData?.platform || navigator.platform);
 };
 
 /** Key caps for a shortcut hint: `<Kbd keys={["Mod", "K"]} />`. "Mod" is ⌘ on Apple platforms, else Ctrl. */

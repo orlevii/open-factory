@@ -597,12 +597,7 @@ export function AgentForm(props: Props) {
       <div className="grid gap-2">
         <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
         <div>
-          <Button
-            type="submit"
-            size="lg"
-            aria-disabled={pending || noCredentials || undefined}
-            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-          >
+          <Button type="submit" size="lg" aria-disabled={pending || noCredentials || undefined}>
             {pending && <Spinner />}
             {pending
               ? create

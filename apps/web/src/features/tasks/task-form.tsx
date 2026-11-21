@@ -185,7 +185,7 @@ export function TaskForm({ onSubmit }: { onSubmit(body: CreateTaskBody): Promise
           <Button type="submit" disabled={pending}>
             {pending ? "Creating…" : "Create task"}
           </Button>
-          <Button type="button" variant="ghost" asChild>
+          <Button type="button" variant="outline" asChild>
             <Link to="/tasks" search={{}}>
               Cancel
             </Link>

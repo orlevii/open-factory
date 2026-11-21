@@ -392,7 +392,7 @@ export function UsersSection() {
         <Button
           id="invites-create"
           type="button"
-          variant="ghost"
+          variant="outline"
           aria-disabled={creating || undefined}
           onClick={() => void create()}
         >

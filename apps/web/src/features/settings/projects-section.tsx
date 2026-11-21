@@ -497,7 +497,7 @@ export function ProjectsSection() {
           <Button
             id="projects-add"
             type="button"
-            variant="ghost"
+            variant="outline"
             onClick={() => {
               setOutcome(undefined);
               setAdding(true);

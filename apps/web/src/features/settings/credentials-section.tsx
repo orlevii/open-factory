@@ -621,7 +621,7 @@ export function CredentialsSection() {
           <Button
             id="credentials-add"
             type="button"
-            variant="ghost"
+            variant="outline"
             onClick={() => {
               setOutcome(undefined);
               setAdding(true);

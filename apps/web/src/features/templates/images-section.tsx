@@ -217,7 +217,9 @@ function BuildLogSheet({
             <SheetHeader>
               <SheetTitle>{shown} build log</SheetTitle>
             </SheetHeader>
-            <SheetBody key={shown}>
+            {/* Sized to the log, not the panel: the footer's Build sits right under the card instead of
+                at the bottom of a tall, mostly empty panel. It still shrinks and scrolls when short. */}
+            <SheetBody key={shown} className="flex-initial">
               <BuildLog name={shown} item={item} />
             </SheetBody>
             {item && <BuildLogFooter key={`${shown}-footer`} item={item} />}

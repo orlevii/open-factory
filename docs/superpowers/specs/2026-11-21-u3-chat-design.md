@@ -1,11 +1,11 @@
 # U3 Chat: Technical Design
 
 - **Date:** 2026-11-21
-- **Status:** Draft. Owner-proxy (owner-u3) answered Q1–Q25; streaming, `/` commands and attachments (§11, §13.3–§13.5) wait for spike-u3's findings. Low certainty and deviations for Or: §21.
+- **Status:** Draft. Owner-proxy (owner-u3) answered Q1–Q26; streaming, `/` commands and attachments (§11, §13.3–§13.5) wait for spike-u3's findings. Low certainty and deviations for Or: §21.
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (decisions 1–21; 7, 13 and 16–21 binding here), `docs/product/ui-review/status.md` (U3 table rows 1–12, file:line at `322075d`), `docs/product/ui-review/pr76-review.md` (the U3 items decision 15 hands over), the seven reviews in `docs/product/ui-review/` (chat.md is the main source), `docs/product/behavior/*.md`, `docs/product/architecture/harness-driver.md`, and, once written, `docs/product/architecture/claude-streaming-and-commands.md` (spike-u3).
 - **Builds on:** U1 (PRs #84–#88, decisions #77): the control system, `data-instant`, memoized timeline rows (`stabilizeRows`, `TimelineItem` + `itemPropsEqual`, memoized `Markdown`, rAF-batched frames), the send-key rule. U2 (PRs #95, #97–#101, decisions #89, leftovers #102): `AgentChip`, `AgentAvatar`, the one-line header and `LiveLine`, Agent details, the shortcut layer, `requestComposerFocus`.
 - **Followed by:** U4 (create flows and mobile). U4 owns the mobile composer layout and long-press on rows (Q25).
-- **Decision log:** GitHub issue "U3: Chat — decisions"; Q1–Q25 are the proxy's answers, D1–Dn tech-lead decisions.
+- **Decision log:** GitHub issue "U3: Chat — decisions"; Q1–Q26 are the proxy's answers, D1–Dn tech-lead decisions.
 
 > `docs/product/` is gitignored. Paths into it are relative to the main checkout. Other paths are relative to the repo root; web paths are relative to `apps/web/src/` unless they start with `apps/` or `packages/`.
 
@@ -132,10 +132,10 @@ The Urgent checkbox, its hint and the "Send urgent" label swap go. The hint line
 - When the hold's 10 s fallback fires (urgent or plain), the runtime appends a new factory event `interrupt_unconfirmed{}`; the timeline renders it as a warning quiet line: "The turn didn't confirm the stop within 10 s, so held messages were sent anyway."
 - Stop-then-Send now equals ⌥Enter, which is why Q4 needs no split menu.
 
-### 6.4 Cancel a held message (Q5, D2)
+### 6.4 Cancel a held message (Q5, Q26)
 
-- Server: `DELETE /api/agents/:slug/queue/:messageId` sets the message row's `state` to `"cancelled"` and drops it from the runtime queue, only if it is still unwritten and was sent by the caller (D2: your own messages; agents' and other humans' messages are not yours to retract); 409 `already_delivered` otherwise. `POST /api/agents/:slug/queue/:messageId/restore` sets it back to `"pending"` and re-inserts it by `createdAt` (its original position), 409 when it was written or the agent ended. Both publish the `queue` frame. Boot recovery skips `cancelled` rows.
-- Client: a ghost "Cancel" on a queued message block you sent. On success the block is replaced in place by a one-line `InlineOutcome` "Message cancelled. Undo" (DESIGN.md: forgiveness over confirmation). Undo is offered only while the server would honour it: it disappears when the next `queue` frame or event shows the agent has started writing (a turn opened). No "Send now" (Q5).
+- Server: `DELETE /api/agents/:slug/queue/:messageId` sets the message row's `state` to `"cancelled"` and drops it from the runtime queue, only if it is still unwritten and was sent by the caller (Q26: the route checks the sender is the session user, 403 `not_sender` otherwise; agents' and other humans' messages are not yours to retract); 409 `already_delivered` when it was written. Both routes log an info line with user, agent and message id (audit). `POST /api/agents/:slug/queue/:messageId/restore` sets it back to `"pending"` and re-inserts it by `createdAt` (its original position), 409 when it was written or the agent ended. Both publish the `queue` frame. Boot recovery skips `cancelled` rows.
+- Client: a ghost "Cancel" on a queued message block you sent; blocks you can't cancel show no Cancel at all. On success the block is replaced in place by a one-line `InlineOutcome` "Message cancelled. Undo" (DESIGN.md: forgiveness over confirmation). Undo is offered only while the server would honour it: it disappears when the next `queue` frame or event shows the agent has started writing (a turn opened). No "Send now" (Q5).
 
 ### 6.5 Drafts, recall, optimistic send
 
@@ -401,7 +401,7 @@ Five stacked PRs on `u2/6-templates-inbox-home` (#101), in this order (Q1):
 
 ## 21. Decisions
 
-Proxy answers Q1–Q25 and tech-lead decisions D1–D2 are logged in the decisions issue. Rated 3/5 or lower, for Or:
+Proxy answers Q1–Q26 and tech-lead decision D1 are logged in the decisions issue. Rated 3/5 or lower, for Or:
 
 - **Q2** (3/5): Stop only in the composer; narrows decision 5's "header keeps … plus Stop".
 - **Q4** (3/5): ⌥Enter for urgent and no split-Send menu.

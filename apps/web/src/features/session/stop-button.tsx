@@ -13,7 +13,8 @@ export type StopHandle = {
 
 /**
  * Stop, left of Send while a turn is open (U3 §6.1). One `postInterrupt`, then a spinner and
- * "Stopping…" until the turn changes (`turnEpoch`); a 409 (the turn already ended) is ignored and any
+ * "Stopping…" until `turnEpoch` changes (a turn edge, or the 10s fallback's `interrupt_unconfirmed`, after
+ * which a turn that ran on can be stopped again); a 409 (the turn already ended) is ignored and any
  * other failure goes to `onError` for the composer's error line. While a compaction runs it reads
  * "Compacting…" and does nothing: the runtime never interrupts one (D5). aria-disabled, not disabled,
  * so it keeps focus and its name.
@@ -28,7 +29,8 @@ export function StopButton({
 }: {
   slug: string;
   turnOpen: boolean;
-  /** Changes on every turn edge, even a close and reopen that landed in one commit. */
+  /** The session's `stopEpoch`: changes on every turn edge, even a close and reopen that landed in one
+   *  commit, and on a live `interrupt_unconfirmed`. */
   turnEpoch: number;
   compacting?: boolean;
   /** Called with a failure, and with `undefined` when a new attempt starts. */
@@ -79,8 +81,9 @@ export function StopButton({
       onClick={stop}
     >
       {pending ? <Spinner /> : <CircleStop aria-hidden="true" />}
-      {/* Below ~24rem of composer (200% text) only the icon shows; the label stays the name. */}
-      <span className="@max-[24rem]:sr-only">
+      {/* Below 20rem of composer (200% text) only the icon shows; the label stays the name. A phone at
+          100% text (a ~22rem composer) keeps "Stop". */}
+      <span className="@max-[20rem]:sr-only">
         {pending ? "Stopping…" : compacting ? "Compacting…" : "Stop"}
       </span>
     </Button>

@@ -47,7 +47,7 @@ function setup(initial: AgentSummary, extra?: ReactNode) {
   const ui = (agent: AgentSummary, epoch: number) => (
     <>
       {extra}
-      <Composer slug="dev" agent={agent} turnEpoch={epoch} />
+      <Composer slug="dev" agent={agent} stopEpoch={epoch} />
     </>
   );
   const r = render(ui(initial, 1));
@@ -129,6 +129,28 @@ test("while compacting Stop is disabled and reads Compacting…", async () => {
   expect(interrupts()).toEqual([]);
 });
 
+test("while compacting the hint says the message arrives after it (no ⌥↵ promise)", () => {
+  setup(working({ compacting: true }));
+  expect(document.querySelector("[data-composer-hint]")).toHaveTextContent(
+    /^Arrives after the compaction\.$/,
+  );
+  expect(document.querySelector("[data-composer-hint] kbd")).toBeNull();
+});
+
+test("Stop resets from Stopping… when stopEpoch changes within the same turn (unconfirmed stop)", async () => {
+  const { update } = setup(working());
+  await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+  expect(screen.getByRole("button", { name: "Stopping…" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  update(working(), 2); // the turn is still open: only the stop epoch moved
+  const stop = screen.getByRole("button", { name: "Stop" });
+  expect(stop).toHaveAttribute("aria-disabled", "false");
+  await userEvent.click(stop);
+  expect(interrupts()).toHaveLength(2);
+});
+
 test("⌥Enter posts urgent:true; Enter and ⌘Enter post urgent:false", async () => {
   const { box } = setup(working());
   const sends = () =>
@@ -173,13 +195,18 @@ test("the hint shows only while a turn is open; the composer height is unchanged
   expect(hint).toHaveTextContent(
     /^Arrives at the agent's next step\. (⌥|Alt)↵ to interrupt instead\.$/,
   );
-  // The line's height is reserved whether or not it has text, so the composer never resizes.
-  expect(hint).toHaveClass("min-h-5");
+  // The line's height is fixed whether or not it has text, so the composer never resizes: a fixed
+  // height that clips (not a minimum the key caps could grow), and caps aligned inside the line box.
+  expect(hint).toHaveClass("h-5", "truncate");
+  expect(hint).not.toHaveClass("min-h-5");
+  const caps = hint?.querySelector("kbd")?.parentElement;
+  expect(caps).toHaveClass("align-top");
+  expect(caps).not.toHaveClass("align-middle");
   update(agentSummary(), 2);
   const after = document.querySelector("[data-composer-hint]");
   expect(after).toBe(hint);
   expect(after).toBeEmptyDOMElement();
-  expect(after).toHaveClass("min-h-5");
+  expect(after).toHaveClass("h-5", "truncate");
 });
 
 test("on a coarse pointer the hint says to Stop first", () => {
@@ -243,7 +270,8 @@ test("a failed Stop says why and allows a retry", async () => {
 test("Stop's label hides below a narrow composer, keeping its name", () => {
   setup(working());
   const label = screen.getByText("Stop");
-  expect(label).toHaveClass("@max-[24rem]:sr-only");
+  // 20rem: a 390px phone's ~358px composer at 100% text keeps the label; 200% text drops it.
+  expect(label).toHaveClass("@max-[20rem]:sr-only");
   expect(label.closest(".\\@container")).not.toBeNull();
 });
 
@@ -299,7 +327,7 @@ function Session({ agent }: { agent: AgentSummary }) {
       <Composer
         slug="dev"
         agent={agent}
-        turnEpoch={1}
+        stopEpoch={1}
         onSending={onSending}
         onSendFailed={onSendFailed}
         onQueued={onQueued}
@@ -541,7 +569,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
 
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
-  render(<Composer ref={ref} slug="dev" agent={working()} turnEpoch={1} />);
+  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
   expect(screen.getByRole("textbox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);

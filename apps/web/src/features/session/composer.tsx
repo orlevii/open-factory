@@ -113,7 +113,7 @@ export function Composer({
   ref,
   slug,
   agent,
-  turnEpoch,
+  stopEpoch,
   waiting = false,
   onQueued,
   onSent,
@@ -125,9 +125,9 @@ export function Composer({
   ref?: Ref<ComposerHandle>;
   slug: string;
   agent: AgentSummary;
-  /** The session's turn epoch: Stop resets on every turn edge (U3 §6.1). Without one (the inbox
-   *  pane, which holds no session state) the composer shows no Stop. */
-  turnEpoch?: number;
+  /** The session's `stopEpoch`: Stop resets on every turn edge (U3 §6.1) and when a stop went
+   *  unconfirmed. Without one (the inbox pane, which holds no session state) the composer shows no Stop. */
+  stopEpoch?: number;
   /** The session is still loading: typing works, sending waits. */
   waiting?: boolean;
   /** Called with the 202 queue item: it replaces the "Sending" block (U3 §13.2). */
@@ -172,9 +172,9 @@ export function Composer({
   }, [landed, unconfirmed, setText, draft, setUnconfirmed]);
   // A failed Stop, on the composer's error line; it belongs to that turn (reset on its edge).
   const [stopError, setStopError] = useState<string | undefined>();
-  const [errorEpoch, setErrorEpoch] = useState(turnEpoch);
-  if (errorEpoch !== turnEpoch) {
-    setErrorEpoch(turnEpoch);
+  const [errorEpoch, setErrorEpoch] = useState(stopEpoch);
+  if (errorEpoch !== stopEpoch) {
+    setErrorEpoch(stopEpoch);
     setStopError(undefined);
   }
   const onStopError = useCallback(
@@ -360,12 +360,12 @@ export function Composer({
         )}
         {/* Send stays right-anchored; Stop appears to its left while a turn is open. */}
         <div className="mt-2 flex items-center justify-end gap-2">
-          {agent.turnOpen && turnEpoch !== undefined && (
+          {agent.turnOpen && stopEpoch !== undefined && (
             <StopButton
               ref={stopRef}
               slug={slug}
               turnOpen={agent.turnOpen}
-              turnEpoch={turnEpoch}
+              turnEpoch={stopEpoch}
               compacting={agent.compacting === true}
               onError={onStopError}
             />
@@ -374,13 +374,14 @@ export function Composer({
             Send
           </Button>
         </div>
-        {/* Height reserved whether or not a turn is open: the composer never resizes at a turn edge. */}
+        {/* A fixed height whether or not a turn is open (a minimum would let the key caps grow it): the
+            composer never resizes at a turn edge. */}
         <p
           id={hintId}
           data-composer-hint
-          className="mt-2 min-h-5 truncate text-[0.8125rem] leading-5 text-muted-foreground"
+          className="mt-2 h-5 truncate text-[0.8125rem] leading-5 text-muted-foreground"
         >
-          {agent.turnOpen ? <UrgentHint /> : null}
+          {agent.turnOpen ? <UrgentHint compacting={agent.compacting === true} /> : null}
         </p>
         {shownError && (
           <p
@@ -402,13 +403,16 @@ export function Composer({
 }
 
 /** "Arrives at the agent's next step. ⌥↵ to interrupt instead." (Alt off Apple platforms; on touch, where
- *  there is no ⌥Enter, it points at Stop). U3 §6.2. */
-function UrgentHint() {
+ *  there is no ⌥Enter, it points at Stop). U3 §6.2. A compaction is never interrupted (D5), so while one
+ *  runs it promises nothing more than "Arrives after the compaction." */
+function UrgentHint({ compacting }: { compacting: boolean }) {
+  if (compacting) return <>Arrives after the compaction.</>;
   if (isCoarsePointer()) return <>Arrives at the agent's next step. Stop first to interrupt.</>;
   return (
     <>
       Arrives at the agent's next step.{" "}
-      <Kbd keys={[isMac() ? "⌥" : "Alt", "↵"]} className="align-middle" /> to interrupt instead.
+      {/* Top-aligned: the 1.25rem caps fill the 1.25rem line box instead of overhanging it. */}
+      <Kbd keys={[isMac() ? "⌥" : "Alt", "↵"]} className="align-top" /> to interrupt instead.
     </>
   );
 }

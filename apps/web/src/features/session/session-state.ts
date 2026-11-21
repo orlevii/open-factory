@@ -53,6 +53,9 @@ export interface SessionState {
   /** Bumped on every `agent.turnOpen` change the reducer applies, so a consumer that resets on a
    *  turn edge still sees a close and a reopen that were folded into one commit (spec §9.6). */
   turnEpoch: number;
+  /** What Stop resets on: every turn edge, and a live `interrupt_unconfirmed` (the 10s fallback released
+   *  the hold while the turn ran on, so it can be stopped again). */
+  stopEpoch: number;
   needsReload: boolean;
   /** Row keys that replace something that was on screen (a queue item a `message_in` delivered):
    *  they never fade (U3 §8.3). */
@@ -89,6 +92,7 @@ export const initialSessionState: SessionState = {
   queue: [],
   agent: undefined,
   turnEpoch: 0,
+  stopEpoch: 0,
   needsReload: false,
   handedOff: NONE,
   liveAfter: 0,
@@ -307,17 +311,18 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
       );
     } else if (e.type === "turn_end" && next.agent?.turnOpen) {
       next = withAgent(next, { ...next.agent, turnOpen: false, turnStartedAt: undefined });
+    } else if (e.type === "interrupt_unconfirmed") {
+      next = { ...next, stopEpoch: next.stopEpoch + 1 };
     }
   }
   return next;
 }
 
 /** The state with `agent` replaced, counting a `turnOpen` change in `turnEpoch`. */
-const withAgent = (s: SessionState, agent: AgentSummary | undefined): SessionState => ({
-  ...s,
-  agent,
-  turnEpoch: s.turnEpoch + (s.agent?.turnOpen === agent?.turnOpen ? 0 : 1),
-});
+const withAgent = (s: SessionState, agent: AgentSummary | undefined): SessionState => {
+  const edge = s.agent?.turnOpen === agent?.turnOpen ? 0 : 1;
+  return { ...s, agent, turnEpoch: s.turnEpoch + edge, stopEpoch: s.stopEpoch + edge };
+};
 
 export function sessionReducer(s: SessionState, a: SessionAction): SessionState {
   switch (a.type) {
@@ -337,6 +342,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
             // the epoch carries across loads, so a reload never makes it repeat a value
             agent: s.agent,
             turnEpoch: s.turnEpoch,
+            stopEpoch: s.stopEpoch,
             // A reload of the same session (a resync) keeps your cancelled lines; leaving drops them.
             cancelled:
               s.slug === a.detail.agent.slug

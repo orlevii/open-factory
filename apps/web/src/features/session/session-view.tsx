@@ -336,7 +336,7 @@ export function SessionView({
             ref={composerRef}
             slug={slug}
             agent={agent}
-            turnEpoch={s.state.turnEpoch}
+            stopEpoch={s.state.stopEpoch}
             // A send before the session loads would be lost when the load replaces the queue.
             waiting={!loaded}
             onQueued={s.onQueued}

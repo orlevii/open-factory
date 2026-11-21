@@ -458,6 +458,21 @@ test("applying a live turn_end closes the turn in the same step", () => {
   expect(s.turnEpoch).toBe(s0.turnEpoch + 1);
 });
 
+test("a live interrupt_unconfirmed bumps stopEpoch (Stop resets) but not turnEpoch; turn edges bump both", () => {
+  const s0 = loaded({ agent: { turnOpen: true, turnStartedAt: at, status: "working" } });
+  const s1 = sessionReducer(s0, frames([sessionEvent(20, { type: "interrupt_unconfirmed" })]));
+  expect(s1.stopEpoch).toBe(s0.stopEpoch + 1);
+  expect(s1.turnEpoch).toBe(s0.turnEpoch);
+  expect(s1.agent?.turnOpen).toBe(true);
+  const s2 = sessionReducer(s1, frames([sessionEvent(21, turnEnd())]));
+  expect(s2.turnEpoch).toBe(s1.turnEpoch + 1);
+  expect(s2.stopEpoch).toBe(s1.stopEpoch + 1);
+  // A replayed (already-held) one changes nothing.
+  expect(
+    sessionReducer(s2, frames([sessionEvent(20, { type: "interrupt_unconfirmed" })])).stopEpoch,
+  ).toBe(s2.stopEpoch);
+});
+
 test("a loaded turn_end never flips turnOpen", () => {
   const s = sessionReducer(initialSessionState, {
     type: "loaded",

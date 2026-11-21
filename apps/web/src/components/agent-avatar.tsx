@@ -22,32 +22,32 @@ const HEADS = [
   <polygon key="o" points="8,2 16,2 22,8 22,16 16,22 8,22 2,16 2,8" />,
 ];
 const EYES = [
-  <g key="0">
+  <g key="e0">
     <circle cx="8" cy="10" r="2" />
     <circle cx="16" cy="10" r="2" />
   </g>,
-  <g key="1">
+  <g key="e1">
     <rect x="6" y="8" width="4" height="4" />
     <rect x="14" y="8" width="4" height="4" />
   </g>,
-  <rect key="2" x="5" y="9" width="14" height="3" rx="1" />,
-  <g key="3">
+  <rect key="e2" x="5" y="9" width="14" height="3" rx="1" />,
+  <g key="e3">
     <rect x="7" y="7" width="2" height="6" />
     <rect x="15" y="7" width="2" height="6" />
   </g>,
-  <g key="4">
+  <g key="e4">
     <circle cx="12" cy="10" r="3" />
   </g>,
-  <g key="5">
+  <g key="e5">
     <polygon points="6,12 10,12 8,8" />
     <polygon points="14,12 18,12 16,8" />
   </g>,
 ];
 const MOUTHS = [
-  <rect key="0" x="8" y="15" width="8" height="2" />,
-  <rect key="1" x="10" y="15" width="4" height="3" />,
-  <polygon key="2" points="8,15 16,15 12,18" />,
-  <g key="3">
+  <rect key="m0" x="8" y="15" width="8" height="2" />,
+  <rect key="m1" x="10" y="15" width="4" height="3" />,
+  <polygon key="m2" points="8,15 16,15 12,18" />,
+  <g key="m3">
     <rect x="8" y="16" width="2" height="2" />
     <rect x="11" y="16" width="2" height="2" />
     <rect x="14" y="16" width="2" height="2" />
@@ -55,13 +55,13 @@ const MOUTHS = [
 ];
 const ACCESSORIES = [
   null,
-  <rect key="1" x="11" y="0" width="2" height="3" />,
-  <g key="2">
+  <rect key="a1" x="11" y="0" width="2" height="3" />,
+  <g key="a2">
     <rect x="0" y="9" width="2" height="6" />
     <rect x="22" y="9" width="2" height="6" />
   </g>,
-  <polygon key="3" points="9,3 12,0 15,3" />,
-  <g key="4">
+  <polygon key="a3" points="9,3 12,0 15,3" />,
+  <g key="a4">
     <rect x="8" y="0" width="2" height="3" />
     <rect x="14" y="0" width="2" height="3" />
   </g>,

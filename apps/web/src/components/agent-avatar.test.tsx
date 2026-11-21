@@ -1,6 +1,6 @@
 import { type AgentStatus, agentStatusSchema } from "@open-factory/shared";
 import { fireEvent, render } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { AgentAvatar } from "./agent-avatar";
 
 test("draws the generated face, aria-hidden", () => {
@@ -97,4 +97,16 @@ test.each(agentStatusSchema.options)("%s: a hole exactly when there is a badge",
   const { container } = render(<AgentAvatar slug="a" size={20} status={s} />);
   const mark = container.querySelector("[data-status-mark]") !== null;
   expect(container.querySelector(".of-avatar-cut") !== null).toBe(mark);
+});
+
+test("no face's parts share a React key (eyes, mouth and accessory are siblings)", () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    for (let i = 0; i < 200; i++)
+      render(<AgentAvatar slug={`agent-${i}`} template="t" size={16} />);
+    render(<AgentAvatar slug="dev-old" template="t" size={16} />);
+    expect(error.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+  } finally {
+    error.mockRestore();
+  }
 });

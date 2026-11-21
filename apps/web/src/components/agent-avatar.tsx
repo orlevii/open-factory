@@ -89,30 +89,41 @@ const BotSvg = memo(function BotSvg({ slug, size }: { slug: string; size: number
   );
 });
 
+const TOOTH_SM = [4, 8] as const;
+const TOOTH_LG = [6, 12] as const;
+
 /** The status shape that doubles as the avatar badge: shape, never colour alone. Null at rest. */
 export function StatusMark({
   status,
   size,
-  fit = false,
+  tooth = TOOTH_LG,
+  glyph = size * 2,
 }: {
   status: AgentStatus;
-  size: 4 | 6;
-  /** Shrinks the 6x12 tooth to the avatar's 8px hole (4x8); other shapes already fit. */
-  fit?: boolean;
+  /** Diameter of the dot and the ring. */
+  size: number;
+  /** Width and height of the working tooth. */
+  tooth?: readonly [number, number];
+  /** Box of the errored glyph (StatusBadge draws it at twice the dot). */
+  glyph?: number;
 }) {
   const box = { width: size, height: size } satisfies CSSProperties;
   switch (status) {
     case "working":
       return (
-        <span data-status-mark={status} className={fit ? "of-tooth scale-[0.667]" : "of-tooth"} />
+        <span
+          data-status-mark={status}
+          style={{ width: tooth[0], height: tooth[1] }}
+          className="of-tooth"
+        />
       );
     case "errored":
       return (
         <CircleAlert
           data-status-mark={status}
           aria-hidden="true"
-          width={size * 2}
-          height={size * 2}
+          width={glyph}
+          height={glyph}
           className="fill-destructive stroke-card text-destructive"
         />
       );
@@ -138,10 +149,16 @@ export function StatusMark({
   }
 }
 
-const HOLE = 8;
-
 /** Statuses that draw a badge; the rest (idle, hibernated, terminated) draw nothing and cut no hole. */
 const MARKED: ReadonlySet<AgentStatus> = new Set(["working", "errored", "rate_limited", "queued"]);
+
+/** Badge geometry per avatar size (spec §5.1): the badge's box (its longest side) and the shape's sizes. */
+function badgeFor(status: AgentStatus, avatar: 16 | 20 | 24) {
+  const dot = avatar === 16 ? 4 : 6;
+  const tooth = avatar < 24 ? TOOTH_SM : TOOTH_LG;
+  const box = status === "working" ? tooth[1] : dot;
+  return { dot, tooth, box };
+}
 
 export const AgentAvatar = memo(function AgentAvatar({
   slug,
@@ -160,7 +177,7 @@ export const AgentAvatar = memo(function AgentAvatar({
     template && avatarVersion
       ? `/api/templates/${encodeURIComponent(template)}/avatar.svg?v=${encodeURIComponent(avatarVersion)}`
       : null;
-  const mark = status && MARKED.has(status) ? <StatusMark status={status} size={4} fit /> : null;
+  const badge = status && MARKED.has(status) ? badgeFor(status, size) : null;
   return (
     <span
       aria-hidden="true"
@@ -168,18 +185,22 @@ export const AgentAvatar = memo(function AgentAvatar({
       style={{ width: size, height: size }}
     >
       <span
-        className={mark ? "of-avatar-cut absolute inset-0" : "absolute inset-0"}
-        style={{ "--mark": `${HOLE}px` } as CSSProperties}
+        className={badge ? "of-avatar-cut absolute inset-0" : "absolute inset-0"}
+        style={
+          badge
+            ? ({ "--mark": `${badge.box}px`, "--hole": `${badge.box + 2}px` } as CSSProperties)
+            : undefined
+        }
       >
         <BotSvg slug={slug} size={size} />
         {src ? <OverrideImg key={src} src={src} /> : null}
       </span>
-      {mark ? (
+      {status && badge ? (
         <span
           className="absolute flex items-center justify-center"
-          style={{ right: 0, bottom: 0, width: HOLE, height: HOLE }}
+          style={{ right: 0, bottom: 0, width: badge.box, height: badge.box }}
         >
-          {mark}
+          <StatusMark status={status} size={badge.dot} tooth={badge.tooth} glyph={badge.dot} />
         </span>
       ) : null}
     </span>

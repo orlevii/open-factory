@@ -276,7 +276,8 @@
   width: 6px;
   height: 12px;
   background: var(--signal);
-  clip-path: polygon(0 3.46px, 100% 0, 100% 100%, 0 100%);
+  /* 3.46px of 12px: the same slope at any size. */
+  clip-path: polygon(0 28.83%, 100% 0, 100% 100%, 0 100%);
 }
 
 @keyframes of-ignite {
@@ -603,11 +604,12 @@
   }
 }
 
-/* Avatar with a status badge: punches a round hole at the bottom-right where the mark sits. */
+/* Avatar with a status badge: punches a round hole (--hole across) centred on the badge's box
+   (--mark, its longest side) at the bottom-right. */
 .of-avatar-cut {
   mask-image: radial-gradient(
     circle at calc(100% - var(--mark) / 2) calc(100% - var(--mark) / 2),
-    transparent calc(var(--mark) / 2 + 2px),
-    #000 calc(var(--mark) / 2 + 2px)
+    transparent calc(var(--hole) / 2),
+    #000 calc(var(--hole) / 2)
   );
 }

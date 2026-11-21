@@ -53,3 +53,41 @@ test("no badge hole without a status", () => {
   const { container } = render(<AgentAvatar slug="a" size={20} />);
   expect(container.querySelector(".of-avatar-cut")).toBeNull();
 });
+
+function px(v: string | null | undefined) {
+  return Number.parseFloat(v ?? "");
+}
+
+function badgeGeometry(container: HTMLElement) {
+  const mark = container.querySelector<HTMLElement | SVGElement>("[data-status-mark]");
+  const cut = container.querySelector<HTMLElement>(".of-avatar-cut");
+  if (!mark || !cut) throw new Error("no badge");
+  const w = px(mark.style.width || mark.getAttribute("width"));
+  const h = px(mark.style.height || mark.getAttribute("height"));
+  return {
+    w,
+    h,
+    box: px(cut.style.getPropertyValue("--mark")),
+    hole: px(cut.style.getPropertyValue("--hole")),
+  };
+}
+
+test.each([
+  [16, "rate_limited", 4, 4],
+  [20, "rate_limited", 6, 6],
+  [24, "rate_limited", 6, 6],
+  [16, "queued", 4, 4],
+  [20, "queued", 6, 6],
+  [16, "errored", 4, 4],
+  [20, "errored", 6, 6],
+  [24, "errored", 6, 6],
+  [16, "working", 4, 8],
+  [20, "working", 4, 8],
+  [24, "working", 6, 12],
+] as const)("size %i %s badge is %ix%i, its hole 2px larger", (size, status, w, h) => {
+  const { container } = render(<AgentAvatar slug="a" size={size} status={status} />);
+  const g = badgeGeometry(container);
+  expect([g.w, g.h]).toEqual([w, h]);
+  expect(g.box).toBe(Math.max(w, h));
+  expect(g.hole).toBe(g.box + 2);
+});

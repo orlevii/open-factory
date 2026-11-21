@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { agentSummary } from "@/test/session-fixtures";
-import { AgentChip, PrincipalChip } from "./agent-chip";
+import { AgentChip, PrincipalChip, TruncTooltip } from "./agent-chip";
 
 const lead = agentSummary({ slug: "lead", displayName: "Team Lead" });
 
@@ -96,4 +96,23 @@ test("tooltip only when truncated", async () => {
   });
   await userEvent.hover(wrapper);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("Team Lead");
+});
+
+test("a click on a truncated name inside a link still follows the link", async () => {
+  const follow = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+  wrap(
+    <a href="/agents/lead" onClick={follow}>
+      <TruncTooltip text="Team Lead">
+        <span>Team Lead</span>
+      </TruncTooltip>
+    </a>,
+  );
+  const name = screen.getByText("Team Lead");
+  Object.defineProperty(name, "scrollWidth", { configurable: true, value: 200 });
+  Object.defineProperty(name, "clientWidth", { configurable: true, value: 50 });
+  await userEvent.hover(name);
+  await screen.findByRole("tooltip");
+  // Radix closes on pointer down; the trigger must survive it so the click reaches the link.
+  await userEvent.click(screen.getByText("Team Lead", { selector: "span:not([role])" }));
+  expect(follow).toHaveBeenCalledTimes(1);
 });

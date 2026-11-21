@@ -22,8 +22,8 @@ function isTruncated(root: HTMLElement): boolean {
   return false;
 }
 
-/** Wraps a truncating element. At rest it is a plain span; the Radix tooltip mounts only once a
- *  pointer enter or focus finds the content cut off, so a list of chips carries no tooltip roots. */
+/** Wraps a truncating element. At rest it is a plain span; the Radix tooltip mounts only while a
+ *  pointer or focus that found the content cut off stays, so a list of chips carries no tooltip roots. */
 export function TruncTooltip({
   text,
   className,
@@ -44,6 +44,8 @@ export function TruncTooltip({
       ref={ref}
       onPointerEnter={check}
       onFocus={check}
+      onPointerLeave={() => setArmed(false)}
+      onBlur={() => setArmed(false)}
       className={cn("flex min-w-0", className)}
     >
       {children}
@@ -51,7 +53,9 @@ export function TruncTooltip({
   );
   if (!armed) return span;
   return (
-    <Tooltip open onOpenChange={(open) => !open && setArmed(false)}>
+    // Unmounted on leave or blur, not on close: Radix closes on pointer down, and dropping the
+    // trigger then would swallow the click meant for an enclosing link.
+    <Tooltip defaultOpen>
       <TooltipTrigger asChild>{span}</TooltipTrigger>
       <TooltipContent>{text}</TooltipContent>
     </Tooltip>

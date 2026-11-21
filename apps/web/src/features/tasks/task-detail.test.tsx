@@ -182,6 +182,36 @@ test("Assignee picker: typeahead matches the slug, arrows only move the highligh
   await waitFor(() => expect(patches(api)[0]?.body).toEqual({ assignee: "qa" }));
 });
 
+test("focus stays on the status menu while a change saves and after it lands", async () => {
+  const api = world();
+  let land = () => {};
+  api.on(
+    "PATCH /api/tasks/T-42",
+    () =>
+      new Promise<Response>((resolve) => {
+        land = () => resolve(json({ task: detail({ status: "done" }) }));
+      }),
+  );
+  renderApp("/tasks/T-42", alice);
+  const trigger = await screen.findByRole("button", { name: "Status: In progress" });
+  trigger.focus();
+  await userEvent.keyboard("{Enter}");
+  await screen.findByRole("menuitemradio", { name: "Done" });
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  await waitFor(() => expect(patches(api)).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  const busy = screen.getByRole("button", { name: "Status: Done" });
+  expect(busy).toHaveFocus();
+  expect(busy).toHaveAttribute("aria-disabled", "true");
+  await userEvent.keyboard("{Enter}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  act(() => land());
+  expect(await screen.findByText("Status set to done")).toBeInTheDocument();
+  const settled = screen.getByRole("button", { name: "Status: Done" });
+  expect(settled).toHaveFocus();
+  expect(settled).not.toHaveAttribute("aria-disabled");
+});
+
 test("focus stays on the assignee picker while a change saves and after it lands", async () => {
   const api = world();
   let land = () => {};

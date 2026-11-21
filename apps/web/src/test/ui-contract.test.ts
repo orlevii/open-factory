@@ -36,7 +36,7 @@ describe("styles.css", () => {
 });
 
 describe("overlay surfaces", () => {
-  for (const f of ["popover", "dropdown-menu", "tooltip", "select"]) {
+  for (const f of ["popover", "dropdown-menu", "tooltip", "select", "combobox"]) {
     const path = join(SRC, `components/ui/${f}.tsx`);
     test.skipIf(!existsSync(path))(`${f}.tsx has no shadow and no slide-in`, () => {
       const src = readFileSync(path, "utf8");

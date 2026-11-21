@@ -56,6 +56,12 @@ import {
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow, Tx } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
+import {
+  AgentEndedError,
+  AlreadyDeliveredError,
+  assertSender,
+  NotSenderError,
+} from "./message-cancel.ts";
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
@@ -552,14 +558,7 @@ export class AgentRuntime {
       if (!this.seen.has(row.id)) {
         entry = entryOf(row);
         this.seen.add(row.id);
-        // At its (created_at, id) place, so concurrent sends keep their order: it moves ahead only of newer
-        // messages at the tail, never of a notice or a compact (a barrier).
-        let at = this.queue.length;
-        for (; at > 0; at--) {
-          const e = this.queue[at - 1];
-          if (e?.kind !== "message" || isNotice(e) || byCreated(e, entry) < 0) break;
-        }
-        this.queue.splice(at, 0, entry);
+        this.insertByCreated(entry);
         this.publishQueue();
       } else if (!entry) {
         // Already written (boot reconciliation's wake loaded and delivered it while the Router waited on `booted`):
@@ -589,6 +588,73 @@ export class AgentRuntime {
       if (row.urgent) await this.urgentInterrupt(o.fromLabel);
       await this.flush();
       return this.itemOf(entry ?? entryOf(row));
+    });
+  }
+
+  /**
+   * At its (created_at, id) place, so concurrent sends keep their order: it moves ahead only of newer messages at the
+   * tail, never of a notice or a compact (a barrier).
+   */
+  private insertByCreated(entry: MessageEntry) {
+    let at = this.queue.length;
+    for (; at > 0; at--) {
+      const e = this.queue[at - 1];
+      if (e?.kind !== "message" || isNotice(e) || byCreated(e, entry) < 0) break;
+    }
+    this.queue.splice(at, 0, entry);
+  }
+
+  /**
+   * U3 §6.4 (Q26, D2): the sender withdraws a message nothing has written yet. Only their own `kind = 'message'` row
+   * (`NotSenderError` otherwise), only while it is still in the queue (in flight, awaiting or written:
+   * `AlreadyDeliveredError`), and the row changes only if it is still pending and unwritten. A wake already under way
+   * is left alone. Resolves to the cancelled item.
+   */
+  cancelQueued(messageId: string, userId: string): Promise<QueueItem> {
+    return this.apiJob(async () => {
+      assertSender(await this.d.store.messageRow(messageId), {
+        agentId: this.agent.id,
+        userId,
+      });
+      const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === messageId);
+      const entry = this.queue[at];
+      if (!entry) throw new AlreadyDeliveredError();
+      if (!(await this.d.store.cancelPending(messageId))) throw new AlreadyDeliveredError();
+      this.queue.splice(at, 1);
+      this.publishQueue();
+      return this.itemOf(entry);
+    });
+  }
+
+  /**
+   * U3 §6.4: Undo of a cancel. The same sender check; `AgentEndedError` on a terminated or archived agent. The row is
+   * pending again and goes back among the still-queued items by `createdAt` (next, if later ones were written
+   * meanwhile), then wakes and flushes like a delivery, without the `seen` guard (its id is known) and never with an
+   * urgent interrupt. A message that isn't cancelled is left as it is: still queued, a no-op; otherwise
+   * `AlreadyDeliveredError`.
+   */
+  restoreQueued(messageId: string, userId: string): Promise<void> {
+    return this.apiJob(async () => {
+      assertSender(await this.d.store.messageRow(messageId), {
+        agentId: this.agent.id,
+        userId,
+      });
+      if (this.terminated || this.archived) throw new AgentEndedError(this.agent.slug);
+      if (!(await this.d.store.restoreCancelled(messageId))) {
+        if (this.queue.some((e) => e.kind === "message" && e.row.id === messageId)) return;
+        throw new AlreadyDeliveredError();
+      }
+      const row = await this.d.store.pendingJoined(messageId);
+      if (!row) throw new Error(`message ${messageId} is not pending after its restore`);
+      this.seen.add(row.id);
+      this.insertByCreated(entryOf(row));
+      this.publishQueue();
+      if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
+      else {
+        if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
+        await this.wakeInline("message");
+      }
+      await this.flush();
     });
   }
 
@@ -1599,7 +1665,10 @@ export class AgentRuntime {
             err instanceof AgentTerminatedError ||
             err instanceof NoOpenTurnError ||
             err instanceof CompactingError ||
-            err instanceof RecoveryRefusedError
+            err instanceof RecoveryRefusedError ||
+            err instanceof NotSenderError ||
+            err instanceof AlreadyDeliveredError ||
+            err instanceof AgentEndedError
           ) &&
           this.proc
         )

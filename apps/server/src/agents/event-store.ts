@@ -1052,6 +1052,34 @@ export class EventStore {
     if (ids.length)
       await tx.update(messages).set({ deliveredEventSeq: seq }).where(inArray(messages.id, ids));
   }
+  /** One message row as stored, whatever its state; undefined when there is none. */
+  async messageRow(id: string): Promise<MessageRow | undefined> {
+    const [r] = await this.db.select().from(messages).where(eq(messages.id, id));
+    return r;
+  }
+  /**
+   * U3 §6.4: cancels a message only while nothing has written it (`pending` and no delivery event). False when the
+   * row was written, rejected or already cancelled meanwhile.
+   */
+  async cancelPending(id: string): Promise<boolean> {
+    const rows = await this.db
+      .update(messages)
+      .set({ state: "cancelled" })
+      .where(
+        and(eq(messages.id, id), eq(messages.state, "pending"), isNull(messages.deliveredEventSeq)),
+      )
+      .returning({ id: messages.id });
+    return rows.length > 0;
+  }
+  /** U3 §6.4: a cancelled message is pending again. False when it wasn't cancelled. */
+  async restoreCancelled(id: string): Promise<boolean> {
+    const rows = await this.db
+      .update(messages)
+      .set({ state: "pending" })
+      .where(and(eq(messages.id, id), eq(messages.state, "cancelled")))
+      .returning({ id: messages.id });
+    return rows.length > 0;
+  }
   /** The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). */
   async markRejected(id: string, tx: Exec = this.db) {
     await tx

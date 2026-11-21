@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
 import { CompactingError } from "../agents/errors.ts";
+import { AgentEndedError } from "../agents/message-cancel.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -554,5 +555,115 @@ describe("S7: the ended list is bounded", () => {
     queries.length = 0;
     await svc.summary("old-5");
     expect(queries.filter((q) => /from "agents"/.test(q) && !/ where /.test(q))).toEqual([]);
+  });
+});
+
+describe("U3 §6.4: cancel and restore a held message", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let or: { cookie: string; id: string };
+  let sam: { cookie: string; id: string };
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    await s.seedAgent();
+    const a = await s.signUpUser({ handle: "or6" });
+    const b = await s.signUpUser({ handle: "sam6" });
+    or = { cookie: a.cookie, id: a.user.id };
+    sam = { cookie: b.cookie, id: b.user.id };
+  });
+  afterAll(() => s.close());
+
+  const call = (
+    who: { cookie: string },
+    method: "GET" | "POST" | "DELETE",
+    url: string,
+    payload?: object,
+  ) =>
+    s.app.inject({ method, url, headers: { cookie: who.cookie }, ...(payload ? { payload } : {}) });
+  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
+
+  /** A message sent while a Stop's hold is on: queued, unwritten. */
+  async function held(body: string): Promise<string> {
+    if (!drv.starts.length) {
+      await call(or, "POST", "/api/agents/dev/messages", { body: "work", urgent: false });
+      drv.last.emit(ev.session(), ev.turn());
+      await settled();
+      expect((await call(or, "POST", "/api/agents/dev/interrupt")).statusCode).toBe(202);
+    }
+    const res = await call(or, "POST", "/api/agents/dev/messages", { body, urgent: false });
+    expect(res.json().item).toMatchObject({ body, waitReason: "stopping" });
+    return res.json().item.id;
+  }
+
+  test("the sender cancels (200 with the item); another user gets 403; the lookup reports cancelled", async () => {
+    const id = await held("hold me");
+    const other = await call(sam, "DELETE", `/api/agents/dev/queue/${id}`);
+    expect(other.statusCode).toBe(403);
+    expect(other.json().error.code).toBe("not_sender");
+    const res = await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      item: expect.objectContaining({ id, body: "hold me", from: "@or6" }),
+    });
+    const again = await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe("already_delivered");
+    expect((await call(or, "GET", `/api/messages/${id}`)).json()).toMatchObject({
+      id,
+      state: "cancelled",
+    });
+    expect((await call(or, "GET", "/api/agents/dev")).json().queue).toEqual([]);
+  });
+
+  test("restore is 204 and puts it back; another user's restore is 403; unknown agent is 404", async () => {
+    const id = await held("undo me");
+    expect((await call(or, "DELETE", `/api/agents/dev/queue/${id}`)).statusCode).toBe(200);
+    const other = await call(sam, "POST", `/api/agents/dev/queue/${id}/restore`);
+    expect(other.statusCode).toBe(403);
+    expect(other.json().error.code).toBe("not_sender");
+    const res = await call(or, "POST", `/api/agents/dev/queue/${id}/restore`);
+    expect(res.statusCode).toBe(204);
+    expect((await call(or, "GET", "/api/agents/dev")).json().queue).toEqual([
+      expect.objectContaining({ id, body: "undo me" }),
+    ]);
+    expect((await call(or, "GET", `/api/messages/${id}`)).json().state).toBe("pending");
+    expect((await call(or, "DELETE", `/api/agents/nope/queue/${id}`)).statusCode).toBe(404);
+    // Cleanup for the next test: cancel it again.
+    expect((await call(or, "DELETE", `/api/agents/dev/queue/${id}`)).statusCode).toBe(200);
+  });
+
+  test("restore on an ended agent is 409 agent_ended", async () => {
+    const rt = await s.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no runtime");
+    const spy = vi.spyOn(rt, "restoreQueued").mockRejectedValueOnce(new AgentEndedError("dev"));
+    const res = await call(or, "POST", "/api/agents/dev/queue/x/restore");
+    spy.mockRestore();
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("agent_ended");
+  });
+
+  test("both routes log an audit line with the user, the agent and the message", async () => {
+    const id = await held("audit me");
+    const info = vi.spyOn(s.app.log, "info");
+    try {
+      await call(sam, "DELETE", `/api/agents/dev/queue/${id}`);
+      await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
+      await call(or, "POST", `/api/agents/dev/queue/${id}/restore`);
+      const lines = info.mock.calls.map(([obj, msg]) => [obj, msg]);
+      expect(lines).toContainEqual([
+        { user: sam.id, agent: "dev", messageId: id, refused: "not_sender" },
+        "queued message cancel refused",
+      ]);
+      expect(lines).toContainEqual([
+        { user: or.id, agent: "dev", messageId: id },
+        "queued message cancel",
+      ]);
+      expect(lines).toContainEqual([
+        { user: or.id, agent: "dev", messageId: id },
+        "queued message restore",
+      ]);
+    } finally {
+      info.mockRestore();
+    }
   });
 });

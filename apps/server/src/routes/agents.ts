@@ -18,6 +18,7 @@ import {
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
+import type { AgentRuntime } from "../agents/agent-runtime.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -26,11 +27,17 @@ import {
   NoOpenTurnError,
   RecoveryRefusedError,
 } from "../agents/errors.ts";
+import {
+  AgentEndedError,
+  AlreadyDeliveredError,
+  NotSenderError,
+} from "../agents/message-cancel.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { localRuntimeAllowed } from "../config.ts";
 import { parseDays } from "./usage.ts";
 
 const slugParams = z.object({ slug: slugSchema });
+const queueItemParams = z.object({ slug: slugSchema, messageId: z.string().min(1) });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
 
@@ -205,6 +212,63 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         throw e;
       }
     },
+  );
+
+  /**
+   * U3 §6.4: cancel a held message, and Undo it. The runtime checks the sender (403 `not_sender`) and that nothing
+   * has written it (409 `already_delivered`); a restore to an ended agent is 409 `agent_ended`. Every attempt leaves
+   * an audit line with the user, the agent and the message.
+   */
+  const queueRefusal = (
+    e: unknown,
+  ): [status: number, code: string, message: string] | undefined => {
+    if (e instanceof NotSenderError) return [403, e.code, e.message];
+    if (e instanceof AlreadyDeliveredError || e instanceof AgentEndedError)
+      return [409, e.code, e.message];
+    if (e instanceof AgentArchivedError) return [409, "agent_archived", e.message];
+    if (e instanceof AgentTerminatedError) return [409, "agent_terminated", e.message];
+    if (e instanceof AgentStartError) return [503, "agent_start_failed", e.message];
+    return undefined;
+  };
+  /** The audit line (U3 §6.4): who, which agent, which message, and the refusal when there was one. */
+  const queueAction = async <T>(
+    action: "cancel" | "restore",
+    req: { user?: { id: string; handle: string }; params: { slug: string; messageId: string } },
+    reply: FastifyReply,
+    run: (rt: AgentRuntime, userId: string) => Promise<T>,
+  ) => {
+    const rt = await app.runtimes.bySlug(req.params.slug);
+    if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+    const o = { user: user(req).id, agent: rt.agent.slug, messageId: req.params.messageId };
+    try {
+      const out = await run(rt, o.user);
+      app.log.info(o, `queued message ${action}`);
+      return out;
+    } catch (e) {
+      const refused = queueRefusal(e);
+      if (!refused) throw e;
+      app.log.info({ ...o, refused: refused[1] }, `queued message ${action} refused`);
+      return err(reply, ...refused);
+    }
+  };
+
+  app.delete(
+    "/api/agents/:slug/queue/:messageId",
+    { schema: { params: queueItemParams, response: { 200: queueItemResponseSchema } } },
+    (req, reply) =>
+      queueAction("cancel", req, reply, async (rt, userId) => ({
+        item: await rt.cancelQueued(req.params.messageId, userId),
+      })),
+  );
+
+  app.post(
+    "/api/agents/:slug/queue/:messageId/restore",
+    { schema: { params: queueItemParams } },
+    (req, reply) =>
+      queueAction("restore", req, reply, async (rt, userId) => {
+        await rt.restoreQueued(req.params.messageId, userId);
+        return reply.code(204).send();
+      }),
   );
 
   app.post(

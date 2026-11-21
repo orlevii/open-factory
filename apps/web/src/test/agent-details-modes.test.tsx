@@ -212,7 +212,9 @@ test("at 900px, closing the peek from inside it returns focus to the toggle", as
   const user = userEvent.setup();
   await user.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
-  (container()?.querySelector("button, [tabindex]") as HTMLElement).focus();
+  const inside = container()?.querySelector<HTMLElement>("button, [tabindex]");
+  if (!inside) throw new Error("nothing focusable in the peek");
+  inside.focus();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(container()).toBeNull());
   await waitFor(() => expect(toggle()).toHaveFocus());

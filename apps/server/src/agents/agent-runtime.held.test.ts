@@ -578,7 +578,11 @@ test("a written message can't be cancelled (already_delivered); cancelling a can
   await h.rt.cancelQueued(b.id, "u1");
   const frames = h.frames.length;
   // A second tab's DELETE: idempotent, the same item, and no new queue frame (it was never delivered).
-  expect(await h.rt.cancelQueued(b.id, "u1")).toMatchObject({ id: b.id, kind: "message", body: "B" });
+  expect(await h.rt.cancelQueued(b.id, "u1")).toMatchObject({
+    id: b.id,
+    kind: "message",
+    body: "B",
+  });
   expect(h.frames.length).toBe(frames);
   expect(await stateOf(b.id)).toBe("cancelled");
   expect(h.rt.live().status).not.toBe("errored");

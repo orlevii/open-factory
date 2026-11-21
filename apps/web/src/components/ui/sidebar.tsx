@@ -20,6 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { runInstant } from "@/lib/run-instant"
 import { PanelLeftIcon } from "lucide-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
@@ -98,14 +99,8 @@ function SidebarProvider({
         (event.metaKey || event.ctrlKey)
       ) {
         event.preventDefault()
-        // Keyboard-initiated actions never animate (DESIGN.md "Motion"): suspend transitions for
-        // the frame that applies the toggle, then hand them back.
-        const root = document.documentElement
-        root.dataset.instant = ""
-        toggleSidebar()
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => delete root.dataset.instant)
-        )
+        // Keyboard-initiated actions never animate (DESIGN.md "Motion").
+        runInstant(toggleSidebar)
       }
     }
 

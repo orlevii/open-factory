@@ -4,7 +4,7 @@ import { useState } from "react";
 import { expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
-import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "./sheet";
+import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle, closeInstantly } from "./sheet";
 
 function Demo({ open = true, onOpenChange = () => {} }: { open?: boolean; onOpenChange?: (o: boolean) => void }) {
   return (
@@ -155,4 +155,124 @@ test("desktop: content and overlay are stamped per opening, not per mount", asyn
 test("mobile: drawer content and overlay are stamped per opening, not per mount", async () => {
   fakeMatchMedia.install(true);
   await stampedPerOpening("drawer");
+});
+
+type PeekProps = Partial<React.ComponentProps<typeof SheetContent>> & { modal?: boolean };
+function Peek({ modal = false, onOpenChange, ...content }: PeekProps & { onOpenChange?: (o: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open peek
+      </button>
+      <button type="button">Outside</button>
+      <button type="button" id="row">
+        Row
+      </button>
+      <Sheet
+        open={open}
+        modal={modal}
+        onOpenChange={(o) => {
+          onOpenChange?.(o);
+          setOpen(o);
+        }}
+      >
+        <SheetContent {...content}>
+          <SheetHeader>
+            <SheetTitle>Peek</SheetTitle>
+          </SheetHeader>
+          <SheetBody>
+            <input aria-label="inside" />
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+
+test("modal={false}: no overlay, no aria-modal, outside click keeps it open, Esc closes", async () => {
+  fakeMatchMedia.install(false);
+  render(<Peek />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  const panel = await screen.findByRole("dialog", { name: "Peek" });
+  expect(document.querySelector("[data-slot=sheet-overlay]")).toBeNull();
+  expect(panel).not.toHaveAttribute("aria-modal", "true");
+  await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+  expect(screen.getByRole("dialog", { name: "Peek" })).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+test("modal sheets still render the overlay", async () => {
+  fakeMatchMedia.install(false);
+  render(<Peek modal />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  await screen.findByRole("dialog", { name: "Peek" });
+  expect(document.querySelector("[data-slot=sheet-overlay]")).toBeInTheDocument();
+});
+
+test("Esc close is instant (data-instant stamped on the content before closing)", async () => {
+  fakeMatchMedia.install(false);
+  let stampedAtClose: boolean | undefined;
+  render(
+    <Peek
+      onOpenChange={(o) => {
+        if (!o) stampedAtClose = document.querySelector("[data-slot=sheet-content]")?.hasAttribute("data-instant");
+      }}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  const panel = await screen.findByRole("dialog", { name: "Peek" });
+  expect(panel).not.toHaveAttribute("data-instant");
+  await userEvent.keyboard("{Escape}");
+  expect(stampedAtClose).toBe(true);
+});
+
+test("closeInstantly stamps the content, then closes", () => {
+  const el = document.createElement("div");
+  const onOpenChange = vi.fn(() => expect(el).toHaveAttribute("data-instant"));
+  closeInstantly(el, onOpenChange);
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+test("keepFocus: opening leaves focus where it was; returnFocus decides where focus goes on close", async () => {
+  fakeMatchMedia.install(false);
+  render(<Peek keepFocus returnFocus={() => document.getElementById("row")} />);
+  const trigger = screen.getByRole("button", { name: "Open peek" });
+  trigger.focus();
+  await userEvent.keyboard("{Enter}");
+  await screen.findByRole("dialog", { name: "Peek" });
+  expect(trigger).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(document.getElementById("row")).toHaveFocus());
+});
+
+test("without keepFocus, opening moves focus into the sheet", async () => {
+  fakeMatchMedia.install(false);
+  render(<Peek />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  const panel = await screen.findByRole("dialog", { name: "Peek" });
+  await vi.waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+});
+
+test("width='panel' and inset='below-header' classes", async () => {
+  fakeMatchMedia.install(false);
+  render(<Peek width="panel" inset="below-header" />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  const panel = await screen.findByRole("dialog", { name: "Peek" });
+  const tokens = panel.className.split(/\s+/);
+  expect(tokens).toContain("w-[min(20rem,100%)]");
+  expect(tokens).toContain("top-12");
+  expect(tokens).toContain("bottom-0");
+  expect(tokens).not.toContain("inset-y-0");
+  expect(tokens).not.toContain("w-[min(30rem,100%)]");
+});
+
+test("below md it is still the modal bottom drawer", async () => {
+  fakeMatchMedia.install(true);
+  render(<Peek />);
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  await vi.waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeInTheDocument());
+  expect(document.querySelector("[data-slot=drawer-overlay]")).toBeInTheDocument();
+  expect(document.querySelector("[data-slot=sheet-content]")).toBeNull();
 });

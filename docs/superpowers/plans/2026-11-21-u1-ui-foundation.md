@@ -80,7 +80,7 @@ test.each([
   "heading-detail:",
   "button-outline:",
   "Agent identity",
-  "| Detail title (task) | Archivo | 20 / 28 | 650 |",
+  "| Detail title (task, in the page body) | Archivo | 20 / 28 | 650 |",
   "A document never outranks its title.",
   "Live lists never reorder under the pointer",
   "A toast appears only when the control that caused an outcome is gone",

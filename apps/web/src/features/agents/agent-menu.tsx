@@ -55,9 +55,11 @@ export function AgentMenu({
   const slug = agent.slug;
   const trigger = useRef<HTMLButtonElement>(null);
   const [compactOpen, setCompactOpen] = useState(false);
-  // An item that opens an overlay taking focus (Compact…, Agent details as a sheet): the menu's
-  // close must not return focus to ⋯.
-  const [handoff, setHandoff] = useState(false);
+  // An item that opens an overlay taking focus (Compact…, Agent details as a sheet) hands over
+  // once the menu has gone, instead of returning focus to ⋯. Opening it while the menu still
+  // fades out puts the overlay under the pointer: the item's pointer-leave then focuses the dying
+  // menu, which reads as a focus outside and dismisses a popover at once.
+  const handoff = useRef<(() => void) | null>(null);
   const [terminateOpen, setTerminateOpen] = useState(false);
   const session = context === "session";
   const archived = agent.archivedAt !== null;
@@ -116,9 +118,11 @@ export function AgentMenu({
               anchored.onClose();
               return;
             }
-            if (handoff) {
+            const next = handoff.current;
+            if (next) {
               e.preventDefault();
-              setHandoff(false);
+              handoff.current = null;
+              next();
             }
           }}
         >
@@ -133,8 +137,7 @@ export function AgentMenu({
             <DropdownMenuItem
               onSelect={() => {
                 if (!detailsTakeFocus) return onOpenDetails?.();
-                setHandoff(true);
-                requestAnimationFrame(() => onOpenDetails?.());
+                handoff.current = () => onOpenDetails?.();
               }}
             >
               Agent details
@@ -146,8 +149,7 @@ export function AgentMenu({
           {canCompact && (
             <DropdownMenuItem
               onSelect={() => {
-                setHandoff(true);
-                requestAnimationFrame(() => setCompactOpen(true));
+                handoff.current = () => setCompactOpen(true);
               }}
             >
               Compact…

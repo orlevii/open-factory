@@ -1,6 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { expect, test, vi } from "vitest";
+import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "./sheet";
 
@@ -89,4 +91,68 @@ test("the next opening reads the breakpoint afresh", () => {
   rerender(<Demo open />);
   expect(document.querySelector("[data-slot=sheet-content]")).toBeInTheDocument();
   expect(document.querySelector("[data-slot=drawer-content]")).toBeNull();
+});
+
+function Triggered() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open
+      </button>
+      <Demo open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+/** Mirrors overlay-timing.test.tsx: Enter-open stamps, click-open does not, Enter again stamps. */
+async function stampedPerOpening(prefix: "sheet" | "drawer") {
+  const off = installInputModality();
+  try {
+    render(<Triggered />);
+    const trigger = screen.getByRole("button", { name: "Open" });
+    const content = () => document.querySelector(`[data-slot=${prefix}-content]`);
+    const overlay = () => document.querySelector(`[data-slot=${prefix}-overlay]`);
+    const closed = async () => {
+      await userEvent.keyboard("{Escape}");
+      // jsdom never finishes Vaul's injected exit keyframes; end them as the browser would.
+      // (jsdom has no AnimationEvent, so the name is set on a plain Event.)
+      for (const node of [content(), overlay()]) {
+        if (!node) continue;
+        const end = Object.assign(new Event("animationend", { bubbles: true }), {
+          animationName: getComputedStyle(node).animationName,
+        });
+        act(() => {
+          node.dispatchEvent(end);
+        });
+      }
+      await vi.waitFor(() => expect(content()).toBeNull());
+    };
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(content()).toHaveAttribute("data-instant"));
+    expect(overlay()).toHaveAttribute("data-instant");
+    await closed();
+    await userEvent.click(trigger);
+    await vi.waitFor(() => expect(content()).not.toBeNull());
+    expect(content()).not.toHaveAttribute("data-instant");
+    expect(overlay()).not.toHaveAttribute("data-instant");
+    await closed();
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(content()).toHaveAttribute("data-instant"));
+    expect(overlay()).toHaveAttribute("data-instant");
+  } finally {
+    off();
+  }
+}
+
+test("desktop: content and overlay are stamped per opening, not per mount", async () => {
+  fakeMatchMedia.install(false);
+  await stampedPerOpening("sheet");
+});
+
+test("mobile: drawer content and overlay are stamped per opening, not per mount", async () => {
+  fakeMatchMedia.install(true);
+  await stampedPerOpening("drawer");
 });

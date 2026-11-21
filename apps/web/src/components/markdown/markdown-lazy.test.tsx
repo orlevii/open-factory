@@ -8,9 +8,6 @@ vi.mock("mermaid", () => {
   loads.mermaid++;
   return { default: { initialize: vi.fn(), render: vi.fn() } };
 });
-vi.mock("shiki", () => ({
-  codeToHtml: vi.fn(async (code: string) => `<pre class="shiki"><code>${code}</code></pre>`),
-}));
 
 test("a document without a mermaid block never imports mermaid", async () => {
   const { container } = render(

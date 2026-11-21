@@ -7,6 +7,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -89,7 +90,6 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
   const [pending, setPending] = useState(false);
   const [outcome, setOutcome] = useState<"saved" | "failed" | undefined>();
   const [conflict, setConflict] = useState(false);
-  const [toFocus, setToFocus] = useState<Field | null>(null);
   const form = useRef<HTMLFormElement>(null);
 
   const changed = (f: Field) => v[f] !== base.current[f];
@@ -120,12 +120,6 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
   }, [serverKey, dirty, pending]);
 
   const focus = (f: Field) => form.current?.querySelector<HTMLElement>(`#field-${f}`)?.focus();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when asked for
-  useEffect(() => {
-    if (!toFocus) return;
-    focus(toFocus);
-    setToFocus(null);
-  }, [toFocus]);
 
   function reload() {
     base.current = serverValues;
@@ -163,8 +157,12 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
         const e: Errors = {};
         for (const f of FIELDS) if (fields[f]) e[f] = fields[f];
         if (Object.keys(e).length > 0) {
-          setErrors(e);
-          setToFocus(FIELDS.find((f) => e[f]) as Field); // once the fieldset is enabled again
+          // Commit now: the fieldset must be enabled again before its field can take focus.
+          flushSync(() => {
+            setErrors(e);
+            setPending(false);
+          });
+          focus(FIELDS.find((f) => e[f]) as Field);
           return;
         }
       }

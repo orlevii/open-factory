@@ -32,6 +32,7 @@ import {
   CodeText,
   focusOutcome,
   InlineForm,
+  KIND_LABEL,
   MoreButton,
   RowLine,
   RowName,
@@ -47,10 +48,6 @@ import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
-export const KIND_LABEL: Record<CredentialKind, string> = {
-  oauth_token: "OAuth token",
-  api_key: "API key",
-};
 const valueNoun = (k: CredentialKind) => (k === "oauth_token" ? "token" : "key");
 const cap = (s: string) => s[0]?.toUpperCase() + s.slice(1);
 

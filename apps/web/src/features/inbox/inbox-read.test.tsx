@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -143,6 +143,21 @@ test("middle-click and Enter open too; a failing request rolls the row and the c
   // Rolled back after the failure.
   expect(await screen.findByRole("link", { name: /^Unread, From @dev/ })).toBeInTheDocument();
   expect(await screen.findByRole("link", { name: "Inbox, 1 unread" })).toBeInTheDocument();
+});
+
+test("right-click (auxclick with the right button) leaves the row unread; middle-click opens it", async () => {
+  const { api } = world([item(1)]);
+  renderApp("/inbox", alice);
+  const row = await screen.findByRole("link", { name: /^Unread, From @dev/ });
+  const aux = (button: number) =>
+    fireEvent(row, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button }));
+  aux(2);
+  await act(async () => {});
+  expect(screen.getByRole("link", { name: /^Unread, From @dev/ })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Inbox, 1 unread" })).toBeInTheDocument();
+  expect(api.calls.some((c) => c.url === "/api/inbox/i1/read")).toBe(false);
+  aux(1);
+  await waitFor(() => expect(api.calls.some((c) => c.url === "/api/inbox/i1/read")).toBe(true));
 });
 
 test("Mark all read: rows turn read at once with upTo = the newest loaded item; the outcome focuses Undo; Undo restores and refocuses the button", async () => {

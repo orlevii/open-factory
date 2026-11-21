@@ -1,7 +1,7 @@
 import { ApiError, type SecretSummary, secretNameSchema } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Plus } from "lucide-react";
-import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
@@ -240,14 +240,14 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const deleted = useRef(false);
 
-  // A later link to ?addSecret=NAME (while already here) opens the form with that name.
-  const seen = useRef(addSecret);
-  useEffect(() => {
-    if (!addSecret || addSecret === seen.current) return;
-    seen.current = addSecret;
+  // A later link to ?addSecret=NAME (while already here) opens the form with that name. Adjusted
+  // during render, so the form opens in the same pass rather than after an effect.
+  const [seen, setSeen] = useState(addSecret);
+  if (addSecret && addSecret !== seen) {
+    setSeen(addSecret);
     setPrefill(addSecret.toUpperCase());
     setAdding(true);
-  }, [addSecret]);
+  }
 
   const refresh = () => qc.invalidateQueries({ queryKey: secretsQueryOptions.queryKey });
   const upsert = (s: SecretSummary) =>

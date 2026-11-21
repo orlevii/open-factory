@@ -182,6 +182,12 @@ test("highestSeq of empty state is 0", () => {
   expect(highestSeq(initialSessionState)).toBe(0);
 });
 
+test("highestSeq handles more events than Math.max can take as arguments", () => {
+  const events = new Map(Array.from({ length: 300_000 }, (_, i) => [i + 1, {}] as const));
+  const s = { ...initialSessionState, events } as unknown as typeof initialSessionState;
+  expect(highestSeq(s)).toBe(300_000);
+});
+
 test("window mode counts each live seq once, even when a reconnect replays it", () => {
   let s = sessionReducer(initialSessionState, {
     type: "loaded",

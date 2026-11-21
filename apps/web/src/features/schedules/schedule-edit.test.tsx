@@ -193,3 +193,12 @@ test("live: schedules_changed refreshes untouched fields and keeps edited ones",
   await waitFor(() => expect(cron.value).toBe("0 10 * * *"));
   expect(body.value).toBe("Morning review edited"); // the user's edit is kept
 });
+
+test("live: a server change to the timing refreshes the Next runs preview", async () => {
+  const api = mockApi(common(sched()));
+  renderApp("/schedules/S-3", alice);
+  const before = (await screen.findByText(/^Next runs:/)).textContent;
+  api.on("GET /api/schedules/S-3", detail(sched({ cron: "0 10 * * *" })));
+  act(() => ws.push({ type: "schedules_changed" }));
+  await waitFor(() => expect(screen.getByText(/^Next runs:/).textContent).not.toBe(before));
+});

@@ -82,7 +82,7 @@ const fromAgent = (a: AgentSummary): Values => ({
 function useTakenSlugs(enabled: boolean): Set<string> | undefined {
   const active = useQuery({ ...agentsListQueryOptions("exclude"), enabled });
   const archived = useQuery({ ...agentsListQueryOptions("only"), enabled });
-  // Stable between renders: an effect depends on it.
+  // One Set per answer, not one per render.
   return useMemo(
     () =>
       active.data && archived.data
@@ -115,7 +115,8 @@ export function AgentForm(props: Props) {
   );
   const [custom, setCustom] = useState(agent?.grantsOverridden ?? false);
   const [projectsTouched, setProjectsTouched] = useState(false);
-  const touched = useRef<Partial<Record<Field, boolean>>>({});
+  /** Fields the user has made theirs: the template prefill and the credential default stop there. */
+  const [touched, setTouched] = useState<Partial<Record<Field, boolean>>>({});
   const [errors, setErrors] = useState<Errors>({});
   const [outcome, setOutcome] = useState<{
     tone: "success" | "error";
@@ -132,43 +133,44 @@ export function AgentForm(props: Props) {
     retry: false,
   });
   const config: TemplateConfig | undefined = detail.data?.config;
+  // The last template that landed keeps prefilling while the next one loads, so switching
+  // templates doesn't blank the fields in between.
+  const [landed, setLanded] = useState(config);
+  if (config && config !== landed) setLanded(config);
+  const prefill = config ?? landed;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const taken = useTakenSlugs(create);
   const credentials = useQuery(credentialsQueryOptions);
   const projects = useQuery(projectsQueryOptions);
   const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
 
-  // A credential has to be picked; with exactly one there is nothing to choose.
-  useEffect(() => {
-    const first = credentials.data?.[0];
-    if (create && first && values.credential === "") {
-      setValues((v) => (v.credential === "" ? { ...v, credential: first.name } : v));
-    }
-  }, [create, credentials.data, values.credential]);
-
-  // New agent: the chosen template fills the fields the user hasn't edited. The slug takes the
-  // template's name when that slug is free and valid. The detail lands asynchronously, so a field
-  // the user is already in when it lands counts as theirs too: filling it would mix the prefill
-  // into what they are about to type.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-apply only when the template or the taken slugs change
-  useEffect(() => {
-    if (!create || !config) return;
-    const active = document.activeElement?.id;
-    for (const f of ["slug", "displayName", "description"] as const) {
-      if (active === `field-${f}`) touched.current[f] = true;
-    }
-    setValues((v) => {
-      const next = { ...v };
-      if (!touched.current.displayName) next.displayName = config.displayName;
-      if (!touched.current.description) next.description = config.description;
-      if (!custom) next.projects = config.projects;
-      if (!touched.current.slug && taken) {
-        const free = !taken.has(config.name) && slugSchema.safeParse(config.name).success;
-        next.slug = free ? config.name : "";
-      }
-      return next;
-    });
-  }, [create, config, taken]);
+  // What the form shows and submits. New agent: the chosen template fills the fields the user
+  // hasn't edited, and the slug takes the template's name when that slug is free and valid. A
+  // credential has to be picked; with exactly one there is nothing to choose.
+  const shown: Values = !create
+    ? values
+    : {
+        ...values,
+        slug:
+          touched.slug || !prefill || !taken
+            ? values.slug
+            : !taken.has(prefill.name) && slugSchema.safeParse(prefill.name).success
+              ? prefill.name
+              : "",
+        displayName: touched.displayName || !prefill ? values.displayName : prefill.displayName,
+        description: touched.description || !prefill ? values.description : prefill.description,
+        credential: values.credential || credentials.data?.[0]?.name || "",
+        projects: custom || !prefill ? values.projects : prefill.projects,
+      };
+  // The detail (and the taken slugs) land asynchronously, so a field the user enters while they
+  // are still on the way is theirs as it stands: filling it would mix the prefill into what they
+  // are about to type.
+  const awaitingPrefill = create && values.template !== "" && (!config || !taken);
+  const claim = (f: "slug" | "displayName" | "description") => {
+    if (!awaitingPrefill || touched[f]) return;
+    setTouched((t) => ({ ...t, [f]: true }));
+    setValues((v) => ({ ...v, [f]: shown[f] }));
+  };
 
   // "Installing plugins…" after 3 s of creating, only when the template installs any.
   const pluginCount = create ? (config?.plugins.length ?? 0) : 0;
@@ -216,7 +218,7 @@ export function AgentForm(props: Props) {
   }
 
   const set = <K extends keyof Values>(f: K, v: Values[K]) => {
-    touched.current[f] = true;
+    setTouched((t) => (t[f] ? t : { ...t, [f]: true }));
     setValues((s) => ({ ...s, [f]: v }));
     setErrors((e) => ({ ...e, [f]: undefined }));
     // A success line describes the saved state; editing makes it stale.
@@ -229,7 +231,7 @@ export function AgentForm(props: Props) {
     focusFirst(focusAfterPending.current);
     focusAfterPending.current = undefined;
   }, [pending]);
-  const blur = (f: Field) => setErrors((e) => ({ ...e, [f]: check(f, values) }));
+  const blur = (f: Field) => setErrors((e) => ({ ...e, [f]: check(f, shown) }));
   const focusFirst = (e: Errors) => {
     const first = FIELDS.find((f) => e[f]);
     if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
@@ -254,18 +256,18 @@ export function AgentForm(props: Props) {
   };
 
   function body(): CreateAgentBody | PatchAgentBody | null {
-    const displayName = values.displayName.trim();
-    const description = values.description.trim();
-    const reportsTo = values.reportsTo || null;
+    const displayName = shown.displayName.trim();
+    const description = shown.description.trim();
+    const reportsTo = shown.reportsTo || null;
     if (create) {
       return {
-        template: values.template,
-        slug: values.slug,
+        template: shown.template,
+        slug: shown.slug,
         displayName,
         description,
         reportsTo,
-        credential: values.credential,
-        ...(custom ? { projects: values.projects } : {}),
+        credential: shown.credential,
+        ...(custom ? { projects: shown.projects } : {}),
       };
     }
     const base = baseline as Values;
@@ -273,8 +275,8 @@ export function AgentForm(props: Props) {
     if (displayName !== base.displayName) patch.displayName = displayName;
     if (description !== base.description) patch.description = description;
     if (reportsTo !== (base.reportsTo || null)) patch.reportsTo = reportsTo;
-    if (values.credential !== base.credential) patch.credential = values.credential;
-    if (projectsTouched) patch.projects = custom ? values.projects : null;
+    if (shown.credential !== base.credential) patch.credential = shown.credential;
+    if (projectsTouched) patch.projects = custom ? shown.projects : null;
     return Object.keys(patch).length > 0 ? patch : null;
   }
 
@@ -283,7 +285,7 @@ export function AgentForm(props: Props) {
     if (pending || noCredentials) return;
     const found: Errors = {};
     for (const f of FIELDS) {
-      const m = check(f, values);
+      const m = check(f, shown);
       if (m) found[f] = m;
     }
     setErrors(found);
@@ -347,10 +349,11 @@ export function AgentForm(props: Props) {
 
   // Manager options: active persistent agents in tree order (a spawned agent never manages). On Edit
   // the agent and everything under it are left out, because picking one of them would make a cycle.
-  const managerOptions = (() => {
+  const editing = agent?.slug;
+  const managerOptions = useMemo(() => {
     const list = (activeAgents.data ?? []).filter((a) => a.kind === "persistent");
-    if (!agent) return list;
-    const excluded = new Set([agent.slug]);
+    if (!editing) return list;
+    const excluded = new Set([editing]);
     let grew = true;
     while (grew) {
       grew = false;
@@ -362,7 +365,7 @@ export function AgentForm(props: Props) {
       }
     }
     return list.filter((a) => !excluded.has(a.slug));
-  })();
+  }, [activeAgents.data, editing]);
   const managerMissing =
     values.reportsTo !== "" &&
     activeAgents.data !== undefined &&
@@ -432,8 +435,9 @@ export function AgentForm(props: Props) {
             prefix="@"
             help="How others address this agent, like @team-lead. Lowercase letters, numbers and hyphens. Can't be changed later."
             error={errors.slug}
-            value={values.slug}
+            value={shown.slug}
             onChange={(e) => set("slug", e.target.value)}
+            onFocus={() => claim("slug")}
             onBlur={() => blur("slug")}
             autoComplete="off"
             autoCapitalize="none"
@@ -445,8 +449,9 @@ export function AgentForm(props: Props) {
           name="displayName"
           label="Display name"
           error={errors.displayName}
-          value={values.displayName}
+          value={shown.displayName}
           onChange={(e) => set("displayName", e.target.value)}
+          onFocus={() => claim("displayName")}
           onBlur={() => blur("displayName")}
           autoComplete="off"
         />
@@ -458,8 +463,9 @@ export function AgentForm(props: Props) {
               rows={3}
               aria-invalid={a.invalid || undefined}
               aria-describedby={a.describedBy}
-              value={values.description}
+              value={shown.description}
               onChange={(e) => set("description", e.target.value)}
+              onFocus={() => claim("description")}
               onBlur={() => blur("description")}
               className="bg-card dark:bg-card"
             />
@@ -513,12 +519,12 @@ export function AgentForm(props: Props) {
                 aria-invalid={a.invalid || undefined}
                 aria-describedby={a.describedBy}
                 disabled={!credentials.data}
-                value={values.credential}
+                value={shown.credential}
                 onChange={(e) => set("credential", e.target.value)}
                 onBlur={() => blur("credential")}
               >
                 {!credentials.data ? (
-                  <option value={values.credential}>Loading…</option>
+                  <option value={shown.credential}>Loading…</option>
                 ) : (
                   credentials.data.map((c) => (
                     <option key={c.name} value={c.name}>
@@ -532,7 +538,7 @@ export function AgentForm(props: Props) {
         )}
         <ProjectGrantPicker
           projects={projects.data}
-          value={values.projects}
+          value={shown.projects}
           custom={custom}
           error={errors.projects}
           onChange={setProjects}

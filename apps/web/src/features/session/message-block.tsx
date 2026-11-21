@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
@@ -11,12 +11,17 @@ import { formatTime } from "./format";
 export const LINK_CLASS =
   "underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
 
-/** Slug -> display name for the active agents (cached list). `undefined` until it has loaded. */
-const toNames = (agents: { slug: string; displayName: string }[]) =>
-  new Map(agents.map((a) => [a.slug, a.displayName]));
-export function useAgentNames(): Map<string, string> | undefined {
-  // A module-level select: the map is rebuilt only when the list itself changes.
-  return useQuery({ ...agentsQueryOptions, select: toNames }).data;
+/** One active agent's display name (cached list): `null` when the slug isn't active, `undefined`
+ *  until the list has loaded. */
+export function useAgentName(slug: string): string | null | undefined {
+  // A primitive select: every agent_status frame patches the list, but a link only re-renders when
+  // its own name changes.
+  const select = useCallback(
+    (agents: { slug: string; displayName: string }[]) =>
+      agents.find((a) => a.slug === slug)?.displayName ?? null,
+    [slug],
+  );
+  return useQuery({ ...agentsQueryOptions, select }).data;
 }
 
 /** Slug -> an ended agent's display name, or null when it was archived (it stays unlinked). */
@@ -32,9 +37,8 @@ const toEnded = (agents: { slug: string; displayName: string; terminatedAt?: str
  */
 const ENDED_LOOKUP_STALE_MS = 30_000;
 function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
-  const names = useAgentNames();
-  const active = names?.get(slug);
-  const needEnded = names !== undefined && active === undefined;
+  const active = useAgentName(slug);
+  const needEnded = active === null;
   // Many links share this lookup as a timeline fills: one fetch serves them for a while, and a
   // terminated frame invalidates it anyway (useAgentStatusFrames).
   const ended = useQuery({
@@ -45,7 +49,7 @@ function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
     refetchOnWindowFocus: false,
   });
   const { data: more } = useQuery(endedMoreQueryOptions);
-  if (!needEnded) return { link: true, display: active };
+  if (!needEnded) return { link: true, display: active ?? undefined };
   // A failed lookup falls back to S6's plain slug for anything not active.
   if (!ended.data) return { link: !ended.isError };
   const display = ended.data.get(slug);

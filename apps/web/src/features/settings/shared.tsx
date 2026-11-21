@@ -1,3 +1,4 @@
+import type { CredentialKind } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { Ellipsis, Loader2 } from "lucide-react";
 import {
@@ -13,6 +14,11 @@ import { Button } from "@/components/ui/button";
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
 export const smallClass = "text-[0.8125rem] leading-[1.125rem]";
+
+export const KIND_LABEL: Record<CredentialKind, string> = {
+  oauth_token: "OAuth token",
+  api_key: "API key",
+};
 
 /** "@a", "@a and @b", "@a, @b and @c". */
 export const tags = (slugs: string[]) => {

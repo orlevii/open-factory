@@ -8,6 +8,9 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     routeTree,
     context: { queryClient },
     history,
+    // Hovering or focusing a link starts its loader; React Query's staleTime, not the router, decides freshness.
+    defaultPreload: "intent",
+    defaultPreloadStaleTime: 0,
     defaultPendingComponent: AppPending,
     defaultPendingMs: 400,
     defaultPendingMinMs: 300,

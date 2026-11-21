@@ -1,5 +1,5 @@
-import { apiFetch, signUpSchema, signUpStateSchema } from "@open-factory/shared";
-import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import { signUpSchema } from "@open-factory/shared";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { flushSync } from "react-dom";
@@ -17,20 +17,9 @@ import {
 } from "@/components/auth-error";
 import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
+import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
-
-export const signUpStateQueryOptions = (invite?: string) =>
-  queryOptions({
-    queryKey: ["sign-up-state", invite ?? ""],
-    queryFn: () => {
-      const query = new URLSearchParams(invite ? { invite } : {}).toString();
-      return apiFetch(`/api/auth/sign-up-state${query ? `?${query}` : ""}`, {
-        schema: signUpStateSchema,
-      });
-    },
-    staleTime: 0,
-  });
 
 export const Route = createFileRoute("/sign-up")({
   validateSearch: z.object({ invite: z.string().optional().catch(undefined) }),

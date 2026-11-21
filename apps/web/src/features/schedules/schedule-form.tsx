@@ -13,6 +13,7 @@ import {
   type MutableRefObject,
   type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -80,16 +81,19 @@ export function ScheduleForm({
   /** Set by the page once it has done something that leaves (a delete): the unsaved-changes guard then stays quiet. */
   leaving?: MutableRefObject<boolean>;
 }) {
-  const start: FormValues = initial
-    ? valuesOf(initial)
-    : {
-        target: presetTarget ?? "",
-        mode: "repeats",
-        cron: "",
-        local: "",
-        zone: browserZone(),
-        body: "",
-      };
+  // The start values are read once: valuesOf formats the instant, and browserZone asks Intl.
+  const [start] = useState<FormValues>(() =>
+    initial
+      ? valuesOf(initial)
+      : {
+          target: presetTarget ?? "",
+          mode: "repeats",
+          cron: "",
+          local: "",
+          zone: browserZone(),
+          body: "",
+        },
+  );
   const [v, setV] = useState<FormValues>(start);
   const base = useRef(start);
   const [errors, setErrors] = useState<Errors>({});
@@ -108,18 +112,18 @@ export function ScheduleForm({
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 
   // Live: a refreshed schedule updates the fields the user hasn't touched; edited fields are kept.
-  const serverValues = initial ? JSON.stringify(valuesOf(initial)) : "";
+  const serverValues = useMemo(() => (initial ? JSON.stringify(valuesOf(initial)) : ""), [initial]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: only a change on the server counts
   useEffect(() => {
     if (!initial) return;
     const next = valuesOf(initial);
-    setV((cur) => {
-      const out = { ...cur };
-      for (const k of Object.keys(next) as (keyof FormValues)[])
-        if (cur[k] === base.current[k]) out[k] = next[k] as never;
-      return out;
-    });
+    const out = { ...v };
+    for (const k of Object.keys(next) as (keyof FormValues)[])
+      if (v[k] === base.current[k]) out[k] = next[k] as never;
     base.current = next;
+    setV(out);
+    // The preview follows the fields it reads, so a server change to the timing doesn't leave it stale.
+    setPreview(previewText({ mode: out.mode, cron: out.cron, local: out.local, zone: out.zone }));
   }, [serverValues]);
 
   const changed = (f: keyof FormValues) => v[f] !== base.current[f];

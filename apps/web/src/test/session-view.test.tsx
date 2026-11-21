@@ -709,7 +709,7 @@ test("an error with fix secrets links to Settings → Secrets", async () => {
   renderApp("/agents/dev", alice);
   expect(await screen.findByRole("link", { name: "Open Settings → Secrets" })).toHaveAttribute(
     "href",
-    "/settings#secrets",
+    "/settings/secrets",
   );
 });
 
@@ -724,11 +724,11 @@ test("an error with fix credentials or projects links to that section", async ()
   renderApp("/agents/dev", alice);
   expect(await screen.findByRole("link", { name: "Open Settings → Credentials" })).toHaveAttribute(
     "href",
-    "/settings#credentials",
+    "/settings/credentials",
   );
   expect(screen.getByRole("link", { name: "Open Settings → Projects" })).toHaveAttribute(
     "href",
-    "/settings#projects",
+    "/settings/projects",
   );
 });
 

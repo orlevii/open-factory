@@ -22,6 +22,7 @@ import { Route as AppAgentsNewRouteImport } from './routes/_app/agents.new'
 import { Route as AppSchedulesIndexRouteImport } from './routes/_app/schedules.index'
 import { Route as AppSchedulesKeyRouteImport } from './routes/_app/schedules.$key'
 import { Route as AppSchedulesNewRouteImport } from './routes/_app/schedules.new'
+import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings.index'
 import { Route as AppSettingsCredentialsRouteImport } from './routes/_app/settings.credentials'
 import { Route as AppSettingsFactoryRouteImport } from './routes/_app/settings.factory'
 import { Route as AppSettingsProjectsRouteImport } from './routes/_app/settings.projects'
@@ -99,6 +100,11 @@ const AppSchedulesNewRoute = AppSchedulesNewRouteImport.update({
   id: '/schedules/new',
   path: '/schedules/new',
   getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsCredentialsRoute = AppSettingsCredentialsRouteImport.update({
   id: '/credentials',
@@ -188,6 +194,7 @@ export interface FileRoutesByFullPath {
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents/': typeof AppAgentsIndexRoute
   '/schedules/': typeof AppSchedulesIndexRoute
+  '/settings/': typeof AppSettingsIndexRoute
   '/tasks/': typeof AppTasksIndexRoute
   '/templates/': typeof AppTemplatesIndexRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
@@ -197,7 +204,6 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/inbox': typeof AppInboxRoute
-  '/settings': typeof AppSettingsRouteWithChildren
   '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
@@ -215,6 +221,7 @@ export interface FileRoutesByTo {
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents': typeof AppAgentsIndexRoute
   '/schedules': typeof AppSchedulesIndexRoute
+  '/settings': typeof AppSettingsIndexRoute
   '/tasks': typeof AppTasksIndexRoute
   '/templates': typeof AppTemplatesIndexRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
@@ -244,6 +251,7 @@ export interface FileRoutesById {
   '/_app/templates/new': typeof AppTemplatesNewRoute
   '/_app/agents/': typeof AppAgentsIndexRoute
   '/_app/schedules/': typeof AppSchedulesIndexRoute
+  '/_app/settings/': typeof AppSettingsIndexRoute
   '/_app/tasks/': typeof AppTasksIndexRoute
   '/_app/templates/': typeof AppTemplatesIndexRoute
   '/_app/agents/$slug_/edit': typeof AppAgentsSlugEditRoute
@@ -273,6 +281,7 @@ export interface FileRouteTypes {
     | '/templates/new'
     | '/agents/'
     | '/schedules/'
+    | '/settings/'
     | '/tasks/'
     | '/templates/'
     | '/agents/$slug/edit'
@@ -282,7 +291,6 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/inbox'
-    | '/settings'
     | '/usage'
     | '/'
     | '/agents/$slug'
@@ -300,6 +308,7 @@ export interface FileRouteTypes {
     | '/templates/new'
     | '/agents'
     | '/schedules'
+    | '/settings'
     | '/tasks'
     | '/templates'
     | '/agents/$slug/edit'
@@ -328,6 +337,7 @@ export interface FileRouteTypes {
     | '/_app/templates/new'
     | '/_app/agents/'
     | '/_app/schedules/'
+    | '/_app/settings/'
     | '/_app/tasks/'
     | '/_app/templates/'
     | '/_app/agents/$slug_/edit'
@@ -433,6 +443,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSchedulesNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/': {
+      id: '/_app/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof AppSettingsIndexRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
     '/_app/settings/credentials': {
       id: '/_app/settings/credentials'
       path: '/credentials'
@@ -533,6 +550,7 @@ interface AppSettingsRouteChildren {
   AppSettingsProjectsRoute: typeof AppSettingsProjectsRoute
   AppSettingsSecretsRoute: typeof AppSettingsSecretsRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
+  AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
@@ -541,6 +559,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsProjectsRoute: AppSettingsProjectsRoute,
   AppSettingsSecretsRoute: AppSettingsSecretsRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
+  AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
 
 const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(

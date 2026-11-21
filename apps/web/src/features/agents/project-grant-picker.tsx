@@ -42,8 +42,7 @@ export function ProjectGrantPicker({
         <p className="text-[0.8125rem] text-muted-foreground">
           No projects yet.{" "}
           <Link
-            to="/settings"
-            hash="projects"
+            to="/settings/projects"
             className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
           >
             Add one in Settings

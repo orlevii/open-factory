@@ -550,7 +550,7 @@ export function AgentForm(props: Props) {
           <div className="grid gap-1.5">
             <p className="text-[0.8125rem] font-medium">Credential</p>
             <p className="text-[0.8125rem] text-muted-foreground">
-              <Link to="/settings" hash="credentials" className={linkClass}>
+              <Link to="/settings/credentials" className={linkClass}>
                 Add a Claude credential in Settings
               </Link>{" "}
               first.
@@ -650,7 +650,7 @@ function TemplateSummary({
       {missingSecrets.map((s) => (
         <Warning key={s}>
           Secret <span className="font-mono">{s}</span> isn't set. The agent won't start until you{" "}
-          <Link to="/settings" search={{ addSecret: s }} hash="secrets" className={linkClass}>
+          <Link to="/settings/secrets" search={{ addSecret: s }} className={linkClass}>
             add it<span className="sr-only"> in Settings</span>
           </Link>
           .

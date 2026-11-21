@@ -1,6 +1,13 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
-import { buildRows, deliveryFailedIds, interruptedTurnEnds } from "./rows";
+import {
+  buildRows,
+  deliveryFailedIds,
+  interruptedTurnEnds,
+  type Row,
+  stabilizeRows,
+  stableSet,
+} from "./rows";
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
@@ -304,4 +311,120 @@ test("an unanswered spawn after its turn ended is no longer open", () => {
     e({ type: "turn_end", isError: false, numTurns: 1 }),
   ]);
   expect(rows).toMatchObject([{ kind: "spawn", turnOpen: false }]);
+});
+
+// Stable rows (spec §9.3).
+const toolRow = (r: Row | undefined) => {
+  if (r?.kind !== "tool") throw new Error("not a tool row");
+  return r;
+};
+
+test("stabilizing a rebuild of the same events returns the previous array", () => {
+  seq = 0;
+  const evs = [
+    e({ type: "turn_started" }),
+    e({ type: "assistant_text", text: "hi" }),
+    e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
+  ];
+  const prev = buildRows(evs);
+  expect(stabilizeRows(prev, buildRows(evs))).toBe(prev);
+  const empty = buildRows([]);
+  expect(stabilizeRows(empty, buildRows([]))).toBe(empty);
+});
+
+test("appending an event reuses every previous row and adds the new one", () => {
+  seq = 0;
+  const evs = [
+    e({ type: "turn_started" }),
+    e({ type: "assistant_text", text: "a" }),
+    e({ type: "assistant_text", text: "b" }),
+  ];
+  const prev = buildRows(evs);
+  const next = stabilizeRows(prev, buildRows([...evs, e({ type: "assistant_text", text: "c" })]));
+  expect(next).not.toBe(prev);
+  expect(next).toHaveLength(3);
+  for (const [i, r] of prev.entries()) expect(next[i]).toBe(r);
+  expect(next[2]).toMatchObject({ kind: "text", text: "c" });
+});
+
+test("an update_group whose envelopes array is rebuilt with the same elements is reused", () => {
+  seq = 0;
+  const evs = [
+    e(
+      {
+        type: "message_in",
+        messages: [
+          { id: "u1", from: "@a", kind: "member_update", urgent: false, body: "x" },
+          { id: "u2", from: "@a", kind: "member_update", urgent: false, body: "y" },
+        ],
+      } as never,
+      null,
+    ),
+  ];
+  const prev = buildRows(evs);
+  const next = buildRows(evs);
+  expect(prev[0]?.kind).toBe("update_group");
+  expect(next[0]).not.toBe(prev[0]);
+  expect(stabilizeRows(prev, next)).toBe(prev);
+});
+
+test("a tool row whose truncated object is rebuilt with the same values is reused", () => {
+  seq = 0;
+  const evs = [
+    {
+      ...e({ type: "tool_call", toolUseId: "a", name: "Bash", input: {} }),
+      truncated: { x: 1 } as Record<string, number>,
+    },
+    {
+      ...e({ type: "tool_result", toolUseId: "a", content: "x", isError: false }),
+      truncated: { content: 9 },
+    },
+  ];
+  const prev = buildRows(evs);
+  const next = buildRows(evs);
+  expect(toolRow(next[0]).truncated).not.toBe(toolRow(prev[0]).truncated);
+  expect(stabilizeRows(prev, next)).toBe(prev);
+});
+
+test("a later result, denial or truncated replaces the tool row but keeps its unchanged children", () => {
+  seq = 0;
+  const base = [
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({ type: "tool_call", toolUseId: "c", name: "Bash", input: {}, parentToolUseId: "p" }),
+    e({ type: "tool_result", toolUseId: "c", content: "x", isError: false, parentToolUseId: "p" }),
+    e({ type: "assistant_text", text: "sub", parentToolUseId: "p" }),
+  ];
+  const prev = buildRows(base);
+  const later = [
+    e({ type: "tool_result", toolUseId: "p", content: "done", isError: false }),
+    e({
+      type: "permission_denied",
+      toolName: "Task",
+      toolUseId: "p",
+      reasonType: "rule",
+      reason: "no",
+    }),
+    {
+      ...e({ type: "tool_result", toolUseId: "p", content: "done", isError: false }),
+      truncated: { content: 3 },
+    },
+  ];
+  for (const ev of later) {
+    const next = stabilizeRows(prev, buildRows([...base, ev]));
+    const [was, now] = [toolRow(prev[0]), toolRow(next[0])];
+    expect(now).not.toBe(was);
+    expect(now.children).toHaveLength(2);
+    for (const [i, c] of was.children.entries()) expect(now.children[i]).toBe(c);
+  }
+});
+
+test("stableSet keeps the previous set when the contents are equal", () => {
+  const prev = new Set(["a", "b"]);
+  expect(stableSet(prev, new Set(prev))).toBe(prev);
+  const grown = new Set(["a", "b", "c"]);
+  expect(stableSet(prev, grown)).toBe(grown);
+  const swapped = new Set(["a", "c"]);
+  expect(stableSet(prev, swapped)).toBe(swapped);
+  expect(stableSet(undefined, swapped)).toBe(swapped);
 });

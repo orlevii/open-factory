@@ -22,8 +22,8 @@ export function Timeline(props: {
   slug: string;
   spawned?: boolean;
   rows: Row[];
-  failedIds: Set<string>;
-  interruptedEnds: Set<number>;
+  failedIds: ReadonlySet<string>;
+  interruptedEnds: ReadonlySet<number>;
   highlightSeq?: number;
   /** A `?message=` target: lights the row that holds this envelope rather than the event's first. */
   highlightMessageId?: string;

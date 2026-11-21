@@ -103,7 +103,13 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   const load = useCallback(
     async (explicit?: number) => {
       try {
-        const detail = await qc.fetchQuery({ ...agentDetailQueryOptions(slug), staleTime: 0 });
+        // A plain visit has nothing to resolve first, so the latest page loads alongside the detail
+        // (spec §11); `?event=` and `?message=` need their target before the window can be asked for.
+        const plain = explicit === undefined && message === undefined;
+        const [detail, latest] = await Promise.all([
+          qc.fetchQuery({ ...agentDetailQueryOptions(slug), staleTime: 0 }),
+          plain ? fetchEvents(slug) : undefined,
+        ]);
         lastSeqRef.current = detail.lastSeq;
         let around = explicit;
         setMessageNotice(undefined);
@@ -123,7 +129,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
             // any other failure: the latest page, as for a plain visit
           }
         }
-        let page: EventsPage | undefined;
+        let page: EventsPage | undefined = latest;
         let mode: "latest" | "window" = "latest";
         setMissingEvent(undefined);
         if (around !== undefined) {

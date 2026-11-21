@@ -688,3 +688,68 @@ test("layout: the Status and Assignee triggers truncate instead of widening the 
   }
   expect(within(assignee).getByText("@dev")).toHaveClass("min-w-0", "truncate");
 });
+
+/** The list row of T-42, as the tasks list caches it. */
+const summary = () => {
+  const { key, title, status, assignee, blockedBy, createdBy, updatedAt } = detail();
+  return { key, title, status, assignee, blockedBy, createdBy, updatedAt };
+};
+/** The tasks list knows T-42; its detail GET waits for `release`. */
+function cachedListWorld() {
+  let release: (r: Response) => void = () => {};
+  const gate = new Promise<Response>((r) => {
+    release = r;
+  });
+  const api = mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks?": () => json({ tasks: [summary()], nextCursor: null }),
+    "GET /api/tasks/T-42": () => gate.then((r) => r.clone()),
+  });
+  return { api, release };
+}
+
+test("with the tasks list cached, the page shows the title and status at once; nothing is editable until the detail arrives", async () => {
+  const { release } = cachedListWorld();
+  renderApp("/tasks", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Plan the billing migration/ }));
+  expect(
+    await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Status: In progress" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Assignee/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Edit title" })).toBeDisabled();
+  expect(document.querySelectorAll("[data-slot=skeleton]").length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Comment" })).not.toBeInTheDocument();
+  expect(screen.queryByText("None")).not.toBeInTheDocument();
+
+  release(json(detail()));
+  expect(await screen.findByText("brief")).toBeInTheDocument();
+  expect(document.querySelector("[data-slot=skeleton]")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Edit title" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Status: In progress" })).toBeEnabled();
+  // The activity that arrived with the detail is history, not news.
+  expect(screen.queryByText(/commented$/)).not.toBeInTheDocument();
+});
+
+test("with the tasks list cached, a task that turns out not to exist shows Task not found", async () => {
+  const { release } = cachedListWorld();
+  renderApp("/tasks", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Plan the billing migration/ }));
+  await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" });
+  release(json({ error: { code: "task_not_found", message: "No task T-42." } }, 404));
+  expect(await screen.findByRole("heading", { name: "Task not found." })).toBeInTheDocument();
+});
+
+test("a ?comment= link opened from the cached list waits for the real activity before looking for the comment", async () => {
+  const { release } = cachedListWorld();
+  const { router } = renderApp("/tasks", alice);
+  await screen.findByRole("link", { name: /Plan the billing migration/ });
+  await act(() =>
+    router.navigate({ to: "/tasks/$key", params: { key: "T-42" }, search: { comment: "c1" } }),
+  );
+  await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" });
+  release(json(detail()));
+  expect(await screen.findByRole("article", { name: "Comment from @dev" })).toBeInTheDocument();
+  expect(screen.queryByText("Comment not found. Showing the task.")).not.toBeInTheDocument();
+});

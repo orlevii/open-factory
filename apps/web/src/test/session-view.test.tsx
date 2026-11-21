@@ -3,7 +3,7 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { alice, renderApp } from "@/test/render-app";
-import { conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({
   onMessage: undefined as undefined | ((m: ServerMessage) => void),
@@ -38,7 +38,7 @@ vi.mock("@/lib/ws", () => ({
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
-let routes: Record<string, () => Response>;
+let routes: Record<string, () => Response | Promise<Response>>;
 beforeEach(() => {
   ws.sent = [];
   ws.connects = true;
@@ -750,4 +750,77 @@ test("the Interrupt button uses the stop glyph", async () => {
   await screen.findByText("Two entries.");
   const icon = screen.getByRole("button", { name: /Interrupt/ }).querySelector("svg");
   expect(icon).toHaveClass("lucide-circle-stop");
+});
+
+/** A response the test releases by hand; every request before or after the release gets a copy. */
+function held() {
+  let release: (r: Response) => void = () => {};
+  const gate = new Promise<Response>((r) => {
+    release = r;
+  });
+  return { respond: () => gate.then((r) => r.clone()), release };
+}
+const requested = (part: string) =>
+  vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes(part)).length;
+const listed = () => json({ agents: [agentSummary()], more: false, running: { count: 0, max: 8 } });
+
+test("with the agents list cached, the session renders its header from the summary while the detail loads", async () => {
+  routes["/api/agents?"] = listed;
+  const gate = held();
+  routes["/api/agents/dev"] = gate.respond;
+  renderApp("/agents", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Dev agent/ }));
+  // No route pending screen: the header and strip come from the list's summary.
+  expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+  expect(document.querySelector("[data-timeline-skeleton] [data-slot=skeleton]")).not.toBeNull();
+  // Plain visit: the events page is requested alongside the detail, not after it.
+  await vi.waitFor(() => expect(requested("/api/agents/dev/events?")).toBe(1));
+  gate.release(json(detail()));
+  expect(await screen.findByText("Two entries.")).toBeInTheDocument();
+  expect(document.querySelector("[data-timeline-skeleton]")).not.toBeInTheDocument();
+});
+
+test("with nothing cached, the route still waits for the detail", async () => {
+  const gate = held();
+  routes["/api/agents/dev"] = gate.respond;
+  renderApp("/agents/dev", alice);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(screen.queryByRole("heading", { level: 1, name: "Dev agent" })).not.toBeInTheDocument();
+  expect(requested("/api/agents/dev/events?")).toBe(0);
+  gate.release(json(detail()));
+  expect(await screen.findByText("Two entries.")).toBeInTheDocument();
+});
+
+test("a cached summary whose agent turns out not to exist shows Agent not found", async () => {
+  routes["/api/agents?"] = listed;
+  routes["/api/agents/dev"] = () => json({ error: { code: "agent_not_found", message: "x" } }, 404);
+  renderApp("/agents", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Dev agent/ }));
+  expect(await screen.findByRole("heading", { name: "Agent not found." })).toBeInTheDocument();
+});
+
+test("?message= resolves the message before asking for the events window", async () => {
+  routes["/api/agents/dev/events?around=5"] = () => json(conversation());
+  const gate = held();
+  routes["/api/messages/m1"] = gate.respond;
+  renderApp("/agents/dev?message=m1", alice);
+  await vi.waitFor(() => expect(requested("/api/messages/m1")).toBe(1));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(requested("/api/agents/dev/events?")).toBe(0);
+  gate.release(
+    json({
+      id: "m1",
+      kind: "message",
+      from: "b",
+      to: "dev",
+      state: "delivered",
+      recipientEvent: { agentSlug: "dev", seq: 5 },
+    }),
+  );
+  await vi.waitFor(() => expect(requested("around=5")).toBe(1));
 });

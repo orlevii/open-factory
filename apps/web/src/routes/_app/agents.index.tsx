@@ -6,6 +6,7 @@ import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Skeleton } from "@/components/ui/skeleton";
 import { UndoArchiveLine } from "@/features/agents/agent-actions";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
@@ -125,7 +126,13 @@ function AgentsPage() {
 
 function EmptyAgents() {
   const p = usePrerequisites();
-  if (p.loading) return null;
+  // A one-line plate at the line's height (text-sm, 20px), so the page doesn't shift when it lands.
+  if (p.loading)
+    return (
+      <div data-empty-agents aria-hidden="true">
+        <Skeleton className="h-5 w-64 max-w-full" />
+      </div>
+    );
   if (p.failed) return <p className="text-sm text-muted-foreground">No agents yet.</p>;
   return (
     <PrerequisiteLine

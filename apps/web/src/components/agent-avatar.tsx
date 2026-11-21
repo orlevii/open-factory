@@ -90,11 +90,22 @@ const BotSvg = memo(function BotSvg({ slug, size }: { slug: string; size: number
 });
 
 /** The status shape that doubles as the avatar badge: shape, never colour alone. Null at rest. */
-export function StatusMark({ status, size }: { status: AgentStatus; size: 4 | 6 }) {
+export function StatusMark({
+  status,
+  size,
+  fit = false,
+}: {
+  status: AgentStatus;
+  size: 4 | 6;
+  /** Shrinks the 6x12 tooth to the avatar's 8px hole (4x8); other shapes already fit. */
+  fit?: boolean;
+}) {
   const box = { width: size, height: size } satisfies CSSProperties;
   switch (status) {
     case "working":
-      return <span data-status-mark={status} className="of-tooth" />;
+      return (
+        <span data-status-mark={status} className={fit ? "of-tooth scale-[0.667]" : "of-tooth"} />
+      );
     case "errored":
       return (
         <CircleAlert
@@ -146,7 +157,7 @@ export const AgentAvatar = memo(function AgentAvatar({
     template && avatarVersion
       ? `/api/templates/${encodeURIComponent(template)}/avatar.svg?v=${encodeURIComponent(avatarVersion)}`
       : null;
-  const mark = status ? <StatusMark status={status} size={4} /> : null;
+  const mark = status ? <StatusMark status={status} size={4} fit /> : null;
   return (
     <span
       aria-hidden="true"

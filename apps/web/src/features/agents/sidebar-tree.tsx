@@ -449,7 +449,6 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
     setPointerToggled(via === "pointer" ? slug : null);
   }, []);
 
-  const menuAgent = useAgent(menu.slug ?? "");
   const ulRef = useRef<HTMLUListElement>(null);
   const loaded = shapeKey !== undefined;
   useEffect(() => {
@@ -586,20 +585,41 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
           );
         })}
       </ul>
-      {menu.slug && menuAgent ? (
-        <AgentMenu
-          agent={menuAgent}
-          context="sidebar"
-          anchored={{
-            open: menu.open,
-            onOpenChange: (open) => setMenu((m) => ({ ...m, open })),
-            anchor: menu.slug ? (rowOf(ulRef.current, menu.slug) ?? null) : null,
-            onClose: () => {
-              if (menu.slug) focusRow(menu.slug);
-            },
-          }}
+      {menu.slug ? (
+        <TreeAgentMenu
+          slug={menu.slug}
+          open={menu.open}
+          onOpenChange={(open) => setMenu((m) => ({ ...m, open }))}
+          anchor={rowOf(ulRef.current, menu.slug) ?? null}
+          onClose={focusRow}
         />
       ) : null}
     </nav>
   );
 });
+
+/** The tree's one AgentMenu. It subscribes to its agent itself, so that agent's status frames
+ *  re-render the menu only, not the tree (the slug outlives the close for the exit animation). */
+function TreeAgentMenu({
+  slug,
+  open,
+  onOpenChange,
+  anchor,
+  onClose,
+}: {
+  slug: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  anchor: HTMLElement | null;
+  onClose: (slug: string) => void;
+}) {
+  const agent = useAgent(slug);
+  if (!agent) return null;
+  return (
+    <AgentMenu
+      agent={agent}
+      context="sidebar"
+      anchored={{ open, onOpenChange, anchor, onClose: () => onClose(slug) }}
+    />
+  );
+}

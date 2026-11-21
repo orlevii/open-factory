@@ -397,6 +397,20 @@ test("Shift+F10 and the Context Menu key open the menu for the focused row; Esc 
   expect(await screen.findByRole("menu")).toBeInTheDocument();
 });
 
+test("after a row's menu closes, a frame for that agent doesn't re-render the tree", async () => {
+  const { qc } = setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  await screen.findByRole("menu");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  resetProbe();
+  // Alpha is an open root: its own status is no one's working count.
+  await push(qc, frame("a", "working"));
+  expect(probe.tree).toBe(0);
+});
+
 test("right-click keeps the browser's own menu", async () => {
   setup({ activeSlug: "a" });
   await screen.findByRole("tree");

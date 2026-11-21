@@ -301,7 +301,7 @@ function TitleBlock({
         </div>
       ) : (
         <div className="flex min-w-0 items-start gap-2">
-          <h2 className="min-w-0 font-heading text-base leading-6 font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]">
+          <h2 className="min-w-0 font-heading text-xl leading-7 font-[650] tracking-[-0.015em] [overflow-wrap:anywhere]">
             {task.title}
           </h2>
           <Button
@@ -386,7 +386,7 @@ function BodyBlock({
       ) : (
         <div className="grid gap-2">
           {task.body.trim() ? (
-            <Markdown source={task.body} />
+            <Markdown source={task.body} variant="detail" />
           ) : (
             <p className="text-sm text-muted-foreground">No description.</p>
           )}

@@ -2,27 +2,31 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { agentSummary } from "@/test/session-fixtures";
 import { AgentChip, PrincipalChip } from "./agent-chip";
 
 const lead = agentSummary({ slug: "lead", displayName: "Team Lead" });
 
-function wrap(ui: ReactNode, seed?: (qc: QueryClient) => void) {
+function wrapQc(ui: ReactNode, seed?: (qc: QueryClient) => void) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed?.(qc);
-  return render(
-    <QueryClientProvider client={qc}>
-      <TooltipProvider>{ui}</TooltipProvider>
-    </QueryClientProvider>,
-  );
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <TooltipProvider>{ui}</TooltipProvider>
+      </QueryClientProvider>,
+    ),
+  };
 }
+const wrap = (ui: ReactNode, seed?: (qc: QueryClient) => void) => wrapQc(ui, seed);
 
 test("agent form shows avatar, name and @slug; no native title", () => {
   const { container } = wrap(<AgentChip agent={lead} showSlug />);
-  expect(screen.getAllByText("Team Lead").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("@lead").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Team Lead")).toHaveLength(1);
+  expect(screen.getAllByText("@lead")).toHaveLength(2); // visible + sr-only
   expect(container.querySelector("svg")).not.toBeNull();
   expect(container.querySelector("[title]")).toBeNull();
 });
@@ -32,13 +36,35 @@ test("slug form resolves from the live list cache", () => {
   expect(screen.getByText("Team Lead")).toBeInTheDocument();
 });
 
-test("slug form resolves an ended agent from the cache, never fetching it", () => {
+afterEach(() => vi.restoreAllMocks());
+
+test("slug form resolves an ended agent from the cache", () => {
   const gone = agentSummary({ slug: "gone", displayName: "Gone Bot" });
   wrap(<AgentChip slug="gone" />, (qc) => {
     qc.setQueryData(["agents", "exclude"], [lead]);
     qc.setQueryData(["agents", "only"], [gone]);
   });
   expect(screen.getByText("Gone Bot")).toBeInTheDocument();
+});
+
+test("a chip never fetches the ended list", async () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  const { qc } = wrapQc(<AgentChip slug="gone" />, (c) =>
+    c.setQueryData(["agents", "exclude"], [lead]),
+  );
+  await Promise.resolve();
+  expect(qc.isFetching({ queryKey: ["agents", "only"] })).toBe(0);
+  expect(fetchSpy).not.toHaveBeenCalled();
+});
+
+test("a chip mounting over a stale live list does not refetch it", async () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  const { qc } = wrapQc(<AgentChip slug="lead" />, (c) =>
+    c.setQueryData(["agents", "exclude"], [lead]),
+  );
+  await Promise.resolve();
+  expect(qc.isFetching()).toBe(0);
+  expect(fetchSpy).not.toHaveBeenCalled();
 });
 
 test("slug form falls back to @slug when unknown", () => {

@@ -204,18 +204,18 @@ export function TaskDetailView({
       <p role="status" aria-live="polite" className="sr-only">
         {announce}
       </p>
-      <div className="grid gap-x-6 gap-y-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:grid-rows-[auto_auto_1fr]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,17.5rem)] lg:grid-rows-[auto_auto_1fr]">
         <TitleBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
-        <aside className="contents lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:block">
-          <div className="order-2 grid gap-1 lg:mb-0">
+        <aside className="contents min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:block">
+          <div className="order-2 grid min-w-0 gap-1 lg:mb-0">
             <StatusAndAssignee task={task} announce={setAnnounce} save={saveTask} />
           </div>
-          <div className="order-4">
+          <div className="order-4 min-w-0">
             <SideRest task={task} save={saveTask} />
           </div>
         </aside>
         <BodyBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
-        <div className="order-5 grid gap-4 lg:col-start-1">
+        <div className="order-5 grid min-w-0 gap-4 lg:col-start-1">
           <TaskActivity
             taskKey={task.key}
             items={task.activity}

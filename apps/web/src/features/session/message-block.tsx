@@ -222,6 +222,7 @@ export function ClampedMarkdown({
       <Markdown source={lines.slice(0, limit).join("\n")} variant="detail" />
       <button
         type="button"
+        data-expands
         onClick={(e) => {
           e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
           setAll(true);

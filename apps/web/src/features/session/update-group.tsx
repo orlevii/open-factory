@@ -98,6 +98,7 @@ export function UpdateGroup({
       {collapsed && (
         <button
           type="button"
+          data-expands
           onClick={() => {
             article.current?.focus(); // the button is about to unmount
             setAll(true);

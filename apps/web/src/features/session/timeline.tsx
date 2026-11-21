@@ -13,12 +13,13 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import type { Row } from "./rows";
+import { registerTimelineRepin } from "./session-commands";
+import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
 import { TimelineItem } from "./timeline-item";
 
-const NEAR_BOTTOM = 64;
 const NO_KEYS: ReadonlySet<string> = new Set();
-/** What a toggle that resizes the timeline calls first (spec §8.1). */
-export type TimelineHandle = { captureAnchor(): void };
+/** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
+export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
 
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
@@ -47,15 +48,12 @@ export function Timeline(props: {
   const { rows, liveAfter = Number.POSITIVE_INFINITY, handedOff = NO_KEYS } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
   const prevLastKey = useRef<string | undefined>(undefined);
-  const anchor = useRef<{ height: number; top: number; firstKey?: string } | null>(null);
   const centred = useRef(false);
-  // The row at the top of the viewport and its offset, kept for width changes (spec §8.1).
-  const widthAnchor = useRef<{ el: HTMLElement; top: number } | null>(null);
-  const lastWidth = useRef<number | undefined>(undefined);
-  const scrollFrame = useRef(0);
   const [unseen, setUnseen] = useState(0);
+  const stick = useStickToBottom(scroller, log, (pinned) => {
+    if (pinned) setUnseen(0);
+  });
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -76,76 +74,28 @@ export function Timeline(props: {
     const prevIndex = rows.findIndex((r) => r.key === prevLastKey.current);
     const appended = prevIndex < 0 ? 0 : rows.length - 1 - prevIndex;
     prevLastKey.current = rows.at(-1)?.key;
-    const a = anchor.current;
-    if (a && rows[0]?.key !== a.firstKey) {
-      // Load earlier prepended: keep the first visible row where it was.
-      el.scrollTop = a.top + (el.scrollHeight - a.height);
-      anchor.current = null;
-      return;
-    }
     if (litKey !== undefined && !centred.current) {
       centred.current = true;
-      atBottom.current = false;
+      stick.unpin();
       el.querySelector("[data-highlighted]")?.scrollIntoView?.({ block: "center" });
       return;
     }
-    if (atBottom.current)
-      el.scrollTop = el.scrollHeight; // instant: events arrive tens of times a minute
-    else if (appended > 0) setUnseen((n) => n + appended);
-  }, [rows, litKey]);
+    // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
+    // row keeps its place, a Load earlier prepend included.
+    stick.settle();
+    if (!stick.pinned.current && appended > 0) setUnseen((n) => n + appended);
+  }, [rows, litKey, stick]);
 
-  const captureAnchor = useCallback(() => {
-    const el = scroller.current;
-    if (!el) return;
-    const box = el.getBoundingClientRect();
-    const hit = document
-      .elementFromPoint(box.left + 32, box.top + 1)
-      ?.closest<HTMLElement>("[data-row]");
-    // The point can land in the space between rows: take the first row that reaches the viewport top.
-    const row =
-      hit && el.contains(hit)
-        ? hit
-        : [...el.querySelectorAll<HTMLElement>("[data-row]")].find(
-            (r) => r.getBoundingClientRect().bottom > box.top,
-          );
-    // A probe that finds nothing keeps the last good anchor rather than clearing it.
-    if (row) widthAnchor.current = { el: row, top: row.getBoundingClientRect().top };
-  }, []);
-  useImperativeHandle(props.ref, () => ({ captureAnchor }), [captureAnchor]);
-
-  // Footer and async content (queued blocks, the Working line, highlighting, "Show all") change the
-  // height without changing rows: stay pinned while at the bottom.
-  useEffect(() => {
-    const el = scroller.current;
-    const content = log.current;
-    if (!el || !content || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      // A width change (sidebar, Agent details, window) reflows every row: pinned stays pinned,
-      // otherwise the top row goes back to where it was. Synchronous: after layout, before paint.
-      // atBottom is the last scroll's answer; the reflow itself must not change it.
-      const w = entries.find((e) => e.target === el)?.contentRect.width;
-      const widthChanged =
-        w !== undefined && lastWidth.current !== undefined && w !== lastWidth.current;
-      if (w !== undefined) lastWidth.current = w;
-      if (widthChanged && !anchor.current) {
-        const a = widthAnchor.current;
-        if (atBottom.current) el.scrollTop = el.scrollHeight;
-        else if (a?.el.isConnected) el.scrollTop += a.el.getBoundingClientRect().top - a.top;
-        return;
-      }
-      if (atBottom.current && !anchor.current) el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(content);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  useEffect(
-    () => () => {
-      cancelAnimationFrame(scrollFrame.current);
-      scrollFrame.current = 0;
-    },
-    [],
+  useImperativeHandle(
+    props.ref,
+    () => ({
+      captureAnchor: stick.captureAnchor,
+      expandAnchor: stick.expandAnchor,
+      repin: stick.repin,
+    }),
+    [stick],
   );
+  useEffect(() => registerTimelineRepin(props.slug, stick.repin), [props.slug, stick]);
 
   // The tint stays until the user clicks somewhere other than the highlighted row.
   useEffect(() => {
@@ -158,24 +108,12 @@ export function Timeline(props: {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [highlight]);
 
-  const onScroll = () => {
-    const el = scroller.current;
-    if (!el) return;
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
-    if (atBottom.current) setUnseen(0);
-    if (!scrollFrame.current)
-      scrollFrame.current = requestAnimationFrame(() => {
-        scrollFrame.current = 0;
-        captureAnchor();
-      });
-  };
-
   const loadEarlier = async () => {
-    const el = scroller.current;
-    if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop, firstKey: rows[0]?.key };
+    // The top visible row keeps its place when the earlier rows land above it.
+    stick.expandAnchor();
     setLoadingEarlier(true);
     try {
-      if (!(await props.onLoadEarlier())) anchor.current = null; // nothing prepended
+      await props.onLoadEarlier();
     } finally {
       setLoadingEarlier(false);
     }
@@ -271,7 +209,7 @@ export function Timeline(props: {
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto px-4 py-4 md:px-6">
+      <div ref={scroller} className="h-full overflow-y-auto px-4 py-4 md:px-6">
         <div
           ref={log}
           role="log"
@@ -318,12 +256,7 @@ export function Timeline(props: {
           variant="ghost"
           size="sm"
           className="absolute right-4 bottom-3 border border-border bg-card md:right-6"
-          onClick={() => {
-            const el = scroller.current;
-            if (el) el.scrollTop = el.scrollHeight;
-            atBottom.current = true;
-            setUnseen(0);
-          }}
+          onClick={stick.repin}
         >
           <ArrowDown aria-hidden="true" /> {unseen} new {unseen === 1 ? "event" : "events"}
         </Button>

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { isSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
 import { postMessage } from "./api";
-import { registerComposerFocus } from "./session-commands";
+import { registerComposerFocus, repinTimeline } from "./session-commands";
 
 const draftKey = (slug: string) => `of-draft:${slug}`;
 const readDraft = (slug: string) => {
@@ -147,6 +147,7 @@ export function Composer({
     }
     setSending(true);
     setError(undefined);
+    repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
     try {
       const item = await postMessage(slug, sent.trim(), urgent);
       onQueued?.(item);

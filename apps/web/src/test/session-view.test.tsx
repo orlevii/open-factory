@@ -358,7 +358,9 @@ test("scrolled up, live rows are counted into the pill (singular, then plural)",
   const scroller = screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2000 });
   Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 500 });
-  scroller.scrollTop = 100;
+  scroller.scrollTop = 1500; // at the bottom
+  fireEvent.scroll(scroller);
+  scroller.scrollTop = 100; // the reader scrolls up
   fireEvent.scroll(scroller);
   live(11, { type: "assistant_text", text: "one" });
   expect(await screen.findByRole("button", { name: "1 new event" })).toBeInTheDocument();

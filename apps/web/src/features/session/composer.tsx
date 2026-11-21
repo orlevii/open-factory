@@ -94,11 +94,14 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
 export function Composer({
   slug,
   agent,
+  waiting = false,
   onQueued,
   onTerminated,
 }: {
   slug: string;
   agent: AgentSummary;
+  /** The session is still loading: typing works, sending waits. */
+  waiting?: boolean;
   /** Called with the 202 queue item (the session inserts it locally while disconnected). */
   onQueued?: (item: QueueItem) => void;
   /** A send that raced a termination (`409 agent_terminated`), with the sentence that says so. */
@@ -122,7 +125,7 @@ export function Composer({
   const urgentNow = urgent && agent.turnOpen;
 
   async function send() {
-    if (empty || sending) return;
+    if (empty || sending || waiting) return;
     const sent = text;
     // Clear only what was sent: anything typed while the POST was in flight stays.
     const accepted = () => {
@@ -213,7 +216,7 @@ export function Composer({
           </div>
           <Button
             type="submit"
-            disabled={empty || sending}
+            disabled={empty || sending || waiting}
             aria-label={urgentNow ? "Send urgent" : "Send"}
           >
             <span className="grid">

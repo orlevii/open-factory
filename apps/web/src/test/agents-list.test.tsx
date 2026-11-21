@@ -198,3 +198,22 @@ test("a terminated frame shows Terminated (no dot) at once, then the list refetc
     expect(screen.queryByRole("link", { name: /X · ab12/ })).not.toBeInTheDocument(),
   );
 });
+
+test("an empty list holds its line with a skeleton while the prerequisites load", async () => {
+  // The credentials list never answers, so the prerequisites stay loading.
+  const api = mockWorld({
+    agents: [],
+    extra: { "GET /api/credentials": () => new Promise<Response>(() => {}) },
+  });
+  renderApp("/agents", alice);
+  await vi.waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/agents?ended=exclude")).toBe(true),
+  );
+  const plate = await vi.waitFor(() => {
+    const el = document.querySelector("[data-empty-agents] [data-slot=skeleton]");
+    expect(el).not.toBeNull();
+    return el;
+  });
+  expect(plate).toHaveClass("h-5");
+  expect(screen.queryByText(/No agents yet\./)).not.toBeInTheDocument();
+});

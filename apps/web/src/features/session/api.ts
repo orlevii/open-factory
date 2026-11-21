@@ -1,4 +1,5 @@
 import {
+  type AgentSummary,
   agentDetailSchema,
   agentListSchema,
   agentResponseSchema,
@@ -7,7 +8,7 @@ import {
   messageLookupSchema,
   queueItemResponseSchema,
 } from "@open-factory/shared";
-import { queryOptions, skipToken } from "@tanstack/react-query";
+import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
 
 type Running = { count: number; max: number };
@@ -54,6 +55,17 @@ export const agentDetailQueryOptions = (slug: string) =>
       apiFetch(`/api/agents/${encodeURIComponent(slug)}`, { schema: agentDetailSchema }),
     staleTime: 0,
   });
+
+/** The agent's row from any cached list (active or ended), so a page can render its name and status
+ *  while the detail loads (spec §11). A plain cache read: it does not subscribe. */
+export function summaryFromAgentsList(qc: QueryClient, slug: string): AgentSummary | undefined {
+  for (const [, list] of qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] })) {
+    // Guarded: a non-list value under the prefix must not throw during render or a socket frame.
+    const hit = Array.isArray(list) ? list.find((a) => a.slug === slug) : undefined;
+    if (hit) return hit;
+  }
+  return undefined;
+}
 
 export function fetchEvents(
   slug: string,

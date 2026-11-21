@@ -8,13 +8,9 @@
 
 **Tech Stack:** React 19, TanStack Router 1.170 / Query 5.107, Radix (`radix-ui` 1.8.1), Tailwind 4.3.5 + tw-animate-css, **Vaul 1.1.2 (new, exact pin)**, Vitest 5 + Testing Library (jsdom), Fastify 5 (one server file), Biome.
 
-**Spec:** `docs/superpowers/specs/2026-11-21-u1-ui-foundation-design.md`. The spec wins over this plan on any conflict, except where this plan notes a spec line that contradicts another spec line (listed below). Decision log: https://github.com/orlevii/open-factory/issues/77. Follow-ups that are NOT U1 work and stay open: #78–#83.
+**Spec:** `docs/superpowers/specs/2026-11-21-u1-ui-foundation-design.md`. The spec wins over this plan on any conflict. Decision log: https://github.com/orlevii/open-factory/issues/77. Follow-ups that are NOT U1 work and stay open: #78–#83.
 
-**Spec lines that contradict later spec decisions (this plan follows the later decision):**
-- §12.4 table row reads "Detail title (task, template, schedule)"; §6.10 scopes it to the task only. Write the DESIGN.md row as `| Detail title (task) | Archivo | 20 / 28 | 650 |`.
-- §2.3 says "meta and actions never shrink"; §7.3 (Q22) defines the give-way order. Follow §7.3.
-- §13 "Bugs" says `"+N more"`; §7.1 (Q15) says "All N agents". Follow §7.1.
-- §12.5 says "add the 20% scrim"; §5.2 (Q19) is 20% light / 40% dark. Write "the scrim (20% black in light mode, 40% in dark)".
+The four spec self-contradictions found while planning (§2.3, §12.4, §12.5, §13) have been corrected in the spec. The DESIGN.md detail-title row is `| Detail title (task, in the page body) | Archivo | 20 / 28 | 650 |`.
 
 ## Global Constraints
 

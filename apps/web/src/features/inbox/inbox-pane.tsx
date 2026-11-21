@@ -19,6 +19,7 @@ import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
+import { INBOX_DWELL_MS } from "@/lib/timing";
 import { type InboxItem, inboxItemOptions, useOpenItem } from "./api";
 import { ExcerptSkeleton, SessionExcerpt } from "./session-excerpt";
 
@@ -93,15 +94,44 @@ function usePaneItem(id: string, loaded: InboxItem | undefined) {
   return { item, gone, failed: !item && !gone && fetched.isError };
 }
 
-/** Sending a reply marks the item read at once (also its single-item copy, so a second send doesn't
- *  count it again). */
-function useMarkReplied(item: InboxItem) {
+/** Marks an item read (also its single-item copy, so a second call doesn't count it again). */
+function useMarkRead() {
   const open = useOpenItem();
   const qc = useQueryClient();
-  return useCallback(() => {
-    open(item);
-    qc.setQueryData(inboxItemOptions(item.id).queryKey, (i) => i && { ...i, read: true });
-  }, [open, qc, item]);
+  return useCallback(
+    (item: InboxItem) => {
+      open(item);
+      qc.setQueryData(inboxItemOptions(item.id).queryKey, (i) => i && { ...i, read: true });
+    },
+    [open, qc],
+  );
+}
+
+/** Sending a reply marks the item read at once. */
+function useMarkReplied(item: InboxItem) {
+  const markRead = useMarkRead();
+  return useCallback(() => markRead(item), [markRead, item]);
+}
+
+/**
+ * The dwell (spec §11.1): an unread item is read once it has been shown for INBOX_DWELL_MS, however
+ * it came to be shown (j/k, a deep link, Back/Forward). Moving on first (the pane remounts per item)
+ * cancels it; a click, Enter or Space has already read it, which cancels it too.
+ */
+function useDwellRead(item: InboxItem | undefined) {
+  const markRead = useMarkRead();
+  const latest = useRef(item);
+  useEffect(() => {
+    latest.current = item;
+  }, [item]);
+  const unread = item !== undefined && !item.read;
+  useEffect(() => {
+    if (!unread) return;
+    const timer = setTimeout(() => {
+      if (latest.current) markRead(latest.current);
+    }, INBOX_DWELL_MS);
+    return () => clearTimeout(timer);
+  }, [unread, markRead]);
 }
 
 /** A message: the session excerpt at its target, and the composer to that session. */
@@ -345,6 +375,7 @@ function TaskContent({
 
 function PaneItem({ id, loaded }: { id: string; loaded: InboxItem | undefined }) {
   const { item, gone, failed } = usePaneItem(id, loaded);
+  useDwellRead(item);
   return (
     <>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-sm md:px-6">

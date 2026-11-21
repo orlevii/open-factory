@@ -175,7 +175,8 @@ test("↓/↑ move focus only (no ?item= change)", async () => {
   await new Promise((r) => setTimeout(r, INBOX_DWELL_MS + 50));
   expect(search(app).item).toBe("i1");
   expect(row("i1")).toHaveAttribute("aria-current", "true");
-  expect(reads()).toHaveLength(0);
+  // Only the shown item is read (after the dwell); the rows focus passed are not.
+  await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
 });
 
 test("Enter selects (push) and marks read at once", async () => {
@@ -260,6 +261,9 @@ test("a dwell is cancelled by a click elsewhere and on unmount; a pending prefet
   fireEvent.keyDown(row("i1") as HTMLElement, { key: "j" });
   await act(async () => vi.advanceTimersByTime(100));
   fireEvent.click(row("i4") as HTMLElement);
+  // The pane moves to i4 once the navigation commits; i2's dwell ends with it.
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(search(app).item).toBe("i4");
   await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 2));
   expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i4/read"]);
 
@@ -285,4 +289,27 @@ test("Back during a dwell cancels it", async () => {
   expect(search(app).item).toBeUndefined();
   await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 2));
   expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]);
+});
+
+test("a deep-linked unread item is read once it has been shown for INBOX_DWELL_MS", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  await visit(1280, "/inbox?item=i2");
+  await waitFor(() => expect(row("i2")).toHaveAttribute("aria-current", "true"));
+  expect(reads()).toHaveLength(0);
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS));
+  await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i2/read"]));
+});
+
+test("an item Back restores is read after the dwell; one shown for less is not", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const app = await visit(1280);
+  await act(async () => app.router.navigate({ to: "/inbox", search: { item: "i3" } }));
+  await act(async () => app.router.navigate({ to: "/inbox", search: { item: "i4" } }));
+  expect(search(app).item).toBe("i4");
+  await act(async () => app.router.history.back());
+  await waitFor(() => expect(search(app).item).toBe("i3"));
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS));
+  await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i3/read"]));
+  await act(async () => vi.advanceTimersByTime(INBOX_DWELL_MS * 2));
+  expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i3/read"]);
 });

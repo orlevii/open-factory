@@ -15,7 +15,7 @@ import { onRowKeyDown } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
 import { sessionQueryOptions } from "@/lib/session";
 import { shouldIgnore } from "@/lib/shortcuts";
-import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
+import { PREFETCH_REST_MS } from "@/lib/timing";
 import { type InboxItem, prefetchPane, useInbox, useOpenItem } from "./api";
 import { InboxRow } from "./inbox-row";
 
@@ -25,7 +25,8 @@ const plainClick = (e: MouseEvent) =>
 /** The Inbox: a plain list of links, one per message sent to the humans (and factory items), newest
  *  first. Arrow keys also move between rows; Tab reaches every row link as usual.
  *  With `onSelect` (the two-pane layout) a plain click, Enter or Space selects a row (push) and marks it
- *  read at once; `j`/`k` move the selection (replace) and mark the resting row read after INBOX_DWELL_MS. */
+ *  read at once; `j`/`k` move the selection (replace). The pane marks whatever it shows read after
+ *  INBOX_DWELL_MS, so a sweep reads only the row it rests on. */
 export function InboxList({
   selectedId,
   onSelect,
@@ -48,18 +49,6 @@ export function InboxList({
   }, [items]);
   const byId = (id: string) => latest.current?.find((i) => i.id === id);
 
-  // The dwell: the row j/k rests on is read once it has been shown for INBOX_DWELL_MS.
-  const dwell = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
-  const clearDwell = useCallback(() => {
-    if (dwell.current) clearTimeout(dwell.current.timer);
-    dwell.current = null;
-  }, []);
-  useEffect(() => {
-    // The selection moved some other way (a click, Back): that row's dwell no longer applies.
-    if (dwell.current && dwell.current.id !== selectedId) clearDwell();
-  }, [selectedId, clearDwell]);
-  useEffect(() => clearDwell, [clearDwell]);
-
   // The neighbours' pane data, once the selection has rested.
   const index = selectedId && items ? items.findIndex((i) => i.id === selectedId) : -1;
   const prevId = index > 0 ? items?.[index - 1]?.id : undefined;
@@ -79,12 +68,11 @@ export function InboxList({
     (item: InboxItem, e: MouseEvent) => {
       if (onSelect && plainClick(e)) {
         e.preventDefault();
-        clearDwell();
         onSelect(item.id, false);
       }
       open(item);
     },
-    [onSelect, open, clearDwell],
+    [onSelect, open],
   );
 
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
@@ -94,16 +82,7 @@ export function InboxList({
     if (row && (e.key === "j" || e.key === "k")) {
       const id = row.dataset.inboxId;
       if (!id || id === selectedId) return;
-      clearDwell();
       runInstantOn(el, () => onSelect(id, true));
-      dwell.current = {
-        id,
-        timer: setTimeout(() => {
-          dwell.current = null;
-          const item = byId(id);
-          if (item) open(item);
-        }, INBOX_DWELL_MS),
-      };
       return;
     }
     // Space selects the focused row, as Enter does (the shortcuts sheet's "Select or peek row").
@@ -111,7 +90,6 @@ export function InboxList({
       const item = byId(e.target.dataset.inboxId ?? "");
       if (!item) return;
       e.preventDefault();
-      clearDwell();
       runInstantOn(el, () => onSelect(item.id, false));
       open(item);
     }

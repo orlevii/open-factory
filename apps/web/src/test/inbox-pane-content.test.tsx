@@ -14,6 +14,12 @@ import { alice, renderApp } from "@/test/render-app";
 import { detail as agentDetail } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+// The dwell read is inbox-pane.test's; here an item shown is read only by a reply, so the reply's
+// read is what the tests see.
+vi.mock("@/lib/timing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/timing")>()),
+  INBOX_DWELL_MS: 600_000,
+}));
 vi.mock("@/lib/ws", () => ({
   connectWs: (o: { onOpen?: () => void }) => {
     setTimeout(() => o.onOpen?.(), 0);
@@ -174,7 +180,7 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
   // Excerpt rows are plain TimelineRows: no copy links.
   expect(within(p).queryByRole("button", { name: /copy link/i })).toBeNull();
 
-  // A deep link doesn't mark the item read; replying does.
+  // Shown (within the dwell) isn't read yet; replying reads it at once.
   expect(reads()).toHaveLength(0);
   const box = await within(p).findByRole("textbox", { name: "Message to Dev agent" });
   await userEvent.type(box, "On it");

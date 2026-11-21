@@ -206,7 +206,7 @@ Spacing replaces boxes for grouping (Apple m2, DESIGN.md "rhythm comes from rule
 - `.prose-of` (speech, task bodies, comments): 15/24 (`0.9375rem/1.5rem`), tracking 0 (Q33: DESIGN.md's −0.01em at 15–17px applies to Archivo headings only).
 - Markdown headings, page scale: h1 20/28, h2 17/24, h3 15/24 at 650. Demoted (`.prose-of-detail`): h1 17, h2 16, h3 15, all 650. **Every speaker's markdown in the timeline uses the demoted scale** (agent text included; today it uses the page scale at `timeline-row.tsx:325`), so nothing in a session outranks the page title.
 - `.prose-of-work` is a modifier on `.prose-of` (like `.prose-of-detail`, so it keeps every overflow rule): 13/20, headings 14/13/13. Used for tool results rendered as markdown.
-- Overflow: `.prose-of`'s `overflow-wrap: anywhere` rule extends to `:is(h1,h2,h3,h4,h5,h6,dt,dd)`; the timeline log gets `overflow-x: clip` so a leak can never scroll the conversation sideways.
+- Overflow: `.prose-of`'s `overflow-wrap: anywhere` rule extends to `:is(h1,h2,h3,h4,h5,h6,dt,dd)`; the inner `role="log"` element (`timeline.tsx:272`, not the `overflow-y-auto` scroller, where clip would compute to a scrollable `hidden`) gets `overflow-x: clip`, so a leak can never scroll the conversation sideways.
 - Code stays Geist Mono 13/1.55.
 - PR2 records before/after screenshots of a long session in light and dark; #82 is closed by PR2.
 

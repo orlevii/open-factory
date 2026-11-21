@@ -1,9 +1,10 @@
-import type { AgentSummary } from "@open-factory/shared";
+import type { AgentSummary, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { agentsQueryOptions } from "@/features/session/api";
 import { createQueryClient } from "@/lib/query-client";
+import { WsContext, type WsHub } from "@/lib/ws-context";
 import { json, mockApi } from "@/test/mock-api";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
@@ -22,16 +23,37 @@ async function setup(agents: AgentSummary[] | "pending" | "error") {
         : new Promise<Response>(() => {}),
   });
   if (Array.isArray(agents)) qc.setQueryData(agentsQueryOptions.queryKey, agents);
+  let listener: (m: ServerMessage) => void = () => {};
+  const hub: WsHub = {
+    send: () => true,
+    listen: (fn) => {
+      listener = fn;
+      return () => {};
+    },
+    status: "open",
+    openCount: 1,
+  };
   const view = renderInRouter(
     <QueryClientProvider client={qc}>
-      <section aria-label="panel">
-        <HomeAgents />
-      </section>
+      <WsContext.Provider value={hub}>
+        <section aria-label="panel">
+          <HomeAgents />
+        </section>
+      </WsContext.Provider>
     </QueryClientProvider>,
   );
   await screen.findByRole("region", { name: "panel" });
-  return { qc, view };
+  const push = (m: ServerMessage) => act(() => listener(m));
+  return { qc, view, push };
 }
+const statusFrame = (agent: string, status: AgentSummary["status"]): ServerMessage => ({
+  type: "agent_status",
+  agent,
+  status,
+  turnOpen: false,
+  restartPending: false,
+  restartWaitingOn: 0,
+});
 /** HomeAgents' own root (the element that carries the hover and focus handlers). */
 const panel = async () =>
   (await screen.findByRole("list", { name: "Agents" })).parentElement as HTMLElement;
@@ -151,6 +173,29 @@ test("an agent appearing while frozen is appended last", async () => {
     ]),
   );
   await waitFor(() => expect(slugs()).toEqual(["w-1", "idle-1", "new"]));
+});
+
+test("agent_status frames update rows live (Home mounts the status listener)", async () => {
+  const { push } = await setup(fleet());
+  expect(slugs()).toEqual(["w-1", "idle-1"]);
+  push(statusFrame("idle-1", "errored"));
+  expect(
+    await within(screen.getByRole("link", { name: /Bea/ })).findByText("Errored"),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(slugs()).toEqual(["idle-1", "w-1"]));
+});
+
+test("a status frame under the pointer updates the row in place; the order applies on leave", async () => {
+  const { push } = await setup(fleet());
+  const p = await panel();
+  fireEvent.pointerEnter(p);
+  push(statusFrame("idle-1", "errored"));
+  expect(
+    await within(screen.getByRole("link", { name: /Bea/ })).findByText("Errored"),
+  ).toBeInTheDocument();
+  expect(slugs()).toEqual(["w-1", "idle-1"]);
+  fireEvent.pointerLeave(p);
+  await waitFor(() => expect(slugs()).toEqual(["idle-1", "w-1"]));
 });
 
 test("hovering before the query resolves still renders rows when it does", async () => {

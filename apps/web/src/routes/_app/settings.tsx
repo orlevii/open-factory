@@ -1,147 +1,72 @@
-import { type UsageDays, usageDaysSchema } from "@open-factory/shared";
-import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
-import { z } from "zod";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
 import {
-  credentialsQueryOptions,
-  factorySettingsQueryOptions,
-  invitesQueryOptions,
-  projectsQueryOptions,
-  secretsQueryOptions,
-  usersQueryOptions,
-} from "@/features/settings/api";
-import { CredentialsSection } from "@/features/settings/credentials-section";
-import { FactorySection } from "@/features/settings/factory-section";
-import { ProjectsSection } from "@/features/settings/projects-section";
-import { SecretsSection } from "@/features/settings/secrets-section";
-import { UsageSection } from "@/features/settings/usage-section";
-import { UsersSection } from "@/features/settings/users-section";
-import { agentsUsageQuery, credentialsUsageQuery, dailyUsageQuery } from "@/features/usage/api";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-const SECTIONS = [
-  { id: "usage", title: "Usage" },
-  { id: "credentials", title: "Credentials" },
-  { id: "secrets", title: "Secrets" },
-  { id: "projects", title: "Projects" },
-  { id: "users", title: "Users" },
-  { id: "factory", title: "Factory" },
+const PAGES = [
+  { to: "/settings/credentials", title: "Credentials" },
+  { to: "/settings/secrets", title: "Secrets" },
+  { to: "/settings/projects", title: "Projects" },
+  { to: "/settings/users", title: "Users" },
+  { to: "/settings/factory", title: "Factory" },
 ] as const;
-const IDS: readonly string[] = SECTIONS.map((s) => s.id);
 
-const DEFAULT_DAYS: UsageDays = 30;
-const searchSchema = z.object({
-  // ?addSecret=NAME opens the add-secret form with the name filled in (the New agent warnings
-  // link here).
-  addSecret: z.string().optional().catch(undefined),
-  // The Usage range; an unknown one falls back to the default.
-  days: usageDaysSchema.optional().catch(undefined),
-});
+export const Route = createFileRoute("/_app/settings")({ component: SettingsLayout });
 
-export const Route = createFileRoute("/_app/settings")({
-  validateSearch: searchSchema,
-  // Only so the first load shows the pending mark (and a #hash lands on loaded content); each
-  // section renders its own failure. No loaderDeps: a range switch keeps the previous data.
-  loader: async ({ context, location }) => {
-    const days = searchSchema.parse(location.search).days ?? DEFAULT_DAYS;
-    const qc = context.queryClient;
-    await Promise.allSettled([
-      qc.ensureQueryData(dailyUsageQuery(days)),
-      qc.ensureQueryData(agentsUsageQuery(days)),
-      qc.ensureQueryData(credentialsUsageQuery(days)),
-      // These three are stale at once (no WebSocket event covers them): fetch on every entry, and
-      // the sections skip their own mount fetch, so entry costs one request each.
-      qc.fetchQuery(credentialsQueryOptions),
-      qc.fetchQuery(secretsQueryOptions),
-      qc.fetchQuery(projectsQueryOptions),
-      qc.ensureQueryData(usersQueryOptions),
-      qc.ensureQueryData(invitesQueryOptions),
-      qc.ensureQueryData(factorySettingsQueryOptions),
-    ]);
-  },
-  component: SettingsPage,
-});
-
-function SettingsPage() {
-  const { addSecret, days = DEFAULT_DAYS } = Route.useSearch();
-  const hash = useLocation({ select: (l) => l.hash });
+function SettingsLayout() {
   const navigate = useNavigate();
-
-  // #usage … #factory: bring the section into view and move focus to its heading, so keyboard
-  // and screen-reader users land there too. The loader has already waited for the content. With
-  // ?addSecret the add form has already taken focus (its value field).
-  const handled = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (!IDS.includes(hash)) {
-      handled.current = undefined;
-      return;
-    }
-    if (handled.current === hash) return;
-    handled.current = hash;
-    document.getElementById(hash)?.scrollIntoView?.({ block: "start" });
-    if (!(addSecret && hash === "secrets")) document.getElementById(`${hash}-title`)?.focus();
-  }, [hash, addSecret]);
-  // A click on the anchor of the current hash changes no location, so the effect above doesn't
-  // run: move to the section here.
-  const revisit = (id: string) => {
-    if (id !== hash) return;
-    document.getElementById(id)?.scrollIntoView?.({ block: "start" });
-    document.getElementById(`${id}-title`)?.focus();
-  };
-  // A fragment typed in the address bar, or back/forward between fragments, doesn't reach the
-  // router's location: follow the browser's hashchange too.
-  useEffect(() => {
-    const onHashChange = () => {
-      const id = decodeURIComponent(window.location.hash.slice(1));
-      if (!IDS.includes(id)) return;
-      handled.current = id;
-      document.getElementById(id)?.scrollIntoView?.({ block: "start" });
-      document.getElementById(`${id}-title`)?.focus();
-    };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
-
+  const current = useRouterState({
+    select: (s) => PAGES.find((p) => s.location.pathname.startsWith(p.to))?.to,
+  });
   return (
     <>
       <PageHeader title="Settings" />
       <PageBody>
-        <div className="grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-10">
-          <nav aria-label="On this page">
-            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[0.8125rem] leading-[1.125rem]">
-              {SECTIONS.map((s) => (
-                <li key={s.id}>
-                  <Link
-                    from={Route.fullPath}
-                    to="."
-                    search={(prev) => prev}
-                    hash={s.id}
-                    onClick={() => revisit(s.id)}
-                    className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    {s.title}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
-          <UsageSection
-            days={days}
-            onDaysChange={(d) =>
-              void navigate({
-                from: Route.fullPath,
-                to: ".",
-                search: (prev) => ({ ...prev, days: d === DEFAULT_DAYS ? undefined : d }),
-                hash: true,
-                resetScroll: false,
-              })
-            }
-          />
-          <CredentialsSection />
-          <SecretsSection addSecret={addSecret} />
-          <ProjectsSection />
-          <UsersSection />
-          <FactorySection />
+        {/* The container is the body: 11.25rem of sub-nav + the 2.5rem gap + the 40rem the content
+            needs is 53.75rem. Narrower than that, the sub-nav becomes a Section select. */}
+        <div className="@container">
+          <div className="grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-6 @min-[53.75rem]:grid-cols-[11.25rem_minmax(0,1fr)] @min-[53.75rem]:gap-10">
+            <nav aria-label="Settings" className="hidden @min-[53.75rem]:block">
+              <ul className="grid gap-0.5">
+                {PAGES.map((p) => (
+                  <li key={p.to}>
+                    <Link
+                      to={p.to}
+                      className="flex h-8 items-center rounded-md px-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                      activeProps={{ className: "bg-accent font-medium text-foreground" }}
+                    >
+                      {p.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+            <div className="@min-[53.75rem]:hidden">
+              <Select
+                value={current}
+                onValueChange={(to) => void navigate({ to: to as (typeof PAGES)[number]["to"] })}
+              >
+                <SelectTrigger aria-label="Section">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGES.map((p) => (
+                    <SelectItem key={p.to} value={p.to}>
+                      {p.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0">
+              <Outlet />
+            </div>
+          </div>
         </div>
       </PageBody>
     </>

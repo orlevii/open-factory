@@ -39,6 +39,7 @@ const detail = (issues: unknown[] = []) => ({
     path: "/h/of/templates/lead",
     issues,
     agents: [],
+    avatar: { version: null, tooLarge: false },
     config: {
       name: "lead",
       displayName: "Lead",

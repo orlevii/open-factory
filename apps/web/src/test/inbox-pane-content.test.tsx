@@ -423,7 +423,8 @@ test("switching items shows skeletons, never the previous body", async () => {
   release();
   await waitFor(() => expect(within(pane()).getByText("dev event 60")).toBeInTheDocument());
   expect(pane().querySelector("[data-pane-skeleton]")).toBeNull();
-});
+  // Two full-app route renders and a held fetch: past the default 5s when the suite runs in parallel.
+}, 15_000);
 
 test("?item= outside the loaded pages fetches the item and shows it", async () => {
   setup([item(1)]);

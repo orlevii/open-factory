@@ -539,21 +539,21 @@ test("disconnected: an accepted message shows as queued at once", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   const log = screen.getByRole("log", { name: "Session" });
   expect(await within(log).findByText("offline hello")).toBeInTheDocument();
-  expect(within(log).getByText("Not delivered yet")).toBeInTheDocument();
+  // Not at once: an item younger than 300ms doesn't say so (U3 §13.2).
+  expect(within(log).queryByText("Not delivered yet")).toBeNull();
+  expect(await within(log).findByText("Not delivered yet")).toBeInTheDocument();
 });
 
-test("connected: the queue frame is authoritative, so no local row is added", async () => {
+test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", async () => {
   routes["/api/agents/dev/messages"] = accepted("online hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
   await userEvent.type(screen.getByRole("textbox", { name: /Message to/ }), "online hello");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  await vi.waitFor(() =>
-    expect(screen.getByRole("textbox", { name: /Message to/ })).toHaveValue(""),
-  );
   const log = screen.getByRole("log", { name: "Session" });
-  expect(within(log).queryByText("online hello")).not.toBeInTheDocument();
+  await vi.waitFor(() => expect(within(log).queryByRole("group", { name: "Sending" })).toBeNull());
+  expect(within(log).getAllByText("online hello")).toHaveLength(1);
 });
 
 // --- S4 additions (UI design §4.4) ---
@@ -914,7 +914,7 @@ test("a cold load renders from the detail the route waited for while the session
   gate.release(json(detail()));
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-  sessionStorage.removeItem("of-draft:dev"); // the unsent draft would carry into the next test
+  localStorage.removeItem("of-draft:v1:agent:dev"); // the unsent draft would carry into the next test
 });
 
 test("a cached summary whose agent turns out not to exist shows Agent not found", async () => {

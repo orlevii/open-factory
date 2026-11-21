@@ -664,3 +664,122 @@ test("a second cancel of the same item, or of one not queued, changes nothing", 
   expect(sessionReducer(s, { type: "cancel", id: "a" })).toBe(s);
   expect(sessionReducer(s, { type: "cancel", id: "zz" })).toBe(s);
 });
+
+// U3 §13.2: optimistic "Sending" blocks, handed off by clientMessageId.
+const CID = "0b6f7b5e-8d0f-4a39-9a5d-1f1f3a1c2b01";
+const block = { clientMessageId: CID, body: "hello", urgent: false };
+const echoItem = (id: string) => ({ ...qItem(id), body: "hello", clientMessageId: CID });
+const sendingState = () => sessionReducer(withQueue([]), { type: "sending", block });
+
+test("a sending block is added once and a failure removes it", () => {
+  const s = sendingState();
+  expect(s.sending).toEqual([block]);
+  expect(sessionReducer(s, { type: "sending", block })).toBe(s);
+  const failed = sessionReducer(s, { type: "send_failed", clientMessageId: CID });
+  expect(failed.sending).toEqual([]);
+  expect(failed.landed.has(CID)).toBe(false);
+});
+
+test("the 202's item replaces the block in one step, connected or not", () => {
+  for (const live of [true, false]) {
+    const s = sessionReducer(sendingState(), { type: "queued", item: echoItem("m1"), live });
+    expect(s.sending).toEqual([]);
+    expect(s.queue.map((q) => q.id)).toEqual(["m1"]);
+    expect(s.landed.has(CID)).toBe(true);
+  }
+});
+
+test("while connected, a 202 with no block left (already delivered) adds nothing", () => {
+  const s = withQueue([]);
+  expect(sessionReducer(s, { type: "queued", item: qItem("m1"), live: true })).toBe(s);
+});
+
+test("a queue frame echoing the id replaces the block in one step", () => {
+  const s = sessionReducer(sendingState(), {
+    type: "frame",
+    message: { type: "queue", agent: "dev", items: [echoItem("m1")] },
+  });
+  expect(s.sending).toEqual([]);
+  expect(s.queue.map((q) => q.id)).toEqual(["m1"]);
+  // The 202 that follows changes nothing.
+  expect(sessionReducer(s, { type: "queued", item: echoItem("m1"), live: true }).queue).toBe(
+    s.queue,
+  );
+});
+
+test("a message_in echoing the id removes the block and its row is handed off", () => {
+  const ev10 = sessionEvent(10, {
+    type: "message_in",
+    messages: [
+      {
+        id: "m1",
+        from: "@or",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        clientMessageId: CID,
+      },
+    ],
+  });
+  const s = sessionReducer(sendingState(), frames([ev10]));
+  expect(s.sending).toEqual([]);
+  expect(s.handedOff.has("10:0")).toBe(true);
+  expect(s.landed.has(CID)).toBe(true);
+});
+
+test("an unconfirmed send (15s abort) is remembered, and a late echo marks it landed", () => {
+  let s = sessionReducer(sendingState(), {
+    type: "send_failed",
+    clientMessageId: CID,
+    unconfirmed: true,
+  });
+  expect(s.sending).toEqual([]);
+  expect(s.landed.has(CID)).toBe(false);
+  const ev10 = sessionEvent(10, {
+    type: "message_in",
+    messages: [
+      {
+        id: "m1",
+        from: "@or",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        clientMessageId: CID,
+      },
+    ],
+  });
+  s = sessionReducer(s, frames([ev10]));
+  expect(s.landed.has(CID)).toBe(true);
+  // Unrelated echoes don't mark anything.
+  const other = sessionReducer(withQueue([]), {
+    type: "frame",
+    message: { type: "queue", agent: "dev", items: [echoItem("m1")] },
+  });
+  expect(other.landed.size).toBe(0);
+});
+
+test("a retry's 202 for an item you cancelled doesn't put it back in the queue", () => {
+  let s = sessionReducer(withQueue([]), {
+    type: "frame",
+    message: { type: "queue", agent: "dev", items: [echoItem("m1")] },
+  });
+  s = sessionReducer(s, { type: "cancel", id: "m1" });
+  s = sessionReducer(s, { type: "frame", message: queueFrame([]) });
+  s = sessionReducer(s, { type: "sending", block });
+  s = sessionReducer(s, { type: "queued", item: echoItem("m1"), live: true });
+  expect(s.sending).toEqual([]);
+  expect(view(s)).toEqual(["x:m1"]);
+});
+
+test("a reload of the same session keeps the blocks; another session drops them", () => {
+  const s = sendingState();
+  const same = sessionReducer(s, { type: "loaded", page: page([1]), detail, mode: "latest" });
+  expect(same.sending).toEqual([block]);
+  const other = sessionReducer(s, {
+    type: "loaded",
+    page: page([1]),
+    detail: { ...detail, agent: agentSummary({ slug: "ops" }) },
+    mode: "latest",
+  });
+  expect(other.sending).toEqual([]);
+});

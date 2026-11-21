@@ -188,7 +188,7 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
   await waitFor(() =>
     expect(
       api.calls.find((c) => c.method === "POST" && c.url === "/api/agents/dev/messages")?.body,
-    ).toEqual({ body: "On it", urgent: false }),
+    ).toEqual({ body: "On it", urgent: false, clientMessageId: expect.any(String) }),
   );
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
   // The session's composer, keys and reserved hint line included (U3 §6.2).

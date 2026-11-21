@@ -30,7 +30,7 @@ let posted: { url: string; body: unknown }[];
 let postReply: (url: string) => Response | Promise<Response>;
 let agentOver: Parameters<typeof detail>[0];
 beforeEach(() => {
-  sessionStorage.clear(); // drafts persist per agent
+  localStorage.clear(); // drafts persist per agent
   posted = [];
   agentOver = {};
   postReply = (url) =>
@@ -70,7 +70,10 @@ test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () 
   await userEvent.keyboard("{Enter}");
   await vi.waitFor(() =>
     expect(posted).toEqual([
-      { url: "/api/agents/dev/messages", body: { body: "line one\nline two", urgent: false } },
+      {
+        url: "/api/agents/dev/messages",
+        body: { body: "line one\nline two", urgent: false, clientMessageId: expect.any(String) },
+      },
     ]),
   );
   await vi.waitFor(() => expect(input).toHaveValue(""));
@@ -133,7 +136,7 @@ test("slash text is sent as a plain message", async () => {
   await vi.waitFor(() =>
     expect(posted[0]).toEqual({
       url: "/api/agents/dev/messages",
-      body: { body: "/compact", urgent: false },
+      body: { body: "/compact", urgent: false, clientMessageId: expect.any(String) },
     }),
   );
 });

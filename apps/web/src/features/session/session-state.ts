@@ -26,6 +26,14 @@ export interface CancelledEntry {
   dismissed?: boolean;
 }
 
+/** An optimistic send (U3 §13.2): drawn in the queue area as "Sending" until the server echoes its
+ *  `clientMessageId` (the 202's item, a `queue` frame or the delivered `message_in`). */
+export interface SendingBlock {
+  clientMessageId: string;
+  body: string;
+  urgent: boolean;
+}
+
 export interface SessionState {
   slug: string | undefined;
   events: Map<number, SessionEvent>;
@@ -54,10 +62,18 @@ export interface SessionState {
   liveAfter: number;
   /** Optimistic Cancel overlay (U3 §6.4), by message id: hides the item, shows the outcome line. */
   cancelled: ReadonlyMap<string, CancelledEntry>;
+  /** Sends in flight, oldest first (U3 §13.2). */
+  sending: readonly SendingBlock[];
+  /** Sends whose POST aborted after 15s: a late echo of one moves it to `landed`. */
+  awaiting: ReadonlySet<string>;
+  /** `clientMessageId`s of this tab's sends the server has echoed: the composer reads it to treat an
+   *  aborted send as sent and to clear its unchanged text (never to send it twice). */
+  landed: ReadonlySet<string>;
 }
 
 const NONE: ReadonlySet<string> = new Set();
 const NO_CANCELLED: ReadonlyMap<string, CancelledEntry> = new Map();
+const NO_SENDING: readonly SendingBlock[] = [];
 /** A frames batch appending more events than this counts as a load: nothing in it fades. */
 const BULK = 10;
 
@@ -77,6 +93,9 @@ export const initialSessionState: SessionState = {
   handedOff: NONE,
   liveAfter: 0,
   cancelled: NO_CANCELLED,
+  sending: NO_SENDING,
+  awaiting: NONE,
+  landed: NONE,
 };
 
 export type SessionAction =
@@ -85,8 +104,13 @@ export type SessionAction =
   | { type: "frame"; message: ServerMessage }
   /** The frames of one animation frame, folded in order (one commit per frame). */
   | { type: "frames"; messages: ServerMessage[] }
-  /** A 202 queue item inserted locally while the socket is down; the next `queue` frame replaces it. */
-  | { type: "queued"; item: QueueItem }
+  /** A 202's queue item: it replaces its "Sending" block; with no block it is inserted only while the
+   *  socket is down (`live` false), and the next `queue` frame replaces it. */
+  | { type: "queued"; item: QueueItem; live?: boolean }
+  /** U3 §13.2: Enter added an optimistic block. */
+  | { type: "sending"; block: SendingBlock }
+  /** The POST failed (the block goes); `unconfirmed` when it aborted after 15s and may still land. */
+  | { type: "send_failed"; clientMessageId: string; unconfirmed?: boolean | undefined }
   /** A fresh summary from a response or a refetch (S7: terminate, pin, the termination fields). */
   | { type: "agent"; agent: AgentSummary }
   /** Everything held so far is caught up (after a load; PR4 adds the subscribe's `reset` frame). */
@@ -211,6 +235,35 @@ function withFresh(
 
 const topSeq = (s: Pick<SessionState, "ordered">) => s.ordered.at(-1)?.seq ?? 0;
 
+/** The server echoed these `clientMessageId`s: their "Sending" blocks go and they count as landed (an
+ *  aborted send's too). The same state when none is one of ours. */
+function withEchoes(s: SessionState, ids: Iterable<string | undefined>): SessionState {
+  if (s.sending.length === 0 && s.awaiting.size === 0) return s;
+  let landed: Set<string> | undefined;
+  let awaiting: Set<string> | undefined;
+  for (const id of ids) {
+    if (id === undefined) continue;
+    const ours = s.awaiting.has(id) || s.sending.some((b) => b.clientMessageId === id);
+    if (!ours || (landed ?? s.landed).has(id)) continue;
+    landed ??= new Set(s.landed);
+    landed.add(id);
+    if (s.awaiting.has(id)) {
+      awaiting ??= new Set(s.awaiting);
+      awaiting.delete(id);
+    }
+  }
+  if (!landed) return s;
+  const sending = s.sending.filter((b) => !landed.has(b.clientMessageId));
+  return {
+    ...s,
+    landed,
+    ...(awaiting ? { awaiting } : {}),
+    sending: sending.length === s.sending.length ? s.sending : sending,
+  };
+}
+
+const echoedBy = (items: QueueItem[]) => items.map((q) => q.clientMessageId);
+
 /** What newly appended live events do besides becoming rows (U3 §8.3, §5.3), in the same step: a
  *  `message_in` takes the queue items it delivered off the queue and its rows are handed off; a
  *  `turn_end` closes the turn, so the activity line goes as its footer arrives. Only events above
@@ -220,7 +273,7 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
   for (const se of fresh) {
     if (se.seq <= s.liveAfter) continue;
     const e = se.event;
-    if (e.type === "message_in" && next.queue.length > 0) {
+    if (e.type === "message_in" && (next.queue.length > 0 || next.sending.length > 0)) {
       let handedOff: Set<string> | undefined;
       let queue = next.queue;
       for (const [i, m] of e.messages.entries()) {
@@ -231,12 +284,24 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
             !ids.has(q.id) &&
             !(m.clientMessageId !== undefined && q.clientMessageId === m.clientMessageId),
         );
-        if (kept.length === queue.length) continue;
+        const block =
+          m.clientMessageId !== undefined &&
+          next.sending.some((b) => b.clientMessageId === m.clientMessageId);
+        if (kept.length === queue.length && !block) continue;
         queue = kept;
         handedOff ??= new Set(next.handedOff);
         handedOff.add(`${se.seq}:${i}`);
       }
       if (handedOff) next = { ...next, queue, handedOff };
+      next = withEchoes(
+        next,
+        e.messages.map((m) => m.clientMessageId),
+      );
+    } else if (e.type === "message_in") {
+      next = withEchoes(
+        next,
+        e.messages.map((m) => m.clientMessageId),
+      );
     } else if (e.type === "turn_end" && next.agent?.turnOpen) {
       next = withAgent(next, { ...next.agent, turnOpen: false, turnStartedAt: undefined });
     }
@@ -256,23 +321,30 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     case "reset":
       return initialSessionState;
     case "loaded":
-      return withAgent(
-        {
-          ...initialSessionState,
-          slug: a.detail.agent.slug,
-          ...withEvents(initialSessionState, a.page.events),
-          hasMoreBefore: a.page.hasMore.before,
-          windowed: a.mode === "window" && a.page.hasMore.after,
-          maxSeenSeq: a.detail.lastSeq,
-          queue: a.detail.queue,
-          // the epoch carries across loads, so a reload never makes it repeat a value
-          agent: s.agent,
-          turnEpoch: s.turnEpoch,
-          // A reload of the same session (a resync) keeps your cancelled lines; leaving drops them.
-          cancelled: s.slug === a.detail.agent.slug ? s.cancelled : NO_CANCELLED,
-          liveAfter: a.page.events.reduce((m, e) => Math.max(m, e.seq), 0),
-        },
-        a.detail.agent,
+      return loadedEchoes(
+        withAgent(
+          {
+            ...initialSessionState,
+            slug: a.detail.agent.slug,
+            ...withEvents(initialSessionState, a.page.events),
+            hasMoreBefore: a.page.hasMore.before,
+            windowed: a.mode === "window" && a.page.hasMore.after,
+            maxSeenSeq: a.detail.lastSeq,
+            queue: a.detail.queue,
+            // the epoch carries across loads, so a reload never makes it repeat a value
+            agent: s.agent,
+            turnEpoch: s.turnEpoch,
+            // A reload of the same session (a resync) keeps your cancelled lines; leaving drops them.
+            cancelled: s.slug === a.detail.agent.slug ? s.cancelled : NO_CANCELLED,
+            // ...and its sends in flight, which the reloaded queue may already hold.
+            ...(s.slug === a.detail.agent.slug
+              ? { sending: s.sending, awaiting: s.awaiting, landed: s.landed }
+              : {}),
+            liveAfter: a.page.events.reduce((m, e) => Math.max(m, e.seq), 0),
+          },
+          a.detail.agent,
+        ),
+        a,
       );
     case "earlier":
       return {
@@ -280,9 +352,38 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         ...withEvents(s, a.page.events),
         hasMoreBefore: a.page.hasMore.before,
       };
-    case "queued":
-      if (s.queue.some((q) => q.id === a.item.id)) return s;
-      return { ...s, queue: [...s.queue, a.item] };
+    case "queued": {
+      const cid = a.item.clientMessageId;
+      const handsOff = cid !== undefined && s.sending.some((b) => b.clientMessageId === cid);
+      if (!handsOff && a.live) return s; // the frames are authoritative while connected
+      const next = withEchoes(s, [cid]);
+      // A retry's 202 answers with the original, even one you cancelled since: it stays cancelled.
+      if (next.queue.some((q) => q.id === a.item.id) || hides(next.cancelled.get(a.item.id)))
+        return next;
+      return { ...next, queue: [...next.queue, a.item] };
+    }
+    case "sending": {
+      const id = a.block.clientMessageId;
+      if (s.sending.some((b) => b.clientMessageId === id)) return s;
+      let awaiting = s.awaiting;
+      if (awaiting.has(id)) {
+        const next = new Set(awaiting);
+        next.delete(id);
+        awaiting = next;
+      }
+      return { ...s, sending: [...s.sending, a.block], awaiting };
+    }
+    case "send_failed": {
+      const id = a.clientMessageId;
+      const sending = s.sending.filter((b) => b.clientMessageId !== id);
+      const wait = a.unconfirmed === true && !s.landed.has(id) && !s.awaiting.has(id);
+      if (sending.length === s.sending.length && !wait) return s;
+      return {
+        ...s,
+        sending: sending.length === s.sending.length ? s.sending : sending,
+        ...(wait ? { awaiting: new Set(s.awaiting).add(id) } : {}),
+      };
+    }
     case "cancel": {
       if (hides(s.cancelled.get(a.id))) return s;
       const visible = queueView(s.queue, s.cancelled).flatMap((v) =>
@@ -338,7 +439,10 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         return applyLive({ ...s, ...added }, fresh);
       }
       if (m.type === "queue")
-        return { ...s, queue: m.items, cancelled: pruneCancelled(s.cancelled, m.items) };
+        return withEchoes(
+          { ...s, queue: m.items, cancelled: pruneCancelled(s.cancelled, m.items) },
+          echoedBy(m.items),
+        );
       if (m.type === "agent_status" && s.agent) {
         const { type: _t, agent: _a, ...rest } = m;
         // Fields a frame may leave out are set explicitly, so a frame without one clears it (absent
@@ -384,6 +488,19 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return next;
     }
   }
+}
+
+/** A reload of the same session: its queue and page may echo sends still in flight. */
+function loadedEchoes(
+  s: SessionState,
+  a: Extract<SessionAction, { type: "loaded" }>,
+): SessionState {
+  if (s.sending.length === 0 && s.awaiting.size === 0) return s;
+  const ids: (string | undefined)[] = echoedBy(a.detail.queue);
+  for (const e of a.page.events)
+    if (e.event.type === "message_in")
+      for (const m of e.event.messages) ids.push(m.clientMessageId);
+  return withEchoes(s, ids);
 }
 
 export const eventsInOrder = (s: SessionState) => s.ordered;

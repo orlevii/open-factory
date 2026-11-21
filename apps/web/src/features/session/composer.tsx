@@ -13,28 +13,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
+import { agentDraftKey, readDraft, useDraft, writeDraft } from "@/lib/drafts";
 import { isCoarsePointer, isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { postMessage } from "./api";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
+import type { SendingBlock } from "./session-state";
 import { StopButton, type StopHandle } from "./stop-button";
 
-const draftKey = (slug: string) => `of-draft:${slug}`;
-const readDraft = (slug: string) => {
-  try {
-    return sessionStorage.getItem(draftKey(slug)) ?? "";
-  } catch {
-    return "";
-  }
-};
-const writeDraft = (slug: string, v: string) => {
-  try {
-    sessionStorage.setItem(draftKey(slug), v);
-  } catch {
-    /* private mode */
-  }
-};
-
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
+/** U3 §13.2: a send not answered in this long is aborted; it may still land, so a retry reuses its id. */
+export const SEND_TIMEOUT_MS = 15_000;
+export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
+const NO_LANDED: ReadonlySet<string> = new Set();
+
+/** A send whose POST aborted: the box got `sent` back (as `box`, after `before`). */
+type Unconfirmed = { id: string; sent: string; box: string; before: string };
 
 /** Moves focus to the composer's textarea (after a Restart or a new session, UI design §3.1). */
 export function focusComposer() {
@@ -55,7 +48,7 @@ export const terminatedNotSent = (slug: string) => `@${slug} was terminated, so 
  * be copied out (then it is cleared); `notice` is a send that raced the termination.
  */
 export function TerminatedComposer({ slug, notice }: { slug: string; notice?: string }) {
-  const [draft, setDraft] = useState(() => (readDraft(slug).trim() ? readDraft(slug) : ""));
+  const [draft, setDraft] = useState(() => readDraft(agentDraftKey(slug)));
   const [copyFailed, setCopyFailed] = useState(false);
   const lineRef = useRef<HTMLParagraphElement>(null);
   async function copy() {
@@ -64,7 +57,7 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
       const write = navigator.clipboard?.writeText(draft);
       if (!write) throw new Error("no clipboard");
       await write;
-      writeDraft(slug, "");
+      writeDraft(agentDraftKey(slug), "");
       setDraft("");
       lineRef.current?.focus(); // the button is gone
     } catch {
@@ -118,6 +111,9 @@ export function Composer({
   onQueued,
   onSent,
   onTerminated,
+  onSending,
+  onSendFailed,
+  landed = NO_LANDED,
 }: {
   ref?: Ref<ComposerHandle>;
   slug: string;
@@ -127,16 +123,35 @@ export function Composer({
   turnEpoch?: number;
   /** The session is still loading: typing works, sending waits. */
   waiting?: boolean;
-  /** Called with the 202 queue item (the session inserts it locally while disconnected). */
+  /** Called with the 202 queue item: it replaces the "Sending" block (U3 §13.2). */
   onQueued?: (item: QueueItem) => void;
+  /** Enter: the optimistic block goes in the queue area at once (U3 §13.2). */
+  onSending?: (block: SendingBlock) => void;
+  /** The send failed (its block goes); `unconfirmed` when it aborted and may still land. */
+  onSendFailed?: (clientMessageId: string, unconfirmed?: boolean) => void;
+  /** The session's echoed `clientMessageId`s: an aborted send that shows up counts as sent. */
+  landed?: ReadonlySet<string>;
   /** The server took the message (queued, or queued while its start failed). */
   onSent?: () => void;
   /** A send that raced a termination (`409 agent_terminated`), with the sentence that says so. */
   onTerminated?: (notice: string) => void;
 }) {
-  const [text, setText] = useState(() => readDraft(slug));
-  const [sending, setSending] = useState(false);
+  const [text, setText, draft] = useDraft(agentDraftKey(slug));
   const [error, setError] = useState<string | undefined>();
+  const [unconfirmed, setUnconfirmed] = useState<Unconfirmed | undefined>();
+  // Read when a POST settles, long after the render that started it.
+  const landedRef = useRef(landed);
+  useEffect(() => {
+    landedRef.current = landed;
+  }, [landed]);
+  // A late landing of an aborted send (U3 §13.2): the unchanged box clears and the error goes.
+  useEffect(() => {
+    if (!unconfirmed || !landed.has(unconfirmed.id)) return;
+    setText((cur) => (cur === unconfirmed.box ? unconfirmed.before : cur));
+    draft.clearSent(unconfirmed.sent);
+    setUnconfirmed(undefined);
+    setError((e) => (e === UNCONFIRMED ? undefined : e));
+  }, [landed, unconfirmed, setText, draft]);
   // A failed Stop, on the composer's error line; it belongs to that turn (reset on its edge).
   const [stopError, setStopError] = useState<string | undefined>();
   const [errorEpoch, setErrorEpoch] = useState(turnEpoch);
@@ -162,7 +177,6 @@ export function Composer({
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
     agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
-  useEffect(() => writeDraft(slug, text), [slug, text]);
   useEffect(() => registerComposerFocus(slug, () => boxRef.current?.focus()), [slug]);
   useImperativeHandle(
     ref,
@@ -177,44 +191,90 @@ export function Composer({
         setText((cur) => (cur === sent ? "" : cur));
       },
     }),
-    [],
+    [setText],
   );
   const empty = text.trim() === "";
   const shownError = error ?? stopError;
 
+  /** The text goes back in the box after anything typed since; returns what the box then holds. */
+  const putBack = (sent: string) => {
+    draft.release(sent);
+    let box = sent;
+    setText((cur) => {
+      box = cur.trim() ? `${cur}\n${sent}` : sent;
+      return box;
+    });
+    return box;
+  };
+
   async function send(urgent = false) {
-    if (empty || sending || waiting) return;
+    if (empty || waiting) return;
     const sent = text;
-    // Clear only what was sent: anything typed while the POST was in flight stays.
-    const accepted = () => {
-      setText((cur) => (cur.startsWith(sent) ? cur.slice(sent.length) : cur));
-      onSent?.();
-    };
-    const bytes = new TextEncoder().encode(sent.trim()).length;
+    const body = sent.trim();
+    const bytes = new TextEncoder().encode(body).length;
     if (bytes > MAX_BODY_BYTES) {
       setError(
         `This message is ${Math.ceil(bytes / 1024)} KB; the limit is 64 KB. Shorten it to send.`,
       );
       return;
     }
-    setSending(true);
+    // U3 §13.2: the unchanged text of an unconfirmed send goes again under the same id, so a
+    // late-landing original can never be delivered twice.
+    const retry =
+      unconfirmed && sent === unconfirmed.box && !landedRef.current.has(unconfirmed.id)
+        ? unconfirmed.id
+        : undefined;
+    const clientMessageId = retry ?? crypto.randomUUID();
+    setUnconfirmed(undefined);
     setError(undefined);
+    // Optimistic: the box empties and the block shows at once; the stored draft keeps the text until
+    // the server accepts it.
+    draft.hold(sent);
+    setText("");
+    onSending?.({ clientMessageId, body, urgent });
     repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
+    boxRef.current?.focus(); // focus stays in the composer after sending (UI §7)
+    const accepted = () => {
+      draft.clearSent(sent);
+      onSent?.();
+    };
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
     try {
-      const item = await postMessage(slug, sent.trim(), urgent);
-      onQueued?.(item);
+      const item = await postMessage(slug, body, { urgent, clientMessageId, signal: abort.signal });
+      // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
+      onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
       accepted();
     } catch (e) {
-      // 503: queued server-side; the queued row shows "Not delivered yet: <reason>".
-      if (e instanceof ApiError && e.code === "agent_start_failed") accepted();
-      else if (e instanceof ApiError && e.code === "agent_terminated") {
-        // The draft stays: the read-only line that replaces the composer offers to copy it.
-        setError(terminatedNotSent(slug));
-        onTerminated?.(terminatedNotSent(slug));
-      } else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      if (e instanceof ApiError && e.code === "agent_start_failed") {
+        // 503: queued server-side; the queue frame shows "Not delivered yet: <reason>".
+        onSendFailed?.(clientMessageId);
+        accepted();
+      } else if (abort.signal.aborted) {
+        // The send already showed up (its queue item or delivery): it was sent.
+        if (landedRef.current.has(clientMessageId)) accepted();
+        else {
+          onSendFailed?.(clientMessageId, true);
+          const box = putBack(sent);
+          setUnconfirmed({
+            id: clientMessageId,
+            sent,
+            box,
+            before: box === sent ? "" : box.slice(0, -sent.length - 1),
+          });
+          setError(UNCONFIRMED);
+        }
+      } else {
+        onSendFailed?.(clientMessageId);
+        putBack(sent);
+        if (e instanceof ApiError && e.code === "agent_terminated") {
+          // The draft stays: the read-only line that replaces the composer offers to copy it.
+          setError(terminatedNotSent(slug));
+          onTerminated?.(terminatedNotSent(slug));
+        } else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      }
     } finally {
-      setSending(false);
-      boxRef.current?.focus(); // focus stays in the composer after sending (UI §7)
+      clearTimeout(timer);
     }
   }
 
@@ -256,6 +316,8 @@ export function Composer({
             setText(e.target.value);
             setError(undefined);
           }}
+          onFocus={draft.bind.onFocus}
+          onBlur={draft.bind.onBlur}
           onKeyDown={onKeyDown}
           placeholder={`Message ${agent.displayName}`}
           rows={2}
@@ -286,7 +348,7 @@ export function Composer({
               onError={onStopError}
             />
           )}
-          <Button type="submit" disabled={empty || sending || waiting}>
+          <Button type="submit" disabled={empty || waiting}>
             Send
           </Button>
         </div>
@@ -305,6 +367,11 @@ export function Composer({
           >
             <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
             {shownError}
+            {shownError === UNCONFIRMED && unconfirmed && text === unconfirmed.box && (
+              <Button type="button" variant="ghost" size="xs" onClick={() => void send()}>
+                Retry
+              </Button>
+            )}
           </p>
         )}
       </div>

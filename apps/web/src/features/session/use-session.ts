@@ -40,6 +40,7 @@ import {
   eventsInOrder,
   highestSeq,
   initialSessionState,
+  type SendingBlock,
   type SessionAction,
   sessionReducer,
 } from "./session-state";
@@ -291,12 +292,20 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     if (needsTermination) void refreshAgent();
   }, [needsTermination, refreshAgent]);
 
-  /** While the socket is down no `queue` frame will come, so show the accepted item at once
-   *  (UI design §4.4); when connected the frame is authoritative. */
+  /** The 202's item replaces its "Sending" block (U3 §13.2). Otherwise, while the socket is down no
+   *  `queue` frame will come, so the accepted item shows at once (UI design §4.4); when connected the
+   *  frame is authoritative. */
   const onQueued = useCallback(
-    (item: QueueItem) => {
-      if (wsRef.current.status !== "open") dispatch({ type: "queued", item });
-    },
+    (item: QueueItem) => dispatch({ type: "queued", item, live: wsRef.current.status === "open" }),
+    [dispatch],
+  );
+  const onSending = useCallback(
+    (block: SendingBlock) => dispatch({ type: "sending", block }),
+    [dispatch],
+  );
+  const onSendFailed = useCallback(
+    (clientMessageId: string, unconfirmed?: boolean) =>
+      dispatch({ type: "send_failed", clientMessageId, unconfirmed }),
     [dispatch],
   );
 
@@ -336,6 +345,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     earlierError,
     retry,
     onQueued,
+    onSending,
+    onSendFailed,
     cancelItem,
     undoCancel,
     clearCancelled,

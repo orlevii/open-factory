@@ -283,6 +283,7 @@ export function SessionView({
               <>
                 {s.rows.length === 0 &&
                   s.state.queue.length === 0 &&
+                  s.state.sending.length === 0 &&
                   s.state.cancelled.size === 0 && (
                     <p className="text-sm text-muted-foreground">
                       {archived ? "No messages yet." : "No messages yet. Send the first one below."}
@@ -298,6 +299,7 @@ export function SessionView({
                 )}
                 <QueueItems
                   items={s.state.queue}
+                  sending={s.state.sending}
                   agent={agent}
                   cancelled={s.state.cancelled}
                   self={me?.user.handle}
@@ -336,6 +338,9 @@ export function SessionView({
             // A send before the session loads would be lost when the load replaces the queue.
             waiting={!loaded}
             onQueued={s.onQueued}
+            onSending={s.onSending}
+            onSendFailed={s.onSendFailed}
+            landed={s.state.landed}
             onSent={s.clearCancelled}
             onTerminated={(notice) => {
               setRaceNotice(notice);

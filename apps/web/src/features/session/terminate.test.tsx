@@ -188,7 +188,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   await vi.waitFor(() =>
     expect(screen.queryByRole("button", { name: "Copy unsent message" })).toBeNull(),
   );
-  expect(sessionStorage.getItem(`of-draft:${SLUG}`) ?? "").toBe("");
+  expect(localStorage.getItem(`of-draft:v1:agent:${SLUG}`)).toBeNull();
   // The detail was refetched for the header's dates.
   expect(await screen.findByText(/Terminated by/)).toBeInTheDocument();
 });

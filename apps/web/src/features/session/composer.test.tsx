@@ -1,18 +1,26 @@
-import type { AgentSummary } from "@open-factory/shared";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { agentDraftKey, readDraft } from "@/lib/drafts";
 import { agentSummary } from "@/test/session-fixtures";
 import { Composer } from "./composer";
+import { QueueItems } from "./queue-items";
+import {
+  initialSessionState,
+  type SendingBlock,
+  type SessionAction,
+  sessionReducer,
+} from "./session-state";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 let posted: { url: string; body: unknown }[];
-let reply: (url: string) => Response | Promise<Response>;
+let reply: (url: string, init?: RequestInit) => Response | Promise<Response>;
 beforeEach(() => {
-  sessionStorage.clear();
+  localStorage.clear();
   posted = [];
   reply = (url) =>
     url.endsWith("/interrupt")
@@ -22,11 +30,14 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       posted.push({ url, body: JSON.parse(String(init?.body ?? "{}")) });
-      return reply(url);
+      return reply(url, init);
     }),
   );
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const working = (over: Partial<AgentSummary> = {}) =>
   agentSummary({ status: "working", turnOpen: true, ...over });
@@ -120,7 +131,13 @@ test("while compacting Stop is disabled and reads Compacting…", async () => {
 
 test("⌥Enter posts urgent:true; Enter and ⌘Enter post urgent:false", async () => {
   const { box } = setup(working());
-  const sends = () => posted.filter((p) => p.url.endsWith("/messages")).map((p) => p.body);
+  const sends = () =>
+    posted
+      .filter((p) => p.url.endsWith("/messages"))
+      .map((p) => {
+        const { clientMessageId: _id, ...rest } = p.body as { clientMessageId?: string };
+        return rest;
+      });
   await userEvent.type(box, "a");
   fireEvent.keyDown(box, { key: "Enter", altKey: true });
   await vi.waitFor(() => expect(sends()).toEqual([{ body: "a", urgent: true }]));
@@ -250,4 +267,274 @@ test("a turn closing doesn't move focus that wasn't on Stop", async () => {
   } finally {
     outside.remove();
   }
+});
+
+// U3 §13.2 (Q22, Q29): durable drafts and optimistic sends, with the session's reducer and queue.
+let act$: ((a: SessionAction) => void) | undefined;
+function Session({ agent }: { agent: AgentSummary }) {
+  const [s, dispatch] = useReducer(sessionReducer, undefined, () =>
+    sessionReducer(initialSessionState, {
+      type: "loaded",
+      page: { events: [], hasMore: { before: false, after: false } },
+      detail: { agent, queue: [], lastSeq: 0 },
+      mode: "latest",
+    }),
+  );
+  act$ = dispatch;
+  const onSending = useCallback((block: SendingBlock) => dispatch({ type: "sending", block }), []);
+  const onSendFailed = useCallback(
+    (clientMessageId: string, unconfirmed?: boolean) =>
+      dispatch({ type: "send_failed", clientMessageId, unconfirmed }),
+    [],
+  );
+  const onQueued = useCallback(
+    (item: QueueItem) => dispatch({ type: "queued", item, live: true }),
+    [],
+  );
+  return (
+    <>
+      <div data-testid="queue">
+        <QueueItems items={s.queue} sending={s.sending} agent={agent} self="alice" />
+      </div>
+      <Composer
+        slug="dev"
+        agent={agent}
+        turnEpoch={1}
+        onSending={onSending}
+        onSendFailed={onSendFailed}
+        onQueued={onQueued}
+        landed={s.landed}
+      />
+    </>
+  );
+}
+
+/** A reply held until the test resolves it; it rejects like fetch when the request is aborted. */
+function heldReply() {
+  let resolve: (r: Response) => void = () => {};
+  reply = (url, init) =>
+    url.endsWith("/messages")
+      ? new Promise<Response>((res, rej) => {
+          resolve = res;
+          init?.signal?.addEventListener("abort", () =>
+            rej(new DOMException("The operation was aborted.", "AbortError")),
+          );
+        })
+      : json({}, 202);
+  return { resolve: (r: Response) => act(async () => resolve(r)) };
+}
+const messageSends = () =>
+  posted
+    .filter((p) => p.url.endsWith("/messages"))
+    .map((p) => p.body as { body: string; urgent: boolean; clientMessageId: string });
+const queueEl = () => screen.getByTestId("queue");
+const accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
+  json(
+    {
+      item: {
+        id: "m1",
+        kind: "message",
+        from: "@alice",
+        body: "hello",
+        clientMessageId,
+        createdAt: new Date().toISOString(),
+        ...over,
+      },
+    },
+    202,
+  );
+const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
+  seq,
+  agentSlug: "dev",
+  turnId: "t1",
+  at: new Date().toISOString(),
+  event: {
+    type: "message_in",
+    messages: [
+      { id: "m1", from: "@alice", kind: "message", urgent: false, body: "hello", clientMessageId },
+    ],
+  },
+});
+const frame = (event: SessionEvent) =>
+  act(() => act$?.({ type: "frame", message: { type: "session_event", agent: "dev", event } }));
+function renderSession(agent = agentSummary()) {
+  render(<Session agent={agent} />);
+  return screen.getByRole("textbox", { name: "Message to Dev agent" });
+}
+const sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
+
+test("the draft is in localStorage under a versioned key and survives a remount", async () => {
+  const box = renderSession();
+  await userEvent.type(box, "half a thought");
+  box.blur();
+  expect(readDraft(agentDraftKey("dev"))).toBe("half a thought");
+  expect(localStorage.getItem("of-draft:v1:agent:dev")).not.toBeNull();
+});
+
+test("Enter clears the box and shows a muted Sending block: no time, no Cancel, no dashed edge", async () => {
+  heldReply();
+  const box = renderSession();
+  await userEvent.type(box, "hello{Enter}");
+  expect(box).toHaveValue("");
+  const block = within(queueEl()).getByRole("group", { name: "Sending" });
+  expect(block).toHaveTextContent("hello");
+  expect(block).not.toHaveTextContent("Sending");
+  expect(block).not.toHaveClass("border-dashed");
+  expect(block.querySelector("time")).toBeNull();
+  expect(within(block).queryByRole("button")).toBeNull();
+  expect(block.querySelector("[data-message-body]")).toHaveClass("text-muted-foreground");
+  const sent = messageSends()[0];
+  expect(sent).toEqual({ body: "hello", urgent: false, clientMessageId: expect.any(String) });
+  expect(sent?.clientMessageId).toMatch(/^[0-9a-f-]{36}$/);
+  // The stored draft keeps the text until the server accepts it (after the 150ms write throttle).
+  await sleep(200);
+  expect(readDraft(agentDraftKey("dev"))).toBe("hello");
+});
+
+test("Sending… with a spinner appears only after 400ms", async () => {
+  heldReply();
+  const box = renderSession();
+  await userEvent.type(box, "hello{Enter}");
+  await sleep(250);
+  expect(within(queueEl()).queryByText("Sending…")).toBeNull();
+  await sleep(250);
+  const label = within(queueEl()).getByText("Sending…");
+  expect(label.closest("span")?.querySelector("svg.motion-safe\\:animate-spin")).not.toBeNull();
+});
+
+test("an ⌥Enter send says Sending · will interrupt the turn", async () => {
+  heldReply();
+  const box = renderSession(agentSummary({ status: "working", turnOpen: true }));
+  await userEvent.type(box, "now");
+  fireEvent.keyDown(box, { key: "Enter", altKey: true });
+  await sleep(450);
+  expect(within(queueEl()).getByText("Sending · will interrupt the turn")).toBeInTheDocument();
+  expect(messageSends()[0]?.urgent).toBe(true);
+});
+
+test("the 202 replaces the block in place: same element, no Not delivered yet for 300ms", async () => {
+  const held = heldReply();
+  const box = renderSession();
+  await userEvent.type(box, "hello{Enter}");
+  const block = within(queueEl()).getByRole("group", { name: "Sending" });
+  const id = messageSends()[0]?.clientMessageId ?? "";
+  await held.resolve(accepted202(id));
+  expect(within(queueEl()).queryByRole("group", { name: "Sending" })).toBeNull();
+  const item = queueEl().querySelector("[data-message-block]");
+  expect(item).toBe(block); // one commit, the same node: nothing re-enters
+  expect(item).not.toHaveAttribute("data-live");
+  expect(queueEl()).not.toHaveTextContent("Not delivered yet");
+  await sleep(350);
+  expect(queueEl()).toHaveTextContent("Not delivered yet");
+  expect(readDraft(agentDraftKey("dev"))).toBe("");
+});
+
+test("a message_in echoing the id removes the block in one step", async () => {
+  heldReply();
+  const box = renderSession();
+  await userEvent.type(box, "hello{Enter}");
+  const id = messageSends()[0]?.clientMessageId ?? "";
+  frame(echoIn(5, id));
+  expect(within(queueEl()).queryByRole("group", { name: "Sending" })).toBeNull();
+  expect(queueEl()).toBeEmptyDOMElement();
+});
+
+test("a failure removes the block and puts the text back, after anything typed since", async () => {
+  const held = heldReply();
+  const box = renderSession();
+  await userEvent.type(box, "hello{Enter}");
+  await userEvent.type(box, "more");
+  await held.resolve(json({ error: { code: "internal", message: "Boom" } }, 500));
+  expect(within(queueEl()).queryByRole("group", { name: "Sending" })).toBeNull();
+  expect(box).toHaveValue("more\nhello");
+  expect(screen.getByRole("alert")).toHaveTextContent("Boom");
+});
+
+test("after 15s the send aborts; Enter on the unchanged text reuses the same clientMessageId", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  heldReply();
+  const box = renderSession();
+  fireEvent.change(box, { target: { value: "hello" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  const first = messageSends()[0]?.clientMessageId;
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  expect(within(queueEl()).queryByRole("group", { name: "Sending" })).toBeNull();
+  expect(box).toHaveValue("hello");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't confirm the send. Retry sends it once.",
+  );
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(messageSends()).toHaveLength(2);
+  expect(messageSends()[1]?.clientMessageId).toBe(first);
+});
+
+test("Retry after the abort reuses the id too; changed text gets a new one", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  heldReply();
+  const box = renderSession();
+  fireEvent.change(box, { target: { value: "hello" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(messageSends()[1]?.clientMessageId).toBe(messageSends()[0]?.clientMessageId);
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  fireEvent.change(box, { target: { value: "hello!" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(messageSends()[2]?.clientMessageId).not.toBe(messageSends()[0]?.clientMessageId);
+});
+
+test("a late message_in for an aborted send clears the unchanged box and the error", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  heldReply();
+  const box = renderSession();
+  fireEvent.change(box, { target: { value: "hello" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  const id = messageSends()[0]?.clientMessageId ?? "";
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+  frame(echoIn(5, id));
+  expect(box).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(readDraft(agentDraftKey("dev"))).toBe("");
+});
+
+test("an aborted send whose item the queue already showed counts as sent", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  heldReply();
+  const box = renderSession();
+  fireEvent.change(box, { target: { value: "hello" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  const id = messageSends()[0]?.clientMessageId ?? "";
+  act(() =>
+    act$?.({
+      type: "frame",
+      message: {
+        type: "queue",
+        agent: "dev",
+        items: [
+          {
+            id: "m1",
+            kind: "message",
+            from: "@alice",
+            body: "hello",
+            clientMessageId: id,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    }),
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  expect(box).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
 });

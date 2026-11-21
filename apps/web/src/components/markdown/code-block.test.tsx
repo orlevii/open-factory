@@ -51,3 +51,27 @@ test("a language change never shows the old language's highlight", async () => {
   await finish(1);
   expect(container.querySelector("pre.shiki")).toHaveTextContent("two");
 });
+
+test("a language round trip never resurfaces the old highlight", async () => {
+  pending.length = 0;
+  const { container, rerender } = render(<CodeBlock code="one" lang="ts" />);
+  await finish(0);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("one");
+
+  rerender(<CodeBlock code="two" lang="nope" />);
+  rerender(<CodeBlock code="two" lang="ts" />);
+  expect(container.querySelector("pre.shiki")).toBeNull();
+  expect(container.querySelector("pre")).toHaveTextContent("two");
+  await finish(1);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("two");
+});
+
+test("a round trip through a language still in flight shows plain code", async () => {
+  pending.length = 0;
+  const { container, rerender } = render(<CodeBlock code="one" lang="ts" />);
+  await finish(0);
+  rerender(<CodeBlock code="two" lang="py" />); // in flight, never finished
+  rerender(<CodeBlock code="two" lang="ts" />);
+  expect(container.querySelector("pre.shiki")).toBeNull();
+  expect(container.querySelector("pre")).toHaveTextContent("two");
+});

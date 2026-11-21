@@ -5,6 +5,8 @@ export function CodeBlock({ code, lang }: { code: string; lang: string }) {
   // The highlight remembers which language it was made for, so a language change never shows the old one's markup.
   const [stored, setStored] = useState<{ lang: string; html: string } | null>(null);
   const supported = resolveLang(lang) !== undefined;
+  // Drop a highlight made for another language now, so it can't reappear if the language changes back.
+  if (stored && stored.lang !== lang) setStored(null);
   useEffect(() => {
     if (!supported) return;
     let live = true;

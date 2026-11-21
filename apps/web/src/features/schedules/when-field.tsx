@@ -1,10 +1,16 @@
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 
 export type WhenMode = "repeats" | "once";
 
+const MODES = [
+  { value: "repeats", label: "Repeats" },
+  { value: "once", label: "Once" },
+] as const;
+
 /**
- * The "When" fieldset (UI design §3): a segmented pair of native radios, and only the chosen option's field in the DOM
+ * The "When" fieldset (UI design §3): a segmented control, and only the chosen option's field in the DOM
  * (the other's value lives in the form's state, so switching back loses nothing).
  */
 export function WhenField({
@@ -28,28 +34,18 @@ export function WhenField({
   onBlurCron(): void;
   onBlurLocal(): void;
 }) {
-  const radio = (m: WhenMode, label: string) => (
-    <label
-      className={`flex h-9 flex-1 cursor-pointer items-center justify-center rounded-md border border-input px-3 text-sm has-[:checked]:bg-sidebar-accent has-[:checked]:font-medium has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${mode === m ? "bg-sidebar-accent" : "bg-card"}`}
-    >
-      <input
-        type="radio"
-        name="when-mode"
-        value={m}
-        checked={mode === m}
-        onChange={() => onMode(m)}
-        className="sr-only"
-      />
-      {label}
-    </label>
-  );
   return (
-    <fieldset className="grid min-w-0 gap-3">
-      <legend className="mb-1.5 text-[0.8125rem] font-medium">When</legend>
-      <div className="flex max-w-sm gap-2">
-        {radio("repeats", "Repeats")}
-        {radio("once", "Once")}
-      </div>
+    <div className="grid min-w-0 gap-3">
+      <SegmentedControl
+        legend="When"
+        legendVisible
+        name="when-mode"
+        block
+        className="max-w-sm"
+        value={mode}
+        options={MODES}
+        onChange={onMode}
+      />
       {mode === "repeats" ? (
         <FieldShell
           name="cron"
@@ -89,6 +85,6 @@ export function WhenField({
           )}
         </FieldShell>
       )}
-    </fieldset>
+    </div>
   );
 }

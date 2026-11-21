@@ -255,7 +255,7 @@ export function InlineForm({
   useEffect(() => {
     const first = autoFocusId
       ? document.getElementById(autoFocusId)
-      : ref.current?.querySelector<HTMLElement>("input:not([type=radio]), textarea");
+      : ref.current?.querySelector<HTMLElement>("input, textarea");
     first?.focus();
   }, []);
   return (

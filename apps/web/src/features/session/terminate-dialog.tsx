@@ -25,6 +25,7 @@ export function TerminateDialog({
       title={`Terminate @${slug}?`}
       body={TERMINATE_BODY}
       confirmLabel={`Terminate @${slug}`}
+      pendingLabel="Terminating…"
       onConfirm={onConfirm}
       onCloseAutoFocus={onCloseAutoFocus}
     />

@@ -2,6 +2,13 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./tooltip";
@@ -52,6 +59,35 @@ test("Popover is stamped per opening, not per mount", async () => {
     </Popover>,
   );
   await sequence("popover-content");
+});
+
+test("AlertDialog content and overlay are stamped per opening, not per mount", async () => {
+  render(
+    <AlertDialog>
+      <AlertDialogTrigger>Open</AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogTitle>Delete?</AlertDialogTitle>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+      </AlertDialogContent>
+    </AlertDialog>,
+  );
+  await sequence("alert-dialog-content");
+  expect(document.querySelector("[data-slot=alert-dialog-overlay]")).toHaveAttribute("data-instant");
+});
+
+test("AlertDialog timing: 150ms in, a 100ms fade out with no zoom", () => {
+  render(
+    <AlertDialog open>
+      <AlertDialogContent>
+        <AlertDialogTitle>Delete?</AlertDialogTitle>
+      </AlertDialogContent>
+    </AlertDialog>,
+  );
+  const content = document.querySelector("[data-slot=alert-dialog-content]");
+  expect(content).toHaveClass("duration-150", "data-closed:duration-100", "motion-safe:data-open:zoom-in-[0.96]", "rounded-lg", "border-float-edge");
+  expect(content?.className).not.toMatch(/zoom-out|ring-|rounded-xl/);
+  const overlay = document.querySelector("[data-slot=alert-dialog-overlay]");
+  expect(overlay).toHaveClass("bg-black/20", "dark:bg-black/40", "duration-150", "data-closed:duration-100");
 });
 
 test("TooltipProvider opens after 400ms", () => {

@@ -19,6 +19,7 @@ export function UnpinDialog({
       title={`Unpin and delete @${slug}'s workspace?`}
       body="Its files and Claude config are removed within 10 minutes; its session history stays."
       confirmLabel="Delete workspace"
+      pendingLabel="Unpinning…"
       onConfirm={onConfirm}
     />
   );

@@ -416,6 +416,7 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
         title={`Delete secret ${confirming?.name ?? ""}?`}
         body={deleteBody(confirming?.usedBy ?? [])}
         confirmLabel={`Delete ${confirming?.name ?? ""}`}
+        pendingLabel="Deleting…"
         onConfirm={() => (confirming ? remove(confirming) : undefined)}
         onCloseAutoFocus={(e) => {
           // No Radix trigger to return to: back to Delete…, or, after a delete (the row is gone),

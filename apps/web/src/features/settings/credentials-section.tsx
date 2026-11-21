@@ -644,6 +644,7 @@ export function CredentialsSection() {
           )
         }
         confirmLabel={`Delete ${confirming?.name ?? ""}`}
+        pendingLabel="Deleting…"
         onConfirm={() => (confirming ? remove(confirming) : undefined)}
         onCloseAutoFocus={(e) => {
           e.preventDefault();

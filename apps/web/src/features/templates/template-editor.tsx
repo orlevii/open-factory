@@ -490,6 +490,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
           </>
         }
         confirmLabel={`Delete ${name}`}
+        pendingLabel="Deleting…"
         onConfirm={async () => {
           try {
             await deleteTemplate(name);

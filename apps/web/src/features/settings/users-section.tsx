@@ -419,6 +419,7 @@ export function UsersSection() {
         title={`Disable @${confirming?.handle ?? ""}?`}
         body={disableBody(confirming ? pendingFor(confirming.id) : 0)}
         confirmLabel={`Disable @${confirming?.handle ?? ""}`}
+        pendingLabel="Disabling…"
         onConfirm={() => (confirming ? disable(confirming) : undefined)}
         onCloseAutoFocus={(e) => {
           e.preventDefault();

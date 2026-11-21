@@ -67,7 +67,7 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
           ref={lineRef}
           data-readonly-line
           tabIndex={-1}
-          className="text-sm text-muted-foreground outline-none"
+          className="text-sm text-muted-foreground outline-none" // ui-contract:allow programmatic focus target, not interactive
         >
           This agent was terminated. Its session is read-only.
         </p>

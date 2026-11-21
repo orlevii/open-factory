@@ -157,7 +157,11 @@ export function SettingsSection({
       className="grid min-w-0 scroll-mt-6 grid-cols-[minmax(0,1fr)] gap-3"
     >
       <div className="grid gap-0.5">
-        <h2 id={`${id}-title`} tabIndex={-1} className="text-[0.8125rem] font-medium outline-none">
+        <h2
+          id={`${id}-title`}
+          tabIndex={-1}
+          className="text-[0.8125rem] font-medium outline-none" // ui-contract:allow programmatic focus target, not interactive
+        >
           {title}
         </h2>
         {description && <p className={`${smallClass} text-muted-foreground`}>{description}</p>}

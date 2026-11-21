@@ -45,7 +45,7 @@ export function TemplateList({ dir, templates }: { dir: string; templates: Summa
           <Link
             to="/templates/$name"
             params={{ name: t.name }}
-            className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:flex-nowrap md:py-0"
+            className="of-row flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm md:flex-nowrap md:py-0"
           >
             <span className="font-mono text-[0.8125rem]">{t.name}</span>
             {t.displayName && <span className="shrink-0">{t.displayName}</span>}

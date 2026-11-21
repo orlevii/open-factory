@@ -128,7 +128,7 @@ export function AgentTree({
               to="/agents/$slug"
               params={{ slug: a.slug }}
               className={cn(
-                "flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+                "of-row flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
                 // md: two lines (status, name, cost; then slug, template, runtime under the name), so the
                 // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
                 // window with the sidebar open doesn't give, so they key on the tree's width, not the window.

@@ -173,7 +173,11 @@ function AppLayout() {
           </a>
           <AppSidebar />
           {/* SidebarInset renders the single <main> landmark; each screen renders its PageHeader. */}
-          <SidebarInset id="content" tabIndex={-1} className="min-w-0 outline-none">
+          <SidebarInset
+            id="content"
+            tabIndex={-1}
+            className="min-w-0 outline-none" // ui-contract:allow skip-link target, not interactive
+          >
             <Outlet />
           </SidebarInset>
         </SidebarProvider>

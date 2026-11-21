@@ -162,7 +162,7 @@ export function BuildLog({ name, item }: { name: string; item?: ImageItem }) {
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable log must be reachable to scroll with the keyboard.
         tabIndex={0}
         onScroll={onScroll}
-        className="h-[20lh] overflow-auto font-mono text-[0.8125rem] leading-[1.5] whitespace-pre-wrap break-words focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="h-[20lh] overflow-auto font-mono text-[0.8125rem] leading-[1.5] whitespace-pre-wrap break-words"
       >
         {text}
       </pre>

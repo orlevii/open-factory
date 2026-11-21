@@ -85,8 +85,7 @@ function labelOf(item: InboxItem, time: string): string {
   return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
 }
 
-const LINK_CLASS =
-  "flex min-h-14 flex-col justify-center gap-0.5 py-2 pr-2 pl-0 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none";
+const LINK_CLASS = "of-row flex min-h-14 flex-col justify-center gap-0.5 py-2 pr-2 pl-0 text-sm";
 
 /**
  * One inbox row (shared with Home's panel): a single link, two lines, an ink dot in a fixed slot when unread.

@@ -1,20 +1,9 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { SRC, sourceFiles } from "./ui-contract-files";
 
-// __dirname, not import.meta.url: jsdom serves the latter over http.
-const SRC = join(__dirname, "..");
 const css = readFileSync(join(SRC, "styles.css"), "utf8");
-
-export function sourceFiles(dir = SRC): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) return sourceFiles(p);
-    return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !name.endsWith(".gen.ts")
-      ? [p]
-      : [];
-  });
-}
 
 describe("styles.css", () => {
   test("the loading mark animates only when motion is allowed", () => {
@@ -51,4 +40,24 @@ describe("form controls", () => {
       }
     });
   }
+});
+
+describe("focus ring", () => {
+  const ALLOW = [/data-slot="(dropdown-menu|select)-item"/]; // menu/select items show focus as a fill
+  test("no utility hides or replaces the focus ring", () => {
+    const offenders = sourceFiles().flatMap((f) => {
+      const text = readFileSync(f, "utf8");
+      return [...text.matchAll(/\b(outline-none|outline-hidden|ring-3|ring-ring\/50)\b/g)]
+        .filter((m) => {
+          const at = m.index ?? 0;
+          const line = text.slice(text.lastIndexOf("\n", at) + 1, text.indexOf("\n", at));
+          return (
+            !ALLOW.some((re) => re.test(text.slice(Math.max(0, at - 600), at))) &&
+            !line.includes("ui-contract:allow")
+          );
+        })
+        .map(() => f.replace(SRC, ""));
+    });
+    expect(offenders).toEqual([]);
+  });
 });

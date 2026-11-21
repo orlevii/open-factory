@@ -56,7 +56,7 @@ export function MarkdownEditor(props: {
           aria-describedby={props["aria-describedby"]}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent"
+          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent" // ui-contract:allow the frame shows focus-within
         />
       </TabsContent>
       <TabsContent value="preview" className="mt-0 min-h-40 p-3">

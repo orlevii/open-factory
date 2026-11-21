@@ -57,7 +57,7 @@ export function IssueList({
                 onClick={() => onJump(i.file, i.line as number)}
                 className={cn(
                   row,
-                  "-mx-1.5 w-[calc(100%+0.75rem)] rounded-md px-1.5 py-0.5 hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+                  "of-row -mx-1.5 w-[calc(100%+0.75rem)] rounded-md px-1.5 py-0.5",
                 )}
               >
                 {body}

@@ -38,7 +38,7 @@ export function InlineOutcome({
     <div
       ref={lineRef}
       tabIndex={-1}
-      className="flex items-center gap-x-1.5 text-[0.8125rem] leading-[1.125rem] outline-none"
+      className="flex items-center gap-x-1.5 text-[0.8125rem] leading-[1.125rem] outline-none" // ui-contract:allow programmatic focus target, not interactive
     >
       {tone === "success" && (
         <CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />

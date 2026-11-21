@@ -578,7 +578,7 @@ const TemplateHeader = memo(function TemplateHeader({
                 key={slug}
                 to="/agents/$slug"
                 params={{ slug }}
-                className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline"
               >
                 @{slug}
                 {i < template.agents.length - 1 ? "," : ""}

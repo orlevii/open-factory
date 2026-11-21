@@ -6,7 +6,7 @@ import { LINK_CLASS } from "@/features/session/message-block";
 import { formatCost } from "./format";
 
 /** The shared link underline, with a focus ring for links inside table cells. */
-export const linkClass = `${LINK_CLASS} rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`;
+export const linkClass = `${LINK_CLASS} rounded-sm`;
 export const th =
   "py-1.5 pr-4 text-left text-[0.8125rem] font-normal text-muted-foreground last:pr-0";
 export const thNum = `${th} text-right`;
@@ -41,7 +41,7 @@ function Section({
         aria-labelledby={id}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs a tab stop.
         tabIndex={0}
-        className="overflow-x-auto rounded-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="overflow-x-auto rounded-sm"
       >
         <table aria-labelledby={id} className="w-full border-collapse text-sm">
           <thead className="border-b">

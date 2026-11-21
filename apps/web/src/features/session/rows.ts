@@ -263,3 +263,64 @@ export function buildRows(events: SessionEvent[]): Row[] {
   }
   return top;
 }
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && Object.getPrototypeOf(v) === Object.prototype;
+
+/** Event objects are compared by identity (immutable, kept in the map); arrays element by element; plain
+ *  objects (a tool's `truncated`) shallowly. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b))
+    return a.length === b.length && a.every((x, i) => x === b[i]);
+  if (isPlainObject(a) && isPlainObject(b) && !("type" in a)) {
+    const ka = Object.keys(a);
+    return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+  }
+  return false;
+}
+
+/** Children first (spec §9.3): a tool row whose result, denial or `truncated` arrives later is a new
+ *  object, but it still carries its stabilized children, so unchanged child rows keep their identity.
+ *  A seq repeated within one batch is inserted once upstream (Task 29), so keys are unique here. */
+function stabilizeRow(old: Row, row: Row): Row {
+  if (old === row) return old;
+  if (old.kind !== row.kind) return row;
+  let base = row;
+  if (row.kind === "tool" && old.kind === "tool") {
+    const children = stabilizeRows(old.children, row.children);
+    if (children !== row.children) base = { ...row, children };
+  }
+  const o = old as Record<string, unknown>;
+  const r = base as Record<string, unknown>;
+  const keys = Object.keys(r);
+  if (keys.length !== Object.keys(o).length) return base;
+  for (const k of keys) if (!sameValue(o[k], r[k])) return base;
+  return old;
+}
+
+/** Reuses the previous row object for every unchanged row, so memoized rows skip rendering (spec §9.3). */
+export function stabilizeRows(prev: readonly Row[], next: Row[]): Row[] {
+  if (prev.length === 0) return next.length === 0 ? (prev as Row[]) : next;
+  const byKey = new Map(prev.map((r) => [r.key, r]));
+  let same = prev.length === next.length;
+  const out = next.map((row, i) => {
+    const old = byKey.get(row.key);
+    const s = old ? stabilizeRow(old, row) : row;
+    if (s !== prev[i]) same = false;
+    return s;
+  });
+  return same ? (prev as Row[]) : out;
+}
+
+/** The previous set when the contents are equal, so consumers comparing by identity skip work. */
+export function stableSet<T>(
+  prev: ReadonlySet<T> | undefined,
+  next: ReadonlySet<T>,
+): ReadonlySet<T> {
+  if (prev && prev.size === next.size) {
+    for (const x of next) if (!prev.has(x)) return next;
+    return prev;
+  }
+  return next;
+}

@@ -146,3 +146,16 @@ test("unmount cancels the pending frame", async () => {
   hook.unmount();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test("a frame that changes no row keeps the rows and sets' identity (spec §9.3)", async () => {
+  const { hook, push } = await setup();
+  const { rows, failedIds, interruptedEnds } = hook.result.current;
+  push(frame(4)); // a hidden event: new events, same rows
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(hook.result.current.state.ordered).toHaveLength(4);
+  expect(hook.result.current.rows).toBe(rows);
+  expect(hook.result.current.failedIds).toBe(failedIds);
+  expect(hook.result.current.interruptedEnds).toBe(interruptedEnds);
+});

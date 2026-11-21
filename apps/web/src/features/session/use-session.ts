@@ -5,12 +5,28 @@ import {
   type EventsPage,
   type QueueItem,
   type ServerMessage,
+  type SessionEvent,
 } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useWs } from "@/lib/ws-context";
 import { agentDetailQueryOptions, fetchEvents, fetchMessage } from "./api";
-import { buildRows, deliveryFailedIds, interruptedTurnEnds } from "./rows";
+import {
+  buildRows,
+  deliveryFailedIds,
+  interruptedTurnEnds,
+  type Row,
+  stabilizeRows,
+  stableSet,
+} from "./rows";
 import {
   eventsInOrder,
   highestSeq,
@@ -28,6 +44,24 @@ const asApiError = (e: unknown) =>
 /** Why `?message=` couldn't jump to the message (UI design §2.5); rendered by the session view so the
  *  recipient's `@slug` can be mono. */
 export type MessageNotice = { kind: "rejected"; to: string } | { kind: "not_found" };
+
+/** Derives a value from `input`, letting `compute` reuse the previous committed result (spec §9.3);
+ *  recomputed only when `input` changes. The ref is written after commit, never during render, and no
+ *  state is set in render, so a frame still costs one render (§9.6). `compute` must be stable. */
+function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) => V): V {
+  const prev = useRef<V | undefined>(undefined);
+  const value = useMemo(() => compute(input, prev.current), [input, compute]);
+  useLayoutEffect(() => {
+    prev.current = value;
+  }, [value]);
+  return value;
+}
+const stableRows = (ev: SessionEvent[], prev: Row[] | undefined) =>
+  stabilizeRows(prev ?? [], buildRows(ev));
+const stableFailedIds = (ev: SessionEvent[], prev: ReadonlySet<string> | undefined) =>
+  stableSet(prev, deliveryFailedIds(ev));
+const stableInterruptedEnds = (ev: SessionEvent[], prev: ReadonlySet<number> | undefined) =>
+  stableSet(prev, interruptedTurnEnds(ev));
 
 export function useSession(slug: string, eventSeq?: number, message?: string) {
   const ws = useWs();
@@ -168,9 +202,10 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
 
   // Already stable: only an event change produces a new array (status and queue frames keep it).
   const events = eventsInOrder(state);
-  const rows = useMemo(() => buildRows(events), [events]);
-  const failedIds = useMemo(() => deliveryFailedIds(events), [events]);
-  const interruptedEnds = useMemo(() => interruptedTurnEnds(events), [events]);
+  // Unchanged rows and equal sets keep their identity, so memoized timeline items skip (spec §9.3).
+  const rows = useStabilized(events, stableRows);
+  const failedIds = useStabilized(events, stableFailedIds);
+  const interruptedEnds = useStabilized(events, stableInterruptedEnds);
 
   /** Resolves true when rows were prepended. */
   const loadEarlier = useCallback(async () => {

@@ -124,12 +124,12 @@ Desktop panel:
 - Bottom: `inset-x-0 bottom-0 max-h-[90svh] rounded-t-xl border-t border-float-edge bg-popover`, a 4×36px handle (`bg-border`, `aria-hidden`), bottom padding `max(1rem, env(safe-area-inset-bottom))`. The surface runs edge to edge; its inner column is `mx-auto w-full max-w-lg`, so a 600–767px window doesn't stretch buttons across.
 - Left: `inset-y-0 left-0 w-(--sidebar-width) max-w-[85vw] border-r border-float-edge`.
 - Focus: Vaul's Root defaults `autoFocus` to `false` and prevents Radix's open auto-focus (`vaul/dist/index.mjs`), which would leave focus on the trigger behind the scrim. The wrapper defaults `autoFocus` to `true`; its `onOpenAutoFocus` focuses the content (`tabIndex={-1}`) rather than the first input, so the iOS keyboard doesn't rise mid-slide; consumers can override (ConfirmDialog keeps Cancel's `autoFocus`). `onCloseAutoFocus` passes through. Tests assert `document.activeElement` is inside the drawer after open.
-- Motion: Vaul animates open and close with CSS keyframes at 0.5s from a `<style>` it appends to `<head>` when its module loads, after `styles.css`, unlayered. Tailwind utilities live in `@layer utilities` and lose to it, and an equal-specificity rule loses the tie on source order. So `styles.css` gets an **unlayered** block whose declarations are `!important` (an important declaration beats any normal one regardless of specificity or order) and whose selectors are also strictly more specific than Vaul's highest rule for each property, belt and braces (Vaul's: `[data-vaul-drawer]` (0,1,0) for duration, `[data-vaul-overlay][data-vaul-snap-points=false]` (0,2,0) for the overlay's duration, four-attribute selectors (0,4,0) for `animation-name`):
+- Motion: Vaul animates open and close with CSS keyframes at 0.5s from a `<style>` it appends to `<head>` when its module loads, after `styles.css`, unlayered. Tailwind utilities live in `@layer utilities` and lose to it, and an equal-specificity rule loses the tie on source order. So `styles.css` gets an **unlayered** block whose declarations are `!important`: an important declaration beats Vaul's normal ones regardless of specificity or order, so one mechanism does the job (Vaul's rules: `[data-vaul-drawer]` for duration, `[data-vaul-overlay][data-vaul-snap-points=false]` for the overlay's duration, four-attribute selectors for `animation-name`):
   ```css
   /* Vaul 1.1.2 (pinned) injects unlayered rules after this file: [data-vaul-drawer]{animation-duration:.5s},
-     [data-vaul-overlay][data-vaul-snap-points=false]{animation-duration:.5s}. These outrank them by
-     specificity (one more attribute each). Re-check on any Vaul upgrade; the guard test in drawer.test.tsx fails if
-     the attributes change. DESIGN.md → Motion. */
+     [data-vaul-overlay][data-vaul-snap-points=false]{animation-duration:.5s}. !important overrides them.
+     Re-check on any Vaul upgrade; the guard test in drawer.test.tsx fails if these attributes change.
+     DESIGN.md → Motion. */
   [data-vaul-drawer][data-slot="drawer-content"][data-state="open"] { animation-duration: 250ms !important; animation-timing-function: var(--ease-drawer) !important; }
   [data-vaul-drawer][data-slot="drawer-content"][data-state="closed"] { animation-duration: 200ms !important; animation-timing-function: var(--ease-out) !important; }
   [data-vaul-drawer][data-slot="drawer-content"][data-state="closed"][data-released] { animation-duration: 300ms !important; animation-timing-function: var(--ease-drawer) !important; } /* Q23 */
@@ -459,7 +459,7 @@ Add after "Page title": `| Detail title (task, in the page body) | Archivo | 20 
 TDD per change; Vitest + Testing Library (jsdom) for web, the existing server test setup for `errors.ts`.
 
 - **Primitives:** render tests for `Sheet`, `Drawer`, `ConfirmDialog` (desktop and mobile via a mocked `matchMedia`); the primitive locked at open across a breakpoint flip (§5.1); focus inside the drawer after open (§5.4); the keyboard stamp (§8.1); the Vaul upgrade guard (§5.4); reduced-motion classes and `--initial-transform` on the Radix sheet and the Vaul drawer (fade kept, slide dropped): slots, roles (`dialog`, `alertdialog`), close paths (Esc, scrim, Close), pending holds the confirmation open, button order on mobile, `data-slot` attributes the CSS keys on. `Select`, `RadioGroup`, `SegmentedControl`: keyboard selection and `onChange`; the sentinel mapping.
-- **Class contracts:** a source-scan test asserts: no `shadow-` in the floating-layer primitives (`popover`, `dropdown-menu`, `select`, `sheet`, `drawer`, `alert-dialog`, `tooltip`, `tabs`); no `slide-in-from-` in menus, popovers, selects or tooltips; no `ring-3`, `ring-ring/50`, `outline-none` or `outline-hidden` anywhere in `apps/web/src` outside the menu/select item allowlist (§6.1); `styles.css` has the `of-ignite` animation only inside `@media (prefers-reduced-motion: no-preference)` and the unlayered Vaul block with its `[data-state]` selectors.
+- **Class contracts:** a source-scan test asserts: no `shadow-` in the floating-layer primitives (`popover`, `dropdown-menu`, `select`, `sheet`, `drawer`, `alert-dialog`, `tooltip`, `tabs`); no `slide-in-from-` in menus, popovers, selects or tooltips; no `ring-3`, `ring-ring/50`, `outline-none` or `outline-hidden` anywhere in `apps/web/src` outside the menu/select item allowlist (§6.1); `styles.css` has the `of-ignite` animation only inside `@media (prefers-reduced-motion: no-preference)` and the `[data-instant]` rule. Tests guard against regressions, not values: no test copies DESIGN.md prose or a token value (`--float-edge`, the avatar hues and the like are retuned from screenshots, so pinning them would triple every retune).
 - **Bugs:** Home (agents, attention-first ordering, frozen order under the pointer, "All N agents" when capped, empty, loading, error); page header classes; composer 64 KB and copy; `isSendKey` table test; comment composer Enter; server validation message.
 - **Timeline:** render counts (§9), `stabilizeRows` unit tests (reuse on unchanged, replace on changed result, children), reducer `frames` fold, rAF batching with Vitest fake timers (`toFake: ["requestAnimationFrame"]`), tabindex on added nodes.
 - **Data layer:** §2.8.
@@ -474,7 +474,19 @@ TDD per change; Vitest + Testing Library (jsdom) for web, the existing server te
 5. (#82) Prose reading size 15/24 (taste T-M2), decided in U3 with the timeline tiers; the demoted heading sizes (17/15/14) are re-derived with it.
 6. (#83) Searchable pickers: replace the native timezone select (Q12) and the agent pickers (manager, assignee, agent filter: 200+ agents is a long Radix Select) with the cmdk combobox once U2 adds cmdk.
 
-## 15. Risks
+## 15. Delivery
+
+Five stacked PRs (owner review of the plan), each based on the one below, each leaving main working, each with its own CI run and its own slice of the §2/§13 manual evidence:
+
+1. `fix(web): data layer and PR #76 follow-ups` (§10, base main).
+2. `feat: DESIGN.md amendments, tokens and UI primitives` (§5, §6 primitives, §8.1, §12; Q7 and Q8 screenshots).
+3. `feat: control system consumers and UI bug fixes` (no scope: it also changes `apps/server/src/errors.ts`) (§6 call sites, §7, §8.2–§8.5; Q5 before/after, the overflow matrix, header checks).
+4. `refactor(web): timeline render performance` (§9; before/after recordings posted on #78).
+5. `fix(web): render pages from cached summaries while details load` (§11).
+
+The whole-stack React review and spec-coverage walk run on the top of the stack.
+
+## 16. Risks
 
 - **Vaul's injected CSS is unlayered.** Overrides must stay unlayered and more specific; a Tailwind utility on the drawer won't move its timing. The class-contract test guards the block.
 - **Radix Select in tests.** It uses pointer capture and `scrollIntoView`; jsdom needs the usual shims (`hasPointerCapture`, `scrollIntoView`) in `test-setup.ts`.

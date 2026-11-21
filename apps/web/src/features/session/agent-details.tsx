@@ -515,6 +515,8 @@ export const AGENT_DETAILS_PREF = "of-agent-details";
 export const AGENT_DETAILS_ID = "agent-details";
 export const AGENT_DETAILS_TOGGLE_ID = "agent-details-toggle";
 const parseOpenPref = (raw: string) => (raw === "open" || raw === "closed" ? raw : undefined);
+/** The open modal is Agent details' own drawer. */
+const ownsDetails = (modal: Element) => modal.id === AGENT_DETAILS_ID;
 
 /**
  * Where Agent details shows and whether it is open (U2 §8.1). ≥1280: in-flow, open unless the human
@@ -551,13 +553,18 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
     [setPref],
   );
   const toggle = useCallback(() => setOpen(!latest.current.open), [setOpen]);
-  useShortcut("]", () => {
-    const c = latest.current;
-    // A key that closes an overlay closes it at once, however it opened (§16.8).
-    if (c.open && c.mode !== "inflow")
-      closeInstantly(document.getElementById(AGENT_DETAILS_ID), () => setOpen(false));
-    else toggle();
-  });
+  useShortcut(
+    "]",
+    () => {
+      const c = latest.current;
+      // A key that closes an overlay closes it at once, however it opened (§16.8).
+      if (c.open && c.mode !== "inflow")
+        closeInstantly(document.getElementById(AGENT_DETAILS_ID), () => setOpen(false));
+      else toggle();
+    },
+    // The phone drawer is modal, and `]` still closes it (§8.1: at every width).
+    { allowInModal: ownsDetails },
+  );
   return { open, toggle, setOpen, mode };
 }
 

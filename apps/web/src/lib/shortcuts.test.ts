@@ -181,6 +181,50 @@ describe("open dialogs", () => {
   });
 });
 
+describe("allowInModal", () => {
+  const panel = "<div id='panel' role='dialog' data-state='open'><button>b</button></div>";
+  const ownsPanel = (m: Element) => m.id === "panel";
+
+  test("a key allowed for the open modal fires; the others stay blocked", () => {
+    mount(panel);
+    const toggle = vi.fn();
+    const other = vi.fn();
+    renderHook(() => useShortcut("]", toggle, { allowInModal: ownsPanel }));
+    renderHook(() => useShortcut("c", other));
+    const target = document.querySelector("button") as Element;
+    press(target, "]");
+    press(target, "c");
+    expect(toggle).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
+  });
+
+  test("a sequence never starts behind a modal", () => {
+    mount(panel);
+    const seq = vi.fn();
+    renderHook(() => useShortcut("g i", seq));
+    const target = document.querySelector("button") as Element;
+    press(target, "g");
+    press(target, "i");
+    expect(seq).not.toHaveBeenCalled();
+  });
+
+  test("another modal open as well keeps the key blocked", () => {
+    document.body.innerHTML = `${panel}<div role='alertdialog'><button>x</button></div>`;
+    const toggle = vi.fn();
+    renderHook(() => useShortcut("]", toggle, { allowInModal: ownsPanel }));
+    press(document.querySelector("button") as Element, "]");
+    expect(toggle).not.toHaveBeenCalled();
+  });
+
+  test("it still respects fields inside the modal", () => {
+    document.body.innerHTML = "<div id='panel' role='dialog' data-state='open'><input /></div>";
+    const toggle = vi.fn();
+    renderHook(() => useShortcut("]", toggle, { allowInModal: ownsPanel }));
+    press(document.querySelector("input") as Element, "]");
+    expect(toggle).not.toHaveBeenCalled();
+  });
+});
+
 describe("key edge cases", () => {
   test("a held key fires once", () => {
     const handler = vi.fn();

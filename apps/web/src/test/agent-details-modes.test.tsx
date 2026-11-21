@@ -1,7 +1,8 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { useShortcut } from "@/lib/shortcuts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -108,6 +109,24 @@ test.each([1440, 1100, 900])(
     expect(toggle()).toHaveAttribute("aria-controls", "agent-details");
   },
 );
+
+test("below 768, ] opens the drawer and closes it again; other keys stay blocked behind it", async () => {
+  await visit(767);
+  const other = vi.fn();
+  renderHook(() => useShortcut("c", other));
+  const user = userEvent.setup();
+  await user.keyboard("]");
+  await waitFor(() => expect(modeOf(container())).toBe("drawer"));
+  // The drawer is modal: the page's other shortcuts stay blocked behind it.
+  await user.keyboard("c");
+  expect(other).not.toHaveBeenCalled();
+  await user.keyboard("]");
+  // The modal drawer hides the page from the accessibility tree, so the toggle is read by id; Vaul
+  // keeps the content mounted while it animates out.
+  const toggleEl = document.getElementById("agent-details-toggle");
+  await waitFor(() => expect(toggleEl).toHaveAttribute("aria-expanded", "false"));
+  expect(container()?.getAttribute("data-state") ?? "closed").toBe("closed");
+});
 
 test("the overlay sits below the header: Stop and the toggle stay clickable", async () => {
   vi.unstubAllGlobals();

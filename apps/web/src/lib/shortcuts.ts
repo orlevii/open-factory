@@ -5,7 +5,9 @@ import { readPref, watchPrefs } from "./prefs";
 export const SINGLE_KEYS_PREF = "of-single-keys";
 const SEQUENCE_MS = 1000;
 
-type Entry = { run: (e: KeyboardEvent) => void };
+/** Whether a binding still fires behind the open modal it is given (by default none does). */
+type AllowInModal = (modal: Element) => boolean;
+type Entry = { run: (e: KeyboardEvent) => void; allowInModal?: AllowInModal };
 /** Per key, a stack of registrations: the last added wins. */
 const registry = new Map<string, Entry[]>();
 
@@ -20,15 +22,23 @@ const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "C
 /** True when a key press must not trigger a shortcut: modifiers, IME, already handled, typing or
  *  navigating inside a field, menu, listbox or tree, a modal open, or the off switch. */
 export function shouldIgnore(e: KeyboardEvent): boolean {
+  return ignoredPress(e) || openModals(e).length > 0;
+}
+
+/** Every reason to ignore a press except an open modal. */
+function ignoredPress(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.isComposing || e.keyCode === 229 || e.defaultPrevented)
     return true;
   // Alt (Option) is fine when it produced a symbol such as `]`; Alt+letter is a browser/OS chord.
   if (e.altKey && /^[a-z0-9]$/i.test(e.key)) return true;
   if (readPref(SINGLE_KEYS_PREF) === "off") return true;
   const target = e.target instanceof Element ? e.target : null;
-  if (target?.closest(IGNORED_TARGETS)) return true;
-  const doc = target?.ownerDocument ?? document;
-  return doc.querySelector(MODAL) !== null;
+  return target?.closest(IGNORED_TARGETS) != null;
+}
+
+function openModals(e: KeyboardEvent): Element[] {
+  const doc = e.target instanceof Element ? e.target.ownerDocument : document;
+  return [...doc.querySelectorAll(MODAL)];
 }
 
 function hasSequenceStartingWith(first: string): boolean {
@@ -37,10 +47,12 @@ function hasSequenceStartingWith(first: string): boolean {
   return false;
 }
 
-function fire(key: string, e: KeyboardEvent): boolean {
+function fire(key: string, e: KeyboardEvent, modals: Element[] = []): boolean {
   const stack = registry.get(key);
   const top = stack?.[stack.length - 1];
   if (!top) return false;
+  const allow = top.allowInModal;
+  if (modals.length > 0 && !(allow && modals.every(allow))) return false;
   e.preventDefault();
   top.run(e);
   return true;
@@ -53,12 +65,19 @@ export function installShortcuts(win: Window = window): () => void {
   const onKeyDown = (e: KeyboardEvent) => {
     // A held key and a bare modifier neither fire nor disturb a sequence in progress.
     if (e.repeat || MODIFIER_KEYS.has(e.key)) return;
-    if (shouldIgnore(e)) {
+    if (ignoredPress(e)) {
       pending = null;
       return;
     }
     // Option+] on a US Mac types a symbol, not `]`: the physical key stands in.
     const key = e.altKey && e.code === "BracketRight" ? "]" : e.key;
+    // Behind a modal only a binding that allows every open one fires, and no sequence starts.
+    const modals = openModals(e);
+    if (modals.length > 0) {
+      pending = null;
+      fire(key, e, modals);
+      return;
+    }
     const now = Date.now();
     const first = pending && now - pending.at <= SEQUENCE_MS ? pending.key : null;
     pending = null;
@@ -77,18 +96,25 @@ export function installShortcuts(win: Window = window): () => void {
  * Binds a key (a single character, or a `"g i"` sequence) while mounted and enabled. It registers
  * once per `(key, enabled)`; the latest handler is read through a ref, so a re-render never
  * re-registers or reorders the stack. The most recently registered binding for a key wins.
+ * `allowInModal` lets it fire behind an open modal it accepts (the panel toggle behind its own
+ * drawer); every other binding is blocked while a modal is open.
  */
 export function useShortcut(
   key: string,
   handler: (e: KeyboardEvent) => void,
-  opts: { enabled?: boolean } = {},
+  opts: { enabled?: boolean; allowInModal?: AllowInModal } = {},
 ): void {
   const enabled = opts.enabled ?? true;
   const latest = useRef(handler);
   latest.current = handler;
+  const allow = useRef(opts.allowInModal);
+  allow.current = opts.allowInModal;
   useEffect(() => {
     if (!enabled) return;
-    const entry: Entry = { run: (e) => latest.current(e) };
+    const entry: Entry = {
+      run: (e) => latest.current(e),
+      allowInModal: (m) => allow.current?.(m) ?? false,
+    };
     const stack = registry.get(key) ?? [];
     stack.push(entry);
     registry.set(key, stack);

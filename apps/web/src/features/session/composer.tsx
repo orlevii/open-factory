@@ -13,7 +13,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
-import { agentDraftKey, readDraft, useDraft, writeDraft } from "@/lib/drafts";
+import {
+  agentDraftKey,
+  readDraft,
+  readUnconfirmed,
+  useDraft,
+  writeDraft,
+  writeUnconfirmed,
+} from "@/lib/drafts";
 import { isCoarsePointer, isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { postMessage } from "./api";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
@@ -138,7 +145,18 @@ export function Composer({
 }) {
   const [text, setText, draft] = useDraft(agentDraftKey(slug));
   const [error, setError] = useState<string | undefined>();
-  const [unconfirmed, setUnconfirmed] = useState<Unconfirmed | undefined>();
+  // An aborted send survives a remount beside its draft, so its unchanged text resends under its id.
+  const [unconfirmed, setUnconfirmedState] = useState<Unconfirmed | undefined>(() => {
+    const u = readUnconfirmed(agentDraftKey(slug));
+    return u && text === u.sent ? { ...u, box: u.sent, before: "" } : undefined;
+  });
+  const setUnconfirmed = useCallback(
+    (u: Unconfirmed | undefined) => {
+      setUnconfirmedState(u);
+      writeUnconfirmed(agentDraftKey(slug), u && { id: u.id, sent: u.sent });
+    },
+    [slug],
+  );
   // Read when a POST settles, long after the render that started it.
   const landedRef = useRef(landed);
   useEffect(() => {
@@ -151,7 +169,7 @@ export function Composer({
     draft.clearSent(unconfirmed.sent);
     setUnconfirmed(undefined);
     setError((e) => (e === UNCONFIRMED ? undefined : e));
-  }, [landed, unconfirmed, setText, draft]);
+  }, [landed, unconfirmed, setText, draft, setUnconfirmed]);
   // A failed Stop, on the composer's error line; it belongs to that turn (reset on its edge).
   const [stopError, setStopError] = useState<string | undefined>();
   const [errorEpoch, setErrorEpoch] = useState(turnEpoch);
@@ -185,13 +203,15 @@ export function Composer({
         // The DOM value is the box as it is now (state may not have committed yet).
         if ((boxRef.current?.value ?? "").trim() !== "") return false;
         setText(next);
+        draft.persist(); // focus is on Cancel, not the box: saved now, or a reload loses it
         return true;
       },
       clearIfUnchanged(sent) {
         setText((cur) => (cur === sent ? "" : cur));
+        draft.persist();
       },
     }),
-    [setText],
+    [setText, draft],
   );
   const empty = text.trim() === "";
   const shownError = error ?? stopError;
@@ -204,6 +224,7 @@ export function Composer({
       box = cur.trim() ? `${cur}\n${sent}` : sent;
       return box;
     });
+    draft.persist();
     return box;
   };
 
@@ -218,10 +239,11 @@ export function Composer({
       );
       return;
     }
-    // U3 §13.2: the unchanged text of an unconfirmed send goes again under the same id, so a
-    // late-landing original can never be delivered twice.
+    // U3 §13.2: exactly the text of an unconfirmed send goes again under the same id, so a late-landing
+    // original can never be delivered twice. Anything else (text typed meanwhile included) is a new
+    // message: under the old id the server would dedupe it to the original and the extra text be lost.
     const retry =
-      unconfirmed && sent === unconfirmed.box && !landedRef.current.has(unconfirmed.id)
+      unconfirmed && sent === unconfirmed.sent && !landedRef.current.has(unconfirmed.id)
         ? unconfirmed.id
         : undefined;
     const clientMessageId = retry ?? crypto.randomUUID();
@@ -367,7 +389,7 @@ export function Composer({
           >
             <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
             {shownError}
-            {shownError === UNCONFIRMED && unconfirmed && text === unconfirmed.box && (
+            {shownError === UNCONFIRMED && unconfirmed && text === unconfirmed.sent && (
               <Button type="button" variant="ghost" size="xs" onClick={() => void send()}>
                 Retry
               </Button>

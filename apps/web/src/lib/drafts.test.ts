@@ -1,6 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { agentDraftKey, readDraft, taskDraftKey, useDraft } from "./drafts";
+import {
+  agentDraftKey,
+  readDraft,
+  readUnconfirmed,
+  taskDraftKey,
+  useDraft,
+  writeUnconfirmed,
+} from "./drafts";
 
 const KEY = agentDraftKey("dev");
 const stored = () => localStorage.getItem("of-draft:v1:agent:dev");
@@ -72,6 +79,26 @@ test("an unfocused instance never writes", () => {
   vi.advanceTimersByTime(1000);
   a.unmount();
   expect(stored()).toBeNull();
+});
+
+test("persist writes at once, focused or not (the app put text in the box)", () => {
+  vi.useFakeTimers();
+  const a = tab();
+  a.type("put back");
+  act(() => a.result.current[2].persist());
+  expect(JSON.parse(stored() ?? "{}").text).toBe("put back");
+});
+
+test("an unconfirmed send is stored beside the draft and expires with it", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-01T00:00:00Z"));
+  writeUnconfirmed(KEY, { id: "c1", sent: "hello" });
+  expect(readUnconfirmed(KEY)).toEqual({ id: "c1", sent: "hello" });
+  vi.setSystemTime(new Date("2026-11-09T00:00:00Z"));
+  expect(readUnconfirmed(KEY)).toBeUndefined();
+  writeUnconfirmed(KEY, { id: "c2", sent: "x" });
+  writeUnconfirmed(KEY, undefined);
+  expect(readUnconfirmed(KEY)).toBeUndefined();
 });
 
 test("a draft expires after 7 days", () => {

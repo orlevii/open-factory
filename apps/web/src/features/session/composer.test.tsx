@@ -1,12 +1,12 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { type ReactNode, useCallback, useReducer, useState } from "react";
+import { createRef, type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { agentDraftKey, readDraft } from "@/lib/drafts";
 import { agentSummary } from "@/test/session-fixtures";
-import { Composer } from "./composer";
+import { Composer, type ComposerHandle } from "./composer";
 import { QueueItems } from "./queue-items";
 import {
   initialSessionState,
@@ -537,4 +537,51 @@ test("an aborted send whose item the queue already showed counts as sent", async
   });
   expect(box).toHaveValue("");
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
+  const ref = createRef<ComposerHandle>();
+  render(<Composer ref={ref} slug="dev" agent={working()} turnEpoch={1} />);
+  expect(screen.getByRole("textbox")).not.toHaveFocus();
+  act(() => {
+    expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
+  });
+  expect(readDraft(agentDraftKey("dev"))).toBe("cancelled text");
+  // Undo of an untouched box takes it out of the stored draft too.
+  act(() => ref.current?.clearIfUnchanged("cancelled text"));
+  expect(readDraft(agentDraftKey("dev"))).toBe("");
+});
+
+test("after an abort, text typed meanwhile makes Enter send under a new id, and there is no Retry", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  heldReply();
+  const box = renderSession();
+  fireEvent.change(box, { target: { value: "first part" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  fireEvent.change(box, { target: { value: "typed meanwhile" } });
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  expect(box).toHaveValue("typed meanwhile\nfirst part");
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(messageSends()[1]?.clientMessageId).not.toBe(messageSends()[0]?.clientMessageId);
+});
+
+test("a remount after an abort resends the unchanged text under the same id", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  heldReply();
+  const first = render(<Session agent={agentSummary()} />);
+  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  fireEvent.change(box, { target: { value: "hello" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  first.unmount();
+  const again = renderSession();
+  expect(again).toHaveValue("hello");
+  fireEvent.keyDown(again, { key: "Enter" });
+  expect(messageSends()).toHaveLength(2);
+  expect(messageSends()[1]?.clientMessageId).toBe(messageSends()[0]?.clientMessageId);
 });

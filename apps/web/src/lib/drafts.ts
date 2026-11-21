@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 /**
  * Durable composer drafts (U3 §13.2, review note m6): `localStorage` under versioned keys, stored as
  * `{ text, at }` and dropped after 7 days. A tab writes only while its box is focused (throttled, flushed
- * on blur, pagehide and unmount); an unfocused tab adopts another tab's write only when its own text is
- * the value that write replaced, so it never wipes what it typed itself and never resurrects sent text.
+ * on blur, pagehide and unmount) or when the app itself puts text in the box (`persist`); an unfocused
+ * tab adopts another tab's write only when its own text is the value that write replaced, so it never
+ * wipes what it typed itself and never resurrects sent text.
  */
 const PREFIX = "of-draft:v1:";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -45,6 +46,38 @@ export function writeDraft(key: string, text: string): void {
   }
 }
 
+/** A send whose POST aborted (U3 §13.2): its `clientMessageId` and text, kept beside the draft so a remount
+ *  resends the unchanged text under the same id (the server dedupes it if the original landed). */
+export type UnconfirmedSend = { id: string; sent: string };
+const UNCONFIRMED_SUFFIX = ":unconfirmed";
+
+export function readUnconfirmed(key: string): UnconfirmedSend | undefined {
+  try {
+    const raw = localStorage.getItem(PREFIX + key + UNCONFIRMED_SUFFIX);
+    if (!raw) return undefined;
+    const v = JSON.parse(raw) as { id?: unknown; sent?: unknown; at?: unknown };
+    if (typeof v.id === "string" && typeof v.sent === "string" && typeof v.at === "number")
+      if (Date.now() - v.at <= TTL_MS) return { id: v.id, sent: v.sent };
+    localStorage.removeItem(PREFIX + key + UNCONFIRMED_SUFFIX);
+  } catch {
+    /* private mode, or unreadable */
+  }
+  return undefined;
+}
+
+export function writeUnconfirmed(key: string, u: UnconfirmedSend | undefined): void {
+  try {
+    if (!u) localStorage.removeItem(PREFIX + key + UNCONFIRMED_SUFFIX);
+    else
+      localStorage.setItem(
+        PREFIX + key + UNCONFIRMED_SUFFIX,
+        JSON.stringify({ id: u.id, sent: u.sent, at: Date.now() }),
+      );
+  } catch {
+    /* private mode, or full */
+  }
+}
+
 /** Removes `sent` from the stored draft and nothing else: other text (typed since, or by another tab)
  *  stays. Runs focused or not: it is what the server accepted. */
 function clearSentDraft(key: string, sent: string): void {
@@ -64,6 +97,9 @@ export interface DraftHandle {
   hold(sent: string): void;
   /** The send failed: `sent` is no longer held (the caller puts it back in the box). */
   release(sent: string): void;
+  /** The app (not the user) changed the box (a Cancel put-back, a failed send's text): write it now,
+   *  focused or not, so a reload keeps it. */
+  persist(): void;
   /** Spread on the textarea: writes happen only while it is focused. */
   bind: { onFocus(): void; onBlur(): void };
 }
@@ -146,6 +182,10 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
       },
       release(sent) {
         held.current = without(held.current, sent);
+      },
+      persist() {
+        pending.current = { key: keyRef.current, text: joined([...held.current, textRef.current]) };
+        flush();
       },
       bind: {
         onFocus() {

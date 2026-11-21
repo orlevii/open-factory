@@ -12,7 +12,7 @@ import { TemplateList } from "@/features/templates/template-list";
 export const Route = createFileRoute("/_app/templates/")({ component: TemplatesPage });
 
 function TemplatesPage() {
-  const { data, isError } = useQuery({ ...templatesQueryOptions, refetchOnMount: "always" });
+  const { data, isError } = useQuery(templatesQueryOptions);
   const fromState = useLocation({ select: (l) => deletedTemplateFrom(l.state) });
   const navigate = useNavigate();
   // Read the one-shot notice, then clear it from the history entry so a reload or Back doesn't

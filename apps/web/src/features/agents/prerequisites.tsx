@@ -15,7 +15,7 @@ export function usePrerequisites(): {
 } {
   const credentials = useQuery(credentialsQueryOptions);
   // Templates are rescanned on every GET, so a fix on disk shows on the next visit.
-  const templates = useQuery({ ...templatesQueryOptions, refetchOnMount: "always" });
+  const templates = useQuery(templatesQueryOptions);
   if (!credentials.data || !templates.data) {
     return {
       missing: null,

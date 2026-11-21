@@ -40,6 +40,7 @@ export type StopCrons = {
   outcome: { text: string; key: number } | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   run(): Promise<void>;
+  returnFocus(): void;
 };
 
 /** The Stop crons state, held by the strip: the segment unmounts once the crons are gone, the dialog and outcome must not. */
@@ -55,6 +56,23 @@ export function useStopCrons(agent: AgentSummary): StopCrons {
     if (prev.current === 0 && count > 0) setOutcome(undefined);
     prev.current = count;
   }, [count]);
+  // Radix calls onCloseAutoFocus on a timer after the dialog unmounts, and the focus waits a frame
+  // more: by then the strip may be gone (navigated away), and the composer found is another page's.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  function returnFocus() {
+    // Back to the strip's button, or to the composer once it is gone (the crons stopped).
+    requestAnimationFrame(() => {
+      if (!mounted.current) return;
+      if (trigger.current?.isConnected) trigger.current.focus();
+      else focusComposer();
+    });
+  }
   async function run() {
     try {
       const r = await stopCrons(agent.slug);
@@ -71,7 +89,7 @@ export function useStopCrons(agent: AgentSummary): StopCrons {
       throw new ApiError(500, "stop_failed", "Couldn't stop the crons. Try again.");
     }
   }
-  return { popover, setPopover, confirm, setConfirm, outcome, trigger, run };
+  return { popover, setPopover, confirm, setConfirm, outcome, trigger, run, returnFocus };
 }
 
 /** The strip's "2 crons" (UI design §4.2): a text button that opens a popover listing the live crons with Stop crons. */
@@ -149,11 +167,8 @@ export function CronsStopLayer({ agent, stop }: { agent: AgentSummary; stop: Sto
         onOpenChange={stop.setConfirm}
         onConfirm={stop.run}
         onCloseAutoFocus={(e) => {
-          // Back to the strip's button, or to the composer once it is gone (the crons stopped).
           e.preventDefault();
-          requestAnimationFrame(() =>
-            stop.trigger.current?.isConnected ? stop.trigger.current.focus() : focusComposer(),
-          );
+          stop.returnFocus();
         }}
       />
       {/* Mounted while the agent has crons (before it fills, so the outcome is announced) and after a stop. */}

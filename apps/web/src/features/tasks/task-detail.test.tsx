@@ -310,6 +310,78 @@ test("composer: disabled while empty, Ctrl-Enter posts, Posting…, the draft st
   expect(box).toHaveValue("");
 });
 
+const posted = (body: string) =>
+  json(
+    {
+      comment: {
+        type: "comment",
+        id: `c-${body}`,
+        author: { kind: "user", handle: "alice" },
+        body,
+        at: at(15, 0),
+      },
+      deliveredTo: [],
+      mentionedHumans: [],
+      notReached: [],
+    },
+    201,
+  );
+
+test("composer: text typed while a post is in flight survives it; the posted part goes", async () => {
+  const api = world();
+  let release: () => void = () => {};
+  api.on("POST /api/tasks/T-42/comments", async () => {
+    await new Promise<void>((r) => (release = r));
+    return posted("a");
+  });
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await screen.findByRole("button", { name: "Posting…" });
+  await userEvent.type(box, "b");
+  await act(async () => release());
+  await screen.findByRole("button", { name: "Comment" });
+  expect(box).toHaveValue("b");
+});
+
+test("composer: with nothing typed during the post the draft clears", async () => {
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await waitFor(() => expect(box).toHaveValue(""));
+});
+
+test("links editor: the agent lists load on the Edit click and Save waits for them", async () => {
+  const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
+  const releases: (() => void)[] = [];
+  api.on("GET /api/agents?", async () => {
+    await new Promise<void>((r) => releases.push(r));
+    return agents();
+  });
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await waitFor(() => expect(releases.length).toBe(2));
+  await act(async () => {
+    for (const r of releases) r();
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+});
+
+test("links editor: when an agent list fails Save is not locked and the editor says so", async () => {
+  const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
+  api.on("GET /api/agents?", () => json({ error: { code: "x", message: "boom" } }, 500));
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail() }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  expect(await screen.findByText(/Couldn't load agents/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
 test("no assignee: the helper says only mentions are notified", async () => {
   world(() => detail({ assignee: null }));
   renderApp("/tasks/T-42", alice);
@@ -391,6 +463,31 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
   expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("my draft");
   expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("The **brief**. more");
   expect(await screen.findByText("@dev commented")).toBeInTheDocument();
+});
+
+test("a save wins over an older detail fetch still in flight", async () => {
+  let held: ((r: Response) => void) | undefined;
+  let gets = 0;
+  const api = world();
+  api.on("GET /api/tasks/T-42", () => {
+    gets += 1;
+    if (gets === 1) return json(detail());
+    return new Promise<Response>((res) => {
+      held = res;
+    });
+  });
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "New" }) }));
+  renderApp("/tasks/T-42", alice);
+  await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" });
+  act(() => ws.push({ type: "tasks_changed", keys: ["T-42"] })); // starts the GET that stays open
+  await waitFor(() => expect(held).toBeDefined());
+  await userEvent.click(screen.getByRole("button", { name: "Edit title" }));
+  await userEvent.clear(screen.getByLabelText("Title"));
+  await userEvent.type(screen.getByLabelText("Title"), "New{Enter}");
+  await screen.findByRole("heading", { level: 2, name: "New" });
+  await act(async () => held?.(json(detail({ title: "Old" }))));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.getByRole("heading", { level: 2, name: "New" })).toBeInTheDocument();
 });
 
 test("dependencies, blocks and links are listed; blocked marker; editing links validates", async () => {

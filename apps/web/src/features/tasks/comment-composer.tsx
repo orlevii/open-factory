@@ -74,17 +74,19 @@ export function CommentComposer({
   );
   async function post() {
     if (posting || draft.trim() === "") return;
+    const sent = draft;
     setPosting(true);
     setFailed(false);
     try {
-      const r = await postComment(taskKey, draft);
+      const r = await postComment(taskKey, sent);
       // The new comment shows at once; the refetch (not awaited) brings the rest of the task.
       qc.setQueryData(taskDetailOptions(taskKey).queryKey, (t) =>
         t && !t.activity.some((a) => a.id === r.comment.id)
           ? { ...t, activity: [...t.activity, r.comment] }
           : t,
       );
-      setDraft("");
+      // Keep what was typed while the post was in flight.
+      setDraft((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length) : cur));
       setNotReached(notReachedLine(r.notReached));
       void qc.invalidateQueries({ queryKey: tasksQueryKey });
     } catch {

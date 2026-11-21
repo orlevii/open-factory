@@ -12,7 +12,7 @@ vi.mock("./highlight", async (importOriginal) => ({
 const finish = (i: number) =>
   act(async () => pending[i]?.resolve(`<pre class="shiki">${pending[i]?.code}</pre>`));
 
-test("keeps the previous highlight while new code highlights, and ignores stale results", async () => {
+test("with the language unchanged, keeps the previous highlight while new code highlights, and ignores stale results", async () => {
   pending.length = 0;
   const { container, rerender } = render(<CodeBlock code="one" lang="ts" />);
   expect(container.querySelector("pre:not(.shiki)")).toHaveTextContent("one");
@@ -37,4 +37,41 @@ test("an unknown language renders plain text right away", async () => {
   expect(container.querySelector("pre.shiki")).toBeNull();
   expect(container.querySelector("pre")).toHaveTextContent("other");
   expect(pending).toHaveLength(1);
+});
+
+test("a language change never shows the old language's highlight", async () => {
+  pending.length = 0;
+  const { container, rerender } = render(<CodeBlock code="one" lang="ts" />);
+  await finish(0);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("one");
+
+  rerender(<CodeBlock code="two" lang="py" />);
+  expect(container.querySelector("pre.shiki")).toBeNull();
+  expect(container.querySelector("pre")).toHaveTextContent("two");
+  await finish(1);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("two");
+});
+
+test("a language round trip never resurfaces the old highlight", async () => {
+  pending.length = 0;
+  const { container, rerender } = render(<CodeBlock code="one" lang="ts" />);
+  await finish(0);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("one");
+
+  rerender(<CodeBlock code="two" lang="nope" />);
+  rerender(<CodeBlock code="two" lang="ts" />);
+  expect(container.querySelector("pre.shiki")).toBeNull();
+  expect(container.querySelector("pre")).toHaveTextContent("two");
+  await finish(1);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("two");
+});
+
+test("a round trip through a language still in flight shows plain code", async () => {
+  pending.length = 0;
+  const { container, rerender } = render(<CodeBlock code="one" lang="ts" />);
+  await finish(0);
+  rerender(<CodeBlock code="two" lang="py" />); // in flight, never finished
+  rerender(<CodeBlock code="two" lang="ts" />);
+  expect(container.querySelector("pre.shiki")).toBeNull();
+  expect(container.querySelector("pre")).toHaveTextContent("two");
 });

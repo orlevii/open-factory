@@ -266,6 +266,43 @@ test("while creating the fields are disabled; Installing plugins… appears afte
   expect(screen.getByText("Installing plugins…")).toBeInTheDocument();
 });
 
+test("the slow line is per attempt: a resubmit after a slow failure starts without it", async () => {
+  let n = 0;
+  const failNext: { current: () => void } = { current: () => {} };
+  mockWorld({
+    details: { lead: templateDetail(templateConfig({ plugins: ["superpowers@market"] })) },
+    extra: {
+      "POST /api/agents": () => {
+        n++;
+        return new Promise<Response>((resolve) => {
+          failNext.current = () => resolve(json({ error: { code: "x", message: "boom" } }, 500));
+        });
+      },
+    },
+  });
+  renderApp("/agents/new?template=lead", alice);
+  await ready();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
+  await screen.findByRole("button", { name: /Creating…/ });
+  await act(async () => {
+    vi.advanceTimersByTime(3000);
+  });
+  expect(screen.getByText("Installing plugins…")).toBeInTheDocument();
+  await act(async () => failNext.current());
+  await screen.findByRole("button", { name: "Create agent" });
+  expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
+  await screen.findByRole("button", { name: /Creating…/ });
+  expect(n).toBe(2);
+  expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
+  await act(async () => {
+    vi.advanceTimersByTime(3000);
+  });
+  expect(screen.getByText("Installing plugins…")).toBeInTheDocument();
+});
+
 test("a 502 shows the form error with a collapsed Show output", async () => {
   mockWorld({
     extra: {

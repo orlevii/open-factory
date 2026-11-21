@@ -49,9 +49,11 @@ export const Route = createFileRoute("/_app/settings")({
       qc.ensureQueryData(dailyUsageQuery(days)),
       qc.ensureQueryData(agentsUsageQuery(days)),
       qc.ensureQueryData(credentialsUsageQuery(days)),
-      qc.ensureQueryData(credentialsQueryOptions),
-      qc.ensureQueryData(secretsQueryOptions),
-      qc.ensureQueryData(projectsQueryOptions),
+      // These three are stale at once (no WebSocket event covers them): fetch on every entry, and
+      // the sections skip their own mount fetch, so entry costs one request each.
+      qc.fetchQuery(credentialsQueryOptions),
+      qc.fetchQuery(secretsQueryOptions),
+      qc.fetchQuery(projectsQueryOptions),
       qc.ensureQueryData(usersQueryOptions),
       qc.ensureQueryData(invitesQueryOptions),
       qc.ensureQueryData(factorySettingsQueryOptions),

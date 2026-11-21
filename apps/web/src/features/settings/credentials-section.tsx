@@ -369,7 +369,11 @@ function VerificationState({ c }: { c: CredentialSummary }) {
 
 export function CredentialsSection() {
   const qc = useQueryClient();
-  const query = useQuery({ ...credentialsQueryOptions, refetchInterval: RATE_LIMIT_REFETCH_MS });
+  const query = useQuery({
+    ...credentialsQueryOptions,
+    refetchOnMount: false, // the settings loader just fetched it
+    refetchInterval: RATE_LIMIT_REFETCH_MS,
+  });
   const { data } = query;
   const focusLater = useFocusLater();
   const [adding, setAdding] = useState(false);

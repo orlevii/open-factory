@@ -53,6 +53,18 @@ export function valuesOf(s: ScheduleItem): FormValues {
   };
 }
 
+/** A refreshed schedule's values: a field the user changed (differs from the previous base) is kept, the rest follow the server. */
+export function mergeServer(
+  prev: FormValues,
+  prevBase: FormValues,
+  server: FormValues,
+): FormValues {
+  const out = { ...prev };
+  for (const k of Object.keys(server) as (keyof FormValues)[])
+    if (prev[k] === prevBase[k]) out[k] = server[k] as never;
+  return out;
+}
+
 /**
  * Create and edit (UI design §3). Each field validates when you leave it, never while you type; everything changed is
  * checked again on submit, which moves focus to the first invalid field. Edit sends only the fields that changed.
@@ -116,13 +128,12 @@ export function ScheduleForm({
   // biome-ignore lint/correctness/useExhaustiveDependencies: only a change on the server counts
   useEffect(() => {
     if (!initial) return;
-    const next = valuesOf(initial);
-    const out = { ...v };
-    for (const k of Object.keys(next) as (keyof FormValues)[])
-      if (v[k] === base.current[k]) out[k] = next[k] as never;
-    base.current = next;
-    setV(out);
+    const server = valuesOf(initial);
+    const prevBase = base.current; // before the reassignment below
+    base.current = server;
+    setV((prev) => mergeServer(prev, prevBase, server));
     // The preview follows the fields it reads, so a server change to the timing doesn't leave it stale.
+    const out = mergeServer(v, prevBase, server);
     setPreview(previewText({ mode: out.mode, cron: out.cron, local: out.local, zone: out.zone }));
   }, [serverValues]);
 

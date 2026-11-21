@@ -265,29 +265,33 @@ test("rows are a snapshot of the query: a list change while it's open moves noth
   await waitFor(() => expect(options(dialog)[0]).toContain("@devbox"));
 });
 
-test("Agent details from the palette at a peek width leaves focus inside the sheet", async () => {
-  const original = window.matchMedia;
-  fakeMatchMedia.installWidth(900);
-  try {
-    renderApp("/agents/dev", alice);
-    // Opened from the composer: the dialog's focus return would send focus back there.
-    const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
-    box.focus();
-    fireEvent.keyDown(box, { key: "k", ctrlKey: true });
-    const dialog = await screen.findByRole("dialog", { name: "Search" });
-    await userEvent.type(within(dialog).getByRole("combobox"), "details");
-    await waitFor(() => expect(highlighted(dialog)).toHaveTextContent("Agent details"));
-    await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(document.getElementById("agent-details")).not.toBeNull());
-    // Past the closing dialog's own focus return (a timer).
-    await new Promise((r) => setTimeout(r, 50));
-    expect(document.getElementById("agent-details")).toContainElement(
-      document.activeElement as HTMLElement,
-    );
-  } finally {
-    window.matchMedia = original;
-  }
-});
+// The whole peek range, edges included (768–1023px).
+test.each([768, 900, 1023])(
+  "Agent details from the palette at %ipx leaves focus inside the sheet",
+  async (width) => {
+    const original = window.matchMedia;
+    fakeMatchMedia.installWidth(width);
+    try {
+      renderApp("/agents/dev", alice);
+      // Opened from the composer: the dialog's focus return would send focus back there.
+      const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
+      box.focus();
+      fireEvent.keyDown(box, { key: "k", ctrlKey: true });
+      const dialog = await screen.findByRole("dialog", { name: "Search" });
+      await userEvent.type(within(dialog).getByRole("combobox"), "details");
+      await waitFor(() => expect(highlighted(dialog)).toHaveTextContent("Agent details"));
+      await userEvent.keyboard("{Enter}");
+      await waitFor(() => expect(document.getElementById("agent-details")).not.toBeNull());
+      // Past the closing dialog's own focus return (a timer).
+      await new Promise((r) => setTimeout(r, 50));
+      expect(document.getElementById("agent-details")).toContainElement(
+        document.activeElement as HTMLElement,
+      );
+    } finally {
+      window.matchMedia = original;
+    }
+  },
+);
 
 test("a short query renders a capped agent list, keeping every strong match", async () => {
   const many = Array.from({ length: 80 }, (_, i) =>

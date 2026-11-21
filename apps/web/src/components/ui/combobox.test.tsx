@@ -36,8 +36,13 @@ function setup(props: Partial<React.ComponentProps<typeof Combobox>> = {}) {
 }
 
 const content = () => document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+/** Each row's visible text (the current value's screen-reader ", selected" left out). */
 const optionNames = () =>
-  screen.getAllByRole("option").map((o) => (o.textContent ?? "").replace(/\s+/g, " ").trim());
+  screen.getAllByRole("option").map((o) => {
+    const copy = o.cloneNode(true) as HTMLElement;
+    for (const sr of copy.querySelectorAll(".sr-only")) sr.remove();
+    return (copy.textContent ?? "").replace(/\s+/g, " ").trim();
+  });
 const highlighted = () =>
   screen.getAllByRole("option").find((o) => o.getAttribute("aria-selected") === "true");
 
@@ -256,4 +261,19 @@ test("a rendered value is a direct child of the slot, so it shrinks with it", ()
   });
   const slot = trigger.querySelector('[data-slot="combobox-value"]');
   expect(screen.getByTestId("chip").parentElement).toBe(slot);
+});
+
+test("the popover and its listbox are named after the combobox", async () => {
+  const { trigger } = setup();
+  await userEvent.click(trigger);
+  expect(await screen.findByRole("listbox", { name: "Manager" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Manager" })).toBeInTheDocument();
+});
+
+test("the current value's row says it is selected to a screen reader, not only with a check", async () => {
+  const { trigger } = setup({ value: "beta" });
+  await userEvent.click(trigger);
+  const row = await screen.findByRole("option", { name: /^Beta/ });
+  expect(row).toHaveAccessibleName("Beta, selected");
+  expect(screen.getByRole("option", { name: "Alpha" })).toBeInTheDocument();
 });

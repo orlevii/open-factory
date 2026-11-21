@@ -24,13 +24,16 @@ export async function pickComboOption(trigger: HTMLElement, name: string | RegEx
   await userEvent.click(await screen.findByRole("option", { name }));
 }
 
-/** The open Combobox's option names (closes it afterwards). */
+/** The open Combobox's option labels as shown (the current value's screen-reader ", selected" left
+ *  out; closes it afterwards). */
 export async function comboOptionNames(trigger: HTMLElement): Promise<string[]> {
   await userEvent.click(trigger);
   await screen.findByRole("listbox");
-  const names = Array.from(document.querySelectorAll("[role=option]")).map((o) =>
-    (o.textContent ?? "").replace(/\s+/g, " ").trim(),
-  );
+  const names = Array.from(document.querySelectorAll("[role=option]")).map((o) => {
+    const copy = o.cloneNode(true) as HTMLElement;
+    for (const sr of copy.querySelectorAll(".sr-only")) sr.remove();
+    return (copy.textContent ?? "").replace(/\s+/g, " ").trim();
+  });
   await userEvent.keyboard("{Escape}");
   return names;
 }

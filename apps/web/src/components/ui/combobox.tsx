@@ -78,14 +78,17 @@ function ComboItem({
     >
       <span className="min-w-0 flex-1 truncate">{renderOption ? renderOption(option) : option.label}</span>
       <span className="absolute right-2 flex size-4 items-center justify-center">
-        {selected ? <CheckIcon className="size-4 text-foreground" /> : null}
+        {selected ? <CheckIcon aria-hidden="true" className="size-4 text-foreground" /> : null}
       </span>
+      {/* cmdk's aria-selected marks the highlight, so the current value says so in words. */}
+      {selected ? <span className="sr-only">, selected</span> : null}
     </CommandPrimitive.Item>
   )
 }
 
 /** Mounted only while open, so the arranging runs per opening, not on every parent render. */
 function ComboList({
+  label,
   options,
   value,
   emptyText,
@@ -93,6 +96,8 @@ function ComboList({
   onSearch,
   renderOption,
 }: {
+  /** The combobox's name, given to the listbox. */
+  label: string
   options: ComboOption[]
   value: string
   emptyText?: string
@@ -153,7 +158,7 @@ function ComboList({
         />
       </div>
       {/* A fixed height: the popover doesn't resize as the filter narrows, and nothing animates it. */}
-      <CommandPrimitive.List onPointerMove={() => (moved.current = true)} className="h-72 overflow-y-auto overscroll-contain scroll-py-1 p-1">
+      <CommandPrimitive.List label={label} onPointerMove={() => (moved.current = true)} className="h-72 overflow-y-auto overscroll-contain scroll-py-1 p-1">
         <CommandPrimitive.Empty className="py-6 text-center text-sm text-muted-foreground">
           {emptyText}
         </CommandPrimitive.Empty>
@@ -291,9 +296,11 @@ function Combobox({
         alignOffset={lock?.offset ?? 0}
         avoidCollisions={!lock}
         onEscapeKeyDown={stampInstant}
+        aria-label={ariaLabel}
         className="w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] gap-0 p-0"
       >
         <ComboList
+          label={ariaLabel}
           options={options}
           value={value}
           emptyText={emptyText}

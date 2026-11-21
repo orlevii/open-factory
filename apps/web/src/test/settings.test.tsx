@@ -353,6 +353,43 @@ test("?addSecret=GH_TOKEN opens the add form with the name filled and the value 
   expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
 });
 
+test("?addSecret brings the add form into view after the navigation's scroll reset", async () => {
+  // jsdom has no layout: record the order of the router's reset (window.scrollTo) and the form's
+  // scrollIntoView; the form must be the last thing scrolled, or the reset hides it again.
+  const scrolls: string[] = [];
+  const reset = vi.spyOn(window, "scrollTo").mockImplementation(() => scrolls.push("reset"));
+  const into = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+    this: Element,
+  ) {
+    scrolls.push(this.getAttribute("aria-label") ?? this.tagName);
+  });
+  try {
+    world();
+    renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
+    const region = await section("Secrets");
+    await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
+    await waitFor(() => expect(scrolls).toContain("reset"));
+    await waitFor(() => expect(scrolls.at(-1)).toBe("Add secret"));
+  } finally {
+    reset.mockRestore();
+    into.mockRestore();
+  }
+});
+
+test("opening the add form with its button scrolls nothing itself", async () => {
+  const into = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  try {
+    world();
+    renderApp("/settings/secrets", alice);
+    const region = await section("Secrets");
+    await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
+    expect(within(region).getByLabelText("Name")).toHaveFocus();
+    expect(into).not.toHaveBeenCalled();
+  } finally {
+    into.mockRestore();
+  }
+});
+
 test("the secret name is uppercased while typing, keeping the caret; reserved names error on blur", async () => {
   world();
   renderApp("/settings/secrets", alice);

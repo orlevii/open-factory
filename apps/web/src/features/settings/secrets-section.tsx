@@ -136,6 +136,7 @@ function AddSecretForm({
       pending={pending}
       formError={formError}
       autoFocusId={initialName ? "field-secret-value" : undefined}
+      reveal={Boolean(initialName)}
     >
       <FormField
         name="secret-name"

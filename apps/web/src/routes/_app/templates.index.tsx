@@ -46,7 +46,7 @@ function TemplatesPage() {
         }
       />
       <PageBody>
-        <div className="grid gap-4">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
           <div role="status" aria-live="polite" className="empty:hidden">
             {deleted && <InlineOutcome tone="success">Deleted {deleted}.</InlineOutcome>}
           </div>

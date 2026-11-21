@@ -31,7 +31,7 @@ export function ImagesSection() {
   }, [hash, isPending]);
 
   return (
-    <section id="images" aria-labelledby="images-title" className="mt-4 grid gap-3 scroll-mt-4">
+    <section id="images" aria-labelledby="images-title" className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3 scroll-mt-4">
       <h2
         id="images-title"
         tabIndex={-1}
@@ -53,7 +53,7 @@ export function ImagesSection() {
         </p>
       )}
       {data && data.images.length === 0 && (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
           No images yet. Add a Dockerfile at{" "}
           <code className={code}>{`${data.imagesDir}/<name>/Dockerfile`}</code>, starting FROM{" "}
           <code className={code}>{data.baseImage}</code>.
@@ -97,7 +97,7 @@ function ImageRow({ item }: { item: ImageItem }) {
   };
 
   return (
-    <li className="grid gap-2 px-2 py-2">
+    <li className="grid grid-cols-[minmax(0,1fr)] gap-2 px-2 py-2">
       <div className="flex min-h-7 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
         <span data-image-name className={code}>
           {item.name}

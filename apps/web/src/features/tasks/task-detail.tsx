@@ -70,7 +70,9 @@ function SideSection({
   flush?: boolean;
 }) {
   return (
-    <section className={`grid gap-1.5 border-b border-border py-3 ${flush ? "pt-0" : ""}`}>
+    <section
+      className={`grid grid-cols-[minmax(0,1fr)] gap-1.5 border-b border-border py-3 ${flush ? "pt-0" : ""}`}
+    >
       <h3 className="text-[0.8125rem] font-normal text-muted-foreground">{label}</h3>
       {children}
     </section>
@@ -204,10 +206,10 @@ export function TaskDetailView({
       <p role="status" aria-live="polite" className="sr-only">
         {announce}
       </p>
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,17.5rem)] lg:grid-rows-[auto_auto_1fr]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 lg:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)] lg:grid-rows-[auto_auto_1fr]">
         <TitleBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
         <aside className="contents min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:block">
-          <div className="order-2 grid min-w-0 gap-1 lg:mb-0">
+          <div className="order-2 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 lg:mb-0">
             <StatusAndAssignee task={task} announce={setAnnounce} save={saveTask} />
           </div>
           <div className="order-4 min-w-0">
@@ -215,7 +217,7 @@ export function TaskDetailView({
           </div>
         </aside>
         <BodyBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
-        <div className="order-5 grid min-w-0 gap-4 lg:col-start-1">
+        <div className="order-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:col-start-1">
           <TaskActivity
             taskKey={task.key}
             items={task.activity}
@@ -271,9 +273,9 @@ function TitleBlock({
     }
   }
   return (
-    <div className="order-1 grid min-w-0 gap-1.5 lg:col-start-1">
+    <div className="order-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 lg:col-start-1">
       {editing ? (
-        <div className="grid gap-1.5">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
           <Input
             ref={input}
             aria-label="Title"
@@ -362,9 +364,9 @@ function BodyBlock({
     }
   }
   return (
-    <div className="order-3 grid min-w-0 gap-2 lg:col-start-1">
+    <div className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:col-start-1">
       {editing ? (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           {/* Escape does not cancel here: it would discard a long draft. */}
           <MarkdownEditor
             id="task-body"
@@ -385,7 +387,7 @@ function BodyBlock({
           />
         </div>
       ) : (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           {task.body.trim() ? (
             <Markdown source={task.body} variant="detail" />
           ) : (
@@ -592,7 +594,7 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
   return (
     <SideSection label="Depends on">
       {editing ? (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <DependencyEditor
             name="task-depends-on"
             value={text}
@@ -691,7 +693,7 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
   return (
     <SideSection label="Links">
       {editing ? (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <LinkEditor rows={rows} onChange={setRows} errors={errors} onBlurRow={() => check()} />
           {(active.isError || ended.isError) && (
             <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">

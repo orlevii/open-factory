@@ -15,7 +15,7 @@ function Dashboard() {
     <>
       <PageHeader title="Home" />
       <PageBody>
-        <div className="grid items-start gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 md:grid-cols-2">
           <Panel id="panel-inbox" title="Inbox" to="/inbox" linkLabel="Open inbox">
             <HomeInbox />
           </Panel>

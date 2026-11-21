@@ -144,8 +144,13 @@ export const templateDetailSchema = z.object({
 });
 export type TemplateDetail = z.infer<typeof templateDetailSchema>;
 export const templateDetailResponseSchema = z.object({ template: templateDetailSchema });
+/** U2 §14: the web's static routes beside `/templates/$name` (`/templates/new`, `/templates/images`). A template
+ *  with one of these names would be unreachable by URL, so creation refuses them. */
+export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new", "images"];
+export const isReservedTemplateName = (name: string) => RESERVED_TEMPLATE_NAMES.includes(name);
+export const RESERVED_TEMPLATE_NAME_MESSAGE = "That name is reserved.";
 export const createTemplateBodySchema = z.object({
-  name: nameSchema,
+  name: nameSchema.refine((n) => !isReservedTemplateName(n), RESERVED_TEMPLATE_NAME_MESSAGE),
   displayName: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
 });

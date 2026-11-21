@@ -1,4 +1,4 @@
-import type { templateSummarySchema } from "@open-factory/shared";
+import { isReservedTemplateName, type templateSummarySchema } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, TriangleAlert } from "lucide-react";
 import type { z } from "zod";
@@ -29,6 +29,20 @@ function ValidationState({ errors, warnings }: { errors: number; warnings: numbe
   );
 }
 
+/** A folder made on disk with a name the web's static routes take (`new`, `images`): `/templates/<name>` opens
+ *  that page instead, so the row isn't a link and says what to do. */
+function ReservedRow({ name }: { name: string }) {
+  return (
+    <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm">
+      <span className="min-w-0 font-mono text-[0.8125rem]">{name}</span>
+      <span className="flex items-center gap-1.5 text-[0.8125rem]">
+        <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
+        Rename this folder: its name is reserved.
+      </span>
+    </div>
+  );
+}
+
 export function TemplateList({ dir, templates }: { dir: string; templates: Summary[] }) {
   if (templates.length === 0) {
     return (
@@ -42,40 +56,44 @@ export function TemplateList({ dir, templates }: { dir: string; templates: Summa
     <ul className="@container divide-y divide-border border-y border-border">
       {templates.map((t) => (
         <li key={t.name}>
-          <Link
-            to="/templates/$name"
-            params={{ name: t.name }}
-            className="of-row flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm @min-[60rem]:flex-nowrap @min-[60rem]:py-0"
-          >
-            <span className="min-w-0 font-mono text-[0.8125rem]">{t.name}</span>
-            {t.displayName && (
-              <span className="min-w-0 @min-[60rem]:shrink-0">{t.displayName}</span>
-            )}
-            {/* The description is the first thing to go on narrow screens. */}
-            <span className="hidden min-w-0 flex-1 truncate text-muted-foreground @min-[60rem]:block">
-              {t.description}
-            </span>
-            <span className="order-3 flex min-w-0 basis-full flex-wrap gap-x-4 text-[0.8125rem] text-muted-foreground @min-[60rem]:order-none @min-[60rem]:contents">
-              {t.runtime && (
-                <span className="@min-[60rem]:shrink-0">
-                  {t.runtime === "docker" ? "Docker" : "Local"}
-                </span>
+          {isReservedTemplateName(t.name) ? (
+            <ReservedRow name={t.name} />
+          ) : (
+            <Link
+              to="/templates/$name"
+              params={{ name: t.name }}
+              className="of-row flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm @min-[60rem]:flex-nowrap @min-[60rem]:py-0"
+            >
+              <span className="min-w-0 font-mono text-[0.8125rem]">{t.name}</span>
+              {t.displayName && (
+                <span className="min-w-0 @min-[60rem]:shrink-0">{t.displayName}</span>
               )}
-              {t.imageStatus && (
-                <span className="flex min-w-0 items-center gap-1.5 @min-[60rem]:shrink-0">
-                  <ImageStatusLabel status={t.imageStatus.status} />
-                  {/* On one line the cell doesn't shrink, so a long registry ref is capped here. */}
-                  <span className="min-w-0 truncate font-mono @min-[60rem]:max-w-56">
-                    {t.imageStatus.name}
-                  </span>
-                </span>
-              )}
-              <span className="@min-[60rem]:shrink-0">
-                {t.agentCount === 0 ? "No agents" : plural(t.agentCount, "agent")}
+              {/* The description is the first thing to go on narrow screens. */}
+              <span className="hidden min-w-0 flex-1 truncate text-muted-foreground @min-[60rem]:block">
+                {t.description}
               </span>
-            </span>
-            <ValidationState errors={t.errors} warnings={t.warnings} />
-          </Link>
+              <span className="order-3 flex min-w-0 basis-full flex-wrap gap-x-4 text-[0.8125rem] text-muted-foreground @min-[60rem]:order-none @min-[60rem]:contents">
+                {t.runtime && (
+                  <span className="@min-[60rem]:shrink-0">
+                    {t.runtime === "docker" ? "Docker" : "Local"}
+                  </span>
+                )}
+                {t.imageStatus && (
+                  <span className="flex min-w-0 items-center gap-1.5 @min-[60rem]:shrink-0">
+                    <ImageStatusLabel status={t.imageStatus.status} />
+                    {/* On one line the cell doesn't shrink, so a long registry ref is capped here. */}
+                    <span className="min-w-0 truncate font-mono @min-[60rem]:max-w-56">
+                      {t.imageStatus.name}
+                    </span>
+                  </span>
+                )}
+                <span className="@min-[60rem]:shrink-0">
+                  {t.agentCount === 0 ? "No agents" : plural(t.agentCount, "agent")}
+                </span>
+              </span>
+              <ValidationState errors={t.errors} warnings={t.warnings} />
+            </Link>
+          )}
         </li>
       ))}
     </ul>

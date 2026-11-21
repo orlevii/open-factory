@@ -291,6 +291,55 @@ test("new template: a taken name shows the field error", async () => {
   expect(await screen.findByText("A template named lead already exists.")).toBeInTheDocument();
 });
 
+test("new template: a name the routes use is reserved, before anything is sent", async () => {
+  const api = mockApi({});
+  renderApp("/templates/new", alice);
+  const name = await screen.findByLabelText("Name");
+  await userEvent.type(name, "images");
+  await userEvent.tab();
+  expect(await screen.findByText("That name is reserved.")).toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText("Display name"), "Images");
+  await userEvent.click(screen.getByRole("button", { name: "Create template" }));
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("list: a folder named images or new can't be opened by URL; its row says to rename it", async () => {
+  mockApi({
+    "GET /api/templates": () =>
+      json({
+        dir: "/d",
+        templates: [
+          summary({ name: "images" }),
+          summary({ name: "new" }),
+          summary({ name: "lead" }),
+        ],
+      }),
+  });
+  renderApp("/templates", alice);
+  const notes = await screen.findAllByText("Rename this folder: its name is reserved.");
+  expect(notes).toHaveLength(2);
+  for (const n of notes) {
+    const row = n.closest("li") as HTMLElement;
+    expect(within(row).queryByRole("link")).toBeNull();
+  }
+  expect(screen.getByRole("link", { name: /^lead/ })).toHaveAttribute("href", "/templates/lead");
+});
+
+test("template page: an oversize avatar.svg is named as ignored", async () => {
+  const d = detail();
+  const api = mockApi({
+    "GET /api/templates/lead": () =>
+      json({ template: { ...d.template, avatar: { version: null, tooLarge: true } } }),
+  });
+  const { unmount } = renderApp("/templates/lead", alice);
+  expect(await screen.findByText("avatar.svg ignored: over 256 KB")).toBeInTheDocument();
+  unmount();
+  api.on("GET /api/templates/lead", () => json(detail()));
+  renderApp("/templates/lead", alice);
+  await screen.findByRole("textbox", { name: "template.yaml" });
+  expect(screen.queryByText(/avatar\.svg ignored/)).toBeNull();
+});
+
 test("new template: blur validates the name; submit validates everything", async () => {
   const api = mockApi({});
   renderApp("/templates/new", alice);

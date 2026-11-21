@@ -62,6 +62,14 @@ test("focus moves into the drawer, onto the content, not the first input", () =>
   expect(document.activeElement).toBe(document.querySelector("[data-slot=drawer-content]"));
 });
 
+test("the content it focuses shows no focus ring: it is a landing point, not a control", () => {
+  // jsdom has no :focus-visible styles; the browser pass checks the drawer opens without the ring.
+  open();
+  const content = document.querySelector("[data-slot=drawer-content]");
+  expect(document.activeElement).toBe(content);
+  expect(content).toHaveClass("outline-none");
+});
+
 test("reduced motion fades an inner wrapper", () => {
   open();
   const inner = document.querySelector("[data-slot=drawer-inner]");

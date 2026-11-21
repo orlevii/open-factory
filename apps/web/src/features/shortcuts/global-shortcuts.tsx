@@ -3,7 +3,10 @@ import { useEffect } from "react";
 import { newTask } from "@/features/tasks/actions";
 import { useShortcut } from "@/lib/shortcuts";
 import { setShortcutsSheetOpen, toggleShortcutsSheet } from "./sheet-store";
-import { ShortcutsSheet } from "./shortcuts-sheet";
+import { SHORTCUTS_SHEET_ID, ShortcutsSheet } from "./shortcuts-sheet";
+
+/** Below 768 the sheet is a modal drawer, and `?` still closes it; behind any other modal it stays blocked. */
+const ownsSheet = (modal: Element) => modal.id === SHORTCUTS_SHEET_ID;
 
 /** Registers the app-wide single-key bindings (§10.3) and hosts the sheet that lists them. Matching
  *  is on `event.key`, so `?` works on layouts where it needs Shift. */
@@ -15,7 +18,7 @@ export function GlobalShortcuts() {
   useShortcut("g u", () => void navigate({ to: "/usage" }));
   useShortcut("g a", () => void navigate({ to: "/agents" }));
   useShortcut("c", () => newTask(navigate));
-  useShortcut("?", toggleShortcutsSheet);
+  useShortcut("?", toggleShortcutsSheet, { allowInModal: ownsSheet });
   // Leaving the shell (sign-out) closes it, so the next shell doesn't open with it.
   useEffect(() => () => setShortcutsSheetOpen(false), []);
   return <ShortcutsSheet />;

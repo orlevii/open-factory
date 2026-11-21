@@ -155,3 +155,41 @@ test("none of them fire while typing in an input", async () => {
     input.remove();
   }
 });
+
+test("below 768 the sheet is a modal drawer: ? still closes it, other keys stay blocked behind it", async () => {
+  fakeMatchMedia.installWidth(390);
+  const { router } = await shell();
+  try {
+    press("?", { shiftKey: true });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="drawer-content"][data-state="open"]'),
+      ).not.toBeNull(),
+    );
+    press("c");
+    act(() => {});
+    expect(router.state.location.pathname).toBe("/inbox");
+    press("?", { shiftKey: true });
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="drawer-content"][data-state="open"]')).toBeNull(),
+    );
+    // Closed again, ? reopens it.
+    press("?", { shiftKey: true });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="drawer-content"][data-state="open"]'),
+      ).not.toBeNull(),
+    );
+  } finally {
+    document.body.style.pointerEvents = "";
+  }
+});
+
+test("? does not toggle the sheet behind another modal", async () => {
+  await shell();
+  fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+  await screen.findByRole("dialog", { name: "Search" });
+  press("?", { shiftKey: true });
+  act(() => {});
+  expect(sheet()).toBeNull();
+});

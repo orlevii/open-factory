@@ -22,6 +22,9 @@ const GROUPS: { title: string; rows: { label: string; keys: string[] }[] }[] = [
   { title: "Session", rows: [{ label: "Agent details", keys: ["]"] }] },
 ];
 
+/** The sheet's content id: `?` may fire behind it when it is the open modal (the phone drawer). */
+export const SHORTCUTS_SHEET_ID = "shortcuts-sheet";
+
 const parseOn = (raw: string) => raw !== "off";
 const serializeOn = (on: boolean) => (on ? "on" : "off");
 
@@ -32,7 +35,7 @@ export function ShortcutsSheet() {
   const [on, setOn] = usePref(SINGLE_KEYS_PREF, true, parseOn, serializeOn);
   return (
     <Sheet open={open} onOpenChange={setShortcutsSheetOpen} modal={false}>
-      <SheetContent aria-describedby={undefined}>
+      <SheetContent id={SHORTCUTS_SHEET_ID} aria-describedby={undefined}>
         <SheetHeader>
           <SheetTitle>Keyboard shortcuts</SheetTitle>
         </SheetHeader>

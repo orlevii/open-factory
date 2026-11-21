@@ -151,7 +151,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         }
         page ??= await fetchEvents(slug);
         dispatch({ type: "loaded", page, detail, mode });
-        // Everything held is caught up: nothing loaded fades (U3 §8.3; PR4 adds the live `reset`).
+        // A no-op today (`loaded` already sets liveAfter): the placeholder for PR4's subscribe `reset`
+        // frame, which must dispatch `caught_up` so a reconnect's replay never fades (U3 §8.3).
         dispatch({ type: "caught_up" });
         setError(undefined);
         setLoadedAt(Date.now());

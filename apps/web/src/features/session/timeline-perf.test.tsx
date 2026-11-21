@@ -239,20 +239,37 @@ test("a queue frame renders no row and no markdown", async () => {
   expect(count.markdown).toBe(0);
 });
 
-test("a live row is marked live; the tab coming back re-renders only rows that were live", async () => {
+test("the tab coming back clears every live row's flag without re-rendering any row's content", async () => {
   await setup();
-  push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
+  // 30 live rows over three frames (each batch is 10 or fewer, so all of them are live).
+  for (let b = 0; b < 3; b++) {
+    for (let i = 0; i < 10; i++) {
+      const seq = 201 + b * 10 + i;
+      push(sessionEvent(ev(seq, { type: "assistant_text", text: `Text ${seq}` })));
+    }
+    frame();
+  }
+  // A live tool with a result, too: tool renderers must not re-render either.
+  push(
+    sessionEvent(
+      ev(231, { type: "tool_call", toolUseId: "tu-live", name: "Bash", input: { command: "ls" } }),
+    ),
+  );
+  push(
+    sessionEvent(
+      ev(232, { type: "tool_result", toolUseId: "tu-live", content: "x", isError: false }),
+    ),
+  );
   frame();
-  const wrap = () => document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]");
-  expect(wrap()).toHaveAttribute("data-live");
-  expect(document.querySelectorAll("[data-row-wrap][data-live]")).toHaveLength(1);
+  expect(document.querySelectorAll("[data-row-wrap][data-live]")).toHaveLength(31);
   reset();
   act(() => {
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  expect(wrap()).not.toHaveAttribute("data-live");
-  // Only the row whose flag flipped; the 200 loaded rows stay put.
-  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+  expect(document.querySelectorAll("[data-row-wrap][data-live]")).toHaveLength(0);
+  expect(commits).toBe(1);
+  expect(count.rows.size).toBe(0);
+  expect(count.markdown).toBe(0);
 });
 
 test("one appended assistant text renders exactly one new row and one markdown", async () => {

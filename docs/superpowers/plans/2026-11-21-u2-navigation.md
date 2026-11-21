@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Agents in the sidebar as the reporting tree with generated avatars, an Agent details panel and one-line session header, Settings pages and a top-level Usage page, a ⌘K palette with shortcuts and searchable pickers, an inbox reading pane and task peek, and the Home and Templates/Images redesigns, delivered as six stacked PRs on U1.
+**Goal:** Agents in the sidebar as the reporting tree with generated avatars, an Agent details panel and one-line session header, Settings pages and a top-level Usage page, a ⌘K palette with shortcuts and searchable pickers, an inbox reading pane and task peek, the Templates/Images views, and the Inbox as home (Home removed), delivered as six stacked PRs on U1.
 
 **Architecture:** Shared Zod schemas grow a few fields (`byAgent`, `avatarVersion`, `q`); the server adds four small routes; the web app adds a handful of primitives (avatar, chip, peek sheet mode, combobox, shortcut dispatcher, prefs, breakpoints) and rebuilds the shell, session header, settings, inbox and task list on them. Live agent state is folded into the query cache once, in the shell, and read per row through selectors so a status frame re-renders only what changed.
 
@@ -33,7 +33,7 @@
 | 3 | `u2/3-settings-usage` | `u2/2-agent-details` | `feat(web): Settings pages and a top-level Usage page` | 27–30 |
 | 4 | `u2/4-palette` | `u2/3-settings-usage` | `feat: command palette, shortcuts and searchable pickers` | 31–38 |
 | 5 | `u2/5-inbox-pane` | `u2/4-palette` | `feat: inbox reading pane and task peek` | 39–46 |
-| 6 | `u2/6-home-templates` | `u2/5-inbox-pane` | `feat(web): Home redesign and Templates/Images views` | 47–52 |
+| 6 | `u2/6-templates-inbox-home` | `u2/5-inbox-pane` | `feat(web): Templates/Images views; the Inbox is home` | 47–52 |
 
 After a PR below merges, retarget the next PR's base to `main` and rebase its branch (`git rebase --onto main <old-base> <branch>`). Task 52 (whole-stack review) runs on PR6's branch.
 
@@ -694,7 +694,7 @@ Implements DESIGN.md §16.1 (`avatar-ink`, `sidebar.width` 256px, Layout "256px 
 - [ ] **Step 2:** Edit the behavior docs in the main checkout (`/Users/orlevi/projects/open-factory/docs/product/behavior/general.md`, `inbox.md`) with the PR1 parts of spec §17. Not committed (gitignored); copy the edited sentences into the PR body.
 - [ ] **Step 3:** Verify: `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. All green.
 - [ ] **Step 4:** Manual evidence (spec §2.13, PR1 rows), recorded in the PR body with screenshots: the 214-agent break-ui dataset (`/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/seed-worst.mjs` against a clone DB) in the sidebar: scroll, expand, a status storm under 4× CPU throttling (Performance recording; if a frame over 16ms is attributable to the tree, comment the recording on #91, else close #91 with it); a collapsed manager at depth 4 with working and unread counts; the `content-visibility: auto` experiment and the per-`Link` router subscription cost (Task 12 review note); an active working row; the rail with 214 agents; avatars at 16/20/24 in both themes with the 16-row contrast table from Task 5; a template `avatar.svg` override.
-- [ ] **Step 5:** Push and open the PR: `git push -u origin u2/1-sidebar-agents && gh pr create --base u1/5-perceived-speed --title "feat: agent avatars and agents in the sidebar" --body-file <body>` following `.github/pull_request_template.md` (What, Why, Approach "<decision>, rather than <alternative>, because <reason>", Changes by area; template comments removed), linking the spec and #89, listing the behavior-doc edits, and noting "Stacked on #88; retarget to main after the U1 stack merges." Add a **Needs Or** section: Q34 — viewing a session marks that agent's unread messages read (switch: don't call read-from; row counts stay until read in the Inbox); Q32 — the working count drawn as tooth + number (switch: render "N working" text); Q4 — spawned avatars at full opacity (switch: `opacity-85` on ephemeral agents). End the body with the Claude Code attribution line.
+- [ ] **Step 5:** Push and open the PR: `git push -u origin u2/1-sidebar-agents && gh pr create --base u1/5-perceived-speed --title "feat: agent avatars and agents in the sidebar" --body-file <body>` following `.github/pull_request_template.md` (What, Why, Approach "<decision>, rather than <alternative>, because <reason>", Changes by area; template comments removed), linking the spec and #89, listing the behavior-doc edits, and noting "Stacked on #88; retarget to main after the U1 stack merges." Add a **Decided by Or's delegate** section: Q34 — viewing a session marks that agent's unread messages read (a badge the conversation doesn't clear reads as a bug; safeguards: server-side by sender, `upTo` cutoff, never from a loader, only while visible); Q32 — the collapsed manager's working count drawn as tooth + number (the words don't fit a 256px row; "N working" stays the accessible name and tooltip); Q4 — spawned avatars at full opacity (spawned-ness is shown by nesting and the "· ab12" suffix; lower opacity would read as disabled). End the body with the Claude Code attribution line.
 
 ---
 
@@ -821,7 +821,7 @@ Implements §8.3. Builds on `agent-strip.tsx` segments (re-homed), `agentsUsageQ
 **Interfaces:**
 - Produces: `AgentDetails({ agent, stop, usage, onClose? }: { agent: AgentSummary; stop: StopCrons; usage: AgentUsageRow | null | undefined; onClose?: () => void })`.
 
-- [ ] **Step 1: Failing tests** — strip titled "Agent details"; `@slug` and description; Now lists every waiting task, crons with Stop crons, restart pending with Why, the terminated facts with Pin; Org shows manager and reports (`AgentChip`) with "All N reports" linking `/agents?focus=<slug>`; Work shows ≤5 tasks with "All N tasks" from `agent.openTasks` and ≤5 schedules with "All N schedules" from `agent.scheduleCount`; Usage shows the 7-day estimate and links `/agents/$slug/usage`; Runtime shows "Unsandboxed" only when local; "Edit agent" only for persistent, not archived; task/schedule queries don't fire until mounted.
+- [ ] **Step 1: Failing tests** — strip titled "Agent details"; `@slug` and description; Now lists every waiting task, crons with Stop crons, restart pending with Why, the terminated facts with Pin; Org shows manager and reports (`AgentChip`) with "All N reports" linking `/agents?focus=<slug>`; Work shows ≤5 tasks with "All N tasks" from `agent.openTasks` and ≤5 schedules with "All N schedules" from `agent.scheduleCount`; Usage shows the 7-day estimate and links `/agents/$slug/usage`; Runtime shows "Unsandboxed" only when local; "Edit agent" is an outline button (decision 20: outline for page/header-level actions) and only for persistent, not archived agents; task/schedule queries don't fire until mounted.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat(web): Agent details content`.
 
 ### Task 23: Web: `SessionView` layout, header and panel modes; strip removed
@@ -908,7 +908,7 @@ Implements DESIGN.md §16.1 `panel`, §16.3 Agent details, §16.6 (peek row and 
 - [ ] **Step 2:** Edit `/Users/orlevi/projects/open-factory/docs/product/behavior/agents-and-sessions.md` per §17 (PR2); copy the edits into the PR body.
 - [ ] **Step 3:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 4:** Manual evidence (§2.13 PR2 rows): the panel at 767/768/1023/1024/1279/1280 with a running agent (Stop reachable, toggle visible); the header at 1280 with an 80-character name, errored, panel open; a 500-row timeline with the sidebar collapse and the panel toggle (Performance recording of the anchoring frames).
-- [ ] **Step 5:** Push and `gh pr create --base u2/1-sidebar-agents` with the template, spec and #89 links, behavior-doc edits, "Stacked on PR1; retarget after it merges", and a **Needs Or** section: "None in this PR."
+- [ ] **Step 5:** Push and `gh pr create --base u2/1-sidebar-agents` with the template, spec and #89 links, behavior-doc edits, "Stacked on PR1; retarget after it merges", and a **Decided by Or's delegate** section: "None in this PR."
 
 ---
 
@@ -1000,7 +1000,7 @@ Implements DESIGN.md §16.3 Sub-navigation [PR3], §16.8 [PR3]; behavior docs §
 - [ ] **Step 2:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 3:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 4:** Manual: Settings at 320 and at 800 with the sidebar open (select form), each section, old bookmarks.
-- [ ] **Step 5:** Push and `gh pr create --base u2/2-agent-details` (template, spec, #89, docs, stacked note; a **Needs Or** section: "None in this PR.").
+- [ ] **Step 5:** Push and `gh pr create --base u2/2-agent-details` (template, spec, #89, docs, stacked note; a **Decided by Or's delegate** section: "None in this PR.").
 
 ---
 
@@ -1167,7 +1167,7 @@ Implements DESIGN.md [PR4] clauses of §16.5, §16.6, §16.7, §16.8; behavior d
 - [ ] **Step 2:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 3:** `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 4:** Record the build chunk-size delta from cmdk (before/after `pnpm build`) in the PR body. Manual: palette at 390 and 1440 (no animation, keys from the composer), comboboxes with 214 agents and the time zone list, a combobox inside a sheet.
-- [ ] **Step 5:** Push and `gh pr create --base u2/3-settings-usage`; body says "Closes #83" plus template, spec, #89, docs, stacked note, and a **Needs Or** section: "None in this PR."
+- [ ] **Step 5:** Push and `gh pr create --base u2/3-settings-usage`; body says "Closes #83" plus template, spec, #89, docs, stacked note, and a **Decided by Or's delegate** section: "None in this PR."
 
 ---
 
@@ -1314,28 +1314,28 @@ Implements DESIGN.md [PR5] clauses of §16.1, §16.3, §16.5, §16.6, §16.8, pl
 - [ ] **Step 2:** DESIGN.md [PR5] text; commit `docs: DESIGN.md reading pane, peeks and selected rows`.
 - [ ] **Step 3:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 4:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`; manual: the inbox pane at 1023/1024 with an 11 KB single-line message (composer stays visible), the task peek at 1024 and 1440, `steel-selected` in both themes next to hover (tune the two values; screenshots).
-- [ ] **Step 5:** Push and `gh pr create --base u2/4-palette` (template, spec, #89, docs, stacked note; a **Needs Or** section: "None in this PR.").
+- [ ] **Step 5:** Push and `gh pr create --base u2/4-palette` (template, spec, #89, docs, stacked note; a **Decided by Or's delegate** section: "None in this PR.").
 
 ---
 
-# PR 6 — `u2/6-home-templates`: Home redesign and Templates/Images views
+# PR 6 — `u2/6-templates-inbox-home`: Templates/Images views; the Inbox is home
 
-`git checkout -b u2/6-home-templates` from `u2/5-inbox-pane`.
+`git checkout -b u2/6-templates-inbox-home` from `u2/5-inbox-pane`.
 
-### Task 47: Web: Home "Needs you" and "Live now"
+### Task 47: Web: the Inbox is home; Home removed
 
-Implements §13. Builds on `routes/_app/index.tsx`, `features/agents/home-agents.tsx` (frozen-order logic), `features/inbox/home-inbox.tsx`, `liveFact` (Task 20), `useAgent`.
+Implements decision 17 (Or's delegate: drop Home; `/` opens the Inbox), replacing spec §13. Builds on `routes/_app/index.tsx`, `features/agents/home-agents.tsx` (+ `home-agents.test.tsx`), `features/inbox/home-inbox.tsx`, `components/app-sidebar.tsx:92` (wordmark link), `components/route-states.tsx:69,88` ("Go to Home"), `routes/sign-in.tsx:15,72`, `routes/sign-up.tsx:28,143`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
-**React review changes (m11):** Home selects plate membership as `string[]` (slugs, from a `select` that keeps a stable array when membership is unchanged); each row reads its agent with `useAgent(slug)`.
-
 **Files:**
-- Modify: `apps/web/src/routes/_app/index.tsx`, `apps/web/src/features/agents/home-agents.tsx` (becomes `LiveNow` + `NeedsYouAgents`)
-- Test: `apps/web/src/features/agents/home-agents.test.tsx`, `apps/web/src/test/empty-states.test.tsx`
+- Modify: `apps/web/src/routes/_app/index.tsx` → `beforeLoad: () => { throw redirect({ to: "/inbox", replace: true }) }`, no component
+- Delete: `apps/web/src/features/agents/home-agents.tsx`, `home-agents.test.tsx`, `apps/web/src/features/inbox/home-inbox.tsx` (Home is its only user). Keep `homeInboxQueryOptions`/`["inbox-home"]`: `features/inbox/notifications.ts:122` still uses it.
+- Modify (link `/inbox` directly): `components/app-sidebar.tsx:92` (wordmark), `components/route-states.tsx:69,88` ("Go to Home" → "Go to Inbox", `to="/inbox"`), `routes/sign-in.tsx:15,72` and `routes/sign-up.tsx:28,143` (`to: "/inbox"`); re-grep `grep -rn 'to="/"\|to: "/"\|href="/"' apps/web/src` and update anything new.
+- Test: `apps/web/src/test/shell.test.tsx`, `apps/web/src/test/empty-states.test.tsx`, `apps/web/src/test/sign-in.test.tsx`, `apps/web/src/test/sign-up.test.tsx`, `apps/web/src/test/route-states.test.tsx`
 
-- [ ] **Step 1:** Failing tests: Needs you = 5 unread items then live errored agents (not rate-limited, not restart-pending, no `stuck`), capped at 8 with "and N more" → `/agents`; Live now = working/queued/rate-limited, tree order, capped at 8, header "2 working · 1 queued"; membership and order frozen while the pointer is inside, applied when it leaves; empty lines "Nothing needs you." / "No agent is working." / "No agents yet." + "New agent".
-- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat(web): Home shows what needs you and what is live`.
+- [ ] **Step 1:** Failing tests: `renderApp("/")` lands on `/inbox` (replace: history length unchanged); the wordmark links `/inbox`; the not-found and error states offer "Go to Inbox" → `/inbox`; signing in or up lands on `/inbox`; no element renders "Home" as a page title.
+- [ ] **Step 2:** FAIL. **Step 3:** Implement, delete the Home files and update the tests that asserted Home (`shell.test.tsx:74` and the empty-states Home cases). **Step 4:** PASS (`pnpm test`). **Step 5:** Commit `feat(web): the Inbox is home; remove the Home page`.
 
 ### Task 48: Web: `SegmentedLinks` and the Templates/Images routes
 
@@ -1379,16 +1379,16 @@ Implements §14 (reserved names, oversize note), §15.3 (detail `avatar`). Build
 
 ### Task 51: PR6 docs, verify and open
 
-Implements behavior docs §17 `administration.md` Images, `inbox.md` Home sentence.
+Implements behavior docs §17 `administration.md` Images and `inbox.md`: replace the Home sentence with "The Inbox is the home screen: `/` opens it." (drop "Home's Needs you panel…"); `general.md`: after sign-up the user lands on the Inbox.
 
 - [ ] **Step 1:** Behavior docs in the main checkout; list them in the PR body. (No DESIGN.md text in PR6.)
 - [ ] **Step 2:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
-- [ ] **Step 3:** Manual: Home with the stress data (caps), Templates and Images at 320, a streaming build log.
-- [ ] **Step 4:** Push and `gh pr create --base u2/5-inbox-pane` (template, spec, #89, docs, stacked note; a **Needs Or** section: "None in this PR."). Add a **Needs Or** section: Q17 — Home redesign vs landing on Inbox (switch: `/` redirects to `/inbox` and `routes/_app/index.tsx` is deleted).
+- [ ] **Step 3:** Manual: `/` opens the Inbox (and Back doesn't bounce), Templates and Images at 320, a streaming build log.
+- [ ] **Step 4:** Push and `gh pr create --base u2/5-inbox-pane --title "feat(web): Templates/Images views; the Inbox is home"` (template, spec, #89, docs, stacked note) with a **Decided by Or's delegate** section: Q17 — Home dropped, `/` opens the Inbox ("Needs you" duplicated the Inbox and "Live now" duplicated the sidebar tree).
 
 ### Task 52: Whole-stack review (on PR6's branch)
 
-- [ ] **Step 1:** Invoke `vercel-react-best-practices` and review the whole React diff of the stack (`git diff u1/5-perceived-speed...u2/6-home-templates -- apps/web`) against it: re-renders on WS frames (sidebar rows, Home, palette), stable selectors and callbacks, no effects that derive state, no waterfalls in loaders (Settings children, `/usage`, inbox pane), list rendering (`key`s, memoized rows), bundle (cmdk eager is deliberate; nothing else added).
+- [ ] **Step 1:** Invoke `vercel-react-best-practices` and review the whole React diff of the stack (`git diff u1/5-perceived-speed...u2/6-templates-inbox-home -- apps/web`) against it: re-renders on WS frames (sidebar rows, Agent details, palette), stable selectors and callbacks, no effects that derive state, no waterfalls in loaders (Settings children, `/usage`, inbox pane), list rendering (`key`s, memoized rows), bundle (cmdk eager is deliberate; nothing else added).
 - [ ] **Step 1b:** Also check (React plan review m13): no component above the tree subscribes to the whole agent list/index; no `Map`/`Set` returned from a query `select`; `useShortcut` registration order is stable across re-renders; no effect that calls the server has object deps; no per-row Radix roots and no `useSidebar` in rows; no request storm during a `j`/`k` sweep in the inbox and task list (DevTools Network recording).
 - [ ] **Step 2:** Walk the spec section by section (§2 acceptance criteria 1–12, §4 checklist rows 1–12, §5–§16) and tick each against a task/commit; record any gap as a fix commit on the PR that owns it (rebase the stack above it) or as a follow-up issue linked from #89.
 - [ ] **Step 3:** Confirm every DESIGN.md [PR n] clause landed in its PR and nothing describes an unbuilt feature; confirm every §17 behavior-doc edit is applied in the main checkout and listed in a PR body.

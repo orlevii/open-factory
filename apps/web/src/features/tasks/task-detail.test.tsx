@@ -568,3 +568,19 @@ test("no usage line when the task has no attributed usage", async () => {
   await screen.findByText("Plan the billing migration");
   expect(screen.queryByText(/^Usage:/)).toBeNull();
 });
+
+test("layout: the grid cannot be widened by long content; every grid and aside child can shrink", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await screen.findByRole("heading", { level: 1 });
+  const grid = document.querySelector("aside")?.parentElement;
+  expect(grid).toHaveClass(
+    "grid-cols-[minmax(0,1fr)]",
+    "lg:grid-cols-[minmax(0,1fr)_minmax(14rem,17.5rem)]",
+  );
+  const aside = grid?.querySelector(":scope > aside") as HTMLElement;
+  expect(aside).toBeTruthy();
+  const kids = [...(grid?.children ?? []), ...aside.children];
+  expect(kids.length).toBeGreaterThan(4);
+  for (const k of kids) expect(k).toHaveClass("min-w-0");
+});

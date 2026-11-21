@@ -12,7 +12,12 @@ import { AgentName } from "@/features/agents/agent-tree";
 import { agentsUsageQuery } from "@/features/usage/api";
 import { sessionQueryOptions } from "@/lib/session";
 import { AgentStrip } from "./agent-strip";
-import { agentsListQueryOptions, runningQueryOptions, summaryFromAgentsList } from "./api";
+import {
+  agentDetailQueryOptions,
+  agentsListQueryOptions,
+  runningQueryOptions,
+  summaryFromAgentsList,
+} from "./api";
 import { CompactPopover } from "./compact-popover";
 import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
@@ -41,9 +46,13 @@ export function SessionView({
   const qc = useQueryClient();
   const loaded = s.state.agent;
   // Until the session has loaded, the header and strip render from the cached list's summary (spec
-  // §11; the route didn't wait for the detail). A deliberate non-reactive read of the list cache
-  // during render: useSession's state takes over as soon as it loads.
-  const agent = loaded ?? summaryFromAgentsList(qc, slug);
+  // §11; the route didn't wait for the detail), or on a cold load from the detail the route did wait
+  // for (useSession reads it again for its lastSeq). Deliberate non-reactive cache reads during
+  // render: useSession's state takes over as soon as it loads.
+  const agent =
+    loaded ??
+    summaryFromAgentsList(qc, slug) ??
+    qc.getQueryData(agentDetailQueryOptions(slug).queryKey)?.agent;
   // The announcer hears the loaded agent only: a stale summary's status turning into the real one
   // isn't a transition.
   const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rows, !!loaded);
@@ -77,7 +86,7 @@ export function SessionView({
         <LoadError message={s.error.message} onRetry={() => void s.retry()} />
       </>
     );
-  if (!agent) return null; // the route's pending component covers the first load
+  if (!agent) return null; // nothing cached and the route's fetch failed: useSession's answer or error follows
   const working = agent.status === "working";
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";

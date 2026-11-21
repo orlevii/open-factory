@@ -242,6 +242,8 @@ export const taskListQuerySchema = z.object({
     )
     .pipe(z.array(z.string().max(20)).max(50))
     .optional(),
+  /** Title search: a case-insensitive substring, `%` and `_` literal. */
+  q: z.string().trim().min(1).max(200).optional(),
   before: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });

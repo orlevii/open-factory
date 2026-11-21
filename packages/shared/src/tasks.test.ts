@@ -76,3 +76,9 @@ test("the list query: no status means the default; statuses repeat; an unknown s
   expect(taskListQuerySchema.parse({ status: "all" }).status).toEqual(["all"]);
   expect(taskListQuerySchema.safeParse({ status: "open_in_progress" }).success).toBe(false);
 });
+
+test("the list query's q is trimmed, non-empty and at most 200 characters", () => {
+  expect(taskListQuerySchema.parse({ q: "  cpu " }).q).toBe("cpu");
+  expect(taskListQuerySchema.safeParse({ q: "   " }).success).toBe(false);
+  expect(taskListQuerySchema.safeParse({ q: "a".repeat(201) }).success).toBe(false);
+});

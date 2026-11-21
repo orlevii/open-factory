@@ -167,7 +167,7 @@ test("Esc closes the peek at once and focuses the selected row, wherever focus w
   expect(row("T-3")).not.toHaveAttribute("aria-current");
 });
 
-test("Space on the list closes the open peek and keeps focus on the selected row", async () => {
+test("Space on the row the peek shows closes it and keeps focus on that row", async () => {
   const app = await visit(1200);
   const r2 = row("T-2") as HTMLElement;
   r2.focus();
@@ -177,6 +177,29 @@ test("Space on the list closes the open peek and keeps focus on the selected row
   expect(sheet).toHaveAttribute("data-instant");
   await waitFor(() => expect(peek()).toBeNull());
   expect(document.activeElement).toBe(r2);
+  expect(app.router.state.location.pathname).toBe("/tasks");
+});
+
+test("Space on a different row retargets the open peek in place: same sheet, a fresh body, scroll at the top", async () => {
+  const app = await visit(1200);
+  const r2 = row("T-2") as HTMLElement;
+  r2.focus();
+  space(r2);
+  const sheet = await screen.findByRole("dialog", { name: "T-2" });
+  const body = sheet.querySelector('[data-slot="sheet-body"]');
+  fireEvent.keyDown(r2, { key: "ArrowDown" });
+  fireEvent.keyDown(row("T-3") as HTMLElement, { key: "ArrowDown" });
+  const r4 = row("T-4") as HTMLElement;
+  expect(document.activeElement).toBe(r4);
+  expect(space(r4)).toBe(false);
+  expect(await screen.findByRole("dialog", { name: "T-4" })).toBe(sheet);
+  expect(sheet).not.toHaveAttribute("data-state", "closed");
+  // Keyed by task: a new body node, so its scroll starts at the top.
+  expect(sheet.querySelector('[data-slot="sheet-body"]')).not.toBe(body);
+  expect(await within(sheet).findByText("Body of task 4")).toBeInTheDocument();
+  expect(r4).toHaveAttribute("aria-current", "true");
+  expect(r2).not.toHaveAttribute("aria-current");
+  expect(document.activeElement).toBe(r4);
   expect(app.router.state.location.pathname).toBe("/tasks");
 });
 

@@ -134,7 +134,8 @@ const Row = memo(function Row({
 
 /** The Tasks page's list (UI design §5): a plain `<ul>` of links, newest updated first, 50 per page.
  *  A click or Enter opens the task's page; with `peek`, Space peeks the focused row (or opens the page
- *  when the list is too narrow to keep room beside the sheet) and `j`/`k` retarget the open peek. */
+ *  when the list is too narrow to keep room beside the sheet), retargets an open peek to it, or closes
+ *  the peek on the row it shows; `j`/`k` retarget the open peek. */
 export function TaskList({
   filters,
   onChange,
@@ -184,7 +185,10 @@ export function TaskList({
     const key = e.target.dataset.taskKey;
     if (!key) return;
     e.preventDefault(); // Space would scroll the page
-    if (peek.key !== null) peek.close();
+    // Space on the row the peek shows closes it; on another row it swaps the peek to that task in
+    // place (the j/k swap), so the sheet doesn't close and reopen.
+    if (peek.key === key) peek.close();
+    else if (peek.key !== null) runInstantOn(el, () => peek.show(key));
     else if (roomToPeek(el)) runInstantOn(el, () => peek.show(key));
     else void navigate({ to: "/tasks/$key", params: { key }, search: {} });
   };

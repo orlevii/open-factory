@@ -15,12 +15,9 @@ import { onRowKeyDown } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
 import { sessionQueryOptions } from "@/lib/session";
 import { shouldIgnore } from "@/lib/shortcuts";
-import { INBOX_DWELL_MS } from "@/lib/timing";
+import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
 import { type InboxItem, prefetchPane, useInbox, useOpenItem } from "./api";
 import { InboxRow } from "./inbox-row";
-
-/** How long a selection rests before its neighbours' pane data are prefetched (a j/k sweep fetches nothing). */
-export const PREFETCH_REST_MS = 150;
 
 const plainClick = (e: MouseEvent) =>
   e.type === "click" && e.button === 0 && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey);
@@ -109,7 +106,7 @@ export function InboxList({
       };
       return;
     }
-    // Space selects the focused row, as Enter does (the shortcuts sheet's "Select row").
+    // Space selects the focused row, as Enter does (the shortcuts sheet's "Select or peek row").
     if (e.key === " " && e.target instanceof HTMLAnchorElement && !shouldIgnore(e.nativeEvent)) {
       const item = byId(e.target.dataset.inboxId ?? "");
       if (!item) return;

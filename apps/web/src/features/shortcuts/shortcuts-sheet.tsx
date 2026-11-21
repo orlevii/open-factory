@@ -25,7 +25,7 @@ const GROUPS: { title: string; rows: { label: string; keys: string[] }[] }[] = [
       { label: "Next row", keys: ["j"] },
       { label: "Previous row", keys: ["k"] },
       { label: "Open row", keys: ["Enter"] },
-      { label: "Select row", keys: ["Space"] },
+      { label: "Select or peek row", keys: ["Space"] },
     ],
   },
   { title: "Session", rows: [{ label: "Agent details", keys: ["]"] }] },

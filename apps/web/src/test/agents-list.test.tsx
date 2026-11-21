@@ -42,7 +42,9 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
 test("an empty list points at creating an agent from a template", async () => {
   mockWorld({ agents: [] });
   renderApp("/agents", alice);
-  expect(await screen.findByText(/No agents yet\./)).toHaveTextContent(
+  // The sidebar tree says it too: the page is the main region.
+  const main = await screen.findByRole("main");
+  expect(await within(main).findByText(/No agents yet\./)).toHaveTextContent(
     "No agents yet. Create one from a template.",
   );
   expect(screen.queryByText(/seed:dev-agent/)).not.toBeInTheDocument();
@@ -215,5 +217,5 @@ test("an empty list holds its line with a skeleton while the prerequisites load"
     return el;
   });
   expect(plate).toHaveClass("h-5");
-  expect(screen.queryByText(/No agents yet\./)).not.toBeInTheDocument();
+  expect(within(screen.getByRole("main")).queryByText(/No agents yet\./)).not.toBeInTheDocument();
 });

@@ -3,6 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bot,
   CalendarClock,
+  ChevronDown,
   ChevronsUpDown,
   Inbox,
   LayoutTemplate,
@@ -10,9 +11,11 @@ import {
   LogOut,
   Monitor,
   Moon,
+  Plus,
   Settings,
   Sun,
 } from "lucide-react";
+import { TruncTooltip } from "@/components/agent-chip";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -34,12 +37,17 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Mark, Wordmark } from "@/components/wordmark";
+import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
+import { useIsLiveAgent } from "@/features/agents/use-agent-index";
 import { useUnreadCount } from "@/features/inbox/api";
 import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { authClient } from "@/lib/auth-client";
+import { usePref } from "@/lib/prefs";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -52,7 +60,6 @@ const themes = [
 
 const nav = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
-  { to: "/agents", label: "Agents", icon: Bot },
   { to: "/tasks", label: "Tasks", icon: ListTodo },
   { to: "/templates", label: "Templates", icon: LayoutTemplate },
   { to: "/schedules", label: "Schedules", icon: CalendarClock },
@@ -62,11 +69,28 @@ const nav = [
 /** A section stays highlighted on its detail routes (/agents/foo). "/" highlights nothing. */
 const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
+/** The slug of `/agents/$slug` itself, not of its /edit or /usage children. */
+function matchSession(pathname: string): string | undefined {
+  const m = /^\/agents\/([^/]+)\/?$/.exec(pathname);
+  const slug = m?.[1];
+  return slug && slug !== "new" ? decodeURIComponent(slug) : undefined;
+}
+
+const parseCollapsed = (raw: string) =>
+  raw === "true" ? true : raw === "false" ? false : undefined;
+
 export function AppSidebar() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, state } = useSidebar();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const activeSlug = useRouterState({ select: (s) => matchSession(s.location.pathname) });
+  const live = useIsLiveAgent(activeSlug ?? "");
+  // The drawer always shows the full tree; only the desktop rail is compressed.
+  const collapsedRail = state === "collapsed" && !isMobile;
+  const [treeCollapsed, setTreeCollapsed] = usePref("of-tree-collapsed", false, parseCollapsed);
+  // An ended agent's session belongs to the Agents section; a live one's row is the highlight.
+  const agentsActive = isActive(pathname, "/agents") && !(activeSlug && live);
   // The _app guard has already loaded this query; it is null only for a moment during sign-out.
   const { data: session } = useQuery(sessionQueryOptions);
   const user = session?.user;
@@ -98,8 +122,8 @@ export function AppSidebar() {
           <Mark className="hidden size-5 group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
+      <SidebarContent className="min-h-0 flex-col overflow-hidden">
+        <SidebarGroup className="shrink-0">
           <SidebarGroupContent>
             <nav aria-label="Main">
               <SidebarMenu>
@@ -156,6 +180,74 @@ export function AppSidebar() {
             </nav>
           </SidebarGroupContent>
         </SidebarGroup>
+        {collapsedRail && <SidebarSeparator decorative={false} className="mx-auto w-6" />}
+        <SidebarGroup className="min-h-0 flex-1 overflow-y-auto pt-0">
+          <SidebarGroupContent>
+            {/* The nav row for /agents and the head of the tree; it stays put while the tree scrolls. */}
+            <SidebarMenu className="sticky top-0 z-10 bg-sidebar">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={agentsActive}
+                  tooltip="Agents"
+                  className={cn(
+                    "relative gap-2.5 transition-colors duration-150",
+                    isMobile ? "h-9" : "h-8",
+                  )}
+                >
+                  <Link
+                    to="/agents"
+                    // The router's own prefix match would mark it on every live session too.
+                    activeOptions={{ exact: true }}
+                    onClick={closeMobile}
+                    aria-current={agentsActive ? "page" : undefined}
+                  >
+                    {agentsActive && (
+                      <span
+                        aria-hidden="true"
+                        className="of-tooth absolute top-1/2 left-0 -translate-y-1/2 group-data-[collapsible=icon]:-left-1"
+                      />
+                    )}
+                    <Bot aria-hidden="true" />
+                    <span>Agents</span>
+                  </Link>
+                </SidebarMenuButton>
+                {!collapsedRail && (
+                  <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Link
+                          to="/agents/new"
+                          onClick={closeMobile}
+                          aria-label="New agent"
+                          className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        >
+                          <Plus aria-hidden="true" className="size-4" />
+                        </Link>
+                      </TooltipTrigger>
+                      <TooltipContent>New agent</TooltipContent>
+                    </Tooltip>
+                    <button
+                      type="button"
+                      aria-label={treeCollapsed ? "Expand agents" : "Collapse agents"}
+                      aria-expanded={!treeCollapsed}
+                      onClick={() => setTreeCollapsed(!treeCollapsed)}
+                      className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                    >
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={cn("size-4", treeCollapsed && "-rotate-90")}
+                      />
+                    </button>
+                  </div>
+                )}
+              </SidebarMenuItem>
+            </SidebarMenu>
+            {(collapsedRail || !treeCollapsed) && (
+              <SidebarAgentTree activeSlug={activeSlug} collapsedRail={collapsedRail} />
+            )}
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -171,10 +263,14 @@ export function AppSidebar() {
                     {user?.handle?.[0]}
                   </span>
                   <div className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:sr-only">
-                    <span className="truncate text-sm font-medium">{user?.name}</span>
-                    <span className="truncate font-mono text-xs text-muted-foreground">
-                      @{user?.handle}
-                    </span>
+                    <TruncTooltip text={user?.name ?? ""}>
+                      <span className="truncate text-sm font-medium">{user?.name}</span>
+                    </TruncTooltip>
+                    <TruncTooltip text={`@${user?.handle}`}>
+                      <span className="truncate font-mono text-xs text-muted-foreground">
+                        @{user?.handle}
+                      </span>
+                    </TruncTooltip>
                   </div>
                   <ChevronsUpDown
                     aria-hidden="true"

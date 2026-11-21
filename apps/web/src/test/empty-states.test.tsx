@@ -32,7 +32,8 @@ test("the dashboard shows the Inbox and Agents panels, each empty", async () => 
   });
   renderApp("/", alice);
   expect(await screen.findByText("Nothing unread.")).toBeInTheDocument();
-  expect(await screen.findByText("No agents yet.")).toBeInTheDocument();
+  const main = screen.getByRole("main");
+  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
 });
 
 test("the sidebar links every section in order", async () => {
@@ -41,5 +42,7 @@ test("the sidebar links every section in order", async () => {
   const labels = within(nav)
     .getAllByRole("link")
     .map((a) => a.textContent);
-  expect(labels).toEqual(["Inbox", "Agents", "Tasks", "Templates", "Schedules", "Settings"]);
+  expect(labels).toEqual(["Inbox", "Tasks", "Templates", "Schedules", "Settings"]);
+  // The Agents row follows the nav and heads the tree.
+  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
 });

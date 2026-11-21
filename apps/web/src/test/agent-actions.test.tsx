@@ -298,7 +298,9 @@ test("Undo on the archived line restores, keeps the line, and drops ?justArchive
 test("?justArchived for an agent that isn't archived shows no Undo line", async () => {
   world();
   renderApp("/agents?justArchived=lead", alice);
-  expect(await screen.findByText("Team Lead")).toBeInTheDocument();
+  // The sidebar tree lists Team Lead too: the page is the main region.
+  const main = await screen.findByRole("main");
+  expect(await within(main).findByText("Team Lead")).toBeInTheDocument();
   expect(screen.queryByText("Archived @lead.")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
 });

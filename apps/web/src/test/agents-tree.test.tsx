@@ -210,7 +210,9 @@ test.each<[string, World, string, string]>([
 test("the header links to New agent", async () => {
   mockWorld({ agents: tree });
   renderApp("/agents", alice);
-  expect(await screen.findByRole("link", { name: "New agent" })).toHaveAttribute(
+  // The sidebar's + links there too: the page header is in the main region.
+  const main = await screen.findByRole("main");
+  expect(await within(main).findByRole("link", { name: "New agent" })).toHaveAttribute(
     "href",
     "/agents/new",
   );

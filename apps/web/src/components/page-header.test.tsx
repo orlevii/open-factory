@@ -38,7 +38,7 @@ test("a data title truncates to a floor; meta, badge, slug and actions follow th
   expect(h1).toHaveClass("min-w-16", "truncate");
   expect(h1).toHaveAttribute("title", NAME);
   const meta = screen.getByText(SLUG).parentElement as HTMLElement;
-  expect(meta).toHaveClass("min-w-0");
+  expect(meta).toHaveClass("min-w-0", "shrink-[3]");
   const badge = screen.getByText("Errored");
   expect(badge).toHaveClass("shrink-0", "whitespace-nowrap");
   const slug = screen.getByText(SLUG);

@@ -153,17 +153,17 @@ describe("disabled buttons", () => {
 });
 
 describe("native tooltips", () => {
-  test("no title= on a Button or Link in the tooltip-converted files", () => {
-    const files = [
-      "features/session/interrupt-button.tsx",
-      "features/templates/template-editor.tsx",
-      "features/tasks/link-editor.tsx",
-    ];
-    const offenders = files.filter((f) =>
-      (readFileSync(join(SRC, f), "utf8").match(/<(?:Button|Link)\b[^>]*>/g) ?? []).some((tag) =>
-        /\btitle=/.test(tag),
-      ),
-    );
+  test("no title= on a Button or Link outside components/ui (ui-contract:allow with a reason where it is not a tooltip)", () => {
+    const offenders = sourceFiles()
+      .filter((f) => !f.includes("/components/ui/"))
+      .flatMap((f) => {
+        const src = readFileSync(f, "utf8");
+        // Blank out `=>` so an arrow function inside a prop does not end the tag early.
+        const tags = src.replace(/=>/g, "  ").match(/<(?:Button|Link)\b[^>]*>/g) ?? [];
+        return tags
+          .filter((tag) => /\btitle=/.test(tag) && !tag.includes("ui-contract:allow"))
+          .map((tag) => `${f.replace(SRC, "")}: ${tag.slice(0, 60)}`);
+      });
     expect(offenders).toEqual([]);
   });
 });

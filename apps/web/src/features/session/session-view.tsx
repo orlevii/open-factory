@@ -36,7 +36,7 @@ import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, useStopCrons } from "./stop-crons";
-import { Timeline } from "./timeline";
+import { Timeline, type TimelineHandle } from "./timeline";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
 
@@ -104,6 +104,7 @@ export function SessionView({
   // An agent that couldn't load has no details: an open sheet would stay empty (the error states
   // have no toggle), so it closes.
   const failed = s.error?.code === "agent_not_found" || (!loaded && !!s.error);
+  const timeline = useRef<TimelineHandle>(null);
   const sheetOpen = panel.open && panel.mode !== "inflow";
   const closePanel = panel.setOpen;
   useEffect(() => {
@@ -190,12 +191,16 @@ export function SessionView({
               onRestartError={setRestartError}
               onPinOutcome={setPinOutcome}
               onAgent={s.setAgent}
+              onBeforeToggle={() => timeline.current?.captureAnchor()}
               actionsMenu={
                 <AgentMenu
                   agent={agent}
                   context="session"
                   stop={stop}
-                  onOpenDetails={() => panel.setOpen(true)}
+                  onOpenDetails={() => {
+                    timeline.current?.captureAnchor();
+                    panel.setOpen(true);
+                  }}
                   detailsTakeFocus={panel.mode !== "inflow"}
                   onTerminateStart={() => {
                     selfTerminating.current = true;
@@ -242,6 +247,7 @@ export function SessionView({
         {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
         {loaded ? (
           <Timeline
+            ref={timeline}
             slug={slug}
             spawned={agent.kind === "ephemeral"}
             rows={s.rows}
@@ -487,6 +493,7 @@ function SessionActions({
   onRestartError,
   onPinOutcome,
   onAgent,
+  onBeforeToggle,
 }: {
   agent: AgentSummary;
   turnEpoch: number;
@@ -496,6 +503,8 @@ function SessionActions({
   onRestartError(message: string | undefined): void;
   onPinOutcome(o: PinOutcome | undefined): void;
   onAgent(a: AgentSummary): void;
+  /** Called before the panel toggles: the timeline takes its scroll anchor (spec §8.1). */
+  onBeforeToggle(): void;
 }) {
   // Edit, Compact, Stop crons and Terminate are in the ⋯ menu (U2 §8.2); the header keeps what
   // can't wait: Pin, Stop, Restart. A terminated agent's session is read-only for good.
@@ -519,7 +528,10 @@ function SessionActions({
             aria-label="Agent details"
             aria-expanded={panel.open}
             aria-controls={AGENT_DETAILS_ID}
-            onClick={panel.toggle}
+            onClick={() => {
+              onBeforeToggle();
+              panel.toggle();
+            }}
           >
             <PanelRight aria-hidden="true" />
           </Button>

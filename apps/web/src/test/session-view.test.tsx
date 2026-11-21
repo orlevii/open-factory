@@ -329,7 +329,7 @@ test("scrolled up, live rows are counted into the pill (singular, then plural)",
 });
 
 test("pinned to the bottom, a content resize (queued block, working line) keeps it pinned", async () => {
-  const observers: (() => void)[] = [];
+  const observers: ResizeObserverCallback[] = [];
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -346,7 +346,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
   const scroller = screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 900 });
   act(() => {
-    for (const cb of observers) cb();
+    for (const cb of observers) cb([], {} as ResizeObserver);
   });
   expect(scroller.scrollTop).toBe(900);
 });

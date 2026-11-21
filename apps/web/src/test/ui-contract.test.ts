@@ -162,6 +162,7 @@ describe("secondary buttons", () => {
     "features/agents/agent-actions.tsx": 3, // Re-sync, Restore, Archive: the agent's page actions
     "features/inbox/inbox-list.tsx": 1, // Load earlier
     "features/session/timeline.tsx": 1, // Load earlier
+    "features/session/agent-details.tsx": 1, // Edit agent: the details footer's standalone action
     "features/session/session-view.tsx": 1, // Jump to latest
     "features/settings/credentials-section.tsx": 1, // Verify
     "features/tasks/task-detail.tsx": 1, // Edit beside the title

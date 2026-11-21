@@ -18,7 +18,7 @@ export const WHATS_KEPT =
 
 /** "Terminated by @lead today at 14:32." or, for the inactivity TTL, "Terminated on … after 3 days
  *  without activity." */
-function endedSentence(agent: AgentSummary, now: Date): ReactNode {
+export function endedSentence(agent: AgentSummary, now: Date): ReactNode {
   const when = atPhrase(new Date(agent.terminatedAt ?? 0), now);
   const by = agent.terminatedBy;
   if (!by) return `Terminated ${when}.`;
@@ -31,7 +31,7 @@ function endedSentence(agent: AgentSummary, now: Date): ReactNode {
 }
 
 /** What became of the workspace; `undefined` when there is nothing to say. */
-function workspaceSentence(agent: AgentSummary, now: Date): string | undefined {
+export function workspaceSentence(agent: AgentSummary, now: Date): string | undefined {
   if (agent.workspaceDeletedAt)
     return `Workspace deleted ${atPhrase(new Date(agent.workspaceDeletedAt), now)}.`;
   if (agent.workspacePinned) return "Workspace pinned.";
@@ -82,7 +82,7 @@ type Outcome = { tone: "success" | "error"; text: string };
 
 /** One button whose label swaps (focus stays on it); the outcome goes to S4's inline-outcome
  *  region. Pin, and Unpin within the grace, act at once; Unpin after the grace confirms. */
-function PinToggle({
+export function PinToggle({
   agent,
   onAgent,
 }: {
@@ -146,7 +146,7 @@ function PinToggle({
   );
 }
 
-function WhatsKept() {
+export function WhatsKept() {
   return (
     <Popover>
       <PopoverTrigger asChild>

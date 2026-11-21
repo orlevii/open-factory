@@ -2,9 +2,8 @@ import type { AgentSummary, AgentUsageRow, WaitingOn } from "@open-factory/share
 import { Link } from "@tanstack/react-router";
 import { RotateCw, ShieldOff } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCost } from "@/features/usage/format";
+import { RESTART_WHY, Why } from "./agent-details";
 import { CronsSegment } from "./crons-popover";
 import { LINK_CLASS } from "./message-block";
 import { resetPhrase } from "./status-badge";
@@ -13,29 +12,8 @@ import { TerminatedSegment } from "./terminated-strip";
 
 const Dot = () => <span aria-hidden="true">·</span>;
 
-export const RESTART_WHY =
-  "The agent finishes its current turn and background tasks, then restarts with the new settings. Its session is kept. Its crons from this session stop, and it's told which, so it can recreate them.";
-
 const waitingText = (n: number) =>
   n > 0 ? ` (waiting on ${n} background ${n === 1 ? "task" : "tasks"})` : "";
-
-/** A "Why?" ghost button with its explanation in a popover; `label` is its distinct accessible name.
- *  The explanation is one paragraph: PopoverContent is a flex column, so loose text and inline
- *  elements would otherwise each land on their own line. */
-function Why({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="xs" aria-label={label}>
-          Why?
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 text-[0.8125rem] leading-[1.125rem]">
-        <p>{children}</p>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 function Runtime({ agent }: { agent: AgentSummary }) {
   if (agent.runtime === "docker")

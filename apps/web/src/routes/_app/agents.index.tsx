@@ -21,6 +21,8 @@ export const Route = createFileRoute("/_app/agents/")({
     /** S4's bookmark: redirected to `ended=only` (S7 UI design §3). */
     archived: z.literal("only").optional().catch(undefined),
     justArchived: z.string().min(1).optional().catch(undefined),
+    /** Agent details' "All N reports": the row to scroll to and mark (the page acts on it, U2 §8.3). */
+    focus: z.string().min(1).optional().catch(undefined),
   }),
   beforeLoad: ({ search }) => {
     if (search.archived)

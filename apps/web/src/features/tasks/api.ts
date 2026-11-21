@@ -54,6 +54,17 @@ export const tasksListOptions = (f: TaskFilters) =>
     },
   });
 
+/** An agent's few open tasks for Agent details: not infinite (`tasksListOptions` pages 50 at a time). */
+export const agentTasksOptions = (slug: string) =>
+  queryOptions({
+    queryKey: [...tasksQueryKey, "agent", slug] as const,
+    queryFn: () =>
+      apiFetch(`/api/tasks?status=open_in_progress&assignee=${encodeURIComponent(slug)}&limit=5`, {
+        schema: taskPageSchema,
+      }),
+    select: (page) => page.tasks,
+  });
+
 export const taskDetailOptions = (key: string) =>
   queryOptions({
     queryKey: [...tasksQueryKey, "detail", key] as const,

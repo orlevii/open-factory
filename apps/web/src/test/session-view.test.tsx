@@ -824,3 +824,83 @@ test("?message= resolves the message before asking for the events window", async
   );
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
 });
+
+const detailRequests = () =>
+  vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === "/api/agents/dev").length;
+/** Hover intent: the router preloads after its delay. */
+const hover = async (link: HTMLElement) => {
+  fireEvent.mouseEnter(link);
+  fireEvent.focus(link);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 80));
+  });
+  fireEvent.mouseLeave(link);
+  fireEvent.blur(link);
+};
+
+test("hovering a cached agent's link fetches its detail once, however often; the click's view fetches it fresh", async () => {
+  routes["/api/agents?"] = listed;
+  const { router } = renderApp("/agents", alice);
+  const link = await screen.findByRole("link", { name: /Dev agent/ });
+  await hover(link);
+  await hover(link);
+  expect(detailRequests()).toBe(1);
+  fireEvent.click(link);
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev"));
+  expect(await screen.findByText("Two entries.")).toBeInTheDocument();
+  // The hover's warm-up, then the session's own fresh read (for lastSeq): never one per hover.
+  expect(detailRequests()).toBe(2);
+});
+
+test("a stale list status turning into the loaded one is not announced", async () => {
+  routes["/api/agents?"] = () =>
+    json({
+      agents: [agentSummary({ status: "working", turnOpen: true })],
+      more: false,
+      running: { count: 1, max: 8 },
+    });
+  renderApp("/agents", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Dev agent/ }));
+  await screen.findByText("Two entries.");
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(screen.queryByText(/Dev agent is idle/)).not.toBeInTheDocument();
+});
+
+test("the composer can't send until the session has loaded", async () => {
+  routes["/api/agents?"] = listed;
+  const gate = held();
+  routes["/api/agents/dev"] = gate.respond;
+  renderApp("/agents", alice);
+  await userEvent.click(await screen.findByRole("link", { name: /Dev agent/ }));
+  const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
+  await userEvent.type(box, "early");
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await userEvent.type(box, "{Enter}");
+  expect(vi.mocked(fetch).mock.calls.some(([, i]) => i?.method === "POST")).toBe(false);
+  gate.release(json(detail()));
+  await screen.findByText("Two entries.");
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  expect(box).toHaveValue("early");
+});
+
+test("?event= asks for its window only after the detail", async () => {
+  routes["/api/agents?"] = listed;
+  routes["/api/agents/dev/events?around=5"] = () => json(conversation());
+  const gate = held();
+  routes["/api/agents/dev"] = gate.respond;
+  const { router } = renderApp("/agents", alice);
+  await screen.findByRole("link", { name: /Dev agent/ });
+  await act(() =>
+    router.navigate({ to: "/agents/$slug", params: { slug: "dev" }, search: { event: 5 } }),
+  );
+  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(requested("/api/agents/dev/events?")).toBe(0);
+  gate.release(json(detail()));
+  await vi.waitFor(() => expect(requested("around=5")).toBe(1));
+  expect(requested("/api/agents/dev/events?")).toBe(1);
+});

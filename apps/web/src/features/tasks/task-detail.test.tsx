@@ -760,3 +760,16 @@ test("a ?comment= link opened from the cached list waits for the real activity b
   expect(await screen.findByRole("article", { name: "Comment from @dev" })).toBeInTheDocument();
   expect(screen.queryByText("Comment not found. Showing the task.")).not.toBeInTheDocument();
 });
+
+test("an open task whose refetch says it no longer exists shows Task not found", async () => {
+  // The loader didn't wait when the list was cached, so the page maps task_not_found itself; the
+  // same mapping covers a background refetch of an open task.
+  const api = world();
+  const { queryClient } = renderApp("/tasks/T-42", alice);
+  await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" });
+  api.on("GET /api/tasks/T-42", () =>
+    json({ error: { code: "task_not_found", message: "No task T-42." } }, 404),
+  );
+  await act(() => queryClient.invalidateQueries({ queryKey: ["tasks", "detail", "T-42"] }));
+  expect(await screen.findByRole("heading", { name: "Task not found." })).toBeInTheDocument();
+});

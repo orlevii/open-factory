@@ -60,7 +60,8 @@ export const agentDetailQueryOptions = (slug: string) =>
  *  while the detail loads (spec §11). A plain cache read: it does not subscribe. */
 export function summaryFromAgentsList(qc: QueryClient, slug: string): AgentSummary | undefined {
   for (const [, list] of qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] })) {
-    const hit = list?.find((a) => a.slug === slug);
+    // Guarded: a non-list value under the prefix must not throw during render or a socket frame.
+    const hit = Array.isArray(list) ? list.find((a) => a.slug === slug) : undefined;
     if (hit) return hit;
   }
   return undefined;

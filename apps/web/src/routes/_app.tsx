@@ -1,4 +1,4 @@
-import type { AgentDetail, AgentSummary, ServerMessage } from "@open-factory/shared";
+import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { useInboxNotifier } from "@/features/inbox/notifications";
+import { summaryFromAgentsList } from "@/features/session/api";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -28,11 +29,10 @@ const USAGE_DEBOUNCE_MS = 5000;
 
 /** `turnOpen` for an agent as the cached agent lists or detail last saw it; undefined when uncached. */
 function cachedTurnOpen(qc: QueryClient, slug: string): boolean | undefined {
-  for (const [, list] of qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] })) {
-    const row = Array.isArray(list) ? list.find((a) => a.slug === slug) : undefined;
-    if (row) return row.turnOpen;
-  }
-  return qc.getQueryData<AgentDetail>(["agent", slug])?.agent.turnOpen;
+  return (
+    summaryFromAgentsList(qc, slug)?.turnOpen ??
+    qc.getQueryData<AgentDetail>(["agent", slug])?.agent.turnOpen
+  );
 }
 
 /** shadcn writes this cookie on every toggle; reading it keeps the collapsed state across reloads. */

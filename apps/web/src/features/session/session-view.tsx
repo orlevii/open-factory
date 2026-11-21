@@ -44,7 +44,9 @@ export function SessionView({
   // §11; the route didn't wait for the detail). A deliberate non-reactive read of the list cache
   // during render: useSession's state takes over as soon as it loads.
   const agent = loaded ?? summaryFromAgentsList(qc, slug);
-  const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!loaded);
+  // The announcer hears the loaded agent only: a stale summary's status turning into the real one
+  // isn't a transition.
+  const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rows, !!loaded);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   const usageRows = useQuery(agentsUsageQuery("rolling7"));
@@ -222,6 +224,8 @@ export function SessionView({
         <Composer
           slug={slug}
           agent={agent}
+          // A send before the session loads would be lost when the load replaces the queue.
+          waiting={!loaded}
           onQueued={s.onQueued}
           onTerminated={(notice) => {
             setRaceNotice(notice);

@@ -43,7 +43,7 @@ export function PageHeader({
         >
           {heading ?? title}
         </h1>
-        {meta && <div className="flex min-w-0 items-center gap-2">{meta}</div>}
+        {meta && <div className="flex min-w-0 shrink-[3] items-center gap-2">{meta}</div>}
         {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
       </header>
       {shell && <ReconnectStrip lost={shell.connectionLost} />}

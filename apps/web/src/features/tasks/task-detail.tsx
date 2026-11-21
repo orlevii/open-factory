@@ -372,6 +372,7 @@ function BodyBlock({
             value={text}
             onChange={setText}
             textareaRef={area}
+            variant="detail"
           />
           <EditorButtons
             pending={pending}

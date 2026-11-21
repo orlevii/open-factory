@@ -179,7 +179,10 @@ export function Composer({
           ref={boxRef}
           id={boxId}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(undefined);
+          }}
           onKeyDown={onKeyDown}
           placeholder={`Message ${agent.displayName}`}
           rows={2}

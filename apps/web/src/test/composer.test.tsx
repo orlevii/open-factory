@@ -115,6 +115,16 @@ test("a 70 KB message is refused before sending, with the draft kept", async () 
   expect(input).toHaveValue(big);
 });
 
+test("the size error clears when the text is edited again", async () => {
+  renderApp("/agents/dev", alice);
+  const input = await box();
+  fireEvent.change(input, { target: { value: "é".repeat(36_000) } });
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  await userEvent.type(input, "x");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 test("503 clears the box (the message is queued); a 400 keeps the text and shows the error inline", async () => {
   renderApp("/agents/dev", alice);
   const input = await box();

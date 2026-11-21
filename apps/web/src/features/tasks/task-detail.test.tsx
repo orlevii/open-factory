@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -415,6 +415,40 @@ test("comment composer: on a coarse pointer the helper drops 'Enter to post.' an
   await userEvent.type(box, "a{Enter}b");
   expect(box).toHaveValue("a\nb");
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("comment composer: Enter during IME composition does not post", async () => {
+  fakeMatchMedia.install(false);
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "draft");
+  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+  expect(box).toHaveValue("draft");
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("comment composer: Ctrl+Enter still posts on a coarse pointer", async () => {
+  fakeMatchMedia.install(false, { coarse: true });
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await waitFor(() => expect(box).toHaveValue(""));
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+});
+
+test("the task body editor's preview uses the detail look of the saved body", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: /Edit description/ }));
+  const editor = screen.getByRole("textbox", { name: "Description" });
+  const frame = editor.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(frame.querySelector(".prose-of-detail")).not.toBeNull();
 });
 
 test("?comment=<id> of an agent's comment: highlighted, focused, composer prefilled; of a human's: no prefill; unknown: a muted line", async () => {

@@ -45,7 +45,10 @@ function TasksPage() {
         title="Tasks"
         actions={
           <Button variant="ghost" asChild>
-            <Link to="/tasks/new" title="New task">
+            <Link /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only link, and repeats the visible text above it */
+              to="/tasks/new"
+              title="New task"
+            >
               <Plus aria-hidden="true" data-icon="inline-start" />
               <span className="max-md:sr-only">New task</span>
             </Link>

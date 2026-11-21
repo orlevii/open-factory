@@ -21,6 +21,8 @@ export function MarkdownEditor(props: {
   /** Controlled Write / Preview, for callers that must jump into the textarea. */
   view?: "write" | "preview";
   onViewChange?(v: "write" | "preview"): void;
+  /** The look of the Preview tab: pass what the saved text renders with. */
+  variant?: "default" | "detail";
 }) {
   const { value, onChange, id, placeholder, view, onViewChange } = props;
   return (
@@ -63,7 +65,7 @@ export function MarkdownEditor(props: {
         {value.trim() === "" ? (
           <p className="text-sm text-muted-foreground">Nothing to preview.</p>
         ) : (
-          <Markdown source={value} />
+          <Markdown source={value} variant={props.variant ?? "default"} />
         )}
       </TabsContent>
     </Tabs>

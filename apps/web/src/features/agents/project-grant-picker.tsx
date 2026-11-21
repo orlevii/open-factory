@@ -5,7 +5,7 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 
-/** The projects an agent is granted: a native checkbox group. "From the template" until the user
+/** The projects an agent is granted: a checkbox group (Radix checkboxes). "From the template" until the user
  *  changes the set, then "Custom" with a way back to the template's default. */
 export function ProjectGrantPicker({
   projects,

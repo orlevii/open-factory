@@ -46,6 +46,7 @@ function SchedulesPage() {
             <Link
               to="/schedules/new"
               search={search.target ? { target: search.target } : {}}
+              /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only link, and repeats the visible text above it */
               title="New schedule"
             >
               <Plus aria-hidden="true" data-icon="inline-start" />

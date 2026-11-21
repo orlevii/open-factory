@@ -113,6 +113,7 @@ export function CommentComposer({
           textareaRef={textarea}
           view={view}
           onViewChange={setView}
+          variant="detail"
           onKeyDown={(e) => {
             if (isSendKey(e.nativeEvent)) {
               e.preventDefault();

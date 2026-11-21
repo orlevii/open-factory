@@ -5,7 +5,7 @@
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (owner decisions 1–15, final), `docs/product/ui-review/status.md` (U2 backlog, file:line at `322075d`), the seven reviews in `docs/product/ui-review/` (paperclip.md is the main source), `docs/product/behavior/*.md`.
 - **Builds on:** U1 (`u1/5-perceived-speed`, PRs #84–#88, decisions issue #77): Sheet/Drawer/ConfirmDialog, the control system, `data-instant` and `stampInstant`, the avatar tokens, DESIGN.md as amended there.
 - **Followed by:** U3 chat (reuses `AgentChip` for speaker lines; owns Stop in the composer and Esc there), U4 create flows and mobile (turns New agent/task/schedule into sheets behind the same actions U2 binds).
-- **Decision log:** GitHub issue "U2: Navigation — decisions"; Q1–Q40 are the proxy's answers, D1–D14 tech-lead decisions.
+- **Decision log:** GitHub issue #89 "U2: Navigation — decisions"; Q1–Q40 are the proxy's answers, D1–D14 tech-lead decisions.
 
 > `docs/product/` is gitignored. Paths into it are relative to the main checkout. Other paths are relative to the repo root; web paths are relative to `apps/web/src/` unless they start with `apps/` or `packages/`.
 
@@ -460,11 +460,11 @@ TDD per change; Vitest + Testing Library (jsdom); server tests in the existing s
 
 ## 19. Follow-up issues (opened with the decisions issue)
 
-1. Agent details resize (paperclip L5: drag, arrow keys in 16px steps, double-click reset, persisted width).
-2. Sidebar tree virtualization: only if PR1's 214-agent measurement shows long frames (Q2).
-3. Trigram index for task title search: only if `q` is slow on real data (Q10).
-4. A keyboard chord for Agent details from inside inputs (Q37), if asked for.
-5. Umbrella: unowned paperclip L1–L4 (breadcrumbs, hover cards, sticky form footers, first-step empty states) and why they are out of U2 (Q19).
+1. (#90) Agent details resize (paperclip L5: drag, arrow keys in 16px steps, double-click reset, persisted width).
+2. (#91) Sidebar tree virtualization: only if PR1's 214-agent measurement shows long frames (Q2).
+3. (#92) Trigram index for task title search: only if `q` is slow on real data (Q10).
+4. (#93) A keyboard chord for Agent details from inside inputs (Q37), if asked for.
+5. (#94) Umbrella: unowned paperclip L1–L4 (breadcrumbs, hover cards, sticky form footers, first-step empty states) and why they are out of U2 (Q19).
 
 ## 20. Delivery
 

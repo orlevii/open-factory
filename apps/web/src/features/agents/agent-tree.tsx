@@ -55,7 +55,7 @@ function endedNote(a: AgentSummary, now: Date): string | null {
 
 /** The display name; a spawned agent's " · ab12" tail never truncates (S7 UI design §3), since it is
  *  what tells siblings apart: the head gives way first. */
-export function AgentName({ agent }: { agent: AgentSummary }) {
+export function AgentName({ agent }: { agent: Pick<AgentSummary, "displayName" | "kind"> }) {
   const i = agent.kind === "ephemeral" ? agent.displayName.lastIndexOf(" · ") : -1;
   if (i <= 0) return <span className="min-w-0 truncate">{agent.displayName}</span>;
   return (

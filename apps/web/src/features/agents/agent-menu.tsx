@@ -173,12 +173,7 @@ export function AgentMenu({
             </Link>
           </DropdownMenuItem>
           {canStopCrons && (
-            <DropdownMenuItem
-              onSelect={() => {
-                stop.setPopover(false);
-                stop.setConfirm(true);
-              }}
-            >
+            <DropdownMenuItem onSelect={() => stop.openConfirm(trigger)}>
               Stop crons…
             </DropdownMenuItem>
           )}

@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { browserZone } from "@/features/schedules/format";
 import { json, mockApi } from "@/test/mock-api";
@@ -217,4 +218,51 @@ test("the outcome stays while the crons are gone and clears when new ones appear
   expect(result.current.outcome?.text).toBe("Stopped @dev's crons.");
   rerender({ agent: withCrons(1) });
   expect(result.current.outcome).toBeUndefined();
+});
+
+/** Crons that can end while the page is open; `clearLive` ends them. */
+let clearLive = () => {};
+function Live() {
+  const [list, setList] = useState(crons);
+  clearLive = () => setList([]);
+  const agent = agentSummary({
+    slug: "dev",
+    crons: list,
+    waitingOn: { tasks: [], crons: list.length },
+  } as never);
+  // As in the session view: the state and the confirmation outlive the segment.
+  const stop = useStopCrons(agent);
+  return (
+    <div>
+      {list.length > 0 && <CronsSegment agent={agent} stop={stop} />}
+      <CronsStopLayer agent={agent} stop={stop} />
+      <div id="composer">
+        <textarea aria-label="composer" />
+      </div>
+    </div>
+  );
+}
+
+test("when the segment's Stop is gone as the confirmation closes, focus goes to the composer", async () => {
+  mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
+  const root = createRootRoute({ component: Live });
+  const router = createRouter({
+    routeTree: root.addChildren([
+      createRoute({ getParentRoute: () => root, path: "/schedules", component: () => null }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  const u = userEvent.setup();
+  await u.click(await screen.findByRole("button", { name: "2 crons: show and stop" }));
+  await u.click(await screen.findByRole("button", { name: "Stop 2 crons" }));
+  await screen.findByRole("alertdialog");
+  // The crons end while the confirmation is open: the segment (and its Stop) unmount with them.
+  act(() => clearLive());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "composer" })).toHaveFocus());
 });

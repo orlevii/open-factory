@@ -10,6 +10,8 @@ export type StopCrons = {
   setPopover(o: boolean): void;
   confirm: boolean;
   setConfirm(o: boolean): void;
+  /** Opens the confirmation; focus returns to `from` when it closes (the segment's button by default). */
+  openConfirm(from?: RefObject<HTMLElement | null>): void;
   outcome: { text: string; key: number } | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   run(): Promise<void>;
@@ -24,6 +26,8 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
   const [confirm, setConfirm] = useState(false);
   const [outcome, setOutcome] = useState<{ text: string; key: number } | undefined>();
   const trigger = useRef<HTMLButtonElement>(null);
+  // Whichever control opened the confirmation: the segment's button or the ⋯ menu's trigger.
+  const origin = useRef<RefObject<HTMLElement | null>>(trigger);
   // The outcome belongs to the crons it stopped: clear it when new ones appear (0 to above 0),
   // adjusted during render on the edge, no effect.
   const count = agent?.crons.length ?? 0;
@@ -42,13 +46,19 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
     };
   }, []);
   function returnFocus() {
-    // Back to the segment's button, or to the composer once it is gone (the crons stopped or the
-    // panel closed).
+    // Back to the control that opened it, or to the composer once it is gone (the crons stopped or
+    // the panel closed).
     requestAnimationFrame(() => {
       if (!mounted.current) return;
-      if (trigger.current?.isConnected) trigger.current.focus();
+      const el = origin.current.current;
+      if (el?.isConnected) el.focus();
       else focusComposer();
     });
+  }
+  function openConfirm(from: RefObject<HTMLElement | null> = trigger) {
+    origin.current = from;
+    setPopover(false);
+    setConfirm(true);
   }
   async function run() {
     if (!agent) return;
@@ -67,7 +77,17 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
       throw new ApiError(500, "stop_failed", "Couldn't stop the crons. Try again.");
     }
   }
-  return { popover, setPopover, confirm, setConfirm, outcome, trigger, run, returnFocus };
+  return {
+    popover,
+    setPopover,
+    confirm,
+    setConfirm,
+    openConfirm,
+    outcome,
+    trigger,
+    run,
+    returnFocus,
+  };
 }
 
 /** The confirmation and the announced outcome, mounted once by the session view so they outlive the

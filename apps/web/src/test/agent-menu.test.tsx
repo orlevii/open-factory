@@ -213,3 +213,15 @@ test("cancelling Terminate… returns focus to the ⋯ button", async () => {
     expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
   );
 });
+
+test("cancelling Stop crons… opened from the menu returns focus to the ⋯ button", async () => {
+  setup({ agent: agentSummary({ crons: [cron] }), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Stop crons…" }));
+  const dlg = await screen.findByRole("alertdialog", { name: "Stop @dev's crons?" });
+  await u.click(within(dlg).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
+  );
+});

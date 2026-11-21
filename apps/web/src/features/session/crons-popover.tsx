@@ -73,14 +73,7 @@ export function CronsSegment({ agent, stop }: { agent: AgentSummary; stop: StopC
             Stopping when @{agent.slug}'s current work finishes.
           </p>
         ) : (
-          <Button
-            variant="ghost"
-            className="justify-self-end"
-            onClick={() => {
-              stop.setPopover(false);
-              stop.setConfirm(true);
-            }}
-          >
+          <Button variant="ghost" className="justify-self-end" onClick={() => stop.openConfirm()}>
             <CircleStop aria-hidden="true" data-icon="inline-start" className="text-destructive" />
             Stop {n} {noun}
           </Button>

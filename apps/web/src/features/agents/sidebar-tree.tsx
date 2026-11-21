@@ -79,12 +79,10 @@ export function useAgentTreeShape(): TreeNode[] {
 /** Mounts its Radix tooltip only once a pointer finds it, so rows carry no tooltip root at rest. */
 function HoverTip({
   text,
-  side,
   className,
   children,
 }: {
   text: string;
-  side?: "right";
   className?: string;
   children: ReactNode;
 }) {
@@ -98,7 +96,7 @@ function HoverTip({
   return (
     <Tooltip open onOpenChange={(open) => !open && setArmed(false)}>
       <TooltipTrigger asChild>{span}</TooltipTrigger>
-      <TooltipContent side={side}>{text}</TooltipContent>
+      <TooltipContent>{text}</TooltipContent>
     </Tooltip>
   );
 }
@@ -238,6 +236,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
 const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: boolean }) {
   const agent = useAgent(slug);
   const unread = useUnreadByAgent(slug);
+  // The Radix tooltip mounts only once a pointer enters the link, so rail rows carry no root at rest.
+  const [tip, setTip] = useState(false);
   if (!agent) return null;
   const status = statusLabel(agent.status, "short");
   return (
@@ -247,16 +247,13 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
         params={{ slug }}
         data-active={active || undefined}
         aria-current={active ? "page" : undefined}
+        onPointerEnter={() => setTip(true)}
         className="relative flex size-8 items-center justify-center rounded-md hover:bg-sidebar-accent data-active:bg-sidebar-accent"
       >
         {active ? (
           <span aria-hidden="true" className="of-tooth absolute top-1/2 -left-1 -translate-y-1/2" />
         ) : null}
-        <HoverTip
-          text={`${agent.displayName} · @${slug} · ${status}`}
-          side="right"
-          className="relative flex"
-        >
+        <span className="relative flex">
           <AgentAvatar
             slug={slug}
             template={agent.template}
@@ -270,11 +267,20 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
               className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-foreground"
             />
           ) : null}
-        </HoverTip>
+        </span>
         <span className="sr-only">
           {agent.displayName}, {status}
           {unread > 0 ? `, ${unread} unread` : ""}
         </span>
+        {tip ? (
+          <Tooltip open onOpenChange={(open) => !open && setTip(false)}>
+            {/* Over the whole link (last, so on top): leaving it anywhere closes the tooltip. */}
+            <TooltipTrigger asChild>
+              <span aria-hidden="true" className="absolute inset-0" />
+            </TooltipTrigger>
+            <TooltipContent side="right">{`${agent.displayName} · @${slug} · ${status}`}</TooltipContent>
+          </Tooltip>
+        ) : null}
       </Link>
     </li>
   );

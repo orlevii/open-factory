@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -305,4 +305,14 @@ test("collapsed rail: only the active agent, unread and badge-worthy agents, ava
   expect(links[1]).toHaveAttribute("aria-current", "page");
   expect(links[0]).toHaveAccessibleName(/Alpha/);
   expect(screen.queryByRole("tree")).toBeNull();
+});
+
+test("collapsed rail: the whole link is the tooltip's trigger, mounted only on hover", async () => {
+  setup({ list: agents({ a: { status: "working" } }), collapsedRail: true });
+  const rail = await screen.findByRole("navigation", { name: "Agents" });
+  const link = within(rail).getByRole("link", { name: /Alpha/ });
+  expect(link.querySelector("[data-slot=tooltip-trigger]")).toBeNull();
+  // A pointer entering the link anywhere, its corner included, not only over the 20px avatar.
+  fireEvent.pointerEnter(link);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(/Alpha · @a · /);
 });

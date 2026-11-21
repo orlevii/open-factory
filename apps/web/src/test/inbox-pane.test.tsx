@@ -229,7 +229,8 @@ test("a j/k sweep prefetches only once the selection rests", async () => {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j" });
     await act(async () => vi.advanceTimersByTime(50));
   }
-  // The pane loads what it shows (i2, i3, i4 and their agent); nothing for a neighbour yet.
+  // At most the pane's own loads (the first move's body; the rest wait for the rest); nothing for
+  // a neighbour yet.
   const shown = ["around=42", "/api/tasks/T-7", "around=44", "/api/agents/dev"];
   const during = api.calls.slice(start).filter((c) => c.method === "GET");
   expect(
@@ -244,6 +245,33 @@ test("a j/k sweep prefetches only once the selection rests", async () => {
   // What a passed-over item loaded while shown is never fetched again by a prefetch.
   const gets = after.filter((_, n) => api.calls[start + n]?.method === "GET");
   expect(gets.filter((u, n) => gets.indexOf(u) !== n)).toEqual([]);
+});
+
+test("a j/k sweep loads the pane's body only for the item it rests on", async () => {
+  const app = await visit(1280, "/inbox?item=i1");
+  (row("i1") as HTMLElement).focus();
+  vi.useFakeTimers();
+  // i1 has rested: its neighbour i2 is prefetched. Count from here.
+  await act(async () => vi.advanceTimersByTime(500));
+  const start = api.calls.length;
+  const bodyGets = (part: string) =>
+    api.calls.slice(start).filter((c) => c.method === "GET" && c.url.includes(part)).length;
+  for (let n = 0; n < 3; n++) {
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j", repeat: n > 0 });
+    await act(async () => vi.advanceTimersByTime(50));
+  }
+  expect(search(app).item).toBe("i4");
+  // The header follows the row at once; the passed-over task (i3) and the target's excerpt (i4)
+  // aren't requested while the selection moves.
+  const pane = screen.getByRole("region", { name: "Reading pane" });
+  expect(within(pane).getByRole("link", { name: "Open in session" })).toHaveAttribute(
+    "href",
+    "/agents/dev?event=44",
+  );
+  expect(bodyGets("/api/tasks/T-7")).toBe(0);
+  expect(bodyGets("around=44")).toBe(0);
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(bodyGets("around=44")).toBe(1);
 });
 
 test("a message row's context line hides the recipient when it is the viewer", async () => {

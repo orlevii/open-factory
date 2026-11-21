@@ -19,7 +19,7 @@ import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
-import { INBOX_DWELL_MS } from "@/lib/timing";
+import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
 import { type InboxItem, inboxItemOptions, useOpenItem } from "./api";
 import { ExcerptSkeleton, SessionExcerpt } from "./session-excerpt";
 
@@ -373,7 +373,16 @@ function TaskContent({
   );
 }
 
-function PaneItem({ id, loaded }: { id: string; loaded: InboxItem | undefined }) {
+function PaneItem({
+  id,
+  loaded,
+  rested,
+}: {
+  id: string;
+  loaded: InboxItem | undefined;
+  /** The body (and its fetches) waits until the selection has rested; the header doesn't. */
+  rested: boolean;
+}) {
   const { item, gone, failed } = usePaneItem(id, loaded);
   useDwellRead(item);
   return (
@@ -400,7 +409,7 @@ function PaneItem({ id, loaded }: { id: string; loaded: InboxItem | undefined })
         <Body>
           <p className={muted}>Couldn't load this item.</p>
         </Body>
-      ) : !item ? (
+      ) : !item || !rested ? (
         <Body>
           <ExcerptSkeleton />
         </Body>
@@ -414,10 +423,31 @@ function PaneItem({ id, loaded }: { id: string; loaded: InboxItem | undefined })
 }
 
 /**
+ * Whether the selection's body may load. A selection that follows one that had rested for
+ * PREFETCH_REST_MS (a click, Enter, the first j/k, a deep link) loads at once; during a j/k sweep
+ * the body waits until the selection rests, so the rows passed over send no request.
+ */
+function useRested(selectedId: string | undefined) {
+  const [sel, setSel] = useState({ id: selectedId, now: true });
+  const [settled, setSettled] = useState(false);
+  // Adjusted during render on the change (no effect): `settled` still describes the previous one.
+  if (selectedId !== sel.id) {
+    setSel({ id: selectedId, now: settled || sel.id === undefined });
+    setSettled(false);
+  }
+  useEffect(() => {
+    if (selectedId === undefined) return;
+    const timer = setTimeout(() => setSettled(true), PREFETCH_REST_MS);
+    return () => clearTimeout(timer);
+  }, [selectedId]);
+  return sel.now || settled;
+}
+
+/**
  * The reading pane beside the list (≥1024, spec §11.2): a 48px header from the list row (so it swaps
  * at once), a scrolling body, and the reply composer pinned below it. Switching items swaps the
- * content at once: the body shows skeleton plates until its own data arrives, never the previous
- * item's body.
+ * content at once: the body shows skeleton plates until its own data arrives (and, during a j/k
+ * sweep, until the selection rests), never the previous item's body.
  */
 export function InboxPane({
   selectedId,
@@ -427,12 +457,13 @@ export function InboxPane({
   /** The selected row from the loaded pages, when it is there. */
   item: InboxItem | undefined;
 }) {
+  const rested = useRested(selectedId);
   return (
     <section aria-label="Reading pane" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selectedId === undefined ? (
         <p className="px-4 py-6 text-sm text-muted-foreground md:px-6">No item selected.</p>
       ) : (
-        <PaneItem key={selectedId} id={selectedId} loaded={item} />
+        <PaneItem key={selectedId} id={selectedId} loaded={item} rested={rested} />
       )}
     </section>
   );

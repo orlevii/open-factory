@@ -34,9 +34,11 @@ export function registerErrorHandlers(app: FastifyInstance) {
         const field = issue.instancePath.split("/")[1];
         if (field && !(field in fields)) fields[field] = issue.message ?? "Invalid value";
       }
+      // The issue's own sentence, never Fastify's "body/body must be ..." path-prefixed message.
+      const first = err.validation?.[0]?.message;
       return reply
         .code(400)
-        .send({ error: { code: "validation_error", message: err.message, fields } });
+        .send({ error: { code: "validation_error", message: first ?? "Invalid request", fields } });
     }
     const status =
       err.statusCode && err.statusCode >= 400 && err.statusCode < 500 ? err.statusCode : 500;

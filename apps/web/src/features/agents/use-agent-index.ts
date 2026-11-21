@@ -22,11 +22,11 @@ export function useAgent(slug: string): AgentSummary | undefined {
   return useQuery({ ...agentsListQueryOptions("exclude"), refetchOnMount: false, select }).data;
 }
 
-export function useIsLiveAgent(slug: string): boolean {
+/** Whether the slug is a live agent; undefined until the list has loaded. Unlike the chips' reads
+ *  it may fetch the list itself: the sidebar asks even while its tree is not mounted. */
+export function useIsLiveAgent(slug: string): boolean | undefined {
   const select = useCallback((l: AgentSummary[]) => agentIndex(l).has(slug), [slug]);
-  return (
-    useQuery({ ...agentsListQueryOptions("exclude"), refetchOnMount: false, select }).data ?? false
-  );
+  return useQuery({ ...agentsListQueryOptions("exclude"), select }).data;
 }
 
 /** An ended agent from the cached ended list. A cache read only: a chip never fetches that list. */

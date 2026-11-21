@@ -263,6 +263,43 @@ test("on an ended agent's session the Agents row is active", async () => {
   expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
 
+test("the Agents row is not active while the agents list is still loading, then follows the session", async () => {
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  mockApi({
+    "GET /api/agents?": async () => {
+      await gate;
+      return json({
+        agents: [agentSummary({ slug: "dev", displayName: "Dev agent" })],
+        running: { count: 0, max: 8 },
+      });
+    },
+  });
+  renderApp("/agents/gone", alice);
+  const agents = await screen.findByRole("link", { name: "Agents" });
+  expect(agents).not.toHaveAttribute("aria-current");
+  await act(async () => release?.());
+  await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
+});
+
+test("on a live session the Agents row is active while the tree is collapsed", async () => {
+  liveAgents();
+  localStorage.setItem("of-tree-collapsed", "true");
+  renderApp("/agents/dev", alice);
+  const agents = await screen.findByRole("link", { name: "Agents" });
+  await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
+  expect(screen.queryByRole("tree")).toBeNull();
+  // Expanding the tree hands the highlight back to the agent's own row.
+  await userEvent.click(screen.getByRole("button", { name: "Expand agents" }));
+  expect(await screen.findByRole("treeitem", { name: /^Dev agent/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await vi.waitFor(() => expect(agents).not.toHaveAttribute("aria-current"));
+});
+
 test("Agents row: label links /agents, chevron collapses the whole tree (of-tree-collapsed), + links /agents/new", async () => {
   liveAgents();
   localStorage.clear();

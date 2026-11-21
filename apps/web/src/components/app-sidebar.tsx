@@ -89,8 +89,11 @@ export function AppSidebar() {
   // The drawer always shows the full tree; only the desktop rail is compressed.
   const collapsedRail = state === "collapsed" && !isMobile;
   const [treeCollapsed, setTreeCollapsed] = usePref("of-tree-collapsed", false, parseCollapsed);
-  // An ended agent's session belongs to the Agents section; a live one's row is the highlight.
-  const agentsActive = isActive(pathname, "/agents") && !(activeSlug && live);
+  // An ended agent's session belongs to the Agents section; a live one's row is the highlight,
+  // unless the tree is hidden (collapsed by the chevron, not the rail). Not active until we know.
+  const agentsActive =
+    isActive(pathname, "/agents") &&
+    (!activeSlug || live === false || (live === true && treeCollapsed && !collapsedRail));
   // The _app guard has already loaded this query; it is null only for a moment during sign-out.
   const { data: session } = useQuery(sessionQueryOptions);
   const user = session?.user;

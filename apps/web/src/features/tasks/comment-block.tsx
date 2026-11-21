@@ -36,7 +36,7 @@ export function CommentBlock({
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
         <span data-comment-author className="flex min-w-0 text-foreground">
-          <PrincipalChip principal={comment.author} size={20} />
+          <PrincipalChip principal={comment.author} size={20} link />
         </span>
         <time dateTime={comment.at} title={at.toLocaleString()} className="text-muted-foreground">
           {formatInboxTime(at, now)}

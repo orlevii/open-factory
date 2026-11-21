@@ -637,7 +637,7 @@ function SideRest({ task, save }: { task: Detail; save: Save }) {
       <SideSection label="Created by">
         <p className="text-[0.8125rem] leading-[1.125rem]">
           <span data-created-by className="inline-flex items-center align-middle">
-            <PrincipalChip principal={task.createdBy} size={20} />
+            <PrincipalChip principal={task.createdBy} size={20} link />
           </span>
           {" · "}
           <time

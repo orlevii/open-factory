@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
+import { Link } from "@tanstack/react-router";
 import { type ReactNode, useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
@@ -73,21 +74,23 @@ function ChipView({
   size,
   showSlug,
   badge,
+  link,
   className,
 }: {
   a: Shown;
   size: Size;
   showSlug: boolean;
   badge: boolean;
+  link: boolean;
   className?: string;
 }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex min-w-0 items-center gap-1.5 @max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
-        className,
-      )}
-    >
+  const classes = cn(
+    "inline-flex min-w-0 items-center gap-1.5 @max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
+    link && "rounded-sm hover:underline",
+    className,
+  );
+  const body = (
+    <>
       <span className="flex min-w-0 items-center gap-1.5">
         <AgentAvatar
           slug={a.slug}
@@ -108,11 +111,25 @@ function ChipView({
           <MiddleTruncate text={`@${a.slug}`} />
         </TruncTooltip>
       ) : null}
-    </span>
+    </>
   );
+  if (link)
+    return (
+      <Link to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
+        {body}
+      </Link>
+    );
+  return <span className={classes}>{body}</span>;
 }
 
-type ChipProps = { size?: Size; showSlug?: boolean; badge?: boolean; className?: string };
+type ChipProps = {
+  size?: Size;
+  showSlug?: boolean;
+  badge?: boolean;
+  /** Wrap the chip in a link to the agent's page. Never inside another link (a task-list row). */
+  link?: boolean;
+  className?: string;
+};
 
 function SlugChip({
   slug,
@@ -120,13 +137,23 @@ function SlugChip({
   size = 20,
   showSlug = false,
   badge = false,
+  link = false,
   className,
 }: ChipProps & { slug: string; name?: string }) {
   const live = useAgent(slug);
   const ended = useEndedAgent(slug);
   const found = live ?? ended;
   const a: Shown = found ?? { slug, displayName: name ?? `@${slug}`, stub: !name };
-  return <ChipView a={a} size={size} showSlug={showSlug} badge={badge} className={className} />;
+  return (
+    <ChipView
+      a={a}
+      size={size}
+      showSlug={showSlug}
+      badge={badge}
+      link={link}
+      className={className}
+    />
+  );
 }
 
 /** Avatar, display name and optionally the muted `@slug`. Pass the agent when you have it; pass
@@ -135,9 +162,16 @@ export function AgentChip(
   props: ({ agent: AgentChipAgent } | { slug: string; name?: string }) & ChipProps,
 ) {
   if ("agent" in props) {
-    const { agent, size = 20, showSlug = false, badge = false, className } = props;
+    const { agent, size = 20, showSlug = false, badge = false, link = false, className } = props;
     return (
-      <ChipView a={agent} size={size} showSlug={showSlug} badge={badge} className={className} />
+      <ChipView
+        a={agent}
+        size={size}
+        showSlug={showSlug}
+        badge={badge}
+        link={link}
+        className={className}
+      />
     );
   }
   return <SlugChip {...props} />;
@@ -146,10 +180,14 @@ export function AgentChip(
 export function PrincipalChip({
   principal,
   size,
+  link,
 }: {
   principal: { kind: "agent"; slug: string } | { kind: "user"; handle: string };
   size?: Size;
+  /** Links an agent to its page; a human has none. */
+  link?: boolean;
 }) {
-  if (principal.kind === "agent") return <AgentChip slug={principal.slug} size={size} />;
+  if (principal.kind === "agent")
+    return <AgentChip slug={principal.slug} size={size} link={link} />;
   return <span className="min-w-0 truncate">@{principal.handle}</span>;
 }

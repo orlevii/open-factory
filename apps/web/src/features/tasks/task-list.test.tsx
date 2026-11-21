@@ -193,6 +193,24 @@ test("tasks_changed refetches without losing focus on a row; the header action l
   expect(links[0]).toHaveAttribute("href", "/tasks/T-1");
 });
 
+test("rows carry no nested anchors, even for an agent creator", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks?": () =>
+      json(
+        page([
+          task(41, {
+            assignee: { slug: "dev", displayName: "Dev" },
+            createdBy: { kind: "agent", slug: "lead" },
+          }),
+        ]),
+      ),
+  });
+  renderApp("/tasks", alice);
+  const row = await screen.findByRole("link", { name: /^T-41/ });
+  expect(row.querySelector("a")).toBeNull();
+});
+
 test("the assignee shows as a chip (avatar and name), a human creator as @handle without an avatar, an ended assignee keeps its mark", async () => {
   mockApi({
     "GET /api/agents?": agents,

@@ -794,6 +794,23 @@ test("with nothing cached, the route still waits for the detail", async () => {
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
 });
 
+test("a cold load renders from the detail the route waited for while the session reads it again", async () => {
+  // The loader's GET answers; the view's own fresh read (for lastSeq) is held.
+  const gate = held();
+  let calls = 0;
+  routes["/api/agents/dev"] = () => (++calls === 1 ? json(detail()) : gate.respond());
+  renderApp("/agents/dev", alice);
+  expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
+  await vi.waitFor(() => expect(detailRequests()).toBe(2));
+  expect(document.querySelector("[data-timeline-skeleton] [data-slot=skeleton]")).not.toBeNull();
+  await userEvent.type(screen.getByRole("textbox", { name: "Message to Dev agent" }), "early");
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  gate.release(json(detail()));
+  expect(await screen.findByText("Two entries.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  sessionStorage.removeItem("of-draft:dev"); // the unsent draft would carry into the next test
+});
+
 test("a cached summary whose agent turns out not to exist shows Agent not found", async () => {
   routes["/api/agents?"] = listed;
   routes["/api/agents/dev"] = () => json({ error: { code: "agent_not_found", message: "x" } }, 404);

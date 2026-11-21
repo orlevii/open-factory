@@ -350,3 +350,37 @@ test("an out-of-order live event is placed by seq", () => {
   s = sessionReducer(s, frame(liveFrame(10)));
   expect(s.ordered.map((e) => e.seq)).toEqual([7, 8, 9, 10, 12]);
 });
+
+const status = (turnOpen: boolean) =>
+  ({
+    type: "agent_status",
+    agent: "dev",
+    status: turnOpen ? "working" : "idle",
+    turnOpen,
+    ...noRestart,
+  }) as const;
+
+test("turnEpoch counts every turn edge, even a close and reopen folded into one batch", () => {
+  let s = sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: page([7, 8, 9]),
+    detail: { ...detail, agent: agentSummary({ status: "working", turnOpen: true }) },
+    mode: "latest",
+  });
+  const start = s.turnEpoch;
+  s = sessionReducer(s, { type: "frames", messages: [status(false), status(true)] });
+  expect(s.agent?.turnOpen).toBe(true);
+  expect(s.turnEpoch).toBe(start + 2);
+  s = sessionReducer(s, frame(status(true)));
+  expect(s.turnEpoch).toBe(start + 2);
+  s = sessionReducer(s, { type: "agent", agent: agentSummary({ turnOpen: false }) });
+  expect(s.turnEpoch).toBe(start + 3);
+  // a reload carries the epoch on rather than restarting it
+  s = sessionReducer(s, { type: "loaded", page: page([7, 8, 9]), detail, mode: "latest" });
+  expect(s.turnEpoch).toBe(start + 3);
+});
+
+test("a frames batch of already-held events returns the same state", () => {
+  const s = loadedLatest();
+  expect(sessionReducer(s, { type: "frames", messages: [liveFrame(8), liveFrame(9)] })).toBe(s);
+});

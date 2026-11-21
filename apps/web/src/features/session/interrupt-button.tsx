@@ -11,14 +11,23 @@ import { NETWORK_ERROR } from "./composer";
  * No confirmation (UI §6). After a click it stays disabled until the status changes; a 409
  * (the turn ended meanwhile) is ignored, any other failure re-enables it with an inline error.
  */
-export function InterruptButton({ slug, turnOpen }: { slug: string; turnOpen: boolean }) {
+export function InterruptButton({
+  slug,
+  turnOpen,
+  turnEpoch,
+}: {
+  slug: string;
+  turnOpen: boolean;
+  /** Changes on every turn edge, even a close and reopen that landed in one commit. */
+  turnEpoch: number;
+}) {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever turnOpen changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever a turn opens or closes
   useEffect(() => {
     setSent(false);
     setError(undefined);
-  }, [turnOpen]);
+  }, [turnEpoch]);
   const enabled = turnOpen && !sent;
 
   async function interrupt() {

@@ -1,7 +1,15 @@
 import { ApiError, type TaskActivity, type TaskDetail } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
@@ -196,10 +204,18 @@ function MentionThread({
   onReply(mention: string): void;
 }) {
   const comments = thread(task.activity, commentId);
+  const list = useRef<HTMLDivElement>(null);
+  const found = comments.length > 0;
+  // Once the thread is in: the mentioned comment's top at the top of the body (spec §11.2, as the
+  // message excerpt does), so the composer below never hides it. Layout; jsdom only sees the call.
+  useLayoutEffect(() => {
+    if (found)
+      list.current?.querySelector("[data-highlighted]")?.scrollIntoView?.({ block: "start" });
+  }, [found]);
   if (comments.length === 0) return <p className={muted}>This comment no longer exists.</p>;
   const now = new Date();
   return (
-    <div className="grid gap-3">
+    <div ref={list} className="grid gap-3 [&>[data-highlighted]]:scroll-mt-4">
       {comments.map((c) => (
         <CommentBlock
           key={c.id}
@@ -233,8 +249,13 @@ function MentionReply({
   }, [mention, replyRef]);
   const assignee = task.assignee && !task.assignee.ended ? task.assignee.slug : undefined;
   return (
-    <div className="grid shrink-0 gap-2 border-t border-border px-4 py-3 md:px-6">
+    // Capped, scrolling within itself (the editor resizes): the body keeps most of the pane.
+    <div
+      data-pane-composer
+      className="grid max-h-[45%] shrink-0 gap-2 overflow-y-auto border-t border-border px-4 py-3 md:px-6"
+    >
       <CommentComposer
+        compact
         key={task.key}
         ref={replyRef}
         taskKey={task.key}

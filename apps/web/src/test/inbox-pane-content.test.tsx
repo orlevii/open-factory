@@ -307,6 +307,33 @@ test("a mention shows the task header, the 3 comments before it and the comment,
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
 });
 
+test("a mention brings the mentioned comment to the top of the body; the composer can't take the body's room", async () => {
+  setup([mention(1, "c4", { kind: "agent", name: "ada" })]);
+  await visit("/inbox?item=i1");
+  const p = pane();
+  await waitFor(() => expect(within(p).getByText("comment c4")).toBeInTheDocument());
+  const lit = p.querySelector("[data-highlighted]");
+  expect(lit).toHaveTextContent("comment c4");
+  // jsdom has no layout: the call is what it can see; the result is a browser check.
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(Element.prototype.scrollIntoView)
+        .mock.calls.some(
+          (call, i) =>
+            vi.mocked(Element.prototype.scrollIntoView).mock.contexts[i] === lit &&
+            (call[0] as ScrollIntoViewOptions | undefined)?.block === "start",
+        ),
+    ).toBe(true),
+  );
+  // The composer is capped and scrolls within itself, so the body always keeps room.
+  const box = within(p).getByRole("textbox", { name: "Comment" });
+  const composer = box.closest("[data-pane-composer]") as HTMLElement;
+  expect(composer).not.toBeNull();
+  expect(composer).toHaveClass("overflow-y-auto");
+  expect(composer.className).toMatch(/max-h-/);
+});
+
 test("a mention by a human leaves the composer empty", async () => {
   setup([mention(1, "h1", { kind: "human", name: "bob" })]);
   await visit("/inbox?item=i1");

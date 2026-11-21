@@ -63,6 +63,7 @@ export function CommentComposer({
   taskKey,
   assignee,
   onPosted,
+  compact,
 }: {
   ref: Ref<CommentComposerHandle>;
   taskKey: string;
@@ -70,6 +71,8 @@ export function CommentComposer({
   onPosted?: () => void;
   /** The current live assignee's slug, for the helper line. */
   assignee: string | undefined;
+  /** A shorter editor, for the inbox reading pane. */
+  compact?: boolean;
 }) {
   const qc = useQueryClient();
   // Key the composer by task: the draft is read once per task.
@@ -146,6 +149,7 @@ export function CommentComposer({
           view={view}
           onViewChange={setView}
           variant="detail"
+          compact={compact}
           onKeyDown={(e) => {
             if (isSendKey(e.nativeEvent)) {
               e.preventDefault();

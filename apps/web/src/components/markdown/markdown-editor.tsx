@@ -23,8 +23,11 @@ export function MarkdownEditor(props: {
   onViewChange?(v: "write" | "preview"): void;
   /** The look of the Preview tab: pass what the saved text renders with. */
   variant?: "default" | "detail";
+  /** A shorter starting height (it still resizes), for a composer that shares a pane. */
+  compact?: boolean;
 }) {
   const { value, onChange, id, placeholder, view, onViewChange } = props;
+  const minH = props.compact ? "min-h-24" : "min-h-40";
   return (
     <Tabs
       {...(view
@@ -58,10 +61,10 @@ export function MarkdownEditor(props: {
           aria-describedby={props["aria-describedby"]}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent" // ui-contract:allow the frame shows focus-within
+          className={`field-sizing-fixed ${minH} resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
         />
       </TabsContent>
-      <TabsContent value="preview" className="mt-0 min-h-40 p-3">
+      <TabsContent value="preview" className={`mt-0 ${minH} p-3`}>
         {value.trim() === "" ? (
           <p className="text-sm text-muted-foreground">Nothing to preview.</p>
         ) : (

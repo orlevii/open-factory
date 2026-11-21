@@ -742,3 +742,10 @@ test("the log and each row wrap can shrink, so no row widens the scroller", asyn
   expect(wraps.length).toBeGreaterThan(0);
   for (const w of wraps) expect(w).toHaveClass("min-w-0");
 });
+
+test("the Interrupt button uses the stop glyph", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const icon = screen.getByRole("button", { name: /Interrupt/ }).querySelector("svg");
+  expect(icon).toHaveClass("lucide-circle-stop");
+});

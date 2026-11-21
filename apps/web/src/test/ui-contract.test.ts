@@ -151,3 +151,19 @@ describe("disabled buttons", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("native tooltips", () => {
+  test("no title= on a Button or Link in the tooltip-converted files", () => {
+    const files = [
+      "features/session/interrupt-button.tsx",
+      "features/templates/template-editor.tsx",
+      "features/tasks/link-editor.tsx",
+    ];
+    const offenders = files.filter((f) =>
+      (readFileSync(join(SRC, f), "utf8").match(/<(?:Button|Link)\b[^>]*>/g) ?? []).some((tag) =>
+        /\btitle=/.test(tag),
+      ),
+    );
+    expect(offenders).toEqual([]);
+  });
+});

@@ -24,13 +24,14 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
   const [confirm, setConfirm] = useState(false);
   const [outcome, setOutcome] = useState<{ text: string; key: number } | undefined>();
   const trigger = useRef<HTMLButtonElement>(null);
-  // The outcome belongs to the crons it stopped: clear it when new ones appear (0 to above 0).
+  // The outcome belongs to the crons it stopped: clear it when new ones appear (0 to above 0),
+  // adjusted during render on the edge, no effect.
   const count = agent?.crons.length ?? 0;
-  const prev = useRef(count);
-  useEffect(() => {
-    if (prev.current === 0 && count > 0) setOutcome(undefined);
-    prev.current = count;
-  }, [count]);
+  const [prevCount, setPrevCount] = useState(count);
+  if (count !== prevCount) {
+    setPrevCount(count);
+    if (prevCount === 0 && count > 0) setOutcome(undefined);
+  }
   // Radix calls onCloseAutoFocus on a timer after the dialog unmounts, and the focus waits a frame
   // more: by then the view may be gone (navigated away), and the composer found is another page's.
   const mounted = useRef(false);

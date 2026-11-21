@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { browserZone } from "@/features/schedules/format";
@@ -203,4 +203,18 @@ test("a pending stop is announced as pending; no_crons and stopping count as don
   // Leave nothing modal behind: an open Radix dialog would hide the next test's page from the queries.
   await u.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test("the outcome stays while the crons are gone and clears when new ones appear", async () => {
+  mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
+  const withCrons = (n: number) => agentSummary({ slug: "dev", crons: crons.slice(0, n) });
+  const { result, rerender } = renderHook(({ agent }) => useStopCrons(agent), {
+    initialProps: { agent: withCrons(2) },
+  });
+  await act(() => result.current.run());
+  expect(result.current.outcome?.text).toBe("Stopped @dev's crons.");
+  rerender({ agent: withCrons(0) });
+  expect(result.current.outcome?.text).toBe("Stopped @dev's crons.");
+  rerender({ agent: withCrons(1) });
+  expect(result.current.outcome).toBeUndefined();
 });

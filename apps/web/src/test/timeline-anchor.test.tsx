@@ -38,8 +38,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  // biome-ignore lint/suspicious/noExplicitAny: jsdom lacks elementFromPoint
-  delete (document as any).elementFromPoint;
+  document.elementFromPoint = () => null;
 });
 
 const rows: Row[] = ["a", "b", "c"].map(
@@ -52,21 +51,22 @@ const rows: Row[] = ["a", "b", "c"].map(
     }) as unknown as Row,
 );
 
-function setup() {
+function setup(more?: { onLoadEarlier(): Promise<boolean> }) {
   const view = render(
     <Timeline
       slug="dev"
       rows={rows}
       failedIds={new Set()}
       interruptedEnds={new Set()}
-      hasMoreBefore={false}
-      onLoadEarlier={async () => false}
+      hasMoreBefore={more !== undefined}
+      onLoadEarlier={more?.onLoadEarlier ?? (async () => false)}
       earlierError={false}
       footer={null}
     />,
   );
   const scroller = view.container.querySelector<HTMLElement>(".overflow-y-auto") as HTMLElement;
   const row = view.container.querySelector<HTMLElement>('[data-row="b"]') as HTMLElement;
+  const rowA = view.container.querySelector<HTMLElement>('[data-row="a"]') as HTMLElement;
   let scrollHeight = 1000;
   Object.defineProperty(scroller, "scrollHeight", { get: () => scrollHeight, configurable: true });
   Object.defineProperty(scroller, "clientHeight", { value: 400, configurable: true });
@@ -90,6 +90,8 @@ function setup() {
     setRowTop: (n: number) => {
       rowTop = n;
     },
+    row,
+    rowA,
     setScrollHeight: (n: number) => {
       scrollHeight = n;
     },
@@ -172,4 +174,52 @@ test("captureAnchor takes a fresh anchor for a toggle that follows no scroll", (
     rec?.cb([{ target: scroller, contentRect: { width: 500 } } as never], {} as ResizeObserver);
   });
   expect(scroller.scrollTop).toBe(150);
+});
+
+test("a probe that lands in the gap between rows falls back to the first row in view", () => {
+  const t = setup();
+  t.resize(600);
+  document.elementFromPoint = () => null; // the point sits in the space between two rows
+  t.rowA.getBoundingClientRect = () => ({ top: -60, bottom: 40 }) as DOMRect; // above the viewport top (50)
+  let top = 100;
+  t.row.getBoundingClientRect = () => ({ top, bottom: top + 60 }) as DOMRect;
+  t.scroller.scrollTop = 200;
+  scrolled(t.scroller);
+  top = 160;
+  t.resize(480);
+  expect(t.scroller.scrollTop).toBe(260);
+});
+
+test("a missed probe does not wipe a valid anchor", () => {
+  const t = setup();
+  t.resize(600);
+  t.scroller.scrollTop = 200;
+  scrolled(t.scroller); // anchors the row at 100
+  document.elementFromPoint = () => null;
+  t.rowA.getBoundingClientRect = () => ({ top: -90, bottom: 10 }) as DOMRect;
+  t.row.getBoundingClientRect = () => ({ top: -20, bottom: 30 }) as DOMRect; // nothing intersects the top
+  scrolled(t.scroller); // the probe finds no row at all
+  t.resize(480);
+  expect(t.scroller.scrollTop).toBe(80); // 200 + (-20 - 100): still corrected against the kept anchor
+});
+
+test("a disconnected anchor is skipped without throwing", () => {
+  const t = setup();
+  t.resize(600);
+  t.scroller.scrollTop = 200;
+  scrolled(t.scroller);
+  t.row.remove(); // its row was replaced
+  expect(() => t.resize(480)).not.toThrow();
+  expect(t.scroller.scrollTop).toBe(200);
+});
+
+test("while Load earlier is pending, a width change does not correct", () => {
+  const t = setup({ onLoadEarlier: () => new Promise<boolean>(() => {}) });
+  t.resize(600);
+  t.scroller.scrollTop = 200;
+  scrolled(t.scroller);
+  fireEvent.click(t.view.getByRole("button", { name: "Load earlier" }));
+  t.setRowTop(160);
+  t.resize(480);
+  expect(t.scroller.scrollTop).toBe(200);
 });

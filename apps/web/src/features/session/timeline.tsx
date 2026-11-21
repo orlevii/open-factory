@@ -93,12 +93,18 @@ export function Timeline(props: {
     const el = scroller.current;
     if (!el) return;
     const box = el.getBoundingClientRect();
-    // jsdom has no elementFromPoint; a browser always does.
-    const row = document
-      .elementFromPoint?.(box.left + 32, box.top + 1)
+    const hit = document
+      .elementFromPoint(box.left + 32, box.top + 1)
       ?.closest<HTMLElement>("[data-row]");
-    widthAnchor.current =
-      row && el.contains(row) ? { el: row, top: row.getBoundingClientRect().top } : null;
+    // The point can land in the space between rows: take the first row that reaches the viewport top.
+    const row =
+      hit && el.contains(hit)
+        ? hit
+        : [...el.querySelectorAll<HTMLElement>("[data-row]")].find(
+            (r) => r.getBoundingClientRect().bottom > box.top,
+          );
+    // A probe that finds nothing keeps the last good anchor rather than clearing it.
+    if (row) widthAnchor.current = { el: row, top: row.getBoundingClientRect().top };
   }, []);
   useImperativeHandle(props.ref, () => ({ captureAnchor }), [captureAnchor]);
 
@@ -128,7 +134,13 @@ export function Timeline(props: {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  useEffect(() => () => cancelAnimationFrame(scrollFrame.current), []);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(scrollFrame.current);
+      scrollFrame.current = 0;
+    },
+    [],
+  );
 
   // The tint stays until the user clicks somewhere other than the highlighted row.
   useEffect(() => {

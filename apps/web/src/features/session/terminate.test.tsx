@@ -370,9 +370,11 @@ test("the terminated frame arriving before the response: the dialog stays open u
 
 test("a failed terminate request after the agent was terminated anyway closes the dialog", async () => {
   const { state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/terminate`]: () => {
+    [`POST /api/agents/${SLUG}/terminate`]: async () => {
       state.agent = terminated({ terminatedBy: "lead" });
       act(() => frameNow());
+      // The frame commits on the next animation frame (and renders), before the failure comes back.
+      await new Promise((r) => setTimeout(r, 50));
       return json({ error: { code: "internal", message: "Something broke." } }, 500);
     },
   });

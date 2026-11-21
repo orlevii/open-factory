@@ -201,6 +201,8 @@ const status = (turnOpen: boolean) =>
     }),
   );
 const interrupt = () => screen.getByRole("button", { name: "Interrupt" });
+/** Frames commit once per animation frame (spec §9.6): lets this one land before the next. */
+const nextFrame = () => act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
 
 test("composer: IME composition Enter does not send (isComposing or keyCode 229)", async () => {
   renderApp("/agents/dev", alice);
@@ -340,6 +342,7 @@ test("interrupt: re-enables when the turn closes and a new one opens", async () 
   await vi.waitFor(() => expect(posted).toHaveLength(1));
   expect(interrupt()).toHaveAttribute("aria-disabled", "true");
   status(false);
+  await nextFrame();
   expect(interrupt()).toHaveAttribute("aria-disabled", "true");
   status(true);
   await vi.waitFor(() => expect(interrupt()).toHaveAttribute("aria-disabled", "false"));

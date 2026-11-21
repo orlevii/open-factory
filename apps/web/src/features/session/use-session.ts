@@ -4,13 +4,20 @@ import {
   ApiError,
   type EventsPage,
   type QueueItem,
+  type ServerMessage,
 } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useWs } from "@/lib/ws-context";
 import { agentDetailQueryOptions, fetchEvents, fetchMessage } from "./api";
 import { buildRows, deliveryFailedIds, interruptedTurnEnds } from "./rows";
-import { eventsInOrder, highestSeq, initialSessionState, sessionReducer } from "./session-state";
+import {
+  eventsInOrder,
+  highestSeq,
+  initialSessionState,
+  type SessionAction,
+  sessionReducer,
+} from "./session-state";
 
 const asApiError = (e: unknown) =>
   e instanceof ApiError
@@ -27,7 +34,26 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   const wsRef = useRef(ws);
   wsRef.current = ws;
   const qc = useQueryClient();
-  const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
+  const [state, dispatchRaw] = useReducer(sessionReducer, initialSessionState);
+  // One commit per animation frame (spec §9.6): this agent's frames wait here until the flush.
+  const queue = useRef<ServerMessage[]>([]);
+  const scheduled = useRef<(() => void) | null>(null); // cancels the pending flush
+  const flush = useCallback(() => {
+    scheduled.current?.();
+    scheduled.current = null;
+    if (queue.current.length === 0) return;
+    const messages = queue.current;
+    queue.current = [];
+    dispatchRaw({ type: "frames", messages });
+  }, []);
+  /** Every local action flushes pending frames first, so order is preserved. */
+  const dispatch = useCallback(
+    (a: SessionAction) => {
+      flush();
+      dispatchRaw(a);
+    },
+    [flush],
+  );
   const [missingEvent, setMissingEvent] = useState<number | undefined>();
   const [messageSeq, setMessageSeq] = useState<number | undefined>();
   const [messageNotice, setMessageNotice] = useState<MessageNotice | undefined>();
@@ -81,13 +107,38 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         setError(asApiError(e));
       }
     },
-    [qc, slug, message],
+    [qc, slug, message, dispatch],
   );
 
   useEffect(() => {
     void load(eventSeq);
   }, [load, eventSeq]);
-  useEffect(() => ws.listen((m) => dispatch({ type: "frame", message: m })), [ws]);
+  useEffect(
+    () =>
+      ws.listen((m) => {
+        if (!("agent" in m) || m.agent !== slug) return; // other agents never touch this state
+        queue.current.push(m);
+        if (scheduled.current) return;
+        if (document.hidden) {
+          const t = setTimeout(flush, 100); // rAF pauses in background tabs
+          scheduled.current = () => clearTimeout(t);
+        } else {
+          const id = requestAnimationFrame(flush);
+          scheduled.current = () => cancelAnimationFrame(id);
+        }
+      }),
+    [ws, slug, flush],
+  );
+  // Unmount or a slug change drops the pending flush and the frames for the old slug.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup runs on every slug change
+  useEffect(
+    () => () => {
+      scheduled.current?.();
+      scheduled.current = null;
+      queue.current = [];
+    },
+    [slug],
+  );
 
   // (Re)subscribe after every load and every socket (re)open. A windowed view only counts new
   // events, so it subscribes from the agent's lastSeq (spec §10), or after the newest seq it has
@@ -115,7 +166,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     if (ws.openCount && failed && failed.code !== "agent_not_found") void load(eventSeq);
   }, [ws.openCount, load, eventSeq]);
 
-  const events = useMemo(() => eventsInOrder(state), [state]);
+  // Already stable: only an event change produces a new array (status and queue frames keep it).
+  const events = eventsInOrder(state);
   const rows = useMemo(() => buildRows(events), [events]);
   const failedIds = useMemo(() => deliveryFailedIds(events), [events]);
   const interruptedEnds = useMemo(() => interruptedTurnEnds(events), [events]);
@@ -133,7 +185,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
       setEarlierError(true);
       return false;
     }
-  }, [events, slug]);
+  }, [events, slug, dispatch]);
 
   const retry = useCallback(() => load(eventSeq), [load, eventSeq]);
 
@@ -144,7 +196,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
       qc.setQueryData<AgentDetail>(["agent", agent.slug], (d) => (d ? { ...d, agent } : d));
       void qc.invalidateQueries({ queryKey: ["agents"] });
     },
-    [qc],
+    [qc, dispatch],
   );
 
   /** Refetches the summary only (not the events): after a send raced a termination. */
@@ -154,7 +206,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         (d) => dispatch({ type: "agent", agent: d.agent }),
         () => {},
       ),
-    [qc, slug],
+    [qc, slug, dispatch],
   );
   // A status frame says `terminated` but carries no termination fields (who, when, the workspace):
   // fetch them once. A failure leaves the strip without its sentence; the next load fills it.
@@ -166,9 +218,12 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
 
   /** While the socket is down no `queue` frame will come, so show the accepted item at once
    *  (UI design §4.4); when connected the frame is authoritative. */
-  const onQueued = useCallback((item: QueueItem) => {
-    if (wsRef.current.status !== "open") dispatch({ type: "queued", item });
-  }, []);
+  const onQueued = useCallback(
+    (item: QueueItem) => {
+      if (wsRef.current.status !== "open") dispatch({ type: "queued", item });
+    },
+    [dispatch],
+  );
 
   return {
     state,

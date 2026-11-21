@@ -14,8 +14,6 @@ export type ComboOption = {
   disabled?: boolean
   /** Kept first and shown whatever the filter ("None", "Anyone"). */
   fixed?: boolean
-  /** The option's row content; defaults to `label`. */
-  render?: () => React.ReactNode
 }
 
 type Side = "top" | "right" | "bottom" | "left"
@@ -63,10 +61,12 @@ function ComboItem({
   option,
   selected,
   onCommit,
+  renderOption,
 }: {
   option: ComboOption
   selected: boolean
   onCommit: (value: string) => void
+  renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
 }) {
   return (
     <CommandPrimitive.Item
@@ -76,7 +76,7 @@ function ComboItem({
       onSelect={() => onCommit(option.value)}
       className={itemClass}
     >
-      <span className="min-w-0 flex-1 truncate">{option.render ? option.render() : option.label}</span>
+      <span className="min-w-0 flex-1 truncate">{renderOption ? renderOption(option) : option.label}</span>
       <span className="absolute right-2 flex size-4 items-center justify-center">
         {selected ? <CheckIcon className="size-4 text-foreground" /> : null}
       </span>
@@ -91,31 +91,73 @@ function ComboList({
   emptyText,
   onCommit,
   onSearch,
+  renderOption,
 }: {
   options: ComboOption[]
   value: string
   emptyText?: string
   onCommit: (value: string) => void
   onSearch: () => void
+  renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
 }) {
   const { loose, groups } = React.useMemo(() => arrange(options, value), [options, value])
   const current = options.find((o) => o.value === value)
+  const [search, setSearch] = React.useState("")
+  const [highlight, setHighlight] = React.useState(current ? itemKey(current) : "")
+  // Fixed options stay on top while filtering (score 1), so cmdk's "highlight the first row" would pick
+  // "None" and Enter would commit it. While the highlight is cmdk's own (no arrow or pointer move since the
+  // last keystroke), a fixed row is swapped for the best real match.
+  const moved = React.useRef(false)
+  const bestMatch = (query: string) => {
+    let best: { key: string; score: number } | undefined
+    for (const o of options) {
+      if (o.fixed || o.disabled) continue
+      const score = filter(itemKey(o), query, [o.label, ...(o.keywords ?? [])])
+      if (score > 0 && (!best || score > best.score)) best = { key: itemKey(o), score }
+    }
+    return best?.key
+  }
+  // Two steps (the fixed key lands in state first, then the swap) so cmdk, which only follows a changed
+  // `value` prop, is told again each time it re-highlights the fixed row.
+  React.useEffect(() => {
+    if (moved.current || !search || !highlight.startsWith(FIXED)) return
+    const best = bestMatch(search)
+    if (best) setHighlight(best)
+  })
   const item = (o: ComboOption) => (
-    <ComboItem key={itemKey(o)} option={o} selected={o.value === value} onCommit={onCommit} />
+    <ComboItem
+      key={itemKey(o)}
+      option={o}
+      selected={o.value === value}
+      onCommit={onCommit}
+      renderOption={renderOption}
+    />
   )
   return (
     <CommandPrimitive
       label="Search"
       filter={filter}
-      defaultValue={current ? itemKey(current) : undefined}
+      value={highlight}
+      onValueChange={setHighlight}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") moved.current = true
+      }}
       className="flex flex-col"
     >
       <div className="flex h-9 items-center gap-2 border-b border-border px-2.5">
         <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
-        <CommandPrimitive.Input placeholder="Search…" onValueChange={onSearch} className={inputClass} />
+        <CommandPrimitive.Input
+          placeholder="Search…"
+          onValueChange={(s) => {
+            moved.current = false
+            setSearch(s)
+            onSearch()
+          }}
+          className={inputClass}
+        />
       </div>
       {/* A fixed height: the popover doesn't resize as the filter narrows, and nothing animates it. */}
-      <CommandPrimitive.List className="h-72 overflow-y-auto overscroll-contain scroll-py-1 p-1">
+      <CommandPrimitive.List onPointerMove={() => (moved.current = true)} className="h-72 overflow-y-auto overscroll-contain scroll-py-1 p-1">
         <CommandPrimitive.Empty className="py-6 text-center text-sm text-muted-foreground">
           {emptyText}
         </CommandPrimitive.Empty>
@@ -141,6 +183,11 @@ function Combobox({
   placeholder,
   emptyText,
   "aria-label": ariaLabel,
+  "aria-invalid": ariaInvalid,
+  "aria-describedby": ariaDescribedBy,
+  id,
+  disabled,
+  renderOption,
   renderValue,
   triggerClassName,
 }: {
@@ -150,6 +197,12 @@ function Combobox({
   placeholder?: string
   emptyText?: string
   "aria-label": string
+  "aria-invalid"?: boolean | undefined
+  "aria-describedby"?: string | undefined
+  id?: string | undefined
+  disabled?: boolean | undefined
+  /** One row renderer for every option (a stable function, not a closure per option); defaults to the label. */
+  renderOption?: (option: ComboOption) => React.ReactNode
   renderValue?: (value: string) => React.ReactNode
   triggerClassName?: string
 }) {
@@ -193,7 +246,11 @@ function Combobox({
         <button
           type="button"
           role="combobox"
+          id={id}
+          disabled={disabled}
           aria-label={ariaLabel}
+          aria-invalid={ariaInvalid}
+          aria-describedby={ariaDescribedBy}
           data-slot="combobox-trigger"
           data-placeholder={empty ? "" : undefined}
           className={cn(selectTriggerClass, triggerClassName)}
@@ -225,6 +282,7 @@ function Combobox({
           emptyText={emptyText}
           onCommit={commit}
           onSearch={lockPlacement}
+          renderOption={renderOption}
         />
       </PopoverContent>
     </Popover>

@@ -11,7 +11,7 @@ import {
 } from "@/test/agent-screens-fixtures";
 import { json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { optionNames, pickOption } from "@/test/select-helpers";
+import { comboOptionNames, optionNames, pickOption } from "@/test/select-helpers";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -183,6 +183,10 @@ test("a 400 with fields.slug puts the error under Slug and focuses it", async ()
   });
 });
 
+/** The manager picker's option names with the muted @slug (chip text repeats it for screen readers) dropped. */
+const managerNames = async (trigger: HTMLElement) =>
+  (await comboOptionNames(trigger)).map((n) => n.replace(/@.*/, ""));
+
 test("Edit: the manager select leaves out the agent and its descendants, indented", async () => {
   const agents = [
     agentSummary({ slug: "cto", displayName: "CTO" }),
@@ -194,15 +198,13 @@ test("Edit: the manager select leaves out the agent and its descendants, indente
   renderApp("/agents/lead/edit", alice);
   const select = await screen.findByLabelText("Manager");
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
-  // The closed trigger shows the name and a muted @slug, without the item's indent.
-  expect(select.querySelector("[data-slot=select-value] .text-muted-foreground")).toHaveTextContent(
-    "@cto",
-  );
+  // The closed trigger shows the name and @slug, without the item's indent.
+  expect(select).toHaveTextContent("@cto");
   expect(select.querySelector("[style*=padding]")).toBeNull();
-  expect(await optionNames(select)).toEqual([
+  expect(await managerNames(select)).toEqual([
     "No manager (reports to the humans)",
-    "CTO @cto",
-    "Other @other",
+    "CTO",
+    "Other",
   ]);
   // Template and slug are read-only on Edit.
   expect(screen.queryByLabelText("Template")).not.toBeInTheDocument();
@@ -226,11 +228,7 @@ test("the manager select leaves out spawned agents", async () => {
   await ready();
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toBeEnabled());
-  expect(await optionNames(select)).toEqual([
-    "No manager (reports to the humans)",
-    "CTO @cto",
-    "Lead @lead",
-  ]);
+  expect(await managerNames(select)).toEqual(["No manager (reports to the humans)", "CTO", "Lead"]);
 });
 
 test("projects: From the template, then Custom with Use template default", async () => {
@@ -514,17 +512,17 @@ test("the manager picker pads by depth, at most three levels, then marks deeper 
   await userEvent.click(select);
   const listbox = await screen.findByRole("listbox");
   const rows = chain.map((slug) => {
-    const item = within(listbox).getByRole("option", { name: new RegExp(`@${slug}$`) });
+    const item = within(listbox).getByRole("option", { name: new RegExp(`@${slug}`) });
     const name = item.querySelector<HTMLElement>("[style*=padding]");
-    return [name?.style.paddingInlineStart, name?.textContent];
+    return [name?.style.paddingInlineStart, name?.textContent?.replace(/@.*/, "")];
   });
   expect(rows).toEqual([
     ["0rem", "A"],
     ["0.75rem", "B"],
     ["1.5rem", "C"],
     ["2.25rem", "D"],
-    ["2.25rem", "└ E"],
-    ["2.25rem", "└ F"],
+    ["2.25rem", "└E"],
+    ["2.25rem", "└F"],
   ]);
 });
 

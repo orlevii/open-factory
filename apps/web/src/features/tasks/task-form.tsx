@@ -6,12 +6,14 @@ import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
+import type { ComboOption } from "@/components/ui/combobox";
+import { AgentCombobox } from "@/features/agents/agent-combobox";
 import { agentsListQueryOptions } from "@/features/session/api";
-import { AgentPicker } from "./agent-picker";
 import type { CreateTaskBody } from "./api";
 import { checkDependencies, DependencyEditor } from "./dependency-editor";
 import { checkLink, LinkEditor, type LinkRow, rowsToInput } from "./link-editor";
 
+const UNASSIGNED: ComboOption[] = [{ value: "", label: "Unassigned", fixed: true }];
 const FIELDS = ["title", "body", "assignee", "dependsOn", "links"] as const;
 type Field = (typeof FIELDS)[number];
 type Errors = Partial<Record<Field, string>>;
@@ -141,12 +143,16 @@ export function TaskForm({ onSubmit }: { onSubmit(body: CreateTaskBody): Promise
           help="Assigning sends the task to the agent's session right away."
         >
           {(a) => (
-            <AgentPicker
+            <AgentCombobox
               id={a.id}
-              value={assignee}
-              describedBy={a.describedBy}
-              onChange={(v) => {
-                setAssignee(v);
+              aria-label="Assignee"
+              scope="live"
+              fixed={UNASSIGNED}
+              value={assignee || null}
+              aria-invalid={a.invalid || undefined}
+              aria-describedby={a.describedBy}
+              onValueChange={(v) => {
+                setAssignee(v ?? "");
                 setError("assignee", undefined);
               }}
             />

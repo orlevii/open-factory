@@ -148,41 +148,45 @@ test("Assignee: Enter on an item assigns it and says so; a failed commit reverts
         }),
   );
   renderApp("/tasks/T-42", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Assignee: @dev" }));
-  await userEvent.click(await screen.findByRole("menuitemradio", { name: "@qa · QA" }));
+  await userEvent.click(await screen.findByRole("combobox", { name: "Assignee: @dev" }));
+  await userEvent.click(await screen.findByRole("option", { name: /QA\s*@qa/ }));
   expect(await screen.findByText("Assigned to @qa")).toBeInTheDocument();
   expect(patches(api)[0]?.body).toEqual({ assignee: "qa" });
   fail = true;
-  await userEvent.click(screen.getByRole("button", { name: "Assignee: @qa" }));
-  await userEvent.click(await screen.findByRole("menuitemradio", { name: "@dev · Dev" }));
+  await userEvent.click(screen.getByRole("combobox", { name: "Assignee: @qa" }));
+  await userEvent.click(await screen.findByRole("option", { name: /Dev\s*@dev/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "@qa was terminated and can't be assigned tasks.",
   );
-  expect(screen.getByRole("button", { name: "Assignee: @qa" })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Assignee: @qa" }));
-  await userEvent.click(await screen.findByRole("menuitemradio", { name: "Unassigned" }));
+  expect(screen.getByRole("combobox", { name: "Assignee: @qa" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("combobox", { name: "Assignee: @qa" }));
+  await userEvent.click(await screen.findByRole("option", { name: "Unassigned" }));
   await waitFor(() => expect(patches(api).at(-1)?.body).toEqual({ assignee: null }));
 });
 
-test("Assignee menu typeahead matches the slug without a leading @, and never assigns by itself", async () => {
+test("Assignee picker: typeahead matches the slug, arrows only move the highlight, Enter assigns", async () => {
   const api = world();
   renderApp("/tasks/T-42", alice);
-  const trigger = await screen.findByRole("button", { name: "Assignee: @dev" });
+  const trigger = await screen.findByRole("combobox", { name: "Assignee: @dev" });
   trigger.focus();
   await userEvent.keyboard("{Enter}");
-  await screen.findByRole("menuitemradio", { name: "@qa · QA" });
-  await userEvent.keyboard("qa");
+  await screen.findByRole("option", { name: /QA\s*@qa/ });
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowUp}");
+  await userEvent.type(screen.getByRole("combobox", { name: "Search" }), "qa");
+  await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2)); // Unassigned stays
   await waitFor(() =>
-    expect(screen.getByRole("menuitemradio", { name: "@qa · QA" })).toHaveFocus(),
+    expect(screen.getByRole("option", { name: /QA/ })).toHaveAttribute("aria-selected", "true"),
   );
   expect(patches(api)).toHaveLength(0);
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(patches(api)[0]?.body).toEqual({ assignee: "qa" }));
 });
 
 test("an ended assignee shows muted above a 'Choose an agent…' trigger", async () => {
   world(() => detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }));
   renderApp("/tasks/T-42", alice);
   expect(
-    await screen.findByRole("button", { name: "Assignee: Choose an agent…" }),
+    await screen.findByRole("combobox", { name: "Assignee: Choose an agent…" }),
   ).toBeInTheDocument();
   expect(
     screen.getByText((_, el) => el?.tagName === "P" && el.textContent === "@dev · terminated"),
@@ -688,12 +692,11 @@ test("layout: the Status and Assignee triggers truncate instead of widening the 
   world();
   renderApp("/tasks/T-42", alice);
   const status = await screen.findByRole("button", { name: /^Status:/ });
-  const assignee = screen.getByRole("button", { name: /^Assignee:/ });
+  const assignee = screen.getByRole("combobox", { name: /^Assignee:/ });
   for (const b of [status, assignee]) {
     expect(b).toHaveClass("w-full", "min-w-0");
-    expect(b.querySelector(".truncate")).not.toBeNull();
   }
-  expect(within(assignee).getByText("@dev")).toHaveClass("min-w-0", "truncate");
+  expect(status.querySelector(".truncate")).not.toBeNull();
 });
 
 /** The list row of T-42, as the tasks list caches it. */
@@ -723,7 +726,7 @@ test("with the tasks list cached, the page shows the title and status at once; n
     await screen.findByRole("heading", { level: 2, name: "Plan the billing migration" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Status: In progress" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: /^Assignee/ })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: /^Assignee/ })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Edit title" })).toBeDisabled();
   expect(document.querySelectorAll("[data-slot=skeleton]").length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();

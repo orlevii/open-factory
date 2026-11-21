@@ -16,8 +16,8 @@ import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
+import type { ComboOption } from "@/components/ui/combobox";
 import {
-  ALL,
   Select,
   SelectContent,
   SelectItem,
@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { ShowOutput } from "@/features/agents/show-output";
@@ -34,7 +35,6 @@ import {
   projectsQueryOptions,
   secretsQueryOptions,
 } from "@/features/settings/api";
-import { Slug } from "@/features/tasks/agent-picker";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 
 const FIELDS = [
@@ -59,14 +59,10 @@ type Values = {
   projects: string[];
 };
 
+const NO_MANAGER: ComboOption[] = [
+  { value: "", label: "No manager (reports to the humans)", fixed: true },
+];
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
-/** Reporting-line depth as padding (plain spaces collapse in HTML): 0.75rem a level, three levels at most, then a `└ `. */
-const ManagerName = ({ depth, name }: { depth: number; name: string }) => (
-  <span style={{ paddingInlineStart: `${Math.min(depth, 3) * 0.75}rem` }}>
-    {depth > 3 && "└ "}
-    {name}
-  </span>
-);
 const linkClass =
   "text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
 
@@ -372,14 +368,13 @@ export function AgentForm(props: Props) {
     }
   }
 
-  // Manager options: active persistent agents in tree order (a spawned agent never manages). On Edit
-  // the agent and everything under it are left out, because picking one of them would make a cycle.
+  // Who can manage: persistent agents (a spawned agent never manages). On Edit the agent and everything
+  // under it are left out, because picking one of them would make a cycle.
   const editing = agent?.slug;
-  const managerOptions = useMemo(() => {
-    const list = (activeAgents.data ?? []).filter((a) => a.kind === "persistent");
-    if (!editing) return list;
-    const excluded = new Set([editing]);
-    let grew = true;
+  const canManage = useMemo(() => {
+    const list = activeAgents.data ?? [];
+    const excluded = new Set<string>(editing ? [editing] : []);
+    let grew = editing !== undefined;
     while (grew) {
       grew = false;
       for (const a of list) {
@@ -389,13 +384,18 @@ export function AgentForm(props: Props) {
         }
       }
     }
-    return list.filter((a) => !excluded.has(a.slug));
+    return (a: AgentOpt) => a.kind === "persistent" && !excluded.has(a.slug);
   }, [activeAgents.data, editing]);
-  const selectedManager = managerOptions.find((a) => a.slug === values.reportsTo);
   const managerMissing =
     values.reportsTo !== "" &&
     activeAgents.data !== undefined &&
-    !managerOptions.some((a) => a.slug === values.reportsTo);
+    !activeAgents.data.some(
+      (a) => a.slug === values.reportsTo && !a.archivedAt && !a.terminatedAt && canManage(a),
+    );
+  const renderMissingManager = useMemo(
+    () => (managerMissing ? (slug: string) => `@${slug} (archived)` : undefined),
+    [managerMissing],
+  );
 
   const noCredentials = credentials.data !== undefined && credentials.data.length === 0;
   const missingSecrets =
@@ -501,49 +501,20 @@ export function AgentForm(props: Props) {
         </FieldShell>
         <FieldShell name="reportsTo" label="Manager" error={errors.reportsTo}>
           {(a) => (
-            <Select
+            <AgentCombobox
+              id={a.id}
+              aria-label="Manager"
+              scope="live"
+              order="tree"
+              fixed={NO_MANAGER}
+              filter={canManage}
               disabled={!activeAgents.data}
-              value={values.reportsTo || ALL}
-              onValueChange={(v) => set("reportsTo", v === ALL ? "" : v)}
-            >
-              <SelectTrigger
-                id={a.id}
-                aria-invalid={a.invalid || undefined}
-                aria-describedby={a.describedBy}
-              >
-                {/* Explicit content: the trigger shows the name and slug, never the item's indent. */}
-                <SelectValue>
-                  {!activeAgents.data ? (
-                    "Loading…"
-                  ) : values.reportsTo === "" ? (
-                    "No manager (reports to the humans)"
-                  ) : managerMissing ? (
-                    `@${values.reportsTo} (archived)`
-                  ) : (
-                    <>
-                      <span>{selectedManager?.displayName}</span> <Slug slug={values.reportsTo} />
-                    </>
-                  )}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {activeAgents.data && (
-                  <>
-                    <SelectItem value={ALL}>No manager (reports to the humans)</SelectItem>
-                    {managerOptions.map((m) => (
-                      <SelectItem key={m.slug} value={m.slug} textValue={m.slug}>
-                        <ManagerName depth={m.depth} name={m.displayName} /> <Slug slug={m.slug} />
-                      </SelectItem>
-                    ))}
-                    {managerMissing && (
-                      <SelectItem value={values.reportsTo} disabled>
-                        {`@${values.reportsTo} (archived)`}
-                      </SelectItem>
-                    )}
-                  </>
-                )}
-              </SelectContent>
-            </Select>
+              value={values.reportsTo || null}
+              renderValue={renderMissingManager}
+              aria-invalid={a.invalid || undefined}
+              aria-describedby={a.describedBy}
+              onValueChange={(v) => set("reportsTo", v ?? "")}
+            />
           )}
         </FieldShell>
         {noCredentials ? (

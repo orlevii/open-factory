@@ -198,3 +198,30 @@ test("ArrowDown or ArrowUp on the closed trigger opens it, stamped data-instant,
   }
   expect(onValueChange).not.toHaveBeenCalled();
 });
+
+test("typing then Enter commits the best match, not the fixed option kept on top", async () => {
+  const { trigger, onValueChange } = setup();
+  await userEvent.click(trigger);
+  await userEvent.type(await screen.findByRole("combobox", { name: "Search" }), "bet");
+  await vi.waitFor(() => expect(highlighted()).toHaveTextContent("Beta"));
+  await userEvent.keyboard("{Enter}");
+  expect(onValueChange).toHaveBeenCalledWith("beta");
+});
+
+test("one renderOption draws every non-trigger row; id, disabled and describedby reach the trigger", async () => {
+  const renderOption = (o: ComboOption) => <b data-testid="row">{o.label.toUpperCase()}</b>;
+  const { trigger } = setup({ renderOption, id: "f-mgr", "aria-describedby": "h", "aria-invalid": true });
+  expect(trigger).toHaveAttribute("id", "f-mgr");
+  expect(trigger).toHaveAttribute("aria-describedby", "h");
+  expect(trigger).toHaveAttribute("aria-invalid", "true");
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  expect(screen.getAllByTestId("row").map((r) => r.textContent)).toEqual(
+    expect.arrayContaining(["ALPHA", "BETA", "GAMMA", "NONE"]),
+  );
+});
+
+test("disabled blocks opening", async () => {
+  const { trigger } = setup({ disabled: true });
+  expect(trigger).toBeDisabled();
+});

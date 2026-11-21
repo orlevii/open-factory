@@ -1,13 +1,6 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ALL,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SelectItem } from "@/components/ui/select";
 import { agentsQueryOptions } from "@/features/session/api";
 
 type Agents = AgentSummary[];
@@ -48,43 +41,5 @@ export function AgentItem({ agent }: { agent: { slug: string; displayName: strin
       )}
       <Slug slug={agent.slug} />
     </SelectItem>
-  );
-}
-
-/** The create form's picker: nothing is sent until "Create task". "" is Unassigned (the ALL sentinel inside). */
-export function AgentPicker({
-  id,
-  value,
-  onChange,
-  describedBy,
-  placeholder = "Unassigned",
-  extraOption,
-}: {
-  id: string;
-  value: string;
-  onChange(slug: string): void;
-  describedBy?: string | undefined;
-  /** The empty option's text: "Unassigned" for tasks, "Choose an agent…" for schedules. */
-  placeholder?: string;
-  /** An agent that isn't assignable (archived) but is the current value: kept as an option while selected. */
-  extraOption?: { value: string; label: string } | undefined;
-}) {
-  const { agents, isPending } = useAssignableAgents();
-  return (
-    <Select value={value || ALL} onValueChange={(v) => onChange(v === ALL ? "" : v)}>
-      <SelectTrigger id={id} aria-describedby={describedBy}>
-        {/* While the agents load, the chosen slug stands in for the missing option text. */}
-        <SelectValue>{isPending && value ? `@${value}` : undefined}</SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{placeholder}</SelectItem>
-        {extraOption && !agents.some((a) => a.slug === extraOption.value) && (
-          <SelectItem value={extraOption.value}>{extraOption.label}</SelectItem>
-        )}
-        {agents.map((a) => (
-          <AgentItem key={a.slug} agent={a} />
-        ))}
-      </SelectContent>
-    </Select>
   );
 }

@@ -127,10 +127,58 @@ test("hidden document flushes on a 100ms timeout; visibilitychange flushes at on
   off();
 });
 
-test("unmounting the shell drops pending frames", () => {
+test("teardown flushes pending frames and removes the visibilitychange listener", () => {
   const off = installStatusFrameFlush();
   enqueueStatusFrame(qc, frame("ada", "working"));
   off();
-  vi.advanceTimersByTime(500);
+  expect(list()[0]?.status).toBe("working");
+  enqueueStatusFrame(qc, frame("ada", "idle"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  // The listener is gone: only the scheduled frame flushes it.
+  expect(list()[0]?.status).toBe("working");
+  vi.advanceTimersToNextFrame();
   expect(list()[0]?.status).toBe("idle");
+});
+
+test("a pending animation frame is flushed when the tab turns hidden (visibilitychange)", () => {
+  const off = installStatusFrameFlush();
+  enqueueStatusFrame(qc, frame("ada", "working"));
+  Object.defineProperty(document, "hidden", { value: true, configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(list()[0]?.status).toBe("working");
+  off();
+});
+
+test("a frame without lastError clears it, in the list and the detail", () => {
+  const withErr = agentSummary({ slug: "ada", status: "errored", lastError: "boom" });
+  qc.setQueryData(["agents", "exclude"], [withErr]);
+  qc.setQueryData(["agent", "ada"], { agent: withErr });
+  applyStatusFrames(qc, [frame("ada", "idle")]);
+  expect(list()[0]?.lastError).toBeUndefined();
+  expect(
+    qc.getQueryData<{ agent: AgentSummary }>(["agent", "ada"])?.agent.lastError,
+  ).toBeUndefined();
+});
+
+test("restartPending and restartWaitingOn fold into the list and the detail", () => {
+  qc.setQueryData(["agent", "ada"], { agent: agentSummary({ slug: "ada" }) });
+  applyStatusFrames(qc, [frame("ada", "idle", { restartPending: true, restartWaitingOn: 2 })]);
+  expect(list()[0]).toMatchObject({ restartPending: true, restartWaitingOn: 2 });
+  expect(qc.getQueryData<{ agent: AgentSummary }>(["agent", "ada"])?.agent).toMatchObject({
+    restartPending: true,
+    restartWaitingOn: 2,
+  });
+});
+
+test("every cached list variant is patched, others untouched", () => {
+  qc.setQueryData(["agents", "only"], [agentSummary({ slug: "ada", status: "working" })]);
+  qc.setQueryData(["agents", "include"], [agentSummary({ slug: "ada", status: "working" })]);
+  const other = agentSummary({ slug: "zed", status: "idle" });
+  qc.setQueryData(["agents", "other"], [other]);
+  applyStatusFrames(qc, [frame("ada", "idle", { restartPending: true, restartWaitingOn: 1 })]);
+  for (const v of ["exclude", "only", "include"]) {
+    const row = qc.getQueryData<AgentSummary[]>(["agents", v])?.find((a) => a.slug === "ada");
+    expect(row, v).toMatchObject({ status: "idle", restartWaitingOn: 1 });
+  }
+  expect(qc.getQueryData<AgentSummary[]>(["agents", "other"])?.[0]).toBe(other);
 });

@@ -41,14 +41,13 @@ export function flushStatusFrames(): void {
   if (qc && frames.length > 0) applyStatusFrames(qc, frames);
 }
 
-/** Flush at once when visibility changes, and drop what is pending on teardown. Returns the cleanup. */
+/** Flush at once when visibility changes, and on teardown (an effect re-run for the same client must
+ *  not lose the pending frames; on a real unmount the write is harmless). Returns the cleanup. */
 export function installStatusFrameFlush(): () => void {
   document.addEventListener("visibilitychange", flushStatusFrames);
   return () => {
     document.removeEventListener("visibilitychange", flushStatusFrames);
-    cancelScheduled?.();
-    cancelScheduled = null;
-    queue = [];
+    flushStatusFrames();
     client = null;
   };
 }

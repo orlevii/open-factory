@@ -1,4 +1,4 @@
-import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
+import type { AgentSummary, AgentsUsage } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
@@ -11,6 +11,7 @@ import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
 import { agentTasksOptions } from "@/features/tasks/api";
 import { STATUS } from "@/features/tasks/status-label";
+import { agentsUsageQuery } from "@/features/usage/api";
 import { formatCost } from "@/features/usage/format";
 import { MOBILE, useMedia, WIDE, XWIDE } from "@/lib/breakpoints";
 import { usePref } from "@/lib/prefs";
@@ -362,13 +363,15 @@ function Work({ agent }: { agent: AgentSummary }) {
   );
 }
 
-function Usage({
-  agent,
-  usage,
-}: {
-  agent: AgentSummary;
-  usage?: AgentUsageRow | null | undefined;
-}) {
+function Usage({ agent }: { agent: AgentSummary }) {
+  // The 7-day row for this agent: null once loaded without one, undefined while loading. Mounted
+  // only while Agent details is open, so the all-agents fetch runs only then.
+  const slug = agent.slug;
+  const select = useCallback(
+    (d: AgentsUsage) => d.agents.find((r) => r.slug === slug) ?? null,
+    [slug],
+  );
+  const usage = useQuery({ ...agentsUsageQuery("rolling7"), select }).data;
   const t = usage && (usage.kind === "ephemeral" ? usage.own : usage.total);
   const cost = t && t.turns > 0 ? formatCost(t.costUsd, t.turns) : null;
   return (
@@ -452,15 +455,12 @@ function Runtime({ agent }: { agent: AgentSummary }) {
 export function AgentDetails({
   agent,
   stop,
-  usage,
   onClose,
   slotsMax,
   onAgent,
 }: {
   agent: AgentSummary;
   stop: StopCrons;
-  /** The 7-day usage row; null once loaded without one for this agent, undefined while loading. */
-  usage: AgentUsageRow | null | undefined;
   /** Shown in the sheet and drawer modes. */
   onClose?: (() => void) | undefined;
   /** For the queued detail. */
@@ -487,7 +487,7 @@ export function AgentDetails({
         <Now agent={agent} stop={stop} slotsMax={slotsMax} onAgent={onAgent} />
         <Org agent={agent} />
         <Work agent={agent} />
-        <Usage agent={agent} usage={usage} />
+        <Usage agent={agent} />
         <Runtime agent={agent} />
       </div>
       {canEdit && (

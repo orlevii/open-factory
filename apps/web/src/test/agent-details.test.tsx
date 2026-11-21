@@ -73,25 +73,25 @@ type Props = {
   seed?: (qc: QueryClient) => void;
 };
 
-function Harness({ agent, usage, onClose, slotsMax }: Omit<Props, "seed">) {
+function Harness({ agent, onClose, slotsMax }: Omit<Props, "seed" | "usage">) {
   const a = agent ?? agentSummary();
   const stop: StopCrons = useStopCrons(a);
-  return <AgentDetails agent={a} stop={stop} usage={usage} onClose={onClose} slotsMax={slotsMax} />;
+  return <AgentDetails agent={a} stop={stop} onClose={onClose} slotsMax={slotsMax} />;
 }
 
 function setup(props: Props = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   props.seed?.(qc);
+  // The Usage section reads the 7-day rows itself; undefined leaves it loading.
+  if (props.usage !== undefined)
+    qc.setQueryData(["usage", "agents", "rolling7"], {
+      agents: props.usage ? [props.usage] : [],
+    });
   const root = createRootRoute({
     component: () => (
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <Harness
-            agent={props.agent}
-            usage={props.usage}
-            onClose={props.onClose}
-            slotsMax={props.slotsMax}
-          />
+          <Harness agent={props.agent} onClose={props.onClose} slotsMax={props.slotsMax} />
         </TooltipProvider>
       </QueryClientProvider>
     ),

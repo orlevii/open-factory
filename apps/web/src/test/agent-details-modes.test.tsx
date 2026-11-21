@@ -70,6 +70,21 @@ test.each([
   expect(within(container() as HTMLElement).getByText("@dev")).toBeInTheDocument();
 });
 
+test("the 7-day usage is fetched only once Agent details opens", async () => {
+  const api = mockApi({
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/agents/dev/events?": () => json(conversation()),
+    "GET /api/usage/agents?": () => json({ agents: [] }),
+  });
+  const usageCalls = () => api.calls.filter((c) => c.url.startsWith("/api/usage/agents"));
+  await visit(1100);
+  expect(container()).toBeNull();
+  expect(usageCalls()).toEqual([]);
+  await userEvent.click(toggle());
+  await waitFor(() => expect(usageCalls()).toHaveLength(1));
+  expect(usageCalls()[0]?.url).toBe("/api/usage/agents?window=rolling");
+});
+
 test("≥1280 the choice is remembered (of-agent-details); 1024–1279 starts closed on every visit", async () => {
   const first = await visit(1440);
   await userEvent.click(toggle());

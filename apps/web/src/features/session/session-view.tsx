@@ -13,7 +13,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
-import { agentsUsageQuery } from "@/features/usage/api";
 import { sessionQueryOptions } from "@/lib/session";
 import {
   AGENT_DETAILS_ID,
@@ -73,7 +72,6 @@ export function SessionView({
   const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rows, !!loaded);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
-  const usageRows = useQuery(agentsUsageQuery("rolling7"));
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
   const [raceNotice, setRaceNotice] = useState<string>();
   // The header's actions report here, in a notice row under it: a failed Restart, a Pin outcome.
@@ -127,14 +125,10 @@ export function SessionView({
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";
   const errored = agent.status === "errored";
-  const usage = usageRows.data
-    ? (usageRows.data.agents.find((r) => r.slug === agent.slug) ?? null)
-    : undefined;
   const details = (onClose?: () => void) => (
     <AgentDetails
       agent={agent}
       stop={stop}
-      usage={usage}
       slotsMax={running.data?.max}
       onAgent={s.setAgent}
       onClose={onClose}

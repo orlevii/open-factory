@@ -1157,27 +1157,13 @@ export class EventStore {
     return out;
   }
 
-  /**
-   * The user's inbox, newest first. Cursor is `created_at|id` in base64url (spec §11). `unread` keeps only items not
-   * yet read (Home's panel).
-   */
-  async inboxPage(
-    userId: string,
-    before?: string,
-    limit = 50,
-    o: { unread?: boolean } = {},
-  ): Promise<{ items: InboxEntry[]; nextCursor: string | null }> {
+  /** The inbox item rows (item, message and the joined names) matching `where`, unordered. */
+  private inboxRows(where: SQL | undefined) {
     const fa = alias(agents, "fa");
     const sa = alias(agents, "sa");
     const tu = alias(users, "tu");
     const fu = alias(users, "fu");
-    let cursor: SQL | undefined;
-    if (before) {
-      const [at, id] = Buffer.from(before, "base64url").toString().split("|");
-      if (!at || !id || !isCursorInstant(at)) throw new InvalidCursorError();
-      cursor = sql`(${inboxItems.createdAt}, ${inboxItems.id}) < (${at}::timestamptz, ${id})`;
-    }
-    const rows = await this.db
+    return this.db
       .select({
         item: inboxItems,
         m: messages,
@@ -1197,16 +1183,13 @@ export class EventStore {
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
       .leftJoin(tu, eq(tu.id, messages.toUserId))
       .leftJoin(tasks, eq(tasks.id, messages.taskId))
-      .where(
-        and(
-          eq(inboxItems.userId, userId),
-          cursor,
-          o.unread ? isNull(inboxItems.readAt) : undefined,
-        ),
-      )
-      .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
-      .limit(limit + 1);
-    const page = rows.slice(0, limit);
+      .where(where);
+  }
+
+  /** Maps joined inbox rows to entries (sender, task, link), in order. */
+  private async toEntries(
+    page: Awaited<ReturnType<EventStore["inboxRows"]>>,
+  ): Promise<InboxEntry[]> {
     const senders = await this.senderEvents(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
@@ -1251,6 +1234,38 @@ export class EventStore {
             : { kind: "session", agentSlug, ...(sender ? { seq: sender.seq } : {}) },
       });
     }
+    return items;
+  }
+
+  /** One item of the user's inbox, or null when it does not exist or belongs to someone else. */
+  async inboxItem(userId: string, id: string): Promise<InboxEntry | null> {
+    const rows = await this.inboxRows(and(eq(inboxItems.userId, userId), eq(inboxItems.id, id)));
+    return (await this.toEntries(rows))[0] ?? null;
+  }
+
+  /**
+   * The user's inbox, newest first. Cursor is `created_at|id` in base64url (spec §11). `unread` keeps only items not
+   * yet read (Home's panel).
+   */
+  async inboxPage(
+    userId: string,
+    before?: string,
+    limit = 50,
+    o: { unread?: boolean } = {},
+  ): Promise<{ items: InboxEntry[]; nextCursor: string | null }> {
+    let cursor: SQL | undefined;
+    if (before) {
+      const [at, id] = Buffer.from(before, "base64url").toString().split("|");
+      if (!at || !id || !isCursorInstant(at)) throw new InvalidCursorError();
+      cursor = sql`(${inboxItems.createdAt}, ${inboxItems.id}) < (${at}::timestamptz, ${id})`;
+    }
+    const rows = await this.inboxRows(
+      and(eq(inboxItems.userId, userId), cursor, o.unread ? isNull(inboxItems.readAt) : undefined),
+    )
+      .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
+      .limit(limit + 1);
+    const page = rows.slice(0, limit);
+    const items = await this.toEntries(page);
     const last = page.at(-1);
     const nextCursor =
       rows.length > limit && last

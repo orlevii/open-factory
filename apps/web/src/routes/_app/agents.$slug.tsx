@@ -1,7 +1,7 @@
 import { ApiError } from "@open-factory/shared";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { z } from "zod";
-import { agentDetailQueryOptions } from "@/features/session/api";
+import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
 import { SessionView } from "@/features/session/session-view";
 
 export const Route = createFileRoute("/_app/agents/$slug")({
@@ -11,11 +11,18 @@ export const Route = createFileRoute("/_app/agents/$slug")({
     // A message id: the view resolves it to the recipient's event (GET /api/messages/:id).
     message: z.string().min(1).optional().catch(undefined),
   }),
-  // Only so the first load shows the route's pending mark and an unknown slug the not-found state;
-  // the view itself fetches the detail fresh for its lastSeq.
+  // When a list already holds the agent's summary the page renders from it at once and the detail
+  // loads behind it (spec §11); only an uncached slug waits here, so it can show the not-found state.
+  // The view itself fetches the detail fresh for its lastSeq (deduped with this request).
   loader: async ({ context, params }) => {
+    const qc = context.queryClient;
+    const opts = agentDetailQueryOptions(params.slug);
+    if (summaryFromAgentsList(qc, params.slug)) {
+      void qc.prefetchQuery(opts);
+      return;
+    }
     try {
-      await context.queryClient.ensureQueryData(agentDetailQueryOptions(params.slug));
+      await qc.ensureQueryData(opts);
     } catch (e) {
       if (e instanceof ApiError && e.code === "agent_not_found") throw notFound();
       // Anything else: the view shows the error with a retry.

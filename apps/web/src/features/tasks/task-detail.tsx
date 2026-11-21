@@ -20,12 +20,20 @@ import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
 import { AgentLink, LINK_CLASS } from "@/features/session/message-block";
 import { formatCostEst } from "@/features/usage/format";
 import { sessionQueryOptions } from "@/lib/session";
-import { type PatchTaskBody, patchTask, taskDetailOptions, tasksQueryKey } from "./api";
+import {
+  type PatchTaskBody,
+  patchTask,
+  taskDetailOptions,
+  taskPlaceholder,
+  taskSummaryFromList,
+  tasksQueryKey,
+} from "./api";
 import { AssigneeMenu } from "./assignee-menu";
 import { authorMention } from "./comment-block";
 import { CommentComposer, type CommentComposerHandle } from "./comment-composer";
@@ -116,6 +124,34 @@ function EditorButtons({
   );
 }
 
+/** The task detail, or until it arrives a stand-in from the cached list row (spec §11): the route
+ *  renders the title and status at once instead of waiting. The list-cache read in `placeholderData`
+ *  is deliberately non-reactive: the real detail replaces it as soon as it loads. */
+export function useTaskDetail(key: string) {
+  const qc = useQueryClient();
+  return useQuery({
+    ...taskDetailOptions(key),
+    placeholderData: () => {
+      const row = taskSummaryFromList(qc, key);
+      return row && taskPlaceholder(row);
+    },
+  });
+}
+
+/** Static plates where a detail-only part of the page will go (distinct classes: they are the keys). */
+function Plates({ heights }: { heights: readonly string[] }) {
+  return (
+    <div aria-hidden="true" className="grid gap-2">
+      {heights.map((h) => (
+        <Skeleton key={h} className={h} />
+      ))}
+    </div>
+  );
+}
+const BODY_PLATES = ["h-4 w-11/12", "h-4 w-10/12", "h-4 w-7/12"] as const;
+const ACTIVITY_PLATES = ["h-10", "h-14"] as const;
+const SIDE_PLATES = ["h-14", "h-16"] as const;
+
 /** The task page body (UI design §7); the route wraps it with the header. */
 export function TaskDetailView({
   taskKey,
@@ -125,7 +161,8 @@ export function TaskDetailView({
   commentId: string | undefined;
 }) {
   const qc = useQueryClient();
-  const { data: task } = useQuery(taskDetailOptions(taskKey));
+  // While `placeholder`, only the list row's fields are real: nothing is editable from them.
+  const { data: task, isPlaceholderData: placeholder } = useTaskDetail(taskKey);
   const { data: session } = useQuery(sessionQueryOptions);
   const me =
     session?.user && "handle" in session.user ? (session.user.handle as string) : undefined;
@@ -159,7 +196,8 @@ export function TaskDetailView({
   const [missing, setMissing] = useState(false);
   const handled = useRef<string>(undefined);
   useEffect(() => {
-    if (!task || !commentId || handled.current === commentId) return;
+    // The stand-in has no activity: look for the comment once the real one is in.
+    if (!task || placeholder || !commentId || handled.current === commentId) return;
     handled.current = commentId;
     const c = task.activity.find((a) => a.type === "comment" && a.id === commentId);
     if (c?.type !== "comment") return setMissing(true);
@@ -170,7 +208,7 @@ export function TaskDetailView({
       el?.scrollIntoView?.({ block: "center" });
       el?.focus({ preventScroll: true });
     });
-  }, [task, commentId]);
+  }, [task, placeholder, commentId]);
   useEffect(() => {
     if (!highlight) return;
     const off = (e: PointerEvent) => {
@@ -184,7 +222,7 @@ export function TaskDetailView({
   // A new comment by someone else is announced politely.
   const seen = useRef<Set<string>>(undefined);
   useEffect(() => {
-    if (!task) return;
+    if (!task || placeholder) return; // the first real activity is history, not news
     const ids = new Set(task.activity.filter((a) => a.type === "comment").map((a) => a.id));
     if (seen.current) {
       const fresh = task.activity.find(
@@ -197,7 +235,7 @@ export function TaskDetailView({
         setAnnounce(`${authorMention(fresh.author)} commented`);
     }
     seen.current = ids;
-  }, [task, me]);
+  }, [task, placeholder, me]);
 
   if (!task) return null;
   const liveAssignee = task.assignee && !task.assignee.ended ? task.assignee.slug : undefined;
@@ -207,25 +245,53 @@ export function TaskDetailView({
         {announce}
       </p>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 lg:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)] lg:grid-rows-[auto_auto_1fr]">
-        <TitleBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
+        <TitleBlock
+          task={task}
+          liveAssignee={liveAssignee}
+          save={saveTask}
+          disabled={placeholder}
+        />
         <aside className="contents min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:block">
           <div className="order-2 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 lg:mb-0">
-            <StatusAndAssignee task={task} announce={setAnnounce} save={saveTask} />
+            <StatusAndAssignee
+              task={task}
+              announce={setAnnounce}
+              save={saveTask}
+              disabled={placeholder}
+            />
           </div>
           <div className="order-4 min-w-0">
-            <SideRest task={task} save={saveTask} />
+            {placeholder ? (
+              <div className="pt-3">
+                <Plates heights={SIDE_PLATES} />
+              </div>
+            ) : (
+              <SideRest task={task} save={saveTask} />
+            )}
           </div>
         </aside>
-        <BodyBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
+        {placeholder ? (
+          <div className="order-3 min-w-0 lg:col-start-1">
+            <Plates heights={BODY_PLATES} />
+          </div>
+        ) : (
+          <BodyBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
+        )}
         <div className="order-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:col-start-1">
-          <TaskActivity
-            taskKey={task.key}
-            items={task.activity}
-            highlightedId={highlight}
-            onReply={reply}
-            notFoundLine={missing}
-          />
-          <CommentComposer ref={composer} taskKey={taskKey} assignee={liveAssignee} />
+          {placeholder ? (
+            <Plates heights={ACTIVITY_PLATES} />
+          ) : (
+            <>
+              <TaskActivity
+                taskKey={task.key}
+                items={task.activity}
+                highlightedId={highlight}
+                onReply={reply}
+                notFoundLine={missing}
+              />
+              <CommentComposer ref={composer} taskKey={taskKey} assignee={liveAssignee} />
+            </>
+          )}
         </div>
       </div>
     </PageBody>
@@ -238,10 +304,12 @@ function TitleBlock({
   task,
   liveAssignee,
   save,
+  disabled,
 }: {
   task: Detail;
   liveAssignee: string | undefined;
   save: Save;
+  disabled: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(task.title);
@@ -312,6 +380,7 @@ function TitleBlock({
             size="xs"
             aria-label="Edit title"
             className="shrink-0"
+            disabled={disabled}
             onClick={() => {
               setText(task.title);
               setEditing(true);
@@ -417,10 +486,12 @@ function StatusAndAssignee({
   task,
   announce,
   save,
+  disabled,
 }: {
   task: Detail;
   announce(s: string): void;
   save: Save;
+  disabled: boolean;
 }) {
   const [optimistic, setOptimistic] = useState<{
     status?: Detail["status"];
@@ -454,7 +525,7 @@ function StatusAndAssignee({
       <SideSection label="Status" flush>
         <StatusMenu
           value={status}
-          disabled={pending}
+          disabled={pending || disabled}
           onCommit={(s) =>
             void apply({ status: s }, `Status set to ${STATUS[s].sentence}`, { status: s })
           }
@@ -463,7 +534,7 @@ function StatusAndAssignee({
       <SideSection label="Assignee">
         <AssigneeMenu
           value={assignee}
-          disabled={pending}
+          disabled={pending || disabled}
           onCommit={(slug) =>
             void apply({ assignee: slug }, slug ? `Assigned to @${slug}` : "Unassigned", {
               assignee: slug,

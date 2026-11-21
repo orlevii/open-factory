@@ -1,17 +1,18 @@
 import type { AgentSummary } from "@open-factory/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, Pencil } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/page-header";
-import { NotFound } from "@/components/route-states";
+import { ResourceNotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentName } from "@/features/agents/agent-tree";
 import { agentsUsageQuery } from "@/features/usage/api";
 import { sessionQueryOptions } from "@/lib/session";
 import { AgentStrip } from "./agent-strip";
-import { agentsListQueryOptions, runningQueryOptions } from "./api";
+import { agentsListQueryOptions, runningQueryOptions, summaryFromAgentsList } from "./api";
 import { CompactPopover } from "./compact-popover";
 import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
 import { InterruptButton } from "./interrupt-button";
@@ -37,8 +38,13 @@ export function SessionView({
   useAgentStatusFrames();
   const s = useSession(slug, eventSeq, messageId);
   const navigate = useNavigate();
-  const agent = s.state.agent;
-  const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!agent);
+  const qc = useQueryClient();
+  const loaded = s.state.agent;
+  // Until the session has loaded, the header and strip render from the cached list's summary (spec
+  // §11; the route didn't wait for the detail). A deliberate non-reactive read of the list cache
+  // during render: useSession's state takes over as soon as it loads.
+  const agent = loaded ?? summaryFromAgentsList(qc, slug);
+  const announce = useAnnouncer(agent?.displayName ?? slug, agent, s.rows, !!loaded);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   const usageRows = useQuery(agentsUsageQuery("rolling7"));
@@ -48,7 +54,8 @@ export function SessionView({
   // by this human's own confirmed Terminate (that focuses Pin workspace when the dialog closes).
   // Open popovers and dialogs close as their controls unmount; focus goes to the read-only line.
   const selfTerminating = useRef(false);
-  const status = agent?.status;
+  // The loaded status only: a stale list summary turning into the real status isn't a transition.
+  const status = loaded?.status;
   const prevStatus = useRef(status);
   useEffect(() => {
     const was = prevStatus.current;
@@ -56,16 +63,19 @@ export function SessionView({
     if (status !== "terminated" || was === undefined || was === "terminated") return;
     if (!selfTerminating.current) focusReadOnly(false);
   }, [status]);
-  if (s.error?.code === "agent_not_found") return <NotFound />;
-  if (!agent) {
-    if (!s.error) return null; // the route's pending component covers the first load
+  // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.
+  if (s.error?.code === "agent_not_found")
+    return (
+      <ResourceNotFound title="Agent not found." backTo="/agents" backLabel="Back to agents" />
+    );
+  if (!loaded && s.error)
     return (
       <>
-        <PageHeader title={slug} />
+        <PageHeader title={agent?.displayName ?? slug} />
         <LoadError message={s.error.message} onRetry={() => void s.retry()} />
       </>
     );
-  }
+  if (!agent) return null; // the route's pending component covers the first load
   const working = agent.status === "working";
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";
@@ -139,39 +149,46 @@ export function SessionView({
         </p>
       )}
       {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
-      <Timeline
-        slug={slug}
-        spawned={agent.kind === "ephemeral"}
-        rows={s.rows}
-        failedIds={s.failedIds}
-        interruptedEnds={s.interruptedEnds}
-        highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
-        highlightMessageId={eventSeq === undefined ? messageId : undefined}
-        hasMoreBefore={s.state.hasMoreBefore}
-        onLoadEarlier={s.loadEarlier}
-        earlierError={s.earlierError}
-        footer={
-          <>
-            {s.rows.length === 0 && s.state.queue.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                {archived ? "No messages yet." : "No messages yet. Send the first one below."}
-              </p>
-            )}
-            <QueueItems items={s.state.queue} agent={agent} />
-            {working && (
-              <p
-                data-working-line
-                className="flex h-6 items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-              >
-                <span aria-hidden="true" className="inline-flex size-3 items-center justify-center">
-                  <span className="of-tooth" />
-                </span>
-                Working
-              </p>
-            )}
-          </>
-        }
-      />
+      {loaded ? (
+        <Timeline
+          slug={slug}
+          spawned={agent.kind === "ephemeral"}
+          rows={s.rows}
+          failedIds={s.failedIds}
+          interruptedEnds={s.interruptedEnds}
+          highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
+          highlightMessageId={eventSeq === undefined ? messageId : undefined}
+          hasMoreBefore={s.state.hasMoreBefore}
+          onLoadEarlier={s.loadEarlier}
+          earlierError={s.earlierError}
+          footer={
+            <>
+              {s.rows.length === 0 && s.state.queue.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {archived ? "No messages yet." : "No messages yet. Send the first one below."}
+                </p>
+              )}
+              <QueueItems items={s.state.queue} agent={agent} />
+              {working && (
+                <p
+                  data-working-line
+                  className="flex h-6 items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="inline-flex size-3 items-center justify-center"
+                  >
+                    <span className="of-tooth" />
+                  </span>
+                  Working
+                </p>
+              )}
+            </>
+          }
+        />
+      ) : (
+        <TimelineSkeleton />
+      )}
       {s.state.windowed && (
         <div className="flex shrink-0 justify-center py-2">
           <Button
@@ -212,6 +229,20 @@ export function SessionView({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** Static rows where the timeline will be, while the session loads behind a cached header. */
+function TimelineSkeleton() {
+  return (
+    <div data-timeline-skeleton aria-hidden="true" className="min-h-0 flex-1 px-4 py-4 md:px-6">
+      <div className="grid max-w-[52rem] gap-3">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-16" />
+        <Skeleton className="h-4 w-1/4" />
+        <Skeleton className="h-10 w-5/6" />
+      </div>
     </div>
   );
 }

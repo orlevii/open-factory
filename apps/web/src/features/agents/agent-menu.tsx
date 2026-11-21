@@ -32,6 +32,7 @@ export function AgentMenu({
   onTerminateStart = () => {},
   onTerminated = () => {},
   triggerClassName,
+  anchored,
 }: {
   agent: AgentSummary;
   context: "session" | "sidebar";
@@ -42,6 +43,14 @@ export function AgentMenu({
   onTerminateStart?: () => void;
   onTerminated?: (a: AgentSummary, ok: boolean) => void;
   triggerClassName?: string;
+  /** One shared instance for a list (the sidebar tree): controlled, with no ⋯ of its own. It opens
+   *  below the right edge of `anchor` (the row the caller names) and hands focus back with `onClose`. */
+  anchored?: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    anchor: HTMLElement | null;
+    onClose: () => void;
+  };
 }) {
   const slug = agent.slug;
   const trigger = useRef<HTMLButtonElement>(null);
@@ -59,25 +68,46 @@ export function AgentMenu({
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
 
+  // Measured while open: the menu follows the row it was opened on, which may have scrolled.
+  const rect = anchored?.open ? anchored.anchor?.getBoundingClientRect() : undefined;
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu open={anchored?.open} onOpenChange={anchored?.onOpenChange}>
         <DropdownMenuTrigger asChild>
-          <Button
-            ref={trigger}
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Actions for ${agent.displayName}`}
-            className={cn(triggerClassName)}
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </Button>
+          {anchored ? (
+            // A stand-in for the row: fixed over it, invisible and out of the way of pointers.
+            <span
+              aria-hidden="true"
+              data-menu-stand-in=""
+              className="pointer-events-none fixed"
+              style={
+                rect
+                  ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+                  : undefined
+              }
+            />
+          ) : (
+            <Button
+              ref={trigger}
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Actions for ${agent.displayName}`}
+              className={cn(triggerClassName)}
+            >
+              <MoreHorizontal aria-hidden="true" />
+            </Button>
+          )}
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
           // Compact… opens a popover anchored on the ⋯ button, and Agent details may open a sheet:
           // focus belongs to them, not back here.
           onCloseAutoFocus={(e) => {
+            if (anchored) {
+              e.preventDefault();
+              anchored.onClose();
+              return;
+            }
             if (handoff) {
               e.preventDefault();
               setHandoff(false);

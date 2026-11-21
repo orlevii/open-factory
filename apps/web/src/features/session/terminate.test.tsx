@@ -84,9 +84,13 @@ async function details() {
   await vi.waitFor(() => expect(document.getElementById("agent-details")).not.toBeNull());
   return document.getElementById("agent-details") as HTMLElement;
 }
-/** The header's ⋯ menu: Compact… and Terminate… live there (U2 §8.4). */
+/** The header's ⋯ menu (the sidebar row has one too): Compact… and Terminate… live there (U2 §8.4). */
 async function menuItem(name: string) {
-  await userEvent.click(screen.getByRole("button", { name: "Actions for Tech Lead · ab12" }));
+  await userEvent.click(
+    within(screen.getByRole("banner")).getByRole("button", {
+      name: "Actions for Tech Lead · ab12",
+    }),
+  );
   await userEvent.click(await screen.findByRole("menuitem", { name }));
 }
 const sentence = () =>

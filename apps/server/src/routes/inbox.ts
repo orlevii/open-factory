@@ -47,7 +47,14 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     "/api/inbox/unread-count",
     { schema: { response: { 200: unreadCountSchema } } },
-    async (req) => ({ count: await app.store.unreadCount(userOf(req)), byAgent: {} }),
+    async (req) => {
+      const u = userOf(req);
+      const [count, byAgent] = await Promise.all([
+        app.store.unreadCount(u),
+        app.store.unreadByAgent(u),
+      ]);
+      return { count, byAgent };
+    },
   );
 
   // Read state is per user (one row per user per item): a change reaches that user's sockets only.

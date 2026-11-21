@@ -1310,4 +1310,23 @@ export class EventStore {
       .where(and(eq(inboxItems.userId, userId), isNull(inboxItems.readAt)));
     return r?.n ?? 0;
   }
+
+  /** Unread `message`-kind inbox items per sending agent slug (mentions, task events and factory items excluded). */
+  async unreadByAgent(userId: string): Promise<Record<string, number>> {
+    const fa = alias(agents, "fa");
+    const rows = await this.db
+      .select({ slug: fa.slug, n: count() })
+      .from(inboxItems)
+      .innerJoin(messages, eq(messages.id, inboxItems.messageId))
+      .innerJoin(fa, eq(fa.id, messages.fromAgentId))
+      .where(
+        and(
+          eq(inboxItems.userId, userId),
+          isNull(inboxItems.readAt),
+          eq(inboxItems.kind, "message"),
+        ),
+      )
+      .groupBy(fa.slug);
+    return Object.fromEntries(rows.map((r) => [r.slug, r.n]));
+  }
 }

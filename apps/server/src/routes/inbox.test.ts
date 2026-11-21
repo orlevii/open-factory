@@ -226,7 +226,21 @@ test("POST /api/inbox/:id/read marks only the caller's item, idempotently; anoth
   ).toBeNull();
   const unread = (await get("/api/inbox?unread=true&limit=5")).json().items as { id: string }[];
   expect(unread.map((i) => i.id)).not.toContain(mine);
-  expect((await get("/api/inbox/unread-count")).json()).toEqual({ count: unread.length });
+  expect((await get("/api/inbox/unread-count")).json()).toMatchObject({
+    count: unread.length,
+  });
+});
+
+test("unread-count byAgent counts unread messages by sending agent only", async () => {
+  const { or, agent } = await actors();
+  await aCalls("toolu_m1", { to: "@or", body: "one" });
+  await aCalls("toolu_m2", { to: "@humans", body: "two" });
+  // A mention is a different inbox kind: it must not count toward byAgent.
+  await h.app.tasks.create(or, { title: "t" });
+  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  const r = (await get("/api/inbox/unread-count")).json();
+  expect(r.byAgent).toEqual({ ada: 2 });
+  expect(r.count).toBeGreaterThanOrEqual(3);
 });
 
 test("read-all marks up to upTo (a newer item stays unread) and Undo restores exactly those", async () => {

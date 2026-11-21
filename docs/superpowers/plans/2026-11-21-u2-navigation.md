@@ -47,7 +47,8 @@ After a PR below merges, retarget the next PR's base to `main` and rebase its br
 | `apps/web/src/lib/prefs.ts` | `usePref` over localStorage | 1 |
 | `apps/web/src/lib/breakpoints.ts` | rem media queries + `useMedia` | 1 |
 | `apps/web/src/lib/timing.ts` | `INBOX_DWELL_MS` | 1 |
-| `apps/web/src/features/agents/use-agent-index.ts` | `useAgentIndex`, `useAgent(slug)` | 1 |
+| `apps/web/src/features/agents/use-agent-index.ts` | `useAgent`, `useIsLiveAgent`, `useEndedAgent` (internal WeakMap index) | 1 |
+| `apps/web/src/features/agents/status-frames.ts` | coalesced `agent_status`/`supervisor` frame queue | 1 |
 | `apps/web/src/features/agents/tree-model.ts` | pure tree shape, expansion, working counts, rail filter | 1 |
 | `apps/web/src/features/agents/sidebar-tree.tsx` | the sidebar tree component | 1 |
 | `apps/web/src/features/session/use-read-from.ts` | session-view read-from effect | 1 |
@@ -285,6 +286,8 @@ Implements §5.1 (drawing, override, badge), §16.5 Avatars [PR1]. Builds on `.o
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (m4):** `BotSvg` is `memo` on `(slug, size)`; `botParts` results are cached in a module `Map<slug, BotParts>`; the shape paths are hoisted constants with integer coordinates; the override `<img>` has `decoding="async"`.
+
 **Files:**
 - Create: `apps/web/src/components/agent-avatar.tsx`
 - Modify: `apps/web/src/features/session/status-badge.tsx` (use `StatusMark` for the leading glyph)
@@ -337,9 +340,15 @@ Implements §5.1 (chip). Builds on `AgentName` (`features/agents/agent-tree.tsx:
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M3, M5, m5; these override the steps below where they differ):**
+- `TruncTooltip` renders only the truncating element until `pointerenter`/`focus` finds `scrollWidth > clientWidth`; only then does it mount the Radix `Tooltip` (no per-chip Radix root at rest).
+- No exported `useAgentIndex` returning a `Map` from a `select` (structural sharing only shares plain objects/arrays). Keep the module-level `WeakMap` index as an internal helper; export `useAgent(slug)` = `useQuery({ ...agentsListQueryOptions("exclude"), refetchOnMount: false, select: useCallback((l) => indexOf(l).get(slug), [slug]) })` (returns the agent object, identity-stable) and `useIsLiveAgent(slug): boolean` (same, `!!`).
+- The ended lookup is a cache read only: `useQuery({ ...agentsListQueryOptions("only"), enabled: false, select })`, never a fetch from a chip.
+- `@container` goes on the cell/row that contains the chip, not on the `inline-flex` chip itself.
+
 **Files:**
 - Create: `apps/web/src/components/agent-chip.tsx`
-- Create: `apps/web/src/features/agents/use-agent-index.ts` (`useAgentIndex`, `useAgent(slug)`; see Task 9 for the frame side)
+- Create: `apps/web/src/features/agents/use-agent-index.ts` (`useAgent`, `useIsLiveAgent`, `useEndedAgent`; see Task 9 for the frame side)
 - Test: `apps/web/src/components/agent-chip.test.tsx`
 
 **Interfaces:**
@@ -348,7 +357,7 @@ Implements §5.1 (chip). Builds on `AgentName` (`features/agents/agent-tree.tsx:
   - `AgentChip(props: ({ agent: AgentChipAgent } | { slug: string; name?: string }) & { size?: 16|20|24; showSlug?: boolean; badge?: boolean; className?: string })`
   - `PrincipalChip({ principal, size }: { principal: { kind: "agent"; slug: string } | { kind: "user"; handle: string }; size?: 16|20|24 })`
   - `TruncTooltip({ text, children })`: wraps a single truncating element; opens the shared Radix tooltip only when `el.scrollWidth > el.clientWidth` at pointer-enter or focus.
-  - `useAgentIndex(): Map<string, AgentSummary>` (live) and `useEndedIndex()`; `useAgent(slug): AgentSummary | undefined`.
+  - `useAgent(slug): AgentSummary | undefined`, `useIsLiveAgent(slug): boolean`, `useEndedAgent(slug)` (cache read only, `enabled: false`).
 
 - [ ] **Step 1: Failing tests**
 
@@ -365,7 +374,7 @@ test("tooltip only when truncated", async () => { /* mock scrollWidth > clientWi
 ```
 
 - [ ] **Step 2:** Run → FAIL.
-- [ ] **Step 3:** Implement. `useAgentIndex` = `useQuery({ ...agentsListQueryOptions("exclude"), select: indexOf })` where `const cache = new WeakMap<AgentSummary[], Map<string, AgentSummary>>(); const indexOf = (l) => cache.get(l) ?? (cache.set(l, new Map(l.map((a) => [a.slug, a]))), cache.get(l)!)` at module scope (stable `select`). `useAgent(slug)` = same query with `select: useCallback((l) => indexOf(l).get(slug), [slug])`. Chip layout: `inline-flex min-w-0 items-center gap-1.5`; name `min-w-[min(8rem,45%)] truncate` via `AgentName`; slug `MiddleTruncate` `min-w-24 font-mono text-muted-foreground`; `@container` + `@max-[24rem]:flex-col @max-[24rem]:items-start` for the two-line form.
+- [ ] **Step 3:** Implement. The internal index: `const cache = new WeakMap<AgentSummary[], Map<string, AgentSummary>>(); const indexOf = (l) => cache.get(l) ?? (cache.set(l, new Map(l.map((a) => [a.slug, a]))), cache.get(l)!)` at module scope. `useAgent(slug)` = `useQuery({ ...agentsListQueryOptions("exclude"), refetchOnMount: false, select: useCallback((l) => indexOf(l).get(slug), [slug]) })`; `useIsLiveAgent` the same returning a boolean. Chip layout: `inline-flex min-w-0 items-center gap-1.5`; name `min-w-[min(8rem,45%)] truncate` via `AgentName`; slug `MiddleTruncate` `min-w-24 font-mono text-muted-foreground`; `@container` + `@max-[24rem]:flex-col @max-[24rem]:items-start` for the two-line form.
 - [ ] **Step 4:** Run → PASS.
 - [ ] **Step 5:** Commit `feat(web): AgentChip and PrincipalChip`.
 
@@ -374,6 +383,8 @@ test("tooltip only when truncated", async () => { /* mock scrollWidth > clientWi
 Implements §5.4, §5.5. Builds on `hooks/use-mobile.ts` (cached `MediaQueryList`), `lib/theme.ts` (storage sync pattern).
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (m1):** `usePref` subscribes at module level (one `storage` listener and one in-module listener set for all keys); a module raw-value cache per key is invalidated by `storage` events and our own writes; the parsed value is memoized on the raw string; `parse` validates the shape and catches JSON errors (returns `undefined` → fallback); the setter is stable. `useMedia` keeps a `Map<query, MediaQueryList>` per `window.matchMedia` identity.
 
 **Files:**
 - Create: `apps/web/src/lib/prefs.ts`, `apps/web/src/lib/breakpoints.ts`, `apps/web/src/lib/timing.ts`
@@ -404,40 +415,43 @@ test("useMedia follows the fake matchMedia", () => { /* use test/fake-match-medi
 
 ### Task 9: Web: shell-level, coalesced agent status frames
 
-Implements §5.3. Builds on `useAgentStatusFrames` (`features/session/use-agent-status.ts`), `AppLayout` (`routes/_app.tsx`), the rAF/hidden-timeout pattern in `features/session/use-session.ts:158-171`.
+Implements §5.3 (as updated after the React plan review: frames enter through `AppLayout`'s `onMessage`). Builds on `useAgentStatusFrames` (`features/session/use-agent-status.ts`), `AppLayout` (`routes/_app.tsx`: it renders `WsContext.Provider`, so `useWs()` cannot run there; its `connectWs({ onMessage })` handler is the entry point), the rAF/hidden-timeout pattern in `features/session/use-session.ts:158-171`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
 **Files:**
-- Modify: `apps/web/src/features/session/use-agent-status.ts` (queue + flush)
-- Modify: `apps/web/src/routes/_app.tsx` (mount once)
-- Modify: remove calls in `features/session/session-view.tsx:43`, `features/agents/home-agents.tsx`, `routes/_app/agents.index.tsx`, `routes/_app/agents.$slug_.edit.tsx`, `features/settings/factory-section.tsx`
-- Test: `apps/web/src/test/use-agent-status.test.tsx` (extend), `apps/web/src/test/ws-hub.test.tsx`
+- Create: `apps/web/src/features/agents/status-frames.ts` (module-level queue + `applyStatusFrames`)
+- Modify: `apps/web/src/routes/_app.tsx` (`onMessage` enqueues `agent_status` and `supervisor` frames; then the hub listeners run as today)
+- Delete: `apps/web/src/features/session/use-agent-status.ts` and its five call sites (`features/session/session-view.tsx:43`, `features/agents/home-agents.tsx`, `routes/_app/agents.index.tsx`, `routes/_app/agents.$slug_.edit.tsx`, `features/settings/factory-section.tsx`)
+- Test: `apps/web/src/test/status-frames.test.ts`, `apps/web/src/test/shell.test.tsx` (real `AppLayout`)
 
 **Interfaces:**
-- Produces: `applyStatusFrames(qc: QueryClient, frames: WsMessage[]): void` (exported for tests); `useAgentStatusFrames()` unchanged signature.
+- Produces: `enqueueStatusFrame(qc: QueryClient, m: WsMessage): void` (ignores other types); `applyStatusFrames(qc: QueryClient, frames: WsMessage[]): void` (exported for tests); `flushStatusFrames(): void` (tests and `visibilitychange`).
 
 - [ ] **Step 1: Failing tests**
 
 ```ts
-test("frames in one frame coalesce: one list write, last frame per slug wins", () => {
-  vi.useFakeTimers({ toFake: ["requestAnimationFrame"] });
+test("frames in one animation frame coalesce: one list write, last frame per slug wins", () => {
+  vi.useFakeTimers({ toFake: ["requestAnimationFrame", "setTimeout"] });
   const spy = vi.spyOn(qc, "setQueriesData");
-  push(frame("ada", "working")); push(frame("ada", "idle")); push(frame("bob", "working"));
+  enqueueStatusFrame(qc, frame("ada", "working")); enqueueStatusFrame(qc, frame("ada", "idle")); enqueueStatusFrame(qc, frame("bob", "working"));
   expect(spy).not.toHaveBeenCalled();
   vi.advanceTimersToNextFrame();
   expect(spy).toHaveBeenCalledTimes(1);
   expect(list().find((a) => a.slug === "ada")?.status).toBe("idle");
 });
-test("unchanged agents keep their object identity", () => { /* before = list()[1]; push frame for list()[0]; flush; expect(list()[1]).toBe(before) */ });
-test("entering terminated is computed against the state before the batch", () => { /* working→terminated in one batch invalidates ["agents"] once */ });
-test("supervisor frame sets the running count", () => {});
-test("mounted once: the session view no longer subscribes", () => { /* renderApp('/agents/ada') and count ws.listen registrations for agent_status = 1 */ });
+test("unchanged agents keep their object identity", () => {});
+test("entering terminated is computed against the state before the batch; ['agents'] invalidated once per batch", () => {});
+test("an uncached slug invalidates ['agents'] once per batch, not once per frame", () => {});
+test("the newest supervisor frame sets the running count", () => {});
+test("hidden document flushes on a 100ms timeout; visibilitychange flushes at once", () => {});
+// shell.test.tsx, rendering the real AppLayout through renderApp('/'):
+test("an agent_status frame pushed through the mocked ws onMessage updates the sidebar row after one frame", async () => {});
 ```
 
-- [ ] **Step 2:** Run → FAIL.
-- [ ] **Step 3:** Move the per-frame body into `applyStatusFrames`: fold frames into `Map<slug, patch>` (last wins), compute `enters` per slug against `getQueriesData` before writing, one `setQueriesData` over `["agents"]` mapping only matching slugs, one `setQueryData(["agent", slug])` per cached detail (invalidate uncached), newest `supervisor` sets `runningQueryKey`. The hook queues frames in a ref and flushes with `requestAnimationFrame` (`setTimeout(…,100)` while `document.hidden`), cancelling on unmount. Mount in `AppLayout`; delete the five page calls.
-- [ ] **Step 4:** Run the two files plus `pnpm vitest run apps/web/src/test/session-view.test.tsx apps/web/src/test/agents-list.test.tsx` → PASS (adjust tests that relied on a synchronous patch to advance one frame).
+- [ ] **Step 2:** `pnpm vitest run apps/web/src/test/status-frames.test.ts apps/web/src/test/shell.test.tsx` → FAIL.
+- [ ] **Step 3:** Implement: a module-level `queue: WsMessage[]` and one scheduled flush (`requestAnimationFrame`, or `setTimeout(…, 100)` while `document.hidden`; a `visibilitychange` listener flushes immediately; install it once per `QueryClient` from `AppLayout`'s mount effect and remove on unmount). `applyStatusFrames` folds `agent_status` frames into `Map<slug, patch>` (last wins), reads `getQueriesData(["agents"])` once to compute `enters`/uncached per slug, does one `setQueriesData(["agents"])` mapping only matching slugs (unchanged objects keep identity), one `setQueryData(["agent", slug])` per cached detail (one `invalidateQueries(["agent", slug])` per uncached), at most one `invalidateQueries(["agents"])` per batch, and the newest `supervisor` frame sets `runningQueryKey`. `AppLayout.onMessage` calls `enqueueStatusFrame(qc, m)` before notifying hub listeners.
+- [ ] **Step 4:** Run the two files plus `pnpm vitest run apps/web/src/test/session-view.test.tsx apps/web/src/test/agents-list.test.tsx apps/web/src/features/agents/home-agents.test.tsx` → PASS (tests that relied on a synchronous patch advance one frame or call `flushStatusFrames()`).
 - [ ] **Step 5:** Commit `refactor(web): fold agent status frames once in the shell, one write per frame`.
 
 ### Task 10: Web: inbox cache keeps `byAgent`; read-from client
@@ -445,6 +459,8 @@ test("mounted once: the session view no longer subscribes", () => { /* renderApp
 Implements §15.1 (web). Builds on `features/inbox/api.ts` (`unreadCountQueryOptions`, `useInboxCache().setRead`, `useOpenItem`).
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M5, M12):** `useInboxCache()` returns a memoized object (`useMemo` on `qc`), so effects that use it have stable deps. `useUnreadByAgent(slug)` selects with `useCallback` on `slug` and `refetchOnMount: false`.
 
 **Files:**
 - Modify: `apps/web/src/features/inbox/api.ts`
@@ -469,6 +485,8 @@ Implements §6.2, §6.3 (counts), §6.6 (rail). Builds on `treeOrder` (`packages
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M1):** nothing in this model is returned from a query `select` as a `Map`/`Set`. `workingCounts` returns `Record<string, number>` and `railSlugs` returns `string[]` (plain values that structural sharing can keep stable); update the interfaces and tests accordingly (`m.b` instead of `m.get("b")`).
+
 **Files:**
 - Create: `apps/web/src/features/agents/tree-model.ts`
 - Test: `apps/web/src/features/agents/tree-model.test.ts`
@@ -480,7 +498,7 @@ Implements §6.2, §6.3 (counts), §6.6 (rail). Builds on `treeOrder` (`packages
   - `isExpanded(node, stored: Record<string, boolean>, revealed: ReadonlySet<string>): boolean` — default `node.level === 0`; `stored[slug]` overrides; `revealed` forces open
   - `visibleNodes(nodes, stored, revealed): TreeNode[]`
   - `ancestorsOf(nodes, slug): string[]`
-  - `workingCounts(nodes, statusOf: (slug) => AgentStatus | undefined, expanded: (slug) => boolean): Map<string, number>` — only for collapsed nodes with children; counts working descendants at any depth
+  - `workingCounts(nodes, statusOf: (slug) => AgentStatus | undefined, expanded: (slug) => boolean): Record<string, number>` — only for collapsed nodes with children; counts working descendants at any depth
   - `railSlugs(nodes, { active, unread: (slug)=>number, statusOf }): string[]` — active, unread>0, or status in working/queued/rate_limited/errored; tree order
   - `INDENT_PX = 8`, `MAX_INDENT_LEVEL = 4`, `indentOf(level) = Math.min(level, 4) * 8`
   - `pruneStored(stored, liveSlugs: Set<string>)`
@@ -504,8 +522,8 @@ test("working count on collapsed managers counts all working descendants", () =>
   const n = buildTree(rows);
   const status = (s: string) => (s === "c" || s === "s" ? "working" : "idle") as AgentStatus;
   const m = workingCounts(n, status, (s) => isExpanded(n.find((x) => x.slug === s)!, {}, new Set()));
-  expect(m.get("b")).toBe(2);
-  expect(m.has("a")).toBe(false); // a is expanded
+  expect(m.b).toBe(2);
+  expect("a" in m).toBe(false); // a is expanded
 });
 test("indent stops at level 4", () => expect([0, 4, 9].map(indentOf)).toEqual([0, 32, 32]));
 test("rail keeps active, unread and badge-worthy agents in tree order", () => {});
@@ -520,12 +538,21 @@ Implements §6.2–§6.5, §6.7. Builds on Tasks 6, 7, 8, 10, 11; `SidebarMenu*`
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M1, M2, M3, m2, m3; these override the steps below where they differ):**
+- Working counts: a query `select` (wrapped in `useCallback` over the expansion inputs) returning `Record<slug, number>`; the rail's `string[]` select is enabled only when the rail is collapsed. Add a test that the tree component itself renders 0 times on a frame that changes no count and no rail membership.
+- Rows are a plain TanStack `Link` with `role="treeitem"` and the menu-button classes copied from `sidebarMenuButtonVariants` — no `SidebarMenuButton`, no `useSidebar()`, no per-row `Tooltip` in rows. Closing the mobile drawer is one delegated `onClick` on the `ul` (in `SidebarAgentTree`, which may call `useSidebar` once).
+- `SidebarAgentTree` is `memo` with primitive props; every callback passed to rows is stable (`useCallback` + functional `setState`).
+- One `AgentMenu` at tree level, controlled by `menuSlug` state and anchored to the hovered/focused row (Task 25 adds it; leave the `menuSlug` state and a `data-menu-anchor` on rows here).
+- `revealed` is derived with `useMemo` on `[shapeKey, activeSlug]` (not state); only the `scrollIntoView` runs in an effect. Parse the shape key in `useMemo`.
+- Render the tree **flat** (one `ul role="tree"` of rows in visible order) with `aria-level`, `aria-setsize` and `aria-posinset` on each treeitem, no nested `role="group"` lists (spec §6.5 as updated); update the semantics test.
+- In the Task 17 recording also try `content-visibility: auto` + `contain-intrinsic-size: 32px` on rows and measure the cost of each `Link`'s router subscription; keep whichever the recording supports.
+
 **Files:**
 - Create: `apps/web/src/features/agents/sidebar-tree.tsx`
 - Test: `apps/web/src/test/sidebar-tree.test.tsx`
 
 **Interfaces:**
-- Consumes: `useAgent`, `useAgentIndex`, `useUnreadByAgent`, `usePref`, `buildTree`/`visibleNodes`/`workingCounts`/`ancestorsOf`/`indentOf`.
+- Consumes: `useAgent`, `useUnreadByAgent`, `usePref`, `buildTree`/`visibleNodes`/`workingCounts`/`ancestorsOf`/`indentOf`.
 - Produces: `SidebarAgentTree({ activeSlug, collapsedRail }: { activeSlug?: string; collapsedRail: boolean })`; `SidebarAgentRow = memo(...)` with `data-agent-row={slug}`; `useAgentTreeShape(): TreeNode[]` (select builds a key string `slug|displayName|reportsTo` joined; `useMemo` on that key).
 
 - [ ] **Step 1: Failing tests** (render inside `SidebarProvider` with a seeded query client; fixtures A→B→C, S under B):
@@ -557,6 +584,8 @@ Implements §6.1, §6.6; DESIGN.md §16.4 [PR1]. Builds on `components/app-sideb
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M4, M2):** `AppSidebar` uses `useIsLiveAgent(activeSlug)` (a boolean select) for the Agents-row rule, never a whole-list index. It passes only primitives to `SidebarAgentTree`.
+
 **Files:**
 - Modify: `apps/web/src/components/app-sidebar.tsx`
 - Test: `apps/web/src/test/shell.test.tsx` (extend)
@@ -584,6 +613,8 @@ Implements §15.1 (session effect), spec §2.3. Builds on Task 10, `SessionView`
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M12; these override Step 3):** the hook's effect deps are primitives only: `slug`, `hasUnread = byAgent[slug] > 0`, `newestEventAt`, and `visible` from `useSyncExternalStore` over `visibilitychange`. The POST, the optimistic update and the throttle live in a `useEffectEvent` (or a ref-held callback). Cancel the trailing timer on slug change and unmount; roll back the optimistic update on failure (restore the previous `byAgent`/`count` and the flipped rows).
+
 **Files:**
 - Create: `apps/web/src/features/session/use-read-from.ts`
 - Modify: `apps/web/src/features/session/session-view.tsx` (call it)
@@ -608,6 +639,8 @@ test("a hover preload of /agents/ada never calls read-from", async () => { /* re
 Implements §7. Builds on `features/agents/agent-tree.tsx` (`AgentTree`, `:116-200`).
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (m7):** compute each row's `continues: boolean[]` in one backward pass over the ordered list (track, per level, whether a later sibling exists), not per row.
 
 **Files:**
 - Modify: `apps/web/src/features/agents/agent-tree.tsx`
@@ -645,7 +678,7 @@ Implements DESIGN.md §16.1 (`avatar-ink`, `sidebar.width` 256px, Layout "256px 
 - [ ] **Step 1:** Apply the §16 [PR1] text to `DESIGN.md` exactly as the spec quotes it (front matter: add `avatar-ink`, fix `sidebar.width: "256px"`; Layout "240px" → "256px"; §16.2 replace + append; §16.4 replace the Navigation bullet; §16.5 add the Avatars bullet). Commit `docs: DESIGN.md avatars and the sidebar agent tree`.
 - [ ] **Step 2:** Edit the behavior docs in the main checkout (`/Users/orlevi/projects/open-factory/docs/product/behavior/general.md`, `inbox.md`) with the PR1 parts of spec §17. Not committed (gitignored); copy the edited sentences into the PR body.
 - [ ] **Step 3:** Verify: `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. All green.
-- [ ] **Step 4:** Manual evidence (spec §2.13, PR1 rows), recorded in the PR body with screenshots: the 214-agent break-ui dataset (`/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/seed-worst.mjs` against a clone DB) in the sidebar: scroll, expand, a status storm under 4× CPU throttling (Performance recording; if a frame over 16ms is attributable to the tree, comment the recording on #91, else close #91 with it); a collapsed manager at depth 4 with working and unread counts; an active working row; the rail with 214 agents; avatars at 16/20/24 in both themes with the 16-row contrast table from Task 5; a template `avatar.svg` override.
+- [ ] **Step 4:** Manual evidence (spec §2.13, PR1 rows), recorded in the PR body with screenshots: the 214-agent break-ui dataset (`/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/seed-worst.mjs` against a clone DB) in the sidebar: scroll, expand, a status storm under 4× CPU throttling (Performance recording; if a frame over 16ms is attributable to the tree, comment the recording on #91, else close #91 with it); a collapsed manager at depth 4 with working and unread counts; the `content-visibility: auto` experiment and the per-`Link` router subscription cost (Task 12 review note); an active working row; the rail with 214 agents; avatars at 16/20/24 in both themes with the 16-row contrast table from Task 5; a template `avatar.svg` override.
 - [ ] **Step 5:** Push and open the PR: `git push -u origin u2/1-sidebar-agents && gh pr create --base u1/5-perceived-speed --title "feat: agent avatars and agents in the sidebar" --body-file <body>` following `.github/pull_request_template.md` (What, Why, Approach "<decision>, rather than <alternative>, because <reason>", Changes by area; template comments removed), linking the spec and #89, listing the behavior-doc edits, and noting "Stacked on #88; retarget to main after the U1 stack merges." End the body with the Claude Code attribution line.
 
 ---
@@ -686,6 +719,8 @@ test("below md it is still the modal bottom drawer", () => {});
 Implements §10.3 (dispatcher), §5.6 `Kbd`. Builds on `routes/_app.tsx` (`AppLayout`), `lib/prefs.ts`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M6):** `useShortcut` registers once per `(key, enabled)` and keeps the latest handler in a ref (or `useEffectEvent`), so a re-render never re-registers. Add a test that re-rendering an earlier registrant doesn't steal the key from a later one. `shouldIgnore` reads `of-single-keys` from the prefs module cache (Task 8), not `localStorage` per keystroke.
 
 **Files:**
 - Create: `apps/web/src/components/ui/kbd.tsx`, `apps/web/src/lib/shortcuts.ts`
@@ -780,6 +815,8 @@ Implements §8.1 (layout and modes), §8.2; DESIGN.md §16.1 `panel`, §16.3 Age
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M7; overrides Step 3 where it differs):** no effect resets `open` on slug change. Keep state `{ slug, open }`; derive `open = state.slug === slug ? state.open : defaultFor(mode)` (≥1280: the pref; else closed); `toggle` is stable (`useCallback` with functional `setState` writing `{ slug, open: !current }`, and the pref only in `XWIDE`).
+
 **Files:**
 - Modify: `apps/web/src/features/session/session-view.tsx`
 - Create (inside `agent-details.tsx`): `useAgentDetailsPanel(slug): { open: boolean; toggle: () => void; mode: "inflow" | "overlay" | "drawer" }`
@@ -812,6 +849,8 @@ Implements §8.1 (scroll anchoring). Builds on `features/session/timeline.tsx` (
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (m8):** the anchor is named `widthAnchor`; extend the existing `onScroll` handler (`timeline.tsx:105`) and the existing `ResizeObserver` (`timeline.tsx:86`) instead of adding new ones; expose `captureAnchor()` with `useImperativeHandle` (the chosen API) for Task 23's toggle.
+
 **Files:**
 - Modify: `apps/web/src/features/session/timeline.tsx`
 - Test: `apps/web/src/test/timeline-anchor.test.tsx`
@@ -836,6 +875,8 @@ test("atBottom is not recomputed in the RO callback", () => {});
 Implements §6.3 (⋯, Shift+F10), §8.3 ("All N reports" target). Builds on Task 12, Task 21, `routes/_app/agents.index.tsx` (search schema).
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M3):** there is ONE `AgentMenu` at tree level, controlled by `menuSlug` and anchored (Radix `DropdownMenu` with a virtual/`PopoverAnchor`-style anchor) to the hovered or focused row's `data-menu-anchor`; the hover ⋯ and Shift+F10/Context Menu key just set `menuSlug`. No per-row menu roots.
 
 **Files:**
 - Modify: `apps/web/src/features/agents/sidebar-tree.tsx`, `apps/web/src/routes/_app/agents.index.tsx`, `apps/web/src/features/agents/agent-tree.tsx`
@@ -866,6 +907,8 @@ Implements §9 (layout, children); DESIGN.md §16.3 Sub-navigation [PR3], §16.8
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (m9):** each child route loader uses `Promise.allSettled` over its own queries (a failing query shows that section's error, not a route error); remove the old layout loader from `settings.tsx` entirely.
+
 **Files:**
 - Modify: `apps/web/src/routes/_app/settings.tsx` (layout + sub-nav + `<Outlet/>`; remove "On this page", hash plumbing, `hashchange`)
 - Create: `apps/web/src/routes/_app/settings.credentials.tsx`, `settings.secrets.tsx` (`validateSearch: { addSecret?: string }`), `settings.projects.tsx`, `settings.users.tsx`, `settings.factory.tsx`
@@ -894,6 +937,8 @@ test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", ()
 Implements §9 (`/usage`, "By credential", Usage nav row); spec §2.5 nav order. Builds on `features/settings/usage-section.tsx`, `features/usage/*`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (m9):** the `/usage` loader uses `Promise.allSettled` over its three queries.
 
 **Files:**
 - Create: `apps/web/src/routes/_app/usage.tsx` (`validateSearch: { days: 7|30|90 = 30 }`, loader warms `dailyUsageQuery`, `agentsUsageQuery`, `credentialsUsageQuery`)
@@ -976,6 +1021,8 @@ Implements §10.1, §10.4 (primitive); DESIGN.md §16.5 Combobox [PR4].
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M9):** hoist the cmdk `filter` function to module scope (it treats `fixed` options via a lookup on the option value, not a closure over props).
+
 **Files:**
 - Modify: `apps/web/package.json`, `pnpm-lock.yaml` (`pnpm --filter @open-factory/web add --save-exact cmdk@1.1.1`)
 - Create: `apps/web/src/components/ui/combobox.tsx`
@@ -1003,6 +1050,8 @@ Implements §10.4 (manager, assignee, New task, schedule target). Builds on `fea
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M9):** `AgentCombobox` builds its options from a `select` projecting only `{ slug, displayName, kind, reportsTo }` (status frames don't rebuild the list); each option's chip reads its own badge status through `useAgent(slug)`; `Combobox` gets one `renderOption(option)` prop instead of per-option `render` closures.
+
 **Files:**
 - Create: `apps/web/src/features/agents/agent-combobox.tsx`
 - Modify: the four files above
@@ -1019,6 +1068,8 @@ Implements §10.4 (manager, assignee, New task, schedule target). Builds on `fea
 Implements §10.4 (filters, time zone). Builds on `features/tasks/task-filters.tsx` (`:84-115`), `features/schedules/schedule-filters.tsx` (`:37-45`), `features/schedules/timezone-select.tsx` (`zoneGroups`), `components/native-select.tsx`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M9):** time-zone offsets are computed lazily on first open and cached at module level (a `Map<zone, offset>`), not per render or per mount.
 
 **Files:**
 - Modify: `task-filters.tsx`, `schedule-filters.tsx`, `timezone-select.tsx`
@@ -1049,6 +1100,12 @@ Implements §10.2 (ranking, snapshot).
 Implements §10.2; DESIGN.md §16.5 Command palette [PR4], §16.6 palette ladder row and drawer-row append [PR4], §16.7 Elevation insert, Don'ts, Motion "never animates" [PR4]. Builds on `radix-ui` `Dialog`, cmdk `Command`, Task 35, `lookupTasks` (`features/tasks/api.ts:110`), `agentsListQueryOptions("only")`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M8, m12; these override Step 3 where they differ):**
+- Ranking runs in the input's `onValueChange` and once on open, reading `qc.getQueryData(...)` for the live and ended lists and storing the ranked result in state. No render-time ref mutation and no subscription to the agents list (status frames never re-render the palette).
+- Tasks: `useQuery({ ...tasksSearchOptions(q), placeholderData: keepPreviousData })`; rows are muted and not committable while `isPlaceholderData`.
+- Prefetch the ended list on the Search row's `pointerenter`/`focus` and on the ⌘K keydown (drop the `enabled: open` query).
+- Record the build chunk-size delta (before/after `pnpm build`) in the PR4 body (Task 38).
 
 **Files:**
 - Create: `apps/web/src/features/palette/command-palette.tsx` (+ `tasksSearchOptions(q)` in `features/tasks/api.ts`: key `["tasks","search",q]`, `GET /api/tasks?q=…&status=all&limit=20`)
@@ -1093,7 +1150,7 @@ Implements DESIGN.md [PR4] clauses of §16.5, §16.6, §16.7, §16.8; behavior d
 - [ ] **Step 1:** DESIGN.md [PR4] text; commit `docs: DESIGN.md palette, combobox and shortcuts`.
 - [ ] **Step 2:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 3:** `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
-- [ ] **Step 4:** Manual: palette at 390 and 1440 (no animation, keys from the composer), comboboxes with 214 agents and the time zone list, a combobox inside a sheet.
+- [ ] **Step 4:** Record the build chunk-size delta from cmdk (before/after `pnpm build`) in the PR body. Manual: palette at 390 and 1440 (no animation, keys from the composer), comboboxes with 214 agents and the time zone list, a combobox inside a sheet.
 - [ ] **Step 5:** Push and `gh pr create --base u2/3-settings-usage`; body says "Closes #83" plus template, spec, #89, docs, stacked note.
 
 ---
@@ -1134,6 +1191,8 @@ Implements §11.1 (rows, `plainPreview`). Builds on `features/inbox/inbox-row.ts
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (m10):** hoist `plainPreview`'s regexes to module scope; memoize the preview per item (`useMemo` on `item.id`/`item.preview` in the row, which is `memo`).
+
 **Files:**
 - Create: `apps/web/src/features/inbox/preview.ts`
 - Modify: `apps/web/src/features/inbox/inbox-row.tsx`
@@ -1158,6 +1217,13 @@ test.each([
 Implements §11.1 (layout, selection, dwell); DESIGN.md §16.3 Two panes [PR5]. Builds on `routes/_app/inbox.tsx`, `features/inbox/inbox-list.tsx`, `useOpenItem`, `INBOX_DWELL_MS`, `WIDE`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M10; these override Step 3 where they differ):**
+- Move `inboxItemOptions(id)` (key `["inbox","item",id]`, `GET /api/inbox/:id`) and `excerptOptions(slug, seq)` (key `["agent", slug, "excerpt", seq ?? "latest"]`) into this task (`features/inbox/api.ts`), since prefetching neighbours needs them; Task 43 consumes them.
+- Prefetch the neighbours only after the selection has rested ~150ms (cancel on move), so a `j`/`k` sweep makes no request storm.
+- Read `item` with `Route.useSearch({ select: (s) => s.item })`; keep `item` out of `loaderDeps` (selection never re-runs the loader).
+- Rows are `memo` with a primitive `selected: boolean` prop.
+- Optionally render the pane from `useDeferredValue(itemId)`, showing the skeleton while the deferred id lags.
 
 **Files:**
 - Modify: `apps/web/src/routes/_app/inbox.tsx` (`validateSearch: { item?: string }`; two-pane at `WIDE`), `apps/web/src/features/inbox/inbox-list.tsx` (selection props)
@@ -1184,6 +1250,8 @@ test("neighbours' pane data are prefetched on selection", async () => {});
 Implements §11.2. Builds on `GET /api/agents/:slug/events?around=&limit=` (`fetchEvents` in `features/session/api.ts:70`), `rows.ts` (`buildRows`), `TimelineRow` (`features/session/timeline-row.tsx`), `Composer`/`TerminatedComposer` (`features/session/composer.tsx:47,94`), `CommentComposer` (`features/tasks/comment-composer.tsx`, `prefill`), `taskDetailOptions`, Task 39.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (M10, M12):** consumes `inboxItemOptions` and `excerptOptions` from Task 42. "Sending a reply marks the item read" happens in the composer's send success handler (`onQueued`/post success), not in an effect.
 
 **Files:**
 - Create: `apps/web/src/features/inbox/session-excerpt.tsx`
@@ -1212,6 +1280,8 @@ Implements §12; DESIGN.md §16.6 [PR5] append. Builds on `features/tasks/task-l
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
+**React review changes (M11; overrides the width gate in Step 3):** measure `listEl.clientWidth` inside the Space handler (≥ 54rem in px at the current root font size → peek, else navigate) instead of a `ResizeObserver` gate.
+
 **Files:**
 - Create: `apps/web/src/features/tasks/task-peek.tsx`
 - Modify: `apps/web/src/features/tasks/task-list.tsx`, `apps/web/src/routes/_app/tasks.index.tsx`
@@ -1224,7 +1294,7 @@ Implements §12; DESIGN.md §16.6 [PR5] append. Builds on `features/tasks/task-l
 
 Implements DESIGN.md [PR5] clauses of §16.1, §16.3, §16.5, §16.6, §16.8, plus §16.3 Sub-navigation "the selected fill" change; switches the Settings sub-nav's current row to `steel-selected` (`routes/_app/settings.tsx`, one class); behavior docs §17 `inbox.md` (pane, read rule), `tasks.md` [PR5].
 
-- [ ] **Step 1:** Settings sub-nav class change + its test assertion; commit `feat(web): Settings sub-nav uses the selected fill`.
+- [ ] **Step 1:** Settings sub-nav class change + its test assertion (Implementer and reviewer invoke `vercel-react-best-practices` and follow it); commit `feat(web): Settings sub-nav uses the selected fill`.
 - [ ] **Step 2:** DESIGN.md [PR5] text; commit `docs: DESIGN.md reading pane, peeks and selected rows`.
 - [ ] **Step 3:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 4:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`; manual: the inbox pane at 1023/1024 with an 11 KB single-line message (composer stays visible), the task peek at 1024 and 1440, `steel-selected` in both themes next to hover (tune the two values; screenshots).
@@ -1238,9 +1308,11 @@ Implements DESIGN.md [PR5] clauses of §16.1, §16.3, §16.5, §16.6, §16.8, pl
 
 ### Task 47: Web: Home "Needs you" and "Live now"
 
-Implements §13. Builds on `routes/_app/index.tsx`, `features/agents/home-agents.tsx` (frozen-order logic), `features/inbox/home-inbox.tsx`, `liveFact` (Task 20), `useAgentIndex`.
+Implements §13. Builds on `routes/_app/index.tsx`, `features/agents/home-agents.tsx` (frozen-order logic), `features/inbox/home-inbox.tsx`, `liveFact` (Task 20), `useAgent`.
 
 **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
+
+**React review changes (m11):** Home selects plate membership as `string[]` (slugs, from a `select` that keeps a stable array when membership is unchanged); each row reads its agent with `useAgent(slug)`.
 
 **Files:**
 - Modify: `apps/web/src/routes/_app/index.tsx`, `apps/web/src/features/agents/home-agents.tsx` (becomes `LiveNow` + `NeedsYouAgents`)
@@ -1301,6 +1373,7 @@ Implements behavior docs §17 `administration.md` Images, `inbox.md` Home senten
 ### Task 52: Whole-stack review (on PR6's branch)
 
 - [ ] **Step 1:** Invoke `vercel-react-best-practices` and review the whole React diff of the stack (`git diff u1/5-perceived-speed...u2/6-home-templates -- apps/web`) against it: re-renders on WS frames (sidebar rows, Home, palette), stable selectors and callbacks, no effects that derive state, no waterfalls in loaders (Settings children, `/usage`, inbox pane), list rendering (`key`s, memoized rows), bundle (cmdk eager is deliberate; nothing else added).
+- [ ] **Step 1b:** Also check (React plan review m13): no component above the tree subscribes to the whole agent list/index; no `Map`/`Set` returned from a query `select`; `useShortcut` registration order is stable across re-renders; no effect that calls the server has object deps; no per-row Radix roots and no `useSidebar` in rows; no request storm during a `j`/`k` sweep in the inbox and task list (DevTools Network recording).
 - [ ] **Step 2:** Walk the spec section by section (§2 acceptance criteria 1–12, §4 checklist rows 1–12, §5–§16) and tick each against a task/commit; record any gap as a fix commit on the PR that owns it (rebase the stack above it) or as a follow-up issue linked from #89.
 - [ ] **Step 3:** Confirm every DESIGN.md [PR n] clause landed in its PR and nothing describes an unbuilt feature; confirm every §17 behavior-doc edit is applied in the main checkout and listed in a PR body.
 - [ ] **Step 4:** Post the review summary as a comment on #89 and on PR6.

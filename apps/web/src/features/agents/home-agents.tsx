@@ -126,11 +126,13 @@ function AgentRow({ agent: a }: { agent: AgentSummary }) {
       <span className="shrink-0">
         <StatusBadge status={a.status} size="short" />
       </span>
-      {extra && <span className="shrink-0 text-warning">{extra}</span>}
+      {extra && <span className="shrink-0 text-muted-foreground">{extra}</span>}
       <span className="min-w-0 truncate" title={a.displayName}>
         {a.displayName}
       </span>
-      <span className="min-w-0 truncate font-mono text-muted-foreground">@{a.slug}</span>
+      <span className="min-w-0 shrink-[999] truncate font-mono text-muted-foreground">
+        @{a.slug}
+      </span>
     </Link>
   );
 }

@@ -133,7 +133,7 @@ export function InboxRow({
           <time
             dateTime={item.createdAt}
             title={at.toLocaleString()}
-            className="ml-auto shrink-0 font-normal text-muted-foreground"
+            className="shrink-0 font-normal text-muted-foreground"
           >
             {time}
           </time>

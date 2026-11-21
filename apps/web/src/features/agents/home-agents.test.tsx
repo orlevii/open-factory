@@ -166,3 +166,12 @@ test("hovering before the query resolves still renders rows when it does", async
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
+
+test("the slug truncates before the name, and the extra label is readable text", async () => {
+  await setup([a("s", "Sam", { stuck: true })]);
+  const row = await screen.findByRole("link", { name: /Sam/ });
+  expect(within(row).getByText("@s")).toHaveClass("shrink-[999]");
+  expect(within(row).getByText("Sam")).not.toHaveClass("shrink-[999]");
+  expect(within(row).getByText("Stuck")).toHaveClass("text-muted-foreground");
+  expect(within(row).getByText("Stuck")).not.toHaveClass("text-warning");
+});

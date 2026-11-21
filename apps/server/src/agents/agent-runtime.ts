@@ -319,6 +319,8 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   ...taskFieldsOf(e.row),
   ...scheduleFieldsOf(e.row),
   ...(e.row.kind === "task_update" && e.row.notice ? { fact: e.row.notice } : {}),
+  // U3 §13.2: a UI field on the envelope; never part of the text the model reads.
+  ...(e.row.clientMessageId ? { clientMessageId: e.row.clientMessageId } : {}),
 });
 
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
@@ -589,6 +591,15 @@ export class AgentRuntime {
       await this.flush();
       return this.itemOf(entry ?? entryOf(row));
     });
+  }
+
+  /**
+   * U3 §13.2: the queue item a repeated send answers with: the queued entry while it is still queued (so a Stop's
+   * `waitReason` shows), otherwise the row's own.
+   */
+  itemFor(row: PendingRow): QueueItem {
+    const queued = this.queue.find((e) => e.kind === "message" && e.row.id === row.id);
+    return this.itemOf(queued ?? entryOf(row));
   }
 
   /**
@@ -1713,6 +1724,7 @@ export class AgentRuntime {
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
           ...queueScheduleOf(e.row),
+          ...(e.row.clientMessageId ? { clientMessageId: e.row.clientMessageId } : {}),
           // U3 §6.3: a Stop (or urgent send) is waiting for the interrupted turn's result.
           ...(this.hold ? { waitReason: "stopping" as const } : {}),
         }

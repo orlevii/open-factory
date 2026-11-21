@@ -43,6 +43,8 @@ export interface FactoryMessage {
   parts?: Envelope["parts"];
   fact?: string;
   subject?: Envelope["subject"];
+  /** U3 §13.2: the sender's optimistic-row id, for the UI only; never rendered into the model's text. */
+  clientMessageId?: string;
 }
 
 export interface ExitInfo {

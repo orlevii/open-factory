@@ -69,6 +69,8 @@ export type BatchRow = {
   due?: string;
   firings?: number;
   late?: boolean;
+  /** U3 §13.2: the sender's optimistic-row id, for the UI only; `one()` never renders it. */
+  clientMessageId?: string;
 };
 
 const ORDER: Record<MessageKind, number> = {
@@ -112,6 +114,7 @@ function single(r: BatchRow): FactoryMessage {
     ...(r.subject ? { subject: r.subject } : {}),
     ...taskFields(r),
     ...scheduleFields(r),
+    ...(r.clientMessageId ? { clientMessageId: r.clientMessageId } : {}),
     parts: [part(r)],
   };
 }

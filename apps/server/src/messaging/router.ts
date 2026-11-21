@@ -104,8 +104,14 @@ export class Router {
    * recipient's row is committed, then handed over: awaited for a human (its start failures reach the route),
    * enqueued for an agent. A message to humans is delivered at once to their inbox.
    */
-  async send(from: Sender, to: string, body: string, urgent: boolean): Promise<SendResult> {
-    if ("userId" in from) return this.sendFromHuman(from, to, body, urgent);
+  async send(
+    from: Sender,
+    to: string,
+    body: string,
+    urgent: boolean,
+    opts: { clientMessageId?: string } = {},
+  ): Promise<SendResult> {
+    if ("userId" in from) return this.sendFromHuman(from, to, body, urgent, opts.clientMessageId);
     const me = await this.d.store.agentById(from.agentId);
     if (!me || me.archivedAt || me.terminatedAt)
       return {
@@ -202,22 +208,57 @@ export class Router {
     slug: string,
     body: string,
     urgent: boolean,
+    clientMessageId?: string,
   ): Promise<SendResult> {
+    // U3 §13.2: a repeat of an earlier send answers with the original, whatever happened since (the agent may have
+    // ended, the message been written). The insert below settles a concurrent repeat.
+    if (clientMessageId) {
+      const earlier = await this.d.store.byClientMessageId(from.userId, clientMessageId);
+      if (earlier) return this.repeated(earlier);
+    }
     const agent = await this.d.store.agentBySlug(slug);
     if (!agent) return notFound(slug);
     if (agent.archivedAt) return archived(agent.slug);
     if (agent.terminatedAt) return terminated(agent.slug);
-    const row = await this.d.store.createMessage({
-      from: { userId: from.userId },
-      toAgentId: agent.id,
-      body,
-      urgent,
-    });
+    let row: PendingRow;
+    if (clientMessageId) {
+      const r = await this.d.store.createClientMessage({
+        fromUserId: from.userId,
+        toAgentId: agent.id,
+        body,
+        urgent,
+        clientMessageId,
+      });
+      // Only the request whose insert wrote the row hands it to the runtime.
+      if (!r.created) return this.repeated(r.row);
+      row = r.row;
+    } else
+      row = await this.d.store.createMessage({
+        from: { userId: from.userId },
+        toAgentId: agent.id,
+        body,
+        urgent,
+      });
     await this.booted;
     if (this.closed) throw new Error(SHUTTING_DOWN);
     const status = await this.statusOf(agent.id);
     const item = await this.d.runtimes.deliver(row, "human");
     return { ok: true, id: row.id, to: agent.slug, status, ...(item ? { item } : {}) };
+  }
+
+  /** U3 §13.2: the original send's 202, from the row it wrote; nothing is queued or delivered again. */
+  private async repeated(row: PendingRow): Promise<SendResult> {
+    await this.booted;
+    const agent = row.toAgentId ? await this.d.store.agentById(row.toAgentId) : undefined;
+    if (!agent) throw new Error(`message ${row.id} has no agent recipient`);
+    const rt = await this.d.runtimes.load(agent.id);
+    return {
+      ok: true,
+      id: row.id,
+      to: agent.slug,
+      status: this.d.runtimes.statusOf(agent),
+      ...(rt ? { item: rt.itemFor(row) } : {}),
+    };
   }
 
   /**

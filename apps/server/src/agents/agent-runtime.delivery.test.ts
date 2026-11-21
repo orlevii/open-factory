@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
@@ -482,4 +484,32 @@ test("rolled-back batches go behind notices queued meanwhile", async () => {
     ["system", expect.stringContaining("stopped unexpectedly")],
     ["message", "a"],
   ]);
+});
+
+test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId; the model's text never has it", async () => {
+  await startedIdle();
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" }); // a hold, so the item is seen queued first
+  const cid = randomUUID();
+  const row = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: agentId,
+    body: "with an id",
+    urgent: false,
+    clientMessageId: cid,
+  });
+  const item = await rt.deliver(row, { sender: "human", fromLabel: "@or" });
+  expect(item).toMatchObject({ id: row.id, clientMessageId: cid });
+  expect(rt.queueItems()).toEqual([expect.objectContaining({ clientMessageId: cid })]);
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  const sent = driver.last.sent.at(-1) ?? [];
+  expect(sent).toEqual([expect.objectContaining({ id: row.id, clientMessageId: cid })]);
+  const stored = (await events()).filter((e) => e.type === "message_in").at(-1)?.event;
+  expect(stored).toMatchObject({ messages: [{ id: row.id, clientMessageId: cid }] });
+  const text = renderEnvelopes(sent);
+  expect(text).not.toContain(cid);
+  expect(text).toBe(renderEnvelopes(sent.map(({ clientMessageId: _c, ...m }) => m)));
 });

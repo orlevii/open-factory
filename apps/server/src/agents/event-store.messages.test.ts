@@ -328,3 +328,18 @@ test("the same sender can't reuse a client id", async () => {
   await send("a");
   await expect(send("b")).rejects.toThrow();
 });
+
+test("U3 §13.2: createClientMessage inserts once per (sender, client id), even concurrently", async () => {
+  const cid = "6f1c1c2e-8f7e-4a43-9b7d-2f4d7f1f0a01";
+  const m = { fromUserId: "u1", toAgentId: "a1", body: "x", urgent: false, clientMessageId: cid };
+  const results = await Promise.all([1, 2, 3, 4].map(() => store.createClientMessage(m)));
+  expect(results.filter((r) => r.created)).toHaveLength(1);
+  expect(new Set(results.map((r) => r.row.id)).size).toBe(1);
+  const later = await store.createClientMessage({ ...m, body: "other" });
+  expect(later).toMatchObject({ created: false, row: { id: results[0]?.row.id, body: "x" } });
+  const other = await store.createClientMessage({ ...m, fromUserId: "u2" });
+  expect(other.created).toBe(true);
+  expect(
+    (await t.sql`select count(*)::int as n from messages where client_message_id = ${cid}`)[0]?.n,
+  ).toBe(2);
+});

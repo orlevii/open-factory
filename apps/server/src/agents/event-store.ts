@@ -748,6 +748,52 @@ export class EventStore {
     });
     return this.pendingRow(id, tx);
   }
+  /**
+   * U3 §13.2: a human's send carrying the client's id. The unique partial index on (`from_user_id`,
+   * `client_message_id`) decides: a repeat (the same sender and id, at any later time, or concurrently) inserts
+   * nothing and returns the original row with `created: false`.
+   */
+  async createClientMessage(m: {
+    fromUserId: string;
+    toAgentId: string;
+    body: string;
+    urgent: boolean;
+    clientMessageId: string;
+  }): Promise<{ row: PendingRow; created: boolean }> {
+    const id = randomUUID();
+    const inserted = await this.db
+      .insert(messages)
+      .values({
+        id,
+        kind: "message",
+        clientMessageId: m.clientMessageId,
+        fromUserId: m.fromUserId,
+        toAgentId: m.toAgentId,
+        body: m.body,
+        urgent: m.urgent,
+        createdAt: this.clock(),
+      })
+      .onConflictDoNothing({
+        target: [messages.fromUserId, messages.clientMessageId],
+        where: sql`${messages.clientMessageId} is not null`,
+      })
+      .returning({ id: messages.id });
+    if (inserted.length) return { row: await this.pendingRow(id), created: true };
+    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId);
+    if (!existing)
+      throw new Error(`client message ${m.clientMessageId} conflicted but isn't there`);
+    return { row: existing, created: false };
+  }
+  /** U3 §13.2: the joined row a sender's earlier send with this client id wrote, whatever its state. */
+  async byClientMessageId(
+    fromUserId: string,
+    clientMessageId: string,
+  ): Promise<PendingRow | undefined> {
+    const [r] = await this.joined(this.db).where(
+      and(eq(messages.fromUserId, fromUserId), eq(messages.clientMessageId, clientMessageId)),
+    );
+    return r;
+  }
   /** A held peer or member-update row, pending until the runtime renders it (spec §8). Returns the joined row. */
   async createHeld(
     m: {

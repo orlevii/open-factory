@@ -194,6 +194,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           req.params.slug,
           req.body.body,
           req.body.urgent,
+          req.body.clientMessageId ? { clientMessageId: req.body.clientMessageId } : {},
         );
         if (!r.ok) {
           if (r.code === "archived") {

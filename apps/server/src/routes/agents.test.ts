@@ -667,3 +667,91 @@ describe("U3 §6.4: cancel and restore a held message", () => {
     }
   });
 });
+
+describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let or: string;
+  let sam: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    await s.seedAgent();
+    or = (await s.signUpUser({ handle: "or8" })).cookie;
+    sam = (await s.signUpUser({ handle: "sam8" })).cookie;
+  });
+  afterAll(() => s.close());
+
+  const post = (cookie: string, payload: object) =>
+    s.app.inject({
+      method: "POST",
+      url: "/api/agents/dev/messages",
+      headers: { cookie },
+      payload: { urgent: false, ...payload },
+    });
+  const rows = async (cid: string) =>
+    s.sql`select id, from_user_id from messages where client_message_id = ${cid}`;
+  const sends = () => drv.starts.flatMap((p) => p.writes.filter((w) => w.kind === "send"));
+  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
+
+  test("the same id twice: one row, the same 202 body, echoed on the item", async () => {
+    const cid = randomUUID();
+    const first = await post(or, { body: "once", clientMessageId: cid });
+    expect(first.statusCode).toBe(202);
+    expect(first.json().item).toMatchObject({ body: "once", clientMessageId: cid });
+    const before = sends().length;
+    const second = await post(or, { body: "once", clientMessageId: cid });
+    expect(second.statusCode).toBe(202);
+    expect(second.json()).toEqual(first.json());
+    expect(await rows(cid)).toHaveLength(1);
+    expect(sends()).toHaveLength(before); // nothing queued or delivered again
+  });
+
+  test("the same id much later (written, its turn over) still answers the original 202, no new row", async () => {
+    const cid = randomUUID();
+    const first = await post(or, { body: "later", clientMessageId: cid });
+    drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+    await settled();
+    const before = sends().length;
+    const again = await post(or, { body: "a retry with other text", clientMessageId: cid });
+    expect(again.statusCode).toBe(202);
+    expect(again.json().item).toEqual(first.json().item);
+    expect(await rows(cid)).toHaveLength(1);
+    expect(sends()).toHaveLength(before);
+  });
+
+  test("the same id from a different sender is a new row", async () => {
+    const cid = randomUUID();
+    const a = await post(or, { body: "mine", clientMessageId: cid });
+    const b = await post(sam, { body: "theirs", clientMessageId: cid });
+    expect(b.statusCode).toBe(202);
+    expect(b.json().item.id).not.toBe(a.json().item.id);
+    expect(b.json().item).toMatchObject({ body: "theirs", from: "@sam8", clientMessageId: cid });
+    expect(await rows(cid)).toHaveLength(2);
+  });
+
+  test("concurrency: two simultaneous POSTs with the same id make one row and one delivery", async () => {
+    await settled();
+    const cid = randomUUID();
+    const before = sends().length;
+    const [x, y] = await Promise.all([
+      post(or, { body: "race", clientMessageId: cid }),
+      post(or, { body: "race", clientMessageId: cid }),
+    ]);
+    await settled();
+    expect([x.statusCode, y.statusCode]).toEqual([202, 202]);
+    expect(x.json()).toEqual(y.json());
+    expect(await rows(cid)).toHaveLength(1);
+    const written = sends()
+      .slice(before)
+      .flatMap((w) => (w.kind === "send" ? w.messages : []))
+      .filter((m) => m.clientMessageId === cid);
+    expect(written).toHaveLength(1);
+  });
+
+  test("without an id nothing is deduped", async () => {
+    await post(or, { body: "plain" });
+    await post(or, { body: "plain" });
+    const n = await s.sql`select count(*)::int as n from messages where body = 'plain'`;
+    expect(n[0]?.n).toBe(2);
+  });
+});

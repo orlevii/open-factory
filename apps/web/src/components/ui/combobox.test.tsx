@@ -231,3 +231,29 @@ test("disabled cannot be opened by click or keyboard", async () => {
   expect(screen.queryByRole("listbox")).toBeNull();
   expect(onValueChange).not.toHaveBeenCalled();
 });
+
+// jsdom has no layout: this pins the structure that makes a long value truncate inside the trigger
+// (checked in the browser at 1440 and 390, where the page no longer widens).
+test("a long value sits in a shrinkable, clipping slot: text gets its own ellipsis, a node shrinks", () => {
+  const long = "A very long option label that cannot possibly fit in the trigger".repeat(3);
+  const { trigger } = setup({ options: [{ value: "x", label: long }], value: "x" });
+  const slot = trigger.querySelector<HTMLElement>('[data-slot="combobox-value"]');
+  expect(slot).not.toBeNull();
+  // A flex item that may shrink below its content, clips it, and contains the content's sr-only
+  // (absolute) spans so they can't widen the page.
+  for (const c of ["flex", "min-w-0", "flex-1", "overflow-hidden", "relative"])
+    expect(slot).toHaveClass(c);
+  const text = slot?.firstElementChild;
+  expect(text).toHaveTextContent(long);
+  expect(text).toHaveClass("truncate");
+});
+
+test("a rendered value is a direct child of the slot, so it shrinks with it", () => {
+  const { trigger } = setup({
+    options: [{ value: "x", label: "X" }],
+    value: "x",
+    renderValue: () => <span data-testid="chip">chip</span>,
+  });
+  const slot = trigger.querySelector('[data-slot="combobox-value"]');
+  expect(screen.getByTestId("chip").parentElement).toBe(slot);
+});

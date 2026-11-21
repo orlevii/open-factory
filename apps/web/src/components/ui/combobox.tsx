@@ -268,7 +268,12 @@ function Combobox({
           }}
           ref={triggerRef}
         >
-          <span>{shown}</span>
+          {/* A flex item that shrinks below its content and clips it: text gets its own ellipsis and a
+              rendered value (an agent chip) shrinks with the slot, so its parts truncate. `relative`
+              keeps the content's sr-only (absolute) spans inside the clip, off the page's width. */}
+          <span data-slot="combobox-value" className="relative flex min-w-0 flex-1 overflow-hidden">
+            {typeof shown === "string" ? <span className="truncate">{shown}</span> : shown}
+          </span>
           <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
         </button>
       </PopoverTrigger>

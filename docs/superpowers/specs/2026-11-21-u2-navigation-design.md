@@ -1,7 +1,7 @@
 # U2 Navigation: Technical Design
 
 - **Date:** 2026-11-21
-- **Status:** revised after the self-review and five UI-lens reviews (Taste, Apple design, Emil design-eng, Motion, Break UI); owner-proxy (owner-u2) answered Q1–Q40. Low certainty and deviations for Or: §21.
+- **Status:** Or's delegate decided Q4, Q17, Q32, Q34 (decisions.md rows 16–21). Revised after the self-review and five UI-lens reviews (Taste, Apple design, Emil design-eng, Motion, Break UI); owner-proxy (owner-u2) answered Q1–Q40. Low certainty and deviations for Or: §21.
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (owner decisions 1–15, final), `docs/product/ui-review/status.md` (U2 backlog, file:line at `322075d`), the seven reviews in `docs/product/ui-review/` (paperclip.md is the main source), `docs/product/behavior/*.md`.
 - **Builds on:** U1 (`u1/5-perceived-speed`, PRs #84–#88, decisions issue #77): Sheet/Drawer/ConfirmDialog, the control system, `data-instant` and `stampInstant`, the avatar tokens, DESIGN.md as amended there.
 - **Followed by:** U3 chat (reuses `AgentChip` for speaker lines; owns Stop in the composer and Esc there), U4 create flows and mobile (turns New agent/task/schedule into sheets behind the same actions U2 binds).
@@ -18,7 +18,7 @@ Make Open Factory navigable the way its first principle asks ("talk directly"): 
 3. Settings one route per section; Usage top-level (decision 4).
 4. ⌘K palette, a small shortcut layer, searchable agent and time-zone pickers (decision 8, #83).
 5. Inbox reading pane (decision 6) and task peek (decision 14).
-6. Home redesign and Templates/Images views (decision 14).
+6. Templates/Images views (decision 14); the Inbox becomes the home screen (`/` → `/inbox`; decision 14's Home redesign resolved by dropping Home, Or's delegate, decisions.md row 17).
 
 ## 2. Acceptance criteria
 
@@ -34,7 +34,7 @@ All run in default CI (`pnpm test`, `pnpm typecheck`, `pnpm lint`) unless marked
 8. **Pickers.** Manager, assignee (task detail and New task), the task list's assignee and creator filters, schedule target and time zone are comboboxes with typeahead; assigning pickers list live agents only; filters also list ended agents ("Ended"); arrow keys never commit; an agent value not in the options renders as `@slug` with its face; a human `@handle` value renders as text.
 9. **Inbox pane.** At 1024px+, click or Enter selects a row (push `?item=`), marks it read and shows it; `j`/`k` move the selection (replace), the pane follows, and the item is marked read after `INBOX_DWELL_MS` of being shown; a key-repeat sweep marks nothing read (fake-timer test); ↑/↓ move focus only. Reload with `?item=` of an item outside the first page shows it (`GET /api/inbox/:id`). Modifier-click and middle-click open the target. Below 1024px rows navigate.
 10. **Task peek.** `j`/`k` move the selection, Enter opens the page, Space opens a non-modal peek when the list keeps ≥24rem beside it (else opens the page); `j`/`k` retarget it in place; Esc closes it and focuses the selected row. A plain click navigates.
-11. **Home.** "Needs you": up to 5 newest unread items, then live errored agents (capped at 8, "and N more"). "Live now": working, queued and rate-limited agents (capped at 8), header "2 working · 1 queued". Existing queries only.
+11. **Home.** `/` redirects (replace) to `/inbox`; U1's Home page, its Agents panel and their tests are deleted; links to Home point at `/inbox`.
 12. **Templates/Images.** `/templates` and `/templates/images`, switched by a segmented control; `/templates#images` redirects; creating a template named `new` or `images` is rejected; a build log opens in a non-modal sheet and streams there; nothing overflows at 320.
 13. **Manual, recorded in each PR:** the 214-agent break-ui dataset in the sidebar (scroll, expand, a status storm under 4× CPU throttling; decides the virtualization follow-up); a collapsed manager at depth 4 with working and unread counts; an active working row (two orange marks, Q3); the rail with 214 agents; avatars at 16/20/24 in both themes with the 3:1 ink table; the panel at 767/768/1023/1024/1279/1280 with a running agent; the session header at 1280 with an 80-character name, errored, panel open; a 500-row timeline with the sidebar collapse and the panel open (scroll anchoring frame cost); the palette at 390 and 1440; the inbox pane at 1023/1024 with an 11 KB single-line message; the task peek at 1024 and 1440; Settings at 320 and 800 with the sidebar open; Templates at 320.
 
@@ -59,7 +59,7 @@ All run in default CI (`pnpm test`, `pnpm typecheck`, `pnpm lint`) unless marked
 | 5 | Settings routes; Usage top-level; one "Credentials" heading (U2 #5) | §9 |
 | 6 | Inbox reading pane; read rows de-emphasised; previews without raw markdown (U2 #6) | §11 |
 | 7 | Agents page: identity first, continuous tree lines, runtime only when exceptional (U2 #7) | §7 |
-| 8 | Home redesign (decision 14, paperclip M3) | §13 |
+| 8 | Home redesign (decision 14, paperclip M3): resolved by dropping Home for the Inbox (paperclip M3's alternative; decisions.md row 17) | §13 |
 | 9 | Task peek and list keyboard (decision 14, paperclip M4) | §12 |
 | 10 | Templates/Images layout, build log in a panel (decision 14, paperclip M5) | §14 |
 | 11 | Sheet `modal={false}` peek mode (U1 Q18) | §5.2 |
@@ -97,10 +97,10 @@ AgentChip(props: { agent: AgentChipAgent } | { slug: string; name?: string },
 - `AgentChipAgent = Pick<AgentSummary, "slug" | "displayName" | "template" | "status" | "kind" | "avatarVersion">`.
 - The slug form (`{ slug, name? }`) resolves the agent from the live list cache, then the cached ended list, else renders the slug-seeded face with `name ?? "@" + slug`. Call sites with a slug only use it: inbox senders whose `from.kind` is `agent`, the task assignee (`TaskAgentRef`), agent creators and comment authors (`TaskPrincipal` with `kind: "agent"`), and agent combobox values. Human principals (`kind: "user"`) and `@handle` values render as the handle in text with no avatar (`PrincipalChip` wraps both cases).
 - `aria-hidden` always; a name is always beside it (in the rail, the tooltip and the sr-only label).
-- **Badge (Q25, Q33)**, only when `badge` is set and only for list contexts (sidebar, Agents page, Home, inbox rows, comboboxes); never on the session header avatar (Q36). Bottom-right corner: working → the tooth (4×8 below size 24, else 6×12); errored → a filled alert glyph in `crimson`; rate-limited → a filled dot in `warning`; queued → a hollow 1.5px ring in the queued status colour; idle, hibernated, terminated → nothing. 6px at sizes 20 and 24, 4px at 16. The badge sits in a hole cut from the avatar with a CSS `mask` 2px larger than the badge, so whatever surface the row shows (hover, press, selected, highlighted) shows through; there is no ring colour. Dots change colour over 150ms; a shape swap is instant; nothing pulses. The status word is always present as text (tooltip and sr-only in the sidebar and rail; the status column elsewhere).
+- **Badge (Q25, Q33)**, only when `badge` is set and only for list contexts (sidebar, Agents page, inbox rows, comboboxes); never on the session header avatar (Q36). Bottom-right corner: working → the tooth (4×8 below size 24, else 6×12); errored → a filled alert glyph in `crimson`; rate-limited → a filled dot in `warning`; queued → a hollow 1.5px ring in the queued status colour; idle, hibernated, terminated → nothing. 6px at sizes 20 and 24, 4px at 16. The badge sits in a hole cut from the avatar with a CSS `mask` 2px larger than the badge, so whatever surface the row shows (hover, press, selected, highlighted) shows through; there is no ring colour. Dots change colour over 150ms; a shape swap is instant; nothing pulses. The status word is always present as text (tooltip and sr-only in the sidebar and rail; the status column elsewhere).
 - `StatusBadge` adopts the same shapes per status (Q33), keeping its label.
 - `PrincipalChip` = `AgentChip` for agents, the plain `@handle` for humans. `AgentChip` = avatar + display name (`min-w-0`, truncating; a spawned name keeps its " · ab12" tail via `AgentName`) + optional muted mono `@slug`. The slug gives way first (`MiddleTruncate`, down to 6rem), the name keeps at least `min(8rem, 45%)`; in a container under 24rem the chip wraps to two lines (name, then the slug at 12px). Full values appear in a Radix tooltip only when truncated (measured `scrollWidth > clientWidth` on pointer enter or focus), inside the shared `TooltipProvider`; no native `title`.
-- Sizes used: 16 (palette, comboboxes, inbox rows), 20 (sidebar, Agents page, task assignee, Agent details Org, Home), 24 (session header). No other.
+- Sizes used: 16 (palette, comboboxes, inbox rows), 20 (sidebar, Agents page, task assignee, Agent details Org), 24 (session header). No other.
 - `AgentAvatar` is `memo`; `botParts` is `useMemo` on the slug.
 
 ### 5.2 Peek sheets: `Sheet` gains `modal` and `inset` (U1 Q18)
@@ -246,7 +246,7 @@ No live agents: one muted line "No agents yet." and a "New agent" link. Loading:
 - **Work**: open tasks from a new non-infinite `agentTasksOptions(slug)` (`GET /api/tasks?status=open_in_progress&assignee=<slug>&limit=5`; `tasksListOptions` is infinite with a fixed limit of 50) (key, title, status), "All N tasks" from `agent.openTasks` → `/tasks?assignee=`; schedules targeting it, up to 5 (`S-n`, next run), "All N schedules" from `agent.scheduleCount`. Both queries enabled only while it is open.
 - **Usage** (decision 4): the 7-day estimate from `agentsUsageQuery("rolling7")` + "Usage" → `/agents/$slug/usage`.
 - **Runtime**: template (link), credential, image (pulling), projects, "Unsandboxed" when local.
-- Footer: "Edit agent" (outline; persistent, not archived). U1's pending outline-vs-ghost decision applies if Or changes it.
+- Footer: "Edit agent" (outline: a page/header-level standalone action, decisions.md row 20; persistent, not archived).
 - No new endpoint. Its own scroll.
 
 ### 8.4 `AgentMenu` (Q6, Q8)
@@ -344,14 +344,14 @@ The pane is a flex column: a 48px header (from the list row, so it swaps at once
 - Plain click navigates; Enter opens the page.
 - Below 768: the Sheet's drawer.
 
-## 13. Home (PR6, Q17)
+## 13. Home: the Inbox is the home screen (PR6, Q17)
 
-`routes/_app/index.tsx`: `PageHeader title="Home"`, two plates side by side from `lg`, stacked below:
+Decided by Or's delegate (decisions.md row 17): "Needs you" duplicates the Inbox and "Live now" duplicates the sidebar tree, so Home is dropped rather than redesigned (paperclip M3's own alternative; inbox.md already calls the Inbox the home screen).
 
-- **Needs you**: the 5 newest unread inbox items (`HomeInbox`), then live agents that are errored (`AgentChip` with badge, `liveFact()`, link to the session), at most 8, then "and N more" → `/agents`. Rate-limited and restart-pending agents are not "needs you". Empty: "Nothing needs you."
-- **Live now**: agents working, queued or rate-limited (`AgentChip`, `StatusBadge`, `liveFact()`), tree order, at most 8 then "and N more"; header count describes the list ("2 working · 1 queued"). Order and membership are frozen while the pointer or focus is in the plate (U1's rule, extended to rows joining or leaving); never animated. Empty: "No agent is working." No agents at all: "No agents yet." with "New agent".
-- Existing queries only.
-- Alternative for Or (Q17, certainty 3): drop Home and land on `/inbox`; a one-line answer: `/` redirects to `/inbox` and `index.tsx` is deleted.
+- `routes/_app/index.tsx` becomes a redirect: `beforeLoad` → `/inbox` with `replace` (preserving nothing else).
+- U1's Home content is deleted: the Home Agents panel (`features/agents/home-agents.tsx` or wherever U1 put it), `HomeInbox` and the `["inbox-home"]` query if nothing else uses them, and their tests.
+- Every link to `/` points at `/inbox` (the sidebar wordmark, not-found and error "back" links, empty states; the dev greps `to="/"`).
+- After sign-in and sign-up the user lands on `/inbox` (general.md said "the dashboard (Inbox + Agents)").
 
 ## 14. Templates and Images (PR6, Q18)
 
@@ -367,7 +367,7 @@ The pane is a flex column: a 48px header (from the list row, so it swaps at once
 - `GET /api/inbox/unread-count` → `{ count, byAgent: Record<slug, number> }` (schema in `packages/shared/src/messaging.ts`). `byAgent` = the user's unread `inbox_items` of kind `message` joined to `messages` on `message_id`, grouped by `messages.from_agent_id` → slug; mentions, task events and `@factory` items (`from_agent_id` null) count for no agent. `count` stays the global badge's source.
 - `POST /api/inbox/read-from/:slug` `{ upTo: string /* ISO */ }` → `{ marked: number, readAt }`: marks the requesting user's unread `message` items from that agent created at or before `upTo` read; idempotent; unknown slug 404.
 - Web: `useInboxCache().setRead` keeps `byAgent` (spreads the old value, decrements `byAgent[from.name]` for agent-sent `message` items); Mark all read and its Undo leave `byAgent` to the `inbox_changed` refetch; if that frame is missed, the reconnect-wide invalidation (U1 R4) resyncs it.
-- The server publishes `inbox_changed` to that user when `marked > 0` (as read-all and `:id/read` do), so list pages, Home and other tabs refetch; the client also flips cached inbox rows where `kind === "message" && from.kind === "agent" && from.name === slug`. `upTo` is validated as read-all's cursor (400 when not an instant).
+- The server publishes `inbox_changed` to that user when `marked > 0` (as read-all and `:id/read` do), so list pages and other tabs refetch; the client also flips cached inbox rows where `kind === "message" && from.kind === "agent" && from.name === slug`. `upTo` is validated as read-all's cursor (400 when not an instant).
 - The session view calls `read-from` (only from the mounted `SessionView`, never a loader, only while `document.visibilityState === "visible"`, re-checked on `visibilitychange`) whenever the agent's `byAgent` count is non-zero and the newest loaded event's time has advanced since the last call, with `upTo` = that time (the newest **event**: the agent's outgoing `send_message` event is stamped before its inbox item, so the call re-runs as events advance); at most one call in flight, trailing-throttled to one per second, so a streaming turn doesn't POST per event. It updates `count` and `byAgent` optimistically.
 
 ### 15.2 Task search (PR4, Q10)
@@ -416,7 +416,7 @@ Replace "status rides on the avatar as the usual dot or tooth" with "status ride
 
 ### 16.5 Components (new bullets) (PR1, PR4, PR5)
 
-> - **Avatars:** 16px in pickers, the palette and inbox rows; 20px in the sidebar, lists, Agent details and Home; 24px in the session header. Always decorative (`aria-hidden`); a name is beside it, or in the rail its tooltip. In lists a status badge is cut into the bottom-right corner, one shape per status, the same shapes `StatusBadge` uses: the tooth when working, an alert glyph when errored, a filled dot when rate-limited, a hollow ring when queued, nothing at rest. The session header's avatar carries no badge; the status badge beside it does.
+> - **Avatars:** 16px in pickers, the palette and inbox rows; 20px in the sidebar, lists and Agent details; 24px in the session header. Always decorative (`aria-hidden`); a name is beside it, or in the rail its tooltip. In lists a status badge is cut into the bottom-right corner, one shape per status, the same shapes `StatusBadge` uses: the tooth when working, an alert glyph when errored, a filled dot when rate-limited, a hollow ring when queued, nothing at rest. The session header's avatar carries no badge; the status badge beside it does.
 > - **Selected rows:** a row shown in a pane or peek, or the current page of a sub-nav, takes `steel-selected`, one step deeper than hover, and keeps it under the pointer.
 > - **Command palette:** ⌘K / Ctrl+K from anywhere. A floating layer at the top centre, 640px wide, with the popover look and the scrim; modal. It never animates, however it was opened. Groups: Agents, an exact task key, Go to, Actions, then Tasks: a group whose results arrive late sits last, so nothing above the highlight moves when it lands.
 > - **Combobox:** a searchable pick (agents, time zones) looks exactly like a Select and opens a popover with a filter field at a fixed height. Arrow keys move the highlight; only Enter or a click commits.
@@ -444,10 +444,11 @@ Replace "status rides on the avatar as the usual dot or tooth" with "status ride
 
 ## 17. Behavior-doc edits (gitignored `docs/product/`; applied in the main checkout by the dev in the PR named, and listed in its description)
 
+- `general.md` → Auth (PR6): "After sign-up the user lands directly on the dashboard (Inbox + Agents)." → "After sign-up the user lands on the Inbox."
 - `general.md` → Navigation (PR1, PR3, PR4): "Inbox, Tasks, Templates, Schedules, Usage, Settings, then Agents, which heads the live agents as the reporting tree (rows open the agent's session). ⌘K finds any agent, task or page; `?` lists the shortcuts."
 - `agents-and-sessions.md` → Session view (PR2): the strip is replaced by "The header shows the status and at most one live fact (terminated, errored, queued, restart pending, waiting on, crons, in that priority). Everything else is in Agent details (Now, Org, Work, Usage, Runtime): open at 1280px and up, toggled with `]`." Actions: Compact, Edit, Stop crons and Terminate move to the header's ⋯ menu (Terminate still confirms); Restart stays visible when errored. "pinned by 2 crons" → "kept awake by 2 crons". Drop "The agent strip gains an org segment".
 - `administration.md` → Settings (PR3): "Settings sections and order: Credentials, Secrets, Projects, Users, Factory, one page each with a sub-nav; `/settings` opens Credentials." Usage becomes its own top-level page (`/usage`). Schedules (PR4): "native time zone picker (no combobox…)" → "a searchable time zone picker". Templates → Images (PR6): "a view of the Templates page (`/templates/images`); the build log streams in a side panel."
-- `inbox.md` (PR1, PR5, PR6): read rule: "An item becomes read when opened (click, Cmd/Ctrl-click, middle-click or Enter), when it has been shown in the reading pane for a moment, or when you reply from the pane; sweeping past with j/k does not. Opening an agent's session marks that agent's unread messages to you read." Add: "On wide screens (1024px and up) the Inbox is a list and a reading pane: the pane shows the message with its surrounding session rows, or the comment with its thread, and a composer that replies at the same target." The sidebar's agent rows show unread messages per agent. Home: "Home's Needs you panel shows the 5 newest unread items."
+- `inbox.md` (PR1, PR5, PR6): read rule: "An item becomes read when opened (click, Cmd/Ctrl-click, middle-click or Enter), when it has been shown in the reading pane for a moment, or when you reply from the pane; sweeping past with j/k does not. Opening an agent's session marks that agent's unread messages to you read." Add: "On wide screens (1024px and up) the Inbox is a list and a reading pane: the pane shows the message with its surrounding session rows, or the comment with its thread, and a composer that replies at the same target." The sidebar's agent rows show unread messages per agent. [PR6] Home: replace "Home's Inbox panel shows the 5 newest unread items." with "The Inbox is the home screen: `/` opens it."
 - `tasks.md`: [PR4] "Status is a radio menu and the assignee a searchable picker; both commit only on an explicit pick (Enter or a click), never on arrow keys." and "Tasks are searchable by key or title (⌘K)." [PR5] "The list is keyboard-navigable (`j`/`k`, Enter opens, Space peeks)."
 
 ## 18. Testing
@@ -455,7 +456,7 @@ Replace "status rides on the avatar as the usual dot or tooth" with "status ride
 TDD per change; Vitest + Testing Library (jsdom); server tests in the existing setup. Tests guard behaviour and regressions, never token values or DESIGN.md prose (U1 rule); the avatar contrast test computes from the tokens, it doesn't pin them.
 
 - **Pure units:** `fnv1a32`/`botParts` golden vectors; the avatar ink contrast table; `liveFact` priority; tree shape, expansion merge (stored vs revealed), working counts; rail selection; palette `rank` and snapshotting; `plainPreview`; the shortcut dispatcher (editable, role containers, modal, `defaultPrevented`, Alt-produced keys, the off switch, `g` timeout with fake timers); `esc` for LIKE.
-- **Components:** sidebar tree (APG keys, one tab stop, chevron click doesn't navigate, active row and Agents row for live and ended sessions, reveal not persisted, render counts on a frame via `vi.mock` counters, coalesced frames); `AgentAvatar` img over face and error; badge shapes in `AgentAvatar` and `StatusBadge`; `Sheet modal={false}` (no `aria-modal`, outside click keeps it, Esc closes and is instant, focus stays in the list on keyboard open, focus returns to the named element, retarget keeps the content node); Agent details per width (mocked `matchMedia` at 767/768/1023/1024/1279/1280), `]`, persistence only ≥1280; the header's one fact and Pin outside it; `Timeline` anchoring (mock `ResizeObserver`, `elementFromPoint`); `AgentMenu` items per context and Compact focus; Stop crons from the menu with the panel closed; Settings redirects and per-route loader requests; palette (opens from an input, no animation attribute missing, "Open T-42" row first and stable highlight, `q` debounce, ended label, stale rows not committable); `Combobox` (arrows don't commit, Enter commits, fixed options kept, unknown value); inbox (click selects + push + read once; `j`/`k` replace, dwell marks read after `INBOX_DWELL_MS`, a sweep marks nothing; ↑/↓ focus only; `?item=` outside the page; <1024 navigates; `setRead` keeps `byAgent`); session `read-from` (called once when visible with a count; not on preload; not while hidden); task peek (Space, width gate, retarget, Esc focus; container classes on `TaskDetailView`); Home plates and caps; Templates/Images routes, redirect, build-log retarget.
+- **Components:** sidebar tree (APG keys, one tab stop, chevron click doesn't navigate, active row and Agents row for live and ended sessions, reveal not persisted, render counts on a frame via `vi.mock` counters, coalesced frames); `AgentAvatar` img over face and error; badge shapes in `AgentAvatar` and `StatusBadge`; `Sheet modal={false}` (no `aria-modal`, outside click keeps it, Esc closes and is instant, focus stays in the list on keyboard open, focus returns to the named element, retarget keeps the content node); Agent details per width (mocked `matchMedia` at 767/768/1023/1024/1279/1280), `]`, persistence only ≥1280; the header's one fact and Pin outside it; `Timeline` anchoring (mock `ResizeObserver`, `elementFromPoint`); `AgentMenu` items per context and Compact focus; Stop crons from the menu with the panel closed; Settings redirects and per-route loader requests; palette (opens from an input, no animation attribute missing, "Open T-42" row first and stable highlight, `q` debounce, ended label, stale rows not committable); `Combobox` (arrows don't commit, Enter commits, fixed options kept, unknown value); inbox (click selects + push + read once; `j`/`k` replace, dwell marks read after `INBOX_DWELL_MS`, a sweep marks nothing; ↑/↓ focus only; `?item=` outside the page; <1024 navigates; `setRead` keeps `byAgent`); session `read-from` (called once when visible with a count; not on preload; not while hidden); task peek (Space, width gate, retarget, Esc focus; container classes on `TaskDetailView`); `/` redirects to `/inbox` and the old Home tests are gone; Templates/Images routes, redirect, build-log retarget.
 - **Server:** `byAgent` attribution; `read-from` (scope, `upTo`, idempotence, other users untouched); `q` with `%`, `_`, `\`; avatar route (headers, 400/404 cases, oversize, ETag) and `avatarVersion` on summaries; `GET /api/inbox/:id` (own, other user's, unknown).
 - **Manual (per PR):** §2.13.
 
@@ -478,15 +479,23 @@ Six stacked PRs on U1's `u1/5-perceived-speed` (Q1), each on the one below, each
 | 3 | `feat(web): Settings pages and a top-level Usage page` | §9, DESIGN.md §16.3 (Sub-navigation); `administration.md` Settings, `general.md` |
 | 4 | `feat: command palette, shortcuts and searchable pickers` | §10 (except `j`/`k`, which land with their lists in PR5), §15.2, DESIGN.md §16.5 (palette, combobox, shortcuts, key hints), §16.6 (palette row), §16.7 (Form controls, Don'ts); `administration.md` Schedules, `tasks.md`, `general.md`; closes #83 |
 | 5 | `feat: inbox reading pane and task peek` | §11, §12, §15.4, the `j`/`k` bindings (and their lines in the shortcuts sheet), §5.6 `steel-selected` and `runInstantOn`, DESIGN.md §16.1 (selected tokens), §16.3 (Two panes), §16.5 (Selected rows); `inbox.md`, `tasks.md` |
-| 6 | `feat(web): Home redesign and Templates/Images views` | §13, §14; `administration.md` Images, `inbox.md` Home |
+| 6 | `feat(web): Templates/Images views; the Inbox is home` | §13 (`/` → `/inbox`, Home removed), §14, the whole-stack review; `administration.md` Images, `inbox.md` Home, `general.md` Auth |
 
 PR3's Settings sub-nav uses `steel-selected`, which lands in PR5: PR3 renders its current row with `steel-hover` + medium weight and PR5 switches it to `steel-selected` (one line).
 
-## 21. Decisions and deviations for Or
+## 21. Decisions
 
-**Deviations from the decisions' literal text (for Or):**
+**Decided by Or's delegate (decisions.md rows 16–21; Or delegated the open calls to the team lead, who decided on UI/UX practice and Emil's design principles):**
+- Q34 yes (row 16): opening an agent's session marks that agent's unread messages to you read, with the safeguards of §15.1 (server-side by sender, `upTo`, never from a loader, only while visible). Reason: a badge that opening the conversation doesn't clear reads as a bug.
+- Q17 drop Home (row 17): `/` → `/inbox`; the Home page is deleted (§13). Reason: "Needs you" duplicates the Inbox and "Live now" duplicates the sidebar tree.
+- Q32 tooth + number (row 18), "N working" as accessible name and tooltip. Reason: the words don't fit a 256px row with a name.
+- Q4 full opacity (row 19). Reason: spawned-ness is shown by nesting and the "· ab12" suffix; a lower opacity would read as disabled.
+- Row 20: ghost for in-section actions, outline for page/header-level ones, so Agent details' "Edit agent" is outline. Row 21 (disabled buttons keep their variant's shape) is fixed in U1.
+
+**Deviations from the decisions' literal text (now decided):**
 - Q32: decision 2's "1 working" is drawn as the working tooth plus a number (accessible name "1 working"), because the words don't fit a 256px row with a name.
 - Q34: opening an agent's session marks that agent's unread messages read (an inbox.md change).
+- Q17: decision 14's "Home redesign" is resolved by removing Home.
 - Q30: Agent details is in-flow (not an overlay) at 1024–1279, closed by default there, per decision 5's "closed below 1280".
 
 | Q | Decision | Certainty |
@@ -494,7 +503,7 @@ PR3's Settings sub-nav uses `steel-selected`, which lands in PR5: PR3 renders it
 | Q1 | Six stacked PRs; #83 pickers in PR4 with one Combobox | 4 |
 | Q2 | Full live tree, roots open, collapsed below, per-browser toggles, no cap, indent stops at depth 4, roving tabindex | 4 |
 | Q3 | Status on the avatar; left tooth = "you are here"; Agents row not active on a live session | 4 |
-| Q4 | Seed = slug hash; spawned agents full opacity | 4 / **3** |
+| Q4 | Seed = slug hash; spawned agents full opacity (confirmed by Or's delegate) | 4 / delegate |
 | Q5 | `avatar.svg` only, live from disk, locked-down headers | 4 |
 | Q6 | Row anatomy; ⋯ reuses `AgentMenu` (right-click custom menu dropped later) | 4 |
 | Q7 | Agent details sections; strip removed; no new endpoint (overlay part revised by Q30) | 4 |
@@ -507,7 +516,7 @@ PR3's Settings sub-nav uses `steel-selected`, which lands in PR5: PR3 renders it
 | Q14 | In-flow inbox panes ≥1024, `?item=` (selection rules revised by Q31) | 4 |
 | Q15 | Pane content; reuse `Composer` and `CommentComposer` | 4 |
 | Q16 | Click navigates; Space peeks | **3** |
-| Q17 | Home "Needs you" + "Live now"; drop-Home alternative recorded | **3** |
+| Q17 | Drop Home: `/` → `/inbox` (Or's delegate; the proxy had picked the redesign at 3) | delegate |
 | Q18 | Templates/Images routes; log in a peek | 4 |
 | Q19 | L1–L4 out, one umbrella issue; Agents page polish in PR1 | **3** / 4 |
 | Q20 | Parts generator, flat-topped hex, golden vectors; `AgentChip` everywhere | 4 / **3** |
@@ -522,9 +531,9 @@ PR3's Settings sub-nav uses `steel-selected`, which lands in PR5: PR3 renders it
 | Q29 | `GET /api/inbox/:id`, own items only | 4 |
 | Q30 | In-flow ≥1024 (open by default ≥1280), sheet under the header 768–1023 | 4 |
 | Q31 | `j`/`k` select with replace, read after `INBOX_DWELL_MS`; click/Enter push and read | **3** |
-| Q32 | Working count as tooth + number; 8px indent | **3** |
+| Q32 | Working count as tooth + number; 8px indent (confirmed by Or's delegate) | delegate |
 | Q33 | Distinct badge shapes, shared with `StatusBadge` | 4 |
-| Q34 | Session view marks that agent's messages read; row counts messages only | **3** |
+| Q34 | Session view marks that agent's messages read; row counts messages only (confirmed by Or's delegate) | delegate |
 | Q35 | `steel-selected` token | 4 |
 | Q36 | No header avatar badge; 48px "Agent details" strip; sizes 16/20/24; one name | 4 |
 | Q37 | No input chord for `]` in U2 | 4 |
@@ -540,6 +549,6 @@ Tech-lead decisions: D1 shell-level, coalesced status frames; D2 `usePref` over 
 - **Radix non-modal Dialog.** Outside interaction is prevented; close focus is handled by the consumer (§5.2); one peek state per page.
 - **Nested focus scopes.** cmdk inside a Popover inside a non-modal Sheet (a combobox in the task peek) is tested.
 - **SVG from disk.** Served only with §15.3's headers, rendered only through `<img>`.
-- **Read semantics.** `read-from` must never run on preload or in a hidden tab (tested); Q34 is flagged for Or.
+- **Read semantics.** `read-from` must never run on preload or in a hidden tab (tested).
 - **Behavior docs are gitignored.** §17 edits are applied in the main checkout and listed in each PR.
-- **U1's pending decisions:** only the "Edit agent" button in Agent details (outline vs ghost) depends on them.
+- **U1's decisions 20–21** are settled; Agent details' "Edit agent" is outline.

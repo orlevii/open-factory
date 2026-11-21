@@ -6,7 +6,6 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { useInboxNotifier } from "@/features/inbox/notifications";
-import { runningQueryKey } from "@/features/session/api";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -121,8 +120,8 @@ function AppLayout() {
           opened.current = true;
           return;
         }
-        void qc.invalidateQueries({ queryKey: ["usage"] });
-        void qc.invalidateQueries({ queryKey: runningQueryKey });
+        // Only mounted queries refetch; the rest are marked stale.
+        void qc.invalidateQueries();
       },
     });
     conn.current = connection;

@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { WsOptions } from "@/lib/ws";
 import { useWs, type WsHub } from "@/lib/ws-context";
@@ -130,15 +130,27 @@ test("a turn-closed edge invalidates usage once, 5 s after the first edge; later
   }
 });
 
-test("a first false frame is not an edge; the first open doesn't invalidate usage, a reconnect does", async () => {
+test("a first false frame is not an edge; the first open invalidates nothing, a reconnect invalidates everything", async () => {
   const { usage, spy } = await mounted();
   act(() => h.opts?.onMessage?.(status("dev", false)));
   expect(usage()).toBe(0);
   act(() => h.opts?.onOpen?.()); // first open: the loaders just fetched
   expect(usage()).toBe(0);
+  expect(spy).not.toHaveBeenCalled();
   act(() => h.opts?.onOpen?.()); // reconnect
-  expect(usage()).toBe(1);
-  expect(spy).toHaveBeenCalledWith({ queryKey: ["supervisor"] });
+  expect(spy).toHaveBeenCalledWith(); // everything: only mounted queries refetch
+});
+
+test("a reconnect refetches the mounted inbox list, and not a first open", async () => {
+  const api = mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  renderApp("/inbox", alice);
+  await screen.findByText("probe 0");
+  const inboxCalls = () => api.calls.filter((c) => c.url.startsWith("/api/inbox?")).length;
+  const before = inboxCalls();
+  act(() => h.opts?.onOpen?.()); // first open
+  expect(inboxCalls()).toBe(before);
+  act(() => h.opts?.onOpen?.()); // reconnect
+  await waitFor(() => expect(inboxCalls()).toBe(before + 1));
 });
 
 test("a turn open at connect (per the cached agents list) is seen ending", async () => {

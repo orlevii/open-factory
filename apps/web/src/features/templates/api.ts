@@ -17,6 +17,8 @@ const path = (name: string) => `/api/templates/${encodeURIComponent(name)}`;
 
 export const templatesQueryOptions = queryOptions({
   queryKey: ["templates"],
+  // No WebSocket event invalidates it: refetch on focus and mount.
+  staleTime: 0,
   queryFn: () => apiFetch("/api/templates", { schema: templatesListSchema }),
 });
 

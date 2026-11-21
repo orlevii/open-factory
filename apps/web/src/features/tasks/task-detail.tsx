@@ -130,8 +130,10 @@ export function TaskDetailView({
   // land under it), and the rest of the tasks cache refreshes without holding the editor open.
   const save = useMutation({
     mutationFn: (b: PatchTaskBody) => patchTask(taskKey, b),
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
       const detailKey = taskDetailOptions(taskKey).queryKey;
+      // An older detail GET still in flight would land on top of the saved task (pr76 R3).
+      await qc.cancelQueries({ queryKey: detailKey });
       qc.setQueryData(detailKey, r.task);
       void qc.invalidateQueries({
         queryKey: tasksQueryKey,

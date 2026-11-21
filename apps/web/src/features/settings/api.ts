@@ -21,6 +21,8 @@ const enc = encodeURIComponent;
 
 export const credentialsQueryOptions = queryOptions({
   queryKey: ["credentials"],
+  // No WebSocket event invalidates it: refetch on focus and mount.
+  staleTime: 0,
   queryFn: () =>
     apiFetch("/api/credentials", { schema: credentialsListSchema }).then((r) => r.credentials),
 });
@@ -45,6 +47,8 @@ export const deleteCredential = (name: string) =>
 
 export const secretsQueryOptions = queryOptions({
   queryKey: ["secrets"],
+  // No WebSocket event invalidates it: refetch on focus and mount.
+  staleTime: 0,
   queryFn: () => apiFetch("/api/secrets", { schema: secretsListSchema }).then((r) => r.secrets),
 });
 export const putSecret = (name: string, value: string) =>
@@ -58,6 +62,8 @@ export const deleteSecret = (name: string) =>
 
 export const projectsQueryOptions = queryOptions({
   queryKey: ["projects"],
+  // No WebSocket event invalidates it: refetch on focus and mount.
+  staleTime: 0,
   queryFn: () => apiFetch("/api/projects", { schema: projectsListSchema }).then((r) => r.projects),
 });
 export const createProject = (body: { name: string; hostPath: string }) =>

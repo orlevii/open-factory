@@ -144,7 +144,7 @@ describe("disabled buttons", () => {
           .split(/(?=<Button\b)/)
           .slice(1)
           .some((chunk) =>
-            /className=[^\n]*\bopacity-50/.test(chunk.split(/<\/Button>|\n\s*>\n/)[0]),
+            /className=[^\n]*\bopacity-50/.test(chunk.split(/<\/Button>|\n\s*>\n/)[0] ?? ""),
           );
       })
       .map((f) => f.replace(SRC, ""));

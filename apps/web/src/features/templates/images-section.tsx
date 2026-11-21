@@ -44,7 +44,9 @@ export function ImagesSection() {
         data-log-open={logFor !== null || undefined}
         className="grid grid-cols-[minmax(0,1fr)] gap-3 @[54rem]:data-log-open:pr-[30rem]"
       >
-        <h2 id="images-title" className="font-heading text-[0.9375rem] font-semibold">
+        {/* The header's Templates | Images switch already shows the view's name; the heading only labels
+            the section (and keeps the page outline) for assistive tech. */}
+        <h2 id="images-title" className="sr-only">
           Images
         </h2>
         {isError && !data && (

@@ -289,7 +289,7 @@ function TitleBlock({
                 void commit();
               } else if (e.key === "Escape") close();
             }}
-            className="h-9 bg-card dark:bg-card"
+            className="h-9"
           />
           <EditorButtons
             pending={pending}

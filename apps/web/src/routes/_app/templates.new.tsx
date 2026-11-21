@@ -135,7 +135,6 @@ function NewTemplate() {
                 value={values.description}
                 onChange={(e) => set("description", e.target.value)}
                 onBlur={() => blur("description")}
-                className="bg-card dark:bg-card"
               />
             )}
           </FieldShell>

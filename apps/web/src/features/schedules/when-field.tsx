@@ -82,7 +82,7 @@ export function WhenField({
               value={local}
               aria-invalid={a.invalid || undefined}
               aria-describedby={a.describedBy}
-              className="h-9 bg-card dark:bg-card"
+              className="h-9"
               onChange={(e) => onLocal(e.target.value)}
               onBlur={onBlurLocal}
             />

@@ -468,7 +468,6 @@ export function AgentForm(props: Props) {
               onChange={(e) => set("description", e.target.value)}
               onFocus={() => claim("description")}
               onBlur={() => blur("description")}
-              className="bg-card dark:bg-card"
             />
           )}
         </FieldShell>

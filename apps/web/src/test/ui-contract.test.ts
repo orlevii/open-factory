@@ -34,3 +34,21 @@ describe("styles.css", () => {
     );
   });
 });
+
+describe("form controls", () => {
+  const files = [
+    "components/ui/button.tsx",
+    "components/ui/input.tsx",
+    "components/ui/textarea.tsx",
+    "components/ui/checkbox.tsx",
+    "components/native-select.tsx",
+  ];
+  for (const f of files) {
+    test(`${f} uses the one base-layer focus ring`, () => {
+      const src = readFileSync(join(SRC, f), "utf8");
+      for (const bad of ["outline-none", "ring-3", "ring-ring/50", "focus-visible:ring-2"]) {
+        expect(src).not.toContain(bad);
+      }
+    });
+  }
+});

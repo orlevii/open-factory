@@ -7,7 +7,6 @@ import { AgentActions } from "@/features/agents/agent-actions";
 import { AgentForm } from "@/features/agents/agent-form";
 import { updateAgent } from "@/features/agents/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
-import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 
 // `$slug_` keeps this page out of the session view's layout: it's a sibling, not a child.
 export const Route = createFileRoute("/_app/agents/$slug_/edit")({
@@ -29,7 +28,6 @@ export const Route = createFileRoute("/_app/agents/$slug_/edit")({
 function EditAgent() {
   const { slug } = Route.useParams();
   const qc = useQueryClient();
-  useAgentStatusFrames();
   const { data, isError } = useQuery(agentDetailQueryOptions(slug));
   const agent = data?.agent;
   return (

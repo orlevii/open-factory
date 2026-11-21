@@ -5,19 +5,26 @@ import sidebarSource from "@/components/ui/sidebar.tsx?raw";
 import { installInputModality } from "@/lib/input-modality";
 import type { WsOptions, WsStatus } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
-const ws = vi.hoisted(() => ({ onStatus: undefined as ((s: WsStatus) => void) | undefined }));
+const ws = vi.hoisted(() => ({
+  onStatus: undefined as ((s: WsStatus) => void) | undefined,
+  onMessage: undefined as ((m: unknown) => void) | undefined,
+}));
 vi.mock("@/lib/ws", () => ({
   connectWs: (opts: WsOptions) => {
     ws.onStatus = opts.onStatus;
+    ws.onMessage = opts.onMessage as ((m: unknown) => void) | undefined;
     return { close() {}, status: () => "connecting", send: () => true };
   },
 }));
 
 beforeEach(() => {
   ws.onStatus = undefined;
+  ws.onMessage = undefined;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -182,4 +189,30 @@ test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens ins
     off();
     window.matchMedia = original;
   }
+});
+
+test("an agent_status frame pushed through the ws onMessage updates the agent row after one frame", async () => {
+  mockApi({
+    "GET /api/agents?": () =>
+      json({
+        agents: [agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" })],
+        running: { count: 1, max: 8 },
+      }),
+  });
+  renderApp("/", alice);
+  const row = await screen.findByRole("link", { name: /Dev agent/ });
+  expect(within(row).getByText("Working")).toBeInTheDocument();
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "idle",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  // Coalesced: the write lands on the next animation frame, not synchronously.
+  expect(within(row).getByText("Working")).toBeInTheDocument();
+  expect(await within(row).findByText("Idle")).toBeInTheDocument();
 });

@@ -6,7 +6,6 @@ import { EmptyState } from "@/components/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentsQueryOptions } from "@/features/session/api";
 import { StatusBadge } from "@/features/session/status-badge";
-import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 
 const MAX_ROWS = 8;
 const ATTENTION = (a: AgentSummary) =>
@@ -27,8 +26,6 @@ export function orderHomeAgents(agents: AgentSummary[]) {
 
 /** Home's Agents panel. The order freezes while the pointer or focus is inside, so rows never move under it. */
 export function HomeAgents() {
-  // Home mounts no other listener: without it agent_status frames never reach this list.
-  useAgentStatusFrames();
   const q = useQuery(agentsQueryOptions);
   // Two flags: the pointer leaving while focus stays inside (or the reverse) must not unfreeze.
   const [hovered, setHovered] = useState(false);

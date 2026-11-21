@@ -28,7 +28,6 @@ import type { Row } from "./rows";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { TerminateButton } from "./terminate-button";
 import { Timeline } from "./timeline";
-import { useAgentStatusFrames } from "./use-agent-status";
 import { useSession } from "./use-session";
 
 export function SessionView({
@@ -40,7 +39,6 @@ export function SessionView({
   eventSeq?: number;
   messageId?: string;
 }) {
-  useAgentStatusFrames();
   const s = useSession(slug, eventSeq, messageId);
   const navigate = useNavigate();
   const qc = useQueryClient();

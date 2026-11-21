@@ -148,9 +148,51 @@ function Plates({ heights }: { heights: readonly string[] }) {
     </div>
   );
 }
-const BODY_PLATES = ["h-4 w-11/12", "h-4 w-10/12", "h-4 w-7/12"] as const;
 const ACTIVITY_PLATES = ["h-10", "h-14"] as const;
-const SIDE_PLATES = ["h-14", "h-16"] as const;
+
+/** One line of side-panel text ("None") at its own line height. */
+const SIDE_LINE = "h-[1lh] text-[0.8125rem]";
+
+/** The side sections as they render empty (None, None, None, the creator), a plate per line at its
+ *  real height: on a phone Activity sits under them, and it must not jump when the detail lands. */
+function SideRestPlates() {
+  return (
+    <div aria-hidden="true">
+      <SideSection label="Depends on">
+        <Skeleton className={`${SIDE_LINE} w-10`} />
+        <Skeleton className="h-6 w-32" />
+      </SideSection>
+      <SideSection label="Blocks">
+        <Skeleton className={`${SIDE_LINE} w-10`} />
+      </SideSection>
+      <SideSection label="Links">
+        <Skeleton className={`${SIDE_LINE} w-10`} />
+        <Skeleton className="h-6 w-20" />
+      </SideSection>
+      <SideSection label="Created by">
+        <Skeleton className="h-[1.125rem] w-36" />
+      </SideSection>
+    </div>
+  );
+}
+
+/** A one-paragraph description and its Edit row, at their real heights. */
+function BodyPlates() {
+  return (
+    <div
+      aria-hidden="true"
+      className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 lg:col-start-1"
+    >
+      {/* The markdown's line (1.375rem) and the paragraph's bottom margin (prose-sm: 1rem). */}
+      <div className="pb-4">
+        <Skeleton className="h-[1.375rem] w-10/12" />
+      </div>
+      <div>
+        <Skeleton className="h-6 w-12" />
+      </div>
+    </div>
+  );
+}
 
 /** The task page body (UI design §7); the route wraps it with the header. */
 export function TaskDetailView({
@@ -261,19 +303,11 @@ export function TaskDetailView({
             />
           </div>
           <div className="order-4 min-w-0">
-            {placeholder ? (
-              <div className="pt-3">
-                <Plates heights={SIDE_PLATES} />
-              </div>
-            ) : (
-              <SideRest task={task} save={saveTask} />
-            )}
+            {placeholder ? <SideRestPlates /> : <SideRest task={task} save={saveTask} />}
           </div>
         </aside>
         {placeholder ? (
-          <div className="order-3 min-w-0 lg:col-start-1">
-            <Plates heights={BODY_PLATES} />
-          </div>
+          <BodyPlates />
         ) : (
           <BodyBlock task={task} liveAssignee={liveAssignee} save={saveTask} />
         )}

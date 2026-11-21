@@ -106,3 +106,13 @@ describe("loading", () => {
     );
   });
 });
+
+describe("selects", () => {
+  test("NativeSelect is imported only by the timezone select", () => {
+    const offenders = sourceFiles()
+      .filter((f) => !f.endsWith("components/native-select.tsx"))
+      .filter((f) => readFileSync(f, "utf8").includes("components/native-select"))
+      .map((f) => f.replace(SRC, ""));
+    expect(offenders).toEqual(["/features/schedules/timezone-select.tsx"]);
+  });
+});

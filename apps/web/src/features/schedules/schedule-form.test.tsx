@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 import { zoneGroups } from "./timezone-select";
 
@@ -44,8 +45,7 @@ const item = {
 
 /** The agents arrive asynchronously: wait for the option before choosing it. */
 async function pick(slug: string) {
-  await screen.findByRole("option", { name: new RegExp(`^@${slug} ·`) });
-  await userEvent.selectOptions(screen.getByLabelText("Target"), slug);
+  await pickOption(await screen.findByLabelText("Target"), new RegExp(`@${slug}$`));
 }
 
 async function openNew() {
@@ -144,8 +144,7 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
 
 test("the target picker starts at 'Choose an agent…' and a spawned agent adds the helper", async () => {
   await openNew();
-  const target = screen.getByLabelText("Target") as HTMLSelectElement;
-  expect(target.options[0]?.text).toBe("Choose an agent…");
+  expect(screen.getByLabelText("Target")).toHaveTextContent("Choose an agent…");
   expect(screen.getByText("The schedule wakes this agent at each run.")).toBeInTheDocument();
   await pick("kid");
   expect(

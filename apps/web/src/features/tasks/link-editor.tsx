@@ -1,8 +1,14 @@
 import type { LinkInput } from "@open-factory/shared";
 import { CircleAlert, Plus, X } from "lucide-react";
-import { NativeSelect } from "@/components/native-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export type LinkRow = { id: string; kind: LinkInput["kind"]; target: string; title: string };
 
@@ -79,19 +85,25 @@ export function LinkEditor({
         return (
           <div key={r.id} className="grid gap-1">
             <div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
-              <NativeSelect
-                aria-label={`Link ${i + 1} kind`}
+              <Select
                 value={r.kind}
-                onChange={(e) => patch(r.id, { kind: e.target.value as LinkRow["kind"] })}
-                onBlur={() => onBlurRow(r.id)}
-                className="w-24 shrink-0"
+                onValueChange={(v) => patch(r.id, { kind: v as LinkRow["kind"] })}
               >
-                {KINDS.map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </NativeSelect>
+                <SelectTrigger
+                  aria-label={`Link ${i + 1} kind`}
+                  onBlur={() => onBlurRow(r.id)}
+                  className="w-24 shrink-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map(([v, l]) => (
+                    <SelectItem key={v} value={v}>
+                      {l}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
                 aria-label={`Link ${i + 1} target`}
                 aria-invalid={err ? true : undefined}

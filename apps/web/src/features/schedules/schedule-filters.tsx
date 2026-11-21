@@ -1,8 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { NativeSelect } from "@/components/native-select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import {
+  ALL,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { agentsQueryOptions } from "@/features/session/api";
+import { AgentItem } from "@/features/tasks/agent-picker";
 import type { ScheduleFilters } from "./api";
 
 export const isDefault = (f: ScheduleFilters) => !f.target && !f.done;
@@ -26,22 +34,24 @@ export function ScheduleFiltersBar({
         >
           Target
         </label>
-        <NativeSelect
-          id="schedule-target"
-          value={value.target ?? ""}
-          onChange={(e) => onChange({ ...value, target: e.target.value || undefined })}
+        <Select
+          value={value.target ?? ALL}
+          onValueChange={(v) => onChange({ ...value, target: v === ALL ? undefined : v })}
         >
-          <option value="">Any agent</option>
-          {/* An ended target is reachable through the URL only; it shows while selected. */}
-          {value.target && !slugs.includes(value.target) && (
-            <option value={value.target}>@{value.target}</option>
-          )}
-          {slugs.map((s) => (
-            <option key={s} value={s}>
-              @{s}
-            </option>
-          ))}
-        </NativeSelect>
+          <SelectTrigger id="schedule-target">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Any agent</SelectItem>
+            {/* An ended target is reachable through the URL only; it shows while selected. */}
+            {value.target && !slugs.includes(value.target) && (
+              <AgentItem agent={{ slug: value.target, displayName: "" }} />
+            )}
+            {agents.map((a) => (
+              <AgentItem key={a.slug} agent={a} />
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex items-center gap-2 md:pb-2">
         <Checkbox

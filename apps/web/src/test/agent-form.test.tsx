@@ -11,6 +11,7 @@ import {
 } from "@/test/agent-screens-fixtures";
 import { json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { optionNames, pickOption } from "@/test/select-helpers";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -44,9 +45,14 @@ test("?template=lead preselects it and fills the fields and grants from it", asy
   mockWorld({ templates: [templateSummary("lead"), templateSummary("broken", 2)] });
   renderApp("/agents/new?template=lead", alice);
   await ready();
-  const select = field("Template") as unknown as HTMLSelectElement;
-  expect(select.value).toBe("lead");
-  expect(within(select).getByRole("option", { name: "broken (has errors)" })).toBeDisabled();
+  const select = field("Template");
+  expect(select).toHaveTextContent("lead");
+  await userEvent.click(select);
+  expect(await screen.findByRole("option", { name: "broken (has errors)" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await userEvent.keyboard("{Escape}");
   expect(field("Display name").value).toBe("Team Lead");
   expect(field("Description").value).toBe("Leads the team");
   expect(screen.getByRole("checkbox", { name: /app/ })).toBeChecked();
@@ -186,14 +192,18 @@ test("Edit: the manager select leaves out the agent and its descendants, indente
   ];
   mockWorld({ agents });
   renderApp("/agents/lead/edit", alice);
-  const select = (await screen.findByLabelText("Manager")) as HTMLSelectElement;
-  await vi.waitFor(() => expect(select.options.length).toBeGreaterThan(1));
-  expect([...select.options].map((o) => o.textContent)).toEqual([
+  const select = await screen.findByLabelText("Manager");
+  await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
+  // The closed trigger shows the name and a muted @slug, without the item's indent.
+  expect(select.querySelector("[data-slot=select-value] .text-muted-foreground")).toHaveTextContent(
+    "@cto",
+  );
+  expect(select.querySelector("[style*=padding]")).toBeNull();
+  expect(await optionNames(select)).toEqual([
     "No manager (reports to the humans)",
-    "CTO (@cto)",
-    "    Other (@other)",
+    "CTO @cto",
+    "Other @other",
   ]);
-  expect(select.value).toBe("cto");
   // Template and slug are read-only on Edit.
   expect(screen.queryByLabelText("Template")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Slug")).not.toBeInTheDocument();
@@ -214,12 +224,12 @@ test("the manager select leaves out spawned agents", async () => {
   mockWorld({ agents });
   renderApp("/agents/new?template=lead", alice);
   await ready();
-  const select = field("Manager") as unknown as HTMLSelectElement;
-  await vi.waitFor(() => expect(select.options.length).toBeGreaterThan(1));
-  expect([...select.options].map((o) => o.textContent)).toEqual([
+  const select = field("Manager");
+  await vi.waitFor(() => expect(select).toBeEnabled());
+  expect(await optionNames(select)).toEqual([
     "No manager (reports to the humans)",
-    "CTO (@cto)",
-    "    Lead (@lead)",
+    "CTO @cto",
+    "Lead @lead",
   ]);
 });
 
@@ -370,11 +380,9 @@ test("the credential select lists names with their kind", async () => {
   mockWorld({ credentials: [credential("work"), credential("personal", "api_key")] });
   renderApp("/agents/new?template=lead", alice);
   await ready();
-  const select = field("Credential") as unknown as HTMLSelectElement;
-  expect([...select.options].map((o) => o.textContent)).toEqual([
-    "work: OAuth token",
-    "personal: API key",
-  ]);
+  const select = field("Credential");
+  await vi.waitFor(() => expect(select).toBeEnabled());
+  expect(await optionNames(select)).toEqual(["work: OAuth token", "personal: API key"]);
 });
 
 const projectsError = () =>
@@ -463,9 +471,7 @@ test("an unknown ?template= counts as unchosen", async () => {
   const api = mockWorld();
   renderApp("/agents/new?template=nope", alice);
   await screen.findByRole("button", { name: "Create agent" });
-  await vi.waitFor(() =>
-    expect((field("Template") as unknown as HTMLSelectElement).disabled).toBe(false),
-  );
+  await vi.waitFor(() => expect(field("Template")).toBeEnabled());
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);
@@ -520,8 +526,8 @@ test("the template prefill never overwrites a field the user is in or has typed 
     },
   });
   renderApp("/agents/new", alice);
-  await screen.findByRole("option", { name: "lead" });
-  await userEvent.selectOptions(field("Template") as unknown as HTMLSelectElement, "lead");
+  await vi.waitFor(() => expect(field("Template")).toBeEnabled());
+  await pickOption(field("Template"), "lead");
   // Straight into Slug and Description while the template detail is still in flight.
   await userEvent.type(field("Description"), "Mine");
   await userEvent.click(field("Slug"));
@@ -547,7 +553,7 @@ test("switching templates re-prefills only the fields the user hasn't edited", a
   await ready();
   await userEvent.clear(field("Display name"));
   await userEvent.type(field("Display name"), "Mine");
-  await userEvent.selectOptions(field("Template") as unknown as HTMLSelectElement, "writer");
+  await pickOption(field("Template"), "writer");
   await vi.waitFor(() => expect(field("Description").value).toBe("Writes docs"));
   expect(field("Slug").value).toBe("writer");
   expect(field("Display name").value).toBe("Mine");

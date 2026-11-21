@@ -436,3 +436,42 @@ test("the selected row dropping out of the loaded pages keeps its header", async
   expect(within(p).queryByText("This item no longer exists.")).toBeNull();
   expect(api.calls.filter((c) => c.url === "/api/inbox/i1")).toHaveLength(1);
 });
+
+test("a half-typed comment reply survives switching items; a posted one is cleared", async () => {
+  setup([mention(1, "c4", { kind: "agent", name: "ada" }), item(2)]);
+  api.on(
+    "POST /api/tasks/T-7/comments",
+    validBody(taskCommentBodySchema, (b) =>
+      json(
+        {
+          comment: {
+            type: "comment",
+            id: "c9",
+            author: { kind: "user", handle: "alice" },
+            body: (b as { body: string }).body,
+            at: at(9),
+          },
+          deliveredTo: ["ada"],
+          mentionedHumans: [],
+          notReached: [],
+        },
+        201,
+      ),
+    ),
+  );
+  const app = await visit("/inbox?item=i1");
+  const box = () => within(pane()).getByRole("textbox", { name: "Comment" });
+  await waitFor(() => expect(box()).toHaveValue("@ada "));
+  await userEvent.type(box(), "half typed");
+  await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
+  await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());
+  await app.router.navigate({ to: "/inbox", search: { item: "i1" } });
+  await waitFor(() => expect(box()).toHaveValue("@ada half typed"));
+  fireEvent.click(within(pane()).getByRole("button", { name: "Comment" }));
+  await waitFor(() => expect(box()).toHaveValue(""));
+  await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
+  await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());
+  await app.router.navigate({ to: "/inbox", search: { item: "i1" } });
+  // Nothing left over: only the prefill comes back.
+  await waitFor(() => expect(box()).toHaveValue("@ada "));
+}, 20_000);

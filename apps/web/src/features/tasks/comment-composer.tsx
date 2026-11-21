@@ -1,6 +1,6 @@
 import type { TaskCommentResponse } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { type Ref, useImperativeHandle, useRef, useState } from "react";
+import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
 import { isCoarsePointer, isSendKey } from "@/lib/send-key";
@@ -26,6 +26,25 @@ export function notReachedLine(list: TaskCommentResponse["notReached"]): string 
   return `Not reached: ${parts.join(", ")}.`;
 }
 
+// One draft per task for this tab's session, as the session composer keeps one per agent: a
+// half-typed reply survives leaving the task (or the inbox item) and coming back.
+const draftKey = (taskKey: string) => `of-comment-draft:${taskKey}`;
+const readDraft = (taskKey: string) => {
+  try {
+    return sessionStorage.getItem(draftKey(taskKey)) ?? "";
+  } catch {
+    return "";
+  }
+};
+const writeDraft = (taskKey: string, v: string) => {
+  try {
+    if (v) sessionStorage.setItem(draftKey(taskKey), v);
+    else sessionStorage.removeItem(draftKey(taskKey));
+  } catch {
+    /* private mode */
+  }
+};
+
 export type CommentComposerHandle = {
   /** Reply: the mention goes to the start of the draft (once), then the textarea takes focus. */
   reply(mention: string): void;
@@ -36,7 +55,8 @@ export type CommentComposerHandle = {
 /**
  * The comment composer (UI design §7). It owns the draft, so a keystroke re-renders only the
  * composer, not the task above it; the page reaches in through the handle for Reply and the
- * `?comment=` prefill. A refetch never loses the draft: the composer stays mounted.
+ * `?comment=` prefill. A refetch never loses the draft (the composer stays mounted), and the draft
+ * is kept per task for the tab's session, so leaving and coming back keeps it; a post clears it.
  */
 export function CommentComposer({
   ref,
@@ -52,7 +72,11 @@ export function CommentComposer({
   assignee: string | undefined;
 }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState("");
+  // Key the composer by task: the draft is read once per task.
+  const [draft, setDraft] = useState(() => readDraft(taskKey));
+  // A prefill nobody typed after isn't a draft: it isn't kept (the next deep link prefills its own).
+  const prefilled = useRef<string>(undefined);
+  useEffect(() => writeDraft(taskKey, draft === prefilled.current ? "" : draft), [taskKey, draft]);
   const [view, setView] = useState<"write" | "preview">("write");
   const textarea = useRef<HTMLTextAreaElement>(null);
   const [posting, setPosting] = useState(false);
@@ -71,7 +95,11 @@ export function CommentComposer({
         });
       },
       prefill(mention) {
-        setDraft((d) => (d === "" ? `${mention} ` : d));
+        setDraft((d) => {
+          if (d !== "") return d;
+          prefilled.current = `${mention} `;
+          return prefilled.current;
+        });
       },
     }),
     [],

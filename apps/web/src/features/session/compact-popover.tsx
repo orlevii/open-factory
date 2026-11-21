@@ -71,7 +71,19 @@ export function CompactPopover({
           <TooltipContent className="md:hidden">Compact</TooltipContent>
         </Tooltip>
       )}
-      <PopoverContent align="end" className="w-72">
+      <PopoverContent
+        align="end"
+        className="w-72"
+        // No PopoverTrigger when anchored, so Radix has nothing to return focus to: send it to the anchor.
+        onCloseAutoFocus={
+          anchor
+            ? (e) => {
+                e.preventDefault();
+                anchor.current?.focus();
+              }
+            : undefined
+        }
+      >
         <form
           onSubmit={(e) => {
             e.preventDefault();

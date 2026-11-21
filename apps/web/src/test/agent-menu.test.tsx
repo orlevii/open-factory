@@ -172,3 +172,44 @@ test("Compact… moves focus into the compact popover", async () => {
   const input = await screen.findByRole("textbox", { name: "Focus (optional)" });
   await vi.waitFor(() => expect(input).toHaveFocus());
 });
+
+test("Escape from the compact popover returns focus to the ⋯ button", async () => {
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Compact…" }));
+  const input = await screen.findByRole("textbox", { name: "Focus (optional)" });
+  await vi.waitFor(() => expect(input).toHaveFocus());
+  await u.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
+  );
+});
+
+test("a successful Compact returns focus to the ⋯ button", async () => {
+  mockApi({
+    "POST /api/agents/dev/compact": () =>
+      json({ item: { id: "q", kind: "compact", from: "@alice", createdAt: "x" } }, 202),
+  });
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Compact…" }));
+  await u.click(await screen.findByRole("button", { name: "Compact" }));
+  await vi.waitFor(() => expect(screen.queryByRole("textbox"), "popover still open").toBeNull());
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
+  );
+});
+
+test("cancelling Terminate… returns focus to the ⋯ button", async () => {
+  setup({ agent: agentSummary({ kind: "ephemeral" }), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Terminate…" }));
+  const dlg = await screen.findByRole("alertdialog", { name: "Terminate @dev?" });
+  await u.click(within(dlg).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
+  );
+});

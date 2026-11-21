@@ -54,6 +54,7 @@
   --color-avatar-6: var(--avatar-6);
   --color-avatar-7: var(--avatar-7);
   --color-avatar-8: var(--avatar-8);
+  --color-avatar-ink: var(--avatar-ink);
   --color-signal: var(--signal);
   --color-signal-text: var(--signal-text);
   --color-signal-foreground: var(--signal-foreground);
@@ -119,6 +120,7 @@
   --avatar-6: oklch(0.62 0.07 295);
   --avatar-7: oklch(0.62 0.07 320);
   --avatar-8: oklch(0.62 0.07 345);
+  --avatar-ink: oklch(0.2 0.008 255); /* ink drawn on every avatar fill, both themes */
 
   /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
   --signal: oklch(
@@ -200,6 +202,7 @@
   --avatar-6: oklch(0.7 0.07 295);
   --avatar-7: oklch(0.7 0.07 320);
   --avatar-8: oklch(0.7 0.07 345);
+  --avatar-ink: oklch(0.2 0.008 255);
 
   --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
   --signal-text: oklch(0.72 0.18 40);

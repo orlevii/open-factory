@@ -724,3 +724,15 @@ test("Save reads 'Saving…' while the PUT is pending", async () => {
   await act(async () => release());
   expect(await screen.findByText("Saved.")).toBeInTheDocument();
 });
+
+test("list header: below sm the button reads New and the Images link is hidden", async () => {
+  mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
+  renderApp("/templates", alice);
+  const link = await screen.findByRole("link", { name: /New/ });
+  const spans = link.querySelectorAll("span");
+  expect(spans[0]).toHaveClass("max-sm:hidden");
+  expect(spans[0]).toHaveTextContent("New template");
+  expect(spans[1]).toHaveClass("sm:hidden");
+  expect(spans[1]).toHaveTextContent("New");
+  expect(screen.getByRole("link", { name: "Images" })).toHaveClass("max-sm:hidden");
+});

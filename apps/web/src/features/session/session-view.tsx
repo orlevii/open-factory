@@ -81,11 +81,12 @@ export function SessionView({
       )}
       <PageHeader
         title={agent.displayName}
+        titleFromData
         heading={<AgentName agent={agent} />}
         documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
         meta={
           <>
-            <span className="max-md:hidden">
+            <span className="shrink-0 max-md:hidden">
               <StatusBadge
                 status={agent.status}
                 rateLimitedUntil={agent.rateLimitedUntil}
@@ -93,7 +94,7 @@ export function SessionView({
                 size="long"
               />
             </span>
-            <span className="md:hidden">
+            <span className="shrink-0 md:hidden">
               <StatusBadge status={agent.status} size="short" />
             </span>
           </>

@@ -8,21 +8,12 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, UserPlus } from "lucide-react";
-import {
-  memo,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { PageBody, PageHeader } from "@/components/page-header";
+import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -271,7 +262,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   if (gone) {
     return (
       <>
-        <PageHeader title={template.config?.displayName ?? name} meta={<Mono>{name}</Mono>} />
+        <PageHeader
+          title={template.config?.displayName ?? name}
+          titleFromData
+          meta={<HeaderSlug value={name} />}
+        />
         <PageBody>
           <div className="grid max-w-xl gap-3">
             <p role="alert" className="text-sm">
@@ -523,7 +518,8 @@ const TemplateHeader = memo(function TemplateHeader({
     <>
       <PageHeader
         title={template.config?.displayName ?? name}
-        meta={<Mono>{name}</Mono>}
+        titleFromData
+        meta={<HeaderSlug value={name} />}
         actions={
           <>
             {errorCount > 0 ? (
@@ -614,10 +610,6 @@ const IssuesBlock = memo(function IssuesBlock({
     </section>
   );
 });
-
-const Mono = ({ children }: { children: ReactNode }) => (
-  <span className="font-mono text-[0.8125rem] text-muted-foreground">{children}</span>
-);
 
 /** One live region that is always mounted, so changes are announced. */
 function Status({ outcome }: { outcome?: Outcome }) {

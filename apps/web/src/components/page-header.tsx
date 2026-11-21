@@ -10,6 +10,7 @@ export function PageHeader({
   documentTitle,
   meta,
   actions,
+  titleFromData = false,
 }: {
   title: string;
   /** The h1's content when it needs more than the plain title (a spawned agent's kept " · ab12"). */
@@ -17,6 +18,8 @@ export function PageHeader({
   documentTitle?: string;
   meta?: ReactNode;
   actions?: ReactNode;
+  /** The title is data (an agent or task name): it truncates down to a 4rem floor. A static title never shrinks. */
+  titleFromData?: boolean;
 }) {
   const shell = useShell();
   useEffect(() => {
@@ -24,22 +27,40 @@ export function PageHeader({
   }, [title, documentTitle]);
   return (
     <>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">
+      <header className="@container flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">
         <SidebarTrigger className="-ml-1.5" />
         <h1
           className={cn(
             "font-heading text-base leading-5 font-semibold tracking-[-0.01em]",
-            // A custom heading may truncate (it decides which part gives way), so the h1 may shrink.
-            heading !== undefined && "min-w-0 truncate",
+            // Give-way order: meta slug, then a data title (to a floor), then nothing else shrinks.
+            titleFromData
+              ? "min-w-16 truncate"
+              : heading !== undefined
+                ? "min-w-0 truncate"
+                : "shrink-0",
           )}
+          title={titleFromData ? title : undefined}
         >
           {heading ?? title}
         </h1>
         {meta && <div className="flex min-w-0 items-center gap-2">{meta}</div>}
-        {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+        {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
       </header>
       {shell && <ReconnectStrip lost={shell.connectionLost} />}
     </>
+  );
+}
+
+/** A mono name inside `meta`: the first thing to give way (truncates, then hides on a narrow header). */
+export function HeaderSlug({ value }: { value: string }) {
+  return (
+    <span
+      data-slot="header-slug"
+      title={value}
+      className="min-w-0 truncate font-mono text-muted-foreground @max-[32rem]:hidden"
+    >
+      {value}
+    </span>
   );
 }
 

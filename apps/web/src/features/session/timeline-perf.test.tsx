@@ -410,6 +410,13 @@ test("buildRows runs once per events change, not for status or queue frames; ope
     restartWaitingOn: 0,
   });
   frame();
+  // The frame did reach the hook (a render that skipped it would prove nothing).
+  expect(harnessRenders).toBeGreaterThan(0);
+  expect(count.builds).toBe(0);
+  harnessRenders = 0;
+  push({ type: "queue", agent: "dev", items: [] });
+  frame();
+  expect(harnessRenders).toBeGreaterThan(0);
   expect(count.builds).toBe(0);
   const open = seen?.open;
   expect(open?.newestOpenTool?.key).toBe("5");

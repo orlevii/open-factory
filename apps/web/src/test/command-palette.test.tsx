@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { useShortcut } from "@/lib/shortcuts";
 import type { WsOptions } from "@/lib/ws";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi, validQuery } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, conversation, detail } from "@/test/session-fixtures";
@@ -244,4 +245,114 @@ test("rows are a snapshot of the query: a list change while it's open moves noth
   expect(options(dialog)).toEqual(before);
   await userEvent.type(input, "b");
   await waitFor(() => expect(options(dialog)[0]).toContain("@devbox"));
+});
+
+test("Agent details from the palette at a peek width leaves focus inside the sheet", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.installWidth(900);
+  try {
+    renderApp("/agents/dev", alice);
+    // Opened from the composer: the dialog's focus return would send focus back there.
+    const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
+    box.focus();
+    fireEvent.keyDown(box, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    await userEvent.type(within(dialog).getByRole("combobox"), "details");
+    await waitFor(() => expect(highlighted(dialog)).toHaveTextContent("Agent details"));
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(document.getElementById("agent-details")).not.toBeNull());
+    // Past the closing dialog's own focus return (a timer).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.getElementById("agent-details")).toContainElement(
+      document.activeElement as HTMLElement,
+    );
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+test("a short query renders a capped agent list, keeping every strong match", async () => {
+  const many = Array.from({ length: 80 }, (_, i) =>
+    agentSummary({ slug: `agent-${i}`, displayName: `Agent ${i}` }),
+  );
+  api.on("GET /api/agents?ended=exclude", () =>
+    json({ agents: many, running: { count: 0, max: 8 } }),
+  );
+  api.on("GET /api/agents?ended=only", () =>
+    json({
+      agents: [
+        agentSummary({ slug: "g", displayName: "Gee", terminatedAt: "2026-11-01T00:00:00.000Z" }),
+      ],
+      more: false,
+      running: { count: 0, max: 8 },
+    }),
+  );
+  const { dialog, input } = await openFromInput();
+  await userEvent.type(input, "g");
+  await waitFor(() => expect(options(dialog).some((o) => o?.includes("@g"))).toBe(true));
+  const agentRows = within(within(dialog).getByRole("group", { name: "Agents" })).getAllByRole(
+    "option",
+  );
+  expect(agentRows.length).toBeLessThanOrEqual(51);
+  expect(within(dialog).getByText("Keep typing to narrow the agents.")).toBeInTheDocument();
+});
+
+test("the ended-more note is shown outside the list box", async () => {
+  api.on("GET /api/agents?ended=only", () =>
+    json({ agents: ended, more: true, running: { count: 0, max: 8 } }),
+  );
+  const { dialog, input } = await openFromInput();
+  await userEvent.type(input, "dev");
+  const note = await within(dialog).findByText("Showing the 200 most recently ended");
+  expect(note.closest("[role=listbox]")).toBeNull();
+});
+
+test("⇧Enter to an agent whose session isn't open yet focuses its composer once it mounts", async () => {
+  const { dialog, input, router } = await openFromInput();
+  await userEvent.type(input, "dev");
+  await waitFor(() => expect(highlighted(dialog)).toHaveTextContent("@dev"));
+  await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev"));
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Message to Dev agent" })).toHaveFocus(),
+  );
+});
+
+test("Esc returns focus to the field it was opened from", async () => {
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1, name: "Inbox" });
+  const field = document.createElement("input");
+  document.body.append(field);
+  try {
+    field.focus();
+    fireEvent.keyDown(field, { key: "k", ctrlKey: true });
+    await screen.findByRole("dialog", { name: "Search" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Search" })).toBeNull());
+    await waitFor(() => expect(field).toHaveFocus());
+  } finally {
+    field.remove();
+  }
+});
+
+test("ties keep the sidebar tree's order, not the server's", async () => {
+  api.on("GET /api/agents?ended=exclude", () =>
+    json({
+      agents: [
+        agentSummary({ slug: "zed-x", displayName: "Zed" }),
+        agentSummary({ slug: "amy-x", displayName: "Amy" }),
+        agentSummary({ slug: "kid-x", displayName: "Kid", reportsTo: "zed-x" }),
+      ],
+      running: { count: 0, max: 8 },
+    }),
+  );
+  const { dialog, input } = await openFromInput();
+  await userEvent.type(input, "x");
+  await waitFor(() =>
+    expect(options(dialog).slice(0, 3)).toEqual([
+      expect.stringContaining("@amy-x"),
+      expect.stringContaining("@zed-x"),
+      expect.stringContaining("@kid-x"),
+    ]),
+  );
 });

@@ -1,4 +1,4 @@
-import type { AgentSummary } from "@open-factory/shared";
+import { type AgentSummary, treeOrder } from "@open-factory/shared";
 import {
   keepPreviousData,
   type QueryClient,
@@ -18,14 +18,18 @@ import { lookupTasks, tasksSearchOptions } from "@/features/tasks/api";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { setPreference } from "@/lib/theme";
 import { ACTIONS, type ActionItem, GO_TO, isTaskKey, type RankedAgent, rankAgents } from "./rank";
-import { readRecentAgents, rememberAgent } from "./recent";
+import { readRecentAgents } from "./recent";
 
 // --- Open state: a module-level store, so the sidebar's Search row and ⌘K open the one palette. ---
 let isOpen = false;
+/** Focused when it opened: a plain close (Esc, a click outside) returns focus there. Radix's modal
+ *  Dialog only returns focus to its own Trigger, and the palette has none. */
+let opener: HTMLElement | null = null;
 const listeners = new Set<() => void>();
 function setPaletteOpen(next: boolean) {
   if (next === isOpen) return;
   isOpen = next;
+  if (next) opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   for (const l of listeners) l();
 }
 const subscribe = (l: () => void) => {
@@ -52,26 +56,39 @@ function isPaletteKey(e: KeyboardEvent) {
   return mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k";
 }
 
+const NOTHING = () => {};
 const SEARCH_DEBOUNCE_MS = 150;
 const MIN_SEARCH = 2;
 const SESSION_PATH = /^\/agents\/(?!new\/?$)[^/]+\/?$/;
 
 const isLive = (a: AgentSummary) => !a.archivedAt && !a.terminatedAt;
 
+/** The sidebar tree's order (depth-first under each manager) for each live list, computed once. */
+const treeOrders = new WeakMap<AgentSummary[], string[]>();
+function treeOrderOf(live: AgentSummary[]): string[] {
+  let order = treeOrders.get(live);
+  if (!order) {
+    order = treeOrder(live).map((r) => r.slug);
+    treeOrders.set(live, order);
+  }
+  return order;
+}
+
+/** At most this many agent rows render; exact, prefix and recent matches are never cut. */
+const AGENT_ROWS = 50;
+type AgentRows = { rows: RankedAgent[]; cut: boolean };
+
 /** Reads the cached lists once (no subscription: a status frame never re-renders or reorders the
  *  palette) and ranks them for `query`. */
-function rankFromCache(qc: QueryClient, query: string): RankedAgent[] {
-  const live = (
-    qc.getQueryData<AgentSummary[]>(agentsListQueryOptions("exclude").queryKey) ?? []
-  ).filter(isLive);
+function rankFromCache(qc: QueryClient, query: string): AgentRows {
+  const cached = qc.getQueryData<AgentSummary[]>(agentsListQueryOptions("exclude").queryKey) ?? [];
+  const live = cached.filter(isLive);
   const ended = qc.getQueryData<AgentSummary[]>(agentsListQueryOptions("only").queryKey) ?? [];
-  return rankAgents(
-    query,
-    live,
-    ended,
-    readRecentAgents(),
-    live.map((a) => a.slug),
-  );
+  const ranked = rankAgents(query, live, ended, readRecentAgents(), treeOrderOf(cached));
+  if (ranked.length <= AGENT_ROWS) return { rows: ranked, cut: false };
+  let room = AGENT_ROWS - ranked.filter((r) => r.strong).length;
+  const rows = ranked.filter((r) => r.strong || room-- > 0);
+  return { rows, cut: true };
 }
 
 const matches = (label: string, q: string) => q === "" || label.toLowerCase().includes(q);
@@ -124,10 +141,12 @@ export function CommandPalette() {
           aria-describedby={undefined}
           onCloseAutoFocus={(e) => {
             const run = afterClose.current;
+            const back = opener;
             afterClose.current = null;
-            if (!run) return;
+            opener = null;
             e.preventDefault();
-            run();
+            if (run) run();
+            else if (back?.isConnected) back.focus();
           }}
           className="fixed top-[15vh] left-1/2 z-50 flex w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-float-edge bg-popover text-popover-foreground outline-hidden max-md:top-2" // ui-contract:allow the surface takes focus only programmatically; the field inside opens focused
         >
@@ -146,7 +165,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
   const onSession = useRouterState({ select: (s) => SESSION_PATH.test(s.location.pathname) });
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
-  const [agents, setAgents] = useState(() => rankFromCache(qc, ""));
+  const [{ rows: agents, cut }, setAgents] = useState(() => rankFromCache(qc, ""));
   const latestQuery = useRef("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // ⇧ on the committing Enter or click: open the session and focus its composer.
@@ -205,33 +224,38 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
     (a) => (!a.sessionOnly || onSession) && matches(a.label, lower),
   );
 
-  const commit = (go: () => void, after?: () => void) => {
-    afterClose.current = after ?? null;
+  /** Closes the palette, then runs `go`. `after` runs once the dialog has let go of focus (in its
+   *  close hand-off, so nothing it focuses is taken back); null returns focus to where ⌘K was
+   *  pressed. */
+  const commit = (go: () => void, after: (() => void) | null) => {
+    afterClose.current = after;
     setPaletteOpen(false);
     go();
   };
+  /** A new page: focus is not sent back to the page being left. */
+  const leave = (go: () => void) => commit(go, NOTHING);
   const openAgent = (slug: string) => {
-    const focus = shift.current;
-    rememberAgent(slug);
     commit(
       () => void navigate({ to: "/agents/$slug", params: { slug } }),
-      focus ? () => requestComposerFocus(slug) : undefined,
+      shift.current ? () => requestComposerFocus(slug) : NOTHING,
     );
   };
   const runAction = (a: ActionItem) => {
     switch (a.kind) {
       case "navigate":
-        return commit(() => void navigate({ to: a.to as string }));
+        return leave(() => void navigate({ to: a.to as string }));
       case "new-task":
-        return commit(() => void navigate({ to: "/tasks/new" }));
+        return leave(() => void navigate({ to: "/tasks/new" }));
       case "agent-details":
-        return commit(openAgentDetails);
+        // Opened after the close hand-off: a peek sheet doesn't trap focus, so the dialog's focus
+        // return would otherwise pull focus back out of it.
+        return commit(NOTHING, openAgentDetails);
       case "theme-system":
-        return commit(() => setPreference("system"));
+        return commit(() => setPreference("system"), null);
       case "theme-light":
-        return commit(() => setPreference("light"));
+        return commit(() => setPreference("light"), null);
       case "theme-dark":
-        return commit(() => setPreference("dark"));
+        return commit(() => setPreference("dark"), null);
       case "shortcuts":
         return;
     }
@@ -276,11 +300,6 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
                 {ended && <span className="shrink-0 text-xs text-muted-foreground">Ended</span>}
               </Command.Item>
             ))}
-            {endedMore && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                Showing the 200 most recently ended
-              </p>
-            )}
           </Command.Group>
         )}
         {taskKey && (
@@ -288,7 +307,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
             <Command.Item
               value={`key:${taskKey}`}
               onSelect={() =>
-                commit(() => void navigate({ to: "/tasks/$key", params: { key: taskKey } }))
+                leave(() => void navigate({ to: "/tasks/$key", params: { key: taskKey } }))
               }
               className={itemClass}
             >
@@ -306,7 +325,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
                 key={g.id}
                 value={`go:${g.id}`}
                 onSelect={() =>
-                  commit(() => void navigate({ to: g.to, ...(g.hash ? { hash: g.hash } : {}) }))
+                  leave(() => void navigate({ to: g.to, ...(g.hash ? { hash: g.hash } : {}) }))
                 }
                 className={itemClass}
               >
@@ -343,7 +362,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
                 disabled={staleTasks}
                 onSelect={() => {
                   if (staleTasks) return;
-                  commit(() => void navigate({ to: "/tasks/$key", params: { key: t.key } }));
+                  leave(() => void navigate({ to: "/tasks/$key", params: { key: t.key } }));
                 }}
                 className={itemClass}
               >
@@ -355,6 +374,13 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
           </Command.Group>
         )}
       </Command.List>
+      {/* Notes about the agent rows, outside the list box (a list box holds only options). */}
+      {(cut || endedMore) && (
+        <div className="border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
+          {cut && <p>Keep typing to narrow the agents.</p>}
+          {endedMore && <p>Showing the 200 most recently ended</p>}
+        </div>
+      )}
     </Command>
   );
 }

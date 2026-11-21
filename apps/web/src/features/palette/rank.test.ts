@@ -7,6 +7,23 @@ const a = (slug: string, displayName = slug): AgentSummary =>
 const slugs = (r: { agent: AgentSummary }[]) => r.map((x) => x.agent.slug);
 
 describe("rankAgents", () => {
+  test("marks exact, prefix and recent matches strong, substring matches not", () => {
+    const r = rankAgents(
+      "bot",
+      [a("bot"), a("botany"), a("recent-bot"), a("xbotx")],
+      [a("bot-old")],
+      ["recent-bot"],
+      [],
+    );
+    expect(r.map((x) => [x.agent.slug, x.strong])).toEqual([
+      ["bot", true],
+      ["botany", true],
+      ["recent-bot", true],
+      ["xbotx", false],
+      ["bot-old", true],
+    ]);
+    expect(rankAgents("", [a("bot")], [], ["bot"], []).every((x) => x.strong)).toBe(true);
+  });
   test("exact slug beats exact name beats prefix beats recent beats substring", () => {
     const live = [
       a("xbotx", "has bot inside"), // substring

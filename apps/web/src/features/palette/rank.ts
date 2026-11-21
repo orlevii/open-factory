@@ -3,6 +3,9 @@ import type { AgentSummary } from "@open-factory/shared";
 export interface RankedAgent {
   agent: AgentSummary;
   ended: boolean;
+  /** An exact, prefix or recent match (or a recent agent for the empty query), never cut from a
+   *  capped list; substring matches are. */
+  strong: boolean;
 }
 
 const TASK_KEY = /^t-\d+$/i;
@@ -52,8 +55,8 @@ export function rankAgents(
   if (q === "") {
     if (recent.length === 0) return [];
     const bySlug = new Map<string, RankedAgent>();
-    for (const agent of ended) bySlug.set(agent.slug, { agent, ended: true });
-    for (const agent of live) bySlug.set(agent.slug, { agent, ended: false });
+    for (const agent of ended) bySlug.set(agent.slug, { agent, ended: true, strong: true });
+    for (const agent of live) bySlug.set(agent.slug, { agent, ended: false, strong: true });
     const out: RankedAgent[] = [];
     const seen = new Set<string>();
     for (const slug of recent) {
@@ -98,7 +101,7 @@ export function rankAgents(
   collect(ended, true);
 
   hits.sort((x, y) => Number(x.ended) - Number(y.ended) || x.tier - y.tier || x.order - y.order);
-  return hits;
+  return hits.map(({ agent, ended, tier }) => ({ agent, ended, strong: tier < SUBSTRING }));
 }
 
 export interface GoToItem {

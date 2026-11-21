@@ -18,7 +18,7 @@ type Pending = { slug: string; upTo: string };
  * unread messages posts `upTo` = the newest event time; the unread count turns to zero at once, and
  * while it is still > 0 (a new message after the last call) a newer event posts again. One request
  * in flight, a trailing 1s throttle, and a failure refetches the count and the inbox, which are the
- * truth, rather than guessing what to restore.
+ * truth, and is not retried until a newer event, another session or the tab coming back.
  */
 export function useReadFrom(slug: string, newestEventAt: string | undefined): void {
   const hasUnread = useUnreadByAgent(slug) > 0;
@@ -29,11 +29,14 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
     lastAt: 0,
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
     pending: undefined as Pending | undefined,
+    /** The call that last failed: not repeated until the newest event or the slug changes, or the tab returns. */
+    failed: undefined as Pending | undefined,
   });
 
   const request = useCallback(
     (want: Pending) => {
       const st = state.current;
+      if (st.failed?.slug === want.slug && st.failed.upTo === want.upTo) return;
       st.pending = want;
       if (st.inFlight || st.timer !== undefined) return;
       const flush = () => {
@@ -41,11 +44,16 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
         const next = st.pending;
         if (!next || st.inFlight) return;
         st.pending = undefined;
+        // A trailing call that fires after the tab was hidden waits for it to be visible again.
+        if (!isVisible()) return;
         st.inFlight = true;
         st.lastAt = Date.now();
         cache.readFrom(next.slug);
         postReadFrom(next.slug, next.upTo)
-          .catch(() => cache.refetch())
+          .catch(() => {
+            st.failed = next;
+            cache.refetch();
+          })
           .finally(() => {
             st.inFlight = false;
             if (st.pending) request(st.pending);
@@ -59,6 +67,7 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
   );
 
   useEffect(() => {
+    if (!visible) state.current.failed = undefined;
     if (visible && hasUnread && newestEventAt) request({ slug, upTo: newestEventAt });
   }, [slug, hasUnread, newestEventAt, visible, request]);
 

@@ -10,6 +10,10 @@ Principles: talk directly, one agent one session, structure is the reporting lin
 
 Stack: a TypeScript pnpm monorepo with Fastify, Postgres (Drizzle, pg-boss), React + Vite, and a bundled CLI, with Zod schemas shared across packages.
 
+## Git worktrees
+
+Create git worktrees under `.worktrees/` at the repo root (for example `git worktree add .worktrees/<branch> -b <branch>`). The directory is gitignored.
+
 ## Pull requests
 
 Follow `.github/pull_request_template.md` when creating a PR:

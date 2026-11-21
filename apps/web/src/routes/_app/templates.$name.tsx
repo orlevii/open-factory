@@ -8,9 +8,13 @@ import { TemplateEditor } from "@/features/templates/template-editor";
 
 export const Route = createFileRoute("/_app/templates/$name")({
   // Only so the first load shows the pending mark and an unknown name the not-found state.
-  loader: async ({ context, params }) => {
+  loader: async ({ context, params, preload }) => {
+    const opts = templateQueryOptions(params.name);
     try {
-      await context.queryClient.fetchQuery(templateQueryOptions(params.name));
+      // A hover warms the cache once; the click within 5s reuses it (pr76 R2).
+      await (preload
+        ? context.queryClient.ensureQueryData(opts)
+        : context.queryClient.fetchQuery(opts));
     } catch (e) {
       if (e instanceof ApiError && e.code === "template_not_found") throw notFound();
       // Anything else: the page shows the error line.

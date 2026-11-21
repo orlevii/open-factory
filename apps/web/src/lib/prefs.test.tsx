@@ -74,3 +74,25 @@ test("usePref reads the current value after every subscriber left and another ta
   const second = renderHook(() => usePref("of-r", false, parseBool, ser));
   expect(second.result.current[0]).toBe(false);
 });
+
+test("usePref re-derives when only the key changes, even if both keys hold the same string", () => {
+  localStorage.setItem("of-k1", "7");
+  localStorage.setItem("of-k2", "7");
+  const { result, rerender } = renderHook(
+    ({ k, parse }: { k: string; parse: (r: string) => number }) => usePref(k, 0, parse),
+    { initialProps: { k: "of-k1", parse: (r: string) => Number(r) } },
+  );
+  expect(result.current[0]).toBe(7);
+  rerender({ k: "of-k2", parse: (r: string) => Number(r) * 2 });
+  expect(result.current[0]).toBe(14);
+});
+
+test("usePref keeps the parsed value's identity across an unrelated cross-tab clear", () => {
+  localStorage.setItem("of-i", "[1]");
+  const { result } = renderHook(() => usePref<number[]>("of-i", [], (r) => JSON.parse(r)));
+  const before = result.current[0];
+  act(() => {
+    window.dispatchEvent(new StorageEvent("storage", { key: null }));
+  });
+  expect(result.current[0]).toBe(before);
+});

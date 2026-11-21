@@ -2,8 +2,12 @@ import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 
 /** Per-browser preferences over localStorage. One `storage` listener and one listener set serve every key. */
 const listeners = new Set<() => void>();
-/** Raw string per key (null = absent or unreadable). Invalidated by `storage` events, set by our own writes. */
-const raw = new Map<string, string | null>();
+/** One immutable cell per key: a new object whenever the key's string changes, so a cell is a key-scoped
+ *  snapshot (two keys never share one, even when they hold the same string). */
+type Cell = { readonly value: string | null };
+const cells = new Map<string, Cell>();
+/** Keys whose cell is known to match localStorage. `storage` events and re-attaching drop keys from it. */
+const fresh = new Set<string>();
 let attached = false;
 
 function notify() {
@@ -11,28 +15,39 @@ function notify() {
 }
 
 function onStorage(e: StorageEvent) {
-  if (e.key === null) raw.clear();
-  else raw.delete(e.key);
+  if (e.key === null) fresh.clear();
+  else fresh.delete(e.key);
   notify();
 }
 
-function readRaw(key: string): string | null {
-  const hit = raw.get(key);
-  if (hit !== undefined) return hit;
-  let value: string | null = null;
+/** Replaces the key's cell only when its string changed, so an unchanged value keeps its identity. */
+function put(key: string, value: string | null): Cell {
+  fresh.add(key);
+  const cell = cells.get(key);
+  if (cell && cell.value === value) return cell;
+  const next = { value };
+  cells.set(key, next);
+  return next;
+}
+
+function readCell(key: string): Cell {
+  const hit = cells.get(key);
+  if (hit && fresh.has(key)) return hit;
+  let value: string | null = null; // (null = absent or unreadable)
   try {
     value = localStorage.getItem(key);
   } catch {
     // Blocked storage: behaves as absent.
   }
-  raw.set(key, value);
-  return value;
+  return put(key, value);
 }
+
+const serverCell: Cell = { value: null };
 
 function subscribe(l: () => void) {
   if (!attached) {
-    // Nothing listened while unsubscribed, so anything cached may be stale.
-    raw.clear();
+    // Nothing listened while unsubscribed, so any cell may be stale.
+    fresh.clear();
     window.addEventListener("storage", onStorage);
     attached = true;
   }
@@ -42,7 +57,7 @@ function subscribe(l: () => void) {
     if (listeners.size === 0) {
       window.removeEventListener("storage", onStorage);
       attached = false;
-      raw.clear();
+      fresh.clear();
     }
   };
 }
@@ -60,27 +75,28 @@ export function usePref<T>(
   const latest = useRef({ fallback, parse, serialize });
   latest.current = { fallback, parse, serialize };
 
-  const stored = useSyncExternalStore(
+  const cell = useSyncExternalStore(
     subscribe,
-    () => readRaw(key),
-    () => null,
+    () => readCell(key),
+    () => serverCell,
   );
 
-  // Memoized on the raw string (and key) only; parse/fallback are read through the ref so inline functions don't bust it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` re-derives the value when only the key changes.
+  // Memoized on the key-scoped cell only (a new key or a new string is a new cell); parse/fallback are read
+  // through the ref so inline functions don't bust it.
   const value = useMemo(() => {
+    const stored = cell.value;
     if (stored === null) return latest.current.fallback;
     try {
       return latest.current.parse(stored) ?? latest.current.fallback;
     } catch {
       return latest.current.fallback;
     }
-  }, [stored, key]);
+  }, [cell]);
 
   const set = useCallback(
     (v: T) => {
       const s = latest.current.serialize(v);
-      raw.set(key, s);
+      put(key, s);
       try {
         localStorage.setItem(key, s);
       } catch {

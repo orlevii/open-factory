@@ -57,6 +57,8 @@ export const envelopeSchema = z.object({
   parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })).optional(),
   fact: z.string().optional(),
   subject: subjectSchema.optional(),
+  /** UI-only: the sender's optimistic-row id. Never rendered into the model's text. */
+  clientMessageId: z.string().optional(),
 });
 export type Envelope = z.infer<typeof envelopeSchema>;
 
@@ -107,7 +109,7 @@ export const messageLookupSchema = z.object({
   kind: z.enum(MESSAGE_KINDS),
   from: z.string(),
   to: z.string(),
-  state: z.enum(["pending", "delivered", "rejected"]),
+  state: z.enum(["pending", "delivered", "rejected", "cancelled"]),
   recipientEvent: eventRefSchema.optional(),
   senderEvent: eventRefSchema.optional(),
   scheduleKey: z.string().optional(),

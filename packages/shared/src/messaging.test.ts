@@ -2,7 +2,12 @@ import { expect, test } from "vitest";
 import { queueItemSchema } from "./agents.ts";
 import { anyEventSchema } from "./events.ts";
 import { handleSchema, RESERVED_HANDLES } from "./handle.ts";
-import { readFromBodySchema, readFromResponseSchema, unreadCountSchema } from "./messaging.ts";
+import {
+  messageLookupSchema,
+  readFromBodySchema,
+  readFromResponseSchema,
+  unreadCountSchema,
+} from "./messaging.ts";
 import { isReservedSecretName } from "./names.ts";
 import { serverMessageSchema } from "./ws.ts";
 
@@ -99,4 +104,8 @@ test("read-from body and response", () => {
   expect(
     readFromResponseSchema.parse({ marked: 1, readAt: "2026-11-21T00:00:00.000Z" }).marked,
   ).toBe(1);
+});
+
+test("a looked-up message can be cancelled", () => {
+  expect(messageLookupSchema.shape.state.parse("cancelled")).toBe("cancelled");
 });

@@ -219,3 +219,9 @@ test("S10 harness events", () => {
       .success,
   ).toBe(true);
 });
+
+test("interrupt_unconfirmed is a factory event", () => {
+  expect(anyEventSchema.parse({ type: "interrupt_unconfirmed" }).type).toBe(
+    "interrupt_unconfirmed",
+  );
+});

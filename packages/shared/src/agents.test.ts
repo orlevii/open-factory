@@ -3,6 +3,8 @@ import {
   agentListQuerySchema,
   agentSummarySchema,
   patchAgentBodySchema,
+  queueItemSchema,
+  sendMessageBodySchema,
   spawnAgentToolSchema,
   terminateAgentToolSchema,
 } from "./agents.ts";
@@ -41,4 +43,25 @@ test("agent summary avatarVersion defaults to null", () => {
   const base = agentSummarySchema.shape;
   expect(base.avatarVersion.parse(undefined)).toBeNull();
   expect(base.avatarVersion.parse("v1")).toBe("v1");
+});
+
+test("agent summary carries turnStartedAt and compacting", () => {
+  const shape = agentSummarySchema.shape;
+  expect(shape.turnStartedAt.parse("2026-11-21T10:00:00.000Z")).toBe("2026-11-21T10:00:00.000Z");
+  expect(shape.compacting.parse(true)).toBe(true);
+});
+test("queue items accept the stopping wait reason and a client id", () => {
+  const q = queueItemSchema.parse({
+    id: "m1",
+    kind: "message",
+    from: "@or",
+    createdAt: "2026-11-21T10:00:00.000Z",
+    waitReason: "stopping",
+    clientMessageId: crypto.randomUUID(),
+  });
+  expect(q.waitReason).toBe("stopping");
+});
+test("send body takes an optional clientMessageId", () => {
+  const id = crypto.randomUUID();
+  expect(sendMessageBodySchema.parse({ body: "hi", clientMessageId: id }).clientMessageId).toBe(id);
 });

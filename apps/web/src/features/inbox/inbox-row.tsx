@@ -125,7 +125,7 @@ export function InboxRow({
       </span>
       <span className="grid min-w-0 gap-0.5">
         <span
-          className={`flex items-center gap-x-2 text-[0.8125rem] leading-[1.125rem] ${item.read ? "" : "font-medium"}`}
+          className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-[0.8125rem] leading-[1.125rem] ${item.read ? "" : "font-medium"}`}
         >
           <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
             <SenderLine item={item} />

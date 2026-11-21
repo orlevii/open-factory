@@ -180,14 +180,45 @@ test("Space on the list closes the open peek and keeps focus on the selected row
   expect(app.router.state.location.pathname).toBe("/tasks");
 });
 
-test("F6 moves focus from the list into the open peek", async () => {
+test("F6 moves focus from the list onto the peek's Open link", async () => {
   await visit(1200);
   const r2 = row("T-2") as HTMLElement;
   r2.focus();
   space(r2);
   const sheet = await screen.findByRole("dialog", { name: "T-2" });
   fireEvent.keyDown(r2, { key: "F6" });
-  expect(sheet.contains(document.activeElement)).toBe(true);
+  expect(document.activeElement).toBe(within(sheet).getByRole("link", { name: "Open" }));
+});
+
+test("Esc with focus on the list closes the peek and keeps focus on the selected row", async () => {
+  await visit(1200);
+  const r2 = row("T-2") as HTMLElement;
+  r2.focus();
+  space(r2);
+  const sheet = await screen.findByRole("dialog", { name: "T-2" });
+  fireEvent.keyDown(r2, { key: "Escape" });
+  expect(sheet).toHaveAttribute("data-instant");
+  await waitFor(() => expect(peek()).toBeNull());
+  expect(document.activeElement).toBe(r2);
+});
+
+test("Esc inside the peek's editors leaves the peek open: the description draft survives, the title edit cancels", async () => {
+  await visit(1200);
+  const r2 = row("T-2") as HTMLElement;
+  r2.focus();
+  space(r2);
+  const sheet = await screen.findByRole("dialog", { name: "T-2" });
+  await userEvent.click(await within(sheet).findByRole("button", { name: "Edit description" }));
+  const area = within(sheet).getByRole("textbox", { name: "Description" });
+  fireEvent.change(area, { target: { value: "A long draft" } });
+  fireEvent.keyDown(area, { key: "Escape" });
+  expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
+  expect(within(sheet).getByRole("textbox", { name: "Description" })).toHaveValue("A long draft");
+  await userEvent.click(within(sheet).getByRole("button", { name: "Edit title" }));
+  const title = within(sheet).getByRole("textbox", { name: "Title" });
+  fireEvent.keyDown(title, { key: "Escape" });
+  await waitFor(() => expect(within(sheet).queryByRole("textbox", { name: "Title" })).toBeNull());
+  expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
 });
 
 test("a plain click and Enter open the task's page; no peek", async () => {

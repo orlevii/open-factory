@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TaskDetailView } from "./task-detail";
 
+/** A field inside the peek owns Esc (the title edit cancels; the description keeps its draft). */
+const FIELD = "input,textarea,[contenteditable]:not([contenteditable=false])";
+
 /**
  * The Tasks list's peek (spec §12): a non-modal sheet opened by Space on a row, focus left on the list.
  * The sheet stays mounted while `taskKey` changes; only the body is keyed, so `j`/`k` swap the task in
@@ -35,6 +38,11 @@ export function TaskPeek({
         ref={contentRef}
         keepFocus
         aria-describedby={undefined}
+        // Radix hears Esc on the document before the editors do: it must not close the peek (and
+        // unmount an unsaved draft) from inside a field. The field's own handler still runs.
+        onEscapeKeyDown={(e) => {
+          if (e.target instanceof Element && e.target.closest(FIELD)) e.preventDefault();
+        }}
         returnFocus={() => (shown ? returnFocus(shown) : null)}
       >
         {shown && (

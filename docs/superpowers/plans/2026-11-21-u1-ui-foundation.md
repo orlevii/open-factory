@@ -32,8 +32,9 @@ The four spec self-contradictions found while planning (§2.3, §12.4, §12.5, �
   - Home: `No agents yet.`, `New agent`, `Couldn't load agents.`, `All {N} agents`.
 - **Keyboard stamp (B1):** overlay Content and Overlay nodes compose the module-level ref callback `stampInstant` (`lib/input-modality.ts`). Radix and Vaul mount those nodes once per opening, so the check runs per opening: if the last input was the keyboard, the node gets `data-instant` for that opening. Never read modality in `useState`/`useMemo` inside a wrapper component: wrappers such as `PopoverContent` stay mounted while closed, so a mount-time read would be fixed at page load.
 - **Mobile** means `useIsMobile()` with the query `(width < 48rem)` (Task 6). Adaptive overlays decide dialog-or-drawer once per opening (`useLatchedMobile`, Task 8).
-- **No shadow** on any floating layer; no `outline-none` / `outline-hidden` / `ring-3` / `ring-ring/50` anywhere in `apps/web/src` outside the menu/select item allowlist (enforced by `src/test/ui-contract.test.ts`, created in Task 2 and extended later).
-- **Manual checks** are recorded in the PR, never claimed without evidence. Stress data comes from `seed-worst.mjs` in `/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/`, run only against a cloned database, never the shared one.
+- **No shadow** on any floating layer; no `outline-none` / `outline-hidden` / `ring-3` / `ring-ring/50` anywhere in `apps/web/src` outside the menu/select item allowlist (enforced by `src/test/ui-contract.test.ts`, created in Task 2 and extended later with forbidden-pattern scans only).
+- **Delivery:** five stacked PRs (see "Delivery" below); each verification task runs `pnpm install --frozen-lockfile`.
+- **Manual checks** are recorded in the PR they belong to, never claimed without evidence. Stress data comes from `seed-worst.mjs` in `/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/`, run only against a cloned database, never the shared one.
 
 ## File map
 
@@ -51,194 +52,25 @@ The four spec self-contradictions found while planning (§2.3, §12.4, §12.5, �
 
 **Modified (main ones):** `DESIGN.md`, `styles.css`, `main.tsx`, `router.tsx`, `test/render-app.tsx`, `test-setup.ts`, `hooks/use-mobile.ts`, every file in `components/ui/` listed per task, `components/confirm-dialog.tsx`, `components/page-header.tsx`, `components/route-states.tsx`, `components/markdown/{markdown,code-block,highlight}.tsx|ts`, `features/session/{use-session,session-state,rows,timeline,composer,interrupt-button,tool-call-row,quiet-line,compaction-marker}.ts(x)`, `features/tasks/{task-detail,comment-composer,link-editor,task-filters,agent-picker,assignee-menu,task-list}.tsx`, `features/agents/{agent-form,agent-tree,project-grant-picker}.tsx`, `features/schedules/{schedule-form,schedule-filters,when-field,timezone-select,schedule-row}.tsx`, `features/settings/*`, `features/templates/*`, `features/inbox/inbox-row.tsx`, `features/usage/range-filter.tsx`, `routes/_app.tsx`, `routes/_app/{index,agents.index,agents.$slug,tasks.$key,schedules.$key,templates.$name,templates.index,templates.new}.tsx`, `apps/server/src/errors.ts` (+ test).
 
----
+## Delivery: five stacked PRs
 
-## Phase A: foundations
+U1 ships as five stacked PRs (owner review). Each branch is created from the previous one, each PR is based on the one below it, each leaves `main` working when merged in order, and each has its own CI run and its own slice of manual evidence. After a lower PR merges, the next one is retargeted to `main`. Fixes go on the lowest branch they belong to and are rebased up the stack.
 
-### Task 1: DESIGN.md amendments
+| PR | Branch (base) | Title | Tasks |
+|---|---|---|---|
+| 1 | `u1/1-data-layer` (`main`) | `fix(web): data layer and PR #76 follow-ups` | 3–7, V1 |
+| 2 | `u1/2-primitives` (`u1/1-data-layer`) | `feat: DESIGN.md amendments, tokens and UI primitives` | 1, 2, 8–18, V2 |
+| 3 | `u1/3-consumers` (`u1/2-primitives`) | `feat: control system consumers and UI bug fixes` | 19–28, 32, V3 |
+| 4 | `u1/4-timeline` (`u1/3-consumers`) | `refactor(web): timeline render performance` | 29–31, V4 |
+| 5 | `u1/5-perceived-speed` (`u1/4-timeline`) | `fix(web): render pages from cached summaries while details load` | 33, 34, V5 |
 
-**DESIGN.md sections implemented:** front matter; Overview; Colors → Primary, Agent identity (new); Typography → Hierarchy, Named Rules; Layout; Elevation & Depth; Shapes → The pitch; Components (Buttons, Form controls, Rows, Overlays, Toasts, Composers, Empty states, Browser surfaces); Motion (Frequency, Curves, Durations, Popovers, Reduced motion, Gesture UI, Performance, Deliberately not used); Do's and Don'ts.
-
-**Files:**
-- Modify: `DESIGN.md`
-- Test: `apps/web/src/test/design-doc.test.ts` (new)
-
-Docs only, no React code in this task.
-
-- [ ] **Step 1: Write the failing test.** It pins the phrases that must exist and the ones that must be gone, so later edits can't silently drop an amendment.
-
-```ts
-// apps/web/src/test/design-doc.test.ts
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { expect, test } from "vitest";
-
-const doc = readFileSync(fileURLToPath(new URL("../../../../DESIGN.md", import.meta.url)), "utf8");
-
-test.each([
-  'float-edge: "oklch(0.80 0.006 255)"',
-  'night-float-edge: "oklch(0.38 0.008 255)"',
-  "heading-detail:",
-  "button-outline:",
-  "Agent identity",
-  "| Detail title (task, in the page body) | Archivo | 20 / 28 | 650 |",
-  "A document never outranks its title.",
-  "Live lists never reorder under the pointer",
-  "A toast appears only when the control that caused an outcome is gone",
-  "Enter sends in every composer",
-  "Linear only for constant rotation (the spinner).",
-  "A peek sheet does not dim or trap focus",
-  "20% in light mode and 40% in dark",
-  "Nothing has a shadow.",
-  "Drawers use Vaul (pinned exactly)",
-])("DESIGN.md contains %s", (phrase) => {
-  expect(doc).toContain(phrase);
-});
-
-test.each([
-  "the warm orange is the only temperature on screen",
-  "On mobile the sidebar becomes a sheet.",
-  "the caret and checkbox accent are signal",
-  "Springs and the Motion library, until something can be dragged.",
-  "toasts or modals for routine tasks",
-  'height: "36px"\n  button-ghost',
-])("DESIGN.md no longer contains %s", (phrase) => {
-  expect(doc).not.toContain(phrase);
-});
-```
-
-- [ ] **Step 2: Run it red.** `pnpm --filter @open-factory/web exec vitest run src/test/design-doc.test.ts` → FAIL (missing phrases).
-
-- [ ] **Step 3: Apply every amendment in spec §12.1–§12.9 verbatim**, with the four corrections listed at the top of this plan (task-only detail-title row; 20/40% scrim wording in Elevation & Depth). Front matter: add the colors, the typography entry and the component entries exactly as §12.1 lists them, and change `button-primary.height`, `button-ghost.height`, `input.height` to `"32px"`.
-
-- [ ] **Step 4: Run it green**, then `pnpm lint`.
-
-- [ ] **Step 5: Commit** `docs(design): U1 amendments to DESIGN.md`.
+Boundaries follow the owner's split with one adjustment: PR 3's title drops the `(web)` scope because Task 27 changes `apps/server/src/errors.ts` (AGENTS.md: no scope when a PR spans several). No dependency forced a task across a boundary: PR 1 needs nothing from later PRs (Task 6's rem breakpoint is code; its DESIGN.md wording lands with Task 1 in PR 2); PR 2's primitives need only PR 1; PR 3's consumers need PR 2's primitives (Select, SegmentedControl, Spinner, `runInstant`, `.of-row`); PR 4's memoized `Markdown` keeps the `variant` prop Task 22 adds in PR 3; PR 5 needs Task 4's loaders and the static `Skeleton`. Task numbers are kept for cross-references; execute in the order the sections below list them.
 
 ---
 
-### Task 2: Stylesheet foundations and the UI contract test
+## PR 1: data layer and PR #76 follow-ups
 
-**DESIGN.md sections implemented:** Colors (float-edge, avatar tokens); Shapes → The pitch (loading mark); Components → Markdown, Rows, Browser surfaces; Motion → Frequency (keyboard rule), Reduced motion, Deliberately not used (status dots).
-
-Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
-
-**Files:**
-- Modify: `apps/web/src/styles.css` (`:root` ~66-150, `:root[data-theme="dark"]` 152-205, both `prefers-contrast` blocks 209-235, `.of-ignite` 247-261, `.prose-of` 264-361, the base layer 403-468)
-- Create: `apps/web/src/test/ui-contract.test.ts`
-
-- [ ] **Step 1: Write the failing contract test.** It reads `styles.css` and the source tree as text.
-
-```ts
-// apps/web/src/test/ui-contract.test.ts
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
-
-const SRC = fileURLToPath(new URL("..", import.meta.url));
-const css = readFileSync(join(SRC, "styles.css"), "utf8");
-
-export function sourceFiles(dir = SRC): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) return sourceFiles(p);
-    return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !name.endsWith(".gen.ts") ? [p] : [];
-  });
-}
-
-describe("styles.css", () => {
-  test("float-edge is a token in both themes and the theme map", () => {
-    expect(css).toMatch(/--float-edge:\s*oklch\(0\.8 0\.006 255\)|--float-edge:\s*oklch\(0\.80 0\.006 255\)/);
-    expect(css).toMatch(/--float-edge:\s*oklch\(0\.38 0\.008 255\)/);
-    expect(css).toContain("--color-float-edge: var(--float-edge)");
-  });
-  test("eight avatar tokens per theme", () => {
-    for (const h of [120, 180, 205, 230, 270, 295, 320, 345]) {
-      expect(css).toContain(`oklch(0.62 0.07 ${h})`);
-      expect(css).toContain(`oklch(0.7 0.07 ${h})`);
-    }
-  });
-  test("the loading mark animates only when motion is allowed", () => {
-    const gate = css.match(/@media \(prefers-reduced-motion: no-preference\)\s*{[^}]*\.of-ignite\s*{[^}]*animation:\s*of-ignite/);
-    expect(gate).not.toBeNull();
-    const outside = css.replace(/@media \(prefers-reduced-motion: no-preference\)\s*{[\s\S]*?}\s*}/g, "");
-    expect(outside).not.toMatch(/\.of-ignite\s*{[^}]*animation/);
-  });
-  test("keyboard-opened overlays never animate", () => {
-    expect(css).toMatch(/\[data-instant\],\s*\[data-instant\] \*\s*{[^}]*animation:\s*none !important/);
-  });
-  test("prose wraps long tokens but table cells only break-word", () => {
-    expect(css).toMatch(/\.prose-of :is\(p, li, blockquote\)\s*{\s*overflow-wrap:\s*anywhere/);
-    expect(css).toMatch(/\.prose-of :is\(td, th\)\s*{\s*overflow-wrap:\s*break-word/);
-  });
-  test("task lists are graphite", () => {
-    expect(css).toMatch(/input\[type="checkbox"\]\)\s*{\s*accent-color:\s*var\(--foreground\)/);
-  });
-  test("rows have one hover/press recipe with an inset ring", () => {
-    expect(css).toMatch(/\.of-row\s*{[^}]*transition:\s*background-color 150ms var\(--ease-out\)/);
-    expect(css).toMatch(/\.of-row:focus-visible\s*{[^}]*outline-offset:\s*-2px/);
-  });
-  test("status dots change colour over 150ms", () => {
-    expect(css).toMatch(/\[data-status-dot\]\s*{[^}]*transition:\s*background-color 150ms/);
-  });
-});
-```
-
-- [ ] **Step 2: Run red.** `pnpm --filter @open-factory/web exec vitest run src/test/ui-contract.test.ts` → FAIL.
-
-- [ ] **Step 3: Edit `styles.css`.**
-  - `@theme inline`: add `--color-float-edge: var(--float-edge);` and `--color-avatar-1` … `--color-avatar-8: var(--avatar-N);`.
-  - `:root`: `--float-edge: oklch(0.80 0.006 255);` and `--avatar-1: oklch(0.62 0.07 120);` … `--avatar-8: oklch(0.62 0.07 345);`. Dark (`:root[data-theme="dark"]`): `--float-edge: oklch(0.38 0.008 255);`, `--avatar-N: oklch(0.7 0.07 H)`. Both `prefers-contrast: more` blocks: `--float-edge: var(--input);`. (Biome's formatter may print `0.80` as `0.8`; the test accepts both.)
-  - Loading mark (replace lines 247-261 and delete `.of-ignite { animation: none; }` from the base reduced-motion block at ~464):
-    ```css
-    @keyframes of-ignite {
-      0% { clip-path: inset(0 100% 0 0); opacity: 1; }
-      60% { clip-path: inset(0); }
-      85% { opacity: 1; }
-      100% { clip-path: inset(0); opacity: 0; }
-    }
-    /* Still and lit by default; it only animates when motion is allowed (DESIGN.md → The pitch). */
-    .of-ignite { clip-path: inset(0); }
-    @media (prefers-reduced-motion: no-preference) {
-      .of-ignite { animation: of-ignite 1.2s var(--ease-out) infinite; }
-    }
-    ```
-  - Prose overflow (after the `.prose-of` token block):
-    ```css
-    .prose-of :is(p, li, blockquote) { overflow-wrap: anywhere; }
-    .prose-of :is(a, :not(pre) > code):not(td *, th *) { overflow-wrap: anywhere; }
-    .prose-of :is(td, th) { overflow-wrap: break-word; }
-    ```
-  - Task lists (`styles.css:360`): `accent-color: var(--foreground);`.
-  - Rows, in a new `@layer components { … }` block:
-    ```css
-    @layer components {
-      .of-row { transition: background-color 150ms var(--ease-out); }
-      @media (hover: hover) and (pointer: fine) { .of-row:hover { background: var(--accent); } }
-      .of-row:active { background: color-mix(in oklch, var(--accent), var(--foreground) 6%); transition-duration: 0ms; }
-      @media (pointer: coarse) { .of-row:active { transition-delay: 80ms; } }
-      .of-row:focus-visible { outline-offset: -2px; }
-      [data-status-dot] { transition: background-color 150ms var(--ease-out); }
-    }
-    ```
-  - Base layer: remove `outline-ring/50` from the `*` rule (keep `border-border`); replace the `:root[data-instant] *` rule with
-    ```css
-    /* Keyboard-initiated: a root flag for one frame (⌘B), or a stamp on an overlay for its whole opening. */
-    [data-instant],
-    [data-instant] * {
-      /* biome-ignore lint/complexity/noImportantStyles: must beat every component animation and transition. */
-      animation: none !important;
-      /* biome-ignore lint/complexity/noImportantStyles: as above. */
-      transition-duration: 0s !important;
-    }
-    ```
-
-- [ ] **Step 4: Run green**, plus `pnpm --filter @open-factory/web exec vitest run` (the whole web suite still passes: nothing else changed), `pnpm typecheck`, `pnpm lint`.
-
-- [ ] **Step 5: Commit** `feat(web): U1 tokens, loading mark, prose wrapping and row recipe`.
-
----
+Branch `u1/1-data-layer`, created from `main`. Tasks 3–7 need no primitive and touch no DESIGN.md text.
 
 ### Task 3: Shared query client and retry rule (R1, R5)
 
@@ -404,7 +236,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 ### Task 6: Mobile breakpoint, highlighter and code-block nits
 
-**DESIGN.md sections implemented:** Layout (breakpoint wording).
+**DESIGN.md sections implemented:** none in this task (the breakpoint wording in DESIGN.md → Layout lands with Task 1 in PR 2).
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
@@ -479,7 +311,141 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 ---
 
-## Phase B: primitives
+### Task V1: Verify and open PR 1
+
+**DESIGN.md sections implemented:** none (verification).
+
+Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+- [ ] **Step 1: Verify.** On `u1/1-data-layer`, from a clean clone: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, and the dev loop (`pnpm compose up -d`, `pnpm dev`): the app works on this branch alone (main must stay working at every merge). Record what ran and the output.
+- [ ] **Step 2: Manual evidence for this PR** (screenshots or recordings attached to the PR; never claimed without evidence):
+  - Settings: one visit's request count in the Network panel (expect no double fetches); hovering a task row and clicking it sends one detail request.
+  - A task title edit while a refetch is in flight keeps the new title (reproduce by throttling the network).
+- [ ] **Step 3: Push and open PR 1** (authorized to push and open, not merge): head `u1/1-data-layer`, base `main`, title `fix(web): data layer and PR #76 follow-ups`, body per `.github/pull_request_template.md` and AGENTS.md (What, Why, Approach with one "<decision>, rather than <alternative>, because <reason>" bullet per decision, Changes grouped by area; template comments removed). Link the spec, this plan and #77; list the tasks it delivers (Tasks 3–7). Close nothing except what this PR delivers; #78–#83 stay open. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [ ] **Step 4: CI.** Check this PR's own CI run until green; fix on this branch (rebasing the branches above it) and push.
+
+---
+
+## PR 2: DESIGN.md amendments, tokens and UI primitives
+
+Branch `u1/2-primitives`, created from `u1/1-data-layer`. The DESIGN.md text, the stylesheet foundations and every primitive, with the consumers the primitives replace internally (ConfirmDialog, the mobile nav).
+
+### Task 1: DESIGN.md amendments
+
+**DESIGN.md sections implemented:** front matter; Overview; Colors → Primary, Agent identity (new); Typography → Hierarchy, Named Rules; Layout; Elevation & Depth; Shapes → The pitch; Components (Buttons, Form controls, Rows, Overlays, Toasts, Composers, Empty states, Browser surfaces); Motion (Frequency, Curves, Durations, Popovers, Reduced motion, Gesture UI, Performance, Deliberately not used); Do's and Don'ts.
+
+**Files:**
+- Modify: `DESIGN.md`
+
+Docs only, no React code in this task.
+
+DESIGN.md is reviewed as text, against spec §12, not pinned by a test (owner review).
+
+- [ ] **Step 1: Apply every amendment in spec §12.1–§12.9 verbatim**, with the four corrections listed at the top of this plan (task-only detail-title row; 20/40% scrim wording in Elevation & Depth). Front matter: add the colors, the typography entry and the component entries exactly as §12.1 lists them, and change `button-primary.height`, `button-ghost.height`, `input.height` to `"32px"`.
+
+- [ ] **Step 2: Review.** The task reviewer diffs `DESIGN.md` against spec §12.1–§12.9 line by line (every amendment present, every replaced line gone), then `pnpm lint`.
+
+- [ ] **Step 3: Commit** `docs(design): U1 amendments to DESIGN.md`.
+
+---
+
+### Task 2: Stylesheet foundations and the UI contract test
+
+**DESIGN.md sections implemented:** Colors (float-edge, avatar tokens); Shapes → The pitch (loading mark); Components → Markdown, Rows, Browser surfaces; Motion → Frequency (keyboard rule), Reduced motion, Deliberately not used (status dots).
+
+Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**Files:**
+- Modify: `apps/web/src/styles.css` (`:root` ~66-150, `:root[data-theme="dark"]` 152-205, both `prefers-contrast` blocks 209-235, `.of-ignite` 247-261, `.prose-of` 264-361, the base layer 403-468)
+- Create: `apps/web/src/test/ui-contract.test.ts`
+
+- [ ] **Step 1: Write the failing contract test.** It reads `styles.css` and the source tree as text. Per the owner review, `ui-contract.test.ts` holds **only** forbidden-pattern scans and the two behavioural CSS gates below; token values, the row recipe, the status-dot transition and the task-list accent are reviewed as code and checked in the manual screenshots, never restated in a test.
+
+```ts
+// apps/web/src/test/ui-contract.test.ts
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "vitest";
+
+const SRC = fileURLToPath(new URL("..", import.meta.url));
+const css = readFileSync(join(SRC, "styles.css"), "utf8");
+
+export function sourceFiles(dir = SRC): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) return sourceFiles(p);
+    return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !name.endsWith(".gen.ts") ? [p] : [];
+  });
+}
+
+describe("styles.css", () => {
+  test("the loading mark animates only when motion is allowed", () => {
+    const gate = css.match(/@media \(prefers-reduced-motion: no-preference\)\s*{[^}]*\.of-ignite\s*{[^}]*animation:\s*of-ignite/);
+    expect(gate).not.toBeNull();
+    const outside = css.replace(/@media \(prefers-reduced-motion: no-preference\)\s*{[\s\S]*?}\s*}/g, "");
+    expect(outside).not.toMatch(/\.of-ignite\s*{[^}]*animation/);
+  });
+  test("keyboard-opened overlays never animate", () => {
+    expect(css).toMatch(/\[data-instant\],\s*\[data-instant\] \*\s*{[^}]*animation:\s*none !important/);
+  });
+});
+```
+
+- [ ] **Step 2: Run red.** `pnpm --filter @open-factory/web exec vitest run src/test/ui-contract.test.ts` → FAIL.
+
+- [ ] **Step 3: Edit `styles.css`.**
+  - `@theme inline`: add `--color-float-edge: var(--float-edge);` and `--color-avatar-1` … `--color-avatar-8: var(--avatar-N);`.
+  - `:root`: `--float-edge: oklch(0.80 0.006 255);` and `--avatar-1: oklch(0.62 0.07 120);` … `--avatar-8: oklch(0.62 0.07 345);`. Dark (`:root[data-theme="dark"]`): `--float-edge: oklch(0.38 0.008 255);`, `--avatar-N: oklch(0.7 0.07 H)`. Both `prefers-contrast: more` blocks: `--float-edge: var(--input);`. (Biome's formatter may print `0.80` as `0.8`; the test accepts both.)
+  - Loading mark (replace lines 247-261 and delete `.of-ignite { animation: none; }` from the base reduced-motion block at ~464):
+    ```css
+    @keyframes of-ignite {
+      0% { clip-path: inset(0 100% 0 0); opacity: 1; }
+      60% { clip-path: inset(0); }
+      85% { opacity: 1; }
+      100% { clip-path: inset(0); opacity: 0; }
+    }
+    /* Still and lit by default; it only animates when motion is allowed (DESIGN.md → The pitch). */
+    .of-ignite { clip-path: inset(0); }
+    @media (prefers-reduced-motion: no-preference) {
+      .of-ignite { animation: of-ignite 1.2s var(--ease-out) infinite; }
+    }
+    ```
+  - Prose overflow (after the `.prose-of` token block):
+    ```css
+    .prose-of :is(p, li, blockquote) { overflow-wrap: anywhere; }
+    .prose-of :is(a, :not(pre) > code):not(td *, th *) { overflow-wrap: anywhere; }
+    .prose-of :is(td, th) { overflow-wrap: break-word; }
+    ```
+  - Task lists (`styles.css:360`): `accent-color: var(--foreground);`.
+  - Rows, in a new `@layer components { … }` block:
+    ```css
+    @layer components {
+      .of-row { transition: background-color 150ms var(--ease-out); }
+      @media (hover: hover) and (pointer: fine) { .of-row:hover { background: var(--accent); } }
+      .of-row:active { background: color-mix(in oklch, var(--accent), var(--foreground) 6%); transition-duration: 0ms; }
+      @media (pointer: coarse) { .of-row:active { transition-delay: 80ms; } }
+      .of-row:focus-visible { outline-offset: -2px; }
+      [data-status-dot] { transition: background-color 150ms var(--ease-out); }
+    }
+    ```
+  - Base layer: remove `outline-ring/50` from the `*` rule (keep `border-border`); replace the `:root[data-instant] *` rule with
+    ```css
+    /* Keyboard-initiated: a root flag for one frame (⌘B), or a stamp on an overlay for its whole opening. */
+    [data-instant],
+    [data-instant] * {
+      /* biome-ignore lint/complexity/noImportantStyles: must beat every component animation and transition. */
+      animation: none !important;
+      /* biome-ignore lint/complexity/noImportantStyles: as above. */
+      transition-duration: 0s !important;
+    }
+    ```
+
+- [ ] **Step 4: Run green**, plus `pnpm --filter @open-factory/web exec vitest run` (the whole web suite still passes), `pnpm typecheck`, `pnpm lint`. The reviewer checks the token, prose, row and status-dot edits against spec §5.2, §6.8, §7.2, §8.3 by reading the diff.
+
+- [ ] **Step 5: Commit** `feat(web): U1 tokens, loading mark, prose wrapping and row recipe`.
+
+---
 
 ### Task 8: Input modality, root-instant helper, latched mobile hook
 
@@ -733,7 +699,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `components/ui/overlay-timing.test.tsx` (new), `src/test/ui-contract.test.ts` (extend)
 
 - [ ] **Step 1: Failing tests.**
-  - Contract: `popover.tsx`, `dropdown-menu.tsx`, `tooltip.tsx` contain no `shadow-` and no `slide-in-from-`; dropdown content contains `max-w-[min(var(--radix-dropdown-menu-content-available-width),20rem)]` and no `w-(--radix-dropdown-menu-trigger-width)`; popover and dropdown contain `border-float-edge` and `data-closed:duration-75`.
+  - Contract (forbidden patterns only): `popover.tsx`, `dropdown-menu.tsx`, `tooltip.tsx`, `select.tsx` (once it exists) contain no `shadow-` and no `slide-in-from-`.
   - `overlay-timing.test.tsx`, **per opening** (B1): after `installInputModality()`, open a `DropdownMenu` with Enter on its trigger → content has `data-instant`; close it (Escape); open it again with a click → content has **no** `data-instant`; close; open with Enter again → stamped. Same sequence for `Popover`.
   - Tooltip: `TooltipProvider` defaults `delayDuration` 400 and `skipDelayDuration` 300 (render a provider with a trigger; with fake timers the content is absent at 399ms and present at 400ms after hover).
   - Each destructive item renders with `data-variant="destructive"` (one test per settings section where a menu exists; schedule-row test).
@@ -1015,15 +981,6 @@ test("bottom drawer caps its column; left drawer uses the sidebar width", () => 
   open("bottom");
   expect(document.querySelector("[data-slot=drawer-inner]")).toHaveClass("max-w-lg", "mx-auto");
 });
-
-test("the override block is unlayered, !important and keyed on data-state", async () => {
-  const { readFileSync } = await import("node:fs");
-  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
-  expect(css).toMatch(/\[data-vaul-drawer\]\[data-slot="drawer-content"\]\[data-state="open"\]\s*{\s*animation-duration:\s*250ms !important/);
-  expect(css).toMatch(/\[data-vaul-overlay\]\[data-slot="drawer-overlay"\]\[data-state="open"\]\s*{\s*animation-duration:\s*250ms !important/);
-  expect(css).toMatch(/\[data-released\]\s*{\s*animation-duration:\s*300ms !important/);
-  expect(css).toMatch(/prefers-reduced-motion: reduce\)\s*{\s*\[data-vaul-drawer\]\s*{\s*--initial-transform:\s*0px/);
-});
 ```
 
 - [ ] **Step 3: Red.**
@@ -1034,8 +991,8 @@ test("the override block is unlayered, !important and keyed on data-state", asyn
 /* styles.css, at the end, OUTSIDE any @layer.
    Vaul 1.1.2 (pinned exactly) appends unlayered rules to <head> after this file:
    [data-vaul-drawer]{animation-duration:.5s}, [data-vaul-overlay][data-vaul-snap-points=false]{animation-duration:.5s}
-   and four-attribute animation-name selectors. These declarations are !important and one attribute more
-   specific. Re-check on any Vaul upgrade; drawer.test.tsx's guard fails if the attributes change.
+   and four-attribute animation-name selectors. Our declarations are !important, so they win.
+   Re-check on any Vaul upgrade; drawer.test.tsx's guard fails if these attributes or rules change.
    DESIGN.md → Motion → Durations, Gesture UI. */
 [data-vaul-drawer][data-slot="drawer-content"][data-state="open"] { animation-duration: 250ms !important; animation-timing-function: var(--ease-drawer) !important; }
 [data-vaul-drawer][data-slot="drawer-content"][data-state="closed"] { animation-duration: 200ms !important; animation-timing-function: var(--ease-out) !important; }
@@ -1373,7 +1330,28 @@ if (mobile) {
 
 ---
 
-## Phase C: consumers
+### Task V2: Verify and open PR 2
+
+**DESIGN.md sections implemented:** none (verification).
+
+Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+- [ ] **Step 1: Verify.** On `u1/2-primitives`, from a clean clone: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, and the dev loop (`pnpm compose up -d`, `pnpm dev`): the app works on this branch alone (main must stay working at every merge). Record what ran and the output.
+- [ ] **Step 2: Manual evidence for this PR** (screenshots or recordings attached to the PR; never claimed without evidence):
+  - Q8: a menu over a plate in light and dark (tune `--float-edge` if needed and say so), and the 40% dark scrim.
+  - Q7: the eight avatar swatches at 24px in both themes next to the 6px status dots (hue 120 against the warning ochre); drop to seven if two can't be told apart, and amend DESIGN.md and the tokens accordingly.
+  - Overlays at normal and 10% animation speed: sheet, dialog, drawer and scrim together; ⌘B on mobile (no replayed slide); a keyboard-opened menu (no animation), then the same menu clicked (animates).
+  - Q23: on a real phone, a drag-dismiss and a button close of the confirm drawer (300ms vs 200ms by feel).
+  - Reduced motion: loading mark lit and still, spinners still, sheets and drawers fade.
+  - Confirmations with a 64-char secret name, a 40-char slug and 30 crons at 320×568 and at 1440×700 with 200% text.
+- [ ] **Step 3: Push and open PR 2** (authorized to push and open, not merge): head `u1/2-primitives`, base `u1/1-data-layer`, title `feat: DESIGN.md amendments, tokens and UI primitives`, body per `.github/pull_request_template.md` and AGENTS.md (What, Why, Approach with one "<decision>, rather than <alternative>, because <reason>" bullet per decision, Changes grouped by area; template comments removed). Link the spec, this plan and #77; list the tasks it delivers (Tasks 1, 2, 8–18). Title has no scope: the diff spans DESIGN.md and web. Say that it is stacked on PR 1 and must be retargeted to `main` after that one merges. Close nothing except what this PR delivers; #78–#83 stay open. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [ ] **Step 4: CI.** Check this PR's own CI run until green; fix on this branch (rebasing the branches above it) and push.
+
+---
+
+## PR 3: control system consumers and UI bug fixes
+
+Branch `u1/3-consumers`, created from `u1/2-primitives`. Call sites move onto the primitives; the U1 bug list; motion polish.
 
 ### Task 19: Selects at their call sites; manager indent
 
@@ -1445,9 +1423,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
 - Modify: `features/tasks/task-detail.tsx:299`; `components/markdown/markdown.tsx` (add `variant?: "default" | "detail"`); call sites in task body, comments (`features/tasks/comment-block.tsx`), timeline messages (`features/session/message-block.tsx`, `outgoing-message.tsx`); `styles.css` (`.prose-of-detail`)
-- Test: `components/markdown/markdown.test.tsx` (extend), `ui-contract.test.ts`
+- Test: `components/markdown/markdown.test.tsx` (extend)
 
-- [ ] **Step 1: Failing tests:** `<Markdown variant="detail" source="# A" />` wraps in `.prose-of-detail`; the stylesheet defines `.prose-of-detail :where(h1)` at `1.0625rem`, `h2` `0.9375rem`, `h3` `0.875rem`, all `font-weight: 650`, with letter-spacing `-0.01em` for h1/h2 and `0` for h3; the task title `h2` has `text-[1.25rem] leading-[1.75rem] font-[650] tracking-[-0.015em] flex-1`.
+- [ ] **Step 1: Failing test:** `<Markdown variant="detail" source="# A" />` wraps in `.prose-of-detail`, and the default variant doesn't. (The sizes and tracking are reviewed as code and in the Q5 before/after screenshots, not restated in a test.)
 
 - [ ] **Step 2: Red.**
 
@@ -1456,8 +1434,6 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - [ ] **Step 4: Green**, typecheck, lint. **Step 5: Commit** `feat(web): detail title 20/28; headings step down inside a document`.
 
 ---
-
-## Phase D: bugs and quick fixes
 
 ### Task 23: Home Agents panel
 
@@ -1675,7 +1651,43 @@ export function isSendKey(e: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" 
 
 ---
 
-## Phase E: timeline performance
+### Task 32: Pending screen inside the shell; chevrons
+
+**DESIGN.md sections implemented:** Motion → Durations (chevrons), Frequency; Shapes → The pitch (pending screen).
+
+Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**Files:**
+- Modify: `components/route-states.tsx:9-17`, the shell's `SidebarInset` usage (`routes/_app.tsx`, add `relative`), `features/session/tool-call-row.tsx:69`, `features/settings/usage-section.tsx:109`, `features/session/quiet-line.tsx:31`, `features/session/compaction-marker.tsx:23`
+- Test: `test/route-states.test.tsx` (extend)
+
+- [ ] **Step 1: Failing tests:** inside the shell `AppPending` is positioned within the content area (not `fixed`), at the root (no shell) it covers the page; the two `<details>` rows render a chevron. (Chevron timing classes are reviewed as code.)
+
+- [ ] **Step 2: Red.** **Step 3: Implement** (spec §8.2, §8.4; Enter-toggled chevrons in the tool row call `runInstant(() => toggle(key))` when the toggle came from the keyboard: the row's `onKeyDown` path). **Step 4: Green**, typecheck, lint. **Step 5: Commit** `fix(web): pending screen stays in the content area; chevrons rotate on spec`.
+
+---
+
+### Task V3: Verify and open PR 3
+
+**DESIGN.md sections implemented:** none (verification).
+
+Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+- [ ] **Step 1: Verify.** On `u1/3-consumers`, from a clean clone: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, and the dev loop (`pnpm compose up -d`, `pnpm dev`): the app works on this branch alone (main must stay working at every merge). Record what ran and the output.
+- [ ] **Step 2: Manual evidence for this PR** (screenshots or recordings attached to the PR; never claimed without evidence):
+  - Q5: task detail before/after (light; 1440 and 390).
+  - §2.2 overflow matrix (320, 390, 768 with the sidebar, 1440, 200% text at 1024, a 4-column table at 390).
+  - Header checks (§7.3): template header at 320, 390 and 768 with the sidebar, Agents at 320, an 80-char session name at 390 and 1024; Templates at 320.
+  - Light and dark screenshots of Settings, task detail and the template editor after the button audit.
+  - The break-ui stress data from `seed-worst.mjs` against a **cloned** DB only: 214 agents in the manager Select and the assignee menu, duplicate display names, browser font 24px at 1024.
+- [ ] **Step 3: Push and open PR 3** (authorized to push and open, not merge): head `u1/3-consumers`, base `u1/2-primitives`, title `feat: control system consumers and UI bug fixes`, body per `.github/pull_request_template.md` and AGENTS.md (What, Why, Approach with one "<decision>, rather than <alternative>, because <reason>" bullet per decision, Changes grouped by area; template comments removed). Link the spec, this plan and #77; list the tasks it delivers (Tasks 19–28 and 32). Title has no scope, unlike the owner's suggested `feat(web): …`: Task 27 changes `apps/server/src/errors.ts`, and AGENTS.md drops the scope when a PR spans several. Say that it is stacked on PR 2 and must be retargeted to `main` after that one merges. Close nothing except what this PR delivers; #78–#83 stay open. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [ ] **Step 4: CI.** Check this PR's own CI run until green; fix on this branch (rebasing the branches above it) and push.
+
+---
+
+## PR 4: timeline render performance
+
+Branch `u1/4-timeline`, created from `u1/3-consumers`. Motion H2, in isolation so its before/after recording is clean.
 
 ### Task 29: Reducer keeps an ordered array; one commit per frame; memoized Markdown
 
@@ -1997,23 +2009,23 @@ const mo = new MutationObserver((records) => {
 
 ---
 
-## Phase F: motion polish and perceived speed
+### Task V4: Verify and open PR 4
 
-### Task 32: Pending screen inside the shell; chevrons
-
-**DESIGN.md sections implemented:** Motion → Durations (chevrons), Frequency; Shapes → The pitch (pending screen).
+**DESIGN.md sections implemented:** none (verification).
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
-**Files:**
-- Modify: `components/route-states.tsx:9-17`, the shell's `SidebarInset` usage (`routes/_app.tsx`, add `relative`), `features/session/tool-call-row.tsx:69`, `features/settings/usage-section.tsx:109`, `features/session/quiet-line.tsx:31`, `features/session/compaction-marker.tsx:23`
-- Test: `test/route-states.test.tsx` (extend), `ui-contract.test.ts`
-
-- [ ] **Step 1: Failing tests:** inside the shell `AppPending`'s status element has `absolute inset-0` and `animate-in fade-in-0 duration-150`, not `fixed`; at the root (no shell) it is `fixed inset-0`; every chevron listed has `transition-transform duration-150 ease-(--ease-out)`; the two `<details>` rows render a chevron with `group-open:rotate-90` (or `[details[open]>summary_&]:rotate-90`).
-
-- [ ] **Step 2: Red.** **Step 3: Implement** (spec §8.2, §8.4; Enter-toggled chevrons in the tool row call `runInstant(() => toggle(key))` when the toggle came from the keyboard: the row's `onKeyDown` path). **Step 4: Green**, typecheck, lint. **Step 5: Commit** `fix(web): pending screen stays in the content area; chevrons rotate on spec`.
+- [ ] **Step 1: Verify.** On `u1/4-timeline`, from a clean clone: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, and the dev loop (`pnpm compose up -d`, `pnpm dev`): the app works on this branch alone (main must stay working at every merge). Record what ran and the output.
+- [ ] **Step 2: Manual evidence for this PR** (screenshots or recordings attached to the PR; never claimed without evidence):
+  - §2.7: DevTools Performance recordings before (on `main`) and after, on a 2,000-event session with 4× CPU throttling: frame time on an `agent_status` frame, on a `session_event`, and while scrolling; also the sidebar collapse. Post the numbers on #78 (virtualization trigger) and #80 (sidebar trigger).
+- [ ] **Step 3: Push and open PR 4** (authorized to push and open, not merge): head `u1/4-timeline`, base `u1/3-consumers`, title `refactor(web): timeline render performance`, body per `.github/pull_request_template.md` and AGENTS.md (What, Why, Approach with one "<decision>, rather than <alternative>, because <reason>" bullet per decision, Changes grouped by area; template comments removed). Link the spec, this plan and #77; list the tasks it delivers (Tasks 29–31). Type `refactor` (AGENTS.md allows feat, fix, refactor and chore; not perf). Say that it is stacked on PR 3 and must be retargeted to `main` after that one merges. Close nothing except what this PR delivers; #78–#83 stay open. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [ ] **Step 4: CI.** Check this PR's own CI run until green; fix on this branch (rebasing the branches above it) and push.
 
 ---
+
+## PR 5: render pages from cached summaries
+
+Branch `u1/5-perceived-speed`, created from `u1/4-timeline`. Perceived speed, then the stack-wide review before this last PR opens.
 
 ### Task 33: Perceived speed: loaders don't block on cached summaries
 
@@ -2056,29 +2068,27 @@ loader: async ({ context, params, preload }) => {
 
 ---
 
-## Phase G: final review, verification and PR
+### Task 34: Review across the whole stack
 
-### Task 34: Whole-branch review, verification, PR
-
-**DESIGN.md sections implemented:** all of the above (review only).
+**DESIGN.md sections implemented:** all of the above (review only). Runs on the top of the stack after Task 33, before PR 5 opens.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
-- [ ] **Step 1: React review.** A fresh reviewer invokes `vercel-react-best-practices` and checks the whole React diff (`git diff origin/main...HEAD -- apps/web`) against it: re-renders (stable props into memoized components, no inline objects into `TimelineItem`, no context values recreated per render in `Sheet`/`Drawer` providers: wrap them in `useMemo`), effects that should be derived state, waterfalls in loaders, list keys, bundle size (Vaul is the only new import; check it isn't pulled into the initial chunk unnecessarily: the sidebar imports it, so it is, and that's accepted), and `useSyncExternalStore` usage. It also confirms each plan-review finding landed: B1 (the keyboard stamp is the `stampInstant` ref callback on Content/Overlay, checked per opening, never read in a wrapper's state), M1 (a repeated seq in one batch is inserted once), M2 (`stabilizeRow` stabilizes children first), M3 (Home: separate hover and focus flags, frozen in handlers, new slugs appended), M4 (`useSession.load` parallel on a plain visit), M5 (agent-form slow keyed to the attempt), M6 (schedule-form captures `prevBase` first, preview derived in render). Fix findings in a separate commit.
+- [ ] **Step 1: React review.** A fresh reviewer invokes `vercel-react-best-practices` and checks the whole React diff of the stack (`git diff origin/main...u1/5-perceived-speed -- apps/web`) against it: re-renders (stable props into memoized components, no inline objects into `TimelineItem`, no context values recreated per render in `Sheet`/`Drawer` providers: wrap them in `useMemo`), effects that should be derived state, waterfalls in loaders, list keys, bundle size (Vaul is the only new import; check it isn't pulled into the initial chunk unnecessarily: the sidebar imports it, so it is, and that's accepted), and `useSyncExternalStore` usage. It also confirms each plan-review finding landed: B1 (the keyboard stamp is the `stampInstant` ref callback on Content/Overlay, checked per opening, never read in a wrapper's state), M1 (a repeated seq in one batch is inserted once), M2 (`stabilizeRow` stabilizes children first), M3 (Home: separate hover and focus flags, frozen in handlers, new slugs appended), M4 (`useSession.load` parallel on a plain visit), M5 (agent-form slow keyed to the attempt), M6 (schedule-form captures `prevBase` first, preview derived in render). Fix findings in a separate commit.
 - [ ] **Step 2: Spec coverage review.** Walk spec §2 (acceptance criteria) and §4 (checklist) item by item and point to the commit and test for each. Anything missing becomes a fix commit, not a PR note.
-- [ ] **Step 3: Verify for real.** From a clean clone of the branch: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, then the dev loop (`pnpm compose up -d`, `pnpm dev`) and click through Home, Agents, a session, a task, Templates, Schedules, Settings on desktop and at 390. Record what ran and the output.
-- [ ] **Step 4: Manual checks, recorded for the PR** (screenshots and recordings attached or linked in the PR):
-  - Q5: task detail before/after (light; 1440 and 390).
-  - Q8: a menu over a plate in light and dark (tune `--float-edge` if needed and say so), and the dark 40% scrim.
-  - Q7: the eight avatar swatches at 24px in both themes next to the 6px status dots (hue 120 against the warning ochre); drop to seven if two can't be told apart, and amend DESIGN.md and the tokens accordingly.
-  - §2.7: DevTools Performance recordings before (on `origin/main`) and after, on a 2,000-event session with 4× CPU throttling: frame time on an `agent_status` frame, on a `session_event`, and while scrolling; also the sidebar collapse and the pending loading mark. Post the numbers on #78 and #80 (their triggers).
-  - Q23: on a real phone, a drag-dismiss and a button close of the confirm drawer (300ms vs 200ms by feel).
-  - Overlays at normal and 10% animation speed: sheet, dialog, drawer and scrim together; ⌘B on mobile (no replayed slide); keyboard-opened menu (no animation).
-  - Reduced motion: loading mark lit and still, spinners still, sheets and drawers fade.
-  - §2.2 overflow matrix; header checks (§7.3); the break-ui stress data from `seed-worst.mjs` against a **cloned** DB only: 40-char slugs, a 64-char secret, 30 crons, 214 agents in the manager Select and the assignee menu, duplicate display names, Agents at 320, browser font 24px at 1024.
-- [ ] **Step 5: Open the PR** (authorized to push and open, not merge), base `main`, following `.github/pull_request_template.md` and AGENTS.md:
-  - Title: `feat: U1 UI foundation` (no scope: the diff spans web, server and DESIGN.md).
-  - What / Why / Approach (one bullet per decision: "<decision>, rather than <alternative>, because <reason>", e.g. Vaul with `!important` overrides rather than a custom presence; keyframes, not interruptible open/close; Radix Select rather than cmdk in U1; per-overlay keyboard stamp rather than a global two-frame flag) / Changes grouped by area (DESIGN.md, primitives, controls, overlays, timeline, data layer, bugs, server).
-  - Link the spec, this plan and the decision issue #77. Close nothing except what U1 delivers; list #78–#83 as follow-ups that stay open. Remove the template's HTML comments. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
-  - Attach the manual-check evidence from Step 4 and list anything that couldn't be verified.
-- [ ] **Step 6: Check CI** until green; fix and push if not.
+- [ ] **Step 3: Verify the top of the stack for real.** From a clean clone of `u1/5-perceived-speed`: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, then the dev loop (`pnpm compose up -d`, `pnpm dev`) and click through Home, Agents, a session, a task, Templates, Schedules and Settings on desktop and at 390. Record what ran and the output; fixes land on the lowest PR branch they belong to and are rebased up the stack.
+
+---
+
+### Task V5: Verify and open PR 5
+
+**DESIGN.md sections implemented:** none (verification).
+
+Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+- [ ] **Step 1: Verify.** On `u1/5-perceived-speed`, from a clean clone: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint:ci`, `pnpm test`, `pnpm build`, and the dev loop (`pnpm compose up -d`, `pnpm dev`): the app works on this branch alone (main must stay working at every merge). Record what ran and the output.
+- [ ] **Step 2: Manual evidence for this PR** (screenshots or recordings attached to the PR; never claimed without evidence):
+  - Navigating from the agents list to a session and from the tasks list to a task with a throttled network: the header renders at once, skeleton plates hold the layout, no `AppPending` flash.
+  - Task 34's results (React review findings, spec-coverage walk, top-of-stack verification).
+- [ ] **Step 3: Push and open PR 5** (authorized to push and open, not merge): head `u1/5-perceived-speed`, base `u1/4-timeline`, title `fix(web): render pages from cached summaries while details load`, body per `.github/pull_request_template.md` and AGENTS.md (What, Why, Approach with one "<decision>, rather than <alternative>, because <reason>" bullet per decision, Changes grouped by area; template comments removed). Link the spec, this plan and #77; list the tasks it delivers (Task 33, plus the stack-wide review of Task 34). Say that it is stacked on PR 4 and must be retargeted to `main` after that one merges. Close nothing except what this PR delivers; #78–#83 stay open. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [ ] **Step 4: CI.** Check this PR's own CI run until green; fix on this branch (rebasing the branches above it) and push.

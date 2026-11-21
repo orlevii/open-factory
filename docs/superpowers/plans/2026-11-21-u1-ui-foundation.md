@@ -12,6 +12,8 @@
 
 The four spec self-contradictions found while planning (§2.3, §12.4, §12.5, §13) have been corrected in the spec. The DESIGN.md detail-title row is `| Detail title (task, in the page body) | Archivo | 20 / 28 | 650 |`.
 
+**Low-certainty decisions for Or:** list each in the Approach section of the PR that delivers it, with its evidence attached: Q16 (2, spinners static under reduced motion; PR 2), Q5 (3, task title 20/28; PR 3), Q8 (3, `--float-edge` values; PR 2), Q18 (3, peek mode deferred to U2, DESIGN.md rule only; PR 2), Q20 (3, heading tracking; PR 2/3), Q23 (3, 300ms post-flick close; PR 2), and the stacked-PR split itself (3).
+
 ## Global Constraints
 
 - **React rule:** every task that touches `apps/web` says "Implementer and reviewer invoke `vercel-react-best-practices` and follow it". This is binding (React + Vite + TanStack, not Next.js: skip server-component and Next-only rules).
@@ -396,7 +398,7 @@ describe("styles.css", () => {
 
 - [ ] **Step 3: Edit `styles.css`.**
   - `@theme inline`: add `--color-float-edge: var(--float-edge);` and `--color-avatar-1` … `--color-avatar-8: var(--avatar-N);`.
-  - `:root`: `--float-edge: oklch(0.80 0.006 255);` and `--avatar-1: oklch(0.62 0.07 120);` … `--avatar-8: oklch(0.62 0.07 345);`. Dark (`:root[data-theme="dark"]`): `--float-edge: oklch(0.38 0.008 255);`, `--avatar-N: oklch(0.7 0.07 H)`. Both `prefers-contrast: more` blocks: `--float-edge: var(--input);`. (Biome's formatter may print `0.80` as `0.8`; the test accepts both.)
+  - `:root`: `--float-edge: oklch(0.80 0.006 255);` and `--avatar-1: oklch(0.62 0.07 120);` … `--avatar-8: oklch(0.62 0.07 345);`. Dark (`:root[data-theme="dark"]`): `--float-edge: oklch(0.38 0.008 255);`, `--avatar-N: oklch(0.7 0.07 H)`. Both `prefers-contrast: more` blocks: `--float-edge: var(--input);`.
   - Loading mark (replace lines 247-261 and delete `.of-ignite { animation: none; }` from the base reduced-motion block at ~464):
     ```css
     @keyframes of-ignite {

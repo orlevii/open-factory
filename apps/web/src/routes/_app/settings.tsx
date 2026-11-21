@@ -46,7 +46,8 @@ function SettingsLayout() {
                 ))}
               </ul>
             </nav>
-            <div className="@min-[53.75rem]:hidden">
+            {/* As wide as a section name needs, not the content: 15rem, or less on a phone. */}
+            <div className="w-full max-w-60 @min-[53.75rem]:hidden">
               <Select
                 value={current}
                 onValueChange={(to) => void navigate({ to: to as (typeof PAGES)[number]["to"] })}

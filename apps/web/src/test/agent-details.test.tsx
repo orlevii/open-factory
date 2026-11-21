@@ -1,4 +1,4 @@
-import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
+import { type AgentSummary, type AgentUsageRow, taskListQuerySchema } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -13,7 +13,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AgentDetails } from "@/features/session/agent-details";
 import { type StopCrons, useStopCrons } from "@/features/session/stop-crons";
-import { json, mockApi } from "@/test/mock-api";
+import { json, mockApi, validQuery } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -307,7 +307,10 @@ test("Org: no link to all reports when they all fit", async () => {
 
 test("Work: at most 5 tasks and 5 schedules, with the counts that link to the full lists", async () => {
   const api = mockApi({
-    "GET /api/tasks?": () => json({ tasks: [1, 2, 3, 4, 5].map(taskRow), nextCursor: null }),
+    // The server's own query schema: a parameter it refuses is a 400 here too.
+    "GET /api/tasks?": validQuery(taskListQuerySchema, () =>
+      json({ tasks: [1, 2, 3, 4, 5].map(taskRow), nextCursor: null }),
+    ),
     "GET /api/schedules?": () => json({ schedules: [1, 2, 3, 4, 5].map(scheduleRow), more: false }),
   });
   setup({ agent: agentSummary({ openTasks: 9, scheduleCount: 7 }) });
@@ -324,8 +327,11 @@ test("Work: at most 5 tasks and 5 schedules, with the counts that link to the fu
     "/schedules?target=dev",
   );
   const taskCall = api.calls.find((c) => c.url.startsWith("/api/tasks"));
-  expect(taskCall?.url).toContain("assignee=dev");
-  expect(taskCall?.url).toContain("limit=5");
+  const q = new URL(taskCall?.url ?? "", "http://x").searchParams;
+  expect(q.get("assignee")).toBe("dev");
+  expect(q.get("limit")).toBe("5");
+  // Open and in progress is the server's default: no status parameter.
+  expect(q.has("status")).toBe(false);
 });
 
 test("Work: nothing is fetched, and no section shows, for an agent with no tasks or schedules", async () => {

@@ -5,6 +5,7 @@ import {
   linkInputSchema,
   parseTaskKey,
   taskBodySchema,
+  taskListQuerySchema,
   taskTitleSchema,
   updateTaskToolSchema,
 } from "./tasks.ts";
@@ -61,4 +62,17 @@ test("tool schemas: arrays, nullable assignee, caps", () => {
       links: Array(51).fill({ kind: "file", target: "a" }),
     }).success,
   ).toBe(false);
+});
+
+test("the list query: no status means the default; statuses repeat; an unknown status is refused", () => {
+  expect(taskListQuerySchema.parse({ assignee: "dev", limit: "5" })).toEqual({
+    assignee: "dev",
+    limit: 5,
+  });
+  expect(taskListQuerySchema.parse({ status: ["done", "cancelled"] }).status).toEqual([
+    "done",
+    "cancelled",
+  ]);
+  expect(taskListQuerySchema.parse({ status: "all" }).status).toEqual(["all"]);
+  expect(taskListQuerySchema.safeParse({ status: "open_in_progress" }).success).toBe(false);
 });

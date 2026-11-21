@@ -128,6 +128,19 @@ test("GET /api/tasks: default filter, status=all, repeated status, assignee, una
   expect((await call("GET", "/api/tasks?assignee=nobody")).statusCode).toBe(400);
 });
 
+test("GET /api/tasks: Agent details' query (assignee, limit 5, default status) lists open and in-progress only", async () => {
+  await create({ title: "one", assignee: "dev" });
+  await create({ title: "two", assignee: "dev" });
+  await create({ title: "three", assignee: "dev" });
+  await call("PATCH", "/api/tasks/T-2", { status: "in_progress" });
+  await call("PATCH", "/api/tasks/T-3", { status: "done" });
+  const r = await call("GET", "/api/tasks?assignee=dev&limit=5");
+  expect(r.statusCode).toBe(200);
+  expect((r.json() as TaskPage).tasks.map((t) => t.key).sort()).toEqual(["T-1", "T-2"]);
+  // The client's own "open and in progress" sentinel is not a status the server knows.
+  expect((await call("GET", "/api/tasks?status=open_in_progress")).statusCode).toBe(400);
+});
+
 test("paging: newest updated first, a cursor, an invalid cursor is 400 on before", async () => {
   for (const t of ["a", "b", "c"]) await create({ title: t });
   const p1 = (await call("GET", "/api/tasks?limit=2")).json() as TaskPage;

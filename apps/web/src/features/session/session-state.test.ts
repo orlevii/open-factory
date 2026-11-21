@@ -1,5 +1,5 @@
 import type { AgentDetail, EventsPage, SessionEvent } from "@open-factory/shared";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { agentSummary } from "@/test/session-fixtures";
 import { eventsInOrder, highestSeq, initialSessionState, sessionReducer } from "./session-state";
 
@@ -234,4 +234,119 @@ test("a locally queued item is added once and the next queue frame overrides it"
     message: { type: "queue", agent: "dev", items: [qItem("q2")] },
   });
   expect(s.queue.map((q) => q.id)).toEqual(["q2"]);
+});
+
+const liveFrame = (seq: number) =>
+  ({ type: "session_event", agent: "dev", event: ev(seq) }) as const;
+
+test("a single live event above the max appends without sorting, keeping the prefix", () => {
+  const s = loadedLatest();
+  const sort = vi.spyOn(Array.prototype, "sort");
+  try {
+    const next = sessionReducer(s, frame(liveFrame(10)));
+    expect(sort).not.toHaveBeenCalled();
+    for (const [i, e] of s.ordered.entries()) expect(next.ordered[i]).toBe(e);
+    expect(next.ordered.map((e) => e.seq)).toEqual([7, 8, 9, 10]);
+  } finally {
+    sort.mockRestore();
+  }
+});
+
+test("a seq repeated within one batch is inserted once", () => {
+  const s = loadedLatest();
+  const next = sessionReducer(s, {
+    type: "frames",
+    messages: [liveFrame(10), liveFrame(10)],
+  });
+  expect(next.ordered.map((e) => e.seq)).toEqual([7, 8, 9, 10]);
+  expect(next.events.size).toBe(s.events.size + 1);
+});
+
+test("an earlier page sorts once", () => {
+  const s = loadedLatest();
+  const sort = vi.spyOn(Array.prototype, "sort");
+  try {
+    const next = sessionReducer(s, { type: "earlier", page: page([5, 6]) });
+    expect(next.ordered.map((e) => e.seq)).toEqual([5, 6, 7, 8, 9]);
+    // at most one sort of the fresh slice and one of the whole set
+    expect(sort.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(sort.mock.contexts.filter((c) => (c as unknown[]).length === 5)).toHaveLength(1);
+  } finally {
+    sort.mockRestore();
+  }
+});
+
+test("a frames batch copies the map once and equals single frame dispatches", () => {
+  const s = loadedLatest();
+  const messages = [liveFrame(10), liveFrame(11), liveFrame(12)];
+  let copies = 0;
+  const RealMap = Map;
+  vi.stubGlobal(
+    "Map",
+    class CountingMap<K, V> extends RealMap<K, V> {
+      constructor(entries?: Iterable<readonly [K, V]> | null) {
+        super(entries);
+        copies++;
+      }
+    },
+  );
+  let batched: typeof s;
+  try {
+    batched = sessionReducer(s, { type: "frames", messages });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(copies).toBe(1);
+  const single = messages.reduce((acc, m) => sessionReducer(acc, frame(m)), s);
+  expect(batched.ordered.map((e) => e.seq)).toEqual(single.ordered.map((e) => e.seq));
+  expect([...batched.events.keys()].sort()).toEqual([...single.events.keys()].sort());
+  expect({ ...batched, events: undefined, ordered: undefined }).toEqual({
+    ...single,
+    events: undefined,
+    ordered: undefined,
+  });
+});
+
+test("a frames batch mixes status, queue and window counting like single frames", () => {
+  const s = sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: page([3, 4, 5], { before: true, after: true }),
+    detail,
+    mode: "window",
+  });
+  const messages = [
+    liveFrame(10),
+    {
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      ...noRestart,
+    } as const,
+    liveFrame(11),
+    { type: "session_event", agent: "other", event: ev(12) } as const,
+  ];
+  const batched = sessionReducer(s, { type: "frames", messages });
+  const single = messages.reduce((acc, m) => sessionReducer(acc, frame(m)), s);
+  expect(batched).toEqual(single);
+  expect(batched.newWhileAway).toBe(2);
+  expect(batched.ordered).toBe(s.ordered);
+});
+
+test("an agent_status frame keeps events and ordered identical", () => {
+  const s = loadedLatest();
+  const next = sessionReducer(
+    s,
+    frame({ type: "agent_status", agent: "dev", status: "working", turnOpen: true, ...noRestart }),
+  );
+  expect(next.events).toBe(s.events);
+  expect(next.ordered).toBe(s.ordered);
+  expect(eventsInOrder(next)).toBe(eventsInOrder(s));
+});
+
+test("an out-of-order live event is placed by seq", () => {
+  let s = loadedLatest();
+  s = sessionReducer(s, frame(liveFrame(12)));
+  s = sessionReducer(s, frame(liveFrame(10)));
+  expect(s.ordered.map((e) => e.seq)).toEqual([7, 8, 9, 10, 12]);
 });

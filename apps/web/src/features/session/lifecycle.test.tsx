@@ -192,9 +192,12 @@ test("a confirmed reset whose status frame beats the response still closes the d
   // The server publishes the new status inside the job, before it replies 202.
   api.on("POST /api/agents/dev/reset-session", async () => {
     frame({ status: "queued" });
-    // Let the frame render (the recovery buttons go) before the response lands.
+    // Let the frame render (the recovery buttons go) before the response lands. `hidden`: the modal
+    // hides the page from the accessibility tree, which would make this pass before the frame lands.
     await vi.waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Start a new session" })).toBeNull(),
+      expect(
+        screen.queryByRole("button", { name: "Start a new session", hidden: true }),
+      ).toBeNull(),
     );
     // The dialog outlives its button: it is still open (pending), so it can close properly.
     stillOpen = screen.queryByRole("alertdialog") !== null;

@@ -10,6 +10,8 @@ import type {
 export interface SessionState {
   slug: string | undefined;
   events: Map<number, SessionEvent>;
+  /** `events` by seq; a new array only when the events change, appended in the live case. */
+  ordered: SessionEvent[];
   hasMoreBefore: boolean;
   /** true while showing an older window (deep link): live events are counted, not appended */
   windowed: boolean;
@@ -25,6 +27,7 @@ export interface SessionState {
 export const initialSessionState: SessionState = {
   slug: undefined,
   events: new Map(),
+  ordered: [],
   hasMoreBefore: false,
   windowed: false,
   newWhileAway: 0,
@@ -38,17 +41,39 @@ export type SessionAction =
   | { type: "loaded"; page: EventsPage; detail: AgentDetail; mode: "latest" | "window" }
   | { type: "earlier"; page: EventsPage }
   | { type: "frame"; message: ServerMessage }
+  /** The frames of one animation frame, folded in order (one commit per frame). */
+  | { type: "frames"; messages: ServerMessage[] }
   /** A 202 queue item inserted locally while the socket is down; the next `queue` frame replaces it. */
   | { type: "queued"; item: QueueItem }
   /** A fresh summary from a response or a refetch (S7: terminate, pin, the termination fields). */
   | { type: "agent"; agent: AgentSummary }
   | { type: "reset" };
 
-const withEvents = (map: Map<number, SessionEvent>, evs: SessionEvent[]) => {
-  const next = new Map(map);
-  for (const e of evs) next.set(e.seq, e);
-  return next;
-};
+const bySeq = (a: SessionEvent, b: SessionEvent) => a.seq - b.seq;
+
+/** Adds events; the ordered array is appended when every new seq is above the current max (the live
+ *  case), else sorted once. A seq repeated within one batch (a reconnect replay) is inserted once. */
+function withEvents(
+  s: Pick<SessionState, "events" | "ordered">,
+  evs: SessionEvent[],
+): Pick<SessionState, "events" | "ordered"> {
+  let events: Map<number, SessionEvent> | undefined;
+  const fresh: SessionEvent[] = [];
+  for (const e of evs) {
+    if ((events ?? s.events).has(e.seq)) continue; // already held, or earlier in this batch
+    events ??= new Map(s.events);
+    events.set(e.seq, e);
+    fresh.push(e);
+  }
+  if (!events) return { events: s.events, ordered: s.ordered };
+  const max = s.ordered.at(-1)?.seq ?? 0;
+  const sortedFresh = fresh.length > 1 ? fresh.sort(bySeq) : fresh;
+  const ordered =
+    (sortedFresh[0]?.seq ?? 0) > max
+      ? s.ordered.concat(sortedFresh)
+      : [...events.values()].sort(bySeq);
+  return { events, ordered };
+}
 
 export function sessionReducer(s: SessionState, a: SessionAction): SessionState {
   switch (a.type) {
@@ -58,7 +83,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return {
         ...initialSessionState,
         slug: a.detail.agent.slug,
-        events: withEvents(new Map(), a.page.events),
+        ...withEvents(initialSessionState, a.page.events),
         hasMoreBefore: a.page.hasMore.before,
         windowed: a.mode === "window" && a.page.hasMore.after,
         maxSeenSeq: a.detail.lastSeq,
@@ -68,7 +93,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     case "earlier":
       return {
         ...s,
-        events: withEvents(s.events, a.page.events),
+        ...withEvents(s, a.page.events),
         hasMoreBefore: a.page.hasMore.before,
       };
     case "queued":
@@ -86,7 +111,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
           if (m.event.seq <= s.maxSeenSeq) return s;
           return { ...s, newWhileAway: s.newWhileAway + 1, maxSeenSeq: m.event.seq };
         }
-        return { ...s, events: withEvents(s.events, [m.event]) };
+        return { ...s, ...withEvents(s, [m.event]) };
       }
       if (m.type === "queue") return { ...s, queue: m.items };
       if (m.type === "agent_status" && s.agent) {
@@ -97,11 +122,31 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       if (m.type === "resync") return { ...s, needsReload: true };
       return s;
     }
+    case "frames": {
+      // Consecutive live session_events become one withEvents call (one map copy); everything
+      // else goes through the single-frame logic above, in order.
+      let next = s;
+      let pending: SessionEvent[] = [];
+      const drain = () => {
+        if (pending.length === 0) return;
+        next = { ...next, ...withEvents(next, pending) };
+        pending = [];
+      };
+      for (const m of a.messages) {
+        if (m.type === "session_event" && m.agent === next.slug && !next.windowed) {
+          pending.push(m.event);
+          continue;
+        }
+        drain();
+        next = sessionReducer(next, { type: "frame", message: m });
+      }
+      drain();
+      return next;
+    }
   }
 }
 
-export const eventsInOrder = (s: SessionState) =>
-  [...s.events.values()].sort((a, b) => a.seq - b.seq);
+export const eventsInOrder = (s: SessionState) => s.ordered;
 /** A plain loop: spreading a long session's keys into `Math.max` overflows the argument limit. */
 export const highestSeq = (s: SessionState) => {
   let max = 0;

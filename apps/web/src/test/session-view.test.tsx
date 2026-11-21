@@ -267,6 +267,8 @@ test("window mode: a reconnect resubscribes after the newest counted seq and doe
   );
   live(11, { type: "assistant_text", text: "a" });
   live(12, { type: "assistant_text", text: "b" });
+  // Frames commit on the next animation frame; a reconnect's backoff is always longer than that.
+  await act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
   ws.sent = [];
   act(() => ws.reopen());
   await vi.waitFor(() =>

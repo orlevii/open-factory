@@ -25,7 +25,8 @@ export const Route = createFileRoute("/sign-up")({
   validateSearch: z.object({ invite: z.string().optional().catch(undefined) }),
   loaderDeps: ({ search }) => ({ invite: search.invite }),
   beforeLoad: async ({ context }) => {
-    if (await context.queryClient.ensureQueryData(sessionQueryOptions)) throw redirect({ to: "/" });
+    if (await context.queryClient.ensureQueryData(sessionQueryOptions))
+      throw redirect({ to: "/inbox" });
   },
   // Only so the first load shows the pending mark; a failure renders as the error line.
   loader: async ({ context, deps }) => {
@@ -140,7 +141,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         return;
       }
       await refreshSession(qc);
-      await navigate({ to: "/" });
+      await navigate({ to: "/inbox" });
     } catch {
       setFormError(mapAuthError(undefined, "").message);
     } finally {

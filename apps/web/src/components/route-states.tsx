@@ -66,7 +66,7 @@ export function RouteError({ error }: ErrorComponentProps) {
           Retry
         </Button>
         <Button className="h-9" variant="outline" asChild>
-          <Link to="/">Go to Home</Link>
+          <Link to="/inbox">Go to Inbox</Link>
         </Button>
       </div>
     </StateFrame>
@@ -81,11 +81,11 @@ export function NotFound() {
         Page not found.
       </h2>
       <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        Check the address, or go back to Home.
+        Check the address, or go back to the Inbox.
       </p>
       <div className="flex items-center gap-2">
         <Button className="h-9" asChild>
-          <Link to="/">Go to Home</Link>
+          <Link to="/inbox">Go to Inbox</Link>
         </Button>
       </div>
     </StateFrame>

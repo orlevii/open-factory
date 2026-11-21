@@ -12,7 +12,8 @@ import { refreshSession, sessionQueryOptions } from "@/lib/session";
 
 export const Route = createFileRoute("/sign-in")({
   beforeLoad: async ({ context }) => {
-    if (await context.queryClient.ensureQueryData(sessionQueryOptions)) throw redirect({ to: "/" });
+    if (await context.queryClient.ensureQueryData(sessionQueryOptions))
+      throw redirect({ to: "/inbox" });
   },
   component: SignIn,
 });
@@ -69,7 +70,7 @@ function SignIn() {
         return;
       }
       await refreshSession(qc);
-      await navigate({ to: "/" });
+      await navigate({ to: "/inbox" });
     } catch {
       setFormError(mapAuthError(undefined, "").message);
     } finally {

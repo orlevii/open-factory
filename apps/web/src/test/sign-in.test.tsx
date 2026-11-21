@@ -97,11 +97,11 @@ test("the button shows the pending label while the request runs", async () => {
   expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
 });
 
-test("a successful sign-in lands on the dashboard", async () => {
+test("a successful sign-in lands on the Inbox", async () => {
   auth.signIn.email.mockResolvedValue({ data: { user: alice.user }, error: null });
   auth.getSession.mockResolvedValue({ data: alice });
   const { router } = renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/"));
-  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+  await waitFor(() => expect(router.state.location.pathname).toBe("/inbox"));
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
 });

@@ -53,7 +53,7 @@ test("an unknown stored value falls back to System", () => {
 test("the user menu switches the theme", async () => {
   osPrefersDark(false);
   renderApp("/", alice);
-  await screen.findByRole("heading", { level: 1, name: "Home" });
+  await screen.findByRole("heading", { level: 1, name: "Inbox" });
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: /Alice/ }));
   expect(screen.getByRole("menuitemradio", { name: "System" })).toHaveAttribute(

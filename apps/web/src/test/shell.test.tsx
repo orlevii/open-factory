@@ -30,21 +30,21 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test("every screen has one page h1 in the shared header; the dashboard is Home", async () => {
-  renderApp("/", alice);
-  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+test("/ opens the Inbox in place of Home: the entry is replaced, and no screen is titled Home", async () => {
+  const { router } = renderApp("/", alice);
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/inbox");
+  expect(router.history.length).toBe(1);
   expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-  expect(document.title).toBe("Home · Open Factory");
-  const inbox = screen.getByRole("region", { name: "Inbox" });
-  expect(within(inbox).getByRole("link", { name: "Open inbox" })).toHaveAttribute("href", "/inbox");
-  const agents = screen.getByRole("region", { name: "Agents" });
-  expect(within(agents).getByRole("link", { name: "Open agents" })).toHaveAttribute(
-    "href",
-    "/agents",
-  );
-  // An implicit (auto) column would take the inbox card's min-content (a long sender line) and push
-  // the card past the screen below md.
-  expect(inbox.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]", "md:grid-cols-2");
+  expect(screen.queryByRole("heading", { name: "Home" })).toBeNull();
+  expect(document.title).toBe("Inbox · Open Factory");
+});
+
+test("the wordmark links to the Inbox", async () => {
+  renderApp("/agents", alice);
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  expect(nav).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Factory" })).toHaveAttribute("href", "/inbox");
 });
 
 test("the skip link is the first focusable element and targets main#content", async () => {
@@ -75,10 +75,10 @@ test("the active section link is marked aria-current=page", async () => {
   expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
 
-test("an unknown path shows the not-found state with a way home", async () => {
+test("an unknown path shows the not-found state with a way back to the Inbox", async () => {
   renderApp("/nope", alice);
   expect(await screen.findByRole("heading", { name: "Page not found." })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
+  expect(screen.getByRole("link", { name: "Go to Inbox" })).toHaveAttribute("href", "/inbox");
   expect(screen.getAllByRole("main")).toHaveLength(1);
   expect(document.title).toBe("Page not found · Open Factory");
 });
@@ -199,7 +199,7 @@ test("an agent_status frame pushed through the ws onMessage updates the agent ro
         running: { count: 1, max: 8 },
       }),
   });
-  renderApp("/", alice);
+  renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
   expect(within(row).getByText("Working")).toBeInTheDocument();
   act(() =>

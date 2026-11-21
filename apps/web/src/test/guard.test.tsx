@@ -19,9 +19,9 @@ test.each(["/", "/agents", "/settings"])("signed out, %s redirects to /sign-in",
   expect(connectWs).not.toHaveBeenCalled();
 });
 
-test.each(["/sign-in", "/sign-up"])("signed in, %s redirects to /", async (path) => {
+test.each(["/sign-in", "/sign-up"])("signed in, %s redirects to /inbox", async (path) => {
   const { router } = renderApp(path, alice);
-  await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/inbox"));
 });
 
 test("signed in, the layout opens the websocket and shows the user menu", async () => {

@@ -268,7 +268,7 @@ No live agents: one muted line "No agents yet." and a "New agent" link. Loading:
 
 ## 9. Settings and Usage (PR3)
 
-- `routes/_app/settings.tsx` becomes a layout: `PageHeader title="Settings"`, a 180px sub-nav (`<nav aria-label="Settings">`, 32px rows, current page `steel-selected` + medium weight, no tooth) and an `<Outlet />`. When the content beside it would be narrower than 40rem (a container query on the body), the sub-nav becomes a "Section" `Select` above the content (U4 may revisit it on phones).
+- `routes/_app/settings.tsx` becomes a layout: `PageHeader title="Settings"`, a 180px sub-nav (`<nav aria-label="Settings">`, 32px rows, current page with the fill and medium weight in PR3, `steel-selected` from PR5, no tooth) and an `<Outlet />`. When the content beside it would be narrower than 40rem (a container query on the body), the sub-nav becomes a "Section" `Select` above the content (U4 may revisit it on phones).
 - Children `settings.credentials.tsx`, `settings.secrets.tsx` (search `addSecret?`), `settings.projects.tsx`, `settings.users.tsx`, `settings.factory.tsx`; each loader fetches only its own queries (preload-aware as U1 §10.2) and keeps its section's error with Retry. All users are equal admins, so every section shows.
 - The layout's `validateSearch` (`addSecret`, `days`) moves to `settings.index.tsx` (both, for the redirects) and `settings.secrets.tsx` (`addSecret`).
 - `settings.index.tsx`: `beforeLoad` redirects (`replace`) by `location.hash`: `#credentials|secrets|projects|users|factory` → that route (carrying `addSecret` to secrets); `#usage` or `days` → `/usage?days=`; else `/settings/credentials` (Q12).
@@ -425,7 +425,7 @@ Replace "status rides on the avatar as the usual dot or tooth" with "status ride
 ### 16.6 Components → Overlays (PR2, PR4; edits)
 
 - Ladder table: in the row "Any sheet or dialog below `md` … | A bottom drawer (Vaul); the nav is a left drawer", append "; the command palette stays a top dialog" (PR4). Replace the row "A create or edit form, or a quick peek | Right sheet, 480px, with a scrim" with two rows: "A create or edit form | Right sheet, 480px, with a scrim" and "A quick peek (a task, a build log, Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px)" [PR2; "a task, a build log" in PR5 and PR6]. Add after the popover row: "| Jump to anything | Command palette (top centre, with a scrim) |" (PR4).
-- Replace "A peek sheet does not dim or trap focus; the page behind stays usable; Esc and Close dismiss it." with: "A peek sheet does not dim or trap focus; the page behind stays usable and clicking it does not close the peek; Esc and Close dismiss it. " [PR2]; then append "Opened from a list with the keyboard, focus stays in the list so `j`/`k` retarget it in place. A task peek opens only when the list keeps room beside it; otherwise the page opens." [PR5]
+- Replace "A peek sheet does not dim or trap focus; the page behind stays usable; Esc and Close dismiss it." with: "A peek sheet does not dim or trap focus; the page behind stays usable and clicking it does not close the peek; Esc and Close dismiss it." [PR2]; then append "Opened from a list with the keyboard, focus stays in the list so `j`/`k` retarget it in place. A task peek opens only when the list keeps room beside it; otherwise the page opens." [PR5]
 
 ### 16.7 Elevation & Depth, Form controls, Don'ts (PR2, PR4)
 

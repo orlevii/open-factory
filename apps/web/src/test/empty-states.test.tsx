@@ -42,7 +42,7 @@ test("the sidebar links every section in order", async () => {
   const labels = within(nav)
     .getAllByRole("link")
     .map((a) => a.textContent);
-  expect(labels).toEqual(["Inbox", "Tasks", "Templates", "Schedules", "Settings"]);
+  expect(labels).toEqual(["Inbox", "Tasks", "Templates", "Schedules", "Usage", "Settings"]);
   // The Agents row follows the nav and heads the tree.
   expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
 });

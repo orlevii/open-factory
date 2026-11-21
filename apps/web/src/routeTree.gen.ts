@@ -15,6 +15,7 @@ import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as AppAgentsIndexRouteImport } from './routes/_app/agents.index'
 import { Route as AppAgentsSlugRouteImport } from './routes/_app/agents.$slug'
 import { Route as AppAgentsNewRouteImport } from './routes/_app/agents.new'
@@ -62,6 +63,11 @@ const AppInboxRoute = AppInboxRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppUsageRoute = AppUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAgentsIndexRoute = AppAgentsIndexRouteImport.update({
@@ -166,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/sign-up': typeof SignUpRoute
   '/inbox': typeof AppInboxRoute
   '/settings': typeof AppSettingsRouteWithChildren
+  '/usage': typeof AppUsageRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
   '/agents/new': typeof AppAgentsNewRoute
   '/schedules/$key': typeof AppSchedulesKeyRoute
@@ -191,6 +198,7 @@ export interface FileRoutesByTo {
   '/sign-up': typeof SignUpRoute
   '/inbox': typeof AppInboxRoute
   '/settings': typeof AppSettingsRouteWithChildren
+  '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
   '/agents/$slug': typeof AppAgentsSlugRoute
   '/agents/new': typeof AppAgentsNewRoute
@@ -219,6 +227,7 @@ export interface FileRoutesById {
   '/sign-up': typeof SignUpRoute
   '/_app/inbox': typeof AppInboxRoute
   '/_app/settings': typeof AppSettingsRouteWithChildren
+  '/_app/usage': typeof AppUsageRoute
   '/_app/': typeof AppIndexRoute
   '/_app/agents/$slug': typeof AppAgentsSlugRoute
   '/_app/agents/new': typeof AppAgentsNewRoute
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/inbox'
     | '/settings'
+    | '/usage'
     | '/agents/$slug'
     | '/agents/new'
     | '/schedules/$key'
@@ -273,6 +283,7 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/inbox'
     | '/settings'
+    | '/usage'
     | '/'
     | '/agents/$slug'
     | '/agents/new'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/_app/inbox'
     | '/_app/settings'
+    | '/_app/usage'
     | '/_app/'
     | '/_app/agents/$slug'
     | '/_app/agents/new'
@@ -370,6 +382,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/usage': {
+      id: '/_app/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof AppUsageRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/agents/': {
@@ -531,6 +550,7 @@ const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(
 interface AppRouteChildren {
   AppInboxRoute: typeof AppInboxRoute
   AppSettingsRoute: typeof AppSettingsRouteWithChildren
+  AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAgentsSlugRoute: typeof AppAgentsSlugRoute
   AppAgentsNewRoute: typeof AppAgentsNewRoute
@@ -551,6 +571,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppInboxRoute: AppInboxRoute,
   AppSettingsRoute: AppSettingsRouteWithChildren,
+  AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
   AppAgentsSlugRoute: AppAgentsSlugRoute,
   AppAgentsNewRoute: AppAgentsNewRoute,

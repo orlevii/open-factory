@@ -356,3 +356,22 @@ test("ties keep the sidebar tree's order, not the server's", async () => {
     ]),
   );
 });
+
+test("on a phone, closing the palette opened from the nav drawer's Search row returns focus to the menu button", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.installWidth(390);
+  try {
+    renderApp("/inbox", alice);
+    const menu = await screen.findByRole("button", { name: "Toggle Sidebar" });
+    await userEvent.click(menu);
+    const drawer = await screen.findByRole("dialog");
+    await userEvent.click(within(drawer).getByRole("button", { name: /Search/ }));
+    await screen.findByRole("dialog", { name: "Search" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Search" })).toBeNull());
+    await waitFor(() => expect(menu).toHaveFocus());
+  } finally {
+    window.matchMedia = original;
+    document.body.style.pointerEvents = "";
+  }
+});

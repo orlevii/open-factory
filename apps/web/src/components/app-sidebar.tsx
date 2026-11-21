@@ -84,6 +84,8 @@ function matchSession(pathname: string): string | undefined {
 const parseCollapsed = (raw: string) =>
   raw === "true" ? true : raw === "false" ? false : undefined;
 
+const sidebarTrigger = () => document.querySelector<HTMLElement>('[data-sidebar="trigger"]');
+
 export function AppSidebar() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -143,7 +145,8 @@ export function AppSidebar() {
                 onFocus={() => prefetchPaletteData(qc)}
                 onClick={() => {
                   closeMobile();
-                  openPalette();
+                  // The row closes with the drawer: a plain close returns to the header's menu button.
+                  openPalette(isMobile ? sidebarTrigger : undefined);
                 }}
                 className={cn("gap-2.5 transition-colors duration-150", isMobile ? "h-9" : "h-8")}
               >

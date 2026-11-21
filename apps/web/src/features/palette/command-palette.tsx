@@ -27,11 +27,17 @@ let isOpen = false;
 /** Focused when it opened: a plain close (Esc, a click outside) returns focus there. Radix's modal
  *  Dialog only returns focus to its own Trigger, and the palette has none. */
 let opener: HTMLElement | null = null;
+/** Replaces the opener as the return target when the opener won't be there (the phone's nav drawer
+ *  closes as the palette opens). */
+let returnTarget: (() => HTMLElement | null) | null = null;
 const listeners = new Set<() => void>();
-function setPaletteOpen(next: boolean) {
+function setPaletteOpen(next: boolean, returnFocus?: () => HTMLElement | null) {
   if (next === isOpen) return;
   isOpen = next;
-  if (next) opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (next) {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    returnTarget = returnFocus ?? null;
+  }
   for (const l of listeners) l();
 }
 const subscribe = (l: () => void) => {
@@ -42,8 +48,9 @@ const subscribe = (l: () => void) => {
 };
 const getOpen = () => isOpen;
 
-export function openPalette() {
-  setPaletteOpen(true);
+/** `returnFocus` names where a plain close returns focus, instead of the element focused at opening. */
+export function openPalette(returnFocus?: () => HTMLElement | null) {
+  setPaletteOpen(true, returnFocus);
 }
 
 /** Warms the ended agents list (hover or focus on the Search row, the ⌘K keydown). Respects the
@@ -141,9 +148,10 @@ export function CommandPalette() {
           aria-describedby={undefined}
           onCloseAutoFocus={(e) => {
             const run = afterClose.current;
-            const back = opener;
+            const back = returnTarget ? returnTarget() : opener;
             afterClose.current = null;
             opener = null;
+            returnTarget = null;
             e.preventDefault();
             if (run) run();
             else if (back?.isConnected) back.focus();

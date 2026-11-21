@@ -50,6 +50,8 @@ export type MessageNotice = { kind: "rejected"; to: string } | { kind: "not_foun
  *  state is set in render, so a frame still costs one render (§9.6). `compute` must be stable. */
 function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) => V): V {
   const prev = useRef<V | undefined>(undefined);
+  // Reading `prev.current` in render is safe: it only ever holds the last committed value, `compute`
+  // is pure, and a StrictMode double render or discarded render recomputes the same result.
   const value = useMemo(() => compute(input, prev.current), [input, compute]);
   useLayoutEffect(() => {
     prev.current = value;

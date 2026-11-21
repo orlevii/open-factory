@@ -177,6 +177,7 @@ export function Timeline(props: {
     const content = log.current;
     if (!content) return;
     applyTo(content);
+    // Only added nodes need a tabindex pass: nothing flips a control's interactivity in place.
     const mo = new MutationObserver((records) => {
       for (const rec of records)
         for (const n of rec.addedNodes) if (n instanceof HTMLElement) applyTo(n);

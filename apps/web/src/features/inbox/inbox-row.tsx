@@ -4,6 +4,7 @@ import { AgentChip } from "@/components/agent-chip";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
+import { skipFocusPreload } from "@/lib/row-nav";
 import type { InboxItem } from "./api";
 import { plainPreview } from "./preview";
 
@@ -137,6 +138,8 @@ export const InboxRow = memo(function InboxRow({
     "aria-describedby": previewId,
     "aria-current": selected ? ("true" as const) : undefined,
     preload: selectable ? (false as const) : undefined,
+    // Below 1024 rows keep hover preload, but a keyboard sweep through them preloads nothing.
+    onFocus: skipFocusPreload,
     onClick: (e: MouseEvent) => onOpen(item, e),
     // Middle-click only: Chrome fires auxclick for the right button too, and opening the context
     // menu must not mark the row read.

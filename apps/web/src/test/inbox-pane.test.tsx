@@ -367,3 +367,33 @@ test("Undo of Mark all read leaves the shown item unread: the dwell doesn't read
   expect(readsOf("i2")).toBe(1);
   expect(row("i2")?.getAttribute("aria-label")).toMatch(/^Unread/);
 });
+
+test("<1024 a keyboard sweep through the rows fetches no task or agent; hover still warms a row", async () => {
+  await visit(800);
+  await waitFor(() => expect(row("i5")).not.toBeNull());
+  (row("i1") as HTMLElement).focus();
+  vi.useFakeTimers();
+  await act(async () => vi.advanceTimersByTime(500));
+  const start = api.calls.length;
+  const targetGets = () =>
+    api.calls
+      .slice(start)
+      .filter(
+        (c) => c.method === "GET" && (c.url === "/api/tasks/T-7" || c.url === "/api/agents/dev"),
+      );
+  for (let n = 0; n < 4; n++) {
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowDown", repeat: n > 0 });
+    await act(async () => vi.advanceTimersByTime(100));
+  }
+  expect(document.activeElement).toBe(row("i5"));
+  for (let n = 0; n < 4; n++) {
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "k", repeat: n > 0 });
+    await act(async () => vi.advanceTimersByTime(100));
+  }
+  expect(document.activeElement).toBe(row("i1"));
+  await act(async () => vi.advanceTimersByTime(500));
+  expect(targetGets()).toEqual([]);
+  fireEvent.mouseEnter(row("i3") as HTMLElement);
+  await act(async () => vi.advanceTimersByTime(50));
+  expect(targetGets().map((c) => c.url)).toEqual(["/api/tasks/T-7"]);
+});

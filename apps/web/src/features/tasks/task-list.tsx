@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
-import { onRowKeyDown } from "@/lib/row-nav";
+import { onRowKeyDown, skipFocusPreload } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
 import { shouldIgnore } from "@/lib/shortcuts";
 import { PREFETCH_REST_MS } from "@/lib/timing";
@@ -85,6 +85,7 @@ const Row = memo(function Row({
         search={{}}
         aria-label={label(t)}
         aria-current={selected ? "true" : undefined}
+        onFocus={skipFocusPreload}
         data-task-key={t.key}
         className="of-row grid min-h-14 grid-cols-[3.5rem_minmax(0,1fr)] content-center gap-x-3 gap-y-0.5 px-2 py-2 text-sm md:grid-cols-[3.5rem_minmax(0,1fr)_7rem_10rem]"
       >

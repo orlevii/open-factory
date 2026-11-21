@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import type { FocusEvent, KeyboardEvent } from "react";
 import { shouldIgnore } from "./shortcuts";
 
 const KEYS = ["ArrowDown", "ArrowUp", "Home", "End"];
@@ -21,4 +21,11 @@ export function onRowKeyDown(e: KeyboardEvent<HTMLElement>): HTMLElement | undef
   e.preventDefault();
   links[next]?.focus();
   return links[next];
+}
+
+/** A row link's `onFocus`: keeps its intent preload for hover only. Row navigation focuses row by
+ *  row, and a focus preload would run the target's loader for every row a sweep passes. The
+ *  router's Link skips its own focus handler when ours prevents the default (`composeHandlers`). */
+export function skipFocusPreload(e: FocusEvent<HTMLElement>) {
+  e.preventDefault();
 }

@@ -250,3 +250,29 @@ test("the shortcuts sheet says Space selects or peeks", async () => {
   const sheet = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
   expect(within(sheet).getByText("Select or peek row")).toBeInTheDocument();
 });
+
+test("a keyboard sweep down the list fetches no task; hover still warms a row", async () => {
+  await visit(1200);
+  (row("T-1") as HTMLElement).focus();
+  vi.useFakeTimers();
+  const start = api.calls.length;
+  const taskGets = () =>
+    api.calls.slice(start).filter((c) => c.method === "GET" && /^\/api\/tasks\/T-\d$/.test(c.url));
+  // A held j, then a held ↑ back up: focus passes every row (a slow key repeat, so each
+  // focus could finish its preload).
+  for (let n = 0; n < 5; n++) {
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j", repeat: n > 0 });
+    await act(async () => vi.advanceTimersByTime(100));
+  }
+  expect(document.activeElement).toBe(row("T-6"));
+  for (let n = 0; n < 5; n++) {
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowUp", repeat: n > 0 });
+    await act(async () => vi.advanceTimersByTime(100));
+  }
+  expect(document.activeElement).toBe(row("T-1"));
+  await act(async () => vi.advanceTimersByTime(500));
+  expect(taskGets()).toEqual([]);
+  fireEvent.mouseEnter(row("T-3") as HTMLElement);
+  await act(async () => vi.advanceTimersByTime(50));
+  expect(taskGets().map((c) => c.url)).toEqual(["/api/tasks/T-3"]);
+});

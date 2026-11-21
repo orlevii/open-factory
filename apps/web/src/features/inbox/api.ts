@@ -3,6 +3,7 @@ import {
   type inboxItemSchema,
   inboxPageSchema,
   readAllResponseSchema,
+  readFromResponseSchema,
   undoReadAllResponseSchema,
   unreadCountSchema,
 } from "@open-factory/shared";
@@ -14,6 +15,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
 import { z } from "zod";
 
 export type InboxItem = z.infer<typeof inboxItemSchema>;
@@ -51,13 +53,23 @@ export const homeInboxQueryOptions = queryOptions({
   select: (p: Page) => p.items,
 });
 
+export type Unread = { count: number; byAgent: Record<string, number> };
+
 export const unreadCountQueryOptions = queryOptions({
   queryKey: unreadQueryKey,
   queryFn: () => apiFetch("/api/inbox/unread-count", { schema: unreadCountSchema }),
-  select: (d: { count: number }) => d.count,
+  select: (d: Unread) => d.count,
 });
 /** The sidebar's count: refetched on `inbox_changed`, decremented optimistically when a row is opened. */
 export const useUnreadCount = () => useQuery(unreadCountQueryOptions);
+
+/** One agent's unread messages to the viewer; shares the cached count query, never mounts a fetch of its own. */
+export const useUnreadByAgent = (slug: string): number =>
+  useQuery({
+    ...unreadCountQueryOptions,
+    select: useCallback((d: Unread) => d.byAgent[slug] ?? 0, [slug]),
+    refetchOnMount: false,
+  }).data ?? 0;
 
 const okSchema = z.object({ ok: z.literal(true) });
 export const postRead = (id: string) =>
@@ -72,6 +84,12 @@ export const postReadAll = (upTo: string) =>
     body: { upTo },
     schema: readAllResponseSchema,
   });
+export const postReadFrom = (slug: string, upTo: string) =>
+  apiFetch(`/api/inbox/read-from/${encodeURIComponent(slug)}`, {
+    method: "POST",
+    body: { upTo },
+    schema: readFromResponseSchema,
+  });
 export const postUndoReadAll = (readAt: string) =>
   apiFetch("/api/inbox/read-all/undo", {
     method: "POST",
@@ -79,27 +97,56 @@ export const postUndoReadAll = (readAt: string) =>
     schema: undoReadAllResponseSchema,
   });
 
-/** Flips `read` for the given ids in every cached inbox view, and moves the unread count by `delta`. */
+const fromAgent = (i: InboxItem) =>
+  i.kind === "message" && i.from.kind === "agent" ? i.from.name : null;
+
+/** Flips `read` for the given ids in every cached inbox view, and moves the unread count by `delta`. With `items`,
+ *  each agent-sender's count moves too; without them `byAgent` is left for the refetch. */
 export function useInboxCache() {
   const qc = useQueryClient();
-  return {
-    setRead(ids: Set<string>, read: boolean, delta: number) {
-      const flip = (items: InboxItem[]) => items.map((i) => (ids.has(i.id) ? { ...i, read } : i));
+  return useMemo(() => {
+    const flipRows = (match: (i: InboxItem) => boolean, read: boolean) => {
+      const flip = (items: InboxItem[]) => items.map((i) => (match(i) ? { ...i, read } : i));
       qc.setQueryData<InfiniteData<Page>>(
         inboxQueryKey,
         (d) => d && { ...d, pages: d.pages.map((p) => ({ ...p, items: flip(p.items) })) },
       );
       qc.setQueryData<Page>(homeInboxQueryKey, (p) => p && { ...p, items: flip(p.items) });
-      qc.setQueryData<{ count: number }>(
-        unreadQueryKey,
-        (c) => c && { count: Math.max(0, c.count + delta) },
-      );
-    },
-    refetch() {
-      for (const key of [inboxQueryKey, unreadQueryKey, homeInboxQueryKey])
-        void qc.invalidateQueries({ queryKey: key });
-    },
-  };
+    };
+    return {
+      setRead(ids: Set<string>, read: boolean, delta: number, items?: InboxItem[]) {
+        flipRows((i) => ids.has(i.id), read);
+        const byAgent: Record<string, number> = {};
+        for (const i of items ?? []) {
+          const from = fromAgent(i);
+          if (from) byAgent[from] = (byAgent[from] ?? 0) + (read ? -1 : 1);
+        }
+        qc.setQueryData<Unread>(unreadQueryKey, (c) => {
+          if (!c) return c;
+          const next = { ...c.byAgent };
+          for (const [k, d] of Object.entries(byAgent)) next[k] = Math.max(0, (next[k] ?? 0) + d);
+          return { ...c, count: Math.max(0, c.count + delta), byAgent: next };
+        });
+      },
+      /** "Mark read" for one agent: its cached rows turn read and its count goes to zero. */
+      readFrom(slug: string) {
+        flipRows((i) => fromAgent(i) === slug, true);
+        qc.setQueryData<Unread>(
+          unreadQueryKey,
+          (c) =>
+            c && {
+              ...c,
+              count: Math.max(0, c.count - (c.byAgent[slug] ?? 0)),
+              byAgent: { ...c.byAgent, [slug]: 0 },
+            },
+        );
+      },
+      refetch() {
+        for (const key of [inboxQueryKey, unreadQueryKey, homeInboxQueryKey])
+          void qc.invalidateQueries({ queryKey: key });
+      },
+    };
+  }, [qc]);
 }
 
 /**
@@ -111,7 +158,7 @@ export function useOpenItem() {
   return (item: InboxItem) => {
     if (item.read) return;
     const ids = new Set([item.id]);
-    cache.setRead(ids, true, -1);
-    postRead(item.id).catch(() => cache.setRead(ids, false, +1));
+    cache.setRead(ids, true, -1, [item]);
+    postRead(item.id).catch(() => cache.setRead(ids, false, +1, [item]));
   };
 }

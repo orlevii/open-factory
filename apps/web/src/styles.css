@@ -33,6 +33,7 @@
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
+  --color-selected: var(--selected);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -104,6 +105,7 @@
   --muted: oklch(0.94 0.004 250);
   --muted-foreground: oklch(0.5 0.01 255); /* ≥5:1 on ground, muted and card */
   --accent: oklch(0.93 0.005 250); /* shadcn hover surface */
+  --selected: oklch(0.9 0.006 250); /* the current row of a list: one step past hover */
   --accent-foreground: oklch(0.2 0.008 255);
   --destructive: oklch(0.52 0.2 20); /* crimson, kept away from the signal hue; 5.6:1 */
   --border: oklch(0.89 0.005 250);
@@ -187,6 +189,7 @@
   --muted: oklch(0.26 0.008 255);
   --muted-foreground: oklch(0.72 0.008 250); /* ≥6.2:1 */
   --accent: oklch(0.285 0.008 255);
+  --selected: oklch(0.31 0.008 255);
   --accent-foreground: oklch(0.94 0.004 250);
   --destructive: oklch(0.7 0.16 15);
   --border: oklch(0.305 0.008 255);
@@ -551,6 +554,11 @@
     .of-row:hover {
       background: var(--accent);
     }
+  }
+  /* The current row keeps its selected surface under hover (hover would otherwise lighten it). */
+  .of-row[aria-current="true"],
+  .of-row[aria-current="true"]:hover {
+    background-color: var(--selected);
   }
   .of-row:active {
     background: color-mix(in oklch, var(--accent), var(--foreground) 6%);

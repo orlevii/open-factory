@@ -19,6 +19,15 @@ const GROUPS: { title: string; rows: { label: string; keys: string[] }[] }[] = [
       { label: "Keyboard shortcuts", keys: ["?"] },
     ],
   },
+  {
+    title: "Lists",
+    rows: [
+      { label: "Next row", keys: ["j"] },
+      { label: "Previous row", keys: ["k"] },
+      { label: "Open row", keys: ["Enter"] },
+      { label: "Select row", keys: ["Space"] },
+    ],
+  },
   { title: "Session", rows: [{ label: "Agent details", keys: ["]"] }] },
 ];
 

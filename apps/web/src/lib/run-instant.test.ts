@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { runInstant } from "./run-instant";
+import { runInstant, runInstantOn } from "./run-instant";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -35,4 +35,31 @@ test("a throwing fn still clears the flag and rethrows", () => {
   ).toThrow("boom");
   flush();
   expect(document.documentElement.dataset.instant).toBeUndefined();
+});
+
+test("runInstantOn marks only that element and clears it two frames later", () => {
+  const flush = manualFrames();
+  const a = document.createElement("div");
+  const b = document.createElement("div");
+  let during: string | undefined;
+  runInstantOn(a, () => {
+    during = a.dataset.instant;
+  });
+  expect(during).toBe("");
+  expect(b.dataset.instant).toBeUndefined();
+  expect(document.documentElement.dataset.instant).toBeUndefined();
+  flush();
+  expect(a.dataset.instant).toBeUndefined();
+});
+
+test("runInstantOn clears the flag even when fn throws", () => {
+  const flush = manualFrames();
+  const a = document.createElement("div");
+  expect(() =>
+    runInstantOn(a, () => {
+      throw new Error("x");
+    }),
+  ).toThrow("x");
+  flush();
+  expect(a.dataset.instant).toBeUndefined();
 });

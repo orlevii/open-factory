@@ -467,12 +467,12 @@ TDD per change; Vitest + Testing Library (jsdom) for web, the existing server te
 
 ## 14. Follow-up issues
 
-1. Timeline virtualization (break L7). Trigger: in the §2.7 recording on a 2,000-event session after H2 lands, any frame commit over 16ms on an `agent_status` or `session_event` frame, or visible scroll jank (frames over 16ms while scrolling). Below that, close the issue.
-2. Sidebar collapse: transform-based container if a recording on a 500-row session drops below 60fps (motion M3).
-3. Reconnect strip height animation (motion M4 second half; owned by no spec).
-4. Optimistic single-field saves: task status and assignee, inbox mark-read, schedule pause/resume, pin (emil H1 last bullet). Deferred because they touch every mutation and interact with R3's cancel-before-write (§10.3); one focused change (decision 14 allows deferral with a reason).
-5. Prose reading size 15/24 (taste T-M2), decided in U3 with the timeline tiers; the demoted heading sizes (17/15/14) are re-derived with it.
-6. Searchable pickers: replace the native timezone select (Q12) and the agent pickers (manager, assignee, agent filter: 200+ agents is a long Radix Select) with the cmdk combobox once U2 adds cmdk.
+1. (#78) Timeline virtualization (break L7). Trigger: in the §2.7 recording on a 2,000-event session after H2 lands, any frame commit over 16ms on an `agent_status` or `session_event` frame, or visible scroll jank (frames over 16ms while scrolling). Below that, close the issue.
+2. (#80) Sidebar collapse: transform-based container if a recording on a 500-row session drops below 60fps (motion M3).
+3. (#81) Reconnect strip height animation (motion M4 second half; owned by no spec).
+4. (#79) Optimistic single-field saves: task status and assignee, inbox mark-read, schedule pause/resume, pin (emil H1 last bullet). Deferred because they touch every mutation and interact with R3's cancel-before-write (§10.3); one focused change (decision 14 allows deferral with a reason).
+5. (#82) Prose reading size 15/24 (taste T-M2), decided in U3 with the timeline tiers; the demoted heading sizes (17/15/14) are re-derived with it.
+6. (#83) Searchable pickers: replace the native timezone select (Q12) and the agent pickers (manager, assignee, agent filter: 200+ agents is a long Radix Select) with the cmdk combobox once U2 adds cmdk.
 
 ## 15. Risks
 

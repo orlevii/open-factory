@@ -80,8 +80,8 @@ function usePaneItem(id: string, loaded: InboxItem | undefined) {
   if (loaded && loaded !== kept) setKept(loaded);
   const fetched = useQuery({ ...inboxItemOptions(id), enabled: !loaded });
   const gone = !loaded && fetched.error instanceof ApiError && fetched.error.status === 404;
-  const item =
-    loaded ?? (gone ? undefined : (fetched.data ?? (kept?.id === id ? kept : undefined)));
+  // `kept` is always this id's row: PaneItem is keyed by id.
+  const item = loaded ?? (gone ? undefined : (fetched.data ?? kept));
   return { item, gone, failed: !item && !gone && fetched.isError };
 }
 
@@ -108,7 +108,8 @@ function MessageContent({
   const slug = item.from.kind === "factory" && item.about ? item.about : link.agentSlug;
   const seq = slug === link.agentSlug ? link.seq : undefined;
   const qc = useQueryClient();
-  // Status frames patch this cache live, so stepping through one agent's items doesn't refetch it.
+  // agentDetailQueryOptions is always stale (the session page reloads it); here the app default is
+  // enough, as status frames patch this cache live: stepping through one agent's items fetches once.
   const detail = useQuery({
     ...agentDetailQueryOptions(slug),
     staleTime: 30_000,
@@ -183,6 +184,34 @@ function thread(activity: TaskActivity[], commentId: string | undefined): Commen
   const comments = activity.filter((a): a is Comment => a.type === "comment");
   const i = comments.findIndex((c) => c.id === commentId);
   return i < 0 ? [] : comments.slice(Math.max(0, i - 3), i + 1);
+}
+
+function MentionThread({
+  task,
+  commentId,
+  onReply,
+}: {
+  task: TaskDetail;
+  commentId: string | undefined;
+  onReply(mention: string): void;
+}) {
+  const comments = thread(task.activity, commentId);
+  if (comments.length === 0) return <p className={muted}>This comment no longer exists.</p>;
+  const now = new Date();
+  return (
+    <div className="grid gap-3">
+      {comments.map((c) => (
+        <CommentBlock
+          key={c.id}
+          taskKey={task.key}
+          comment={c}
+          now={now}
+          highlighted={c.id === commentId}
+          onReply={onReply}
+        />
+      ))}
+    </div>
+  );
 }
 
 /** The comment composer under a mention, keyed by task (its draft is the task's), prefilled with
@@ -273,18 +302,7 @@ function TaskContent({
           <div className="grid gap-4">
             <TaskHeader task={task} />
             {isMention ? (
-              <div className="grid gap-3">
-                {thread(task.activity, link.commentId).map((c) => (
-                  <CommentBlock
-                    key={c.id}
-                    taskKey={task.key}
-                    comment={c}
-                    now={new Date()}
-                    highlighted={c.id === link.commentId}
-                    onReply={onReply}
-                  />
-                ))}
-              </div>
+              <MentionThread task={task} commentId={link.commentId} onReply={onReply} />
             ) : (
               <TaskFact item={item} task={task} />
             )}

@@ -475,3 +475,25 @@ test("a half-typed comment reply survives switching items; a posted one is clear
   // Nothing left over: only the prefill comes back.
   await waitFor(() => expect(box()).toHaveValue("@ada "));
 }, 20_000);
+
+test("a mention whose comment is gone says so", async () => {
+  setup([mention(1, "c-gone", { kind: "agent", name: "ada" })]);
+  await visit("/inbox?item=i1");
+  expect(await within(pane()).findByText("This comment no longer exists.")).toBeInTheDocument();
+  expect(within(pane()).getByRole("heading", { name: "Seven" })).toBeInTheDocument();
+});
+
+test("moving on cancels the request for the item passed over", async () => {
+  setup([item(1), item(2, { link: { kind: "session", agentSlug: "dev", seq: 60 } })]);
+  // i1's excerpt never answers: it is still in flight when the selection moves on.
+  api.on("GET /api/agents/dev/events?around=42&limit=7", () => new Promise<Response>(() => {}));
+  const app = await visit("/inbox?item=i1");
+  const signalOf = (part: string) =>
+    (vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes(part))?.[1] as RequestInit)
+      ?.signal;
+  await waitFor(() => expect(signalOf("around=42")).toBeDefined());
+  expect(signalOf("around=42")?.aborted).toBe(false);
+  await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
+  await waitFor(() => expect(within(pane()).getByText("dev event 60")).toBeInTheDocument());
+  await waitFor(() => expect(signalOf("around=42")?.aborted).toBe(true));
+});

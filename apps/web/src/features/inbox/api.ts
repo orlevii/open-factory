@@ -65,10 +65,12 @@ export const EXCERPT_LIMIT = 7;
 export const excerptOptions = (slug: string, seq: number | undefined) =>
   queryOptions({
     queryKey: ["agent", slug, "excerpt", seq ?? "latest"] as const,
-    queryFn: () =>
+    // The signal: a j/k sweep's passed-over rows are cancelled once the pane moves on.
+    queryFn: ({ signal }) =>
       fetchEvents(
         slug,
         seq === undefined ? { limit: EXCERPT_LIMIT } : { around: seq, limit: EXCERPT_LIMIT },
+        signal,
       ),
   });
 

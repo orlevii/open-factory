@@ -55,7 +55,8 @@ beforeEach(() => {
   api = mockApi({
     "GET /api/inbox?": () => json({ items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 5, byAgent: {} }),
-    // The agents list loads once (sidebar, chips); unanswered, every new observer would retry it.
+    // The pane loads what it shows; unanswered (404), an errored query refetches for every new
+    // observer, which isn't what these tests are about.
     "GET /api/agents/dev": () => json(detail()),
     "GET /api/tasks/T-7": () =>
       json({
@@ -74,6 +75,7 @@ beforeEach(() => {
         activity: [],
         usage: null,
       }),
+    // The agents list loads once (sidebar, chips).
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   for (const i of items) api.on(`POST /api/inbox/${i.id}/read`, () => json({ ok: true }));

@@ -70,11 +70,13 @@ export function summaryFromAgentsList(qc: QueryClient, slug: string): AgentSumma
 export function fetchEvents(
   slug: string,
   q: { before?: number; around?: number; limit?: number } = {},
+  signal?: AbortSignal,
 ) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
   return apiFetch(`/api/agents/${encodeURIComponent(slug)}/events?${p}`, {
     schema: eventsPageSchema,
+    signal,
   });
 }
 

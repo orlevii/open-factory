@@ -3,8 +3,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
+import { CompactingError } from "../agents/errors.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -91,6 +92,16 @@ test("send, then read events back; interrupt 409 while idle, 202 with an open tu
   driver.last.emit(ev.turn());
   await rt?.settled();
   expect((await req("POST", "/api/agents/dev/interrupt")).statusCode).toBe(202);
+});
+
+test("interrupt during a compaction is 409 compacting", async () => {
+  const rt = await t.app.runtimes.bySlug("dev");
+  if (!rt) throw new Error("no runtime");
+  const spy = vi.spyOn(rt, "interrupt").mockRejectedValueOnce(new CompactingError());
+  const res = await req("POST", "/api/agents/dev/interrupt");
+  spy.mockRestore();
+  expect(res.statusCode).toBe(409);
+  expect(res.json().error).toEqual({ code: "compacting", message: "A compaction is running" });
 });
 
 test("history query edge cases", async () => {

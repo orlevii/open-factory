@@ -181,6 +181,16 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
   expect(el.querySelector("svg")).not.toHaveClass("text-destructive");
 });
 
+test("timeline: interrupt_unconfirmed is a warning quiet line", () => {
+  const { texts, els } = lines([{ type: "interrupt_unconfirmed" }]);
+  expect(texts).toEqual([
+    "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.",
+  ]);
+  const icon = (els[0] as HTMLElement).querySelector("svg");
+  expect(icon).toHaveClass("lucide-triangle-alert");
+  expect(icon).not.toHaveClass("text-destructive");
+});
+
 test("timeline: spawned-agent lifecycle lines without an agent link (human and TTL `by`)", () => {
   const { texts, els } = lines([
     { type: "process_started", resumed: false, reason: "spawned" },

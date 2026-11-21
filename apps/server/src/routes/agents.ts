@@ -22,6 +22,7 @@ import {
   AgentArchivedError,
   AgentStartError,
   AgentTerminatedError,
+  CompactingError,
   NoOpenTurnError,
   RecoveryRefusedError,
 } from "../agents/errors.ts";
@@ -297,6 +298,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           return err(reply, 409, "agent_terminated", e.message);
         if (e instanceof NoOpenTurnError)
           return err(reply, 409, "no_open_turn", "Nothing to interrupt");
+        if (e instanceof CompactingError) return err(reply, 409, "compacting", e.message);
         throw e;
       }
     },

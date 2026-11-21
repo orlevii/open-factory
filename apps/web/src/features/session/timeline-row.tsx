@@ -150,6 +150,8 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
       );
     case "mcp_unavailable":
       return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
+    case "interrupt_unconfirmed":
+      return "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.";
     default:
       return e.type;
   }
@@ -174,6 +176,7 @@ const WARN = new Set([
   "background_work_lost",
   "rate_limit_paused",
   "mcp_unavailable",
+  "interrupt_unconfirmed",
 ]);
 
 function quietIcon(e: AnyEvent): ReactNode {

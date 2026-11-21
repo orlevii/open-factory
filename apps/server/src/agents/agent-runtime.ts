@@ -46,6 +46,7 @@ import {
   AgentArchivedError,
   AgentStartError,
   AgentTerminatedError,
+  CompactingError,
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
@@ -644,23 +645,25 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Stop (U3 §6.3, D1): takes the same hold as an urgent send, so a message sent right after it waits for the
+   * interrupted turn's result instead of being absorbed by the aborting turn. A hold already set (a Stop or an urgent
+   * send under way) makes it a no-op; a compaction is never interrupted (409 `compacting`, D5).
+   */
   async interrupt(c: { byHandle: string }): Promise<void> {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (this.compactInFlight) throw new CompactingError();
+      if (this.hold) return;
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
-        await this.proc.control("interrupt");
+        await this.beginInterruptHold(`@${c.byHandle}`);
       } catch (err) {
         // The process is going away and its `exited` is not processed yet: there is nothing to interrupt (409).
         if (err instanceof ProcessNotRunningError) throw new NoOpenTurnError();
         throw err;
       }
-      await this.append(this.openTurnId, {
-        type: "control",
-        cmd: "interrupt",
-        by: `@${c.byHandle}`,
-      });
     });
   }
 
@@ -1595,6 +1598,7 @@ export class AgentRuntime {
             err instanceof AgentArchivedError ||
             err instanceof AgentTerminatedError ||
             err instanceof NoOpenTurnError ||
+            err instanceof CompactingError ||
             err instanceof RecoveryRefusedError
           ) &&
           this.proc
@@ -1640,6 +1644,8 @@ export class AgentRuntime {
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
           ...queueScheduleOf(e.row),
+          // U3 §6.3: a Stop (or urgent send) is waiting for the interrupted turn's result.
+          ...(this.hold ? { waitReason: "stopping" as const } : {}),
         }
       : {
           id: e.id,
@@ -3160,39 +3166,58 @@ export class AgentRuntime {
     // waits behind the barrier instead)
     if (!this.proc || !this.openTurnId || this.hold || this.compactInFlight) return;
     try {
-      await this.proc.control("interrupt");
+      await this.beginInterruptHold(by);
     } catch (err) {
       // The process is going away: skip the interrupt and the hold. The message stays queued and the coming
       // `exited` cleans up; this is not an internal error.
       if (err instanceof ProcessNotRunningError) return;
       throw err;
     }
+  }
+
+  /**
+   * U3 §6.3 (D1): the interrupt shared by Stop and an urgent send. Writes the control, sets the hold with its fallback,
+   * appends the `control{interrupt}` event and publishes the queue, all in the caller's job, so a `turn_end` can't
+   * slip in between. The callers check the guards (a process, an open turn, no hold, no compaction). A rejected
+   * control write (`ProcessNotRunningError`) sets no hold and is rethrown for the caller to map.
+   */
+  private async beginInterruptHold(by: string): Promise<void> {
+    if (!this.proc) return;
+    await this.proc.control("interrupt");
     const hold = setTimeout(() => {
       this.d.log.warn(
         { agent: this.agent.slug },
-        "no result within the urgent hold timeout; sending anyway",
+        "no result within the interrupt hold timeout; sending anyway",
       );
       void this.run(async () => {
         if (this.hold !== hold) return; // already released (turn_end or exited); never release a newer hold
         this.releaseHold();
         try {
+          await this.append(this.openTurnId, { type: "interrupt_unconfirmed" });
           await this.flush();
           this.maybeRestart();
         } catch (err) {
           if (this.proc) await this.onJobFailure(this.proc, err);
           else
-            this.d.log.error({ err, agent: this.agent.slug }, "flush after the urgent hold failed");
+            this.d.log.error(
+              { err, agent: this.agent.slug },
+              "flush after the interrupt hold failed",
+            );
         }
         this.publishStatus();
       });
     }, this.d.holdTimeoutMs ?? 10_000);
     this.hold = hold;
     await this.append(this.openTurnId, { type: "control", cmd: "interrupt", by });
+    this.publishQueue(); // queued items now read "stopping"
   }
 
+  /** Ends the interrupt hold; the queue is republished so its items stop reading "stopping" (U3 §6.3). */
   private releaseHold() {
-    if (this.hold) clearTimeout(this.hold);
+    if (!this.hold) return;
+    clearTimeout(this.hold);
     this.hold = undefined;
+    this.publishQueue();
   }
 
   /**

@@ -69,6 +69,15 @@ export class NoOpenTurnError extends Error {
   }
 }
 
+/** U3 §6.1 (D5): a compaction is running, and the runtime never interrupts one; the route answers 409 `compacting`. */
+export class CompactingError extends Error {
+  readonly code = "compacting";
+  constructor() {
+    super("A compaction is running");
+    this.name = "CompactingError";
+  }
+}
+
 /** An inbox cursor that doesn't decode to `created_at|id` (spec §11); the route answers 400. */
 export class InvalidCursorError extends Error {
   constructor() {

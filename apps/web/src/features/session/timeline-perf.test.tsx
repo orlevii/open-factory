@@ -73,7 +73,9 @@ vi.mock("./api", async (orig) => ({
 }));
 
 let commits = 0;
+let harnessRenders = 0;
 function Harness() {
+  harnessRenders++;
   const s = useSession("dev");
   return (
     // A "nested-update" is a newly mounted Radix menu settling in a layout effect, not a second frame.
@@ -119,6 +121,7 @@ const reset = () => {
   count.rows.clear();
   count.markdown = 0;
   commits = 0;
+  harnessRenders = 0;
 };
 const frame = () =>
   act(() => {
@@ -221,6 +224,7 @@ test("ten frames in one task commit once", async () => {
   expect(commits).toBe(0);
   frame();
   expect(commits).toBe(1);
+  expect(harnessRenders).toBe(1); // a layout-effect setState would add a render here
   expect(count.rows.size).toBe(10);
   expect(count.markdown).toBe(10);
 });

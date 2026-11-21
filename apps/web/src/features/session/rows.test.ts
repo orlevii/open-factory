@@ -417,6 +417,55 @@ test("a later result, denial or truncated replaces the tool row but keeps its un
     expect(now.children).toHaveLength(2);
     for (const [i, c] of was.children.entries()) expect(now.children[i]).toBe(c);
   }
+  // The replaced rows carry the new fields, not the old ones.
+  const withEv = (ev: SessionEvent) => toolRow(stabilizeRows(prev, buildRows([...base, ev]))[0]);
+  expect(withEv(later[0] as SessionEvent).result).toBe(later[0]?.event);
+  expect(withEv(later[1] as SessionEvent).denial).toBe(later[1]?.event);
+  const t = withEv(later[2] as SessionEvent);
+  expect(t.result).toBe(later[2]?.event);
+  expect(t.truncated).toEqual({ "result.content": 3 });
+});
+
+test("rows whose content really changed are never reused", () => {
+  seq = 0;
+  // A spawn row whose turn closes after the first build.
+  const spawn = e({
+    type: "tool_call",
+    toolUseId: "s1",
+    name: "mcp__factory__spawn_agent",
+    input: { template: "tech-lead", description: "d", prompt: "Brief" },
+  });
+  const open = buildRows([spawn]);
+  const closed = buildRows([spawn, e({ type: "turn_end", isError: false, numTurns: 1 })]);
+  expect(open[0]).toMatchObject({ kind: "spawn", turnOpen: true });
+  expect(closed[0]).toMatchObject({ kind: "spawn", turnOpen: false });
+  expect(stabilizeRows(open, closed)[0]).not.toBe(open[0]);
+  expect(stabilizeRows(open, closed)[0]).toMatchObject({ turnOpen: false });
+
+  // A tool row going running -> no_result.
+  const call = e({ type: "tool_call", toolUseId: "b", name: "Bash", input: {} });
+  const running = buildRows([call]);
+  const gone = buildRows([call, e({ type: "turn_end", isError: false, numTurns: 1 })]);
+  expect(toolRow(running[0]).state).toBe("running");
+  expect(toolRow(gone[0]).state).toBe("no_result");
+  expect(stabilizeRows(running, gone)[0]).not.toBe(running[0]);
+  expect(stabilizeRows(running, gone)[0]).toMatchObject({ state: "no_result" });
+
+  // An update_group gaining an envelope.
+  const env = (id: string) => ({
+    id,
+    from: "@a",
+    kind: "member_update" as const,
+    urgent: false,
+    body: id,
+  });
+  const one = e({ type: "message_in", messages: [env("u1")] } as never, null);
+  const two = { ...one, event: { ...one.event, messages: [env("u1"), env("u2")] } } as SessionEvent;
+  const before = buildRows([one]);
+  const after = buildRows([two]);
+  const grown = stabilizeRows(before, after)[0];
+  expect(grown).not.toBe(before[0]);
+  expect(grown).toMatchObject({ envelopes: [{ id: "u1" }, { id: "u2" }] });
 });
 
 test("stableSet keeps the previous set when the contents are equal", () => {

@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
 import { sessionQueryOptions } from "@/lib/session";
+import { TurnActivity } from "./activity-line";
 import {
   AGENT_DETAILS_ID,
   AGENT_DETAILS_TOGGLE_ID,
@@ -120,7 +121,6 @@ export function SessionView({
       </>
     );
   if (!agent) return null; // nothing cached and the route's fetch failed: useSession's answer or error follows
-  const working = agent.status === "working";
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";
   const errored = agent.status === "errored";
@@ -254,21 +254,15 @@ export function SessionView({
                     {archived ? "No messages yet." : "No messages yet. Send the first one below."}
                   </p>
                 )}
-                <QueueItems items={s.state.queue} agent={agent} />
-                {working && (
-                  <p
-                    data-working-line
-                    className="flex h-6 items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="inline-flex size-3 items-center justify-center"
-                    >
-                      <span className="of-tooth" />
-                    </span>
-                    Working
-                  </p>
+                {/* Time order under the last row: now, then next (U3 §5.2). */}
+                {agent.turnOpen && !s.state.windowed && (
+                  <TurnActivity
+                    open={s.open}
+                    startedAt={agent.turnStartedAt}
+                    turnKey={String(s.state.turnEpoch)}
+                  />
                 )}
+                <QueueItems items={s.state.queue} agent={agent} />
               </>
             }
           />

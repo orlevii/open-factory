@@ -95,11 +95,35 @@ test("subscribes from the newest seq and appends live events", async () => {
   expect(await screen.findByText("Live text")).toBeInTheDocument();
 });
 
-test("working status shows the working line; a status frame removes it", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
+test("an open turn shows the activity line under the last row, above the queue; a status frame removes it", async () => {
+  routes["/api/agents/dev"] = () =>
+    json(
+      detail({ status: "working", turnOpen: true }, [
+        {
+          id: "q1",
+          kind: "message",
+          body: "next up",
+          urgent: false,
+          from: "@or",
+          createdAt: "2026-11-18T10:00:00.000Z",
+        },
+      ]),
+    );
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  expect(document.querySelector("[data-working-line]")).toBeInTheDocument();
+  const line = document.querySelector("[data-activity-line]");
+  expect(line).toBeInTheDocument();
+  expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument();
+  const rows = document.querySelectorAll("[data-row-wrap]");
+  const lastRow = rows[rows.length - 1] as Element;
+  const queued = screen.getByText("next up");
+  // Time order: now, then next.
+  expect(
+    lastRow.compareDocumentPosition(line as Element) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    (line as Element).compareDocumentPosition(queued) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
@@ -111,8 +135,22 @@ test("working status shows the working line; a status frame removes it", async (
     }),
   );
   await vi.waitFor(() =>
-    expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument(),
+    expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument(),
   );
+});
+
+test("no activity line while no turn is open, or in a windowed view", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: false }));
+  const first = renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
+  first.unmount();
+  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
+  routes["/api/agents/dev/events?around=5"] = () =>
+    json({ ...conversation(), hasMore: { before: true, after: true } });
+  renderApp("/agents/dev?event=5", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
 });
 
 test("deep link loads a window around the event and highlights it", async () => {

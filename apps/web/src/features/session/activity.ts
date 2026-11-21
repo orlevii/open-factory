@@ -1,0 +1,90 @@
+import type { OpenTurnRows, ToolRow } from "./rows";
+
+/** What the agent is doing now (U3 §5.1): data only; `ActivityLine` formats it. */
+export type ActivityKind =
+  | "tool_input"
+  | "tool"
+  | "subagent"
+  | "subagents"
+  | "thinking"
+  | "text"
+  | "working";
+export type Activity = { kind: ActivityKind; tool?: string; target?: string; more?: number };
+
+/** The live state's parts the activity reads (PR4's `LiveState` satisfies it; PR1 passes nothing). */
+export type ActivityLive = {
+  toolInput?: { name: string; target?: string };
+  thinking?: { tokens: number };
+  texts: readonly unknown[];
+};
+
+export const WORKING: Activity = { kind: "working" };
+
+const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
+const SEARCH_TOOLS = new Set(["Grep", "Glob"]);
+
+const firstLine = (s: string) => s.split("\n", 1)[0]?.trim() || undefined;
+const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1) || undefined;
+
+/** The short target of a tool call, shared by the open tool and PR4's live tool input: Bash's
+ *  `description` else the command's first line, a file tool's file name, a search's pattern, and an
+ *  MCP tool's "server · tool". Undefined when the tool has none of these. */
+export function formatTarget(tool: string, input: unknown): string | undefined {
+  if (tool.startsWith("mcp__")) {
+    const [server, ...rest] = tool.slice(5).split("__");
+    return rest.length > 0 ? `${server} · ${rest.join("__")}` : server;
+  }
+  const i = (input ?? {}) as Record<string, unknown>;
+  const str = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : undefined);
+  if (tool === "Bash") {
+    const d = str("description");
+    return (d && firstLine(d)) ?? firstLine(str("command") ?? "");
+  }
+  if (FILE_TOOLS.has(tool)) {
+    const p = str("file_path") ?? str("notebook_path") ?? str("path");
+    return p ? baseName(p) : undefined;
+  }
+  if (SEARCH_TOOLS.has(tool)) return firstLine(str("pattern") ?? "");
+  return undefined;
+}
+
+const subagentName = (r: ToolRow) => {
+  const d = (r.call.input as Record<string, unknown> | null)?.description;
+  return typeof d === "string" && d.trim() ? firstLine(d) : r.call.name;
+};
+
+/** The first that applies: live tool input, open subagents, the newest open tool, thinking, live
+ *  text, else "Working" (U3 §5.1). */
+export function deriveActivity(
+  open: OpenTurnRows | undefined,
+  live: ActivityLive | undefined,
+): Activity {
+  if (live?.toolInput) {
+    const { name, target } = live.toolInput;
+    return target === undefined
+      ? { kind: "tool_input", tool: name }
+      : { kind: "tool_input", tool: name, target };
+  }
+  const subs = open?.openSubagents ?? [];
+  const newest = subs.at(-1);
+  if (newest) {
+    const target = subagentName(newest);
+    return subs.length === 1
+      ? { kind: "subagent", target }
+      : { kind: "subagents", target, more: subs.length - 1 };
+  }
+  const tool = open?.newestOpenTool;
+  if (tool) {
+    const target = formatTarget(tool.call.name, tool.call.input);
+    return target === undefined
+      ? { kind: "tool", tool: tool.call.name }
+      : { kind: "tool", tool: tool.call.name, target };
+  }
+  if (live?.thinking) return { kind: "thinking" };
+  if (live && live.texts.length > 0) return { kind: "text" };
+  return WORKING;
+}
+
+/** A primitive per distinct activity, for memo and hold keys. */
+export const activityKey = (a: Activity) =>
+  `${a.kind}:${a.tool ?? ""}:${a.target ?? ""}:${a.more ?? ""}`;

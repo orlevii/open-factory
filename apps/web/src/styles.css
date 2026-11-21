@@ -283,6 +283,15 @@
   clip-path: polygon(0 28.83%, 100% 0, 100% 100%, 0 100%);
 }
 
+/* Live arrival (U3 §5.2, §8.3): the activity line fades in once when it mounts. `@starting-style`
+   applies on insertion only, so a re-render never replays it; reduced motion keeps the fade. */
+[data-activity-line] {
+  transition: opacity 150ms var(--ease-out);
+  @starting-style {
+    opacity: 0;
+  }
+}
+
 @keyframes of-ignite {
   0% {
     clip-path: inset(0 100% 0 0);

@@ -122,7 +122,7 @@ test("timeline: hibernated, process_started reasons (nothing after session_reset
   expect(crash.querySelector("details")).not.toBeNull();
   expect(crash.querySelector("details")?.open).toBe(false);
   expect(within(crash).getByText("Stopped unexpectedly")).toHaveClass("text-foreground");
-  expect(crash.querySelector("svg")).toHaveClass("text-destructive");
+  expect(crash.querySelector("svg:not(.lucide-chevron-right)")).toHaveClass("text-destructive");
   expect(within(els[11] as HTMLElement).getByText("open-factory-base:dev")).toHaveClass(
     "font-mono",
   );

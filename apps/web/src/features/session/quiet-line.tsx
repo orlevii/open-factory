@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 const LINE =
@@ -28,8 +29,12 @@ export function QuietLine({
       </p>
     );
   return (
-    <details>
+    <details className="group">
       <summary {...rowProps} className={`${LINE} cursor-pointer list-none`}>
+        <ChevronRight
+          aria-hidden="true"
+          className="size-3.5 shrink-0 transition-transform duration-150 ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
+        />
         {content}
       </summary>
       <CodePlate>{detail}</CodePlate>

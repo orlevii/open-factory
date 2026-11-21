@@ -7,18 +7,19 @@ import { LoadingMark, Wordmark } from "@/components/wordmark";
 /** Router pending screen: only the mark, its roofline lighting up left to right. Shown only
  *  after defaultPendingMs, so fast loads never flash it. */
 export function AppPending() {
+  const shell = useShell() !== null;
   const status = (
     <div
       role="status"
       aria-live="polite"
-      className="is-loading fixed inset-0 flex items-center justify-center bg-background text-foreground"
+      className={`is-loading ${shell ? "absolute" : "fixed"} inset-0 flex animate-in items-center justify-center bg-background text-foreground duration-150 ease-(--ease-out) fade-in-0`}
     >
       <LoadingMark className="size-8" />
       <span className="sr-only">Loading…</span>
     </div>
   );
   // At the root (first load) there is no shell, so the page still needs its one <main>.
-  return useShell() ? status : <main>{status}</main>;
+  return shell ? status : <main>{status}</main>;
 }
 
 function usePageTitle(title: string) {

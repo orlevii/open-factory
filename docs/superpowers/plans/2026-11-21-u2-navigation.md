@@ -207,6 +207,8 @@ Implements §15.3. Builds on `AgentService.summarize` (`apps/server/src/agents/a
 - Modify: `packages/shared/src/templates.ts` (detail `avatar: { version: string|null; tooLarge: boolean }`)
 - Test: `apps/server/src/templates/avatar.test.ts`, `apps/server/src/routes/templates.test.ts`, `apps/server/src/agents/agent-service.test.ts`
 
+**Owner change (symlinks):** `avatarStat` and the route reject symlinks and swaps. `lstat` the path: require `isFile()` and `!isSymbolicLink()`; require `realpath(file)` to start with `realpath(templateDir) + path.sep`; open with `fs.promises.open(file, constants.O_RDONLY | constants.O_NOFOLLOW)` and `fstat` the handle (regular file, size ≤ 256 KB) before reading from that same handle, so the file can't be swapped between check and read. Any failure counts as absent: the route answers 404 and `avatarVersion` is null. Export `readAvatar(dir): Promise<{ version: string; body: Buffer } | null>` for the route.
+
 - [ ] **Step 1: Failing tests**
 
 ```ts
@@ -219,6 +221,18 @@ test("version from mtime and size; null when missing, too large or not a file", 
   await writeFile(path.join(dir, "avatar.svg"), "x".repeat(256 * 1024 + 1));
   expect(await avatarStat(dir)).toEqual({ version: null, tooLarge: true });
 });
+test("a symlinked avatar.svg is absent, even when it points inside the folder", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "tpl-"));
+  await writeFile(path.join(dir, "real.svg"), "<svg/>");
+  await symlink(path.join(dir, "real.svg"), path.join(dir, "avatar.svg"));
+  expect((await avatarStat(dir)).version).toBeNull();
+  expect(await readAvatar(dir)).toBeNull();
+  const outside = await mkdtemp(path.join(tmpdir(), "out-"));
+  await writeFile(path.join(outside, "x.svg"), "<svg/>");
+  await rm(path.join(dir, "avatar.svg"));
+  await symlink(path.join(outside, "x.svg"), path.join(dir, "avatar.svg"));
+  expect((await avatarStat(dir)).version).toBeNull();
+});
 // templates.test.ts
 test("avatar route: headers, 404 when absent, 400 invalid name, 404 unknown", async () => {
   // write <templatesDir>/dev/avatar.svg in the test app's factory home
@@ -229,13 +243,14 @@ test("avatar route: headers, 404 when absent, 400 invalid name, 404 unknown", as
   expect(r.headers.etag).toBeDefined();
   expect((await get("/api/templates/nope/avatar.svg")).statusCode).toBe(404);
   expect((await get("/api/templates/..%2Fx/avatar.svg")).statusCode).toBe(400);
+  // replace dev/avatar.svg with a symlink → 404, and the agent list reports avatarVersion null
 });
 // agent-service.test.ts
 test("summaries carry the template avatarVersion", async () => { /* seed agent of template with avatar.svg; list; expect avatarVersion string; delete file; list; null */ });
 ```
 
 - [ ] **Step 2:** Run the three files → FAIL.
-- [ ] **Step 3:** Implement. Route: `scanOne(name)` → 404 if undefined; `avatarStat(row.path)`; 404 if no version; `reply.header(...)` the four headers + `Cache-Control: private, max-age=31536000, immutable` + `ETag: "<version>"`; send `await readFile(...)`.
+- [ ] **Step 3:** Implement. Route: `scanOne(name)` → 404 if undefined; `readAvatar(row.path)`; 404 if null; `reply.header(...)` the four headers + `Cache-Control: private, max-age=31536000, immutable` + `ETag: "<version>"`; send the `body` read from the `O_NOFOLLOW` handle.
 - [ ] **Step 4:** Run → PASS.
 - [ ] **Step 5:** Commit `feat(server): template avatar.svg with locked-down headers and avatarVersion on agents`.
 
@@ -679,7 +694,7 @@ Implements DESIGN.md §16.1 (`avatar-ink`, `sidebar.width` 256px, Layout "256px 
 - [ ] **Step 2:** Edit the behavior docs in the main checkout (`/Users/orlevi/projects/open-factory/docs/product/behavior/general.md`, `inbox.md`) with the PR1 parts of spec §17. Not committed (gitignored); copy the edited sentences into the PR body.
 - [ ] **Step 3:** Verify: `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. All green.
 - [ ] **Step 4:** Manual evidence (spec §2.13, PR1 rows), recorded in the PR body with screenshots: the 214-agent break-ui dataset (`/Users/orlevi/.claude/jobs/7530b76c/tmp/break-ui/seed-worst.mjs` against a clone DB) in the sidebar: scroll, expand, a status storm under 4× CPU throttling (Performance recording; if a frame over 16ms is attributable to the tree, comment the recording on #91, else close #91 with it); a collapsed manager at depth 4 with working and unread counts; the `content-visibility: auto` experiment and the per-`Link` router subscription cost (Task 12 review note); an active working row; the rail with 214 agents; avatars at 16/20/24 in both themes with the 16-row contrast table from Task 5; a template `avatar.svg` override.
-- [ ] **Step 5:** Push and open the PR: `git push -u origin u2/1-sidebar-agents && gh pr create --base u1/5-perceived-speed --title "feat: agent avatars and agents in the sidebar" --body-file <body>` following `.github/pull_request_template.md` (What, Why, Approach "<decision>, rather than <alternative>, because <reason>", Changes by area; template comments removed), linking the spec and #89, listing the behavior-doc edits, and noting "Stacked on #88; retarget to main after the U1 stack merges." End the body with the Claude Code attribution line.
+- [ ] **Step 5:** Push and open the PR: `git push -u origin u2/1-sidebar-agents && gh pr create --base u1/5-perceived-speed --title "feat: agent avatars and agents in the sidebar" --body-file <body>` following `.github/pull_request_template.md` (What, Why, Approach "<decision>, rather than <alternative>, because <reason>", Changes by area; template comments removed), linking the spec and #89, listing the behavior-doc edits, and noting "Stacked on #88; retarget to main after the U1 stack merges." Add a **Needs Or** section: Q34 — viewing a session marks that agent's unread messages read (switch: don't call read-from; row counts stay until read in the Inbox); Q32 — the working count drawn as tooth + number (switch: render "N working" text); Q4 — spawned avatars at full opacity (switch: `opacity-85` on ephemeral agents). End the body with the Claude Code attribution line.
 
 ---
 
@@ -893,7 +908,7 @@ Implements DESIGN.md §16.1 `panel`, §16.3 Agent details, §16.6 (peek row and 
 - [ ] **Step 2:** Edit `/Users/orlevi/projects/open-factory/docs/product/behavior/agents-and-sessions.md` per §17 (PR2); copy the edits into the PR body.
 - [ ] **Step 3:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 4:** Manual evidence (§2.13 PR2 rows): the panel at 767/768/1023/1024/1279/1280 with a running agent (Stop reachable, toggle visible); the header at 1280 with an 80-character name, errored, panel open; a 500-row timeline with the sidebar collapse and the panel toggle (Performance recording of the anchoring frames).
-- [ ] **Step 5:** Push and `gh pr create --base u2/1-sidebar-agents` with the template, spec and #89 links, behavior-doc edits, and "Stacked on PR1; retarget after it merges".
+- [ ] **Step 5:** Push and `gh pr create --base u2/1-sidebar-agents` with the template, spec and #89 links, behavior-doc edits, "Stacked on PR1; retarget after it merges", and a **Needs Or** section: "None in this PR."
 
 ---
 
@@ -985,7 +1000,7 @@ Implements DESIGN.md §16.3 Sub-navigation [PR3], §16.8 [PR3]; behavior docs §
 - [ ] **Step 2:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 3:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 4:** Manual: Settings at 320 and at 800 with the sidebar open (select form), each section, old bookmarks.
-- [ ] **Step 5:** Push and `gh pr create --base u2/2-agent-details` (template, spec, #89, docs, stacked note).
+- [ ] **Step 5:** Push and `gh pr create --base u2/2-agent-details` (template, spec, #89, docs, stacked note; a **Needs Or** section: "None in this PR.").
 
 ---
 
@@ -1042,6 +1057,7 @@ test("popover width at least 24rem, side locked while open, list height fixed (h
 test("keyboard-opened popover is stamped data-instant", async () => {});
 ```
 
+- [ ] **Step 1b: Inspect the lockfile diff** (`git diff pnpm-lock.yaml`): cmdk's `@radix-ui/react-dialog`, `react-id`, `react-primitive`, `react-compose-refs` must resolve to the versions already in the `radix-ui@1.8.1` tree (no second Dialog stack; `pnpm why @radix-ui/react-dialog` shows one version); no new package needs a build script; `allowBuilds` in `pnpm-workspace.yaml` is unchanged. If a second Radix copy appears and `pnpm dedupe` can't remove it, record it (package, both versions, why) in the PR4 body (Task 38).
 - [ ] **Step 2:** FAIL. **Step 3:** Implement: `Popover` + `PopoverTrigger asChild` (Button styled like `SelectTrigger`) + `PopoverContent className="w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] p-0" align="start" avoidCollisions={!open-latched}` (lock: record `side` on first `onOpenAutoFocus` via the content's `data-side` and pass `side` + `avoidCollisions={false}` afterwards); `<Command filter={custom that returns 1 for fixed}>` with `CommandInput`, `CommandList className="h-72"`; no `--cmdk-list-height` transition. **Step 4:** PASS. **Step 5:** Commit `feat(web): searchable Combobox on cmdk`.
 
 ### Task 33: Web: `AgentCombobox` and the assigning pickers
@@ -1151,7 +1167,7 @@ Implements DESIGN.md [PR4] clauses of §16.5, §16.6, §16.7, §16.8; behavior d
 - [ ] **Step 2:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 3:** `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 4:** Record the build chunk-size delta from cmdk (before/after `pnpm build`) in the PR body. Manual: palette at 390 and 1440 (no animation, keys from the composer), comboboxes with 214 agents and the time zone list, a combobox inside a sheet.
-- [ ] **Step 5:** Push and `gh pr create --base u2/3-settings-usage`; body says "Closes #83" plus template, spec, #89, docs, stacked note.
+- [ ] **Step 5:** Push and `gh pr create --base u2/3-settings-usage`; body says "Closes #83" plus template, spec, #89, docs, stacked note, and a **Needs Or** section: "None in this PR."
 
 ---
 
@@ -1298,7 +1314,7 @@ Implements DESIGN.md [PR5] clauses of §16.1, §16.3, §16.5, §16.6, §16.8, pl
 - [ ] **Step 2:** DESIGN.md [PR5] text; commit `docs: DESIGN.md reading pane, peeks and selected rows`.
 - [ ] **Step 3:** Behavior docs in the main checkout; list them in the PR body.
 - [ ] **Step 4:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`; manual: the inbox pane at 1023/1024 with an 11 KB single-line message (composer stays visible), the task peek at 1024 and 1440, `steel-selected` in both themes next to hover (tune the two values; screenshots).
-- [ ] **Step 5:** Push and `gh pr create --base u2/4-palette` (template, spec, #89, docs, stacked note).
+- [ ] **Step 5:** Push and `gh pr create --base u2/4-palette` (template, spec, #89, docs, stacked note; a **Needs Or** section: "None in this PR.").
 
 ---
 
@@ -1368,7 +1384,7 @@ Implements behavior docs §17 `administration.md` Images, `inbox.md` Home senten
 - [ ] **Step 1:** Behavior docs in the main checkout; list them in the PR body. (No DESIGN.md text in PR6.)
 - [ ] **Step 2:** `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 - [ ] **Step 3:** Manual: Home with the stress data (caps), Templates and Images at 320, a streaming build log.
-- [ ] **Step 4:** Push and `gh pr create --base u2/5-inbox-pane` (template, spec, #89, docs, stacked note). Mention Q17's alternative (drop Home → `/inbox`) as a one-line switch in the PR body.
+- [ ] **Step 4:** Push and `gh pr create --base u2/5-inbox-pane` (template, spec, #89, docs, stacked note; a **Needs Or** section: "None in this PR."). Add a **Needs Or** section: Q17 — Home redesign vs landing on Inbox (switch: `/` redirects to `/inbox` and `routes/_app/index.tsx` is deleted).
 
 ### Task 52: Whole-stack review (on PR6's branch)
 

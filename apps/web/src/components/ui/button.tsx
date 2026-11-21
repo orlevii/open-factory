@@ -4,18 +4,18 @@ import { cn } from "cn"
 import { Slot } from "radix-ui"
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,scale] duration-150 ease-(--ease-out) select-none active:not-aria-[haspopup]:scale-[0.98] disabled:pointer-events-none disabled:bg-card disabled:border-border disabled:text-muted-foreground aria-disabled:not-aria-busy:cursor-not-allowed aria-disabled:not-aria-busy:bg-card aria-disabled:not-aria-busy:border-border aria-disabled:not-aria-busy:text-muted-foreground aria-disabled:not-aria-busy:hover:bg-card aria-disabled:active:scale-100 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,scale] duration-150 ease-(--ease-out) select-none active:not-aria-[haspopup]:scale-[0.98] disabled:pointer-events-none disabled:text-muted-foreground aria-disabled:not-aria-busy:cursor-not-allowed aria-disabled:not-aria-busy:text-muted-foreground aria-disabled:not-aria-busy:hover:text-muted-foreground aria-disabled:active:scale-100 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        default: "bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-card disabled:border-border aria-disabled:not-aria-busy:bg-card aria-disabled:not-aria-busy:border-border aria-disabled:not-aria-busy:hover:bg-card",
         outline:
-          "border-border bg-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted dark:border-border dark:bg-card dark:hover:bg-muted",
+          "border-border bg-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted dark:border-border dark:bg-card dark:hover:bg-muted disabled:bg-card disabled:border-border aria-disabled:not-aria-busy:bg-card aria-disabled:not-aria-busy:border-border aria-disabled:not-aria-busy:hover:bg-card dark:aria-disabled:not-aria-busy:hover:bg-card",
         ghost:
-          "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+          "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 disabled:bg-transparent aria-disabled:not-aria-busy:bg-transparent aria-disabled:not-aria-busy:hover:bg-transparent dark:aria-disabled:not-aria-busy:hover:bg-transparent",
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30",
-        link: "text-primary underline-offset-4 hover:underline",
+          "bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 disabled:bg-card disabled:border-border aria-disabled:not-aria-busy:bg-card aria-disabled:not-aria-busy:border-border aria-disabled:not-aria-busy:hover:bg-card dark:disabled:bg-card dark:aria-disabled:not-aria-busy:bg-card dark:aria-disabled:not-aria-busy:hover:bg-card",
+        link: "text-primary underline-offset-4 hover:underline aria-disabled:not-aria-busy:hover:no-underline",
       },
       size: {
         default:

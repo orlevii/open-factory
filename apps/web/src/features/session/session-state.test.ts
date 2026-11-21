@@ -627,6 +627,20 @@ test("the cancelled line is the same whichever of the DELETE response and the qu
   ).toEqual(["a", "x:b", "c"]);
 });
 
+test("cancelled lines keep their place when an earlier queue entry leaves, and after an Undo", () => {
+  let s = withQueue(["compact", "m1", "m2", "m3"]);
+  s = sessionReducer(s, { type: "cancel", id: "m2" });
+  s = sessionReducer(s, { type: "cancel", id: "m1" });
+  expect(view(s)).toEqual(["compact", "x:m1", "x:m2", "m3"]);
+  // The compaction starts: its entry leaves the front of the queue.
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["m3"]) });
+  expect(view(s)).toEqual(["x:m1", "x:m2", "m3"]);
+  // Undo of m1 brings it back where it was: m2's line stays after it.
+  s = sessionReducer(s, { type: "restored", id: "m1" });
+  s = sessionReducer(s, { type: "frame", message: queueFrame(["m1", "m3"]) });
+  expect(view(s)).toEqual(["m1", "x:m2", "m3"]);
+});
+
 test("a failed cancel rolls back: the item is back with the reason under it", () => {
   let s = sessionReducer(withQueue(["a", "b"]), { type: "cancel", id: "b" });
   s = sessionReducer(s, { type: "cancel_failed", id: "b", error: "Already delivered" });

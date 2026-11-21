@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
+import { ROW_GUTTER } from "./timeline-item";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "setInterval"] });
@@ -264,4 +265,56 @@ test("a failed restore moves focus from Undo to the error line", async () => {
   rerender(ui({ ...entry, error: "This agent has ended." }));
   const errorLine = within(screen.getByRole("alert")).getByText(/Couldn't undo/).parentElement;
   await vi.waitFor(() => expect(errorLine).toHaveFocus());
+});
+
+test("queued, Sending and cancelled blocks keep the rows' right gutter, so a handoff never jumps", () => {
+  render(
+    <QueueItems
+      items={[msg({ id: "a", body: "queued" })]}
+      sending={[{ clientMessageId: "c1", body: "sending", urgent: false }]}
+      cancelled={new Map([["b", { item: msg({ id: "b" }), index: 1 }]])}
+      agent={agentSummary()}
+      self="alice"
+      onUndo={() => {}}
+    />,
+  );
+  const wrap = (el: Element | null) => el?.closest(".pt-3");
+  expect(wrap(screen.getByText("queued"))).toHaveClass(ROW_GUTTER);
+  expect(wrap(screen.getByText("sending"))).toHaveClass(ROW_GUTTER);
+  expect(wrap(screen.getByText("Message cancelled."))).toHaveClass(ROW_GUTTER);
+});
+
+test("after a successful Undo focus goes to the restored message's Cancel, else the composer", async () => {
+  vi.useRealTimers();
+  const b = msg({ id: "b", body: "restored" });
+  const composer = document.createElement("form");
+  composer.id = "composer";
+  composer.append(document.createElement("textarea"));
+  document.body.append(composer);
+  try {
+    const ui = (items: never[], cancelled: Map<string, unknown>) => (
+      <QueueItems
+        items={items}
+        cancelled={cancelled as never}
+        agent={agentSummary()}
+        self="alice"
+        onCancel={() => {}}
+        onUndo={() => {}}
+      />
+    );
+    const { rerender } = render(ui([], new Map([["b", { item: b, index: 0 }]])));
+    screen.getByRole("button", { name: "Undo" }).focus();
+    rerender(ui([], new Map([["b", { item: b, index: 0, restored: true }]])));
+    // The queue frame brings it back and the line goes.
+    rerender(ui([b], new Map()));
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    await vi.waitFor(() => expect(cancel).toHaveFocus());
+    // A line that goes with nothing to land on hands focus to the composer.
+    rerender(ui([], new Map([["b", { item: b, index: 0 }]])));
+    screen.getByRole("button", { name: "Undo" }).focus();
+    rerender(ui([], new Map()));
+    await vi.waitFor(() => expect(composer.querySelector("textarea")).toHaveFocus());
+  } finally {
+    composer.remove();
+  }
 });

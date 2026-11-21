@@ -8,12 +8,15 @@ import type {
 } from "@open-factory/shared";
 import { speechCount } from "./rows";
 
-/** A held message you cancelled (U3 §6.4): the line "Message cancelled. Undo" shows at `index` among
+/** A held message you cancelled (U3 §6.4): the line "Message cancelled. Undo" shows in its place among
  *  the queue items until your next send. */
 export interface CancelledEntry {
   item: QueueItem;
-  /** Its place among the visible queue items when it was cancelled. */
+  /** Its place among the visible queue items when it was cancelled (orders lines that tie below). */
   index: number;
+  /** The queue entries ahead of it when it was cancelled (hidden ones too): the line goes after those
+   *  still shown, so an earlier entry leaving or an Undo coming back never moves it. */
+  after?: readonly string[];
   /** A failed cancel (`rolledBack`) or a failed restore: why, shown in place of Undo. */
   error?: string;
   /** Cancel moved the text into the empty composer box. */
@@ -150,29 +153,39 @@ export function queueView(
   cancelled: ReadonlyMap<string, CancelledEntry>,
 ): QueueViewEntry[] {
   const items: QueueViewEntry[] = [];
+  const shown = new Set<string>();
   for (const item of queue) {
     const c = cancelled.get(item.id);
     if (hides(c)) continue;
     items.push(c?.error ? { kind: "item", item, error: c.error } : { kind: "item", item });
+    shown.add(item.id);
   }
   if (cancelled.size === 0) return items;
   const listed = new Set(queue.map((q) => q.id));
+  // A line's place now: how many of the entries that were ahead of it are still shown.
+  const place = (c: CancelledEntry) => {
+    if (!c.after) return c.index;
+    let n = 0;
+    for (const id of c.after) if (shown.has(id)) n++;
+    return n;
+  };
   const lines = [...cancelled]
     .filter(([id, c]) => (c.rolledBack ? c.error !== undefined && !listed.has(id) : !c.dismissed))
-    .sort(([, a], [, b]) => a.index - b.index);
+    .map(([id, c]) => ({ id, c, at: place(c) }))
+    .sort((a, b) => a.at - b.at || a.c.index - b.c.index);
   const out: QueueViewEntry[] = [];
   let l = 0;
-  for (const [i, entry] of items.entries()) {
-    for (; l < lines.length && (lines[l]?.[1].index ?? 0) <= i; l++) {
-      const [id, c] = lines[l] as [string, CancelledEntry];
+  const flushLines = (upTo: number) => {
+    for (; l < lines.length && (lines[l]?.at ?? 0) <= upTo; l++) {
+      const { id, c } = lines[l] as (typeof lines)[number];
       out.push({ kind: "cancelled", id, entry: c });
     }
+  };
+  for (const [i, entry] of items.entries()) {
+    flushLines(i);
     out.push(entry);
   }
-  for (; l < lines.length; l++) {
-    const [id, c] = lines[l] as [string, CancelledEntry];
-    out.push({ kind: "cancelled", id, entry: c });
-  }
+  flushLines(Number.POSITIVE_INFINITY);
   return out;
 }
 
@@ -404,8 +417,10 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       const index = visible.findIndex((q) => q.id === a.id);
       const item = visible[index];
       if (!item) return s;
+      const at = s.queue.findIndex((q) => q.id === a.id);
+      const after = s.queue.slice(0, Math.max(0, at)).map((q) => q.id);
       const cancelled = new Map(s.cancelled);
-      cancelled.set(a.id, { item, index, ...(a.inBox ? { inBox: true } : {}) });
+      cancelled.set(a.id, { item, index, after, ...(a.inBox ? { inBox: true } : {}) });
       return { ...s, cancelled };
     }
     case "cancel_failed":

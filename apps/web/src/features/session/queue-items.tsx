@@ -1,14 +1,16 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { Clock } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { TaskBadge } from "@/features/tasks/task-badge";
+import { focusComposer } from "./composer";
 import { formatResetTime } from "./format";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
 import { type CancelledEntry, NO_CANCELLED, queueView, type SendingBlock } from "./session-state";
 import { resetPhrase } from "./status-badge";
+import { ROW_GUTTER } from "./timeline-item";
 
 /** Why queued messages aren't out yet (S5 UI design §3.6), or the error that holds them. */
 function heldReason(agent: AgentSummary): string | undefined {
@@ -152,7 +154,13 @@ export function QueueItems({
                 }
                 action={
                   onCancel && cancellable(q, self) ? (
-                    <Button type="button" variant="ghost" size="xs" onClick={() => onCancel(q)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      data-cancel-for={q.id}
+                      onClick={() => onCancel(q)}
+                    >
                       Cancel
                     </Button>
                   ) : undefined
@@ -221,7 +229,7 @@ function OutgoingMessage({
     const t = setTimeout(() => setGrown(true), Math.max(0, sentAt + YOUNG_ITEM_MS - Date.now()));
     return () => clearTimeout(t);
   }, [sending, grown, sentAt]);
-  return <div className="pt-3">{children(!grown, sending && slow)}</div>;
+  return <div className={`pt-3 ${ROW_GUTTER}`}>{children(!grown, sending && slow)}</div>;
 }
 
 /** "Message cancelled. Undo" in the message's place; after a failed Undo it says why, without Undo
@@ -238,8 +246,22 @@ function CancelledLine({
   onUndo?: (id: string, entry: CancelledEntry) => void;
 }) {
   const failed = entry.error !== undefined;
+  // The line going under the focus (Undo brought the message back, or a rollback did): focus lands on
+  // that message's Cancel, else the composer, never <body>. The cleanup runs before the node is removed.
+  const wrap = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    return () => {
+      if (!el?.contains(document.activeElement)) return;
+      requestAnimationFrame(() => {
+        const cancel = document.querySelector<HTMLElement>(`[data-cancel-for="${CSS.escape(id)}"]`);
+        if (cancel) cancel.focus();
+        else focusComposer();
+      });
+    };
+  }, [id]);
   return (
-    <div className="pt-3">
+    <div ref={wrap} className={`pt-3 ${ROW_GUTTER}`}>
       <InlineOutcome
         tone={failed ? "error" : "success"}
         undo={failed || entry.restored || !onUndo ? undefined : () => onUndo(id, entry)}

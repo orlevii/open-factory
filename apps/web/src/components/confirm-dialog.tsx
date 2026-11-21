@@ -1,5 +1,4 @@
 import { ApiError } from "@open-factory/shared";
-import { Loader2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   AlertDialog,
@@ -11,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ui/spinner";
 
 /** For destructive, irreversible actions only. The action is named in the title and on the button. */
 export function ConfirmDialog({
@@ -87,7 +87,7 @@ export function ConfirmDialog({
             aria-disabled={pending || undefined}
             onClick={confirm}
           >
-            {pending && <Loader2 aria-hidden="true" className="animate-spin" />}
+            {pending && <Spinner />}
             {pending && pendingLabel ? pendingLabel : confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

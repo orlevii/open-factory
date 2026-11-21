@@ -5,7 +5,6 @@ import {
   patchFactorySettingsSchema,
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ErrorLine } from "@/components/error-line";
@@ -13,6 +12,7 @@ import { FieldShell } from "@/components/field-shell";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { runningQueryOptions } from "@/features/session/api";
 import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 import { factorySettingsQueryOptions, patchFactorySettings } from "./api";
@@ -228,7 +228,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <Button type="submit" aria-disabled={pending || undefined}>
-            {pending && <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />}
+            {pending && <Spinner />}
             Save
           </Button>
           <InlineOutcome

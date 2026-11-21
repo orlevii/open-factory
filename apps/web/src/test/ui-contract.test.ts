@@ -72,3 +72,18 @@ describe("focus ring", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("loading", () => {
+  test("only spinner.tsx spins", () => {
+    const offenders = sourceFiles()
+      .filter((f) => !f.endsWith("components/ui/spinner.tsx"))
+      .filter((f) => readFileSync(f, "utf8").includes("animate-spin"))
+      .map((f) => f.replace(SRC, ""));
+    expect(offenders).toEqual([]);
+  });
+  test("skeletons are static", () => {
+    expect(readFileSync(join(SRC, "components/ui/skeleton.tsx"), "utf8")).not.toContain(
+      "animate-pulse",
+    );
+  });
+});

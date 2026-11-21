@@ -7,7 +7,7 @@ import {
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
-import { Loader2, Trash2, UserPlus } from "lucide-react";
+import { Trash2, UserPlus } from "lucide-react";
 import {
   memo,
   type ReactNode,
@@ -24,6 +24,7 @@ import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
 import {
@@ -464,10 +465,10 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                           className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => canSave && save$()}
                         >
-                          {outcome?.tone === "pending" && outcome.kind === "saving" && (
-                            <Loader2 aria-hidden="true" className="animate-spin" />
-                          )}
-                          Save
+                          {outcome?.tone === "pending" && outcome.kind === "saving" && <Spinner />}
+                          {outcome?.tone === "pending" && outcome.kind === "saving"
+                            ? "Saving…"
+                            : "Save"}
                         </Button>
                       </div>
                     </div>
@@ -626,7 +627,7 @@ function Status({ outcome }: { outcome?: Outcome }) {
     <div aria-live="polite" className="min-h-[1.125rem]">
       {outcome?.tone === "pending" && (
         <p className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+          <Spinner size="text" />
           {outcome.text}
         </p>
       )}

@@ -1,6 +1,7 @@
-import { CircleAlert, CircleCheck, Loader2 } from "lucide-react";
+import { CircleAlert, CircleCheck } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 /**
  * The outcome of an action, next to the action. Both live regions are always mounted
@@ -46,12 +47,7 @@ export function InlineOutcome({
       {tone === "error" && (
         <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
       )}
-      {tone === "pending" && (
-        <Loader2
-          aria-hidden="true"
-          className="size-3.5 shrink-0 text-muted-foreground motion-safe:animate-spin"
-        />
-      )}
+      {tone === "pending" && <Spinner size="text" className="shrink-0 text-muted-foreground" />}
       <span
         className={`min-w-0 ${tone === "error" ? "text-destructive" : "text-muted-foreground"}`}
       >

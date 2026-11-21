@@ -1,6 +1,6 @@
 import { ApiError, type InviteItem, type UserAdminItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleSlash, Loader2, Plus } from "lucide-react";
+import { CircleSlash, Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import { formatDay } from "@/features/session/format";
 import {
   createInvite,
@@ -395,15 +396,7 @@ export function UsersSection() {
           aria-disabled={creating || undefined}
           onClick={() => void create()}
         >
-          {creating ? (
-            <Loader2
-              aria-hidden="true"
-              data-icon="inline-start"
-              className="motion-safe:animate-spin"
-            />
-          ) : (
-            <Plus aria-hidden="true" data-icon="inline-start" />
-          )}
+          {creating ? <Spinner /> : <Plus aria-hidden="true" data-icon="inline-start" />}
           Create invite link
         </Button>
       </div>

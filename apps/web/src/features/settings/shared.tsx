@@ -1,6 +1,6 @@
 import type { CredentialKind } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { Ellipsis, Loader2 } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import {
   type ComponentProps,
   type FormEvent,
@@ -10,6 +10,7 @@ import {
   useRef,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
@@ -281,7 +282,7 @@ export function InlineForm({
         </div>
         <div className="flex items-center gap-2">
           <Button type="submit" size="lg" aria-disabled={pending || undefined}>
-            {pending && <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />}
+            {pending && <Spinner />}
             {pending ? pendingLabel : submitLabel}
           </Button>
           <Button

@@ -3,6 +3,19 @@ import { childrenOf } from "./display-passes";
 
 type Ev<T extends AnyEvent["type"]> = Extract<AnyEvent, { type: T }>;
 export type ToolState = "running" | "done" | "failed" | "no_result";
+/** A background task on its call row (U3 §9.5). "stopped": killed, or the process exited first.
+ *  Primitives only, so the shallow stabilization compares it. */
+export type BackgroundTask = {
+  taskId: string;
+  state: "running" | "finished" | "failed" | "stopped";
+  summary?: string;
+};
+const taskState = (status: string): BackgroundTask["state"] =>
+  status === "failed"
+    ? "failed"
+    : status === "stopped" || status === "killed"
+      ? "stopped"
+      : "finished";
 /** A factory tool call shown as its own block or line, paired with its result by `toolUseId`. */
 type FactoryCall = {
   seq: number;
@@ -60,6 +73,8 @@ export type Row =
       state: ToolState;
       /** A `permission_denied` for this call (UI design §4.4): it renders inside the call's row. */
       denial?: Ev<"permission_denied">;
+      /** The background task this call started (U3 §9.5): its lines render on this row instead. */
+      backgroundTask?: BackgroundTask;
       children: Row[];
       key: string;
     }
@@ -240,6 +255,8 @@ const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurnRows | undefined } {
   const { ended, lastExitSeq, lastTurnStartSeq } = endedTurns(events);
   const tools = new Map<string, ToolRow>();
+  // Running background tasks attached to their call rows, by task id (U3 §9.5).
+  const tasks = new Map<string, ToolRow>();
   const outgoing = new Map<string, FactoryRow>();
   const top: Row[] = [];
   const place = (row: Row, parent?: string) => {
@@ -264,8 +281,34 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
       usage = undefined;
     } else if (e.type === "tool_call") calls++;
     else if (e.type === "usage") usage = e;
+    if (e.type === "exited") {
+      // Background tasks die with the process: one with no finish by now stopped.
+      for (const call of tasks.values())
+        if (call.backgroundTask) call.backgroundTask = { ...call.backgroundTask, state: "stopped" };
+      tasks.clear();
+    }
     if (HIDDEN.has(e.type) || silent(e, top.at(-1))) continue;
     switch (e.type) {
+      case "background_task_started": {
+        const call = e.toolUseId ? tools.get(e.toolUseId) : undefined;
+        if (!call) {
+          top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
+          break;
+        }
+        call.backgroundTask = { taskId: e.taskId, state: "running" };
+        tasks.set(e.taskId, call);
+        break;
+      }
+      case "background_task_finished": {
+        const call = tasks.get(e.taskId);
+        if (!call) {
+          top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
+          break;
+        }
+        call.backgroundTask = { taskId: e.taskId, state: taskState(e.status), summary: e.summary };
+        tasks.delete(e.taskId);
+        break;
+      }
       case "message_in": {
         const rows = messageRows(se, e.messages);
         if (rows.some((r) => r.kind === "message")) headPending = true;

@@ -70,4 +70,24 @@ function BashBody({ row }: { row: ToolRow }) {
   );
 }
 
-export const bashRenderer = { Summary: BashSummary, Body: BashBody };
+const TASK_CHIP = {
+  running: "In background",
+  finished: "Finished",
+  failed: "Failed",
+  stopped: "Stopped",
+} as const;
+
+/** A background command's chip lives on its own call row (U3 §9.5). */
+const taskChip = (row: ToolRow) =>
+  row.backgroundTask ? TASK_CHIP[row.backgroundTask.state] : undefined;
+
+/** Its summary goes on the detail line once it finished or failed. */
+const taskDetail = (row: ToolRow) =>
+  row.backgroundTask?.state === "running" ? undefined : row.backgroundTask?.summary;
+
+export const bashRenderer = {
+  Summary: BashSummary,
+  Body: BashBody,
+  chip: taskChip,
+  detail: taskDetail,
+};

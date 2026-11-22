@@ -193,3 +193,33 @@ test("Show input anchors itself through the timeline's toggle rule (aria-expande
     "false",
   );
 });
+
+const withTask = (task: NonNullable<ToolRow["backgroundTask"]>): ToolRow => ({
+  ...bashRow({ command: "make watch" }, { content: "Running in background" }),
+  backgroundTask: task,
+});
+
+test("a background task: 'In background' on the call row's chip, no detail yet", () => {
+  render(<Harness row={withTask({ taskId: "b", state: "running" })} />);
+  expect(toggle()).toHaveTextContent(/^\$ make watchIn background$/);
+  expect(screen.queryByText("Build ok")).toBeNull();
+});
+
+test("a finished or failed background task: the chip, and the summary on the detail line", () => {
+  const { unmount } = render(
+    <Harness row={withTask({ taskId: "b", state: "finished", summary: "Build ok" })} />,
+  );
+  expect(within(toggle()).getByText("Finished")).toHaveClass("shrink-0");
+  const detail = screen.getByText("Build ok");
+  expect(toggle()).not.toContainElement(detail);
+  expect(detail).toHaveClass("line-clamp-2");
+  unmount();
+  render(<Harness row={withTask({ taskId: "b", state: "failed", summary: "Exit 2" })} />);
+  expect(within(toggle()).getByText("Failed")).toBeInTheDocument();
+  expect(screen.getByText("Exit 2")).toBeInTheDocument();
+});
+
+test("a background task the process took down: 'Stopped'", () => {
+  render(<Harness row={withTask({ taskId: "b", state: "stopped" })} />);
+  expect(within(toggle()).getByText("Stopped")).toBeInTheDocument();
+});

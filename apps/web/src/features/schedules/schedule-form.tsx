@@ -21,6 +21,7 @@ import { FieldShell } from "@/components/field-shell";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
+import { mergeServer } from "@/features/sheets/merge-server";
 import { agentOptionLabel, useAssignableAgents } from "@/features/tasks/agent-picker";
 import type { CreateScheduleBody, PatchScheduleBody } from "./api";
 import { browserZone } from "./format";
@@ -52,18 +53,6 @@ export function valuesOf(s: ScheduleItem): FormValues {
     zone: s.timezone,
     body: s.body,
   };
-}
-
-/** A refreshed schedule's values: a field the user changed (differs from the previous base) is kept, the rest follow the server. */
-export function mergeServer(
-  prev: FormValues,
-  prevBase: FormValues,
-  server: FormValues,
-): FormValues {
-  const out = { ...prev };
-  for (const k of Object.keys(server) as (keyof FormValues)[])
-    if (prev[k] === prevBase[k]) out[k] = server[k] as never;
-  return out;
 }
 
 /**

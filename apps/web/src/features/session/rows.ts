@@ -16,6 +16,11 @@ const taskState = (status: string): BackgroundTask["state"] =>
     : status === "stopped" || status === "killed"
       ? "stopped"
       : "finished";
+/** Where a subagent stands (U3 §12): "background" for an auto-backgrounded call until its
+ *  `background_task_finished`; "stopped" when the process exited first, or, for a foreground call,
+ *  when its turn ended with no result. */
+export type SubagentState = "running" | "done" | "failed" | "background" | "stopped";
+
 /** A factory tool call shown as its own block or line, paired with its result by `toolUseId`. */
 type FactoryCall = {
   seq: number;
@@ -60,6 +65,11 @@ export type Row =
       /** Opens a speaker line (U3 §7.2): the first text of its turn, or the first after a message row
        *  in the same turn. Never on a subagent's children. */
       head: boolean;
+      /** Cut at 64 KiB (U3 §11.2): the persisted row's `truncated.text`, or a live block's `capped`. */
+      capped?: boolean;
+      /** A streaming block from `state.live` (U3 §11.4), built by `Timeline`, never by `buildRows`: it
+       *  shares its key (`t:<messageId>:<blockIndex>`) with the persisted row that retires it. */
+      live?: true;
     }
   | {
       kind: "tool";
@@ -79,6 +89,39 @@ export type Row =
       backgroundTask?: BackgroundTask;
       children: Row[];
       key: string;
+    }
+  /** An `Agent`/`Task` call (U3 §12), rendered as a subagent card; its transcript is `children`. The
+   *  persisted figures are flat primitives, so the shallow stabilization compares them. */
+  | {
+      kind: "subagent";
+      seq: number;
+      at: string;
+      resultAt?: string;
+      call: Ev<"tool_call">;
+      result?: Ev<"tool_result">;
+      truncated?: Record<string, number>;
+      denial?: Ev<"permission_denied">;
+      state: SubagentState;
+      /** Auto-backgrounded (meta `Agent{async}`, or a background task it started): its state and
+       *  result come only from `background_task_finished`, never the launch notice. */
+      async: boolean;
+      /** The finished background task's summary: an async subagent's result. */
+      summary?: string;
+      /** From Agent meta or `background_task_finished.usage`; absent when neither says. */
+      toolUses?: number;
+      tokens?: number;
+      durationMs?: number;
+      children: Row[];
+      key: string;
+    }
+  /** The 4th and later consecutive subagents (U3 §12, Q40), keyed by the 4th; its first child is a
+   *  copy under the inner key. `running` counts running and backgrounded children. */
+  | {
+      kind: "subagent_overflow";
+      seq: number;
+      key: string;
+      children: SubagentRow[];
+      running: number;
     }
   | { kind: "orphan_result"; seq: number; result: Ev<"tool_result">; key: string }
   | { kind: "compaction"; seq: number; event: Ev<"compacted">; key: string }
@@ -126,7 +169,7 @@ export type Row =
     };
 
 /** The open turn's rows, from the events after the newest `turn_started` (U3 §5.1). */
-export type OpenTurnRows = { newestOpenTool?: ToolRow; openSubagents: ToolRow[] };
+export type OpenTurnRows = { newestOpenTool?: ToolRow; openSubagents: SubagentRow[] };
 
 // `rate_limited` renders nothing from S5 on: `rate_limit_paused` is the one line for that moment.
 const HIDDEN = new Set([
@@ -237,6 +280,9 @@ function factoryKind(e: Ev<"tool_call">): "outgoing" | "spawn" | "terminate" | u
 }
 
 export type ToolRow = Extract<Row, { kind: "tool" }>;
+export type SubagentRow = Extract<Row, { kind: "subagent" }>;
+/** Rows that hold a call's nested rows (a subagent's transcript) and pair with its result. */
+type CallRow = ToolRow | SubagentRow;
 type FactoryRow = Extract<Row, { kind: "outgoing" | "spawn" | "terminate" }>;
 
 /** Consecutive `member_update` envelopes about one agent become one group; peer events and
@@ -259,12 +305,23 @@ function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
 
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
-export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurnRows | undefined } {
+/** The key a text block renders under (U3 §11.4): the live block and the persisted row that retires
+ *  it share it, so React keeps the element (same DOM, selection and focus) at the handoff. */
+export const textRowKey = (messageId: string, blockIndex: number) => `t:${messageId}:${blockIndex}`;
+
+export function buildRows(events: SessionEvent[]): {
+  rows: Row[];
+  open: OpenTurnRows | undefined;
+  /** The next top-level text would open a speaker line: what a live block's `head` is (U3 §7.2). */
+  textHead: boolean;
+} {
   const { ended, lastExitSeq, lastTurnStartSeq } = endedTurns(events);
-  const tools = new Map<string, ToolRow>();
+  const tools = new Map<string, CallRow>();
   // Running background tasks attached to their call rows, by task id (U3 §9.5).
-  const tasks = new Map<string, ToolRow>();
+  const tasks = new Map<string, CallRow>();
   let stopAsked = false;
+  // Subagents running in the background (U3 §12): an exit before their finish stops them.
+  const backgrounded = new Set<SubagentRow>();
   const outgoing = new Map<string, FactoryRow>();
   const top: Row[] = [];
   const place = (row: Row, parent?: string) => {
@@ -279,8 +336,11 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
   // The next top-level text heads a speaker line; `headTurn` is the turn of the last one placed.
   let headPending = true;
   let headTurn: string | null | undefined;
+  // The newest turn id seen: the turn a live text block belongs to (for `textHead`).
+  let lastTurn: string | null | undefined;
   for (const se of events) {
     const e = se.event;
+    if (se.turnId !== null) lastTurn = se.turnId;
     if (e.type === "turn_started" || e.type === "turn_end") headPending = true;
     if (e.type === "turn_started") {
       started = true;
@@ -295,7 +355,10 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
     if (e.type === "exited") {
       // Background tasks die with the process: one with no finish by now stopped.
       for (const call of tasks.values())
-        if (call.backgroundTask) call.backgroundTask = { ...call.backgroundTask, state: "stopped" };
+        if (call.kind === "tool" && call.backgroundTask)
+          call.backgroundTask = { ...call.backgroundTask, state: "stopped" };
+      for (const sub of backgrounded) sub.state = "stopped";
+      backgrounded.clear();
       tasks.clear();
     }
     if (HIDDEN.has(e.type) || silent(e, top.at(-1))) continue;
@@ -306,7 +369,14 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
           top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
           break;
         }
-        call.backgroundTask = { taskId: e.taskId, state: "running" };
+        if (call.kind === "subagent") {
+          call.async = true;
+          // "stopped" too: an ended turn marks its open calls stopped, but a backgrounded subagent
+          // outlives its turn; only an exit with no finish (below, in event order) stops it (U3 §12).
+          if (call.state === "running" || call.state === "done" || call.state === "stopped")
+            call.state = "background";
+          backgrounded.add(call);
+        } else call.backgroundTask = { taskId: e.taskId, state: "running" };
         tasks.set(e.taskId, call);
         break;
       }
@@ -316,7 +386,22 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
           top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
           break;
         }
-        call.backgroundTask = { taskId: e.taskId, state: taskState(e.status), summary: e.summary };
+        if (call.kind === "subagent") {
+          const st = taskState(e.status);
+          call.state = st === "finished" ? "done" : st;
+          call.summary = e.summary;
+          if (e.usage) {
+            call.toolUses = e.usage.toolUses;
+            call.tokens = e.usage.tokens;
+            call.durationMs = e.usage.durationMs;
+          }
+          backgrounded.delete(call);
+        } else
+          call.backgroundTask = {
+            taskId: e.taskId,
+            state: taskState(e.status),
+            summary: e.summary,
+          };
         tasks.delete(e.taskId);
         break;
       }
@@ -333,8 +418,20 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
           headPending = false;
           headTurn = se.turnId;
         }
+        const key =
+          e.messageId !== undefined && e.blockIndex !== undefined
+            ? textRowKey(e.messageId, e.blockIndex)
+            : `${se.seq}`;
         place(
-          { kind: "text", seq: se.seq, at: se.at, text: e.text, key: `${se.seq}`, head },
+          {
+            kind: "text",
+            seq: se.seq,
+            at: se.at,
+            text: e.text,
+            key,
+            head,
+            ...(se.truncated?.text !== undefined ? { capped: true } : {}),
+          },
           e.parentToolUseId,
         );
         break;
@@ -356,6 +453,22 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
           };
           outgoing.set(e.toolUseId, out);
           place(out, e.parentToolUseId);
+          break;
+        }
+        if (SUBAGENT_TOOLS.has(e.name)) {
+          const sub: SubagentRow = {
+            kind: "subagent",
+            seq: se.seq,
+            at: se.at,
+            call: e,
+            state: turnOver ? "stopped" : "running",
+            async: false,
+            children: [],
+            key: `${se.seq}`,
+            ...(se.truncated ? { truncated: se.truncated } : {}),
+          };
+          tools.set(e.toolUseId, sub);
+          place(sub, e.parentToolUseId);
           break;
         }
         const row: ToolRow = {
@@ -388,8 +501,24 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
         }
         call.result = e;
         call.resultAt = se.at;
-        call.state = e.isError ? "failed" : "done";
-        if (e.isError && stopAsked) call.interrupted = true;
+        if (call.kind === "subagent") {
+          const meta = e.meta?.tool === "Agent" ? e.meta : undefined;
+          if (meta?.async || call.async) {
+            // The launch notice: the card stays in the background until the task finishes.
+            call.async = true;
+            // Lifted from "stopped" too: the main turn ending never stops a backgrounded subagent.
+            if (call.state === "running" || call.state === "stopped") call.state = "background";
+            backgrounded.add(call);
+          } else {
+            call.state = e.isError ? "failed" : "done";
+          }
+          if (meta?.toolUses !== undefined) call.toolUses = meta.toolUses;
+          if (meta?.tokens !== undefined) call.tokens = meta.tokens;
+          if (meta?.durationMs !== undefined) call.durationMs = meta.durationMs;
+        } else {
+          call.state = e.isError ? "failed" : "done";
+          if (e.isError && stopAsked) call.interrupted = true;
+        }
         if (se.truncated)
           call.truncated = {
             ...call.truncated,
@@ -439,14 +568,17 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
         top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
     }
   }
-  if (!hasOpenStart) return { rows: top, open: undefined };
+  // The persisted rule (`head` above) applied to the open turn, so a live block and the row that
+  // retires it agree and no speaker line appears or goes at the handoff.
+  const textHead = headPending || (lastTurn !== undefined && lastTurn !== headTurn);
+  if (!hasOpenStart) return { rows: top, open: undefined, textHead };
   const open: OpenTurnRows = { openSubagents: [] };
   for (const row of tools.values()) {
     if (row.seq <= lastTurnStartSeq || row.state !== "running") continue;
-    if (SUBAGENT_TOOLS.has(row.call.name)) open.openSubagents.push(row);
+    if (row.kind === "subagent") open.openSubagents.push(row);
     else if (!open.newestOpenTool || row.seq > open.newestOpenTool.seq) open.newestOpenTool = row;
   }
-  return { rows: top, open };
+  return { rows: top, open, textHead };
 }
 
 /** `open` rebuilt over the stabilized rows (by key), and the previous object when nothing changed, so
@@ -457,15 +589,15 @@ export function stabilizeOpen(
   rows: readonly Row[],
 ): OpenTurnRows | undefined {
   if (!open) return undefined;
-  const byKey = new Map<string, ToolRow>();
+  const byKey = new Map<string, CallRow>();
   const walk = (list: readonly Row[]) => {
     for (const r of list) {
-      if (r.kind === "tool") byKey.set(r.key, r);
+      if (r.kind === "tool" || r.kind === "subagent") byKey.set(r.key, r);
       walk(childrenOf(r));
     }
   };
   walk(rows);
-  const pick = (r: ToolRow) => byKey.get(r.key) ?? r;
+  const pick = <R extends CallRow>(r: R) => (byKey.get(r.key) as R | undefined) ?? r;
   const next: OpenTurnRows = {
     ...(open.newestOpenTool ? { newestOpenTool: pick(open.newestOpenTool) } : {}),
     openSubagents: open.openSubagents.map(pick),

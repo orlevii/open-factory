@@ -10,7 +10,8 @@
       "!**/*.md",
       "!**/routeTree.gen.ts",
       "!packages/db/migrations/meta",
-      "!apps/web/src/components/ui"
+      "!apps/web/src/components/ui",
+      "!apps/web/src/test/fixtures/stream"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },

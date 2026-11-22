@@ -11,6 +11,8 @@ export function buildClaudeArgs(
     "--output-format",
     "stream-json",
     "--verbose",
+    // U3 §11.1: token streaming; the persisted lines are unchanged by it.
+    "--include-partial-messages",
   ];
   if (spec.permissionMode === "bypass") args.push("--dangerously-skip-permissions");
   else args.push("--permission-mode", "auto");

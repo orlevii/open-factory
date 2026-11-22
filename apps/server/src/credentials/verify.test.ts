@@ -1,6 +1,14 @@
 import { existsSync } from "node:fs";
-import { createClaudeDriver, localTransport } from "@open-factory/harness";
+import {
+  AsyncQueue,
+  createClaudeDriver,
+  type HarnessDriver,
+  type HarnessProcess,
+  type LiveEvent,
+  localTransport,
+} from "@open-factory/harness";
 import { createFakeClaude } from "@open-factory/harness/testing";
+import type { HarnessEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { CredentialVerifier } from "./verify.ts";
 
@@ -88,4 +96,30 @@ test("a process that never answers times out as unreachable", async () => {
     timeoutMs: 300,
   });
   expect((await v.verify("oauth_token", "x")).ok).toBe(false);
+});
+
+test("the verification process's live queue is drained", async () => {
+  const events = new AsyncQueue<HarnessEvent>();
+  const live = new AsyncQueue<LiveEvent>();
+  for (let i = 0; i < 100; i++)
+    live.push({ type: "text_delta", messageId: "m", index: 0, text: "x", line: i + 1 });
+  const proc = {
+    events,
+    live,
+    pid: 1,
+    send: async () => {
+      events.push({ type: "turn_end", isError: false, numTurns: 1 });
+    },
+    control: async () => {},
+    stop: async () => {
+      events.end();
+      live.end();
+      return { code: 0, signal: null };
+    },
+  } as unknown as HarnessProcess;
+  const driver = { start: () => proc } as unknown as HarnessDriver;
+  const v = new CredentialVerifier({ driver, claudeBin: "claude" });
+  expect(await v.verify("api_key", "sk-x")).toEqual({ ok: true });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(live.pending).toBe(0);
 });

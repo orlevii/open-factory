@@ -225,3 +225,89 @@ test("a Bash call with a description reads as that description, in prose, with n
   expect(label).toHaveTextContent(/^Run the tests$/);
   expect(label.querySelector(".font-mono")).toBeNull();
 });
+
+type Live = NonNullable<Parameters<typeof TurnActivity>[0]["live"]>;
+const writing = (bytes: number): Live => ({
+  toolInput: { toolUseId: "tu1", name: "Write", target: "/w/src/app.ts", bytes },
+  texts: [],
+});
+const counter = () => document.querySelector("[data-activity-count]")?.textContent;
+
+test("live tool input: the open tool's label, with a KB counter that updates at most twice a second", () => {
+  const view = render(<TurnActivity open={undefined} live={writing(12_400)} turnKey="1" />);
+  expect(label()).toBe("Writing app.ts");
+  expect(counter()).toBe("12 KB");
+  const seen = new Set<string | undefined>([counter()]);
+  // Frames every 50ms for a second: the counter moves at most twice.
+  let changes = 0;
+  for (let i = 1; i <= 20; i++) {
+    view.rerender(<TurnActivity open={undefined} live={writing(12_400 + i * 1000)} turnKey="1" />);
+    act(() => vi.advanceTimersByTime(50));
+    const now = counter();
+    if (!seen.has(now)) changes++;
+    seen.add(now);
+  }
+  expect(changes).toBeGreaterThan(0);
+  expect(changes).toBeLessThanOrEqual(2);
+  // It settles on the latest figure.
+  act(() => vi.advanceTimersByTime(500));
+  expect(counter()).toBe("32 KB");
+  // Not part of the label (the title keeps the label alone).
+  expect(document.querySelector("[data-activity-label]")).toHaveAttribute(
+    "title",
+    "Writing app.ts",
+  );
+});
+
+test("a new tool's input starts its own counter at once", () => {
+  const view = render(<TurnActivity open={undefined} live={writing(40_000)} turnKey="1" />);
+  expect(counter()).toBe("40 KB");
+  view.rerender(
+    <TurnActivity
+      open={undefined}
+      live={{
+        toolInput: { toolUseId: "tu2", name: "Write", target: "b.md", bytes: 2000 },
+        texts: [],
+      }}
+      turnKey="1"
+    />,
+  );
+  expect(counter()).toBe("2 KB");
+});
+
+test("thinking shows only while live thinking is set; live text reads Writing a reply", () => {
+  const view = render(
+    <TurnActivity open={undefined} live={{ thinking: { tokens: 5 }, texts: [] }} turnKey="1" />,
+  );
+  expect(label()).toBe("Thinking");
+  view.rerender(<TurnActivity open={undefined} live={{ texts: ["x"] }} turnKey="1" />);
+  expect(label()).toBe("Writing a reply");
+  expect(counter()).toBeUndefined();
+});
+
+test("a text block ending and the next tool starting within 400ms never shows Working", () => {
+  const shown: string[] = [];
+  const record = () => {
+    const l = label();
+    if (l !== undefined && shown.at(-1) !== l) shown.push(l);
+  };
+  const view = render(<TurnActivity open={undefined} live={{ texts: ["x"] }} turnKey="1" />);
+  record();
+  view.rerender(<TurnActivity open={undefined} live={{ texts: [] }} turnKey="1" />);
+  record();
+  act(() => vi.advanceTimersByTime(300));
+  record();
+  view.rerender(<TurnActivity open={undefined} live={writing(100)} turnKey="1" />);
+  record();
+  act(() => vi.advanceTimersByTime(1000));
+  record();
+  expect(shown).toEqual(["Writing a reply", "Writing app.ts"]);
+});
+
+test("the KB counter waits until there is at least 1 KB (never '0 KB')", () => {
+  const view = render(<TurnActivity open={undefined} live={writing(400)} turnKey="1" />);
+  expect(label()).toBe("Writing app.ts");
+  expect(counter()).toBeUndefined();
+  view.rerender(<TurnActivity open={undefined} live={writing(1200)} turnKey="1" />);
+  expect(counter()).toBe("1 KB");
+});

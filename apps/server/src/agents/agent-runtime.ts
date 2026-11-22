@@ -8,6 +8,7 @@ import {
   groupEnvelopes,
   type HarnessDriver,
   type HarnessProcess,
+  type LiveEvent,
   ProcessNotRunningError,
 } from "@open-factory/harness";
 import {
@@ -23,6 +24,8 @@ import {
   type HarnessEvent,
   HELD_KINDS,
   type LiveCron as LiveCronView,
+  type LiveFrame,
+  liveKey,
   type MessageKind,
   type QueueItem,
   statusOf,
@@ -56,6 +59,7 @@ import {
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow, Tx } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
+import { type LiveFrameBody, LiveState } from "./live-state.ts";
 import {
   AgentEndedError,
   AlreadyDeliveredError,
@@ -444,6 +448,10 @@ export class AgentRuntime {
   private readonly slots: SlotPort;
   private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
   private liveTasks = new Map<string, LiveTask>(); // startedAt = first seen in a `background_tasks` set
+  /** U3 §11.2: partial messages of the current process, in memory only; published as coalesced `live` frames. */
+  private readonly liveState = new LiveState((body) => this.publishLive(body));
+  /** A background task's tool call (`background_task_started`), so its finish clears that subagent's live line. */
+  private taskToolUse = new Map<string, string>();
   private crons = new Map<string, LiveCron>(); // the live in-session crons (spec §6.2): pin the agent
   /** S9 §10.3: a Stop crons waiting for the first moment the agent isn't busy; `by` is the human's `@handle`. */
   private stopCronsPending: { by: string } | undefined;
@@ -1738,14 +1746,24 @@ export class AgentRuntime {
         };
   }
 
-  private async append(turnId: string | null | undefined, event: AnyEvent, tx?: Tx) {
+  /** `afterPublish` runs in the same tick as the `session_event` publish (U3 §11.2: a live reset right after its row). */
+  private async append(
+    turnId: string | null | undefined,
+    event: AnyEvent,
+    tx?: Tx,
+    afterPublish?: () => void,
+  ) {
     const dto = await this.d.store.append(this.agent.id, turnId ?? null, event, tx);
-    if (!tx)
+    if (!tx) {
+      this.retireLive(event);
       this.d.bus.publish(this.agent.slug, {
         type: "session_event",
         agent: this.agent.slug,
         event: dto,
       });
+      this.endSubagentLive(event);
+      afterPublish?.();
+    }
     await this.forwardEvent(event);
     return dto;
   }
@@ -2108,7 +2126,10 @@ export class AgentRuntime {
     this.clearOwedBound();
     this.lastActivityAt = Date.now();
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
+    this.liveState.newProcess();
+    this.taskToolUse = new Map();
     void this.pump(proc);
+    void this.drainLive(proc); // every process, restarts and resumes included: the queue is unbounded
     if (container) {
       this.lastImage = container.image;
       await this.append(null, {
@@ -2314,6 +2335,69 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * U3 §11.2: the live loop, outside the serial job queue (no DB, no job), until the process's live queue ends. Events
+   * of a process that is no longer current are drained and dropped.
+   */
+  private async drainLive(proc: HarnessProcess) {
+    if (!proc.live) return;
+    try {
+      for await (const e of proc.live) if (proc === this.proc) this.applyLive(e);
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "live event handling failed");
+    }
+  }
+
+  private applyLive(e: LiveEvent) {
+    try {
+      this.liveState.apply(e);
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "a live event could not be applied");
+    }
+  }
+
+  private publishLive(body: LiveFrameBody) {
+    this.d.bus.publish(this.agent.slug, { type: "live", agent: this.agent.slug, ...body });
+  }
+
+  /** The whole live state as a `reset` frame (U3 §11.3): sent after a subscribe's replay and on `live_snapshot`. */
+  liveSnapshot(): LiveFrame {
+    return { type: "live", agent: this.agent.slug, ...this.liveState.snapshot() };
+  }
+
+  /** The stdout line of a persisted event (U3 §11.2); unknown (a driver without lines) clears everything. */
+  private lineOf(proc: HarnessProcess, e: HarnessEvent): number {
+    return proc.lineOf?.(e) ?? Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Before a persisted row is published: its live block retires, so no frame published after the row holds it (U3
+   * §11.2). A subscriber whose replay read the row just before this runs can still get it in its snapshot; the client
+   * ignores a reset text for a key it already has a row for (§11.4).
+   */
+  private retireLive(e: AnyEvent) {
+    if (e.type !== "assistant_text" && e.type !== "tool_call") return;
+    if (e.parentToolUseId) return; // subagents never stream
+    if (e.messageId !== undefined && e.blockIndex !== undefined)
+      this.liveState.retire(liveKey(e.messageId, e.blockIndex));
+    else if (e.type === "tool_call") this.liveState.retireTool(e.toolUseId);
+  }
+
+  /** After a persisted row is published: a finished subagent's live line goes (U3 §11.2, §12). */
+  private endSubagentLive(e: AnyEvent) {
+    if (e.type === "background_task_started" && e.toolUseId)
+      this.taskToolUse.set(e.taskId, e.toolUseId);
+    else if (e.type === "background_task_finished") {
+      const toolUseId = this.taskToolUse.get(e.taskId);
+      this.taskToolUse.delete(e.taskId);
+      if (toolUseId) this.liveState.finishSubagent(toolUseId, { agent: true });
+    } else if (e.type === "tool_result" && !e.parentToolUseId) {
+      // An async (auto-backgrounded) call's result is the launch notice: it keeps running (§12).
+      if (e.meta?.tool === "Agent" && e.meta.async) return;
+      this.liveState.finishSubagent(e.toolUseId, { agent: e.meta?.tool === "Agent" });
+    }
+  }
+
   private revokeToken(proc: HarnessProcess) {
     const generation = this.tokenGens.get(proc);
     if (generation === undefined) return;
@@ -2401,7 +2485,11 @@ export class AgentRuntime {
         const updateOnly =
           !e.originKind && ran.length > 0 && ran.every((k) => HELD_KINDS.includes(k));
         this.turnKinds = [];
-        await this.append(turnId, e);
+        // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
+        // live state first and the reset restores a block a self-started turn already began.
+        await this.append(turnId, e, undefined, () =>
+          this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
+        );
         if (turnId) {
           const close = {
             isError: e.isError,
@@ -2524,7 +2612,15 @@ export class AgentRuntime {
         }
         break;
       case "exited":
-        await this.onExited(proc, e);
+        try {
+          await this.onExited(proc, e);
+        } finally {
+          // A crash restart inside onExited already started the next process, which cleared the live state.
+          if (!this.proc || this.proc === proc) {
+            this.taskToolUse = new Map();
+            this.liveState.endBefore(this.lineOf(proc, e), { subagents: true });
+          }
+        }
         this.maybeRestart();
         break;
       default:

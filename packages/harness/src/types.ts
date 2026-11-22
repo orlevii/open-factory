@@ -1,4 +1,5 @@
 import type { Envelope, HarnessEvent, MessageKind } from "@open-factory/shared";
+import type { LiveEvent } from "./claude/live.ts";
 
 export interface Mount {
   source: string;
@@ -63,6 +64,10 @@ export interface HarnessProcess {
   forceKill(): Promise<void>;
   /** Ends after `exited`. */
   events: AsyncIterable<HarnessEvent>;
+  /** Partial-message events (U3 §11.1), never persisted. Drivers without streaming leave it out. */
+  live?: AsyncIterable<LiveEvent>;
+  /** The stdout line an event from `events` came from, for ordering against `live` (U3 §11.2). */
+  lineOf?(event: object): number | undefined;
 }
 
 export interface HarnessDriver {

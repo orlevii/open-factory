@@ -24,6 +24,7 @@ test("auto mode", () => {
     "--output-format",
     "stream-json",
     "--verbose",
+    "--include-partial-messages",
     "--permission-mode",
     "auto",
     "--resume",
@@ -39,4 +40,11 @@ test("bypass uses --dangerously-skip-permissions and no --permission-mode", () =
   const a = buildClaudeArgs(spec({ permissionMode: "bypass" }), {});
   expect(a).toContain("--dangerously-skip-permissions");
   expect(a).not.toContain("--permission-mode");
+});
+
+test("args include --include-partial-messages (U3 §11.1)", () => {
+  expect(buildClaudeArgs(spec(), {})).toContain("--include-partial-messages");
+  expect(buildClaudeArgs(spec({ permissionMode: "bypass" }), {})).toContain(
+    "--include-partial-messages",
+  );
 });

@@ -7,7 +7,7 @@ import type { Row } from "./rows";
  *  line already shows it, messages keep their visible time, and a tool row, top-level or a folded
  *  run's call, puts it in its own line (`ToolCallRow`'s `time`), so it never covers the state. */
 export function gutterTime(row: Row): string | undefined {
-  if (row.kind === "text" && !row.head) return row.at;
+  if (row.kind === "subagent" || (row.kind === "text" && !row.head)) return row.at;
   return undefined;
 }
 

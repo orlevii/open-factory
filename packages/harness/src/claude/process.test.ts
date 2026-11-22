@@ -46,6 +46,7 @@ test("args: fixed flags, resume and model only when given", () => {
     "--output-format",
     "stream-json",
     "--verbose",
+    "--include-partial-messages",
     "--permission-mode",
     "auto",
   ];
@@ -324,4 +325,74 @@ test("FakeTransport.write rejects after endInput and after exit", async () => {
   const b = new FakeTransport();
   b.exitWith(0);
   await expect(b.write("x")).rejects.toBeInstanceOf(ProcessNotRunningError);
+});
+
+// U3 §11.2: every event carries its stdout line number beside it, never inside it.
+test("events are stamped with increasing stdout line numbers; the shape is unchanged", async () => {
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t);
+  t.emitStdout(
+    JSON.stringify({ type: "system", subtype: "init", session_id: "s", model: "m" }),
+    "",
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "a" }] } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "b" }] } }),
+  );
+  t.exitWith(0);
+  const events: HarnessEvent[] = [];
+  await collectUntil(p.events, () => false, events);
+  expect(events.map((e) => e.type)).toEqual([
+    "session_started",
+    "turn_started",
+    "assistant_text",
+    "assistant_text",
+    "exited",
+  ]);
+  expect(events[2]).toEqual({ type: "assistant_text", text: "a" });
+  const lines = events.map((e) => p.lineOf(e));
+  expect(lines).toEqual([1, 1, 2, 3, 4]);
+  expect(p.lineOf({ type: "turn_started" })).toBeUndefined();
+});
+
+test("a non-JSON stdout line consumes a line number", async () => {
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t, { debug() {}, warn() {}, error() {} });
+  t.emitStdout(
+    JSON.stringify({ type: "system", subtype: "init", session_id: "s", model: "m" }),
+    "not json",
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "a" }] } }),
+  );
+  t.exitWith(0);
+  const events: HarnessEvent[] = [];
+  await collectUntil(p.events, () => false, events);
+  const text = events.find((e) => e.type === "assistant_text");
+  expect(text && p.lineOf(text)).toBe(3);
+});
+
+test("the live queue exists and ends with the process", async () => {
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t);
+  t.emitStdout(JSON.stringify({ type: "system", subtype: "init", session_id: "s", model: "m" }));
+  t.exitWith(0);
+  const live: unknown[] = [];
+  for await (const l of p.live) live.push(l);
+  expect(live).toEqual([]);
+});
+
+test("stream_event lines are not logged at debug", async () => {
+  const debug: string[] = [];
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t, {
+    debug: (o) => void debug.push((o as { line: string }).line),
+    warn() {},
+    error() {},
+  });
+  const init = JSON.stringify({ type: "system", subtype: "init", session_id: "s", model: "m" });
+  const delta = JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x" } },
+  });
+  t.emitStdout(init, delta);
+  t.exitWith(0);
+  await collectUntil(p.events, () => false, []);
+  expect(debug).toEqual([init]);
 });

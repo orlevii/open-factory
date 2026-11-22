@@ -1,3 +1,4 @@
+import type { SubagentProgress } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -14,15 +15,56 @@ import {
 import { Button } from "@/components/ui/button";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
-import { childrenOf, groupOpen, heldSeqs, innerKey } from "./display-passes";
+import { childrenOf, groupOpen, heldSeqs, innerKey, isFold } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import { rowOf } from "./row-of";
-import type { Row } from "./rows";
+import { type Row, textRowKey } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
+import type { LiveText } from "./session-state";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
+import type { RowProgress } from "./timeline-item";
 import { type Arrival, rowGap, TimelineItem } from "./timeline-item";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
+const NO_TEXTS: readonly LiveText[] = [];
+const NO_PROGRESS: readonly SubagentProgress[] = [];
+type TextRow = Extract<Row, { kind: "text" }>;
+const NO_LIVE_ROWS: readonly TextRow[] = [];
+
+/**
+ * The live text blocks as rows (U3 §11.4), keyed like the persisted rows that will retire them. A
+ * block's row object is kept while its text, cap and `head` are unchanged, so a frame that grows one
+ * block leaves the others' items alone. `at` is when this view first saw the block (the speaker
+ * line's time until the persisted row brings the server's).
+ */
+function useLiveRows(texts: readonly LiveText[], head: boolean, off: boolean): readonly TextRow[] {
+  const prev = useRef<ReadonlyMap<string, TextRow>>(new Map());
+  const rows = useMemo(() => {
+    if (off || texts.length === 0) return NO_LIVE_ROWS;
+    return texts.map((t, i): TextRow => {
+      const key = textRowKey(t.messageId, t.index);
+      // Only the first block can open a speaker line: a later one follows a text block.
+      const h = i === 0 && head;
+      const old = prev.current.get(key);
+      if (old && old.text === t.text && old.head === h && (old.capped === true) === t.capped)
+        return old;
+      return {
+        kind: "text",
+        seq: Number.POSITIVE_INFINITY,
+        at: old?.at ?? new Date().toISOString(),
+        text: t.text,
+        key,
+        head: h,
+        live: true,
+        ...(t.capped ? { capped: true } : {}),
+      };
+    });
+  }, [texts, head, off]);
+  useLayoutEffect(() => {
+    prev.current = new Map(rows.map((r) => [r.key, r]));
+  }, [rows]);
+  return rows;
+}
 /** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
 export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
 
@@ -74,22 +116,39 @@ export function Timeline(props: {
   newSpeech?: number;
   /** Navigates to the newest page. Stable: the pill is memoized. */
   onLeaveWindow?(): void;
+  /** `state.live.texts` (U3 §11.4): rendered after the rows, never in a windowed view. */
+  liveTexts?: readonly LiveText[];
+  /** The next top-level text opens a speaker line (`buildRows`' `textHead`). */
+  textHead?: boolean;
+  /** `state.live.subagents` (U3 §12): each card's live line, passed only to subagent rows. */
+  subagents?: readonly SubagentProgress[];
 }) {
   const { rows, liveAfter = Number.POSITIVE_INFINITY, handedOff = NO_KEYS } = props;
+  const windowed = props.windowed ?? false;
+  const liveRows = useLiveRows(props.liveTexts ?? NO_TEXTS, props.textHead ?? false, windowed);
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const pillLayer = useRef<HTMLDivElement>(null);
   const centred = useRef(false);
-  // The highest seq on screen when the view unpinned; undefined while pinned. A primitive, so the
-  // pill's counts derive from rows (U3 §8.2) and the rows layout effect sets no state.
-  const [seenSeq, setSeenSeq] = useState<number>();
+  // The highest seq on screen when the view unpinned, and the live blocks on screen then; undefined
+  // while pinned. The pill's counts derive from rows (U3 §8.2) and the rows layout effect sets no state.
+  const [seen, setSeen] = useState<{ seq: number; live: ReadonlySet<string> }>();
   const latestRows = useRef(rows);
+  const latestLive = useRef(liveRows);
   // Before the rows layout effect below, which may unpin (deep-link centring).
   useLayoutEffect(() => {
     latestRows.current = rows;
-  }, [rows]);
+    latestLive.current = liveRows;
+  }, [rows, liveRows]);
   const stick = useStickToBottom(scroller, log, (pinned) =>
-    setSeenSeq(pinned ? undefined : maxSeq(latestRows.current)),
+    setSeen(
+      pinned
+        ? undefined
+        : {
+            seq: maxSeq(latestRows.current),
+            live: new Set(latestLive.current.map((r) => r.key)),
+          },
+    ),
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
@@ -123,7 +182,7 @@ export function Timeline(props: {
       const holder =
         key === undefined || (active && active !== document.body)
           ? undefined
-          : rows.find((r) => r.kind === "work_group" && (r.key === key || containsKey(r, key)));
+          : rows.find((r) => isFold(r) && (r.key === key || containsKey(r, key)));
       if (holder)
         el.querySelector<HTMLElement>(`[data-row="${CSS.escape(holder.key)}"]`)?.focus({
           preventScroll: true,
@@ -166,9 +225,14 @@ export function Timeline(props: {
   }, [arrival, visible]);
   const onArrivedEnd = useCallback(() => setArrival(undefined), []);
 
-  const arrived = useMemo(() => arrivedSince(rows, seenSeq, handedOff), [rows, seenSeq, handedOff]);
-  const windowed = props.windowed ?? false;
-  const speech = windowed ? (props.newSpeech ?? 0) : arrived.speech;
+  const arrived = useMemo(
+    () => arrivedSince(rows, seen?.seq, handedOff, seen?.live),
+    [rows, seen, handedOff],
+  );
+  // A live block that started after the reader left counts as one message (U3 §8.2).
+  let liveSpeech = 0;
+  if (seen) for (const r of liveRows) if (!seen.live.has(r.key)) liveSpeech++;
+  const speech = windowed ? (props.newSpeech ?? 0) : arrived.speech + liveSpeech;
   const other = !windowed && arrived.other;
   const onLeaveWindow = props.onLeaveWindow;
   const onJump = useCallback(() => {
@@ -243,8 +307,16 @@ export function Timeline(props: {
   };
 
   // Roving tabindex: exactly one row is in the tab order; the first row until one is focused.
+  // The tree walk runs when the rows, the focused key or the expansions change, never per live frame.
+  const activeInRows = useMemo(
+    () => activeKey !== undefined && hasKey(rows, activeKey, expanded),
+    [rows, activeKey, expanded],
+  );
+  // The first row until one is focused; a streaming first reply in an empty log is the stop too.
   const tabKey =
-    activeKey !== undefined && hasKey(rows, activeKey, expanded) ? activeKey : rows[0]?.key;
+    activeInRows || (activeKey !== undefined && liveRows.some((r) => r.key === activeKey))
+      ? activeKey
+      : (rows[0]?.key ?? liveRows[0]?.key);
   // One tab stop (UI design §5, §7): links, buttons and scrollable plates inside a row are in the tab
   // order only while that row is the focused one (tabindex 0), so Tab walks its controls and then
   // leaves; every other row's controls are -1. Rows and Copy link manage their own tabindex.
@@ -319,6 +391,84 @@ export function Timeline(props: {
     [],
   );
 
+  const { spawned, slug, failedIds, interruptedEnds } = props;
+  const progressOf = useProgressOf(props.subagents ?? NO_PROGRESS);
+  // Memoized on the rows and the per-row props: a live frame reuses these element objects, so React
+  // skips every persisted item (U3 §11.4, acceptance 22).
+  const rowEls = useMemo(
+    () =>
+      rows.map((row, i) => (
+        <TimelineItem
+          key={row.key}
+          row={row}
+          slug={slug}
+          spawned={spawned}
+          lit={row.key === litKey}
+          arrivedKey={row.key === litKey ? arrivedKey : undefined}
+          arrival={row.key === litKey ? arrival : undefined}
+          onArrivedEnd={onArrivedEnd}
+          live={row.seq > liveAfter && row.kind !== "turn_footer" && !handedOff.has(row.key)}
+          firstOfSeq={rows[i - 1]?.seq !== row.seq}
+          gap={rowGap(row, rows[i - 1])}
+          tabKey={tabKey}
+          expanded={expanded}
+          failedIds={failedIds}
+          interruptedEnds={interruptedEnds}
+          toggle={toggle}
+          onRowFocus={onRowFocus}
+          progress={progressOf(row)}
+        />
+      )),
+    [
+      progressOf,
+      rows,
+      slug,
+      spawned,
+      litKey,
+      arrivedKey,
+      arrival,
+      onArrivedEnd,
+      liveAfter,
+      handedOff,
+      tabKey,
+      expanded,
+      failedIds,
+      interruptedEnds,
+      toggle,
+      onRowFocus,
+    ],
+  );
+  const liveTexts = props.liveTexts ?? NO_TEXTS;
+  const items =
+    liveRows.length === 0
+      ? rowEls
+      : [
+          ...rowEls,
+          ...liveRows.map((row, i) => (
+            <TimelineItem
+              key={row.key}
+              row={row}
+              slug={slug}
+              spawned={spawned}
+              lit={false}
+              arrivedKey={undefined}
+              arrival={undefined}
+              onArrivedEnd={onArrivedEnd}
+              // Fades once, only when its first text came from a live patch, not a reset (U3 §11.4).
+              live={liveTexts[i]?.fromReset === false}
+              firstOfSeq={false}
+              gap={rowGap(row, i === 0 ? rows.at(-1) : liveRows[i - 1])}
+              tabKey={tabKey}
+              expanded={expanded}
+              failedIds={failedIds}
+              interruptedEnds={interruptedEnds}
+              toggle={toggle}
+              onRowFocus={onRowFocus}
+            />
+          )),
+        ];
+  const last = liveRows.at(-1) ?? rows.at(-1);
+
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scroller} className="h-full overflow-y-auto px-4 py-4 md:px-6">
@@ -345,30 +495,12 @@ export function Timeline(props: {
               )}
             </div>
           )}
-          {rows.map((row, i) => (
-            <TimelineItem
-              key={row.key}
-              row={row}
-              slug={props.slug}
-              spawned={props.spawned}
-              lit={row.key === litKey}
-              arrivedKey={row.key === litKey ? arrivedKey : undefined}
-              arrival={row.key === litKey ? arrival : undefined}
-              onArrivedEnd={onArrivedEnd}
-              live={row.seq > liveAfter && row.kind !== "turn_footer" && !handedOff.has(row.key)}
-              firstOfSeq={rows[i - 1]?.seq !== row.seq}
-              gap={rowGap(row, rows[i - 1])}
-              tabKey={tabKey}
-              expanded={expanded}
-              failedIds={props.failedIds}
-              interruptedEnds={props.interruptedEnds}
-              toggle={toggle}
-              onRowFocus={onRowFocus}
-            />
-          ))}
+          {/* One flat keyed array (U3 §11.4): a live block's item and the persisted row that retires it
+              share a key in the same reconciliation scope, so React keeps the element. */}
+          {items}
           {/* Under the rows (activity line, queue): 12px apart as before, 24px after a turn footer. */}
           <div
-            className={`space-y-3 empty:hidden ${rows.length === 0 ? "" : rows.at(-1)?.kind === "turn_footer" ? "mt-6" : "mt-3"}`}
+            className={`space-y-3 empty:hidden ${last === undefined ? "" : last.kind === "turn_footer" ? "mt-6" : "mt-3"}`}
           >
             {props.footer}
           </div>
@@ -390,6 +522,41 @@ export function Timeline(props: {
   );
 }
 
+type ProgressList = readonly (SubagentProgress | undefined)[];
+const NO_ROW_PROGRESS = { of: (_row: Row): RowProgress => undefined, lists: new Map() };
+
+/**
+ * The live progress each row receives (U3 §11.4, §12, B1): a subagent card gets its own entry (the
+ * reducer keeps an unchanged entry's identity, so a frame re-renders only the cards that changed);
+ * an overflow row gets its children's entries as one array, reused while every entry is the same;
+ * every other row gets `undefined`. Memoized on `live.subagents`; the arrays given out are kept after
+ * commit for the next frame to compare with.
+ */
+function useProgressOf(subagents: readonly SubagentProgress[]): (row: Row) => RowProgress {
+  const kept = useRef<ReadonlyMap<string, ProgressList>>(new Map());
+  const memo = useMemo(() => {
+    if (subagents.length === 0) return NO_ROW_PROGRESS;
+    const byId = new Map(subagents.map((p) => [p.toolUseId, p]));
+    const lists = new Map<string, ProgressList>();
+    const of = (row: Row): RowProgress => {
+      if (row.kind === "subagent") return byId.get(row.call.toolUseId);
+      if (row.kind !== "subagent_overflow") return undefined;
+      const next = row.children.map((c) => byId.get(c.call.toolUseId));
+      if (next.every((p) => p === undefined)) return undefined;
+      const prev = kept.current.get(row.key);
+      const list =
+        prev && prev.length === next.length && prev.every((p, i) => p === next[i]) ? prev : next;
+      lists.set(row.key, list);
+      return list;
+    };
+    return { of, lists };
+  }, [subagents]);
+  useLayoutEffect(() => {
+    kept.current = memo.lists;
+  }, [memo]);
+  return memo.of;
+}
+
 /** A plain loop: rows are seq-ordered, but a group keeps its first child's seq, and a folded run or a
  *  merged failure its first while holding later ones (the Jump pill compares the last). */
 function maxSeq(rows: Row[]): number {
@@ -404,7 +571,7 @@ const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>
   rows.some(
     (r) =>
       r.key === key ||
-      ((r.kind === "work_group" ? groupOpen(r, expanded) : expanded.has(r.key)) &&
+      ((isFold(r) ? groupOpen(r, expanded) : expanded.has(r.key)) &&
         hasKey(childrenOf(r), key, expanded)),
   );
 
@@ -434,14 +601,15 @@ export function targetPath(rows: Row[], seq: number): string[] | undefined {
   if (top === undefined) return undefined;
   const path = [top];
   let row = rows.find((r) => r.key === top);
-  // A group shares its first call's seq but lands on the call itself (U3 §9.4).
-  while (row && (row.kind === "work_group" || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
+  // A group (or the subagent overflow) shares its first child's seq but lands on the child itself
+  // (U3 §9.4, §12).
+  while (row && (isFold(row) || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
     const kids = childrenOf(row);
     row =
       kids.find((c) => c.seq === seq) ??
       kids.find((c) => containsSeq(childrenOf(c), seq)) ??
       // A hidden event between a group's calls: the next call, as at the top level.
-      (row.kind === "work_group" ? kids.find((c) => c.seq > seq) : undefined);
+      (isFold(row) ? kids.find((c) => c.seq > seq) : undefined);
     if (row) path.push(row.key);
   }
   return path;

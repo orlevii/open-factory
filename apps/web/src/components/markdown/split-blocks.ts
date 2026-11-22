@@ -7,10 +7,10 @@ const QUOTE = /^>/;
 const BLANK = /^\s*$/;
 const COLUMN_ZERO = /^\S/;
 
-type Fence = { char: string; len: number };
+export type Fence = { char: string; len: number };
 
 /** The fence state after `line`: opened, closed (undefined) or unchanged. */
-function stepFence(line: string, open: Fence | undefined): Fence | undefined {
+export function stepFence(line: string, open: Fence | undefined): Fence | undefined {
   const m = FENCE.exec(line);
   if (!m) return open;
   const marker = m[1] as string;
@@ -31,14 +31,23 @@ const continues = (first: string, next: string) =>
  * Splits at a blank line outside a fence when the next non-blank line starts at column 0 and doesn't
  * continue a list or quote, so loose lists and indented continuations stay one block. Blank lines
  * between blocks are dropped. `openFence`: the text ends inside a fence (a streaming tail, or a cut).
+ * `starts`: each block's offset in `text`.
  */
-export function splitBlocks(text: string): { blocks: string[]; openFence: boolean } {
+export function splitBlocks(text: string): {
+  blocks: string[];
+  starts: number[];
+  openFence: boolean;
+} {
   const lines = text.split("\n");
   const blocks: string[] = [];
+  const starts: number[] = [];
   let block: string[] = [];
   let fence: Fence | undefined;
   let blank = false; // a blank line outside a fence since the block's last line
+  let at = 0; // the current line's offset
   for (const line of lines) {
+    const lineAt = at;
+    at += line.length + 1;
     if (!fence && BLANK.test(line)) {
       if (block.length > 0) blank = true;
       continue;
@@ -48,6 +57,7 @@ export function splitBlocks(text: string): { blocks: string[]; openFence: boolea
       block = [];
     } else if (blank) block.push("");
     blank = false;
+    if (block.length === 0) starts.push(lineAt);
     block.push(line);
     fence = stepFence(line, fence);
   }
@@ -56,7 +66,7 @@ export function splitBlocks(text: string): { blocks: string[]; openFence: boolea
     while (block.length > 1 && BLANK.test(block.at(-1) as string)) block.pop();
     blocks.push(block.join("\n"));
   }
-  return { blocks, openFence: fence !== undefined };
+  return { blocks, starts, openFence: fence !== undefined };
 }
 
 // Syntax that doesn't render as characters: fence lines, heading/quote/list markers, images and links

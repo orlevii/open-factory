@@ -142,44 +142,92 @@ function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
 
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [imagesAsLinks];
-const VARIANT_CLASS = { default: "", detail: " prose-of-detail", work: " prose-of-work" } as const;
+export const PROSE_CLASS = "prose prose-sm prose-of max-w-none";
+export const VARIANT_CLASS = {
+  default: "",
+  detail: " prose-of-detail",
+  work: " prose-of-work",
+} as const;
 
-/** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing, no image ever loads (each is a
- *  link). Callers constrain the width. Memoized on its props: a parent re-render with the same props
- *  doesn't parse again. */
-export const Markdown = memo(function Markdown({
+/** The parsed markdown alone: no wrapper, the new-tab note's id given by the caller. */
+const MarkdownBody = memo(function MarkdownBody({
   source,
-  variant = "default",
-  untrusted = false,
+  untrusted,
+  noteId,
 }: {
+  source: string;
+  untrusted: boolean;
+  noteId: string;
+}) {
+  const components = useMemo(() => makeComponents(noteId, untrusted), [noteId, untrusted]);
+  return (
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={REHYPE_PLUGINS}
+      components={components}
+    >
+      {source}
+    </ReactMarkdown>
+  );
+});
+
+type MarkdownProps = {
   source: string;
   /** "detail": a task body, comment or any speaker's markdown in a session; headings step down one
    *  size (a document never outranks its title). "work": tool output, 13/20 (U3 §7.3). */
   variant?: "default" | "detail" | "work";
   /** Text from outside (tool results, fetched pages, U3 §9.3): mermaid fences render as code. */
   untrusted?: boolean;
-}) {
-  const newTabNoteId = useId();
-  const components = useMemo(
-    () => makeComponents(newTabNoteId, untrusted),
-    [newTabNoteId, untrusted],
-  );
-  // The link note sits after the prose, never in it: as its last child it would keep the last block's
-  // bottom margin (typography zeroes only the last child's), and rows inside a turn would drift apart.
+} & (
+  | { bare?: false; noteId?: undefined }
+  /** U3 §11.4: one block among siblings in a container that owns the `prose` classes and the
+   *  "Opens in a new tab" note, whose id is `noteId`; `variant` comes from the container. */
+  | { bare: true; noteId: string }
+);
+
+/** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing, no image ever loads (each is a
+ *  link). Callers constrain the width. Memoized on its props: a parent re-render with the same props
+ *  doesn't parse again. */
+export const Markdown = memo(function Markdown(props: MarkdownProps) {
+  const untrusted = props.untrusted ?? false;
+  if (props.bare)
+    return <MarkdownBody source={props.source} untrusted={untrusted} noteId={props.noteId} />;
   return (
-    <>
-      <div className={`prose prose-sm prose-of max-w-none${VARIANT_CLASS[variant]}`}>
-        <ReactMarkdown
-          remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
-          components={components}
-        >
-          {source}
-        </ReactMarkdown>
-      </div>
-      <span id={newTabNoteId} hidden>
-        Opens in a new tab
-      </span>
-    </>
+    <ProseMarkdown
+      source={props.source}
+      variant={props.variant ?? "default"}
+      untrusted={untrusted}
+    />
   );
 });
+
+function ProseMarkdown({
+  source,
+  variant,
+  untrusted,
+}: {
+  source: string;
+  variant: "default" | "detail" | "work";
+  untrusted: boolean;
+}) {
+  const newTabNoteId = useId();
+  return (
+    <>
+      <div className={`${PROSE_CLASS}${VARIANT_CLASS[variant]}`}>
+        <MarkdownBody source={source} untrusted={untrusted} noteId={newTabNoteId} />
+      </div>
+      {/* After the prose, never in it: as its last child it would keep the last block's bottom
+          margin (typography zeroes only the last child's), and rows inside a turn would drift apart. */}
+      <NewTabNote id={newTabNoteId} />
+    </>
+  );
+}
+
+/** The shared description every external link points at. */
+export function NewTabNote({ id }: { id: string }) {
+  return (
+    <span id={id} hidden>
+      Opens in a new tab
+    </span>
+  );
+}

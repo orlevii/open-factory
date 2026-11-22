@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import {
@@ -11,10 +11,11 @@ import {
   mcpParts,
   WORKING,
 } from "./activity";
-import { formatDuration } from "./format";
+import { formatBytes, formatDuration } from "./format";
 import type { OpenTurnRows } from "./rows";
 import { ROW_GUTTER } from "./timeline-item";
 import { McpName } from "./tools/mcp-name";
+import { useSampled } from "./use-sampled";
 
 /** Time elapsed since `since`, ticking on whole seconds; paused while the tab is hidden and recomputed
  *  at once when it returns (or `since` changes), never as a second render on mount. Its own state, so
@@ -47,7 +48,7 @@ export const Elapsed = memo(function Elapsed({ since }: { since: string }) {
   return <span className="shrink-0 tabular-nums">{formatDuration(now - start)}</span>;
 });
 
-const VERB: Record<string, string> = {
+const VERB: Partial<Record<string, string>> = {
   Bash: "Running",
   Read: "Reading",
   Edit: "Editing",
@@ -57,6 +58,16 @@ const VERB: Record<string, string> = {
   Grep: "Searching",
   Glob: "Searching",
 };
+/** "Reading `retry.ts`": a tool's verb and its formatted target, else the target or the tool's name
+ *  (shared with the subagent card's live line, U3 §12). `code` is the part shown as code. */
+export function toolPhrase(
+  tool: string,
+  target: string | undefined,
+): { verb?: string; code: string } {
+  const verb = VERB[tool];
+  return verb && target ? { verb, code: target } : { code: target ?? tool };
+}
+
 const PLAIN: Partial<Record<Activity["kind"], string>> = {
   thinking: "Thinking",
   text: "Writing a reply",
@@ -99,9 +110,12 @@ function labelParts(a: Activity): {
 export const ActivityLine = memo(function ActivityLine({
   activity,
   startedAt,
+  count,
 }: {
   activity: Activity;
   startedAt?: string;
+  /** A fast counter after the label ("12 KB" of tool input), sampled by its own component. */
+  count?: ReactNode;
 }) {
   const { prefix, target, code, path, mcp, suffix } = labelParts(activity);
   const full = `${prefix ?? ""}${target ?? ""}${suffix ?? ""}`;
@@ -136,6 +150,7 @@ export const ActivityLine = memo(function ActivityLine({
           ))}
         {suffix !== undefined && <span className="shrink-0 whitespace-pre">{suffix}</span>}
       </span>
+      {count}
     </p>
   );
 });
@@ -209,5 +224,32 @@ export const TurnActivity = memo(function TurnActivity({
   compacting?: boolean;
 }) {
   const activity = useFallbackHold(useActivity(open, live), turnKey);
-  return <ActivityLine activity={compacting ? COMPACTING : activity} startedAt={startedAt} />;
+  const input = live?.toolInput;
+  const shown = compacting ? COMPACTING : activity;
+  // Shown from 1 KB on: under that, `formatBytes` would read "0 KB" for a short write.
+  const bytes =
+    shown.kind === "tool_input" && (input?.bytes ?? 0) >= 1000 ? input?.bytes : undefined;
+  return (
+    <ActivityLine
+      activity={shown}
+      startedAt={startedAt}
+      count={
+        bytes === undefined ? undefined : (
+          // Keyed by the call: a new tool's input starts its own counter at once.
+          <InputCount key={input?.toolUseId ?? input?.name} text={formatBytes(bytes)} />
+        )
+      }
+    />
+  );
 });
+
+/** " · 12 KB" of tool input so far, updated at most twice a second (U3 §5.1, M4). */
+function InputCount({ text }: { text: string }) {
+  const shown = useSampled(text);
+  return (
+    <span className="shrink-0 whitespace-pre tabular-nums">
+      {" · "}
+      <span data-activity-count>{shown}</span>
+    </span>
+  );
+}

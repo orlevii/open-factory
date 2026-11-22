@@ -34,6 +34,8 @@ export async function wsRoutes(app: FastifyInstance) {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
     };
     const unsubs = new Map<string, () => void>();
+    /** U3 §11.3: per subscribed agent, the live snapshot once its replay is done (a `live_snapshot` answer). */
+    const snapshots = new Map<string, () => ServerMessage | undefined>();
     // Bumped by every subscribe and unsubscribe: a subscribe that resumes after an await and finds a newer
     // generation was superseded (by a later subscribe or an unsubscribe) and must not register anything.
     const generations = new Map<string, number>();
@@ -65,6 +67,7 @@ export async function wsRoutes(app: FastifyInstance) {
     const stop = (agent: string) => {
       unsubs.get(agent)?.();
       unsubs.delete(agent);
+      snapshots.delete(agent);
     };
 
     /**
@@ -98,7 +101,11 @@ export async function wsRoutes(app: FastifyInstance) {
         }
         send(m);
       };
-      const off = app.bus.subscribe(agent, (m) => (live ? forward(m) : buffer.push(m)));
+      // U3 §11.3: live frames that arrive during the replay are dropped; the snapshot sent after it supersedes them.
+      const off = app.bus.subscribe(agent, (m) => {
+        if (live) forward(m);
+        else if (m.type !== "live") buffer.push(m);
+      });
       // A later subscribe or unsubscribe for this agent (or a close) stops this one, replay included.
       unsubs.set(agent, () => {
         cancelled = true;
@@ -118,7 +125,10 @@ export async function wsRoutes(app: FastifyInstance) {
           for (const event of rows) forward({ type: "session_event", agent, event });
         }
         for (const m of buffer.splice(0)) forward(m);
+        // After the replay and the drain, in the same tick: the text so far, then live patches (U3 §11.3).
+        forward(rt.liveSnapshot());
         live = true;
+        snapshots.set(agent, () => (cancelled ? undefined : rt.liveSnapshot()));
       } catch (err) {
         if (cancelled) return; // superseded or closed meanwhile: nobody is waiting for this one
         stop(agent);
@@ -144,6 +154,10 @@ export async function wsRoutes(app: FastifyInstance) {
       else if (m.type === "unsubscribe") {
         nextGeneration(m.agent);
         stop(m.agent);
+      } else if (m.type === "live_snapshot") {
+        // Only for an agent this socket is subscribed to and caught up on: the same reach as its live frames.
+        const snapshot = snapshots.get(m.agent)?.();
+        if (snapshot) send(snapshot);
       }
     });
     send({ type: "hello", userId });

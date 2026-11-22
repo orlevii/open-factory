@@ -10,6 +10,7 @@ import {
   type HarnessProcess,
   ProcessNotRunningError,
 } from "../types.ts";
+import type { LiveEvent } from "./live.ts";
 import { createMapperState, flushMapper, type MapperState, mapLine } from "./mapper.ts";
 
 export interface DriverLog {
@@ -70,6 +71,12 @@ export class StderrTail {
 
 export class ClaudeProcess implements HarnessProcess {
   readonly events: AsyncQueue<HarnessEvent> = new AsyncQueue();
+  /** Partial-message events (U3 §11.1), never persisted; ends with `events`. */
+  readonly live: AsyncQueue<LiveEvent> = new AsyncQueue();
+  /** Each delivered event's stdout line, beside it so the event's shape stays as persisted. */
+  private readonly lines = new WeakMap<object, number>();
+  /** Non-empty stdout lines seen so far. */
+  private line = 0;
   private readonly mapper: MapperState;
   private readonly stderr = new StderrTail();
   private stopRequested = false;
@@ -91,16 +98,22 @@ export class ClaudeProcess implements HarnessProcess {
     const pumpStdout = async () => {
       for await (const line of transport.stdout) {
         if (!line.trim()) continue;
-        log.debug({ ...ctx, line }, "claude stdout");
+        const lineNo = ++this.line;
         let parsed: unknown;
         try {
           parsed = JSON.parse(line);
         } catch {
+          log.debug({ ...ctx, line }, "claude stdout");
           log.warn({ ...ctx, line: line.slice(0, 500) }, "non-JSON stdout line");
           continue;
         }
+        // Partial messages are ~200 lines a turn: kept out of the debug log (U3 §11.1).
+        if ((parsed as { type?: unknown } | null)?.type !== "stream_event")
+          log.debug({ ...ctx, line }, "claude stdout");
         try {
-          for (const e of mapLine(parsed, this.mapper)) this.events.push(e);
+          const { events, live } = mapLine(parsed, this.mapper, lineNo);
+          for (const e of events) this.push(e, lineNo);
+          for (const l of live) this.live.push(l);
         } catch (err) {
           // A mapper bug must not stop the pump: `exited` has to be sent.
           log.warn({ ...ctx, err, line: line.slice(0, 500) }, "could not map stdout line");
@@ -115,30 +128,46 @@ export class ClaudeProcess implements HarnessProcess {
     };
     // Every line is mapped before `exited`: the transport ends the iterables once the process is gone.
     this.exitPromise = Promise.all([pumpStdout(), pumpStderr(), transport.exit]).then(([, , x]) => {
+      // Whatever the exit adds comes after every stdout line.
+      const exitLine = ++this.line;
       if (x.spawnError) {
         const message =
           x.spawnError.code === "ENOENT" || x.spawnError.code === "EACCES"
             ? "Claude Code not found: set FACTORY_CLAUDE_BIN or put claude on PATH"
             : `Could not start Claude Code: ${x.spawnError.message}`;
-        this.events.push({ type: "error", source: "spawn", message });
+        this.push({ type: "error", source: "spawn", message }, exitLine);
       }
       const info: ExitInfo = { code: x.code, signal: x.signal };
       this.exited = info;
       try {
-        for (const e of flushMapper(this.mapper)) this.events.push(e);
+        for (const e of flushMapper(this.mapper)) this.push(e, exitLine);
       } catch (err) {
         log.warn({ ...ctx, err }, "could not flush mapper");
       }
-      this.events.push({
-        type: "exited",
-        code: info.code,
-        signal: info.signal,
-        stderrTail: this.stderr.toString(),
-        expected: this.stopRequested,
-      });
+      this.push(
+        {
+          type: "exited",
+          code: info.code,
+          signal: info.signal,
+          stderrTail: this.stderr.toString(),
+          expected: this.stopRequested,
+        },
+        exitLine,
+      );
       this.events.end();
+      this.live.end();
       return info;
     });
+  }
+
+  private push(e: HarnessEvent, line: number) {
+    this.lines.set(e, line);
+    this.events.push(e);
+  }
+
+  /** The stdout line an event delivered by this process came from (U3 §11.2). */
+  lineOf(event: object): number | undefined {
+    return this.lines.get(event);
   }
 
   get pid() {

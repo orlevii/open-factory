@@ -50,7 +50,10 @@ function DrawerContent({ className, children, onOpenAutoFocus, ref, ...props }: 
         className={cn(
           "group fixed z-50 flex flex-col bg-popover text-sm text-popover-foreground outline-none", // ui-contract:allow the drawer surface takes focus programmatically on open
           direction === "bottom"
-            ? `inset-x-0 bottom-0 ${stacked ? "max-h-[82svh]" : "max-h-[90svh]"} rounded-t-xl border-t border-float-edge pb-[max(1rem,env(safe-area-inset-bottom))]`
+            ? cn(
+                "inset-x-0 bottom-0 rounded-t-xl border-t border-float-edge pb-[max(1rem,env(safe-area-inset-bottom))]",
+                stacked ? "max-h-[82svh]" : "max-h-[90svh]",
+              )
             : // The portal sits in <body>, outside sidebar-wrapper: fall back to SIDEBAR_WIDTH (16rem).
               "inset-y-0 left-0 w-[var(--sidebar-width,16rem)] max-w-[85vw] border-r border-float-edge",
           className,

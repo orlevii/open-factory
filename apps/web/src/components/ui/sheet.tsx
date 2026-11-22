@@ -39,7 +39,8 @@ function Sheet({
   modal?: boolean;
   /** A child over another sheet: 48px narrower on desktop so a strip of the parent shows, 82svh on phones. */
   stacked?: boolean;
-  /** Desktop: the dimmed strip (this sheet's overlay) was clicked. It still closes only this sheet. */
+  /** Desktop: the dimmed strip (this sheet's overlay) was clicked. It still closes only this sheet.
+   *  Pass a stable callback (useCallback): it sits in the context value every SheetContent reads. */
   onStripClick?: () => void;
   children: React.ReactNode;
 }) {
@@ -63,8 +64,12 @@ function Sheet({
   );
 }
 
-/** A key that closes an overlay stamps `data-instant` on the content and its overlay first, so the close
- *  is instant however it opened. The overlay is the content's sibling in the same portal. */
+/** Each desktop SheetContent registers its own overlay here, so a stacked child never stamps its parent's
+ *  (every sheet's overlay and content sit under <body>; the DOM can't pair them). */
+const overlayOf = new WeakMap<HTMLElement, HTMLElement>();
+
+/** A key that closes an overlay stamps `data-instant` on the content and its own overlay first, so the
+ *  close is instant however it opened. */
 function closeSheetInstantly(contentEl: HTMLElement | null | undefined, onOpenChange?: (open: boolean) => void) {
   stampPair(contentEl);
   onOpenChange?.(false);
@@ -73,9 +78,7 @@ function closeSheetInstantly(contentEl: HTMLElement | null | undefined, onOpenCh
 function stampPair(contentEl: HTMLElement | null | undefined) {
   if (!contentEl) return;
   contentEl.setAttribute("data-instant", "");
-  contentEl.parentElement
-    ?.querySelector(":scope > [data-slot=sheet-overlay], :scope > [data-slot=drawer-overlay]")
-    ?.setAttribute("data-instant", "");
+  overlayOf.get(contentEl)?.setAttribute("data-instant", "");
 }
 
 const WIDTH = { sheet: "w-[min(30rem,100%)]", panel: "w-[min(20rem,100%)]" } as const;
@@ -116,7 +119,19 @@ function SheetContent({
     },
     [ref],
   );
-  const stampedRef = useStampedRef(composed);
+  const overlayRef = React.useRef<HTMLElement | null>(null);
+  const registerOverlay = React.useCallback((node: HTMLDivElement | null) => {
+    overlayRef.current = node;
+    stampInstant(node);
+  }, []);
+  const registeredRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      composed(node);
+      if (node && overlayRef.current) overlayOf.set(node, overlayRef.current);
+    },
+    [composed],
+  );
+  const stampedRef = useStampedRef(registeredRef);
   const closeAutoFocus = (e: Event) => {
     onCloseAutoFocus?.(e);
     if (e.defaultPrevented) return;
@@ -147,7 +162,7 @@ function SheetContent({
       {modal && (
         <SheetPrimitive.Overlay
           data-slot="sheet-overlay"
-          ref={stampInstant}
+          ref={registerOverlay}
           onClick={stacked ? onStripClick : undefined}
           className="fixed inset-0 z-50 bg-black/20 duration-250 ease-(--ease-drawer) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-200 data-closed:ease-(--ease-out) dark:bg-black/40"
         />

@@ -3,7 +3,6 @@ import { CircleStop } from "lucide-react";
 import { type Ref, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { postInterrupt } from "./api";
 
 /** Lets the composer's Esc go through the same path as a click (U3 §6.2). */
 export type StopHandle = {
@@ -12,7 +11,7 @@ export type StopHandle = {
 };
 
 /**
- * Stop, left of Send while a turn is open (U3 §6.1). One `postInterrupt`, then a spinner and
+ * Stop, left of Send while a turn is open (U3 §6.1). One `onStop` (the session's `postInterrupt`), then a spinner and
  * "Stopping…" until `turnEpoch` changes (a turn edge, or the 10s fallback's `interrupt_unconfirmed`, after
  * which a turn that ran on can be stopped again); a 409 (the turn already ended) is ignored and any
  * other failure goes to `onError` for the composer's error line. While a compaction runs it reads
@@ -20,14 +19,16 @@ export type StopHandle = {
  * so it keeps focus and its name.
  */
 export function StopButton({
-  slug,
+  onStop,
   turnOpen,
   turnEpoch,
   compacting = false,
   onError,
+  className,
   ref,
 }: {
-  slug: string;
+  /** Sends the interrupt; a rejection with a 409 means the turn already ended. */
+  onStop(): Promise<unknown>;
   turnOpen: boolean;
   /** The session's `stopEpoch`: changes on every turn edge, even a close and reopen that landed in one
    *  commit, and on a live `interrupt_unconfirmed`. */
@@ -35,6 +36,7 @@ export function StopButton({
   compacting?: boolean;
   /** Called with a failure, and with `undefined` when a new attempt starts. */
   onError(error: unknown): void;
+  className?: string;
   ref?: Ref<StopHandle>;
 }) {
   const [pending, setPending] = useState(false);
@@ -50,7 +52,7 @@ export function StopButton({
     if (!enabled) return false;
     setPending(true);
     onError(undefined);
-    postInterrupt(slug).catch((e: unknown) => {
+    onStop().catch((e: unknown) => {
       if (e instanceof ApiError && e.status === 409) {
         // The turn already ended: its edge resets Stop. A compaction never ends that way, and the
         // status frame already says "Compacting…", so the spinner has nothing to wait for.
@@ -82,13 +84,14 @@ export function StopButton({
       type="button"
       variant="outline"
       aria-disabled={!enabled}
+      className={className}
       aria-busy={pending || undefined}
       onClick={stop}
     >
       {pending ? <Spinner /> : <CircleStop aria-hidden="true" />}
-      {/* Below 20rem of composer (200% text) only the icon shows; the label stays the name. A phone at
-          100% text (a ~22rem composer) keeps "Stop". */}
-      <span className="@max-[20rem]:sr-only">
+      {/* Below ~24rem of composer only the icon shows (U3 §13.1; a phone's ~22rem composer too), so the
+          hint keeps readable room; the label stays the name. */}
+      <span className="@max-[24rem]:sr-only">
         {pending ? "Stopping…" : compacting ? "Compacting…" : "Stop"}
       </span>
     </Button>

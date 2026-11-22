@@ -1,10 +1,18 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import type { AgentStatus, QueueItem } from "@open-factory/shared";
+import { type AgentStatus, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import {
+  attachmentOf,
+  bodyWithAttachments,
+  claimUploads,
+  DUPLICATE_ATTACHMENT,
+  INVALID_ATTACHMENT,
+  loadAttachments,
+} from "../uploads/attach.ts";
 import type { Forward } from "./forwarder.ts";
 import type { Neighborhood } from "./neighborhood.ts";
 import { type PeerLeft, peerBody } from "./peer-body.ts";
@@ -26,7 +34,16 @@ export type SendResult =
   | {
       ok: false;
       message: string;
-      code: "not_found" | "ambiguous" | "self" | "archived" | "terminated" | "ended" | "reserved";
+      code:
+        | "not_found"
+        | "ambiguous"
+        | "self"
+        | "archived"
+        | "terminated"
+        | "ended"
+        | "reserved"
+        | "invalid_attachment"
+        | "too_large";
     };
 
 /** What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. */
@@ -42,6 +59,14 @@ export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[]
 
 const SHUTTING_DOWN =
   "The factory is shutting down; the message will be delivered after it restarts.";
+
+const invalidAttachment = (): SendResult => ({
+  ok: false,
+  code: "invalid_attachment",
+  message: INVALID_ATTACHMENT,
+});
+/** An upload was claimed or deleted between the check and the insert: the transaction rolls back. */
+class AttachmentGoneError extends Error {}
 
 const notFound = (name: string): SendResult => ({
   ok: false,
@@ -109,9 +134,9 @@ export class Router {
     to: string,
     body: string,
     urgent: boolean,
-    opts: { clientMessageId?: string } = {},
+    opts: { clientMessageId?: string; attachments?: string[] } = {},
   ): Promise<SendResult> {
-    if ("userId" in from) return this.sendFromHuman(from, to, body, urgent, opts.clientMessageId);
+    if ("userId" in from) return this.sendFromHuman(from, to, body, urgent, opts);
     const me = await this.d.store.agentById(from.agentId);
     if (!me || me.archivedAt || me.terminatedAt)
       return {
@@ -208,10 +233,11 @@ export class Router {
     slug: string,
     body: string,
     urgent: boolean,
-    clientMessageId?: string,
+    opts: { clientMessageId?: string; attachments?: string[] },
   ): Promise<SendResult> {
+    const { clientMessageId } = opts;
     // U3 §13.2: a repeat of an earlier send answers with the original, whatever happened since (the agent may have
-    // ended, the message been written). The insert below settles a concurrent repeat.
+    // ended, the message been written, its uploads been claimed by it). The insert below settles a concurrent repeat.
     if (clientMessageId) {
       const earlier = await this.d.store.byClientMessageId(from.userId, clientMessageId);
       if (earlier) return this.repeated(earlier);
@@ -220,25 +246,60 @@ export class Router {
     if (!agent) return notFound(slug);
     if (agent.archivedAt) return archived(agent.slug);
     if (agent.terminatedAt) return terminated(agent.slug);
+    // U3 §13.5: each upload must be this agent's, this sender's and unused; its `[attached: …]` line joins the body
+    // (so the 64 KB limit counts it) and the row's `message_id` is set in the insert's transaction.
+    const ids = opts.attachments ?? [];
+    const files = ids.length ? await loadAttachments(this.d.db, ids, agent.id, from.userId) : [];
+    if (files === "duplicate")
+      return { ok: false, code: "invalid_attachment", message: DUPLICATE_ATTACHMENT };
+    if (!files) return invalidAttachment();
+    const fullBody = bodyWithAttachments(body, files);
+    if (Buffer.byteLength(fullBody, "utf8") > MAX_BODY_BYTES)
+      return { ok: false, code: "too_large", message: "Message is larger than 64 KB" };
+    const attachments = files.map(attachmentOf);
     let row: PendingRow;
-    if (clientMessageId) {
-      const r = await this.d.store.createClientMessage({
-        fromUserId: from.userId,
-        toAgentId: agent.id,
-        body,
-        urgent,
-        clientMessageId,
+    try {
+      const r = await this.d.store.transaction(async (tx) => {
+        const made = clientMessageId
+          ? await this.d.store.createClientMessage(
+              {
+                fromUserId: from.userId,
+                toAgentId: agent.id,
+                body: fullBody,
+                urgent,
+                clientMessageId,
+                attachments,
+              },
+              tx,
+            )
+          : {
+              row: await this.d.store.createMessage(
+                {
+                  from: { userId: from.userId },
+                  toAgentId: agent.id,
+                  body: fullBody,
+                  urgent,
+                  attachments,
+                },
+                tx,
+              ),
+              created: true,
+            };
+        if (
+          made.created &&
+          ids.length &&
+          !(await claimUploads(tx, ids, made.row.id, agent.id, from.userId))
+        )
+          throw new AttachmentGoneError();
+        return made;
       });
       // Only the request whose insert wrote the row hands it to the runtime.
       if (!r.created) return this.repeated(r.row);
       row = r.row;
-    } else
-      row = await this.d.store.createMessage({
-        from: { userId: from.userId },
-        toAgentId: agent.id,
-        body,
-        urgent,
-      });
+    } catch (e) {
+      if (e instanceof AttachmentGoneError) return invalidAttachment();
+      throw e;
+    }
     await this.booted;
     if (this.closed) throw new Error(SHUTTING_DOWN);
     const status = await this.statusOf(agent.id);

@@ -1,15 +1,19 @@
+import type { MessageAttachment } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CalendarClock, Clock, Factory } from "lucide-react";
+import { CalendarClock, Clock, Factory, FileText, Image as ImageIcon } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { displayName } from "@/components/composer/attachments";
 import { Markdown } from "@/components/markdown/markdown";
 import { clampSource, longestFence } from "@/components/markdown/split-blocks";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 import { rowOf } from "./row-of";
 import { SpeakerLine } from "./speaker-line";
+import { stripAttachedLines } from "./uploads";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
 export const LINK_CLASS =
@@ -136,6 +140,10 @@ export function MessageBlock(props: {
   /** U3 §13.2: an optimistic send, in the delivered card's shape with its body muted and named
    *  "Sending"; `label` ("Sending…") takes the time's place once the POST is slow. */
   sending?: { label?: ReactNode };
+  /** U3 §13.5: the message's confirmed uploads (the envelope's list), shown as chips; their
+   *  `[attached: …]` lines are hidden. Needs `slug` for the previews. */
+  attachments?: readonly MessageAttachment[] | undefined;
+  slug?: string;
 }) {
   const {
     from,
@@ -150,7 +158,13 @@ export function MessageBlock(props: {
     action,
     sending,
     brief,
+    attachments,
+    slug,
   } = props;
+  // Only the lines of this message's own uploads go; a typed `[attached: …]` stays text.
+  // The chips render only with a slug: without them the lines stay, so no file ever disappears.
+  const chips = attachments?.length && slug ? attachments : undefined;
+  const shown = useMemo(() => stripAttachedLines(body, chips), [body, chips]);
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -262,9 +276,84 @@ export function MessageBlock(props: {
           sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
         }
       >
-        {brief ? <LinesBody source={body} lines={3} /> : <ClampedMarkdown source={body} />}
+        {brief ? <LinesBody source={shown} lines={3} /> : <ClampedMarkdown source={shown} />}
       </div>
+      {chips && slug ? <AttachmentList slug={slug} attachments={chips} /> : null}
     </div>
+  );
+}
+
+/** The upload's same-origin, authenticated URL (the session cookie; never an external host). */
+export const uploadUrl = (slug: string, uploadId: string) =>
+  `/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}`;
+
+/** Images up to this size preview automatically; a larger one (or one whose size the envelope doesn't carry)
+ *  waits for "Show preview", so a timeline never downloads and decodes a 20 MB image to show 28px. */
+export const AUTO_PREVIEW_BYTES = 1024 * 1024;
+
+/** A message's files (U3 §13.5): each a chip opening the file; an image previews through the
+ *  authenticated same-origin GET. The name is a text node, never HTML. */
+function AttachmentList({
+  slug,
+  attachments,
+}: {
+  slug: string;
+  attachments: readonly MessageAttachment[];
+}) {
+  return (
+    <ul aria-label="Attached files" className="mt-2 flex flex-wrap gap-1.5">
+      {attachments.map((a) => (
+        <AttachmentChip key={a.uploadId} slug={slug} attachment={a} />
+      ))}
+    </ul>
+  );
+}
+
+function AttachmentChip({ slug, attachment: a }: { slug: string; attachment: MessageAttachment }) {
+  const url = uploadUrl(slug, a.uploadId);
+  const name = displayName(a.name);
+  const small = a.bytes !== undefined && a.bytes <= AUTO_PREVIEW_BYTES;
+  const [asked, setAsked] = useState(false);
+  const preview = a.kind === "image" && (small || asked);
+  return (
+    <li className="flex min-w-0 items-center gap-1">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-attachment
+        className="flex h-9 max-w-[12rem] min-w-0 items-center gap-1.5 rounded-sm border border-border bg-background pr-2 pl-1 text-[0.8125rem] leading-4 text-foreground hover:border-ring"
+      >
+        {preview ? (
+          <img
+            src={url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            width={28}
+            height={28}
+            className="size-7 shrink-0 rounded-[3px] object-cover"
+          />
+        ) : a.kind === "image" ? (
+          <ImageIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        <span dir="auto" className="min-w-0">
+          <MiddleTruncate text={name} keepEnd headMin />
+        </span>
+      </a>
+      {a.kind === "image" && !preview ? (
+        <button
+          type="button"
+          onClick={() => setAsked(true)}
+          aria-label={`Show preview of ${name}`}
+          className="text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Show preview
+        </button>
+      ) : null}
+    </li>
   );
 }
 
@@ -356,7 +445,7 @@ function LinesBody({
 /** "Show all", a `data-expands` toggle: the timeline's click capture anchors its row before the body
  *  expands. The button unmounts, so focus moves to the row first, without scrolling it into view:
  *  nothing above moves. */
-function ShowAll({ onShow }: { onShow(): void }) {
+export function ShowAll({ onShow }: { onShow(): void }) {
   return (
     <button
       type="button"

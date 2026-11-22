@@ -4,6 +4,7 @@ import {
   type EventsPage,
   type LiveFrame,
   liveKey,
+  type MessageAttachment,
   type QueueItem,
   type ServerMessage,
   type SessionEvent,
@@ -38,6 +39,8 @@ export interface SendingBlock {
   clientMessageId: string;
   body: string;
   urgent: boolean;
+  /** The files it carries (U3 §13.5), shown as chips. */
+  attachments?: readonly MessageAttachment[];
 }
 
 /** One streaming text block (U3 §11.4), mirroring the server's `LiveState.texts`. */

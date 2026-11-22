@@ -524,6 +524,9 @@ function usageOf(e: Json, s: MapperState): HarnessEvent {
   };
 }
 
+/** Local commands whose printed text is the `result` (U3 §13.3; the `<synthetic>` assistant line stays dropped). */
+const OUTPUT_COMMANDS = new Set<unknown>(["context", "usage", "cost", "stats"]);
+
 function result(e: Json, s: MapperState): HarnessEvent[] {
   if (!s.sawInit) {
     const message =
@@ -551,6 +554,8 @@ function result(e: Json, s: MapperState): HarnessEvent[] {
     );
   if (e.stop_reason === "refusal")
     out.push(...errorOnce(s, "refusal", "The model refused this request."));
+  if (OUTPUT_COMMANDS.has(e.local_command) && typeof e.result === "string" && e.result)
+    out.push({ type: "command_output", command: String(e.local_command), text: e.result });
   out.push(usageOf(e, s));
   const originKind = e.origin?.kind
     ? String(e.origin.kind)

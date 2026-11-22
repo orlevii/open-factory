@@ -153,6 +153,15 @@ function MessageContent({
   const agent = detail.data ?? summaryFromAgentsList(qc, slug);
   const replied = useMarkReplied(item);
   const [raceNotice, setRaceNotice] = useState<string>();
+  const { refetch } = detail;
+  // Stable, as the memoised composer's other props are (U3 M3).
+  const onTerminated = useCallback(
+    (notice: string) => {
+      setRaceNotice(notice);
+      void refetch();
+    },
+    [refetch],
+  );
   return (
     <>
       <Body>
@@ -193,10 +202,7 @@ function MessageContent({
           slug={slug}
           agent={agent}
           onSent={replied}
-          onTerminated={(notice) => {
-            setRaceNotice(notice);
-            void detail.refetch();
-          }}
+          onTerminated={onTerminated}
         />
       )}
     </>

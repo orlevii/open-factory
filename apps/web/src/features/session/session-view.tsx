@@ -28,6 +28,7 @@ import {
   runningQueryOptions,
   summaryFromAgentsList,
 } from "./api";
+import { commandsQueryOptions } from "./commands";
 import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
 import { childrenOf } from "./display-passes";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
@@ -40,6 +41,7 @@ import { SpeakerProvider } from "./speaker-line";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, type StopCrons, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
+import { recallText, uploadsFor, uploadsUsedSince } from "./uploads";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
 
@@ -68,7 +70,8 @@ export function SessionView({
   const onCancel = useCallback(
     (item: QueueItem) => {
       const body = item.body ?? "";
-      const inBox = composerRef.current?.putBackIfEmpty(body) ?? false;
+      // A command never comes back as text: Enter would send it as a message (U3 §13.3).
+      const inBox = item.kind !== "command" && (composerRef.current?.putBackIfEmpty(body) ?? false);
       cancelItem(
         item,
         inBox,
@@ -87,6 +90,10 @@ export function SessionView({
   useReadFrom(slug, s.state.ordered.at(-1)?.at);
   const navigate = useNavigate();
   const qc = useQueryClient();
+  // The `/` menu's list loads beside the session, never behind it (m11): an open menu reads the cache.
+  useEffect(() => {
+    void qc.prefetchQuery(commandsQueryOptions(slug));
+  }, [qc, slug]);
   const loaded = s.state.agent;
   // Until the session has loaded, the header and Agent details render from the cached list's
   // summary (spec §11; the route didn't wait for the detail), or on a cold load from the detail the
@@ -155,6 +162,7 @@ export function SessionView({
     },
     [setAgent],
   );
+  // Stable, so the memoised composer doesn't render for frames that change nothing it reads (U3 M3).
   const onSendRaced = useCallback(
     (notice: string) => {
       setRaceNotice(notice);
@@ -207,6 +215,22 @@ export function SessionView({
     [queue, sending, agent, cancelled, self, onCancel, onUndo],
   );
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
+  // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
+  const orderedRef = useRef(s.state.ordered);
+  // A delivered message of yours used its uploads: any chip still holding one goes (a send that landed
+  // after its 15s abort and a remount, whose chips came back). Only events past the last look are read.
+  const lookedThrough = useRef({ slug, seq: 0 });
+  const userId = me?.user.id;
+  useEffect(() => {
+    const ordered = s.state.ordered;
+    orderedRef.current = ordered;
+    if (!self) return; // read again once you are known
+    const from = lookedThrough.current.slug === slug ? lookedThrough.current.seq : 0;
+    const used = uploadsUsedSince(ordered, from, self);
+    lookedThrough.current = { slug, seq: ordered.at(-1)?.seq ?? from };
+    if (used.length) uploadsFor(userId, slug).forgetUploads(used);
+  }, [s.state.ordered, slug, self, userId]);
+  const recall = useCallback(() => recallText(orderedRef.current, self), [self]);
   const composer = useMemo(
     () =>
       agent ? (
@@ -223,6 +247,8 @@ export function SessionView({
           landed={landed}
           onSent={clearCancelled}
           onTerminated={onSendRaced}
+          recall={recall}
+          context="session"
         />
       ) : null,
     [
@@ -236,6 +262,7 @@ export function SessionView({
       landed,
       clearCancelled,
       onSendRaced,
+      recall,
     ],
   );
   // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.

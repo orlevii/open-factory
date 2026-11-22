@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
+import { CommandBlock, CommandOutput } from "./command-rows";
 import { CompactionMarker } from "./compaction-marker";
 import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
@@ -294,6 +295,8 @@ export function TimelineRow(props: TimelineRowProps) {
             urgent={row.message.urgent}
             at={row.at}
             failed={failedIds.has(row.message.id)}
+            attachments={row.message.attachments}
+            slug={props.slug}
             {...(row.message.kind === "scheduled" && row.message.scheduleKey
               ? {
                   scheduled: {
@@ -514,6 +517,14 @@ export function TimelineRow(props: TimelineRowProps) {
       );
     case "turn_footer":
       return <QuietLine rowProps={rp}>{footerText(row)}</QuietLine>;
+    case "command":
+      return (
+        <div {...rp}>
+          <CommandBlock by={row.by} text={row.text} at={row.at} />
+        </div>
+      );
+    case "command_output":
+      return <CommandOutput command={row.command} text={row.text} rowProps={rp} />;
     case "quiet":
       return (
         <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>

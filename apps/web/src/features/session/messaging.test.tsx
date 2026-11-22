@@ -2,9 +2,11 @@ import type { AnyEvent, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { FakeXhr, file, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail, resetSeq, se } from "@/test/session-fixtures";
+import { resetUploads } from "./uploads";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({
@@ -27,6 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  resetUploads(); // uploads live in a module store for the page's life
 });
 
 const env = (o: Record<string, unknown>) => ({ urgent: false, ...o }) as never;
@@ -51,11 +54,16 @@ async function open(
         running: { count: 1, max: 8 },
       }),
   });
-  last.qc = renderApp("/agents/dev", alice).queryClient;
+  const r = renderApp("/agents/dev", alice);
+  last.qc = r.queryClient;
+  last.router = r.router;
   await screen.findByText(firstText);
   return api;
 }
-const last = { qc: undefined as undefined | import("@tanstack/react-query").QueryClient };
+const last = {
+  qc: undefined as undefined | import("@tanstack/react-query").QueryClient,
+  router: undefined as undefined | ReturnType<typeof renderApp>["router"],
+};
 
 test("an agent sender is a chip linking to its session (name and @slug); humans stay plain", async () => {
   await open(
@@ -1128,4 +1136,225 @@ test("the users list is fetched alongside the events, not after them (no name po
   renderApp("/agents/dev", alice);
   await vi.waitFor(() => expect(api.calls.some((c) => c.url === "/api/users")).toBe(true));
   expect(document.querySelector("[data-timeline-skeleton]")).not.toBeNull();
+});
+
+// U3 §13.5: attachments in messages and the session composer.
+const UP1 = "0b6f1c1e-6a4e-4c1a-9a43-1d1f6f8f2a10";
+const UP2 = "7c2d9e0f-1b3a-4d5e-8f60-718293a4b5c6";
+const GREETING: AnyEvent[] = [
+  {
+    type: "message_in",
+    messages: [env({ id: "m0", from: "b", kind: "message", body: "hello there" })],
+  },
+];
+const attachedLine = (id: string, safe: string) =>
+  `[attached: .factory/uploads/20261122-${id}-${safe}]`;
+
+test("a confirmed attachment is a chip and its line is hidden; images preview through the authenticated GET", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "m1",
+            from: "@alice",
+            kind: "message",
+            body: `look at these\n\n${attachedLine(UP1, "shot.png")}\n${attachedLine(UP2, "notes.txt")}`,
+            attachments: [
+              {
+                uploadId: UP1,
+                name: "shot.png",
+                kind: "image",
+                bytes: 40_000,
+                width: 640,
+                height: 480,
+              },
+              { uploadId: UP2, name: "notes.txt", kind: "text" },
+            ],
+          }),
+        ],
+      },
+    ],
+    "look at these",
+  );
+  const block = screen.getByText("look at these").closest("[data-message-block]") as HTMLElement;
+  expect(block).not.toHaveTextContent("[attached:");
+  const list = within(block).getByRole("list", { name: "Attached files" });
+  const img = list.querySelector("img");
+  expect(img).toHaveAttribute("src", `/api/agents/dev/uploads/${UP1}`);
+  expect(within(list).getByRole("link", { name: /shot\.png/ })).toHaveAttribute(
+    "href",
+    `/api/agents/dev/uploads/${UP1}`,
+  );
+  expect(within(list).getByRole("link", { name: /notes\.txt/ })).toHaveAttribute(
+    "href",
+    `/api/agents/dev/uploads/${UP2}`,
+  );
+});
+
+test("a typed [attached: …] line without a confirmed upload stays text", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "m1",
+            from: "@alice",
+            kind: "message",
+            body: `read this\n\n[attached: ../x]\n${attachedLine(UP1, "a.png")}`,
+          }),
+        ],
+      },
+    ],
+    /read this/,
+  );
+  const block = screen.getByText(/read this/).closest("[data-message-block]") as HTMLElement;
+  expect(block).toHaveTextContent("[attached: ../x]");
+  expect(block).toHaveTextContent(`[attached: .factory/uploads/20261122-${UP1}-a.png]`);
+  expect(within(block).queryByRole("list", { name: "Attached files" })).toBeNull();
+});
+
+test("↑ recall fills the box with your last message's text, without its attachment lines", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "m1",
+            from: "@alice",
+            kind: "message",
+            body: `see this\n\n${attachedLine(UP1, "a.png")}`,
+            attachments: [{ uploadId: UP1, name: "a.png", kind: "image" }],
+          }),
+        ],
+      },
+    ],
+    "see this",
+  );
+  const box = screen.getByRole("combobox", { name: /Message to/ });
+  await userEvent.click(box);
+  await userEvent.keyboard("{ArrowUp}");
+  expect(box).toHaveValue("see this");
+});
+
+test("a file goes with the message: the POST carries its id and the Sending block shows its chip", async () => {
+  installFakeXhr();
+  const api = await open(GREETING, "hello there", {
+    "POST /api/agents/dev/messages": (() => new Promise<Response>(() => {})) as never,
+  });
+  const box = screen.getByRole("combobox", { name: /Message to/ });
+  fireEvent.paste(box, {
+    clipboardData: { files: [file("a.png", 8, "image/png")], getData: () => "", types: ["Files"] },
+  });
+  act(() => lastXhr().respond(201, { uploadId: UP1, kind: "image", bytes: 8, name: "a.png" }));
+  await userEvent.type(box, "here it is{Enter}");
+  await vi.waitFor(() =>
+    expect(api.calls.find((c) => c.url.endsWith("/messages"))?.body).toMatchObject({
+      body: "here it is",
+      attachments: [UP1],
+    }),
+  );
+  const sending = await screen.findByRole("group", { name: "Sending" });
+  expect(within(sending).getByRole("link", { name: /a\.png/ })).toHaveAttribute(
+    "href",
+    `/api/agents/dev/uploads/${UP1}`,
+  );
+  expect(document.querySelector("[data-composer-frame] [data-upload-chip]")).toBeNull();
+  for (const x of FakeXhr.all) x.abort();
+});
+
+test("leaving the session keeps its uploads; a file dropped outside the composer never navigates", async () => {
+  installFakeXhr();
+  await open(GREETING, "hello there", { "GET /api/agents/other": () => json({ error: {} }, 404) });
+  fireEvent.paste(screen.getByRole("combobox", { name: /Message to/ }), {
+    clipboardData: { files: [file("keep.txt")], getData: () => "", types: ["Files"] },
+  });
+  const stray = fireEvent.drop(document.body, {
+    dataTransfer: { files: [file("x.txt")], types: ["Files"] },
+  });
+  expect(stray).toBe(false); // the window prevented the browser's navigation to the file
+  await act(() => last.router?.navigate({ to: "/agents" }));
+  await vi.waitFor(() => expect(document.querySelector("[data-upload-chip]")).toBeNull());
+  await act(() => last.router?.navigate({ to: "/agents/$slug", params: { slug: "dev" } }));
+  await vi.waitFor(() =>
+    expect(document.querySelector("[data-upload-chip]")).toHaveTextContent("keep.txt"),
+  );
+  for (const x of FakeXhr.all) x.abort();
+});
+
+test("an image over 1 MB, or of unknown size, previews only when asked", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "m1",
+            from: "@alice",
+            kind: "message",
+            body: `two shots\n\n${attachedLine(UP1, "big.png")}\n${attachedLine(UP2, "old.png")}`,
+            attachments: [
+              { uploadId: UP1, name: "big.png", kind: "image", bytes: 5_000_000 },
+              { uploadId: UP2, name: "old.png", kind: "image" },
+            ],
+          }),
+        ],
+      },
+    ],
+    "two shots",
+  );
+  const block = screen.getByText("two shots").closest("[data-message-block]") as HTMLElement;
+  const list = within(block).getByRole("list", { name: "Attached files" });
+  expect(list.querySelector("img")).toBeNull();
+  await userEvent.click(within(list).getByRole("button", { name: "Show preview of big.png" }));
+  expect(list.querySelectorAll("img")).toHaveLength(1);
+  expect(list.querySelector("img")).toHaveAttribute("src", `/api/agents/dev/uploads/${UP1}`);
+  expect(within(list).getByRole("button", { name: "Show preview of old.png" })).toBeInTheDocument();
+});
+
+test("another user signing in on this tab never sees the previous user's uploads", async () => {
+  installFakeXhr();
+  await open(GREETING, "hello there");
+  fireEvent.paste(screen.getByRole("combobox", { name: /Message to/ }), {
+    clipboardData: { files: [file("mine.txt")], getData: () => "", types: ["Files"] },
+  });
+  const x = lastXhr();
+  expect(document.querySelector("[data-upload-chip]")).toHaveTextContent("mine.txt");
+  const bob = { ...alice, user: { ...alice.user, id: "u2", handle: "bob", name: "Bob" } };
+  act(() => last.qc?.setQueryData(["session"], bob));
+  await vi.waitFor(() => expect(document.querySelector("[data-upload-chip]")).toBeNull());
+  expect(x.aborted).toBe(true);
+});
+
+test("a delivered message of yours takes its uploads' chips out of the composer", async () => {
+  installFakeXhr();
+  await open(GREETING, "hello there");
+  fireEvent.paste(screen.getByRole("combobox", { name: /Message to/ }), {
+    clipboardData: { files: [file("a.txt")], getData: () => "", types: ["Files"] },
+  });
+  act(() => lastXhr().respond(201, { uploadId: UP1, kind: "text", bytes: 5, name: "a.txt" }));
+  expect(document.querySelector("[data-upload-chip]")).not.toBeNull();
+  act(() =>
+    ws.onMessage?.({
+      type: "session_event",
+      agent: "dev",
+      event: se({
+        type: "message_in",
+        messages: [
+          env({
+            id: "m9",
+            from: "@alice",
+            kind: "message",
+            body: `late one\n\n${attachedLine(UP1, "a.txt")}`,
+            attachments: [{ uploadId: UP1, name: "a.txt", kind: "text", bytes: 5 }],
+          }),
+        ],
+      }),
+    }),
+  );
+  await screen.findByText("late one");
+  expect(document.querySelector("[data-composer-frame] [data-upload-chip]")).toBeNull();
 });

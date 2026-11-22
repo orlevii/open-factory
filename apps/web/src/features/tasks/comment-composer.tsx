@@ -1,9 +1,10 @@
 import type { TaskCommentResponse } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { MarkdownEditor } from "@/components/markdown/markdown-editor";
-import { Button } from "@/components/ui/button";
-import { isCoarsePointer, isSendKey } from "@/lib/send-key";
+import { type Ref, useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { Composer, type ComposerHandle, SubmitError } from "@/components/composer/composer";
+import { useMentionSource } from "@/features/mentions/mention-source";
+import { taskDraftKey } from "@/lib/drafts";
+import { isCoarsePointer } from "@/lib/send-key";
 import { postComment, taskDetailOptions, tasksQueryKey } from "./api";
 
 const REASON: Record<string, string> = {
@@ -26,24 +27,9 @@ export function notReachedLine(list: TaskCommentResponse["notReached"]): string 
   return `Not reached: ${parts.join(", ")}.`;
 }
 
-// One draft per task for this tab's session, as the session composer keeps one per agent: a
-// half-typed reply survives leaving the task (or the inbox item) and coming back.
-const draftKey = (taskKey: string) => `of-comment-draft:${taskKey}`;
-const readDraft = (taskKey: string) => {
-  try {
-    return sessionStorage.getItem(draftKey(taskKey)) ?? "";
-  } catch {
-    return "";
-  }
-};
-const writeDraft = (taskKey: string, v: string) => {
-  try {
-    if (v) sessionStorage.setItem(draftKey(taskKey), v);
-    else sessionStorage.removeItem(draftKey(taskKey));
-  } catch {
-    /* private mode */
-  }
-};
+/** The comment toolbar's `@` button (people and agents both). */
+const COMMENT_AT_LABEL = "Insert a handle";
+export const POST_FAILED = "Couldn't post the comment. Try again.";
 
 export type CommentComposerHandle = {
   /** Reply: the mention goes to the start of the draft (once), then the textarea takes focus. */
@@ -53,17 +39,17 @@ export type CommentComposerHandle = {
 };
 
 /**
- * The comment composer (UI design §7). It owns the draft, so a keystroke re-renders only the
- * composer, not the task above it; the page reaches in through the handle for Reply and the
- * `?comment=` prefill. A refetch never loses the draft (the composer stays mounted), and the draft
- * is kept per task for the tab's session, so leaving and coming back keeps it; a post clears it.
+ * The comment composer (UI design §7) on the shared `Composer` (U3 §13.1): Write/Preview in its
+ * toolbar, no attachments (a file gets the session note, Q38). The composer owns the draft, so a
+ * keystroke re-renders only it, not the task above; the page reaches in through the handle for Reply
+ * and the `?comment=` prefill. The draft is kept per task in `localStorage` (`of-draft:v1:task:<key>`,
+ * review note m6), so leaving and coming back keeps it; what the server took leaves it.
  */
 export function CommentComposer({
   ref,
   taskKey,
   assignee,
   onPosted,
-  compact,
 }: {
   ref: Ref<CommentComposerHandle>;
   taskKey: string;
@@ -71,109 +57,65 @@ export function CommentComposer({
   onPosted?: () => void;
   /** The current live assignee's slug, for the helper line. */
   assignee: string | undefined;
-  /** A shorter editor, for the inbox reading pane. */
+  /** Kept for callers: the shared composer starts at two lines and grows. */
   compact?: boolean;
 }) {
   const qc = useQueryClient();
-  // Key the composer by task: the draft is read once per task.
-  const [draft, setDraft] = useState(() => readDraft(taskKey));
-  // A prefill nobody typed after isn't a draft: it isn't kept (the next deep link prefills its own).
-  const prefilled = useRef<string>(undefined);
-  useEffect(() => writeDraft(taskKey, draft === prefilled.current ? "" : draft), [taskKey, draft]);
-  const [view, setView] = useState<"write" | "preview">("write");
-  const textarea = useRef<HTMLTextAreaElement>(null);
-  const [posting, setPosting] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const box = useRef<ComposerHandle>(null);
   const [notReached, setNotReached] = useState<string>();
   useImperativeHandle(
     ref,
     () => ({
       reply(mention) {
-        setView("write");
-        setDraft((d) => (d.startsWith(`${mention} `) ? d : `${mention} ${d}`));
-        // After the editor (re)mounts in Write: focus and scroll, instant.
-        requestAnimationFrame(() => {
-          textarea.current?.focus();
-          textarea.current?.scrollIntoView?.({ block: "nearest" });
-        });
+        box.current?.insertAtStart(`${mention} `);
+        box.current?.focus();
       },
       prefill(mention) {
-        setDraft((d) => {
-          if (d !== "") return d;
-          prefilled.current = `${mention} `;
-          return prefilled.current;
-        });
+        // Unfocused, so it isn't stored: a prefill nobody typed after isn't a draft.
+        box.current?.prefillIfEmpty(`${mention} `);
       },
     }),
     [],
   );
-  async function post() {
-    if (posting || draft.trim() === "") return;
-    const sent = draft;
-    setPosting(true);
-    setFailed(false);
-    try {
-      const r = await postComment(taskKey, sent);
+  const onSubmit = useCallback(
+    async (text: string) => {
+      let r: TaskCommentResponse;
+      try {
+        r = await postComment(taskKey, text);
+      } catch {
+        throw new SubmitError(POST_FAILED);
+      }
       // The new comment shows at once; the refetch (not awaited) brings the rest of the task.
       qc.setQueryData(taskDetailOptions(taskKey).queryKey, (t) =>
         t && !t.activity.some((a) => a.id === r.comment.id)
           ? { ...t, activity: [...t.activity, r.comment] }
           : t,
       );
-      // Keep what was typed while the post was in flight.
-      setDraft((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length) : cur));
       setNotReached(notReachedLine(r.notReached));
       onPosted?.();
       void qc.invalidateQueries({ queryKey: tasksQueryKey });
-    } catch {
-      setFailed(true);
-    } finally {
-      setPosting(false);
-    }
-  }
-  const empty = draft.trim() === "";
+    },
+    [qc, taskKey, onPosted],
+  );
+  // `@` completes a handle as `@slug ` (routing as today, U3 §13.4).
+  const at = useMentionSource(COMMENT_AT_LABEL);
+  const completions = useMemo(() => ({ at }), [at]);
   const who = assignee
     ? `Goes to @${assignee} and anyone you @mention.`
     : "No assignee: only the people and agents you @mention are notified.";
-  const helper = isCoarsePointer() ? who : `${who} Enter to post.`;
   return (
     <>
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
-        <MarkdownEditor
-          id="comment-composer"
-          aria-label="Comment"
-          aria-describedby="comment-helper"
-          value={draft}
-          onChange={setDraft}
-          textareaRef={textarea}
-          view={view}
-          onViewChange={setView}
-          variant="detail"
-          compact={compact}
-          onKeyDown={(e) => {
-            if (isSendKey(e.nativeEvent)) {
-              e.preventDefault();
-              if (!empty && !posting) void post();
-            }
-          }}
-        />
-        <p
-          id="comment-helper"
-          className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-        >
-          {helper}
-        </p>
-        {failed && (
-          <p role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive">
-            Couldn't post the comment. Try again.
-          </p>
-        )}
-        <div className="flex justify-end">
-          <Button type="button" onClick={() => void post()} disabled={empty || posting}>
-            {posting ? "Posting…" : "Comment"}
-          </Button>
-        </div>
-      </div>
+      <Composer
+        ref={box}
+        draftKey={taskDraftKey(taskKey)}
+        label="Comment"
+        placeholder=""
+        onSubmit={onSubmit}
+        completions={completions}
+        note={isCoarsePointer() ? who : `${who} Enter to post.`}
+        preview
+        pendingLabel="Posting…"
+      />
       <p
         role="status"
         aria-live="polite"

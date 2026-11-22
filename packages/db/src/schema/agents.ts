@@ -1,4 +1,4 @@
-import type { TemplateConfig } from "@open-factory/shared";
+import type { Command, MessageAttachment, TemplateConfig } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -91,6 +91,19 @@ export const agents = pgTable(
   ],
 );
 
+/**
+ * U3 §13.3: the command list of the agent's last process start (`initialize`). A side table, never a column on
+ * `agents`: agent rows are read wholesale (`select().from(agents)`), and a ~60 KB list must not ride along.
+ */
+export const agentCommands = pgTable("agent_commands", {
+  agentId: text("agent_id")
+    .primaryKey()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  commands: jsonb("commands").$type<Command[]>().notNull(),
+  claudeCodeVersion: text("claude_code_version"),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+});
+
 export const turns = pgTable(
   "turns",
   {
@@ -171,6 +184,8 @@ export const messages = pgTable(
     late: boolean("late"),
     // U3: the sender's optimistic-row id; idempotent per sender forever.
     clientMessageId: text("client_message_id"),
+    // U3 §13.5: the confirmed uploads, for the envelope's UI field (the body carries the `[attached: …]` lines).
+    attachments: jsonb("attachments").$type<MessageAttachment[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },
@@ -209,6 +224,39 @@ export const inboxItems = pgTable(
   ],
 );
 export type InboxItemRow = typeof inboxItems.$inferSelect;
+
+/**
+ * U3 §13.5: a file a human uploaded into an agent's workspace (`.factory/uploads/<stored>`). `message_id` is null until
+ * the message carrying it is sent; an unsent row older than 24 hours is swept with its file.
+ */
+export const uploads = pgTable(
+  "uploads",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    uploaderId: text("uploader_id")
+      .notNull()
+      .references(() => users.id),
+    /** Relative to the agent's workdir: `.factory/uploads/<yyyymmdd>-<id>-<safe>`. */
+    storedPath: text("stored_path").notNull(),
+    originalName: text("original_name").notNull(),
+    kind: text("kind").notNull().$type<"image" | "text">(),
+    bytes: integer("bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("uploads_message_idx").on(t.messageId),
+    // The 24h sweep reads unsent rows by age.
+    index("uploads_unsent_idx").on(t.createdAt).where(sql`${t.messageId} is null`),
+  ],
+);
+export type UploadRow = typeof uploads.$inferSelect;
 
 export type AgentRow = typeof agents.$inferSelect;
 export type TurnRow = typeof turns.$inferSelect;

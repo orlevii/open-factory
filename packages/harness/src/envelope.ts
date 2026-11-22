@@ -71,6 +71,8 @@ export type BatchRow = {
   late?: boolean;
   /** U3 §13.2: the sender's optimistic-row id, for the UI only; `one()` never renders it. */
   clientMessageId?: string;
+  /** U3 §13.5: the confirmed uploads, for the UI only; `one()` never renders them (the body has the lines). */
+  attachments?: Envelope["attachments"];
 };
 
 const ORDER: Record<MessageKind, number> = {
@@ -115,6 +117,7 @@ function single(r: BatchRow): FactoryMessage {
     ...taskFields(r),
     ...scheduleFields(r),
     ...(r.clientMessageId ? { clientMessageId: r.clientMessageId } : {}),
+    ...(r.attachments?.length ? { attachments: r.attachments } : {}),
     parts: [part(r)],
   };
 }

@@ -50,6 +50,7 @@ import { useIsLiveAgent } from "@/features/agents/use-agent-index";
 import { useUnreadCount } from "@/features/inbox/api";
 import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
+import { resetUploads } from "@/features/session/uploads";
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -109,6 +110,8 @@ export function AppSidebar() {
   const notifications = useBrowserNotifications();
 
   async function signOut() {
+    // In-flight uploads stop and every file of this user is dropped from memory (U3 §13.5).
+    resetUploads();
     await authClient.signOut();
     await refreshSession(qc);
     await navigate({ to: "/sign-in" });

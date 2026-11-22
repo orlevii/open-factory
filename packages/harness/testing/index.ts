@@ -18,6 +18,8 @@ export interface FakeScenario {
   onUser: FakeStep[];
   onCompact?: FakeStep[];
   onInterrupt?: FakeStep[];
+  /** What `initialize` answers with (U3 §13.3); none by default. */
+  commands?: { name: string; description: string; argumentHint: string; builtin?: boolean }[];
 }
 export type FakeLogEntry =
   | { kind: "start"; argv: string[]; env: Record<string, string>; pid: number }

@@ -60,7 +60,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const box = () => screen.findByRole("textbox", { name: "Message to Dev agent" });
+const box = () => screen.findByRole("combobox", { name: "Message to Dev agent" });
 
 test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () => {
   renderApp("/agents/dev", alice);

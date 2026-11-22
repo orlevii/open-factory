@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -10,6 +10,7 @@ import { AgentEndedError } from "../agents/message-cancel.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { png } from "../uploads/fixtures.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
@@ -754,5 +755,305 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     await post(or, { body: "plain" });
     const n = await s.sql`select count(*)::int as n from messages where body = 'plain'`;
     expect(n[0]?.n).toBe(2);
+  });
+});
+
+describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let cookie: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    // A template skill is a host skill folder, which a start links into the workdir.
+    const skill = path.join(s.config.hostSkillsDir, "research");
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(path.join(skill, "SKILL.md"), "---\nname: research\ndescription: x\n---\n");
+    await s.seedAgent({ config: { skills: ["research"] } });
+    cookie = (await s.signUpUser({ handle: "or13" })).cookie;
+  });
+  afterAll(() => s.close());
+  const get = (signedIn = true) =>
+    s.app.inject({
+      method: "GET",
+      url: "/api/agents/dev/commands",
+      ...(signedIn ? { headers: { cookie } } : {}),
+    });
+  const list = [
+    { name: "research", description: "Research a topic (project)", argumentHint: "[topic]" },
+    { name: "model", description: "Set the AI model", argumentHint: "<model>", builtin: true },
+    {
+      name: "usage",
+      description: "Show session cost",
+      argumentHint: "",
+      builtin: true,
+      aliases: ["cost", "stats"],
+    },
+    { name: "batch", description: "Plan a large change", argumentHint: "", builtin: true },
+  ];
+
+  test("signed out is 401; an unknown agent is 404", async () => {
+    expect((await get(false)).statusCode).toBe(401);
+    const res = await s.app.inject({
+      method: "GET",
+      url: "/api/agents/nope/commands",
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("agent_not_found");
+  });
+
+  test("before the first start: the template's skills, source template", async () => {
+    const res = await get();
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      commands: [{ name: "research", description: "", argumentHint: "" }],
+      source: "template",
+      at: null,
+      stale: false,
+    });
+  });
+
+  test("after a start: the session's allowed list, stored apart from the agent row", async () => {
+    drv.commandList = list;
+    const sent = await s.app.inject({
+      method: "POST",
+      url: "/api/agents/dev/messages",
+      headers: { cookie },
+      payload: { body: "hi", urgent: false },
+    });
+    expect(sent.statusCode).toBe(202);
+    await expect.poll(async () => (await get()).json().source, { timeout: 5000 }).toBe("session");
+    const body = (await get()).json();
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+    expect(body.stale).toBe(false);
+    expect(Number.isNaN(Date.parse(body.at))).toBe(false);
+    const [row] = await s.db.select().from(schema.agentCommands);
+    expect(row).toMatchObject({ commands: list, claudeCodeVersion: "2.1.327" });
+    // Never on agent reads: not a column of agents, never in a summary.
+    expect(Object.keys(schema.agents)).not.toContain("commands");
+    const detail = await s.app.inject({
+      method: "GET",
+      url: "/api/agents/dev",
+      headers: { cookie },
+    });
+    expect(Object.keys(detail.json().agent)).not.toContain("commands");
+    expect(detail.body).not.toContain("Research a topic");
+    const all = await s.app.inject({ method: "GET", url: "/api/agents", headers: { cookie } });
+    expect(all.body).not.toContain("Research a topic");
+  });
+
+  test("the stored list keeps only well-formed entries, at most 500, and a plain version", async () => {
+    const [agent] = await s.db.select().from(schema.agents);
+    if (!agent) throw new Error("no agent");
+    const many = Array.from({ length: 520 }, (_, i) => ({
+      name: `s${i}`,
+      description: "",
+      argumentHint: "",
+    }));
+    const bad = { name: "x\nmodel", description: "", argumentHint: "" };
+    const r = await s.app.store.saveCommands(agent.id, [bad, ...many], "v".repeat(65));
+    expect(r.dropped).toBe(21);
+    const row = await s.app.store.agentCommands(agent.id);
+    expect(row?.commands).toHaveLength(500);
+    expect(row?.commands[0]?.name).toBe("s0");
+    expect(row?.claudeCodeVersion).toBeNull();
+    // Put the session's list back for the next test.
+    await s.app.store.saveCommands(agent.id, list, "2.1.327");
+  });
+
+  test("stale when the template's skills changed after the list was stored", async () => {
+    const [agent] = await s.db.select().from(schema.agents);
+    if (!agent) throw new Error("no agent");
+    await s.db
+      .update(schema.agents)
+      .set({ config: { ...agent.config, skills: ["research", "triage"] } });
+    const body = (await get()).json();
+    expect(body).toMatchObject({ source: "session", stale: true });
+    // The session's list stays what the menu shows until the next start.
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+  });
+});
+
+describe("U3 §13.5: attachments on POST /messages", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let or: string;
+  let sam: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    await s.seedAgent({ slug: "dev" });
+    await s.seedAgent({ slug: "ops" });
+    or = (await s.signUpUser({ handle: "or9" })).cookie;
+    sam = (await s.signUpUser({ handle: "sam9" })).cookie;
+  });
+  afterAll(() => s.close());
+
+  const upload = async (slug: string, data: Buffer, name: string, cookie = or) => {
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/agents/${slug}/uploads`,
+      headers: {
+        cookie,
+        "content-type": "application/octet-stream",
+        "x-upload-name": encodeURIComponent(name),
+      },
+      payload: data,
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().uploadId as string;
+  };
+  const post = (payload: object, cookie = or, slug = "dev") =>
+    s.app.inject({
+      method: "POST",
+      url: `/api/agents/${slug}/messages`,
+      headers: { cookie },
+      payload: { urgent: false, ...payload },
+    });
+  const uploadRow = async (id: string) =>
+    (await s.db.select().from(schema.uploads)).find((r) => r.id === id);
+  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
+
+  test("each file adds one [attached: …] line, sets message_id, and the envelope carries the list", async () => {
+    const img = await upload("dev", png(64, 32), "screen shot.png");
+    const txt = await upload("dev", Buffer.from("log line\n"), "run.log");
+    const res = await post({ body: "look at these", attachments: [img, txt] });
+    expect(res.statusCode).toBe(202);
+    const messageId = res.json().item.id as string;
+    const imgRow = await uploadRow(img);
+    const txtRow = await uploadRow(txt);
+    expect(imgRow?.messageId).toBe(messageId);
+    expect(txtRow?.messageId).toBe(messageId);
+    const [msg] = await s.sql`select body, attachments from messages where id = ${messageId}`;
+    expect(msg?.body).toBe(
+      `look at these\n\n[attached: ${imgRow?.storedPath}]\n[attached: ${txtRow?.storedPath}]`,
+    );
+    const attachments = [
+      {
+        uploadId: img,
+        name: "screen shot.png",
+        kind: "image",
+        bytes: imgRow?.bytes,
+        width: 64,
+        height: 32,
+      },
+      { uploadId: txt, name: "run.log", kind: "text", bytes: txtRow?.bytes },
+    ];
+    expect(msg?.attachments).toEqual(attachments);
+
+    // The process gets the envelope with the UI list; the model's text is the body with the lines.
+    const sent = drv.last.sent.flat().find((m) => m.id === messageId);
+    expect(sent?.attachments).toEqual(attachments);
+    expect(sent?.body).toContain(`[attached: ${imgRow?.storedPath}]`);
+    // §22 (R3): the path is relative to the cwd the fake process was started with, and names the uploaded file.
+    const rel = /\[attached: ([^\]]+)\]/.exec(sent?.body ?? "")?.[1] ?? "";
+    expect(path.isAbsolute(rel)).toBe(false);
+    const abs = path.resolve(drv.last.spec.cwd, rel);
+    expect(readFileSync(abs)).toEqual(png(64, 32));
+    expect(statSync(abs).mode & 0o004).toBe(0o004);
+
+    // The stored message_in event carries the list for the UI.
+    drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+    await settled();
+    const page = (
+      await s.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie: or } })
+    ).json();
+    const msgIn = page.events
+      .map((e: { event: { type: string; messages?: { id: string }[] } }) => e.event)
+      .find(
+        (e: { type: string; messages?: { id: string }[] }) =>
+          e.type === "message_in" && e.messages?.some((m) => m.id === messageId),
+      );
+    expect(msgIn.messages.find((m: { id: string }) => m.id === messageId).attachments).toEqual(
+      attachments,
+    );
+  });
+
+  test("the clientMessageId dedupe runs first: a retry with now-used attachments gets the original 202", async () => {
+    const a = await upload("dev", Buffer.from("a\n"), "a.txt");
+    const cid = randomUUID();
+    const first = await post({ body: "once", clientMessageId: cid, attachments: [a] });
+    expect(first.statusCode).toBe(202);
+    const again = await post({ body: "once", clientMessageId: cid, attachments: [a] });
+    expect(again.statusCode).toBe(202);
+    expect(again.json()).toEqual(first.json());
+  });
+
+  test("an upload of another agent, another sender, already used or unknown is 422, and nothing is sent", async () => {
+    const forOps = await upload("ops", Buffer.from("x\n"), "ops.txt");
+    const samUpload = await upload("dev", Buffer.from("y\n"), "sam.txt", sam);
+    const used = await upload("dev", Buffer.from("z\n"), "used.txt");
+    expect((await post({ body: "first", attachments: [used] })).statusCode).toBe(202);
+    const fresh = await upload("dev", Buffer.from("w\n"), "fresh.txt");
+    // Finding D15: a repeated id has its own copy.
+    const twice = await post({ body: "twice", attachments: [fresh, fresh] });
+    expect(twice.statusCode).toBe(422);
+    expect(twice.json().error).toEqual({
+      code: "invalid_attachment",
+      message: "The same file is attached twice.",
+    });
+    for (const bad of [[forOps], [samUpload], [used], ["no-such-upload"], [fresh, fresh]]) {
+      const before = await s.sql`select count(*)::int as n from messages`;
+      const res = await post({ body: "with a bad file", attachments: bad });
+      expect(res.statusCode, JSON.stringify(bad)).toBe(422);
+      expect(res.json().error.code).toBe("invalid_attachment");
+      const after = await s.sql`select count(*)::int as n from messages`;
+      expect(after[0]?.n).toBe(before[0]?.n);
+    }
+    // Nothing was claimed by the refused sends.
+    expect((await uploadRow(fresh))?.messageId).toBeNull();
+    expect((await uploadRow(forOps))?.messageId).toBeNull();
+    expect((await uploadRow(samUpload))?.messageId).toBeNull();
+  });
+
+  test("two concurrent sends with the same upload: one 202, one 422, one message row", async () => {
+    const a = await upload("dev", Buffer.from("race\n"), "race.txt");
+    const before = await s.sql`select count(*)::int as n from messages`;
+    const [x, y] = await Promise.all([
+      post({ body: "first", attachments: [a] }),
+      post({ body: "second", attachments: [a] }),
+    ]);
+    expect([x.statusCode, y.statusCode].sort()).toEqual([202, 422]);
+    const after = await s.sql`select count(*)::int as n from messages`;
+    expect((after[0]?.n ?? 0) - (before[0]?.n ?? 0)).toBe(1);
+    const winner = x.statusCode === 202 ? x : y;
+    expect((await uploadRow(a))?.messageId).toBe(winner.json().item.id);
+  });
+
+  test("the attached lines count in the 64 KB limit", async () => {
+    const a = await upload("dev", Buffer.from("q\n"), "q.txt");
+    const res = await post({ body: "x".repeat(64 * 1024 - 20), attachments: [a] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({
+      code: "validation_error",
+      message: "Message is larger than 64 KB",
+    });
+    expect((await uploadRow(a))?.messageId).toBeNull();
+    // Without the file the same body fits.
+    expect((await post({ body: "x".repeat(64 * 1024 - 20) })).statusCode).toBe(202);
+  });
+
+  test("at most 10 attachments", async () => {
+    const res = await post({
+      body: "many",
+      attachments: Array.from({ length: 11 }, (_, i) => `u${i}`),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("a sent upload previews for any signed-in human; its delete is refused", async () => {
+    const a = await upload("dev", png(4, 4), "p.png");
+    expect((await post({ body: "pic", attachments: [a] })).statusCode).toBe(202);
+    const get = await s.app.inject({
+      method: "GET",
+      url: `/api/agents/dev/uploads/${a}`,
+      headers: { cookie: sam },
+    });
+    expect(get.statusCode).toBe(200);
+    const del = await s.app.inject({
+      method: "DELETE",
+      url: `/api/agents/dev/uploads/${a}`,
+      headers: { cookie: or },
+    });
+    expect(del.statusCode).toBe(409);
   });
 });

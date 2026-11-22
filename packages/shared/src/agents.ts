@@ -90,7 +90,7 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice", "held"]),
+  kind: z.enum(["message", "compact", "notice", "held", "command"]),
   body: z.string().optional(),
   count: z.number().int().positive().optional(),
   about: z.string().optional(),
@@ -144,6 +144,8 @@ export const sendMessageBodySchema = z.object({
     .refine((s) => utf8.encode(s).length <= MAX_BODY_BYTES, "Message is larger than 64 KB"),
   urgent: z.boolean().default(false),
   clientMessageId: z.string().uuid().optional(),
+  /** U3 §13.5: upload ids from `POST /api/agents/:slug/uploads`, at most 10. */
+  attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
 export const sendMessageToolSchema = z.object({
   to: z.string().min(1).max(64),

@@ -84,6 +84,8 @@ exports[`persisted events stay the same > session-state-changed-background 1`] =
 
 exports[`persisted events stay the same > u3/attach-file-path 1`] = `"14 53b71ade3f302eb8fdfe67ee057c5e5c14cab85536ab02de38fe6dac05fe836c"`;
 
+exports[`persisted events stay the same > u3/control-initialize-commands 1`] = `"0 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"`;
+
 exports[`persisted events stay the same > u3/partial-interrupt-mid-text 1`] = `"10 8be8ec2237448a450361ce23806f85c7401befefa46692ecdee807219952168a"`;
 
 exports[`persisted events stay the same > u3/partial-subagent 1`] = `"17 9455666c308d4d644fc4b4e5674e85d3e5b5f926fe86c20861c50f70ef67a101"`;
@@ -91,5 +93,7 @@ exports[`persisted events stay the same > u3/partial-subagent 1`] = `"17 9455666
 exports[`persisted events stay the same > u3/partial-text-and-write 1`] = `"10 267278cd17bf3bd7a94032774e00bcf7a1a7c12dad67be6badb97a5120e03787"`;
 
 exports[`persisted events stay the same > u3/partial-thinking-summaries-forward-subagent 1`] = `"13 8f27e80d6c59a28d91bce6930a74bd8af8fe16a3552107b6e5953c94a310ebc4"`;
+
+exports[`persisted events stay the same > u3/slash-local-commands 1`] = `"13 4cec90f5fbf183f3b90bf0d8eb29e1c76ffa9dcd3aca95d7351082750eb6117b"`;
 
 exports[`persisted events stay the same > user-message-priority-now 1`] = `"11 10472a94fc2c4f3766ec6b963fc752d1f5be6f416dc74a0645ad33f76f793d2e"`;

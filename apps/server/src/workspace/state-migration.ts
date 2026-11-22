@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, rename, rm, unlink } from "node:fs/promises";
+import { lstat, mkdir, readdir, rename, rm, rmdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { agentWorkdir, resyncRoot, templateCopyDir } from "./paths.ts";
 
@@ -35,7 +35,7 @@ async function hasLinks(dir: string): Promise<boolean> {
 /**
  * Moves the acceptable children of `from` into `to`. `kind` decides what is acceptable: the template
  * copy takes only the two regular files, the resync root only real directories holding no links.
- * Anything else is skipped with a warning (and removed with `.factory`); a target that exists is
+ * Anything else is skipped with a warning (and removed with its folder); a target that exists is
  * skipped and logged.
  */
 async function moveChildren(
@@ -70,7 +70,8 @@ async function moveChildren(
 
 /**
  * One-time move of S4's factory state out of each agent's writable workdir (spec §11.7). A symlinked
- * `.factory` is unlinked, never followed. Idempotent: nothing to do once `.factory` is gone.
+ * `.factory` is unlinked, never followed. Only `.factory/template` and `.factory/resync` are moved and removed;
+ * `.factory/uploads` (U3 §13.5) and anything else stay. Idempotent: nothing to do once those two are gone.
  */
 export async function migrateWorkdirState(
   factoryHome: string,
@@ -101,8 +102,17 @@ async function migrateOne(factoryHome: string, slug: string, log: Log): Promise<
     ] as const) {
       const src = path.join(old, sub);
       const sst = await lstat(src).catch(() => null);
-      if (sst?.isDirectory()) await moveChildren(src, dest, sub, slug, log);
+      if (!sst) continue;
+      if (sst.isDirectory()) {
+        await moveChildren(src, dest, sub, slug, log);
+        // What wasn't moved (links, odd entries) goes with its folder; `rm` never follows a link inside it.
+        await rm(src, { recursive: true, force: true });
+      } else await unlink(src); // a link or file planted in place of the folder, never followed
     }
-    await rm(old, { recursive: true, force: true });
+    // U3 §13.5: `.factory/` also holds `uploads/` (and whatever else the agent keeps there), so it runs every boot
+    // without deleting anything but the two S4 folders; `.factory` itself goes only when that left it empty.
+    await rmdir(old).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== "ENOTEMPTY" && err.code !== "EEXIST" && err.code !== "ENOENT") throw err;
+    });
   }
 }

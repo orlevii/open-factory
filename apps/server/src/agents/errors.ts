@@ -78,6 +78,15 @@ export class CompactingError extends Error {
   }
 }
 
+/** U3 §13.3: the agent's harness process can't write slash commands; the route answers 501 `commands_unsupported`. */
+export class CommandsUnsupportedError extends Error {
+  readonly code = "commands_unsupported";
+  constructor() {
+    super("This agent's harness can't run slash commands.");
+    this.name = "CommandsUnsupportedError";
+  }
+}
+
 /** An inbox cursor that doesn't decode to `created_at|id` (spec §11); the route answers 400. */
 export class InvalidCursorError extends Error {
   constructor() {

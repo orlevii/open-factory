@@ -49,6 +49,7 @@ import { settingsRoutes } from "./routes/settings.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
+import { uploadsRoutes } from "./routes/uploads.ts";
 import { usageRoutes } from "./routes/usage.ts";
 import { signUpStateRoutes, usersRoutes } from "./routes/users.ts";
 import { type DockerClient, dockerodeClient } from "./runtime/docker/client.ts";
@@ -69,6 +70,8 @@ import { reconcile } from "./supervisor/reconcile.ts";
 import { TaskService } from "./tasks/task-service.ts";
 import { TaskStore } from "./tasks/task-store.ts";
 import { TemplateIndex } from "./templates/template-index.ts";
+import { UploadService } from "./uploads/service.ts";
+import { UploadSweep } from "./uploads/sweep.ts";
 import { UsageService } from "./usage/usage-service.ts";
 import { InviteService } from "./users/invites.ts";
 import { UserAdminService } from "./users/user-admin.ts";
@@ -109,6 +112,7 @@ declare module "fastify" {
     schedules: ScheduleService;
     scheduler: Scheduler;
     agentListener: { port: number; close(): Promise<void> };
+    uploads: UploadService;
   }
 }
 
@@ -370,12 +374,23 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     now: () => Date.now(),
   });
   app.decorate("reaper", reaper);
+  // U3 §13.5: uploads into agent workspaces, and the 24h sweep of unsent ones (started after boot, stopped first).
+  const uploads = new UploadService({
+    db: deps.db,
+    factoryHome: config.factoryHome,
+    lock,
+    log: app.log,
+    now: clock,
+  });
+  app.decorate("uploads", uploads);
+  const uploadSweep = new UploadSweep({ uploads, log: app.log, now: clock });
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
     reaper.stop();
+    uploadSweep.stop();
     scheduler.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
@@ -384,6 +399,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     await agentListener?.close();
     // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
     await reaper.idle();
+    await uploadSweep.idle();
     await scheduler.idle();
   });
 
@@ -409,6 +425,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(tasksRoutes);
   await app.register(schedulesRoutes);
   await app.register(messagesRoutes);
+  await app.register(uploadsRoutes);
   await registerStatic(app, deps.webRoot);
   // The agent listener (spec §5.3) starts before boot reconciliation: step 6 can start agents, and Claude connects to
   // its MCP servers only at startup. A bind failure fails the boot.
@@ -449,6 +466,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     router.bootDone();
     void reaper.run();
     reaper.start();
+    void uploadSweep.run();
+    uploadSweep.start();
     scheduler.start();
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A

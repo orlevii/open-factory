@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
 import { groupWork, mergeFailures } from "./display-passes";
+import { rowMenuItems } from "./row-menu";
 import { buildRows, type Row } from "./rows";
 import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
 import { Timeline } from "./timeline";
@@ -626,4 +627,95 @@ test("a deep link into a group expands it and lands on the child", async () => {
   await waitFor(() => expect(rowEl("5")).not.toBeNull());
   expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
   expect(rowEl("5")).toHaveFocus();
+});
+
+// ---- Commands (U3 §13.3) ----
+
+function renderRows(events: AnyEvent[]) {
+  const { rows } = buildRows(events.map((e) => se(e)));
+  render(
+    <SpeakerContext value={speakers}>
+      {rows.map((row) => (
+        <div key={row.key} data-test-row={row.kind}>
+          <TimelineRow
+            slug="dev"
+            row={row}
+            expanded={new Set()}
+            toggle={() => {}}
+            rowProps={() => ({})}
+            failedIds={new Set()}
+            interruptedEnds={new Set()}
+          />
+        </div>
+      ))}
+    </SpeakerContext>,
+  );
+  return rows;
+}
+
+test("a command renders like your message: the command in mono and 'ran a command'", () => {
+  const rows = renderRows([
+    { type: "control", cmd: "command", arg: "/code-review src/", by: "@alice" },
+  ]);
+  expect(rows.map((r) => r.kind)).toEqual(["command"]);
+  const row = document.querySelector("[data-test-row=command]") as HTMLElement;
+  expect(within(row).getByText("You")).toBeInTheDocument();
+  expect(within(row).getByText("ran a command")).toBeInTheDocument();
+  expect(within(row).getByText("/code-review src/")).toHaveClass("font-mono");
+  expect(row.querySelector("[data-message-block]")).not.toBeNull();
+});
+
+test("/context output renders as markdown with Copy", async () => {
+  renderRows([
+    {
+      type: "command_output",
+      command: "context",
+      text: "## Context usage\n\n| Category | Tokens |\n| --- | --- |\n| System | 3k |",
+    },
+  ]);
+  const row = document.querySelector("[data-test-row=command_output]") as HTMLElement;
+  expect(within(row).getByRole("heading", { name: "Context usage" })).toBeInTheDocument();
+  expect(within(row).getByRole("table")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+});
+
+test("/usage and /cost output render as a code plate with Copy", () => {
+  renderRows([
+    { type: "command_output", command: "usage", text: "Total cost: $0.42\n## not a heading" },
+    { type: "command_output", command: "cost", text: "Total cost: $0.10" },
+  ]);
+  const rows = [...document.querySelectorAll<HTMLElement>("[data-test-row=command_output]")];
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.querySelector("pre")).not.toBeNull();
+    expect(within(row).queryByRole("heading")).toBeNull();
+    expect(within(row).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+  }
+  expect(rows[0]?.querySelector("pre")?.textContent).toBe("Total cost: $0.42\n## not a heading");
+});
+
+test("the row menu copies a command and its output", () => {
+  const rows = buildRows(
+    [
+      { type: "control", cmd: "command", arg: "/context", by: "@alice" } as AnyEvent,
+      { type: "command_output", command: "context", text: "ctx" } as AnyEvent,
+    ].map((e) => se(e)),
+  ).rows;
+  const copies = rows.map((r) =>
+    rowMenuItems(r, "dev")
+      .filter((i) => i.kind === "copy" && i.label !== "Copy link")
+      .map((i) => (i.kind === "copy" ? [i.label, i.text] : [])),
+  );
+  expect(copies).toEqual([[["Copy command", "/context"]], [["Copy text", "ctx"]]]);
+});
+
+test("/context output is untrusted markdown: a mermaid fence shows as code", () => {
+  renderRows([
+    { type: "command_output", command: "context", text: "```mermaid\ngraph TD; A-->B\n```" },
+  ]);
+  const row = document.querySelector("[data-test-row=command_output]") as HTMLElement;
+  expect(row.querySelector(".md-diagram")).toBeNull();
+  expect(row.querySelector("pre")?.textContent).toContain("graph TD");
+  // Shown as code (the plain code block with its own Copy), never handed to mermaid.
+  expect(within(row).getAllByRole("button", { name: "Copy" })).toHaveLength(2);
 });

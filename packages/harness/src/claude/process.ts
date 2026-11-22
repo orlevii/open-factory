@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { HarnessEvent } from "@open-factory/shared";
+import { boundVersion, type Command, type HarnessEvent, parseCommands } from "@open-factory/shared";
 import { AsyncQueue } from "../async-queue.ts";
 import { renderEnvelopes } from "../envelope.ts";
 import type { Transport } from "../transport/types.ts";
@@ -21,6 +21,19 @@ export interface DriverLog {
 const silent: DriverLog = { debug() {}, warn() {}, error() {} };
 
 const STDERR_LINES = 50;
+/** U3 §13.3: how long `initialize` may take before the process goes on without a command list. */
+export const COMMANDS_TIMEOUT_MS = 5000;
+
+type Json = Record<string, unknown>;
+const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null;
+
+/** Keeps the well-formed entries of `initialize`'s `commands` (bounded, a warning per dropped one); else no list. */
+function commandsOf(response: Json | undefined, log: DriverLog): Command[] | undefined {
+  if (!Array.isArray(response?.commands)) return undefined;
+  return parseCommands(response.commands, (entry) =>
+    log.warn({ entry: JSON.stringify(entry)?.slice(0, 300) }, "dropped a malformed command entry"),
+  );
+}
 const STDERR_BYTES = 8 * 1024;
 
 /** Resolves with the exit info, or undefined after `ms`. The timer is cleared as soon as the race settles,
@@ -83,6 +96,10 @@ export class ClaudeProcess implements HarnessProcess {
   private stopping: Promise<ExitInfo> | undefined;
   private exited: ExitInfo | undefined;
   private readonly exitPromise: Promise<ExitInfo>;
+  /** Our control requests awaiting their `control_response`, by request id. */
+  private readonly pending = new Map<string, (response: Json | undefined) => void>();
+  private commandList: Promise<Command[] | undefined>;
+  claudeCodeVersion: string | undefined;
 
   constructor(
     spec: AgentRuntimeSpec,
@@ -111,6 +128,7 @@ export class ClaudeProcess implements HarnessProcess {
         if ((parsed as { type?: unknown } | null)?.type !== "stream_event")
           log.debug({ ...ctx, line }, "claude stdout");
         try {
+          if (this.onControl(parsed)) continue;
           const { events, live } = mapLine(parsed, this.mapper, lineNo);
           for (const e of events) this.push(e, lineNo);
           for (const l of live) this.live.push(l);
@@ -139,6 +157,7 @@ export class ClaudeProcess implements HarnessProcess {
       }
       const info: ExitInfo = { code: x.code, signal: x.signal };
       this.exited = info;
+      for (const resolve of this.pending.values()) resolve(undefined);
       try {
         for (const e of flushMapper(this.mapper)) this.push(e, exitLine);
       } catch (err) {
@@ -158,6 +177,63 @@ export class ClaudeProcess implements HarnessProcess {
       this.live.end();
       return info;
     });
+    // Sent first, as the Agent SDK does (spike §2). Re-sending it later in a process is unverified.
+    this.commandList = this.request({ subtype: "initialize" }, COMMANDS_TIMEOUT_MS).then((r) => {
+      this.claudeCodeVersion = boundVersion(r?.claude_code_version);
+      return commandsOf(r, this.log);
+    });
+  }
+
+  /** Writes a control request; resolves with its success payload, or undefined on an error, a timeout or an exit. */
+  private request(request: Json, timeoutMs: number): Promise<Json | undefined> {
+    const id = randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => done(undefined), timeoutMs);
+      const done = (r: Json | undefined) => {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        resolve(r);
+      };
+      this.pending.set(id, done);
+      this.write({ type: "control_request", request_id: id, request }).catch(() => done(undefined));
+    });
+  }
+
+  /** Control lines are the driver's, never the event log's. True when the line was one. */
+  private onControl(line: unknown): boolean {
+    if (!isObject(line)) return false;
+    if (line.type === "control_response") {
+      const r = isObject(line.response) ? line.response : {};
+      const resolve = this.pending.get(String(r.request_id));
+      resolve?.(r.subtype === "success" && isObject(r.response) ? r.response : undefined);
+      return true;
+    }
+    if (line.type === "control_request") {
+      // Nothing Claude asks the host for is supported (permissions, hooks and MCP stay in Claude).
+      this.write({
+        type: "control_response",
+        response: {
+          subtype: "error",
+          request_id: line.request_id,
+          error: "Not supported by this host",
+        },
+      }).catch(() => {});
+      return true;
+    }
+    if (line.type === "system" && line.subtype === "commands_changed") {
+      // The spike never saw it fire; the runtime reads `commands()` once per start, so a later change isn't stored.
+      const list = commandsOf(line, this.log);
+      if (list) this.commandList = Promise.resolve(list);
+    }
+    return false;
+  }
+
+  commands(): Promise<Command[] | undefined> {
+    return this.commandList;
+  }
+
+  command(text: string): Promise<void> {
+    return this.write({ type: "user", message: { role: "user", content: text } });
   }
 
   private push(e: HarnessEvent, line: number) {

@@ -1003,6 +1003,48 @@ describe("tool_result.meta", () => {
   });
 });
 
+describe("local command output (U3 §13.3, spike slash-local-commands)", () => {
+  // The driver's `in` lines are what it wrote, not stdout: only `out` lines reach the mapper.
+  const out = (readFixture("u3/slash-local-commands") as { dir: string }[]).filter(
+    (l) => l.dir === "out",
+  );
+  const mapped = () => {
+    const state = createMapperState({ resumed: false });
+    return out.flatMap((l) => mapEvents(l, state));
+  };
+
+  test("/context, /cost and /usage results map to command_output before the turn ends", () => {
+    const events = mapped();
+    for (const e of events) expect(anyEventSchema.safeParse(e).success).toBe(true);
+    const outputs = ofType(events, "command_output");
+    expect(outputs.map((e) => e.command)).toEqual(["context", "cost", "usage"]);
+    expect(outputs[0]?.text).toMatch(/^## Context Usage\n/);
+    expect(outputs[0]?.text).toContain("| Category | Tokens | Percentage |");
+    expect(outputs[2]?.text).toMatch(/^Estimated cost: {8}\$0\.0019\n/);
+    // The `<synthetic>` assistant line stays dropped: no assistant_text.
+    expect(ofType(events, "assistant_text")).toEqual([]);
+    const types = events.map((e) => e.type).filter((t) => t !== "turn_started");
+    expect(types.slice(0, 4)).toEqual(["session_started", "command_output", "usage", "turn_end"]);
+  });
+
+  test("other local commands and empty results map to no command_output", () => {
+    const state = createMapperState({ resumed: false });
+    mapLine({ type: "system", subtype: "init", session_id: "s", model: "m", cwd: "/w" }, state);
+    const r = (local_command: string, result: unknown) =>
+      ofType(
+        mapEvents(
+          { type: "result", subtype: "success", num_turns: 0, local_command, result },
+          state,
+        ),
+        "command_output",
+      );
+    expect(r("compact", "Compacted")).toEqual([]);
+    expect(r("context", "")).toEqual([]);
+    expect(r("usage", undefined)).toEqual([]);
+    expect(r("stats", "x")).toEqual([{ type: "command_output", command: "stats", text: "x" }]);
+  });
+});
+
 // U3 §11.1: live events ride beside the persisted ones and never change them. The digest strips
 // the reconcile keys (messageId, blockIndex) so it keeps guarding every other field once they land.
 describe("persisted events stay the same", () => {

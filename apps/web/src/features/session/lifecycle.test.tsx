@@ -53,7 +53,7 @@ const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) 
     restartWaitingOn: 0,
     ...over,
   });
-const composer = () => screen.getByRole("textbox", { name: "Message to Dev agent" });
+const composer = () => screen.getByRole("combobox", { name: "Message to Dev agent" });
 
 test("errored: Restart and Start a new session replace Compact/Stop", async () => {
   world({ status: "errored", errorKind: "resume", lastError: "Resume failed" });

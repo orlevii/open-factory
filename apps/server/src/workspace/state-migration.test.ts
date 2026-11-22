@@ -100,3 +100,27 @@ test("a failing slug is logged and the others still migrate", async () => {
   expect(existsSync(`${home}/state/agents/b/template/settings.json`)).toBe(true);
   expect(existsSync(`${wd}/.factory`)).toBe(true);
 });
+
+test("U3 §13.5: .factory/uploads and anything else survive every boot; .factory goes only when empty", async () => {
+  const { home, wd } = await setup();
+  await mkdir(path.join(wd, ".factory/template"), { recursive: true });
+  await writeFile(path.join(wd, ".factory/template/settings.json"), "{}");
+  await mkdir(path.join(wd, ".factory/uploads"), { recursive: true });
+  await writeFile(path.join(wd, ".factory/uploads/20261122-x-a.png"), "png");
+  await writeFile(path.join(wd, ".factory/notes.txt"), "keep");
+  await migrateWorkdirState(home, ["a"], log);
+  await migrateWorkdirState(home, ["a"], log); // every boot runs it; idempotent
+  expect(await readFile(`${wd}/.factory/uploads/20261122-x-a.png`, "utf8")).toBe("png");
+  expect(await readFile(`${wd}/.factory/notes.txt`, "utf8")).toBe("keep");
+  expect(existsSync(`${wd}/.factory/template`)).toBe(false);
+  expect(await readFile(`${home}/state/agents/a/template/settings.json`, "utf8")).toBe("{}");
+});
+
+test("a .factory holding only uploads/ is left exactly as it is", async () => {
+  const { home, wd } = await setup();
+  await mkdir(path.join(wd, ".factory/uploads"), { recursive: true });
+  await writeFile(path.join(wd, ".factory/uploads/x"), "x");
+  await migrateWorkdirState(home, ["a"], log);
+  expect(await readFile(`${wd}/.factory/uploads/x`, "utf8")).toBe("x");
+  expect(existsSync(`${home}/state/agents/a`)).toBe(false);
+});

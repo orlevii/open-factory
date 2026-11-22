@@ -106,8 +106,16 @@ export interface DraftHandle {
 
 type SetText = (v: string | ((cur: string) => string)) => void;
 
-export function useDraft(key: string): [string, SetText, DraftHandle] {
+/** `stored` turns the box's text into what is written (command mode stores `/name args`, U3 §13.3);
+ *  read when a write happens, so it may read refs. */
+export function useDraft(
+  key: string,
+  stored?: (text: string) => string,
+): [string, SetText, DraftHandle] {
   const [text, setState] = useState(() => readDraft(key));
+  const storedRef = useRef(stored);
+  storedRef.current = stored;
+  const out = useCallback((t: string) => storedRef.current?.(t) ?? t, []);
   const [shownKey, setShownKey] = useState(key);
   // The box as last set (state may not have committed yet), and the sends still in flight.
   const textRef = useRef(text);
@@ -135,9 +143,12 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
 
   const schedule = useCallback(() => {
     if (!focused.current) return;
-    pending.current = { key: keyRef.current, text: joined([...held.current, textRef.current]) };
+    pending.current = {
+      key: keyRef.current,
+      text: joined([...held.current, out(textRef.current)]),
+    };
     timer.current ??= setTimeout(flush, THROTTLE_MS);
-  }, [flush]);
+  }, [flush, out]);
 
   const setText = useCallback<SetText>(
     (v) => {
@@ -154,7 +165,7 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
     keyRef.current = key;
     const onStorage = (e: StorageEvent) => {
       if (e.key !== PREFIX + key || focused.current) return;
-      const mine = joined([...held.current, textRef.current]);
+      const mine = joined([...held.current, out(textRef.current)]);
       if (mine !== textOf(e.oldValue).text) return;
       const next = textOf(e.newValue).text;
       textRef.current = next;
@@ -168,7 +179,7 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, [key, flush]);
+  }, [key, flush, out]);
 
   const handle = useMemo<DraftHandle>(
     () => ({
@@ -184,7 +195,10 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
         held.current = without(held.current, sent);
       },
       persist() {
-        pending.current = { key: keyRef.current, text: joined([...held.current, textRef.current]) };
+        pending.current = {
+          key: keyRef.current,
+          text: joined([...held.current, out(textRef.current)]),
+        };
         flush();
       },
       bind: {
@@ -197,7 +211,7 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
         },
       },
     }),
-    [flush],
+    [flush, out],
   );
 
   return [text, setText, handle];

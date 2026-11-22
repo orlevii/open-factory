@@ -401,7 +401,11 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     const w = await setup({ scenario: "reply" });
     await idle(w, "hello");
 
-    const stdin = w.fake.log().flatMap((e) => (e.kind === "stdin" ? [JSON.parse(e.line)] : []));
+    const stdin = w.fake
+      .log()
+      .flatMap((e) =>
+        e.kind === "stdin" && JSON.parse(e.line).type === "user" ? [JSON.parse(e.line)] : [],
+      );
     expect(stdin).toHaveLength(1);
     expect(stdin[0].message.content).toMatch(
       /^<factory-message from="@or" kind="message" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
@@ -537,14 +541,16 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
 
     // One resume, led by the crash notice.
     await until(() =>
-      expect(w.fake.log().filter((e) => e.kind === "stdin").length).toBeGreaterThanOrEqual(2),
+      expect(
+        w.fake.log().filter((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user").length,
+      ).toBeGreaterThanOrEqual(2),
     );
     const log = w.fake.log();
     const [, resumed] = starts(log);
     expect(starts(log)).toHaveLength(2);
     expect(resumed?.argv).toContain("--resume");
     const afterResume = log.slice(log.indexOf(resumed as FakeLogEntry));
-    const first = afterResume.find((e) => e.kind === "stdin");
+    const first = afterResume.find((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
     expect(first?.kind === "stdin" && JSON.parse(first.line).message.content).toMatch(
       /^<factory-message from="@factory" kind="system"[^>]*>\nYour previous process stopped unexpectedly \(exit code 137\) during a turn\./,
     );

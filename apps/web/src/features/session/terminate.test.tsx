@@ -165,7 +165,7 @@ test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; su
   expect(
     screen.getByText("This agent was terminated. Its session is read-only."),
   ).toBeInTheDocument();
-  expect(screen.queryByRole("textbox", { name: /Message/ })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: /Message/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /Terminate|Compact|Stop/ })).toBeNull();
 });
 
@@ -173,7 +173,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   const writeText = vi.fn(() => Promise.resolve());
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   const { state } = await open(spawned());
-  await userEvent.type(screen.getByRole("textbox", { name: /Message/ }), "half a thought");
+  await userEvent.type(screen.getByRole("combobox", { name: /Message/ }), "half a thought");
   await menuItem("Compact…");
   expect(await screen.findByLabelText("Focus (optional)")).toBeInTheDocument();
   state.agent = terminated({ terminatedBy: "@or" });
@@ -203,7 +203,7 @@ test("a send that races the termination says so", async () => {
       );
     },
   });
-  await userEvent.type(screen.getByRole("textbox", { name: /Message/ }), "late");
+  await userEvent.type(screen.getByRole("combobox", { name: /Message/ }), "late");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   const alert = await screen.findByText(`@${SLUG} was terminated, so this wasn't sent.`);
   expect(alert.closest("[role=alert]")).not.toBeNull();

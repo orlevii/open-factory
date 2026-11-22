@@ -3,9 +3,13 @@ import { type AgentRow, type Db, type RuntimeJournal, schema } from "@open-facto
 import {
   type AnyEvent,
   anyEventSchema,
+  boundVersion,
+  type Command,
   type ErrorKind,
   formatKey,
+  type MessageAttachment,
   type MessageKind,
+  parseCommands,
   type SessionEvent,
   type TaskNotice,
   taskKey,
@@ -140,6 +144,36 @@ export class EventStore {
   /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
   async agentById(id: string, tx: Exec = this.db) {
     return (await tx.select().from(agents).where(eq(agents.id, id)))[0];
+  }
+  /**
+   * U3 §13.3: the command list of the agent's latest process start (a side table, never on agent reads). Only
+   * well-formed entries are stored (name format and sizes, at most MAX_COMMANDS), and a version only when it is a
+   * short plain string. Resolves how many entries were dropped.
+   */
+  async saveCommands(
+    agentId: string,
+    list: Command[],
+    claudeCodeVersion: string | null,
+  ): Promise<{ dropped: number }> {
+    const commands = parseCommands(list);
+    const dropped = list.length - commands.length; // malformed, or past the cap
+    const values = {
+      commands,
+      claudeCodeVersion: boundVersion(claudeCodeVersion) ?? null,
+      at: this.clock(),
+    };
+    await this.db
+      .insert(schema.agentCommands)
+      .values({ agentId, ...values })
+      .onConflictDoUpdate({ target: schema.agentCommands.agentId, set: values });
+    return { dropped };
+  }
+  async agentCommands(agentId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.agentCommands)
+      .where(eq(schema.agentCommands.agentId, agentId));
+    return row;
   }
   async setSessionId(agentId: string, sessionId: string | null) {
     await this.db.update(agents).set({ sessionId }).where(eq(agents.id, agentId));
@@ -731,6 +765,7 @@ export class EventStore {
       urgent: boolean;
       fromToolUseId?: string | null;
       clientMessageId?: string | null;
+      attachments?: MessageAttachment[] | null;
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -739,6 +774,7 @@ export class EventStore {
       id,
       kind: "message",
       clientMessageId: m.clientMessageId ?? null,
+      attachments: m.attachments?.length ? m.attachments : null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
       toAgentId: m.toAgentId,
       body: m.body,
@@ -753,20 +789,25 @@ export class EventStore {
    * `client_message_id`) decides: a repeat (the same sender and id, at any later time, or concurrently) inserts
    * nothing and returns the original row with `created: false`.
    */
-  async createClientMessage(m: {
-    fromUserId: string;
-    toAgentId: string;
-    body: string;
-    urgent: boolean;
-    clientMessageId: string;
-  }): Promise<{ row: PendingRow; created: boolean }> {
+  async createClientMessage(
+    m: {
+      fromUserId: string;
+      toAgentId: string;
+      body: string;
+      urgent: boolean;
+      clientMessageId: string;
+      attachments?: MessageAttachment[] | null;
+    },
+    tx: Exec = this.db,
+  ): Promise<{ row: PendingRow; created: boolean }> {
     const id = randomUUID();
-    const inserted = await this.db
+    const inserted = await tx
       .insert(messages)
       .values({
         id,
         kind: "message",
         clientMessageId: m.clientMessageId,
+        attachments: m.attachments?.length ? m.attachments : null,
         fromUserId: m.fromUserId,
         toAgentId: m.toAgentId,
         body: m.body,
@@ -778,8 +819,8 @@ export class EventStore {
         where: sql`${messages.clientMessageId} is not null`,
       })
       .returning({ id: messages.id });
-    if (inserted.length) return { row: await this.pendingRow(id), created: true };
-    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId);
+    if (inserted.length) return { row: await this.pendingRow(id, tx), created: true };
+    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId, tx);
     if (!existing)
       throw new Error(`client message ${m.clientMessageId} conflicted but isn't there`);
     return { row: existing, created: false };
@@ -788,8 +829,9 @@ export class EventStore {
   async byClientMessageId(
     fromUserId: string,
     clientMessageId: string,
+    tx: Exec = this.db,
   ): Promise<PendingRow | undefined> {
-    const [r] = await this.joined(this.db).where(
+    const [r] = await this.joined(tx).where(
       and(eq(messages.fromUserId, fromUserId), eq(messages.clientMessageId, clientMessageId)),
     );
     return r;

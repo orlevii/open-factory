@@ -97,6 +97,8 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     error: z.string(),
   }),
   z.object({ type: z.literal("model_fallback"), message: z.string() }),
+  /** U3 §13.3: the text a local command (`/context`, `/usage` and its aliases) printed. */
+  z.object({ type: z.literal("command_output"), command: z.string(), text: z.string() }),
   z.object({
     type: z.literal("usage"),
     model: z.string(),
@@ -174,12 +176,13 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "spawned",
         "task_message",
         "scheduled",
+        "command",
       ])
       .optional(),
   }),
   z.object({
     type: z.literal("control"),
-    cmd: z.enum(["compact", "interrupt", "clear", "restart"]),
+    cmd: z.enum(["compact", "interrupt", "clear", "restart", "command"]),
     arg: z.string().optional(),
     by: z.string(),
   }),

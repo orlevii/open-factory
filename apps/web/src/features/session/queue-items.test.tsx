@@ -369,3 +369,57 @@ test("after a successful Undo focus goes to the restored message's Cancel, else 
     composer.remove();
   }
 });
+
+// ---- Command items (U3 §13.3, Q39) ----
+
+const command = (o: Record<string, unknown>) =>
+  ({
+    id: "c1",
+    kind: "command",
+    from: "@alice",
+    body: "/code-review src/ --fix",
+    waitReason: "turn",
+    createdAt: local(13, 59),
+    ...o,
+  }) as never;
+
+test("a held command is one truncated line: the name waits for the turn, args after, the whole in its title", () => {
+  render(<QueueItems items={[command({})]} agent={agentSummary()} self="alice" />);
+  const el = document.querySelector("[data-command-item]") as HTMLElement;
+  const text = el.querySelector("[title]") as HTMLElement;
+  expect(text).toHaveClass("truncate");
+  expect(text).toHaveAttribute("title", "/code-review src/ --fix");
+  expect(text.textContent).toBe("/code-review waits for the turn to end: src/ --fix");
+  expect(within(el).getByText("/code-review")).toHaveClass("font-mono");
+  expect(screen.queryByText(/Compact queued/)).toBeNull();
+});
+
+test("Cancel on your own held command only; no Undo once cancelled", async () => {
+  vi.useRealTimers();
+  const onCancel = vi.fn();
+  const mine = command({});
+  const { rerender } = render(
+    <QueueItems
+      items={[mine, command({ id: "c2", from: "@bob", body: "/context" })]}
+      agent={agentSummary()}
+      self="alice"
+      onCancel={onCancel}
+    />,
+  );
+  const cancels = screen.getAllByRole("button", { name: "Cancel" });
+  expect(cancels).toHaveLength(1);
+  await userEvent.click(cancels[0] as HTMLElement);
+  expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ id: "c1" }));
+  rerender(
+    <QueueItems
+      items={[command({ id: "c2", from: "@bob", body: "/context" })]}
+      cancelled={new Map([["c1", { item: mine, index: 0 }]])}
+      agent={agentSummary()}
+      self="alice"
+      onCancel={onCancel}
+      onUndo={() => {}}
+    />,
+  );
+  expect(screen.getByText("Command cancelled.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});

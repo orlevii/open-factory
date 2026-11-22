@@ -1,5 +1,6 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -15,11 +16,19 @@ import {
   sessionReducer,
 } from "./session-state";
 
+/** The session's composer reads the cached agents and users lists for `@` (U3 §13.4). */
+let qc: QueryClient;
+const render = (ui: ReactNode) =>
+  rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+  });
+
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 let posted: { url: string; body: unknown }[];
 let reply: (url: string, init?: RequestInit) => Response | Promise<Response>;
 beforeEach(() => {
+  qc = new QueryClient();
   localStorage.clear();
   posted = [];
   reply = (url) =>
@@ -47,12 +56,12 @@ function setup(initial: AgentSummary, extra?: ReactNode) {
   const ui = (agent: AgentSummary, epoch: number) => (
     <>
       {extra}
-      <Composer slug="dev" agent={agent} stopEpoch={epoch} />
+      <Composer slug="dev" agent={agent} stopEpoch={epoch} context="session" />
     </>
   );
   const r = render(ui(initial, 1));
   return {
-    box: screen.getByRole("textbox", { name: "Message to Dev agent" }),
+    box: screen.getByRole("combobox", { name: "Message to Dev agent" }),
     update: (a: AgentSummary, epoch: number) => r.rerender(ui(a, epoch)),
   };
 }
@@ -198,7 +207,8 @@ test("⌥Enter during IME composition does not send", async () => {
   fireEvent.keyDown(box, { key: "Enter", altKey: true, isComposing: true });
   fireEvent.keyDown(box, { key: "Enter", altKey: true, keyCode: 229 });
   await tick();
-  expect(posted).toEqual([]);
+  // Only the commands list's prefetch (a GET); nothing sent.
+  expect(posted.filter((p) => !p.url.endsWith("/commands"))).toEqual([]);
 });
 
 test("the hint shows only while a turn is open; the composer height is unchanged", () => {
@@ -279,12 +289,28 @@ test("a failed Stop says why and allows a retry", async () => {
   expect(screen.getByRole("button", { name: "Stop" })).toHaveAttribute("aria-disabled", "false");
 });
 
-test("Stop's label hides below a narrow composer, keeping its name", () => {
+test("Stop's label hides below a ~24rem composer (its stand-in too), keeping its name", () => {
   setup(working());
   const label = screen.getByText("Stop");
-  // 20rem: a 390px phone's ~358px composer at 100% text keeps the label; 200% text drops it.
-  expect(label).toHaveClass("@max-[20rem]:sr-only");
+  // §13.1: below ~24rem only the icon (a 390px phone's ~358px composer included), so the hint keeps room.
+  expect(label).toHaveClass("@max-[24rem]:sr-only");
   expect(label.closest(".\\@container")).not.toBeNull();
+  const standIn = document.querySelector("[data-stop-stand-in] [data-stop-label]")?.parentElement;
+  expect(standIn).toHaveClass("@max-[24rem]:hidden");
+});
+
+test("the toolbar wraps Stop and Send together onto a line of their own when they don't fit (200% text)", () => {
+  setup(working());
+  const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
+  expect(toolbar).toHaveClass("flex-wrap", "min-h-8");
+  expect(toolbar).not.toHaveClass("flex-nowrap", "h-8");
+  const actions = toolbar.lastElementChild as HTMLElement;
+  expect(actions).toHaveAttribute("data-composer-actions");
+  expect(actions.querySelector("[data-stop-slot]")).not.toBeNull();
+  expect(within(actions).getByRole("button", { name: "Send" })).toBeInTheDocument();
+  expect(actions).toHaveClass("ml-auto", "shrink-0");
+  // The hint takes only what is left: it never pushes anything to another line.
+  expect(document.querySelector("[data-composer-hint]")).toHaveClass("basis-0", "flex-1");
 });
 
 test("focus moves to the textarea when Stop unmounts while focused", async () => {
@@ -340,6 +366,7 @@ function Session({ agent }: { agent: AgentSummary }) {
         slug="dev"
         agent={agent}
         stopEpoch={1}
+        context="session"
         onSending={onSending}
         onSendFailed={onSendFailed}
         onQueued={onQueued}
@@ -399,7 +426,7 @@ const frame = (event: SessionEvent) =>
   act(() => act$?.({ type: "frame", message: { type: "session_event", agent: "dev", event } }));
 function renderSession(agent = agentSummary()) {
   render(<Session agent={agent} />);
-  return screen.getByRole("textbox", { name: "Message to Dev agent" });
+  return screen.getByRole("combobox", { name: "Message to Dev agent" });
 }
 const sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
 
@@ -581,8 +608,8 @@ test("an aborted send whose item the queue already showed counts as sent", async
 
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
-  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
-  expect(screen.getByRole("textbox")).not.toHaveFocus();
+  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} context="session" />);
+  expect(screen.getByRole("combobox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
   });
@@ -616,7 +643,7 @@ test("a remount after an abort resends the unchanged text under the same id", as
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   heldReply();
   const first = render(<Session agent={agentSummary()} />);
-  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  const box = screen.getByRole("combobox", { name: "Message to Dev agent" });
   fireEvent.change(box, { target: { value: "hello" } });
   fireEvent.keyDown(box, { key: "Enter" });
   await act(async () => {
@@ -628,4 +655,171 @@ test("a remount after an abort resends the unchanged text under the same id", as
   fireEvent.keyDown(again, { key: "Enter" });
   expect(messageSends()).toHaveLength(2);
   expect(messageSends()[1]?.clientMessageId).toBe(messageSends()[0]?.clientMessageId);
+});
+
+// ---- `@` (U3 §13.4, Q23) ----
+
+test("`@` inserts an agent's handle as plain text; nothing in the session says mention", async () => {
+  qc.setQueryData(
+    ["agents", "exclude"],
+    [agentSummary({ slug: "dev" }), agentSummary({ slug: "qa", displayName: "QA agent" })],
+  );
+  const { box } = setup(agentSummary());
+  const button = screen.getByRole("button", { name: "Insert an agent's handle" });
+  await userEvent.type(box, "ask @q");
+  expect(screen.getByRole("option", { name: /QA agent/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  expect(box).toHaveValue("ask @qa ");
+  // Nothing was sent; the opening menu loaded the users list, which nobody had cached (review I-2).
+  // (The commands list is prefetched on mount, U3 §13.3 m11.)
+  expect(posted.map((p) => p.url).filter((u) => !u.endsWith("/commands"))).toEqual(["/api/users"]);
+  await userEvent.click(button);
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  const composer = document.querySelector("#composer") as HTMLElement;
+  const copy = [
+    composer.textContent,
+    ...[...document.querySelectorAll("[aria-label], [title]")].map(
+      (e) => `${e.getAttribute("aria-label")} ${e.getAttribute("title")}`,
+    ),
+  ].join(" ");
+  expect(copy.toLowerCase()).not.toContain("mention");
+});
+
+// ---- `/` commands (U3 §13.3) ----
+
+const COMMANDS_RESPONSE = {
+  commands: [
+    { name: "context", description: "Show current context usage", argumentHint: "", builtin: true },
+    {
+      name: "code-review",
+      description: "Review the diff",
+      argumentHint: "[target]",
+      builtin: true,
+    },
+  ],
+  source: "session",
+  at: "2026-11-21T10:00:00.000Z",
+  stale: false,
+};
+
+test("the placeholder points at `/`", () => {
+  const { box } = setup(agentSummary());
+  expect(box).toHaveAttribute("placeholder", "Message Dev agent · / for commands");
+});
+
+test("a command dispatches to POST /commands with the chosen name and the args, never as text", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url) =>
+    url.endsWith("/commands")
+      ? json({ item: { id: "c1", kind: "command", from: "@alice", createdAt: "x" } }, 202)
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/code");
+  expect(screen.getByRole("option", { name: /code-review/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  await userEvent.type(box, "src/{Enter}");
+  await tick();
+  const sent = posted.filter((p) => p.url.includes("/api/agents/dev/"));
+  expect(sent.map((p) => p.url)).toContain("/api/agents/dev/commands");
+  const post = sent.find(
+    (p) => p.url === "/api/agents/dev/commands" && "name" in (p.body as object),
+  );
+  expect(post?.body).toMatchObject({ name: "code-review", args: "src/" });
+  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
+});
+
+test("a 422 shows inline and sends no text", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url, init) =>
+    url.endsWith("/commands") && init?.method === "POST"
+      ? json(
+          {
+            error: {
+              code: "unknown_command",
+              message: "/context isn't a command this agent can run.",
+            },
+          },
+          422,
+        )
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/context {Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "/context isn't a command this agent can run.",
+  );
+  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
+});
+
+test("`//x` sends `/x` as a message", async () => {
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "//deploy now");
+  expect(
+    screen.getByText("Sends as text; the agent may still run a skill by that name"),
+  ).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  await tick();
+  const msg = posted.find((p) => p.url.endsWith("/messages"));
+  expect(msg?.body).toMatchObject({ body: "/deploy now" });
+});
+
+test("`/foo` sends as text with the note", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/foo");
+  expect(screen.getByText("Not a command for this agent; sends as text")).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  await tick();
+  expect(posted.find((p) => p.url.endsWith("/messages"))?.body).toMatchObject({ body: "/foo" });
+});
+
+test("a command over 64 KB is refused inline before any POST", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/context ");
+  fireEvent.change(box, { target: { value: "x".repeat(70_000) } });
+  await userEvent.type(box, "{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent("The command is larger than 64 KB.");
+  expect(posted.some((p) => p.url.endsWith("/commands") && "name" in (p.body as object))).toBe(
+    false,
+  );
+});
+
+test.each([
+  [413, "too_large", "The command is larger than 64 KB."],
+  [501, "commands_unsupported", "This agent can't run commands."],
+  [409, "agent_archived", "This agent is archived."],
+])("a %i shows inline and sends no text", async (status, code, message) => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url, init) =>
+    url.endsWith("/commands") && init?.method === "POST"
+      ? json({ error: { code, message } }, status)
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/context {Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
+});
+
+test("a command POST that hangs is aborted after 15s with the reason inline", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url, init) =>
+    url.endsWith("/commands") && init?.method === "POST"
+      ? new Promise<Response>((_, rej) =>
+          init.signal?.addEventListener("abort", () =>
+            rej(new DOMException("aborted", "AbortError")),
+          ),
+        )
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  fireEvent.change(box, { target: { value: "/context " } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't confirm the command. Check the queue before running it again.",
+  );
+  expect(document.querySelector("[data-command-chip]")).not.toBeNull();
 });

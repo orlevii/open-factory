@@ -139,6 +139,10 @@ export type Row =
     }
   | { kind: "denied"; seq: number; event: Ev<"permission_denied">; key: string }
   | { kind: "quiet"; seq: number; event: AnyEvent; key: string }
+  /** A command a human ran (U3 §13.3, `control{cmd:"command"}`): `text` is `/name args`, `by` `@handle`. */
+  | { kind: "command"; seq: number; at: string; by: string; text: string; key: string }
+  /** What a local command printed (`/context`, `/usage` and its aliases). */
+  | { kind: "command_output"; seq: number; at: string; command: string; text: string; key: string }
   /** Two or more consecutive foldable calls (U3 §9.4), keyed by the first; its summary is flat
    *  primitives only, so the shallow stabilization compares it. */
   | {
@@ -563,6 +567,28 @@ export function buildRows(events: SessionEvent[]): {
         started = false;
         calls = 0;
         usage = undefined;
+        break;
+      case "control":
+        if (e.cmd === "command")
+          top.push({
+            kind: "command",
+            seq: se.seq,
+            at: se.at,
+            by: e.by,
+            text: e.arg ?? "",
+            key: `${se.seq}`,
+          });
+        else top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
+        break;
+      case "command_output":
+        top.push({
+          kind: "command_output",
+          seq: se.seq,
+          at: se.at,
+          command: e.command,
+          text: e.text,
+          key: `${se.seq}`,
+        });
         break;
       default:
         top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });

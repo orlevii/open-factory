@@ -1,5 +1,5 @@
 import type { AgentDetail, ServerMessage } from "@open-factory/shared";
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -9,8 +9,10 @@ import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/s
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
+import { dropUploadsExcept } from "@/features/session/uploads";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
+import { installFileDropGuard } from "@/lib/file-drop";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { installShortcuts } from "@/lib/shortcuts";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -45,6 +47,12 @@ const sidebarOpenFromCookie = () => !document.cookie.split("; ").includes("sideb
 function AppLayout() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  // Uploads belong to the signed-in user (U3 §13.5): composers read their store by user id, and a user
+  // change here drops every other user's (aborting what is in flight).
+  const userId = useQuery(sessionQueryOptions).data?.user.id;
+  useEffect(() => {
+    if (userId !== undefined) dropUploadsExcept(userId);
+  }, [userId]);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const [openCount, setOpenCount] = useState(0);
   const listeners = useRef(new Set<(m: ServerMessage) => void>());
@@ -58,6 +66,8 @@ function AppLayout() {
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
   useEffect(() => installShortcuts(), []);
+  // A file dropped outside the composer never navigates away from the app (U3 §13.5).
+  useEffect(() => installFileDropGuard(), []);
   useEffect(() => {
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.

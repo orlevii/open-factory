@@ -16,7 +16,11 @@ import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 import { stampInstant, useStampedRef } from "@/lib/input-modality";
 import { cn } from "@/lib/utils";
 
-const SheetCtx = React.createContext<{ mobile: boolean; modal: boolean }>({ mobile: false, modal: true });
+const SheetCtx = React.createContext<{ mobile: boolean; modal: boolean; stacked: boolean; onStripClick?: () => void }>({
+  mobile: false,
+  modal: true,
+  stacked: false,
+});
 const useMobile = () => React.useContext(SheetCtx).mobile;
 
 /** One sheet for create/edit forms and peeks (DESIGN.md → Overlays): a 480px right panel on desktop, a
@@ -25,20 +29,29 @@ function Sheet({
   open,
   onOpenChange,
   modal = true,
+  stacked = false,
+  onStripClick,
   children,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   /** `false` makes a desktop peek: no scrim, no focus trap, the page behind stays usable. Phones are always modal. */
   modal?: boolean;
+  /** A child over another sheet: 48px narrower on desktop so a strip of the parent shows, 82svh on phones. */
+  stacked?: boolean;
+  /** Desktop: the dimmed strip (this sheet's overlay) was clicked. It still closes only this sheet. */
+  onStripClick?: () => void;
   children: React.ReactNode;
 }) {
   const mobile = useLatchedMobile(open);
-  const ctx = React.useMemo(() => ({ mobile, modal: modal || mobile }), [mobile, modal]);
+  const ctx = React.useMemo(
+    () => ({ mobile, modal: modal || mobile, stacked, onStripClick }),
+    [mobile, modal, stacked, onStripClick],
+  );
   return (
     <SheetCtx.Provider value={ctx}>
       {mobile ? (
-        <Drawer open={open} onOpenChange={onOpenChange} direction="bottom">
+        <Drawer open={open} onOpenChange={onOpenChange} direction="bottom" stacked={stacked}>
           {children}
         </Drawer>
       ) : (
@@ -50,13 +63,23 @@ function Sheet({
   );
 }
 
-/** A key that closes an overlay stamps `data-instant` first, so the close is instant however it opened. */
-function closeInstantly(contentEl: HTMLElement | null | undefined, onOpenChange?: (open: boolean) => void) {
-  contentEl?.setAttribute("data-instant", "");
+/** A key that closes an overlay stamps `data-instant` on the content and its overlay first, so the close
+ *  is instant however it opened. The overlay is the content's sibling in the same portal. */
+function closeSheetInstantly(contentEl: HTMLElement | null | undefined, onOpenChange?: (open: boolean) => void) {
+  stampPair(contentEl);
   onOpenChange?.(false);
 }
 
+function stampPair(contentEl: HTMLElement | null | undefined) {
+  if (!contentEl) return;
+  contentEl.setAttribute("data-instant", "");
+  contentEl.parentElement
+    ?.querySelector(":scope > [data-slot=sheet-overlay], :scope > [data-slot=drawer-overlay]")
+    ?.setAttribute("data-instant", "");
+}
+
 const WIDTH = { sheet: "w-[min(30rem,100%)]", panel: "w-[min(20rem,100%)]" } as const;
+const STACKED_WIDTH = "w-[min(27rem,100%)]";
 const INSET = { full: "inset-y-0", "below-header": "top-12 bottom-0" } as const;
 
 /** Travels 100% of its width with no panel fade; under reduced motion it fades instead (the global
@@ -83,7 +106,7 @@ function SheetContent({
   /** Opening leaves focus where it was (a peek opened by a key on a list). */
   keepFocus?: boolean;
 }) {
-  const { mobile, modal } = React.useContext(SheetCtx);
+  const { mobile, modal, stacked, onStripClick } = React.useContext(SheetCtx);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
   const composed = React.useCallback(
     (node: HTMLDivElement | null) => {
@@ -125,6 +148,7 @@ function SheetContent({
         <SheetPrimitive.Overlay
           data-slot="sheet-overlay"
           ref={stampInstant}
+          onClick={stacked ? onStripClick : undefined}
           className="fixed inset-0 z-50 bg-black/20 duration-250 ease-(--ease-drawer) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-200 data-closed:ease-(--ease-out) dark:bg-black/40"
         />
       )}
@@ -139,7 +163,7 @@ function SheetContent({
           "motion-reduce:data-open:fade-in-0 motion-reduce:data-closed:fade-out-0",
           "[@media(max-height:30rem)]:overflow-y-auto",
           INSET[inset],
-          WIDTH[width],
+          stacked ? STACKED_WIDTH : WIDTH[width],
           className,
         )}
         onOpenAutoFocus={(e) => {
@@ -149,7 +173,7 @@ function SheetContent({
         onCloseAutoFocus={closeAutoFocus}
         onEscapeKeyDown={(e) => {
           onEscapeKeyDown?.(e);
-          if (!e.defaultPrevented) contentRef.current?.setAttribute("data-instant", "");
+          if (!e.defaultPrevented) stampPair(contentRef.current);
         }}
         onInteractOutside={(e) => {
           onInteractOutside?.(e);
@@ -252,7 +276,8 @@ function SheetClose(props: React.ComponentProps<typeof SheetPrimitive.Close>) {
 }
 
 export {
-  closeInstantly,
+  closeSheetInstantly,
+  closeSheetInstantly as closeInstantly,
   Sheet,
   SheetBody,
   SheetClose,

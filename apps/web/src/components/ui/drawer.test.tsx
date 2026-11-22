@@ -112,3 +112,23 @@ test("uncontrolled: a drag-close release mark clears when the drawer opens again
   expect(document.querySelector("[data-slot=drawer-content]")).not.toHaveAttribute("data-released");
   expect(onOpenChange).toHaveBeenCalledWith(true);
 });
+
+test("stacked: the Vaul Root gets noBodyStyles and the content caps at 82svh", () => {
+  render(
+    <Drawer open stacked onOpenChange={() => {}}>
+      <DrawerContent>
+        <DrawerTitle>Child</DrawerTitle>
+      </DrawerContent>
+    </Drawer>,
+  );
+  expect(rootProps.current?.noBodyStyles).toBe(true);
+  const content = document.querySelector("[data-slot=drawer-content]") as HTMLElement;
+  expect(content.className).toContain("max-h-[82svh]");
+  expect(content.className).not.toContain("max-h-[90svh]");
+});
+
+test("not stacked: body styles stay on and the cap is 90svh", () => {
+  open();
+  expect(rootProps.current?.noBodyStyles).toBeFalsy();
+  expect(document.querySelector("[data-slot=drawer-content]")?.className).toContain("max-h-[90svh]");
+});

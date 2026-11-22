@@ -46,11 +46,14 @@ describe("every fixture", () => {
     expect(ofType(events, "turn_started")).toHaveLength(inits);
   });
 
-  test.each(fixtureNames())("%s: no stream_event lines, no live events", (name) => {
+  // Recorded without --include-partial-messages: live events come only from the system lines
+  // that were dropped before U3 (thinking_tokens, task_progress).
+  test.each(fixtureNames())("%s: no stream_event lines, live only from system lines", (name) => {
     expect(readFixture(name).some((l) => (l as { type?: string }).type === "stream_event")).toBe(
       false,
     );
-    expect(mapFixture(name).live).toEqual([]);
+    for (const l of mapFixture(name).live)
+      expect(["thinking_start", "subagent_progress"]).toContain(l.type);
   });
 });
 
@@ -66,7 +69,12 @@ test("rate-limit-event-allowed: one plain turn; the allowed rate limit is a stat
     claudeCodeVersion: "2.1.327",
     mcpServers: [],
   });
-  expect(events[2]).toEqual({ type: "assistant_text", text: "pong" });
+  expect(events[2]).toEqual({
+    type: "assistant_text",
+    text: "pong",
+    messageId: expect.stringMatching(/^msg_/),
+    blockIndex: 0,
+  });
   expect(ofType(events, "usage")[0]).toMatchObject({
     model: "claude-haiku-5-5",
     outputTokens: 4,

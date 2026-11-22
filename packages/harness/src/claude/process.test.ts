@@ -46,6 +46,7 @@ test("args: fixed flags, resume and model only when given", () => {
     "--output-format",
     "stream-json",
     "--verbose",
+    "--include-partial-messages",
     "--permission-mode",
     "auto",
   ];

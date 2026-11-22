@@ -18,7 +18,7 @@ exports[`persisted events stay the same > background-sigterm 1`] = `"24 0dc6e508
 
 exports[`persisted events stay the same > background-stdin-closed-drains 1`] = `"16 71349191d2efef03bc585924d65d396b08974e04c0e9c61e50ec86fd46e21bdd"`;
 
-exports[`persisted events stay the same > background-subagent-stdin-closed 1`] = `"31 4d40f8ed06aad5235d996e66ee8a6c735f7a6a7ddcf243bffd8056c41d1fc4cb"`;
+exports[`persisted events stay the same > background-subagent-stdin-closed 1`] = `"31 99f376a3731efafe0796f756980bd6d4bfeaed98ad979cb91cdce03a47bcc1f7"`;
 
 exports[`persisted events stay the same > claude-md-excludes-ancestors 1`] = `"8 c35676630a17b5d8dfbcbb3e013339a46d3ea36a81fb38f6488ece6120fef39c"`;
 
@@ -86,7 +86,7 @@ exports[`persisted events stay the same > u3/attach-file-path 1`] = `"14 53b71ad
 
 exports[`persisted events stay the same > u3/partial-interrupt-mid-text 1`] = `"10 8be8ec2237448a450361ce23806f85c7401befefa46692ecdee807219952168a"`;
 
-exports[`persisted events stay the same > u3/partial-subagent 1`] = `"17 c543df03e7c8f52d775928aa4512b645fed8862939d3d06a895959cdffbdfc46"`;
+exports[`persisted events stay the same > u3/partial-subagent 1`] = `"17 9455666c308d4d644fc4b4e5674e85d3e5b5f926fe86c20861c50f70ef67a101"`;
 
 exports[`persisted events stay the same > u3/partial-text-and-write 1`] = `"10 267278cd17bf3bd7a94032774e00bcf7a1a7c12dad67be6badb97a5120e03787"`;
 

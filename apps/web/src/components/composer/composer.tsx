@@ -1,5 +1,5 @@
 import { ApiError } from "@open-factory/shared";
-import { AtSign, CircleAlert, CircleStop, Paperclip, Slash } from "lucide-react";
+import { ArrowUp, AtSign, CircleAlert, CircleStop, Paperclip, Slash } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -20,6 +20,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { registerDockedComposer } from "@/lib/composer-height";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
 import { isSendKey, isUrgentSendKey } from "@/lib/send-key";
@@ -150,6 +151,9 @@ export type HintMode = "none" | "working" | "coarse";
 export type ComposerProps = {
   draftKey: string;
   placeholder: string;
+  /** The placeholder on a phone while a turn is open: the queued-message hint, there in place of the
+   *  hidden hint line (U4 §11.4). */
+  turnPlaceholder?: string;
   /** The textarea's accessible name. */
   label: string;
   /** Called right after the box empties (its synchronous part runs first); resolve when the server
@@ -219,6 +223,7 @@ type Unconfirmed = { id: string; sent: string; box: string; before: string; take
 export const Composer = memo(function Composer({
   draftKey,
   placeholder,
+  turnPlaceholder,
   label,
   onSubmit,
   onCommand,
@@ -268,6 +273,9 @@ export const Composer = memo(function Composer({
   // dragenter/dragleave pairs over the frame and its children: the edge goes when the last one leaves.
   const dragDepth = useRef(0);
   const [view, setView] = useState<"write" | "preview">("write");
+  // A phone (below 48rem) has no Write/Preview toggle (U4 §11.4): a Preview left open goes back to Write.
+  const phone = useIsMobile();
+  if (phone && view !== "write") setView("write");
   // Submits still waiting on the server (more than one when sends overlap).
   const [pending, setPending] = useState(0);
   // An aborted send survives a remount beside its draft, so its unchanged text resends under its id.
@@ -897,7 +905,13 @@ export const Composer = memo(function Composer({
                 onBlur={draft.bind.onBlur}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
-                placeholder={command ? command.placeholder : placeholder}
+                placeholder={
+                  command
+                    ? command.placeholder
+                    : phone && turnOpen && turnPlaceholder
+                      ? turnPlaceholder
+                      : placeholder
+                }
                 rows={2}
                 aria-describedby={describedBy}
                 className={`${growth} min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent shadow-none focus-visible:outline-none dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
@@ -939,7 +953,7 @@ export const Composer = memo(function Composer({
                 size="icon"
                 aria-label={slash.label}
                 disabled={!empty || command !== undefined || view !== "write"}
-                className="shrink-0 text-muted-foreground"
+                className={cn("shrink-0 text-muted-foreground", phone && "size-10")}
                 onClick={() => insertTrigger("/")}
               >
                 <Slash aria-hidden="true" />
@@ -951,7 +965,7 @@ export const Composer = memo(function Composer({
                 variant="ghost"
                 size="icon"
                 aria-label={at.label}
-                className="shrink-0 text-muted-foreground"
+                className={cn("shrink-0 text-muted-foreground", phone && "size-10")}
                 onClick={() => insertTrigger("@")}
               >
                 <AtSign aria-hidden="true" />
@@ -964,7 +978,7 @@ export const Composer = memo(function Composer({
                   variant="ghost"
                   size="icon"
                   aria-label="Attach files"
-                  className="shrink-0 text-muted-foreground"
+                  className={cn("shrink-0 text-muted-foreground", phone && "size-10")}
                   onClick={() => fileInput.current?.click()}
                 >
                   <Paperclip aria-hidden="true" />
@@ -982,7 +996,7 @@ export const Composer = memo(function Composer({
                 />
               </>
             )}
-            {preview && (
+            {preview && !phone && (
               <div className="flex shrink-0 items-center">
                 <Button
                   type="button"
@@ -1008,6 +1022,14 @@ export const Composer = memo(function Composer({
             )}
             {hintMode === undefined ? (
               <span className="min-w-0 flex-1 basis-0" />
+            ) : phone ? (
+              // No hint line on a phone: the free room is empty and the hint stays the box's description.
+              <>
+                <span className="min-w-0 flex-1 basis-0" />
+                <p id={hintId} data-composer-hint className="sr-only">
+                  {hintShown ? <Hint mode={hintMode} compacting={compacting} /> : null}
+                </p>
+              </>
             ) : (
               // A fixed height whether or not it has text (a minimum would let the key caps grow it).
               <p
@@ -1021,32 +1043,43 @@ export const Composer = memo(function Composer({
             <div data-composer-actions className="ml-auto flex shrink-0 items-center gap-2">
               {onStop && (
                 // Stop's slot keeps its width with no turn open, so a turn edge never re-wraps the toolbar.
-                <div data-stop-slot className="grid shrink-0">
-                  <span
-                    data-stop-stand-in
-                    aria-hidden="true"
-                    className={cn(
-                      buttonVariants({ variant: "outline" }),
-                      "invisible [grid-area:1/1]",
-                    )}
-                  >
-                    <CircleStop />
-                    {/* As wide as the widest label Stop shows, so the slot never grows within a turn. */}
-                    <span className="grid @max-[24rem]:hidden">
-                      <span
-                        data-stop-label="Stop"
-                        className="[grid-area:1/1] before:content-['Stop']"
-                      />
-                      <span
-                        data-stop-label="Stopping…"
-                        className="[grid-area:1/1] before:content-['Stopping…']"
-                      />
-                      <span
-                        data-stop-label="Compacting…"
-                        className="[grid-area:1/1] before:content-['Compacting…']"
-                      />
+                <div data-stop-slot className={cn("grid shrink-0", phone && "size-10")}>
+                  {phone ? (
+                    <span
+                      data-stop-stand-in
+                      aria-hidden="true"
+                      className={cn(
+                        buttonVariants({ variant: "outline", size: "icon" }),
+                        "invisible size-10 [grid-area:1/1]",
+                      )}
+                    />
+                  ) : (
+                    <span
+                      data-stop-stand-in
+                      aria-hidden="true"
+                      className={cn(
+                        buttonVariants({ variant: "outline" }),
+                        "invisible [grid-area:1/1]",
+                      )}
+                    >
+                      <CircleStop />
+                      {/* As wide as the widest label Stop shows, so the slot never grows within a turn. */}
+                      <span className="grid @max-[24rem]:hidden">
+                        <span
+                          data-stop-label="Stop"
+                          className="[grid-area:1/1] before:content-['Stop']"
+                        />
+                        <span
+                          data-stop-label="Stopping…"
+                          className="[grid-area:1/1] before:content-['Stopping…']"
+                        />
+                        <span
+                          data-stop-label="Compacting…"
+                          className="[grid-area:1/1] before:content-['Compacting…']"
+                        />
+                      </span>
                     </span>
-                  </span>
+                  )}
                   {turnOpen && stopEpoch !== undefined && (
                     <StopButton
                       ref={stopRef}
@@ -1055,7 +1088,8 @@ export const Composer = memo(function Composer({
                       turnEpoch={stopEpoch}
                       compacting={compacting}
                       onError={onStopError}
-                      className="[grid-area:1/1]"
+                      icon={phone}
+                      className={cn("[grid-area:1/1]", phone && "size-10")}
                     />
                   )}
                 </div>
@@ -1064,12 +1098,14 @@ export const Composer = memo(function Composer({
               {/* Held by its files: aria-disabled (focusable; `send` refuses), its reason the line below. */}
               <Button
                 type="submit"
+                size={phone ? "icon" : "default"}
+                aria-label={phone ? "Send" : undefined}
                 disabled={held === undefined && ((empty && !command) || waiting)}
                 aria-disabled={held !== undefined || undefined}
                 aria-describedby={held ? sendReasonId : undefined}
-                className="transition-none"
+                className={cn("transition-none", phone && "size-10")}
               >
-                Send
+                {phone ? <ArrowUp aria-hidden="true" /> : "Send"}
               </Button>
             </div>
           </div>

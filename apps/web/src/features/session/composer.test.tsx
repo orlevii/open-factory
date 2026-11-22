@@ -6,6 +6,7 @@ import { createRef, type ReactNode, useCallback, useReducer, useState } from "re
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { agentDraftKey, readDraft } from "@/lib/drafts";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { agentSummary } from "@/test/session-fixtures";
 import { Composer, type ComposerHandle } from "./composer";
 import { QueueItems } from "./queue-items";
@@ -705,6 +706,19 @@ const COMMANDS_RESPONSE = {
 test("the placeholder points at `/`", () => {
   const { box } = setup(agentSummary());
   expect(box).toHaveAttribute("placeholder", "Message Dev agent · / for commands");
+});
+
+test("on a phone the placeholder says a message sends after the agent's current step while a turn is open", () => {
+  const real = window.matchMedia;
+  fakeMatchMedia.install(true);
+  try {
+    const { box, update } = setup(working());
+    expect(box).toHaveAttribute("placeholder", "Sends after @dev's current step");
+    update(agentSummary(), 2);
+    expect(box).toHaveAttribute("placeholder", "Message Dev agent · / for commands");
+  } finally {
+    window.matchMedia = real;
+  }
 });
 
 test("a command dispatches to POST /commands with the chosen name and the args, never as text", async () => {

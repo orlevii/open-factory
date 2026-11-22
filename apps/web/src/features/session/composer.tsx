@@ -345,6 +345,7 @@ export const Composer = memo(function SessionComposer({
       placeholder={
         inSession ? `Message ${agent.displayName} · / for commands` : `Message ${agent.displayName}`
       }
+      turnPlaceholder={`Sends after @${slug}'s current step`}
       onSubmit={onSubmit}
       onCommand={inSession ? onCommand : undefined}
       validate={checkBody}

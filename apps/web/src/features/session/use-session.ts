@@ -173,8 +173,9 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         }
         page ??= await fetchEvents(slug);
         dispatch({ type: "loaded", page, detail, mode });
-        // A no-op today (`loaded` already sets liveAfter): the placeholder for PR4's subscribe `reset`
-        // frame, which must dispatch `caught_up` so a reconnect's replay never fades (U3 §8.3).
+        // A no-op after `loaded` (which sets liveAfter). The subscribe's live `reset` frame catches up
+        // again in the reducer, in the commit that applies it, so a reconnect's replay never fades
+        // (U3 §8.3, §11.3).
         dispatch({ type: "caught_up" });
         setError(undefined);
         setLoadedAt(Date.now());
@@ -243,6 +244,15 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   useEffect(() => {
     if (state.needsReload) void load(eventSeq); // keeps a deep-link window
   }, [state.needsReload, load, eventSeq]);
+
+  // U3 §11.3: an offset gap asks the server for the whole live state, once per gap. The reducer only
+  // counts; the ref keeps a StrictMode re-run (or a re-render) from sending the same request twice.
+  const snapshotSent = useRef(0);
+  useEffect(() => {
+    if (state.snapshotWanted <= snapshotSent.current) return;
+    snapshotSent.current = state.snapshotWanted;
+    wsRef.current.send({ type: "live_snapshot", agent: slug });
+  }, [state.snapshotWanted, slug]);
 
   // A load that failed while the server was away (a restart: 502, network) retries itself when the
   // socket is back, keeping what is on screen meanwhile; the shell's reconnect strip covers the wait.

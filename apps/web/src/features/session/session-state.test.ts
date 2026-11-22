@@ -1,4 +1,10 @@
-import type { AgentDetail, EventsPage, SessionEvent } from "@open-factory/shared";
+import {
+  type AgentDetail,
+  type EventsPage,
+  liveKey,
+  type ServerMessage,
+  type SessionEvent,
+} from "@open-factory/shared";
 import { expect, test, vi } from "vitest";
 import { agentSummary } from "@/test/session-fixtures";
 import {
@@ -840,4 +846,249 @@ test("an Undo the server delivers at once leaves no cancelled line (frames befor
   s = sessionReducer(s, { type: "restored", id: "m1" });
   expect(s.cancelled.size).toBe(0);
   expect(view(s)).toEqual([]);
+});
+
+// U3 §11.4: live text in the reducer.
+type LiveMsg = Extract<ServerMessage, { type: "live" }>;
+const live = (f: Omit<LiveMsg, "type" | "agent">): ServerMessage => ({
+  type: "live",
+  agent: "dev",
+  ...f,
+});
+const patch = (messageId: string, index: number, offset: number, append: string) =>
+  live({ texts: [{ messageId, index, offset, append }] });
+const liveIn = (s: SessionState, m: ServerMessage) =>
+  sessionReducer(s, { type: "frames", messages: [m] });
+const said = (seq: number, text: string, messageId?: string, blockIndex?: number) =>
+  sessionEvent(seq, {
+    type: "assistant_text",
+    text,
+    ...(messageId === undefined ? {} : { messageId, blockIndex }),
+  });
+const textsOf = (s: SessionState) =>
+  s.live.texts.map((t) => [liveKey(t.messageId, t.index), t.text]);
+const progress = (toolUseId: string, toolUses = 1) => ({
+  toolUseId,
+  description: "Look",
+  subagentType: "Explore",
+  toolUses,
+  tokens: 10,
+  durationMs: 100,
+});
+
+test("patches grow a block; an overlapping offset replaces from it", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "Hel"));
+  expect(textsOf(s)).toEqual([["m1:1", "Hel"]]);
+  expect(s.live.texts[0]?.fromReset).toBe(false);
+  s = liveIn(s, patch("m1", 1, 3, "lo"));
+  expect(textsOf(s)).toEqual([["m1:1", "Hello"]]);
+  s = liveIn(s, patch("m1", 1, 4, "o wor"));
+  expect(textsOf(s)).toEqual([["m1:1", "Hello wor"]]);
+  // Two blocks live at once.
+  s = liveIn(s, patch("m1", 2, 0, "Next"));
+  expect(textsOf(s)).toEqual([
+    ["m1:1", "Hello wor"],
+    ["m1:2", "Next"],
+  ]);
+  expect(s.snapshotWanted).toBe(0);
+});
+
+test("a persisted assistant_text removes its block in the same step and adds its key to retired", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "Hello wor"));
+  s = sessionReducer(s, frames([said(10, "Hello world", "m1", 1)]));
+  expect(s.live.texts).toEqual([]);
+  expect(s.retired.has("m1:1")).toBe(true);
+  expect(s.ordered.at(-1)?.seq).toBe(10);
+  // A row without a key retires nothing.
+  const t = sessionReducer(liveIn(loaded(), patch("m2", 0, 0, "x")), frames([said(10, "x")]));
+  expect(textsOf(t)).toEqual([["m2:0", "x"]]);
+});
+
+test("a late frame or a reset entry for a retired key is ignored", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "Hello"));
+  s = sessionReducer(s, frames([said(10, "Hello world", "m1", 1)]));
+  const late = liveIn(s, patch("m1", 1, 5, " world"));
+  expect(late.live.texts).toEqual([]);
+  expect(late.snapshotWanted).toBe(0);
+  const reset = liveIn(
+    s,
+    live({
+      reset: true,
+      texts: [
+        { messageId: "m1", index: 1, offset: 0, append: "Hello world" },
+        { messageId: "m1", index: 2, offset: 0, append: "More" },
+      ],
+    }),
+  );
+  expect(textsOf(reset)).toEqual([["m1:2", "More"]]);
+});
+
+test("retired is seeded from loaded rows: a reset holding a block whose row is loaded shows one block", () => {
+  const s0 = sessionReducer(initialSessionState, {
+    type: "loaded",
+    page: {
+      events: [said(5, "Hi"), said(6, "Hello world", "m1", 1)],
+      hasMore: { before: false, after: false },
+    },
+    detail: { agent: agentSummary({ turnOpen: true, turnStartedAt: at }), queue: [], lastSeq: 6 },
+    mode: "latest",
+  });
+  expect([...s0.retired]).toEqual(["m1:1"]);
+  const s = liveIn(
+    s0,
+    live({ reset: true, texts: [{ messageId: "m1", index: 1, offset: 0, append: "Hello world" }] }),
+  );
+  expect(s.live.texts).toEqual([]);
+  // The rows hold the block once; live holds nothing.
+  expect(s.ordered.filter((e) => e.event.type === "assistant_text")).toHaveLength(2);
+});
+
+test("a reset replaces live, marks its blocks fromReset, and catches up", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "old"));
+  s = sessionReducer(s, frames([said(10, "a")]));
+  expect(s.liveAfter).toBe(9);
+  s = liveIn(
+    s,
+    live({
+      reset: true,
+      texts: [{ messageId: "m2", index: 0, offset: 0, append: "so far", capped: true }],
+      thinking: { tokens: 12 },
+      subagents: [progress("tu1")],
+    }),
+  );
+  expect(s.live.texts).toEqual([
+    { messageId: "m2", index: 0, text: "so far", capped: true, fromReset: true },
+  ]);
+  expect(s.live.thinking).toEqual({ tokens: 12 });
+  expect(s.live.subagents).toEqual([progress("tu1")]);
+  expect(s.liveAfter).toBe(10);
+  // A reset with nothing clears everything.
+  const empty = liveIn(s, live({ reset: true }));
+  expect(empty.live.texts).toEqual([]);
+  expect(empty.live.thinking).toBeUndefined();
+  expect(empty.live.subagents).toEqual([]);
+});
+
+test("a reset's retire list and a patch's retire list remove blocks and retire their keys", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "a"));
+  s = liveIn(s, patch("m1", 2, 0, "b"));
+  s = liveIn(s, live({ retire: ["m1:1"] }));
+  expect(textsOf(s)).toEqual([["m1:2", "b"]]);
+  expect(s.retired.has("m1:1")).toBe(true);
+  expect(liveIn(s, patch("m1", 1, 0, "again")).live.texts).toHaveLength(1);
+});
+
+test("an offset gap bumps snapshotWanted once until a reset answers it", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "Hel"));
+  s = liveIn(s, patch("m1", 1, 5, "xx")); // the block is 3 long: a gap
+  expect(textsOf(s)).toEqual([["m1:1", "Hel"]]);
+  expect(s.snapshotWanted).toBe(1);
+  s = liveIn(s, patch("m1", 1, 7, "yy"));
+  s = liveIn(s, patch("m9", 0, 4, "zz")); // an unknown block mid-way is a gap too
+  expect(s.snapshotWanted).toBe(1);
+  expect(textsOf(s)).toEqual([["m1:1", "Hel"]]);
+  s = liveIn(
+    s,
+    live({ reset: true, texts: [{ messageId: "m1", index: 1, offset: 0, append: "Hello xxyy" }] }),
+  );
+  s = liveIn(s, patch("m1", 1, 20, "!"));
+  expect(s.snapshotWanted).toBe(2);
+  // Two gaps folded into one batch still ask once.
+  const both = sessionReducer(liveIn(loaded(), patch("m1", 1, 0, "a")), {
+    type: "frames",
+    messages: [patch("m1", 1, 5, "x"), patch("m1", 1, 9, "y")],
+  });
+  expect(both.snapshotWanted).toBe(1);
+});
+
+test("a live turn_end clears live except subagents, and empties retired", () => {
+  let s = loaded({ agent: { turnOpen: true, turnStartedAt: at } });
+  s = liveIn(
+    s,
+    live({
+      texts: [{ messageId: "m1", index: 0, offset: 0, append: "orphan" }],
+      toolInput: { toolUseId: "tu9", name: "Write", bytes: 10 },
+      thinking: { tokens: 3 },
+      subagents: [progress("tu1")],
+    }),
+  );
+  s = sessionReducer(s, frames([said(10, "x", "m0", 0)]));
+  expect(s.retired.size).toBe(1);
+  const subagents = s.live.subagents;
+  s = sessionReducer(s, frames([sessionEvent(11, turnEnd())]));
+  expect(s.live.texts).toEqual([]);
+  expect(s.live.toolInput).toBeUndefined();
+  expect(s.live.thinking).toBeUndefined();
+  expect(s.live.subagents).toBe(subagents);
+  expect(s.retired.size).toBe(0);
+  // exited does the same.
+  const x = sessionReducer(liveIn(loaded(), patch("m3", 0, 0, "a")), {
+    ...frames([
+      sessionEvent(10, { type: "exited", code: 1, signal: null, stderrTail: "", expected: false }),
+    ]),
+  });
+  expect(x.live.texts).toEqual([]);
+});
+
+test("a persisted tool_call clears the live tool input it matches", () => {
+  let s = liveIn(
+    loaded(),
+    live({ toolInput: { toolUseId: "tu1", name: "Write", bytes: 40, target: "a.ts" } }),
+  );
+  expect(s.live.toolInput?.target).toBe("a.ts");
+  const other = sessionReducer(
+    s,
+    frames([sessionEvent(10, { type: "tool_call", toolUseId: "tu0", name: "Read", input: {} })]),
+  );
+  expect(other.live.toolInput?.toolUseId).toBe("tu1");
+  s = sessionReducer(
+    s,
+    frames([sessionEvent(10, { type: "tool_call", toolUseId: "tu1", name: "Write", input: {} })]),
+  );
+  expect(s.live.toolInput).toBeUndefined();
+  // null clears; absent keeps.
+  s = liveIn(s, live({ thinking: { tokens: 5 } }));
+  expect(liveIn(s, live({ texts: [] })).live.thinking).toEqual({ tokens: 5 });
+  expect(liveIn(s, live({ thinking: null })).live.thinking).toBeUndefined();
+});
+
+test("texts and subagents keep their identity independently; equal progress entries are reused", () => {
+  let s = liveIn(loaded(), live({ subagents: [progress("tu1"), progress("tu2")] }));
+  const subs = s.live.subagents;
+  s = liveIn(s, patch("m1", 0, 0, "a"));
+  expect(s.live.subagents).toBe(subs);
+  const texts = s.live.texts;
+  s = liveIn(s, live({ subagents: [progress("tu1"), progress("tu2", 2)] }));
+  expect(s.live.texts).toBe(texts);
+  expect(s.live.subagents).not.toBe(subs);
+  expect(s.live.subagents[0]).toBe(subs[0]);
+  expect(s.live.subagents[1]).not.toBe(subs[1]);
+  // The same list again keeps the array.
+  const again = s.live.subagents;
+  expect(liveIn(s, live({ subagents: [progress("tu1"), progress("tu2", 2)] })).live.subagents).toBe(
+    again,
+  );
+  // A frame changing nothing keeps the state.
+  expect(liveIn(s, live({}))).toBe(s);
+});
+
+test("windowed views ignore live frames", () => {
+  const s0 = loaded({}, "window");
+  expect(s0.windowed).toBe(true);
+  expect(liveIn(s0, patch("m1", 0, 0, "a"))).toBe(s0);
+  expect(liveIn(s0, live({ reset: true, texts: [] }))).toBe(s0);
+});
+
+test("a reload of the same session keeps live; another session starts empty", () => {
+  const s = liveIn(loaded(), patch("m1", 0, 0, "a"));
+  expect(
+    sessionReducer(s, { type: "loaded", page: page([7, 8, 9]), detail, mode: "latest" }).live,
+  ).toBe(s.live);
+  const other = sessionReducer(s, {
+    type: "loaded",
+    page: page([1]),
+    detail: { ...detail, agent: agentSummary({ slug: "qa" }) },
+    mode: "latest",
+  });
+  expect(other.live.texts).toEqual([]);
 });

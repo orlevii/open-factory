@@ -218,6 +218,8 @@ export function SubagentOverflow({
       <button
         type="button"
         aria-expanded={open}
+        // Named like the cards: subagents of this session, never factory spawns (U3 §12).
+        aria-label={`+${plural(count, "more subagent", "more subagents")} in this session${running > 0 ? ` · ${running} running` : ""}`}
         onClick={(e) => {
           if (e.detail === 0) runInstant(onToggle);
           else onToggle();
@@ -227,7 +229,7 @@ export function SubagentOverflow({
       >
         <ChevronRight
           aria-hidden="true"
-          className={`mt-0.5 size-4 shrink-0 ${open ? "rotate-90" : ""}`}
+          className={`mt-0.5 size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
         />
         <span className="min-w-0 flex-1 tabular-nums [overflow-wrap:anywhere]">
           {`+${plural(count, "more subagent", "more subagents")}`}

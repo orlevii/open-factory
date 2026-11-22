@@ -182,6 +182,10 @@ export function SessionView({
       ) : null,
     [agent, sheetHost, stop, slotsMax, setAgent, closeSheet],
   );
+  const cronsLayer = useMemo(
+    () => (agent ? <CronsStopLayer agent={agent} stop={stop} /> : null),
+    [agent, stop],
+  );
   const self = me?.user.handle;
   const { queue, sending, cancelled, stopEpoch, landed } = s.state;
   const queueItems = useMemo(
@@ -285,7 +289,7 @@ export function SessionView({
             <InlineOutcome tone={pinOutcome?.tone}>{pinOutcome?.text}</InlineOutcome>
           </div>
         )}
-        <CronsStopLayer agent={agent} stop={stop} />
+        {cronsLayer}
         {s.missingEvent !== undefined && (
           <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
             Event {s.missingEvent} isn't in this session. Showing the latest.

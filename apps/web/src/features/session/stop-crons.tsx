@@ -1,5 +1,5 @@
 import { type AgentSummary, ApiError } from "@open-factory/shared";
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { stopCrons } from "@/features/schedules/api";
 import { focusComposer } from "./composer";
@@ -96,7 +96,21 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
 
 /** The confirmation and the announced outcome, mounted once by the session view so they outlive the
  *  segment and the menu. */
-export function CronsStopLayer({ agent, stop }: { agent: AgentSummary; stop: StopCrons }) {
+export const CronsStopLayer = memo(function CronsStopLayer({
+  agent,
+  stop,
+}: {
+  agent: AgentSummary;
+  stop: StopCrons;
+}) {
+  const { returnFocus } = stop;
+  const onCloseAutoFocus = useCallback(
+    (e: Event) => {
+      e.preventDefault();
+      returnFocus();
+    },
+    [returnFocus],
+  );
   return (
     <>
       <StopCronsDialog
@@ -106,10 +120,7 @@ export function CronsStopLayer({ agent, stop }: { agent: AgentSummary; stop: Sto
         open={stop.confirm && agent.crons.length > 0}
         onOpenChange={stop.setConfirm}
         onConfirm={stop.run}
-        onCloseAutoFocus={(e) => {
-          e.preventDefault();
-          stop.returnFocus();
-        }}
+        onCloseAutoFocus={onCloseAutoFocus}
       />
       {/* Mounted while the agent has crons (before it fills, so the outcome is announced) and after a stop. */}
       {(agent.crons.length > 0 || stop.outcome) && (
@@ -121,4 +132,4 @@ export function CronsStopLayer({ agent, stop }: { agent: AgentSummary; stop: Sto
       )}
     </>
   );
-}
+});

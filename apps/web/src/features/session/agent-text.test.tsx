@@ -178,3 +178,8 @@ test("a windowed view renders no live rows", () => {
   );
   expect(rowEl("t:m1:1")).toBeNull();
 });
+
+test("while the first reply streams in an empty session, the live row is the log's tab stop", () => {
+  renderTimeline({ rows: [], live: [liveText("m1", 1, "Hello")] });
+  expect(rowEl("t:m1:1")).toHaveAttribute("tabindex", "0");
+});

@@ -50,6 +50,10 @@ vi.mock("./queue-items", async (orig) => {
   const m = await orig<typeof import("./queue-items")>();
   return { ...m, QueueItems: await profiled("queue", m.QueueItems) };
 });
+vi.mock("./stop-crons", async (orig) => {
+  const m = await orig<typeof import("./stop-crons")>();
+  return { ...m, CronsStopLayer: await profiled("crons", m.CronsStopLayer) };
+});
 vi.mock("./composer", async (orig) => {
   const m = await orig<typeof import("./composer")>();
   return { ...m, Composer: await profiled("composer", m.Composer) };
@@ -667,7 +671,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   frame();
   expect(document.querySelector("[data-activity-line]")?.textContent).toContain("0s");
   // The harness sees a SessionView render: the status frame reached every profiled part.
-  for (const id of ["header", "details", "queue", "composer"])
+  for (const id of ["header", "details", "queue", "composer", "crons"])
     expect(count.profiled.get(id)).toBeGreaterThan(0);
   expect(count.timeline).toBeGreaterThan(0);
   reset();

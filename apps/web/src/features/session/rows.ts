@@ -335,8 +335,11 @@ export function buildRows(events: SessionEvent[]): {
   // The next top-level text heads a speaker line; `headTurn` is the turn of the last one placed.
   let headPending = true;
   let headTurn: string | null | undefined;
+  // The newest turn id seen: the turn a live text block belongs to (for `textHead`).
+  let lastTurn: string | null | undefined;
   for (const se of events) {
     const e = se.event;
+    if (se.turnId !== null) lastTurn = se.turnId;
     if (e.type === "turn_started" || e.type === "turn_end") headPending = true;
     if (e.type === "turn_started") {
       started = true;
@@ -383,7 +386,11 @@ export function buildRows(events: SessionEvent[]): {
           const st = taskState(e.status);
           call.state = st === "finished" ? "done" : st;
           call.summary = e.summary;
-          if (e.usage) Object.assign(call, e.usage);
+          if (e.usage) {
+            call.toolUses = e.usage.toolUses;
+            call.tokens = e.usage.tokens;
+            call.durationMs = e.usage.durationMs;
+          }
           backgrounded.delete(call);
         } else
           call.backgroundTask = {
@@ -556,7 +563,9 @@ export function buildRows(events: SessionEvent[]): {
         top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
     }
   }
-  const textHead = headPending;
+  // The persisted rule (`head` above) applied to the open turn, so a live block and the row that
+  // retires it agree and no speaker line appears or goes at the handoff.
+  const textHead = headPending || (lastTurn !== undefined && lastTurn !== headTurn);
   if (!hasOpenStart) return { rows: top, open: undefined, textHead };
   const open: OpenTurnRows = { openSubagents: [] };
   for (const row of tools.values()) {

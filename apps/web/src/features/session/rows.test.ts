@@ -761,3 +761,56 @@ test("a keyed assistant_text renders under t:<messageId>:<blockIndex>, capped wh
     ]).textHead,
   ).toBe(true);
 });
+
+test("textHead follows the persisted head rule: a turn id change with no turn edge loaded heads the next text too", () => {
+  seq = 0;
+  const before = [
+    e({ type: "turn_started" }, "t1"),
+    e({ type: "assistant_text", text: "a" }, "t1"),
+    e({ type: "tool_call", toolUseId: "x", name: "Bash", input: {} }, "t2"),
+  ];
+  const live = buildRows(before).textHead;
+  const persisted = rowsOf([...before, e({ type: "assistant_text", text: "b" }, "t2")]).at(-1);
+  expect(persisted).toMatchObject({ kind: "text", head: true });
+  expect(live).toBe(true);
+  // Same turn, no edge: neither heads.
+  seq = 0;
+  const same = [
+    e({ type: "turn_started" }, "t1"),
+    e({ type: "assistant_text", text: "a" }, "t1"),
+    e({ type: "tool_call", toolUseId: "x", name: "Bash", input: {} }, "t1"),
+  ];
+  expect(buildRows(same).textHead).toBe(false);
+  expect(rowsOf([...same, e({ type: "assistant_text", text: "b" }, "t1")]).at(-1)).toMatchObject({
+    head: false,
+  });
+});
+
+test("a finished async subagent takes only the usage figures it knows", () => {
+  seq = 0;
+  const [row] = rowsOf([
+    e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
+    e({
+      type: "tool_result",
+      toolUseId: "ag",
+      content: "launched",
+      isError: false,
+      meta: { tool: "Agent", async: true },
+    }),
+    e({ type: "background_task_started", taskId: "k", toolUseId: "ag", taskType: "local_agent" }),
+    e({
+      type: "background_task_finished",
+      taskId: "k",
+      status: "completed",
+      summary: "ok",
+      usage: { toolUses: 2, tokens: 5, durationMs: 9, kind: "oops" } as never,
+    }),
+  ]);
+  expect(row).toMatchObject({
+    kind: "subagent",
+    state: "done",
+    toolUses: 2,
+    tokens: 5,
+    durationMs: 9,
+  });
+});

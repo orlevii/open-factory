@@ -12,10 +12,13 @@ export function useSampled<T>(value: T, ms = 500): T {
     latest.current = value;
   });
   const stale = !Object.is(shown, value);
+  // Re-armed after every show: a change that lands in the same batch as the window's end (still
+  // stale, with a new `shown`) gets its own window rather than freezing the counter.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `shown` re-arms the window; the timer reads the latest value from the ref
   useEffect(() => {
     if (!stale) return;
     const t = setTimeout(() => setShown(latest.current), ms);
     return () => clearTimeout(t);
-  }, [stale, ms]);
+  }, [stale, shown, ms]);
   return shown;
 }

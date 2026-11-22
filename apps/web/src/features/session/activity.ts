@@ -84,7 +84,10 @@ export function deriveActivity(
 ): Activity {
   if (live?.toolInput) {
     const { name, target: raw } = live.toolInput;
-    // The raw target through the open tool's formatter: the label stays put when the call lands.
+    // The raw target through the open tool's formatter: the label stays put when the call lands for
+    // file and search tools. Bash is the accepted exception (review m3): live input carries only the
+    // command, and the landed call's `description`, when it has one, takes over ("Running `pnpm test`"
+    // becomes "Running the tests").
     const target =
       raw === undefined
         ? undefined

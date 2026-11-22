@@ -307,11 +307,16 @@ export function Timeline(props: {
   };
 
   // Roving tabindex: exactly one row is in the tab order; the first row until one is focused.
+  // The tree walk runs when the rows, the focused key or the expansions change, never per live frame.
+  const activeInRows = useMemo(
+    () => activeKey !== undefined && hasKey(rows, activeKey, expanded),
+    [rows, activeKey, expanded],
+  );
+  // The first row until one is focused; a streaming first reply in an empty log is the stop too.
   const tabKey =
-    activeKey !== undefined &&
-    (hasKey(rows, activeKey, expanded) || liveRows.some((r) => r.key === activeKey))
+    activeInRows || (activeKey !== undefined && liveRows.some((r) => r.key === activeKey))
       ? activeKey
-      : rows[0]?.key;
+      : (rows[0]?.key ?? liveRows[0]?.key);
   // One tab stop (UI design §5, §7): links, buttons and scrollable plates inside a row are in the tab
   // order only while that row is the focused one (tabindex 0), so Tab walks its controls and then
   // leaves; every other row's controls are -1. Rows and Copy link manage their own tabindex.

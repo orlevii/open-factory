@@ -175,7 +175,10 @@ test("re-rendering the parent with the same source does not parse again", () => 
   const after = markdownCalls.n;
   rerender(<Markdown source="**same**" variant="detail" />);
   expect(markdownCalls.n).toBe(after);
+  // A variant change only changes the wrapper's class: the parsed body is kept.
   rerender(<Markdown source="**same**" />);
+  expect(markdownCalls.n).toBe(after);
+  rerender(<Markdown source="**other**" />);
   expect(markdownCalls.n).toBe(after + 1);
 });
 

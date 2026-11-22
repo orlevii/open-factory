@@ -1,6 +1,7 @@
 import { act, render } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { CodeBlock } from "./code-block";
+import { highlightCache } from "./highlight-cache";
 
 // Each highlight call parks until the test resolves it, so ordering is under test control.
 const pending = vi.hoisted(() => [] as { code: string; resolve: (html: string) => void }[]);
@@ -8,6 +9,8 @@ vi.mock("./highlight", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./highlight")>()),
   highlight: (code: string) => new Promise<string>((resolve) => pending.push({ code, resolve })),
 }));
+
+beforeEach(() => highlightCache.clear());
 
 const finish = (i: number) =>
   act(async () => pending[i]?.resolve(`<pre class="shiki">${pending[i]?.code}</pre>`));
@@ -89,4 +92,21 @@ test("an open fence renders plain <pre><code> and never highlights; closing it h
   expect(container.querySelector("pre.shiki")).toHaveTextContent("const a = 1");
   rerender(<CodeBlock code="const a = 1" lang="ts" closed />);
   expect(pending).toHaveLength(1);
+});
+
+test("a second mount of a highlighted fence paints highlighted on its first render, with no highlight call", async () => {
+  pending.length = 0;
+  const first = render(<CodeBlock code="const b = 2" lang="ts" />);
+  await finish(0);
+  expect(first.container.querySelector("pre.shiki")).toHaveTextContent("const b = 2");
+  first.unmount();
+  const second = render(<CodeBlock code="const b = 2" lang="ts" />);
+  expect(second.container.querySelector("pre.shiki")).toHaveTextContent("const b = 2");
+  expect(pending).toHaveLength(1);
+  // Code that was highlighted before paints at once when a block changes to it.
+  second.rerender(<CodeBlock code="other" lang="ts" />);
+  await finish(1);
+  second.rerender(<CodeBlock code="const b = 2" lang="ts" />);
+  expect(second.container.querySelector("pre.shiki")).toHaveTextContent("const b = 2");
+  expect(pending).toHaveLength(2);
 });

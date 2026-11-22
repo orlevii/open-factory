@@ -5,14 +5,20 @@ const long = (n: number) => "x".repeat(n);
 const emailOf = (n: number) => `${"a".repeat(n - "@example.com".length)}@example.com`;
 
 describe("inputLengthError", () => {
-  test.each(["/sign-up/email", "/update-user"])("%s refuses a name over 80 after trim", (path) => {
-    expect(inputLengthError(path, { name: long(81) })).toEqual({
-      code: "NAME_TOO_LONG",
-      message: "Keep your name to 80 characters or fewer.",
-    });
-    expect(inputLengthError(path, { name: long(80) })).toBeNull();
-    expect(inputLengthError(path, { name: `  ${long(80)}  ` })).toBeNull();
-  });
+  test.each(["/sign-up/email", "/update-user"])(
+    "%s refuses a name over 80, padding included",
+    (path) => {
+      expect(inputLengthError(path, { name: long(81) })).toEqual({
+        code: "NAME_TOO_LONG",
+        message: "Keep your name to 80 characters or fewer.",
+      });
+      expect(inputLengthError(path, { name: long(80) })).toBeNull();
+      expect(inputLengthError(path, { name: `  ${long(76)}  ` })).toBeNull();
+      expect(inputLengthError(path, { name: long(80) + " ".repeat(1000) })?.code).toBe(
+        "NAME_TOO_LONG",
+      );
+    },
+  );
 
   test("sign-up refuses an email over 254, accepts 254", () => {
     expect(inputLengthError("/sign-up/email", { name: "A", email: emailOf(255) })).toEqual({

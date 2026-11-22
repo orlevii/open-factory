@@ -23,7 +23,7 @@ export interface AuthOptionParams {
 }
 
 /**
- * The name and email length limits (spec §13.2) for a better-auth endpoint path and its body, or null.
+ * The name and email length limits (spec §13.2, the raw name, so padding can't bypass the cap) for a better-auth endpoint path and its body, or null.
  * Input only: a body without `name` passes, so an old stored name longer than the limit never blocks an update.
  */
 export function inputLengthError(
@@ -33,7 +33,7 @@ export function inputLengthError(
   if (path !== "/sign-up/email" && path !== "/update-user") return null;
   if (!body || typeof body !== "object") return null;
   const { name, email } = body as { name?: unknown; email?: unknown };
-  if (typeof name === "string" && name.trim().length > USER_NAME_MAX) {
+  if (typeof name === "string" && name.length > USER_NAME_MAX) {
     return { code: "NAME_TOO_LONG", message: NAME_TOO_LONG_MESSAGE };
   }
   if (path === "/sign-up/email" && typeof email === "string" && email.length > EMAIL_MAX) {

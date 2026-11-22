@@ -64,7 +64,7 @@ function sameDiags(a: readonly Diag[], b: readonly Diag[]) {
 }
 
 /** A CodeMirror 6 editor for one template file at a time, controlled the CodeMirror way: edits flow
- *  out through onChange; a `value` that isn't what it last emitted (a reload, a conflict's "Use theirs")
+ *  out through onChange; a `value` that isn't what it last emitted (a reload, Discard)
  *  replaces the file's state with a fresh one, so the reload can't be undone and earlier edits can't
  *  be replayed onto it.
  *  One EditorView per mount; nothing a render changes rebuilds it. */

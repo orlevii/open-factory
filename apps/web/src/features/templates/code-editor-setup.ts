@@ -16,15 +16,7 @@ import {
   previousDiagnostic,
   setDiagnosticsEffect,
 } from "@codemirror/lint";
-import {
-  Annotation,
-  type AnnotationType,
-  Compartment,
-  type Extension,
-  RangeSet,
-  StateField,
-  type Text,
-} from "@codemirror/state";
+import { Compartment, type Extension, RangeSet, StateField, type Text } from "@codemirror/state";
 import {
   drawSelection,
   EditorView,
@@ -56,17 +48,13 @@ export function toDiagnostics(doc: Text, diags: readonly Diag[]): Diagnostic[] {
   return out;
 }
 
-/** Marks a transaction that replaces the doc from outside (a reload, a conflict's "Use theirs"):
- *  the update listener doesn't report it as an edit. */
-export const external: AnnotationType<boolean> = Annotation.define<boolean>();
-
 /** Swapped without rebuilding the editor. Module-level: a compartment is an identity token, and
  *  one per mount would make a restored state's compartments unreachable from the next mount. */
 export const languageSlot = new Compartment();
 export const markerSlot = new Compartment();
 export const attrsSlot = new Compartment();
 
-export type EditorIds = { id: string; labelledBy: string; describedBy: string };
+type EditorIds = { id: string; labelledBy: string; describedBy: string };
 
 /** The content element's id and ARIA wiring; in a compartment, so a description that arrives after
  *  mount (the template editor's warm hint) reaches the screen reader. */
@@ -302,8 +290,7 @@ export function extensionsFor(lang: Lang, o: Options): Extension[] {
     markerSlot.of(markersFor(o.mobile)),
     attrsSlot.of(attrsFor(o.ids)),
     EditorView.updateListener.of((u) => {
-      if (u.docChanged && !u.transactions.every((tr) => tr.annotation(external)))
-        o.onChange(u.state.doc.toString());
+      if (u.docChanged) o.onChange(u.state.doc.toString());
     }),
     EditorView.domEventHandlers({
       blur: () => {

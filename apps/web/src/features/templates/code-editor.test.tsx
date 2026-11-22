@@ -74,9 +74,11 @@ describe("CodeEditor", () => {
     const { view, props, rerender, ref } = setup();
     type(view(), "e");
     const doc = view().state.doc.toString();
+    const before = view().state;
     const spy = vi.spyOn(view(), "dispatch");
     rerender(<CodeEditor ref={ref} {...props} value={doc} />);
     expect(spy).not.toHaveBeenCalled();
+    expect(view().state).toBe(before); // no setState replace either
   });
 
   test("unmount and remount with the same fileKey and states keeps the undo history", () => {

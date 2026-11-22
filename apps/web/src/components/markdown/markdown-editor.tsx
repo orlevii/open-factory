@@ -29,7 +29,6 @@ export function MarkdownEditor(props: {
   writeSurface?: (p: {
     value: string;
     onChange(v: string): void;
-    id?: string;
     describedBy?: string;
   }) => ReactNode;
 }) {
@@ -58,7 +57,7 @@ export function MarkdownEditor(props: {
       </TabsList>
       <TabsContent value="write" className="mt-0">
         {props.writeSurface ? (
-          props.writeSurface({ value, onChange, id, describedBy: props["aria-describedby"] })
+          props.writeSurface({ value, onChange, describedBy: props["aria-describedby"] })
         ) : (
           <Textarea
             id={id}

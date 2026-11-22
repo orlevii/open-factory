@@ -279,7 +279,11 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those
     // untouched values closes, so the same agent can't be created twice. Edits made since are kept.
     if (open) clearDraft("new-agent");
-    else if (clearDraftIf("new-agent", snapshot) && getSheetState().parent?.kind === "new-agent")
+    else if (
+      clearDraftIf("new-agent", snapshot) &&
+      getSheetState().parent?.kind === "new-agent" &&
+      !getSheetState().child // a stacked child the user opened on it (and its input) stays
+    )
       closeSheet();
     const go = () => void router.navigate({ to: "/agents/$slug", params: { slug: agent.slug } });
     if (open) {

@@ -348,7 +348,8 @@ export default function NewTemplateSheet({ spec, sheetId, close }: BodyProps<Spe
         if (open) clearDraft("new-template");
         else if (
           clearDraftIf("new-template", snapshot) &&
-          getSheetState().parent?.kind === "new-template"
+          getSheetState().parent?.kind === "new-template" &&
+          !getSheetState().child
         )
           closeSheet();
         if (open) {

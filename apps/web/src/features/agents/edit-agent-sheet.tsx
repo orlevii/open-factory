@@ -347,7 +347,13 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       closeSheet();
     } else if (clearDraftIf(draftKey, snapshot)) {
       const parent = getSheetState().parent;
-      if (parent?.kind === "edit-agent" && parent.slug === slug && parent.id !== sheetId)
+      // Not while a stacked child the user opened on it is up: the child (and its input) stays.
+      if (
+        parent?.kind === "edit-agent" &&
+        parent.slug === slug &&
+        parent.id !== sheetId &&
+        !getSheetState().child
+      )
         closeSheet();
     }
     // Silent only when the session under the sheet already shows the result (its header shows the name).

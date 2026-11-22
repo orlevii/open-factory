@@ -573,6 +573,28 @@ test("a late success over a New agent reopened on the sent values clears the dra
   expect(posts(api)).toHaveLength(1);
 });
 
+test("a late success over a reopened, untouched New agent keeps it open while a stacked child is on it", async () => {
+  const post = held();
+  await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Team Lead");
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "new-agent" }));
+  const parent = await sheet();
+  expect(await screen.findByLabelText("Display name")).toHaveValue("Team Lead");
+  await userEvent.click(more());
+  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  // The child (and whatever the user is typing in it) stays; the sent draft is still cleared.
+  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect(getSheetState().parent?.kind).toBe("new-agent");
+  expect(hasDraft("new-agent")).toBe(false);
+});
+
 test("a late success after a sign-out neither toasts nor touches the next user's draft", async () => {
   const post = held();
   await openLead({ extra: { ...created(), "POST /api/agents": post.route } });

@@ -414,6 +414,25 @@ test("a late success over the same agent's Edit reopened on the sent values clea
   expect(patches(api)).toHaveLength(1);
 });
 
+test("a late success over the same agent's reopened, untouched Edit keeps it open while a stacked child is on it", async () => {
+  const patch = held();
+  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  const parent = await sheet();
+  await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
+  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
+  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect(getSheetState().parent?.kind).toBe("edit-agent");
+  expect(hasDraft("edit-agent:lead")).toBe(false);
+});
+
 test("a save landing after a sign-out neither toasts nor touches a draft", async () => {
   const patch = held();
   await open({ extra: { "PATCH /api/agents/lead": patch.route } });

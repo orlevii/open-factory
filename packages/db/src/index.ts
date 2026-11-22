@@ -7,6 +7,7 @@ export type {
   RuntimeJournal,
   SessionEventRow,
   TurnRow,
+  UploadRow,
 } from "./schema/agents.ts";
 export type { CredentialRow, ProjectRow, SecretRow, TemplateRow } from "./schema/factory.ts";
 export * as schema from "./schema/index.ts";

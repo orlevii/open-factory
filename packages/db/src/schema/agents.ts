@@ -223,6 +223,39 @@ export const inboxItems = pgTable(
 );
 export type InboxItemRow = typeof inboxItems.$inferSelect;
 
+/**
+ * U3 §13.5: a file a human uploaded into an agent's workspace (`.factory/uploads/<stored>`). `message_id` is null until
+ * the message carrying it is sent; an unsent row older than 24 hours is swept with its file.
+ */
+export const uploads = pgTable(
+  "uploads",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    uploaderId: text("uploader_id")
+      .notNull()
+      .references(() => users.id),
+    /** Relative to the agent's workdir: `.factory/uploads/<yyyymmdd>-<id>-<safe>`. */
+    storedPath: text("stored_path").notNull(),
+    originalName: text("original_name").notNull(),
+    kind: text("kind").notNull().$type<"image" | "text">(),
+    bytes: integer("bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("uploads_message_idx").on(t.messageId),
+    // The 24h sweep reads unsent rows by age.
+    index("uploads_unsent_idx").on(t.createdAt).where(sql`${t.messageId} is null`),
+  ],
+);
+export type UploadRow = typeof uploads.$inferSelect;
+
 export type AgentRow = typeof agents.$inferSelect;
 export type TurnRow = typeof turns.$inferSelect;
 export type SessionEventRow = typeof sessionEvents.$inferSelect;

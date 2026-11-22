@@ -1,0 +1,388 @@
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { schema } from "@open-factory/db";
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, expect, test } from "vitest";
+import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { makeTestApp } from "../test/helpers.ts";
+import { gif, heic, jpeg, png, webp } from "../uploads/fixtures.ts";
+import { agentWorkdir } from "../workspace/paths.ts";
+
+let t: Awaited<ReturnType<typeof makeTestApp>>;
+let or: string;
+let kim: string;
+const MiB = 1024 * 1024;
+
+beforeAll(async () => {
+  t = await makeTestApp({ harnessDriver: new FakeDriver() });
+  await t.seedAgent({ slug: "dev" });
+  await t.seedAgent({ slug: "ops" });
+  await t.seedAgent({ slug: "gone" });
+  await t.seedAgent({ slug: "shelved" });
+  const dev = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
+  await t.db
+    .update(schema.agents)
+    .set({ kind: "ephemeral", reportsTo: dev[0]?.id, terminatedAt: new Date() })
+    .where(eq(schema.agents.slug, "gone"));
+  await t.db
+    .update(schema.agents)
+    .set({ archivedAt: new Date() })
+    .where(eq(schema.agents.slug, "shelved"));
+  or = (await t.signUpUser({ handle: "or" })).cookie;
+  kim = (await t.signUpUser({ handle: "kim", email: "kim@example.com" })).cookie;
+});
+afterAll(() => t.close());
+
+const wd = (slug: string) => agentWorkdir(t.factoryHome, slug);
+const uploadsDir = (slug: string) => path.join(wd(slug), ".factory/uploads");
+const listUploads = (slug: string) =>
+  existsSync(uploadsDir(slug)) ? readdirSync(uploadsDir(slug)) : [];
+
+const upload = (
+  slug: string,
+  payload: Buffer | Readable,
+  name = "shot.png",
+  o: { cookie?: string; headers?: Record<string, string> } = {},
+) =>
+  t.app.inject({
+    method: "POST",
+    url: `/api/agents/${slug}/uploads`,
+    headers: {
+      cookie: o.cookie ?? or,
+      "content-type": "application/octet-stream",
+      "x-upload-name": encodeURIComponent(name),
+      ...o.headers,
+    },
+    payload,
+  });
+const get = (slug: string, id: string, cookie = or) =>
+  t.app.inject({ method: "GET", url: `/api/agents/${slug}/uploads/${id}`, headers: { cookie } });
+const del = (slug: string, id: string, cookie = or) =>
+  t.app.inject({ method: "DELETE", url: `/api/agents/${slug}/uploads/${id}`, headers: { cookie } });
+
+test("POST stores a PNG under .factory/uploads with a safe name and answers its info", async () => {
+  const data = png(640, 480);
+  const res = await upload("dev", data, "shot é [1].png");
+  expect(res.statusCode).toBe(201);
+  const body = res.json();
+  expect(body).toEqual({
+    uploadId: expect.any(String),
+    kind: "image",
+    bytes: data.length,
+    width: 640,
+    height: 480,
+    name: "shot é [1].png",
+  });
+  const [row] = await t.db
+    .select()
+    .from(schema.uploads)
+    .where(eq(schema.uploads.id, body.uploadId));
+  expect(row).toMatchObject({ messageId: null, originalName: "shot é [1].png", kind: "image" });
+  expect(row?.storedPath).toMatch(
+    new RegExp(`^\\.factory/uploads/\\d{8}-${body.uploadId}-shot----1-\\.png$`),
+  );
+  const file = path.join(wd("dev"), row?.storedPath ?? "");
+  expect(readFileSync(file)).toEqual(data);
+  expect(statSync(file).mode & 0o777).toBe(0o644);
+  expect(statSync(uploadsDir("dev")).mode & 0o777).toBe(0o755);
+});
+
+test("jpeg, gif, webp and UTF-8 text are accepted by content", async () => {
+  for (const [data, name, kind] of [
+    [jpeg(100, 50), "a.jpg", "image"],
+    [gif(10, 10), "b.gif", "image"],
+    [webp(30, 20), "c.webp", "image"],
+    [Buffer.from("# Notes\nhello\n"), "notes.md", "text"],
+    [Buffer.from('{"a":1}'), "data.json", "text"],
+  ] as const) {
+    const res = await upload("dev", data, name);
+    expect(res.statusCode, name).toBe(201);
+    expect(res.json().kind).toBe(kind);
+  }
+});
+
+test("auth, a missing agent and an ended agent: the messaging access check", async () => {
+  const anon = await t.app.inject({
+    method: "POST",
+    url: "/api/agents/dev/uploads",
+    headers: { "content-type": "application/octet-stream", "x-upload-name": "a.txt" },
+    payload: Buffer.from("x"),
+  });
+  expect(anon.statusCode).toBe(401);
+  expect((await upload("nope", Buffer.from("x"), "a.txt")).statusCode).toBe(404);
+  const ended = await upload("gone", Buffer.from("x"), "a.txt");
+  expect(ended.statusCode).toBe(409);
+  expect(ended.json().error.code).toBe("agent_terminated");
+  const archived = await upload("shelved", Buffer.from("x"), "a.txt");
+  expect(archived.statusCode).toBe(409);
+  expect(archived.json().error.code).toBe("agent_archived");
+  expect(listUploads("gone")).toEqual([]);
+  expect(listUploads("shelved")).toEqual([]);
+});
+
+test("the name header is required and must decode", async () => {
+  const none = await t.app.inject({
+    method: "POST",
+    url: "/api/agents/dev/uploads",
+    headers: { cookie: or, "content-type": "application/octet-stream" },
+    payload: Buffer.from("x"),
+  });
+  expect(none.statusCode).toBe(400);
+  const bad = await upload("dev", Buffer.from("x"), "a.txt", {
+    headers: { "x-upload-name": "%E0%A4%A" },
+  });
+  expect(bad.statusCode).toBe(400);
+});
+
+test("a Content-Length over 20 MiB is refused up front with 413", async () => {
+  const before = listUploads("ops");
+  let pulled = 0;
+  const body = new Readable({
+    read() {
+      pulled++;
+      this.push(Buffer.alloc(1024));
+      if (pulled > 4) this.push(null);
+    },
+  });
+  const res = await upload("ops", body, "big.txt", {
+    headers: { "content-length": String(20 * MiB + 1) },
+  });
+  expect(res.statusCode).toBe(413);
+  expect(res.json().error.code).toBe("too_large");
+  expect(listUploads("ops")).toEqual(before);
+});
+
+test("a stream crossing 20 MiB is refused with 413 and its temp file deleted", async () => {
+  const before = listUploads("ops");
+  let sent = 0;
+  const body = new Readable({
+    read() {
+      if (sent >= 21 * MiB) return this.push(null);
+      sent += MiB;
+      this.push(Buffer.alloc(MiB, 0x61));
+    },
+  });
+  const res = await upload("ops", body, "big.txt");
+  expect(res.statusCode).toBe(413);
+  expect(res.json().error.code).toBe("too_large");
+  expect(listUploads("ops")).toEqual(before);
+  expect(
+    await t.db.select().from(schema.uploads).where(eq(schema.uploads.originalName, "big.txt")),
+  ).toEqual([]);
+});
+
+test("SVG, HTML, HEIC and UTF-16 are 415 with a reason; nothing is kept", async () => {
+  const before = listUploads("ops");
+  const cases: [Buffer, string, string][] = [
+    [
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+      "x.png",
+      "SVG isn't supported; export it as PNG.",
+    ],
+    [Buffer.from("<!doctype html><script>1</script>"), "x.txt", "HTML files aren't supported."],
+    [heic(), "IMG_1.HEIC", "HEIC isn't supported; export as JPEG"],
+    [
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hi", "utf16le")]),
+      "u.txt",
+      "UTF-16 text isn't supported; save it as UTF-8.",
+    ],
+  ];
+  for (const [data, name, reason] of cases) {
+    const res = await upload("ops", data, name);
+    expect(res.statusCode, name).toBe(415);
+    expect(res.json().error).toEqual({ code: "unsupported_type", message: reason });
+  }
+  expect(listUploads("ops")).toEqual(before);
+});
+
+test("a 30000×30000 PNG header is 422 without decoding", async () => {
+  const res = await upload("ops", png(30000, 30000), "huge.png");
+  expect(res.statusCode).toBe(422);
+  expect(res.json().error).toEqual({
+    code: "image_too_large",
+    message: "Image is too large (max 8000 px a side).",
+  });
+});
+
+test("a symlinked .factory refuses the upload and nothing is written outside the workspace", async () => {
+  await t.seedAgent({ slug: "linked" });
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), "outside-")));
+  symlinkSync(outside, path.join(wd("linked"), ".factory"));
+  const res = await upload("linked", Buffer.from("hello"), "a.txt");
+  expect(res.statusCode).toBe(409);
+  expect(res.json().error.code).toBe("unsafe_workspace");
+  expect(readdirSync(outside)).toEqual([]);
+  expect(
+    await t.db.select().from(schema.uploads).where(eq(schema.uploads.originalName, "a.txt")),
+  ).toEqual([]);
+});
+
+test("GET sends nosniff and the sniffed type; text is an attachment; a swapped or resized file is refused", async () => {
+  const img = (await upload("dev", png(8, 8), "pic.txt")).json();
+  const r1 = await get("dev", img.uploadId);
+  expect(r1.statusCode).toBe(200);
+  expect(r1.headers["content-type"]).toBe("image/png");
+  expect(r1.headers["x-content-type-options"]).toBe("nosniff");
+  expect(String(r1.headers["content-disposition"])).toMatch(/^inline/);
+  expect(r1.rawPayload).toEqual(png(8, 8));
+
+  const txt = (await upload("dev", Buffer.from("plain\n"), "page.md")).json();
+  const r2 = await get("dev", txt.uploadId);
+  expect(r2.headers["content-type"]).toBe("text/plain; charset=utf-8");
+  expect(r2.headers["x-content-type-options"]).toBe("nosniff");
+  expect(String(r2.headers["content-disposition"])).toMatch(/^attachment; filename="page.md"/);
+  expect(r2.body).toBe("plain\n");
+
+  const [row] = await t.db.select().from(schema.uploads).where(eq(schema.uploads.id, txt.uploadId));
+  const file = path.join(wd("dev"), row?.storedPath ?? "");
+  writeFileSync(file, "PLAIN\n"); // swapped, same size
+  expect((await get("dev", txt.uploadId)).statusCode).toBe(409);
+  writeFileSync(file, "plain and more\n"); // resized
+  expect((await get("dev", txt.uploadId)).statusCode).toBe(409);
+  rmSync(file);
+  symlinkSync(path.join(wd("dev"), "AGENTS.md"), file); // a planted link
+  expect((await get("dev", txt.uploadId)).statusCode).toBe(409);
+});
+
+test("no cross-agent or cross-user reads and deletes of an unsent upload", async () => {
+  const mine = (await upload("dev", Buffer.from("secret draft\n"), "d.txt")).json();
+  expect((await get("ops", mine.uploadId)).statusCode).toBe(404); // another agent's URL
+  expect((await get("dev", mine.uploadId, kim)).statusCode).toBe(404); // another user, unsent
+  expect((await del("ops", mine.uploadId)).statusCode).toBe(404);
+  expect((await del("dev", mine.uploadId, kim)).statusCode).toBe(404);
+  expect((await get("dev", "not-an-id")).statusCode).toBe(404);
+  expect((await get("dev", mine.uploadId)).statusCode).toBe(200);
+});
+
+test("DELETE by the uploader while unsent removes row and file; a sent upload can't be deleted", async () => {
+  const a = (await upload("dev", Buffer.from("bye\n"), "bye.txt")).json();
+  const [row] = await t.db.select().from(schema.uploads).where(eq(schema.uploads.id, a.uploadId));
+  const file = path.join(wd("dev"), row?.storedPath ?? "");
+  expect(existsSync(file)).toBe(true);
+  const res = await del("dev", a.uploadId);
+  expect(res.statusCode).toBe(204);
+  expect(existsSync(file)).toBe(false);
+  expect(await t.db.select().from(schema.uploads).where(eq(schema.uploads.id, a.uploadId))).toEqual(
+    [],
+  );
+
+  const b = (await upload("dev", Buffer.from("kept\n"), "kept.txt")).json();
+  const sent = await t.app.inject({
+    method: "POST",
+    url: "/api/agents/dev/messages",
+    headers: { cookie: or },
+    payload: { body: "see attached" },
+  });
+  expect(sent.statusCode).toBe(202);
+  await t.db
+    .update(schema.uploads)
+    .set({ messageId: sent.json().item.id })
+    .where(eq(schema.uploads.id, b.uploadId));
+  const refused = await del("dev", b.uploadId);
+  expect(refused.statusCode).toBe(409);
+  expect(refused.json().error.code).toBe("already_sent");
+  expect((await del("dev", b.uploadId, kim)).statusCode).toBe(403);
+  // A sent upload is part of the session: any signed-in human who can read it may preview it.
+  expect((await get("dev", b.uploadId, kim)).statusCode).toBe(200);
+});
+
+test("the sweep deletes unsent uploads older than 24 hours, and only those", async () => {
+  const old = (await upload("ops", Buffer.from("old\n"), "old.txt")).json();
+  const fresh = (await upload("ops", Buffer.from("fresh\n"), "fresh.txt")).json();
+  const oldSent = (await upload("ops", Buffer.from("old sent\n"), "old-sent.txt")).json();
+  const msg = await t.app.inject({
+    method: "POST",
+    url: "/api/agents/ops/messages",
+    headers: { cookie: or },
+    payload: { body: "x" },
+  });
+  await t.db
+    .update(schema.uploads)
+    .set({ messageId: msg.json().item.id })
+    .where(eq(schema.uploads.id, oldSent.uploadId));
+  const longAgo = new Date(Date.now() - 25 * 3_600_000);
+  for (const id of [old.uploadId, oldSent.uploadId])
+    await t.db.update(schema.uploads).set({ createdAt: longAgo }).where(eq(schema.uploads.id, id));
+  const rows = await t.db.select().from(schema.uploads);
+  const pathOf = (id: string) =>
+    path.join(wd("ops"), rows.find((r) => r.id === id)?.storedPath ?? "");
+
+  expect(await t.app.uploads.sweepUnsent()).toBe(1);
+  expect(existsSync(pathOf(old.uploadId))).toBe(false);
+  expect(existsSync(pathOf(fresh.uploadId))).toBe(true);
+  expect(existsSync(pathOf(oldSent.uploadId))).toBe(true);
+  const left = (await t.db.select().from(schema.uploads)).map((r) => r.id);
+  expect(left).not.toContain(old.uploadId);
+  expect(left).toEqual(expect.arrayContaining([fresh.uploadId, oldSent.uploadId]));
+});
+
+test("the first upload adds .factory/ to the repository's info/exclude, once, never touching .gitignore", async () => {
+  await t.seedAgent({ slug: "repo" });
+  execFileSync("git", ["init", "-q"], { cwd: wd("repo") });
+  writeFileSync(path.join(wd("repo"), ".gitignore"), "dist\n");
+  mkdirSync(path.join(wd("repo"), ".git/info"), { recursive: true });
+  expect((await upload("repo", Buffer.from("a\n"), "a.txt")).statusCode).toBe(201);
+  expect((await upload("repo", Buffer.from("b\n"), "b.txt")).statusCode).toBe(201);
+  const exclude = readFileSync(path.join(wd("repo"), ".git/info/exclude"), "utf8");
+  expect(exclude.split("\n").filter((l) => l === ".factory/")).toHaveLength(1);
+  expect(readFileSync(path.join(wd("repo"), ".gitignore"), "utf8")).toBe("dist\n");
+});
+
+test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connection closes", async () => {
+  const { request } = await import("node:http");
+  await t.app.listen({ port: 0, host: "127.0.0.1" });
+  const port = (t.app.server.address() as { port: number }).port;
+  const before = listUploads("ops");
+  const status = await new Promise<number>((resolve, reject) => {
+    const r = request(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/api/agents/ops/uploads",
+        headers: {
+          cookie: or,
+          "content-type": "application/octet-stream",
+          "x-upload-name": "big.txt",
+          "transfer-encoding": "chunked",
+        },
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      },
+    );
+    r.on("error", (e: NodeJS.ErrnoException) => {
+      // The server may close before every chunk was written; the status already arrived.
+      if (e.code !== "EPIPE" && e.code !== "ECONNRESET") reject(e);
+    });
+    const chunk = Buffer.alloc(MiB, 0x61);
+    let n = 0;
+    const pump = () => {
+      while (n < 30) {
+        n++;
+        if (!r.write(chunk)) return r.once("drain", pump);
+      }
+      r.end();
+    };
+    pump();
+  });
+  expect(status).toBe(413);
+  // The temp file is deleted once the handler has unwound.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(listUploads("ops")).toEqual(before);
+});

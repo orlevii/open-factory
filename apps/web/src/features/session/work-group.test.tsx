@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
 import { groupWork } from "./display-passes";
@@ -66,4 +66,27 @@ test("closing a group clears its calls' inner keys too, so a later regrouping st
     ...groupWork([b, c]),
   ]);
   expect(rowEl("5")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("each call in an open group has its own row menu and gutter time (Copy command per call)", async () => {
+  const user = userEvent.setup();
+  timeline(groupWork([sh(3), sh(5)]));
+  // Collapsed: the group's own menu only.
+  expect(screen.getAllByRole("button", { name: "Row actions", hidden: true })).toHaveLength(1);
+  await user.click(rowEl("3") as HTMLElement);
+  const calls = [rowEl("c:3"), rowEl("5")].map((el) => el?.closest("[data-call]") as HTMLElement);
+  for (const call of calls) {
+    expect(within(call).getAllByRole("button", { name: "Row actions", hidden: true })).toHaveLength(
+      1,
+    );
+    expect(call.querySelector("[data-gutter-time]")).not.toBeNull();
+  }
+  const trigger = within(calls[1] as HTMLElement).getByRole("button", {
+    name: "Row actions",
+    hidden: true,
+  });
+  fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+  const menu = await screen.findByRole("menu");
+  expect(within(menu).getByRole("menuitem", { name: "Copy command" })).toBeInTheDocument();
+  expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
 });

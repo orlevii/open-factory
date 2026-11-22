@@ -11,6 +11,7 @@ import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
+import { NestedRow } from "./row-chrome";
 import type { Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
 import { SpeakerLine } from "./speaker-line";
@@ -376,7 +377,20 @@ export function TimelineRow(props: TimelineRowProps) {
           }
           rowProps={rp}
         >
-          {open && row.children.map((c) => <TimelineRow key={c.key} {...props} row={c} />)}
+          {open &&
+            row.children.map((c) => (
+              // Each call keeps its own ⋯ and gutter time (U3 §7.5); its tab stop is rowProps'.
+              <NestedRow
+                key={c.key}
+                row={c}
+                slug={props.slug}
+                focusable={rowProps(c).tabIndex === 0}
+                callShown={expanded.has(c.key)}
+                onToggleCall={() => toggle(c.key)}
+              >
+                <TimelineRow {...props} row={c} />
+              </NestedRow>
+            ))}
         </WorkGroup>
       );
     }

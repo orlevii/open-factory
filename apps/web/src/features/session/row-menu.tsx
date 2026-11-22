@@ -82,6 +82,9 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
 // explicit: Button leaves it off popup triggers.
 const TRIGGER =
   "absolute top-1 right-0 text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
+/** A nested row's (a folded run's call): its own `group/call` box decides, never the item's. */
+const TRIGGER_NESTED =
+  "absolute top-1 right-0 text-muted-foreground group-focus-within/call:inline-flex group-hover/call:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
 
 /**
  * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots;
@@ -95,6 +98,7 @@ export function RowMenu({
   label = "Row actions",
   callShown = false,
   onToggleCall,
+  nested = false,
 }: {
   /** The list, or a stable function that builds it: called only once the menu is first opened, so a
    *  long timeline does none of that work at mount. */
@@ -105,6 +109,8 @@ export function RowMenu({
   /** The raw call is showing: its item reads "Hide tool call". */
   callShown?: boolean;
   onToggleCall?(): void;
+  /** Inside another row (`NestedRow`): shown on its own box's hover and focus. */
+  nested?: boolean;
 }) {
   const { state, instant, copy } = useCopy();
   const [mounted, setMounted] = useState(false);
@@ -128,6 +134,7 @@ export function RowMenu({
       label={state === "copied" ? "Copied" : label}
       focusable={focusable}
       shown={state !== "idle"}
+      nested={nested}
       {...(mounted ? {} : { onPointerDown: activate, onKeyDown: activate })}
     >
       <CopyIcon
@@ -164,6 +171,7 @@ function TriggerButton({
   label,
   focusable,
   shown,
+  nested,
   children,
   ...rest
 }: {
@@ -171,6 +179,7 @@ function TriggerButton({
   label: string;
   focusable: boolean;
   shown: boolean;
+  nested: boolean;
   children: ReactNode;
   onPointerDown?(e: PointerEvent): void;
   onKeyDown?(e: KeyboardEvent): void;
@@ -186,7 +195,7 @@ function TriggerButton({
       aria-label={label}
       tabIndex={focusable ? 0 : -1}
       // Feedback stays visible after the pointer leaves.
-      className={`${shown ? "inline-flex" : "hidden"} ${TRIGGER}`}
+      className={`${shown ? "inline-flex" : "hidden"} ${nested ? TRIGGER_NESTED : TRIGGER}`}
       {...rest}
     >
       {children}

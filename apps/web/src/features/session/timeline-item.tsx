@@ -1,7 +1,6 @@
 import { memo, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
-import { formatTime } from "./format";
-import { RowMenu, rowMenuItems } from "./row-menu";
+import { RowChrome } from "./row-chrome";
 import type { Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
@@ -111,22 +110,11 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   );
 }, itemPropsEqual);
 
-/** Agent text and tool rows show their time in the gutter on hover or focus (U3 §7.5); a head text
- *  row's speaker line already shows it, and messages keep their visible time. */
-function gutterTime(row: Row): string | undefined {
-  if (row.kind === "tool" || (row.kind === "text" && !row.head)) return row.at;
-  return undefined;
-}
-
 /** The row, its gutter time and its menu, memoized apart from the wrap so the tab coming back (every
  *  live row's `live` turning false at once) re-renders only the wrap divs. */
 const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
   const { row, slug, toggle } = p;
-  // Per row object, and built only when the menu first opens: a re-render for any other reason
-  // reuses the builder, and a long timeline builds no lists at mount.
-  const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
   const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
-  const time = gutterTime(row);
   return (
     <>
       <TimelineRow
@@ -155,19 +143,9 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}
       />
-      {time !== undefined && (
-        // Content | chip | time | ⋯: the time sits just left of the menu, over the row's end.
-        <time
-          data-gutter-time
-          dateTime={time}
-          title={new Date(time).toLocaleString()}
-          className="absolute top-1 right-8 hidden h-6 items-center bg-background px-1 text-[0.8125rem] text-muted-foreground tabular-nums group-focus-within:flex group-hover:flex pointer-coarse:hidden!"
-        >
-          {formatTime(time)}
-        </time>
-      )}
-      <RowMenu
-        items={items}
+      <RowChrome
+        row={row}
+        slug={slug}
         focusable={row.key === p.tabKey}
         callShown={p.expanded.has(row.key)}
         onToggleCall={onToggleCall}

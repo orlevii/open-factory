@@ -6,6 +6,8 @@ import {
   type PointerEvent,
   type ReactNode,
   type Ref,
+  type RefObject,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -74,10 +76,12 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
   return items;
 }
 
-// Shown instantly on hover or focus within the row (fine pointers), always on touch. The 0.98 press
-// is explicit: Button leaves it off popup triggers.
+// Shown instantly on hover or focus within the row (fine pointers), always on touch, and always while
+// its menu is open: the modal menu takes the row's hover and focus, and Radix anchors the menu to
+// this element's box, so a hidden trigger would send it to the viewport's corner. The 0.98 press is
+// explicit: Button leaves it off popup triggers.
 const TRIGGER =
-  "absolute top-1 right-0 text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
+  "absolute top-1 right-0 text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
 
 /**
  * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots;
@@ -92,7 +96,9 @@ export function RowMenu({
   callShown = false,
   onToggleCall,
 }: {
-  items: readonly RowMenuItem[];
+  /** The list, or a stable function that builds it: called only once the menu is first opened, so a
+   *  long timeline does none of that work at mount. */
+  items: readonly RowMenuItem[] | (() => readonly RowMenuItem[]);
   /** The row is the timeline's tab stop. */
   focusable: boolean;
   label?: string;
@@ -102,11 +108,16 @@ export function RowMenu({
 }) {
   const { state, instant, copy } = useCopy();
   const [mounted, setMounted] = useState(false);
+  // The first opening mounts the Radix root after the key that asked for it, so Radix's own
+  // keyboard-modality listener never saw that key: the content then moves focus to the first item
+  // itself (WAI-ARIA menu button). Later openings are Radix's.
+  const openedByKey = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const activate = (e: PointerEvent | KeyboardEvent) => {
     if ("key" in e) {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault(); // the keypress opens the menu; it never also clicks
+      openedByKey.current = true;
     } else if (e.button !== 0 || e.ctrlKey) return;
     else e.preventDefault(); // as Radix's trigger: focus stays where the menu will put it
     setMounted(true);
@@ -136,6 +147,8 @@ export function RowMenu({
             callShown={callShown}
             onToggleCall={onToggleCall}
             onCopy={copy}
+            openedByKey={openedByKey}
+            trigger={trigger}
           />
         </DropdownMenu>
       ) : (
@@ -154,7 +167,7 @@ function TriggerButton({
   children,
   ...rest
 }: {
-  ref: Ref<HTMLButtonElement>;
+  ref?: Ref<HTMLButtonElement>;
   label: string;
   focusable: boolean;
   shown: boolean;
@@ -181,26 +194,60 @@ function TriggerButton({
   );
 }
 
-/** Mounted only while open, so the pointer query and the item list cost nothing at rest. */
+/** Mounted from the first activation on, so the pointer query and the item list cost nothing at
+ *  rest. */
 function RowMenuContent({
-  items,
+  items: source,
   callShown,
   onToggleCall,
   onCopy,
+  openedByKey,
+  trigger,
 }: {
-  items: readonly RowMenuItem[];
+  items: readonly RowMenuItem[] | (() => readonly RowMenuItem[]);
   callShown: boolean;
   onToggleCall?(): void;
   onCopy(text: string, viaKeyboard: boolean): void;
+  openedByKey: RefObject<boolean>;
+  trigger: RefObject<HTMLButtonElement | null>;
 }) {
+  const items = useMemo(() => (typeof source === "function" ? source() : source), [source]);
   const touch = useMedia("(pointer: coarse)");
   // An item chosen with Enter or Space arrives as a click with detail 0: its feedback is instant.
   const viaKeyboard = useRef(false);
+  const interactedOutside = useRef(false);
   const onClick = (e: MouseEvent) => {
     viaKeyboard.current = e.detail === 0;
   };
   return (
-    <DropdownMenuContent align="end">
+    <DropdownMenuContent
+      align="end"
+      // Radix focuses the content itself when it opens; on a keyboard first opening that focus moves
+      // on to the first item.
+      onFocus={(e) => {
+        if (!openedByKey.current || e.target !== e.currentTarget) return;
+        openedByKey.current = false;
+        e.currentTarget
+          .querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])')
+          ?.focus();
+      }}
+      onInteractOutside={() => {
+        interactedOutside.current = true;
+      }}
+      onCloseAutoFocus={(e) => {
+        // Radix would focus the trigger, but once closed it is display:none again (the modal menu
+        // took the row's hover and focus-within), so focus would fall to <body>. Shown for the call,
+        // it takes focus, and focus-within keeps it shown. A click elsewhere keeps its own focus.
+        e.preventDefault();
+        const outside = interactedOutside.current;
+        interactedOutside.current = false;
+        const t = trigger.current;
+        if (outside || !t) return;
+        t.setAttribute("data-returning", "");
+        t.focus({ preventScroll: true });
+        t.removeAttribute("data-returning");
+      }}
+    >
       {items.map((item) => {
         switch (item.kind) {
           case "copy":

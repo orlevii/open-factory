@@ -141,7 +141,7 @@ test("the keyboard opens the menu on the first Enter or Space, and its copy feed
   trigger.focus();
   await user.keyboard("{Enter}");
   const menu = await screen.findByRole("menu");
-  await user.keyboard("{ArrowDown}");
+  // The first item takes focus on the very first keyboard opening, with no Arrow Down (WAI-ARIA).
   const link = within(menu).getByRole("menuitem", { name: "Copy link" });
   await vi.waitFor(() => expect(link).toHaveFocus());
   await user.keyboard("{Enter}");
@@ -154,11 +154,52 @@ test("the keyboard opens the menu on the first Enter or Space, and its copy feed
   expect(await screen.findByRole("menu")).toBeInTheDocument();
 });
 
-test("Space opens a trigger that was never activated", async () => {
+test("Space opens a trigger that was never activated, focused on its first item", async () => {
   renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
   (await screen.findByRole("button", { name: "Row actions" })).focus();
   await userEvent.keyboard(" ");
-  expect(await screen.findByRole("menu")).toBeInTheDocument();
+  const menu = await screen.findByRole("menu");
+  await vi.waitFor(() =>
+    expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toHaveFocus(),
+  );
+});
+
+test("Escape returns focus to the trigger, which shows while it returns", async () => {
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  (await screen.findByRole("button", { name: "Row actions" })).focus();
+  await userEvent.keyboard("{Enter}");
+  await screen.findByRole("menu");
+  await userEvent.keyboard("{Escape}");
+  const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"]') as HTMLElement;
+  await vi.waitFor(() => expect(trigger).toHaveFocus());
+  expect(trigger).toHaveClass("data-returning:inline-flex");
+  expect(trigger).not.toHaveAttribute("data-returning");
+});
+
+test("a pointer opening leaves focus on the menu, not an item", async () => {
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  const menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
+  await vi.waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
+  expect(within(menu).getByRole("menuitem", { name: "Copy link" })).not.toHaveFocus();
+});
+
+test("while its menu is open the trigger stays shown, so the menu keeps its anchor", async () => {
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  await openMenu(await screen.findByRole("button", { name: "Row actions" }));
+  const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"]') as HTMLElement;
+  expect(trigger).toHaveAttribute("data-state", "open");
+  // The row's hover and focus-within are gone under a modal menu; this variant keeps it displayed.
+  expect(trigger).toHaveClass("data-[state=open]:inline-flex");
+});
+
+test("a builder is called only when the menu first opens", async () => {
+  const build = vi.fn(() => rowMenuItems(text(1), "dev"));
+  renderInRouter(<RowMenu items={build} focusable />);
+  const trigger = await screen.findByRole("button", { name: "Row actions" });
+  expect(build).not.toHaveBeenCalled();
+  const menu = await openMenu(trigger);
+  expect(build).toHaveBeenCalledTimes(1);
+  expect(within(menu).getByRole("menuitem", { name: "Copy text" })).toBeInTheDocument();
 });
 
 test("the check reverts after 1.5s", async () => {

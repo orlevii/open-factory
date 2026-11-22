@@ -1,4 +1,4 @@
-import { memo, type TransitionEvent, useCallback, useMemo } from "react";
+import { memo, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
 import { formatTime } from "./format";
 import { RowMenu, rowMenuItems } from "./row-menu";
@@ -100,6 +100,8 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
     <div
       data-row-wrap
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
+      // A marker only (no style): the deep link's holder, kept for the page's life; the tint is
+      // `data-arrived` on the row's own box (U3 §7.4).
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
       className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${p.gap}`}
@@ -120,8 +122,9 @@ function gutterTime(row: Row): string | undefined {
  *  live row's `live` turning false at once) re-renders only the wrap divs. */
 const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
   const { row, slug, toggle } = p;
-  // Plain data per row object: a re-render for any other reason reuses the list.
-  const items = useMemo(() => rowMenuItems(row, slug), [row, slug]);
+  // Per row object, and built only when the menu first opens: a re-render for any other reason
+  // reuses the builder, and a long timeline builds no lists at mount.
+  const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
   const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
   const time = gutterTime(row);
   return (

@@ -904,6 +904,15 @@ test("a persisted assistant_text removes its block in the same step and adds its
   expect(textsOf(t)).toEqual([["m2:0", "x"]]);
 });
 
+test("the persisted row that retires a live block is handed off (it never fades); one without a live block isn't", () => {
+  let s = liveIn(loaded(), patch("m1", 1, 0, "Hello wor"));
+  s = sessionReducer(s, frames([said(10, "Hello world", "m1", 1)]));
+  expect(s.handedOff.has("t:m1:1")).toBe(true);
+  // No live block held that key: it arrived as a row only, and fades like any live row.
+  const t = sessionReducer(loaded(), frames([said(10, "Hi", "m2", 1)]));
+  expect(t.handedOff.has("t:m2:1")).toBe(false);
+});
+
 test("a late frame or a reset entry for a retired key is ignored", () => {
   let s = liveIn(loaded(), patch("m1", 1, 0, "Hello"));
   s = sessionReducer(s, frames([said(10, "Hello world", "m1", 1)]));

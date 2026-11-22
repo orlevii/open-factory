@@ -183,3 +183,22 @@ test("a repeat folded into a failure above what was seen still counts as new out
   expect(arrivedSince([text(1), merged], 6, new Set())).toEqual({ speech: 0, other: true });
   expect(arrivedSince([text(1), merged], 9, new Set())).toEqual({ speech: 0, other: false });
 });
+
+test("a live text block counts once: the persisted block that retires it doesn't count again", () => {
+  const block = (text: string) => [
+    { messageId: "m9", index: 1, text, capped: false, fromReset: false },
+  ];
+  const t = setup({ liveTexts: block("Hel") });
+  t.scrollUp();
+  // On screen when the reader scrolled up: not new.
+  t.rerender(t.base, { liveTexts: block("Hello") });
+  expect(pill()).not.toHaveAttribute("data-shown");
+  const later = (text: string) => [
+    { messageId: "m9", index: 3, text, capped: false, fromReset: false },
+  ];
+  t.rerender(t.base, { liveTexts: later("New") });
+  expect(pill()).toHaveAccessibleName("1 new message");
+  const done: Row = { ...text(5), key: "t:m9:3" };
+  t.rerender([...t.base, done], { liveTexts: [], handedOff: new Set(["t:m9:3"]) });
+  expect(pill()).toHaveAccessibleName("1 new message");
+});

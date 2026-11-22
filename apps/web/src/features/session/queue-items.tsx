@@ -1,6 +1,6 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { Clock } from "lucide-react";
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -85,7 +85,7 @@ function HeldLine({ item, agent }: { item: QueueItem; agent: AgentSummary }) {
 
 /** Pending items, drawn only from `queue` frames (never inferred), at full opacity, with the lines of
  *  the ones you cancelled in their place (U3 §6.4). */
-export function QueueItems({
+export const QueueItems = memo(function QueueItems({
   items,
   agent,
   cancelled = NO_CANCELLED,
@@ -239,7 +239,7 @@ export function QueueItems({
       </OutgoingMessage>,
     );
   return <>{out}</>;
-}
+});
 
 /**
  * A queued message, or a send in flight (U3 §13.2). The same component under the same key for both,

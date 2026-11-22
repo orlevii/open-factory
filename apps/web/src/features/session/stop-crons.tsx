@@ -1,5 +1,5 @@
 import { type AgentSummary, ApiError } from "@open-factory/shared";
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { stopCrons } from "@/features/schedules/api";
 import { focusComposer } from "./composer";
@@ -45,49 +45,53 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
       mounted.current = false;
     };
   }, []);
-  function returnFocus() {
-    // Back to the control that opened it, or to the composer once it is gone (the crons stopped or
-    // the panel closed).
-    requestAnimationFrame(() => {
-      if (!mounted.current) return;
-      const el = origin.current.current;
-      if (el?.isConnected) el.focus();
-      else focusComposer();
-    });
-  }
-  function openConfirm(from: RefObject<HTMLElement | null> = trigger) {
-    origin.current = from;
-    setPopover(false);
-    setConfirm(true);
-  }
-  async function run() {
-    if (!agent) return;
-    try {
-      const r = await stopCrons(agent.slug);
-      setOutcome({
-        key: Date.now(),
-        text:
-          r.status === "stopped"
-            ? `Stopped @${agent.slug}'s crons.`
-            : `@${agent.slug}'s crons stop when its current work finishes.`,
+  // One object while nothing in it changed, so the memoized header and Agent details skip a render
+  // that changes neither (a live frame, U3 §11.4).
+  return useMemo(() => {
+    function returnFocus() {
+      // Back to the control that opened it, or to the composer once it is gone (the crons stopped or
+      // the panel closed).
+      requestAnimationFrame(() => {
+        if (!mounted.current) return;
+        const el = origin.current.current;
+        if (el?.isConnected) el.focus();
+        else focusComposer();
       });
-    } catch (e) {
-      // The crons ended, or are ending, meanwhile: the goal is met.
-      if (e instanceof ApiError && (e.code === "no_crons" || e.code === "stopping")) return;
-      throw new ApiError(500, "stop_failed", "Couldn't stop the crons. Try again.");
     }
-  }
-  return {
-    popover,
-    setPopover,
-    confirm,
-    setConfirm,
-    openConfirm,
-    outcome,
-    trigger,
-    run,
-    returnFocus,
-  };
+    function openConfirm(from: RefObject<HTMLElement | null> = trigger) {
+      origin.current = from;
+      setPopover(false);
+      setConfirm(true);
+    }
+    async function run() {
+      if (!agent) return;
+      try {
+        const r = await stopCrons(agent.slug);
+        setOutcome({
+          key: Date.now(),
+          text:
+            r.status === "stopped"
+              ? `Stopped @${agent.slug}'s crons.`
+              : `@${agent.slug}'s crons stop when its current work finishes.`,
+        });
+      } catch (e) {
+        // The crons ended, or are ending, meanwhile: the goal is met.
+        if (e instanceof ApiError && (e.code === "no_crons" || e.code === "stopping")) return;
+        throw new ApiError(500, "stop_failed", "Couldn't stop the crons. Try again.");
+      }
+    }
+    return {
+      popover,
+      setPopover,
+      confirm,
+      setConfirm,
+      openConfirm,
+      outcome,
+      trigger,
+      run,
+      returnFocus,
+    };
+  }, [agent, popover, confirm, outcome]);
 }
 
 /** The confirmation and the announced outcome, mounted once by the session view so they outlive the

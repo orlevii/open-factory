@@ -4,6 +4,7 @@ import { heldSeqs } from "./display-passes";
 import { isSpeechRow, type Row } from "./rows";
 
 const NOTHING = { speech: 0, other: false } as const;
+const NO_KEYS: ReadonlySet<string> = new Set();
 
 /** What arrived since the reader left the bottom (U3 §8.2): speech rows (a handed-off row replaced
  *  something already on screen, so it isn't new), and whether anything else did. Rows are in seq
@@ -12,6 +13,9 @@ export function arrivedSince(
   rows: Row[],
   seenSeq: number | undefined,
   handedOff: ReadonlySet<string>,
+  /** Live text blocks on screen when the reader left (U3 §8.2): a block counts once, live or
+   *  persisted, so the persisted row that retires a block arrived since counts in its place. */
+  seenLive: ReadonlySet<string> = NO_KEYS,
 ): { speech: number; other: boolean } {
   if (seenSeq === undefined) return NOTHING;
   let speech = 0;
@@ -20,7 +24,7 @@ export function arrivedSince(
     const row = rows[i] as Row;
     // A merged failure keeps its first seq; a repeat folded into it is new all the same.
     if ((heldSeqs(row)?.at(-1) ?? row.seq) <= seenSeq) break;
-    if (handedOff.has(row.key)) continue;
+    if (handedOff.has(row.key) && (row.kind !== "text" || seenLive.has(row.key))) continue;
     if (isSpeechRow(row)) speech++;
     else other = true;
   }

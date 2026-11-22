@@ -60,6 +60,11 @@ export type Row =
       /** Opens a speaker line (U3 §7.2): the first text of its turn, or the first after a message row
        *  in the same turn. Never on a subagent's children. */
       head: boolean;
+      /** Cut at 64 KiB (U3 §11.2): the persisted row's `truncated.text`, or a live block's `capped`. */
+      capped?: boolean;
+      /** A streaming block from `state.live` (U3 §11.4), built by `Timeline`, never by `buildRows`: it
+       *  shares its key (`t:<messageId>:<blockIndex>`) with the persisted row that retires it. */
+      live?: true;
     }
   | {
       kind: "tool";
@@ -259,7 +264,16 @@ function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
 
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
-export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurnRows | undefined } {
+/** The key a text block renders under (U3 §11.4): the live block and the persisted row that retires
+ *  it share it, so React keeps the element (same DOM, selection and focus) at the handoff. */
+export const textRowKey = (messageId: string, blockIndex: number) => `t:${messageId}:${blockIndex}`;
+
+export function buildRows(events: SessionEvent[]): {
+  rows: Row[];
+  open: OpenTurnRows | undefined;
+  /** The next top-level text would open a speaker line: what a live block's `head` is (U3 §7.2). */
+  textHead: boolean;
+} {
   const { ended, lastExitSeq, lastTurnStartSeq } = endedTurns(events);
   const tools = new Map<string, ToolRow>();
   // Running background tasks attached to their call rows, by task id (U3 §9.5).
@@ -333,8 +347,20 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
           headPending = false;
           headTurn = se.turnId;
         }
+        const key =
+          e.messageId !== undefined && e.blockIndex !== undefined
+            ? textRowKey(e.messageId, e.blockIndex)
+            : `${se.seq}`;
         place(
-          { kind: "text", seq: se.seq, at: se.at, text: e.text, key: `${se.seq}`, head },
+          {
+            kind: "text",
+            seq: se.seq,
+            at: se.at,
+            text: e.text,
+            key,
+            head,
+            ...(se.truncated?.text !== undefined ? { capped: true } : {}),
+          },
           e.parentToolUseId,
         );
         break;
@@ -439,14 +465,15 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
         top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
     }
   }
-  if (!hasOpenStart) return { rows: top, open: undefined };
+  const textHead = headPending;
+  if (!hasOpenStart) return { rows: top, open: undefined, textHead };
   const open: OpenTurnRows = { openSubagents: [] };
   for (const row of tools.values()) {
     if (row.seq <= lastTurnStartSeq || row.state !== "running") continue;
     if (SUBAGENT_TOOLS.has(row.call.name)) open.openSubagents.push(row);
     else if (!open.newestOpenTool || row.seq > open.newestOpenTool.seq) open.newestOpenTool = row;
   }
-  return { rows: top, open };
+  return { rows: top, open, textHead };
 }
 
 /** `open` rebuilt over the stabilized rows (by key), and the previous object when nothing changed, so

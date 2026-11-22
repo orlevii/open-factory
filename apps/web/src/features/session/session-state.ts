@@ -9,7 +9,7 @@ import {
   type SessionEvent,
   type SubagentProgress,
 } from "@open-factory/shared";
-import { speechCount } from "./rows";
+import { speechCount, textRowKey } from "./rows";
 
 /** A held message you cancelled (U3 §6.4): the line "Message cancelled. Undo" shows in its place among
  *  the queue items until your next send. */
@@ -411,13 +411,20 @@ function seedRetired(prev: ReadonlySet<string>, events: SessionEvent[]): Readonl
 function liveFromRows(s: SessionState, fresh: SessionEvent[]): SessionState {
   let live = s.live;
   let retired = s.retired;
+  let handedOff = s.handedOff;
   for (const { event: e } of fresh) {
     if (e.type === "assistant_text") {
       const k = textKey(e);
       if (k === undefined || retired.has(k)) continue;
       retired = new Set(retired).add(k);
       const texts = withoutKeys(live.texts, new Set([k]));
-      if (texts !== live.texts) live = { ...live, texts };
+      if (texts !== live.texts) {
+        live = { ...live, texts };
+        // The row replaces the live block on screen (same key and DOM): it never fades (U3 §8.3).
+        handedOff = new Set(handedOff).add(
+          textRowKey(e.messageId as string, e.blockIndex as number),
+        );
+      }
     } else if (e.type === "tool_call" && live.toolInput?.toolUseId === e.toolUseId) {
       const { toolInput: _, ...rest } = live;
       live = rest;
@@ -427,7 +434,9 @@ function liveFromRows(s: SessionState, fresh: SessionEvent[]): SessionState {
       retired = NONE;
     }
   }
-  return live === s.live && retired === s.retired ? s : { ...s, live, retired };
+  return live === s.live && retired === s.retired && handedOff === s.handedOff
+    ? s
+    : { ...s, live, retired, handedOff };
 }
 
 const sameProgress = (a: SubagentProgress, b: SubagentProgress) =>

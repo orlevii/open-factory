@@ -74,14 +74,17 @@ function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) 
   }, [value]);
   return value;
 }
-type RawView = { rawRows: Row[]; open: OpenTurnRows | undefined };
+type RawView = { rawRows: Row[]; open: OpenTurnRows | undefined; textHead: boolean };
 /** Steps 1-2 of the rows pipeline (U3 §7.7), once per events change: `buildRows`, then the raw rows
  *  stabilized against the previous raw rows (`prevRaw`), and `open` mapped onto them. */
 const stableRaw = (ev: SessionEvent[], prev: RawView | undefined): RawView => {
   const built = buildRows(ev);
   const rawRows = stabilizeRows(prev?.rawRows ?? [], built.rows);
   const open = stabilizeOpen(prev?.open, built.open, rawRows);
-  return prev && prev.rawRows === rawRows && prev.open === open ? prev : { rawRows, open };
+  const { textHead } = built;
+  return prev && prev.rawRows === rawRows && prev.open === open && prev.textHead === textHead
+    ? prev
+    : { rawRows, open, textHead };
 };
 /** Steps 3-4: the display passes over the raw rows, then stabilized against the previous final rows
  *  (`prevFinal`, kept apart from `prevRaw`), so a grown group is a new object holding the same
@@ -268,7 +271,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   // Unchanged rows and equal sets keep their identity, so memoized timeline items skip (spec §9.3).
   // `rawRows` are what the events say (the announcer counts each failure there); `rows` are what the
   // timeline shows.
-  const { rawRows, open } = useStabilized(events, stableRaw);
+  const { rawRows, open, textHead } = useStabilized(events, stableRaw);
   const rows = useStabilized(rawRows, stableFinal);
   const failedIds = useStabilized(events, stableFailedIds);
   const interruptedEnds = useStabilized(events, stableInterruptedEnds);
@@ -365,6 +368,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     rows,
     rawRows,
     open,
+    textHead,
     failedIds,
     interruptedEnds,
     loadEarlier,

@@ -725,3 +725,34 @@ test("isNoticeKind: factory notices (system, task assigned, task update), never 
   expect(["system", "task_assigned", "task_update"].every(isNoticeKind)).toBe(true);
   expect(["message", "task_comment", "scheduled"].some(isNoticeKind)).toBe(false);
 });
+
+test("a keyed assistant_text renders under t:<messageId>:<blockIndex>, capped when its text was cut; textHead says whether the next text heads", () => {
+  seq = 0;
+  const built = buildRows([
+    e({ type: "turn_started" }),
+    { ...e({ type: "assistant_text", text: "Hi", messageId: "m1", blockIndex: 1 }) },
+    {
+      ...e({ type: "assistant_text", text: "Long", messageId: "m1", blockIndex: 2 }),
+      truncated: { text: 70000 },
+    },
+    e({ type: "assistant_text", text: "Old" }),
+  ]);
+  expect(built.rows.map((r) => r.key)).toEqual(["t:m1:1", "t:m1:2", "4"]);
+  const [a, b] = built.rows as Extract<Row, { kind: "text" }>[];
+  expect(a?.capped).toBeUndefined();
+  expect(b?.capped).toBe(true);
+  expect(built.textHead).toBe(false);
+  expect(buildRows([e({ type: "turn_started" })]).textHead).toBe(true);
+  expect(
+    buildRows([
+      e({ type: "assistant_text", text: "x" }),
+      e(
+        {
+          type: "message_in",
+          messages: [{ id: "q", from: "@or", kind: "message", urgent: false, body: "b" }],
+        },
+        null,
+      ),
+    ]).textHead,
+  ).toBe(true);
+});

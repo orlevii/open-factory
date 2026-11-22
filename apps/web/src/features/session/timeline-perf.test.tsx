@@ -695,3 +695,59 @@ test("SessionView: the announcer reads the unmerged rows, so a repeated failure 
   expect(document.querySelectorAll('[data-row="202"]')).toHaveLength(0);
   expect(announced()).toBe("Error: boom\u200b");
 });
+
+const livePatch = (
+  messageId: string,
+  index: number,
+  offset: number,
+  append: string,
+): ServerMessage => ({
+  type: "live",
+  agent: "dev",
+  texts: [{ messageId, index, offset, append }],
+});
+
+test("SessionView: a live frame re-renders only the live row, the activity line and the pill: no other TimelineItem, not the header, details, queue or composer", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  expect(document.querySelector('[data-row="t:m1:1"]')?.textContent).toContain("Hel");
+  expect(document.querySelector("[data-activity-line]")).not.toBeNull();
+  reset();
+  push(livePatch("m1", 1, 3, "lo there"));
+  frame();
+  expect(document.querySelector('[data-row="t:m1:1"]')?.textContent).toContain("Hello there");
+  expect(Object.fromEntries(count.rows)).toEqual({ "t:m1:1": 1 });
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+});
+
+test("SessionView: the persisted block retires the live one in one commit on the same DOM node, re-rendering only that row", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  push(livePatch("m1", 1, 0, "Hello wor"));
+  frame();
+  const node = document.querySelector('[data-row="t:m1:1"]');
+  expect(node).not.toBeNull();
+  reset();
+  push(
+    sessionEvent(
+      ev(201, { type: "assistant_text", text: "Hello world", messageId: "m1", blockIndex: 1 }),
+    ),
+  );
+  frame();
+  expect(document.querySelector('[data-row="t:m1:1"]')).toBe(node);
+  expect(node?.textContent).toContain("Hello world");
+  expect(node?.closest("[data-row-wrap]")).not.toHaveAttribute("data-live");
+  expect(document.querySelectorAll('[data-row="t:m1:1"]')).toHaveLength(1);
+  expect(rerendered(["t:m1:1"])).toEqual({});
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+});

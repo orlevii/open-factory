@@ -2,9 +2,9 @@ import type { AnyEvent } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
+import { AgentText } from "./agent-text";
 import { CompactionMarker } from "./compaction-marker";
 import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
@@ -14,7 +14,6 @@ import { QuietLine } from "./quiet-line";
 import { NestedRow } from "./row-chrome";
 import { isNoticeKind, type Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
-import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
@@ -344,11 +343,14 @@ export function TimelineRow(props: TimelineRowProps) {
     case "text":
       return (
         <div {...rp}>
-          {/* The turn's first text, and the first after an incoming message (U3 §7.2). */}
-          {row.head && <SpeakerLine from={props.slug} self at={row.at} />}
-          <div dir="auto">
-            <Markdown source={row.text} variant="detail" />
-          </div>
+          <AgentText
+            text={row.text}
+            live={row.live === true}
+            capped={row.capped === true}
+            head={row.head}
+            at={row.at}
+            slug={props.slug}
+          />
         </div>
       );
     case "tool":

@@ -151,14 +151,17 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         interruptedEnds={p.interruptedEnds}
         toolTime={row.kind === "tool" ? row.at : undefined}
       />
-      <RowChrome
-        row={row}
-        slug={slug}
-        focusable={row.key === p.tabKey}
-        callShown={p.expanded.has(row.key)}
-        onToggleCall={onToggleCall}
-        inCard={isCard(row)}
-      />
+      {/* A live block has no seq to link to yet: its time and ⋯ come with the persisted row. */}
+      {!(row.kind === "text" && row.live) && (
+        <RowChrome
+          row={row}
+          slug={slug}
+          focusable={row.key === p.tabKey}
+          callShown={p.expanded.has(row.key)}
+          onToggleCall={onToggleCall}
+          inCard={isCard(row)}
+        />
+      )}
     </>
   );
 }, contentPropsEqual);

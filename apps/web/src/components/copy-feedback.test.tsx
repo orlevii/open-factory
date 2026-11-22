@@ -87,3 +87,19 @@ test("code blocks, highlighted or plain, have a Copy button", () => {
   render(<Markdown source={"```\nplain text\n```"} />);
   expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
 });
+
+test("copying again within the hold restarts it: the check holds 1.5s from the last copy", async () => {
+  vi.useFakeTimers();
+  clipboard();
+  render(<Probe />);
+  const button = screen.getByRole("button");
+  fireEvent.click(button);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  fireEvent.click(button);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(button).toHaveAttribute("data-state", "copied");
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  expect(button).toHaveAttribute("data-state", "idle");
+});

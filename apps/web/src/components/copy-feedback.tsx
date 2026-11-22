@@ -17,24 +17,29 @@ export function useCopy(): {
   instant: boolean;
   copy(text: string, viaKeyboard: boolean): void;
 } {
-  const [{ state, instant }, set] = useState<{ state: CopyState; instant: boolean }>({
-    state: "idle",
-    instant: false,
-  });
+  // `n` counts outcomes, so a copy within the hold restarts it (the state alone stays "copied").
+  const [{ state, instant, n }, set] = useState<{
+    state: CopyState;
+    instant: boolean;
+    n: number;
+  }>({ state: "idle", instant: false, n: 0 });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `n` restarts the hold on a repeat outcome
   useEffect(() => {
     if (state === "idle") return;
     const t = setTimeout(() => set((s) => ({ ...s, state: "idle" })), HOLD_MS[state]);
     return () => clearTimeout(t);
-  }, [state]);
+  }, [state, n]);
   const copy = useCallback((text: string, viaKeyboard: boolean) => {
+    const done = (next: CopyState) =>
+      set((s) => ({ state: next, instant: viaKeyboard, n: s.n + 1 }));
     const write = navigator.clipboard?.writeText(text);
     if (!write) {
-      set({ state: "failed", instant: viaKeyboard });
+      done("failed");
       return;
     }
     write.then(
-      () => set({ state: "copied", instant: viaKeyboard }),
-      () => set({ state: "failed", instant: viaKeyboard }),
+      () => done("copied"),
+      () => done("failed"),
     );
   }, []);
   return { state, instant, copy };

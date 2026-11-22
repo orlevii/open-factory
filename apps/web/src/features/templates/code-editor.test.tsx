@@ -145,6 +145,17 @@ describe("CodeEditor", () => {
     expect(view().state.selection.main.head).toBe(view().state.doc.line(4).from);
   });
 
+  test("a bare Tab indents (prevented); after Esc it's let through to leave the editor", () => {
+    const { view, container } = setup();
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    act(() => content.focus());
+    // CodeMirror reads Tab and Esc by keyCode.
+    expect(fireEvent.keyDown(content, { key: "Tab", code: "Tab", keyCode: 9 })).toBe(false);
+    expect(view().state.doc.toString()).toBe("  a: 1\nb: 2\nc: 3\nd: 4\n");
+    fireEvent.keyDown(content, { key: "Escape", code: "Escape", keyCode: 27 });
+    expect(fireEvent.keyDown(content, { key: "Tab", code: "Tab", keyCode: 9 })).toBe(true);
+  });
+
   test("restore takes over a textarea's selection, backwards and clamped, and focus", () => {
     const { view, ref, container } = setup();
     act(() => ref.current?.restore({ anchor: 7, head: 2, focus: true }));

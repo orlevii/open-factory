@@ -10,7 +10,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { consumeLongPressRelease } from "@/hooks/use-long-press";
+import { consumeLongPressRelease, longPressFiredWithin } from "@/hooks/use-long-press";
 import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 import { cn } from "@/lib/utils";
 
@@ -238,6 +238,7 @@ function AdaptiveMenuContent({
             type="button"
             data-slot="adaptive-menu-item"
             className={ITEM}
+            onClickCapture={ignoreLiftingFinger}
             onClick={() => setOpen(false)}
           >
             Cancel
@@ -274,6 +275,17 @@ function AdaptiveMenuContent({
       {children}
     </DropdownMenuContent>
   );
+}
+
+/** A drawer opened by a long-press rises under the finger: for this long its items and Cancel ignore a tap, so
+ *  lifting that finger can't select the row it lands on (evidence D6). */
+const LIFT_GUARD_MS = 400;
+
+/** Capture phase, so it beats a consumer's own handler (an `asChild` link navigates in its onClick). */
+function ignoreLiftingFinger(e: React.MouseEvent) {
+  if (!longPressFiredWithin(LIFT_GUARD_MS)) return;
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 const ITEM =
@@ -325,7 +337,7 @@ function AdaptiveMenuItem({
       </DropdownMenuItem>
     );
   const Comp = asChild ? Slot.Root : "button";
-  const { onClick, ...rest } = props as React.ComponentProps<"button">;
+  const { onClick, onClickCapture, ...rest } = props as React.ComponentProps<"button">;
   return (
     <Comp
       {...(asChild ? null : { type: "button" as const })}
@@ -335,6 +347,10 @@ function AdaptiveMenuItem({
       data-disabled={disabled ? "" : undefined}
       aria-disabled={disabled || undefined}
       className={cn(ITEM, className)}
+      onClickCapture={(e: React.MouseEvent<HTMLButtonElement>) => {
+        ignoreLiftingFinger(e);
+        if (!e.isPropagationStopped()) onClickCapture?.(e);
+      }}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         onClick?.(e);
         if (disabled || e.defaultPrevented) return;

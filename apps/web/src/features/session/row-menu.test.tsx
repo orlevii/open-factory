@@ -272,6 +272,9 @@ test("tool rows and agent text show their time in the gutter; the footer has non
   expect(wrapOf("1").querySelector("time[data-gutter-time]")).toHaveAttribute("datetime", at);
   expect(wrapOf("2").querySelector("time[data-gutter-time]")).toHaveAttribute("datetime", at);
   expect(wrapOf("9").querySelector("time[data-gutter-time]")).toBeNull();
+  // The hover-revealed gutter time is paint only: over a subagent card's summary it took the click (evidence D5).
+  const gutter = wrapOf("1").querySelector("time[data-gutter-time]");
+  expect(gutter).toHaveClass("absolute", "pointer-events-none");
 });
 
 test("tool rows take the .of-row pressed fill", async () => {

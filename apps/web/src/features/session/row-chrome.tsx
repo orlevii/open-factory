@@ -95,7 +95,7 @@ export function RowChrome({
           data-gutter-time
           dateTime={time}
           title={new Date(time).toLocaleString()}
-          className={`absolute top-1 right-8 hidden h-6 items-center bg-background px-1 text-[0.8125rem] text-muted-foreground tabular-nums ${nested ? TIME_SHOWN.nested : TIME_SHOWN.top} pointer-coarse:hidden!`}
+          className={`pointer-events-none absolute top-1 right-8 hidden h-6 items-center bg-background px-1 text-[0.8125rem] text-muted-foreground tabular-nums ${nested ? TIME_SHOWN.nested : TIME_SHOWN.top} pointer-coarse:hidden!`}
         >
           {formatTime(time)}
         </time>

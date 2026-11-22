@@ -15,19 +15,21 @@ import {
   AdaptiveMenuTrigger,
 } from "./adaptive-menu";
 
-const release = vi.hoisted(() => ({ armed: false }));
+const release = vi.hoisted(() => ({ armed: false, firedAt: Number.NEGATIVE_INFINITY }));
 vi.mock("@/hooks/use-long-press", () => ({
   consumeLongPressRelease: () => {
     const was = release.armed;
     release.armed = false;
     return was;
   },
+  longPressFiredWithin: (ms: number) => Date.now() - release.firedAt < ms,
 }));
 
 const original = window.matchMedia;
 let mm: ReturnType<typeof fakeMatchMedia.install>;
 beforeEach(() => {
   release.armed = false;
+  release.firedAt = Number.NEGATIVE_INFINITY;
 });
 afterEach(() => {
   window.matchMedia = original;
@@ -575,4 +577,58 @@ test("drawer: when the ⋯ can't take focus, closing returns it to the pressed r
   endAnimation(content);
   await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
   await waitFor(() => expect(rowLink()).toHaveFocus());
+});
+
+test("drawer: for 400ms after a long-press opened it, a tap on an item or Cancel is the lifting finger and does nothing (evidence D6)", () => {
+  phone();
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
+  try {
+    const onEdit = vi.fn();
+    const onLinkClick = vi.fn();
+    render(
+      <AdaptiveMenu title="Priya Nair">
+        <AdaptiveMenuTrigger asChild>
+          <button type="button">More</button>
+        </AdaptiveMenuTrigger>
+        <AdaptiveMenuContent>
+          <AdaptiveMenuItem onSelect={onEdit}>Edit</AdaptiveMenuItem>
+          <AdaptiveMenuItem asChild>
+            <a href="#usage" onClick={onLinkClick}>
+              Usage
+            </a>
+          </AdaptiveMenuItem>
+        </AdaptiveMenuContent>
+      </AdaptiveMenu>,
+    );
+    // The long-press fires and opens the drawer under the finger.
+    release.firedAt = Date.now();
+    touchTap(trigger());
+    const edit = screen.getByRole("button", { name: "Edit" });
+    const usage = screen.getByRole("link", { name: "Usage" });
+    fireEvent.click(edit);
+    // An asChild link's own handler and its navigation are skipped too.
+    expect(fireEvent.click(usage)).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(onLinkClick).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-slot=drawer-content]")).toHaveAttribute("data-state", "open");
+
+    vi.advanceTimersByTime(399);
+    fireEvent.click(edit);
+    expect(onEdit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    fireEvent.click(edit);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("drawer: opened by a tap (no long-press), the first tap on an item selects", () => {
+  phone();
+  const onEdit = vi.fn();
+  render(<Menu onEdit={onEdit} />);
+  touchTap(trigger());
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect(onEdit).toHaveBeenCalledTimes(1);
 });

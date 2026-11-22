@@ -1,7 +1,7 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { consumeLongPressRelease, useLongPress } from "./use-long-press";
+import { consumeLongPressRelease, longPressFiredWithin, useLongPress } from "./use-long-press";
 
 function Row({
   onLongPress,
@@ -46,6 +46,21 @@ test("fires at 500ms with the press point, not at 499", () => {
   expect(onLongPress).not.toHaveBeenCalled();
   act(() => void vi.advanceTimersByTime(1));
   expect(onLongPress).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 20 });
+});
+
+test("longPressFiredWithin: true from the fire for the given window, false before any fire and after it", () => {
+  // Clear of any earlier test's fire.
+  vi.setSystemTime(Date.now() + 60_000);
+  const { el } = setup();
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(499));
+  expect(longPressFiredWithin(400)).toBe(false);
+  act(() => void vi.advanceTimersByTime(1));
+  expect(longPressFiredWithin(400)).toBe(true);
+  act(() => void vi.advanceTimersByTime(399));
+  expect(longPressFiredWithin(400)).toBe(true);
+  act(() => void vi.advanceTimersByTime(1));
+  expect(longPressFiredWithin(400)).toBe(false);
 });
 
 test("vibrates on fire when available", () => {

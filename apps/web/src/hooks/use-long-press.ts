@@ -11,6 +11,14 @@ const HELD_GRACE_MS = 10_000;
 const RELEASE_GRACE_MS = 1000;
 
 let releaseExpiresAt = 0;
+// When the last long-press fired (its menu opened), for a drawer that ignores the lifting finger's tap.
+let firedAt = Number.NEGATIVE_INFINITY;
+
+/** Whether a long-press fired within the last `ms` (a phone's drawer opened under the finger). */
+export function longPressFiredWithin(ms: number): boolean {
+  const since = Date.now() - firedAt;
+  return since >= 0 && since < ms;
+}
 
 /** True for one pointerup after a long-press fired: menus call it to ignore the lifting finger. */
 export function consumeLongPressRelease(): boolean {
@@ -65,6 +73,7 @@ export function useLongPress(
           end(press);
           swallowUntil.current = Date.now() + HELD_GRACE_MS;
           releaseExpiresAt = swallowUntil.current;
+          firedAt = Date.now();
           navigator.vibrate?.(10);
           callback.current(at);
         }, HOLD_MS);

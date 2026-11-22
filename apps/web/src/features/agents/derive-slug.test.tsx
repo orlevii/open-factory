@@ -1,5 +1,32 @@
-import { describe, expect, test } from "vitest";
-import { deriveSlug, foldLetters } from "./derive-slug";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { describe, expect, test, vi } from "vitest";
+import { deriveSlug, foldLetters, useTakenNames } from "./derive-slug";
+
+const lists = vi.hoisted(() => ({
+  exclude: Promise.resolve([{ slug: "alice" }]),
+  only: Promise.resolve([{ slug: "old-bot" }]),
+  users: Promise.resolve([{ handle: "priya" }]),
+  gate: { exclude: false, only: false, users: false },
+}));
+const gated = <T,>(k: "exclude" | "only" | "users", v: () => T) =>
+  new Promise<T>((res) => {
+    const tick = () => (lists.gate[k] ? res(v()) : setTimeout(tick, 5));
+    tick();
+  });
+vi.mock("@/features/agents/api", () => ({
+  agentsListQueryOptions: (m: "exclude" | "only") => ({
+    queryKey: ["agents", m],
+    queryFn: () => gated(m, () => (m === "exclude" ? [{ slug: "alice" }] : [{ slug: "old-bot" }])),
+  }),
+}));
+vi.mock("@/features/settings/api", () => ({
+  usersQueryOptions: {
+    queryKey: ["users"],
+    queryFn: () => gated("users", () => [{ handle: "priya" }]),
+  },
+}));
 
 const none = new Set<string>();
 
@@ -34,6 +61,15 @@ describe("deriveSlug", () => {
     expect(s.endsWith("-2")).toBe(true);
   });
 
+  test("a base ending in a hyphen at the cut gets no '--2'", () => {
+    const name = `${"a".repeat(37)} bcd`; // 37 letters, then a hyphen as the 38th character
+    const base = deriveSlug(name, none);
+    expect(base.length).toBe(40);
+    const s = deriveSlug(name, new Set([base]));
+    expect(s).toBe(`${"a".repeat(37)}-2`);
+    expect(s).not.toMatch(/--/);
+  });
+
   test("reserved and human handles count as taken", () => {
     expect(deriveSlug("Me", new Set(["me"]))).toBe("me-2");
   });
@@ -41,4 +77,30 @@ describe("deriveSlug", () => {
 
 test("foldLetters folds what NFKD leaves alone", () => {
   expect(foldLetters("Łø ß")).toBe("Lo ss");
+});
+
+test("foldLetters folds capital sharp S", () => {
+  expect(foldLetters("STRAẞE")).toBe("STRASsE");
+  expect(deriveSlug("STRAẞE", none)).toBe("strasse");
+});
+
+describe("useTakenNames", () => {
+  test("undefined until all three lists answer; then the union, one Set across rerenders", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(() => useTakenNames(true), { wrapper });
+    expect(result.current).toBeUndefined();
+    lists.gate.exclude = true;
+    lists.gate.only = true;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(result.current).toBeUndefined();
+    lists.gate.users = true;
+    await waitFor(() => expect(result.current).toBeDefined());
+    const set = result.current;
+    for (const n of ["alice", "old-bot", "priya", "me"]) expect(set?.has(n)).toBe(true);
+    rerender();
+    expect(result.current).toBe(set);
+  });
 });

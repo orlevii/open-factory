@@ -11,13 +11,14 @@ const FOLD: Readonly<Record<string, string>> = {
   ł: "l",
   ø: "o",
   ß: "ss",
+  ẞ: "ss",
   æ: "ae",
   œ: "oe",
   đ: "d",
   ı: "i",
   þ: "th",
 };
-const FOLD_RE = /[łøßæœđıþ]/gi;
+const FOLD_RE = /[łøßẞæœđıþ]/gi;
 
 export function foldLetters(s: string): string {
   return s.replace(FOLD_RE, (c) => {
@@ -49,7 +50,8 @@ export function deriveSlug(name: string, taken: ReadonlySet<string>): string {
 }
 
 /** Every address the server refuses: agent slugs (archived included), human handles and the reserved
- *  ones. undefined until the lists answered. */
+ *  ones. undefined until the lists answered. Callers must always derive against this set: without
+ *  it a reserved name like "Me" derives "" (slugSchema refuses it) instead of "me-2". */
 export function useTakenNames(enabled: boolean): ReadonlySet<string> | undefined {
   const active = useQuery({ ...agentsListQueryOptions("exclude"), enabled });
   const archived = useQuery({ ...agentsListQueryOptions("only"), enabled });

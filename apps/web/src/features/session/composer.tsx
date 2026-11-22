@@ -1,43 +1,35 @@
 import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
 import {
-  type KeyboardEvent,
+  memo,
   type Ref,
   useCallback,
   useEffect,
-  useId,
   useImperativeHandle,
   useRef,
   useState,
 } from "react";
-import { Button } from "@/components/ui/button";
-import { isMac, Kbd } from "@/components/ui/kbd";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  agentDraftKey,
-  readDraft,
-  readUnconfirmed,
-  useDraft,
-  writeDraft,
-  writeUnconfirmed,
-} from "@/lib/drafts";
-import { isCoarsePointer, isSendKey, isUrgentSendKey } from "@/lib/send-key";
-import { postMessage } from "./api";
+  type ComposerHandle,
+  Composer as ComposerPrimitive,
+  type HintMode,
+  NETWORK_ERROR,
+  SubmitError,
+  type SubmitOptions,
+  UNCONFIRMED,
+} from "@/components/composer/composer";
+import { Button } from "@/components/ui/button";
+import { agentDraftKey, readDraft, writeDraft } from "@/lib/drafts";
+import { isCoarsePointer } from "@/lib/send-key";
+import { postInterrupt, postMessage } from "./api";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
 import type { SendingBlock } from "./session-state";
-import { StopButton, type StopHandle } from "./stop-button";
 
-export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
+export { NETWORK_ERROR, UNCONFIRMED, UNCONFIRMED_EDITED } from "@/components/composer/composer";
+export type { ComposerHandle };
 /** U3 §13.2: a send not answered in this long is aborted; it may still land, so a retry reuses its id. */
 export const SEND_TIMEOUT_MS = 15_000;
-export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
-/** The box no longer holds the unconfirmed text (typed over, or edited), so there is no Retry. */
-export const UNCONFIRMED_EDITED =
-  "Couldn't confirm the send. It may still arrive; check before sending again.";
 const NO_LANDED: ReadonlySet<string> = new Set();
-
-/** A send whose POST aborted: the box got `sent` back (as `box`, after `before`). */
-type Unconfirmed = { id: string; sent: string; box: string; before: string };
 
 /** Moves focus to the composer's textarea (after a Restart or a new session, UI design §3.1). */
 export function focusComposer() {
@@ -104,27 +96,15 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
   );
 }
 
-/** What the session does to the box around a Cancel and its Undo (U3 §6.4, Q31). */
-export type ComposerHandle = {
-  /** Puts `text` in the box when it is empty; true when it did. */
-  putBackIfEmpty(text: string): boolean;
-  /** Empties the box only if it still holds exactly `text`. */
-  clearIfUnchanged(text: string): void;
-};
+/** The 64 KB body limit, checked before the box empties (a module constant: a stable prop). */
+function checkBody(text: string): string | undefined {
+  const bytes = new TextEncoder().encode(text.trim()).length;
+  return bytes > MAX_BODY_BYTES
+    ? `This message is ${Math.ceil(bytes / 1024)} KB; the limit is 64 KB. Shorten it to send.`
+    : undefined;
+}
 
-export function Composer({
-  ref,
-  slug,
-  agent,
-  stopEpoch,
-  waiting = false,
-  onQueued,
-  onSent,
-  onTerminated,
-  onSending,
-  onSendFailed,
-  landed = NO_LANDED,
-}: {
+type SessionComposerProps = {
   ref?: Ref<ComposerHandle>;
   slug: string;
   agent: AgentSummary;
@@ -145,279 +125,130 @@ export function Composer({
   onSent?: () => void;
   /** A send that raced a termination (`409 agent_terminated`), with the sentence that says so. */
   onTerminated?: (notice: string) => void;
-}) {
-  const [text, setText, draft] = useDraft(agentDraftKey(slug));
-  const [error, setError] = useState<string | undefined>();
-  // An aborted send survives a remount beside its draft, so its unchanged text resends under its id.
-  const [unconfirmed, setUnconfirmedState] = useState<Unconfirmed | undefined>(() => {
-    const u = readUnconfirmed(agentDraftKey(slug));
-    return u && text === u.sent ? { ...u, box: u.sent, before: "" } : undefined;
-  });
-  const setUnconfirmed = useCallback(
-    (u: Unconfirmed | undefined) => {
-      setUnconfirmedState(u);
-      writeUnconfirmed(agentDraftKey(slug), u && { id: u.id, sent: u.sent });
-    },
-    [slug],
+};
+
+/** Only the agent fields the composer reads: a status frame that changes nothing here (a new
+ *  `turnStartedAt`, a status label) never renders it (U3 M3). Every other prop by identity. */
+function sameProps(a: SessionComposerProps, b: SessionComposerProps): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof SessionComposerProps>;
+  for (const k of keys) if (k !== "agent" && a[k] !== b[k]) return false;
+  const x = a.agent;
+  const y = b.agent;
+  return (
+    x.displayName === y.displayName &&
+    x.turnOpen === y.turnOpen &&
+    x.compacting === y.compacting &&
+    x.status === y.status &&
+    x.errorKind === y.errorKind
   );
+}
+
+/**
+ * The session's composer (U3 §13.1): the shared `Composer` with the session's send (the optimistic
+ * block, the 15s abort, the `clientMessageId` dedupe), Stop and the turn hint.
+ */
+export const Composer = memo(function SessionComposer({
+  ref,
+  slug,
+  agent,
+  stopEpoch,
+  waiting = false,
+  onQueued,
+  onSent,
+  onTerminated,
+  onSending,
+  onSendFailed,
+  landed = NO_LANDED,
+}: SessionComposerProps) {
+  const inner = useRef<ComposerHandle>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => inner.current?.focus(),
+      insertAtStart: (t) => inner.current?.insertAtStart(t),
+      prefillIfEmpty: (t) => inner.current?.prefillIfEmpty(t) ?? false,
+      putBackIfEmpty: (t) => inner.current?.putBackIfEmpty(t) ?? false,
+      clearIfUnchanged: (t) => inner.current?.clearIfUnchanged(t),
+    }),
+    [],
+  );
+  useEffect(() => registerComposerFocus(slug, () => inner.current?.focus()), [slug]);
   // Read when a POST settles, long after the render that started it.
   const landedRef = useRef(landed);
   useEffect(() => {
     landedRef.current = landed;
   }, [landed]);
-  // A late landing of an aborted send (U3 §13.2): the unchanged box clears and the error goes.
-  useEffect(() => {
-    if (!unconfirmed || !landed.has(unconfirmed.id)) return;
-    setText((cur) => (cur === unconfirmed.box ? unconfirmed.before : cur));
-    draft.clearSent(unconfirmed.sent);
-    setUnconfirmed(undefined);
-    setError((e) => (e === UNCONFIRMED ? undefined : e));
-  }, [landed, unconfirmed, setText, draft, setUnconfirmed]);
-  // A failed Stop, on the composer's error line; it belongs to that turn (reset on its edge).
-  const [stopError, setStopError] = useState<string | undefined>();
-  const [errorEpoch, setErrorEpoch] = useState(stopEpoch);
-  if (errorEpoch !== stopEpoch) {
-    setErrorEpoch(stopEpoch);
-    setStopError(undefined);
-  }
-  const onStopError = useCallback(
-    (e: unknown) =>
-      setStopError(
-        e === undefined
-          ? undefined
-          : `Couldn't stop: ${e instanceof ApiError ? e.message : NETWORK_ERROR}`,
-      ),
-    [],
+
+  const onSubmit = useCallback(
+    async (text: string, { urgent, clientMessageId }: SubmitOptions) => {
+      const body = text.trim();
+      onSending?.({ clientMessageId, body, urgent });
+      repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
+      try {
+        const item = await postMessage(slug, body, {
+          urgent,
+          clientMessageId,
+          signal: abort.signal,
+        });
+        // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
+        onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
+        onSent?.();
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "agent_start_failed") {
+          // 503: queued server-side; the queue frame shows "Not delivered yet: <reason>".
+          onSendFailed?.(clientMessageId);
+          onSent?.();
+          return;
+        }
+        if (abort.signal.aborted) {
+          // The send already showed up (its queue item or delivery): it was sent.
+          if (landedRef.current.has(clientMessageId)) {
+            onSent?.();
+            return;
+          }
+          onSendFailed?.(clientMessageId, true);
+          throw new SubmitError(UNCONFIRMED, { unconfirmed: true });
+        }
+        onSendFailed?.(clientMessageId);
+        if (e instanceof ApiError && e.code === "agent_terminated") {
+          // The draft stays: the read-only line that replaces the composer offers to copy it.
+          onTerminated?.(terminatedNotSent(slug));
+          throw new SubmitError(terminatedNotSent(slug));
+        }
+        throw new SubmitError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    [slug, onSending, onQueued, onSent, onSendFailed, onTerminated],
   );
-  const stopRef = useRef<StopHandle>(null);
-  const boxRef = useRef<HTMLTextAreaElement>(null);
-  const id = useId();
-  const hintId = `${id}-hint`;
-  const boxId = `${id}-box`;
-  const waitHintId = `${id}-wait`;
+  const onStop = useCallback(() => postInterrupt(slug), [slug]);
+
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
     agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
-  useEffect(() => registerComposerFocus(slug, () => boxRef.current?.focus()), [slug]);
-  useImperativeHandle(
-    ref,
-    () => ({
-      putBackIfEmpty(next) {
-        // The DOM value is the box as it is now (state may not have committed yet).
-        if ((boxRef.current?.value ?? "").trim() !== "") return false;
-        setText(next);
-        draft.persist(); // focus is on Cancel, not the box: saved now, or a reload loses it
-        return true;
-      },
-      clearIfUnchanged(sent) {
-        setText((cur) => (cur === sent ? "" : cur));
-        draft.persist();
-      },
-    }),
-    [setText, draft],
-  );
-  const empty = text.trim() === "";
-  const retryable = unconfirmed !== undefined && text === unconfirmed.sent;
-  const shownError =
-    error === UNCONFIRMED && !retryable ? UNCONFIRMED_EDITED : (error ?? stopError);
-
-  /** The text goes back in the box after anything typed since; returns what the box then holds. */
-  const putBack = (sent: string) => {
-    draft.release(sent);
-    let box = sent;
-    setText((cur) => {
-      box = cur.trim() ? `${cur}\n${sent}` : sent;
-      return box;
-    });
-    draft.persist();
-    return box;
-  };
-
-  async function send(urgent = false) {
-    if (empty || waiting) return;
-    const sent = text;
-    const body = sent.trim();
-    const bytes = new TextEncoder().encode(body).length;
-    if (bytes > MAX_BODY_BYTES) {
-      setError(
-        `This message is ${Math.ceil(bytes / 1024)} KB; the limit is 64 KB. Shorten it to send.`,
-      );
-      return;
-    }
-    // U3 §13.2: exactly the text of an unconfirmed send goes again under the same id, so a late-landing
-    // original can never be delivered twice. Anything else (text typed meanwhile included) is a new
-    // message: under the old id the server would dedupe it to the original and the extra text be lost.
-    const retry =
-      unconfirmed && sent === unconfirmed.sent && !landedRef.current.has(unconfirmed.id)
-        ? unconfirmed.id
-        : undefined;
-    const clientMessageId = retry ?? crypto.randomUUID();
-    setUnconfirmed(undefined);
-    setError(undefined);
-    // Optimistic: the box empties and the block shows at once; the stored draft keeps the text until
-    // the server accepts it.
-    draft.hold(sent);
-    setText("");
-    onSending?.({ clientMessageId, body, urgent });
-    repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
-    boxRef.current?.focus(); // focus stays in the composer after sending (UI §7)
-    const accepted = () => {
-      draft.clearSent(sent);
-      onSent?.();
-    };
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
-    try {
-      const item = await postMessage(slug, body, { urgent, clientMessageId, signal: abort.signal });
-      // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
-      onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
-      accepted();
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "agent_start_failed") {
-        // 503: queued server-side; the queue frame shows "Not delivered yet: <reason>".
-        onSendFailed?.(clientMessageId);
-        accepted();
-      } else if (abort.signal.aborted) {
-        // The send already showed up (its queue item or delivery): it was sent.
-        if (landedRef.current.has(clientMessageId)) accepted();
-        else {
-          onSendFailed?.(clientMessageId, true);
-          const box = putBack(sent);
-          setUnconfirmed({
-            id: clientMessageId,
-            sent,
-            box,
-            before: box === sent ? "" : box.slice(0, -sent.length - 1),
-          });
-          setError(UNCONFIRMED);
-        }
-      } else {
-        onSendFailed?.(clientMessageId);
-        putBack(sent);
-        if (e instanceof ApiError && e.code === "agent_terminated") {
-          // The draft stays: the read-only line that replaces the composer offers to copy it.
-          setError(terminatedNotSent(slug));
-          onTerminated?.(terminatedNotSent(slug));
-        } else setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  // U3 §6.2, in order: IME guard, Esc, ⌥Enter, Enter. PR5 adds the menu, command mode and recall.
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    if (e.key === "Escape") {
-      // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
-      if (e.nativeEvent.defaultPrevented) return;
-      if (!stopRef.current?.stop()) return;
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    const urgent = isUrgentSendKey(e.nativeEvent);
-    if (!urgent && !isSendKey(e.nativeEvent)) return;
-    e.preventDefault();
-    void send(urgent);
-  };
-
+  const hintMode: HintMode = !agent.turnOpen ? "none" : isCoarsePointer() ? "coarse" : "working";
   return (
-    <form
+    <ComposerPrimitive
+      ref={inner}
       id="composer"
       className="shrink-0 border-t border-border px-4 py-3 md:px-6"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void send();
-      }}
-    >
-      <div className="@container max-w-[52rem]">
-        <label htmlFor={boxId} className="sr-only">
-          Message to {agent.displayName}
-        </label>
-        <Textarea
-          ref={boxRef}
-          id={boxId}
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            setError(undefined);
-          }}
-          onFocus={draft.bind.onFocus}
-          onBlur={draft.bind.onBlur}
-          onKeyDown={onKeyDown}
-          placeholder={`Message ${agent.displayName}`}
-          rows={2}
-          aria-describedby={
-            [waitsForNewSession && waitHintId, agent.turnOpen && hintId]
-              .filter(Boolean)
-              .join(" ") || undefined
-          }
-          className="max-h-[9rem] min-h-[3.5rem] resize-none md:max-h-[18rem]"
-        />
-        {waitsForNewSession && (
-          <p
-            id={waitHintId}
-            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
-            Messages wait until a new session is started.
-          </p>
-        )}
-        {/* Send stays right-anchored; Stop appears to its left while a turn is open. */}
-        <div className="mt-2 flex items-center justify-end gap-2">
-          {agent.turnOpen && stopEpoch !== undefined && (
-            <StopButton
-              ref={stopRef}
-              slug={slug}
-              turnOpen={agent.turnOpen}
-              turnEpoch={stopEpoch}
-              compacting={agent.compacting === true}
-              onError={onStopError}
-            />
-          )}
-          <Button type="submit" disabled={empty || waiting}>
-            Send
-          </Button>
-        </div>
-        {/* A fixed height whether or not a turn is open (a minimum would let the key caps grow it): the
-            composer never resizes at a turn edge. */}
-        <p
-          id={hintId}
-          data-composer-hint
-          className="mt-2 h-5 truncate text-[0.8125rem] leading-5 text-muted-foreground"
-        >
-          {agent.turnOpen ? <UrgentHint compacting={agent.compacting === true} /> : null}
-        </p>
-        {shownError && (
-          <p
-            role="alert"
-            className="mt-2 flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
-          >
-            <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-            {shownError}
-            {shownError === UNCONFIRMED && (
-              <Button type="button" variant="ghost" size="xs" onClick={() => void send()}>
-                Retry
-              </Button>
-            )}
-          </p>
-        )}
-      </div>
-    </form>
+      draftKey={agentDraftKey(slug)}
+      label={`Message to ${agent.displayName}`}
+      placeholder={`Message ${agent.displayName}`}
+      onSubmit={onSubmit}
+      validate={checkBody}
+      waiting={waiting}
+      landed={landed}
+      turnOpen={agent.turnOpen}
+      compacting={agent.compacting === true}
+      stopEpoch={stopEpoch}
+      onStop={stopEpoch === undefined ? undefined : onStop}
+      hintMode={hintMode}
+      note={waitsForNewSession ? "Messages wait until a new session is started." : undefined}
+      attachments
+    />
   );
-}
-
-/** "Arrives at the agent's next step. ⌥↵ to interrupt instead." (Alt off Apple platforms; on touch, where
- *  there is no ⌥Enter, it points at Stop). U3 §6.2. A compaction is never interrupted (D5), so while one
- *  runs it promises nothing more than "Arrives after the compaction." */
-function UrgentHint({ compacting }: { compacting: boolean }) {
-  if (compacting) return <>Arrives after the compaction.</>;
-  if (isCoarsePointer()) return <>Arrives at the agent's next step. Stop first to interrupt.</>;
-  return (
-    <>
-      Arrives at the agent's next step.{" "}
-      {/* Top-aligned: the 1.25rem caps fill the 1.25rem line box instead of overhanging it. */}
-      <Kbd keys={[isMac() ? "⌥" : "Alt", "↵"]} className="align-top" /> to interrupt instead.
-    </>
-  );
-}
+}, sameProps);

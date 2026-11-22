@@ -101,6 +101,15 @@ export function SessionView({
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
   const [raceNotice, setRaceNotice] = useState<string>();
+  const { refreshAgent } = s;
+  // Stable, so the memoised composer doesn't render for frames that change nothing it reads (U3 M3).
+  const onTerminated = useCallback(
+    (notice: string) => {
+      setRaceNotice(notice);
+      void refreshAgent();
+    },
+    [refreshAgent],
+  );
   // The header's actions report here, in a notice row under it: a failed Restart, a Pin outcome.
   const [restartError, setRestartError] = useState<string>();
   const [pinOutcome, setPinOutcome] = useState<PinOutcome>();
@@ -361,10 +370,7 @@ export function SessionView({
             onSendFailed={s.onSendFailed}
             landed={s.state.landed}
             onSent={s.clearCancelled}
-            onTerminated={(notice) => {
-              setRaceNotice(notice);
-              void s.refreshAgent();
-            }}
+            onTerminated={onTerminated}
           />
         )}
       </div>

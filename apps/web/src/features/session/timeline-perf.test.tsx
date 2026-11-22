@@ -26,9 +26,9 @@ const count = vi.hoisted(() => ({
   profiled: new Map<string, number>(),
 }));
 /** Wraps a component in a counting Profiler (the SessionView render-count harness, U3 M2). */
-const profiled = vi.hoisted(() => async <P extends object>(id: string, C: (p: P) => unknown) => {
-  const { Profiler, createElement } = await import("react");
-  return (p: P) =>
+const profiled = vi.hoisted(() => async <P extends object>(id: string, C: unknown) => {
+  const { Profiler, createElement, memo } = await import("react");
+  const wrap = (p: P) =>
     createElement(
       Profiler,
       {
@@ -37,6 +37,9 @@ const profiled = vi.hoisted(() => async <P extends object>(id: string, C: (p: P)
       },
       createElement(C as never, p as never),
     );
+  // A memo component stays one: the wrapper bails out exactly when the real component would.
+  const m = C as { $$typeof?: symbol; compare?: (a: P, b: P) => boolean };
+  return m.$$typeof === Symbol.for("react.memo") ? memo(wrap, m.compare ?? undefined) : wrap;
 });
 vi.mock("@/components/page-header", async (orig) => {
   const m = await orig<typeof import("@/components/page-header")>();
@@ -666,8 +669,9 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   });
   frame();
   expect(document.querySelector("[data-activity-line]")?.textContent).toContain("0s");
-  // The harness sees a SessionView render: the status frame reached every profiled part.
-  for (const id of ["header", "details", "queue", "composer"])
+  // The harness sees a SessionView render: the status frame reached every profiled part but the
+  // composer, which reads nothing the frame changed (U3 M3).
+  for (const id of ["header", "details", "queue"])
     expect(count.profiled.get(id)).toBeGreaterThan(0);
   expect(count.timeline).toBeGreaterThan(0);
   reset();
@@ -679,6 +683,41 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   expect(count.timeline).toBe(0);
   expect(count.rows.size).toBe(0);
   expect(count.markdown).toBe(0);
+});
+
+test("SessionView: a live frame and an agent_status frame render the composer 0 times; a keystroke renders only the composer", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
+  frame();
+  expect(count.rows.get("201")).toBe(1);
+  expect(count.profiled.get("composer")).toBeUndefined();
+  reset();
+  push({
+    type: "agent_status",
+    agent: "dev",
+    status: "working",
+    turnOpen: true,
+    restartPending: false,
+    restartWaitingOn: 0,
+    turnStartedAt: "2026-11-21T10:00:00.000Z",
+  });
+  frame();
+  expect(count.profiled.get("header")).toBeGreaterThan(0); // the frame did reach SessionView
+  expect(count.profiled.get("composer")).toBeUndefined();
+  reset();
+  act(() => {
+    fireEvent.change(box, { target: { value: "a" } });
+  });
+  expect(box).toHaveValue("a");
+  expect(Object.fromEntries(count.profiled)).toEqual({ composer: 1 });
+  expect(count.timeline).toBe(0);
+  expect(count.rows.size).toBe(0);
 });
 
 test("SessionView: the announcer reads the unmerged rows, so a repeated failure is announced again", async () => {

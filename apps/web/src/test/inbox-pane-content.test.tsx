@@ -305,7 +305,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
   await waitFor(() => expect(box).toHaveValue("@ada "));
   expect(reads()).toHaveLength(0);
   await userEvent.type(box, "thanks");
-  fireEvent.click(within(p).getByRole("button", { name: "Comment" }));
+  fireEvent.click(within(p).getByRole("button", { name: "Send" }));
   await waitFor(() =>
     expect(api.calls.find((c) => c.url === "/api/tasks/T-7/comments")?.body).toEqual({
       body: "@ada thanks",
@@ -347,6 +347,20 @@ test("a mention by a human leaves the composer empty", async () => {
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment h1")).toBeInTheDocument());
   expect(within(p).getByRole("textbox", { name: "Comment" })).toHaveValue("");
+});
+
+test("the mention reply is the shared composer: Write/Preview in its toolbar, no attach, a file gets the note", async () => {
+  setup([mention(1, "h1", { kind: "human", name: "bob" })]);
+  await visit("/inbox?item=i1");
+  const p = pane();
+  const box = await within(p).findByRole("textbox", { name: "Comment" });
+  const toolbar = box.closest("[data-composer-frame]")?.querySelector("[data-composer-toolbar]");
+  expect(toolbar?.contains(within(p).getByRole("button", { name: "Preview" }))).toBe(true);
+  expect(within(p).queryByRole("button", { name: /attach/i })).toBeNull();
+  const file = new File(["x"], "shot.png", { type: "image/png" });
+  fireEvent.paste(box, { clipboardData: { files: [file], getData: () => "", types: ["Files"] } });
+  expect(within(p).getByText("Files can be sent in an agent's session")).toBeInTheDocument();
+  expect(box).toHaveValue("");
 });
 
 test("a task event shows the fact and Open task, with no composer", async () => {
@@ -502,7 +516,7 @@ test("a half-typed comment reply survives switching items; a posted one is clear
   await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());
   await app.router.navigate({ to: "/inbox", search: { item: "i1" } });
   await waitFor(() => expect(box()).toHaveValue("@ada half typed"));
-  fireEvent.click(within(pane()).getByRole("button", { name: "Comment" }));
+  fireEvent.click(within(pane()).getByRole("button", { name: "Send" }));
   await waitFor(() => expect(box()).toHaveValue(""));
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
   await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());

@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { readDraft, taskDraftKey } from "@/lib/drafts";
 import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -392,7 +393,7 @@ test("Reply puts the author's mention at the start of the composer and focuses i
   expect(box).toHaveValue("@dev ");
 });
 
-test("composer: disabled while empty, Ctrl-Enter posts, Posting…, the draft stays on failure, the helper names the assignee", async () => {
+test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure puts the text back, the helper names the assignee", async () => {
   const api = world();
   let fail = true;
   let release: () => void = () => {};
@@ -421,20 +422,22 @@ test("composer: disabled while empty, Ctrl-Enter posts, Posting…, the draft st
         );
   });
   renderApp("/tasks/T-42", alice);
-  const send = await screen.findByRole("button", { name: "Comment" });
+  const send = await screen.findByRole("button", { name: "Send" });
   expect(send).toBeDisabled();
   const box = screen.getByRole("textbox", { name: "Comment" });
   expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention. Enter to post.");
   await userEvent.type(box, "hello @nobody");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
-  expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
+  // Optimistic (U3 §13.2): the box empties at once; the draft keeps the text until the server takes it.
+  expect(box).toHaveValue("");
+  expect(send).toBeDisabled();
   release();
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn't post the comment. Try again.",
   );
   expect(box).toHaveValue("hello @nobody");
   fail = false;
-  await userEvent.click(screen.getByRole("button", { name: "Comment" }));
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(
     await screen.findByText("Not reached: @nobody (no such name), @kid (terminated)."),
   ).toBeInTheDocument();
@@ -469,10 +472,11 @@ test("composer: text typed while a post is in flight survives it; the posted par
   const box = await screen.findByRole("textbox", { name: "Comment" });
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
-  await screen.findByRole("button", { name: "Posting…" });
+  await waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
   await userEvent.type(box, "b");
   await act(async () => release());
-  await screen.findByRole("button", { name: "Comment" });
+  // The posted part leaves the stored draft; what was typed since stays, in the box and the draft.
+  await waitFor(() => expect(readDraft(taskDraftKey("T-42"))).toBe("b"));
   expect(box).toHaveValue("b");
 });
 
@@ -486,11 +490,11 @@ test("composer: with nothing typed during the post the draft clears", async () =
   await waitFor(() => expect(box).toHaveValue(""));
 });
 
-test("composer: a throwing sessionStorage (private mode) neither breaks typing nor posting", async () => {
+test("composer: a throwing localStorage (private mode) neither breaks typing nor posting", async () => {
   const blocked = () => {
     throw new DOMException("blocked", "SecurityError");
   };
-  vi.stubGlobal("sessionStorage", {
+  vi.stubGlobal("localStorage", {
     getItem: blocked,
     setItem: blocked,
     removeItem: blocked,

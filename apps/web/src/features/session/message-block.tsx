@@ -1,15 +1,19 @@
+import type { MessageAttachment } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CalendarClock, Clock, Factory } from "lucide-react";
+import { CalendarClock, Clock, Factory, FileText } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { displayName } from "@/components/composer/attachments";
 import { Markdown } from "@/components/markdown/markdown";
 import { clampSource, longestFence } from "@/components/markdown/split-blocks";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 import { rowOf } from "./row-of";
 import { SpeakerLine } from "./speaker-line";
+import { stripAttachedLines } from "./uploads";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
 export const LINK_CLASS =
@@ -136,6 +140,10 @@ export function MessageBlock(props: {
   /** U3 §13.2: an optimistic send, in the delivered card's shape with its body muted and named
    *  "Sending"; `label` ("Sending…") takes the time's place once the POST is slow. */
   sending?: { label?: ReactNode };
+  /** U3 §13.5: the message's confirmed uploads (the envelope's list), shown as chips; their
+   *  `[attached: …]` lines are hidden. Needs `slug` for the previews. */
+  attachments?: readonly MessageAttachment[] | undefined;
+  slug?: string;
 }) {
   const {
     from,
@@ -150,7 +158,11 @@ export function MessageBlock(props: {
     action,
     sending,
     brief,
+    attachments,
+    slug,
   } = props;
+  // Only the lines of this message's own uploads go; a typed `[attached: …]` stays text.
+  const shown = useMemo(() => stripAttachedLines(body, attachments), [body, attachments]);
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -262,9 +274,62 @@ export function MessageBlock(props: {
           sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
         }
       >
-        {brief ? <LinesBody source={body} lines={3} /> : <ClampedMarkdown source={body} />}
+        {brief ? <LinesBody source={shown} lines={3} /> : <ClampedMarkdown source={shown} />}
       </div>
+      {attachments?.length && slug ? (
+        <AttachmentList slug={slug} attachments={attachments} />
+      ) : null}
     </div>
+  );
+}
+
+/** The upload's same-origin, authenticated URL (the session cookie; never an external host). */
+export const uploadUrl = (slug: string, uploadId: string) =>
+  `/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}`;
+
+/** A message's files (U3 §13.5): each a chip opening the file; an image previews through the
+ *  authenticated GET. The name is a text node, never HTML. */
+function AttachmentList({
+  slug,
+  attachments,
+}: {
+  slug: string;
+  attachments: readonly MessageAttachment[];
+}) {
+  return (
+    <ul aria-label="Attached files" className="mt-2 flex flex-wrap gap-1.5">
+      {attachments.map((a) => {
+        const url = uploadUrl(slug, a.uploadId);
+        return (
+          <li key={a.uploadId} className="min-w-0">
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-attachment
+              className="flex h-9 max-w-[12rem] min-w-0 items-center gap-1.5 rounded-sm border border-border bg-background pr-2 pl-1 text-[0.8125rem] leading-4 text-foreground hover:border-ring"
+            >
+              {a.kind === "image" ? (
+                <img
+                  src={url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  width={28}
+                  height={28}
+                  className="size-7 shrink-0 rounded-[3px] object-cover"
+                />
+              ) : (
+                <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+              )}
+              <span dir="auto" className="min-w-0">
+                <MiddleTruncate text={displayName(a.name)} keepEnd />
+              </span>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

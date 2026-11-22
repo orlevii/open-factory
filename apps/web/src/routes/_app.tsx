@@ -11,6 +11,7 @@ import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
+import { installFileDropGuard } from "@/lib/file-drop";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { installShortcuts } from "@/lib/shortcuts";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -58,6 +59,8 @@ function AppLayout() {
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
   useEffect(() => installShortcuts(), []);
+  // A file dropped outside the composer never navigates away from the app (U3 §13.5).
+  useEffect(() => installFileDropGuard(), []);
   useEffect(() => {
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.

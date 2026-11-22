@@ -87,7 +87,7 @@ export const fetchMessage = (id: string) =>
 export const postMessage = (
   slug: string,
   body: string,
-  o: { urgent: boolean; clientMessageId?: string; signal?: AbortSignal },
+  o: { urgent: boolean; clientMessageId?: string; attachments?: string[]; signal?: AbortSignal },
 ) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/messages`, {
     method: "POST",
@@ -95,6 +95,7 @@ export const postMessage = (
       body,
       urgent: o.urgent,
       ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
+      ...(o.attachments?.length ? { attachments: o.attachments } : {}),
     },
     schema: queueItemResponseSchema,
     ...(o.signal ? { signal: o.signal } : {}),

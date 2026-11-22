@@ -295,6 +295,8 @@ export function TimelineRow(props: TimelineRowProps) {
             urgent={row.message.urgent}
             at={row.at}
             failed={failedIds.has(row.message.id)}
+            attachments={row.message.attachments}
+            slug={props.slug}
             {...(row.message.kind === "scheduled" && row.message.scheduleKey
               ? {
                   scheduled: {

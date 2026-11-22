@@ -41,6 +41,7 @@ import { SpeakerProvider } from "./speaker-line";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, type StopCrons, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
+import { recallText } from "./uploads";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
 
@@ -214,6 +215,12 @@ export function SessionView({
     [queue, sending, agent, cancelled, self, onCancel, onUndo],
   );
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
+  // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
+  const orderedRef = useRef(s.state.ordered);
+  useEffect(() => {
+    orderedRef.current = s.state.ordered;
+  }, [s.state.ordered]);
+  const recall = useCallback(() => recallText(orderedRef.current, self), [self]);
   const composer = useMemo(
     () =>
       agent ? (
@@ -230,6 +237,7 @@ export function SessionView({
           landed={landed}
           onSent={clearCancelled}
           onTerminated={onSendRaced}
+          recall={recall}
         />
       ) : null,
     [
@@ -243,6 +251,7 @@ export function SessionView({
       landed,
       clearCancelled,
       onSendRaced,
+      recall,
     ],
   );
   // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.

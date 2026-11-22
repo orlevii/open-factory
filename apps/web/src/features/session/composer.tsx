@@ -33,6 +33,7 @@ import { postInterrupt, postMessage } from "./api";
 import { postCommand, unescapeSlash, useCommandSource } from "./commands";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
 import type { SendingBlock } from "./session-state";
+import { rememberSent, uploadsFor } from "./uploads";
 
 export { NETWORK_ERROR, UNCONFIRMED, UNCONFIRMED_EDITED } from "@/components/composer/composer";
 export type { ComposerHandle };
@@ -134,6 +135,8 @@ type SessionComposerProps = {
   onSent?: () => void;
   /** A send that raced a termination (`409 agent_terminated`), with the sentence that says so. */
   onTerminated?: (notice: string) => void;
+  /** ↑ in an empty box: your last message's text from the loaded timeline (U3 §13.2). Stable. */
+  recall?: () => string | undefined;
 };
 
 /** The props compared by identity: every prop but `agent` (keep this list in step with the type). */
@@ -148,6 +151,7 @@ const IDENTITY_KEYS = [
   "landed",
   "onSent",
   "onTerminated",
+  "recall",
 ] as const satisfies readonly Exclude<keyof SessionComposerProps, "agent">[];
 
 /** Only the agent fields the composer reads: a status frame that changes nothing here (a new
@@ -182,6 +186,7 @@ export const Composer = memo(function SessionComposer({
   onSending,
   onSendFailed,
   landed = NO_LANDED,
+  recall,
 }: SessionComposerProps) {
   const inner = useRef<ComposerHandle>(null);
   useImperativeHandle(
@@ -203,10 +208,18 @@ export const Composer = memo(function SessionComposer({
   }, [landed]);
 
   const onSubmit = useCallback(
-    async (text: string, { urgent, clientMessageId }: SubmitOptions) => {
+    async (text: string, { urgent, clientMessageId, attachments }: SubmitOptions) => {
       // `//x` goes as `/x` (U3 §13.3).
       const body = unescapeSlash(text.trim());
-      onSending?.({ clientMessageId, body, urgent });
+      // Its files ride on the optimistic block and, by id, on its queue item (U3 §13.5).
+      const files = attachments.length ? uploadsFor(slug).describe(attachments) : [];
+      rememberSent(clientMessageId, files);
+      onSending?.({
+        clientMessageId,
+        body,
+        urgent,
+        ...(files.length ? { attachments: files } : {}),
+      });
       repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
@@ -214,6 +227,7 @@ export const Composer = memo(function SessionComposer({
         const item = await postMessage(slug, body, {
           urgent,
           clientMessageId,
+          attachments,
           signal: abort.signal,
         });
         // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
@@ -300,7 +314,8 @@ export const Composer = memo(function SessionComposer({
       hintMode={hintMode}
       completions={completions}
       note={waitsForNewSession ? "Messages wait until a new session is started." : undefined}
-      attachments
+      attachments={uploadsFor(slug)}
+      recall={recall}
     />
   );
 }, sameProps);

@@ -2,7 +2,11 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { createUploadStore } from "@/features/session/uploads";
 import { readDraft } from "@/lib/drafts";
+import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-xhr";
+import { json, mockApi } from "@/test/mock-api";
+import { NO_FOLDERS, TOO_MANY } from "./attachments";
 import {
   type CompletionItem,
   type CompletionSource,
@@ -27,8 +31,26 @@ vi.mock("@/components/ui/textarea", async (orig) => {
   };
 });
 
+/** Renders of each chip's name (MiddleTruncate is the chip's name and nothing else in the composer). */
+const nameRenders = vi.hoisted(() => new Map<string, number>());
+vi.mock("@/components/middle-truncate", async (orig) => {
+  const m = await orig<typeof import("@/components/middle-truncate")>();
+  return {
+    ...m,
+    MiddleTruncate: (p: Parameters<typeof m.MiddleTruncate>[0]) => {
+      nameRenders.set(p.text, (nameRenders.get(p.text) ?? 0) + 1);
+      return <m.MiddleTruncate {...p} />;
+    },
+  };
+});
+
 beforeEach(() => localStorage.clear());
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  for (const x of FakeXhr.all) x.abort();
+  FakeXhr.all = [];
+  vi.unstubAllGlobals();
+});
 
 const noSubmit = async () => {};
 function setup(over: Partial<Parameters<typeof Composer>[0]> = {}) {
@@ -759,4 +781,271 @@ test("the toolbar's `/` button starts a command in an empty box", async () => {
   expect(box).toHaveValue("/");
   expect(document.activeElement).toBe(box);
   expect(screen.getAllByRole("option")).toHaveLength(3);
+});
+
+// U3 §13.5: files in the session composer.
+function setupFiles(over: Partial<Parameters<typeof Composer>[0]> = {}) {
+  installFakeXhr();
+  const frames = holdFrames();
+  const store = createUploadStore("dev");
+  const r = setup({ attachments: store, ...over });
+  const frame = r.box.closest("[data-composer-frame]") as HTMLElement;
+  return { ...r, store, frames, frame };
+}
+const pasteFiles = (box: HTMLElement, files: File[], text = "") =>
+  fireEvent.paste(box, {
+    clipboardData: {
+      files,
+      getData: (t: string) => (t === "text/plain" ? text : ""),
+      types: text ? ["text/plain", "Files"] : ["Files"],
+    },
+  });
+const chips = () => [...document.querySelectorAll<HTMLElement>("[data-upload-chip]")];
+const ok = (id: string, name: string) => ({ uploadId: id, kind: "text", bytes: 5, name });
+
+test("a paste with text inserts the text and ignores its image items", () => {
+  const { box, store } = setupFiles();
+  const pasted = pasteFiles(box, [file("cells.png", 10, "image/png")], "A1\tB1");
+  expect(pasted).toBe(true); // the browser inserts the text
+  expect(store.keys()).toEqual([]);
+  expect(chips()).toHaveLength(0);
+});
+
+test("a files-only paste attaches them as chips, max 12rem wide", () => {
+  const { box } = setupFiles();
+  expect(pasteFiles(box, [file("notes.txt")])).toBe(false);
+  expect(chips()).toHaveLength(1);
+  expect(chips()[0]).toHaveClass("max-w-[12rem]");
+  expect(chips()[0]).toHaveTextContent("notes.txt");
+  expect(lastXhr().url).toBe("/api/agents/dev/uploads");
+});
+
+test("a file name is text: markup and bidi overrides are never interpreted", () => {
+  const { box } = setupFiles();
+  pasteFiles(box, [file("<img src=x onerror=alert(1)>\u202Egnp.txt")]);
+  expect(document.querySelector("[data-upload-chip] img")).toBeNull();
+  expect(chips()[0]).toHaveTextContent("<img src=x onerror=alert(1)>gnp.txt");
+});
+
+test("chips take at most two rows, then +N files expands them in place", async () => {
+  // Four chips a row: rows start at 0, 40, 80.
+  const spy = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (!this.hasAttribute("data-upload-chip")) return 0;
+    return Math.floor([...(this.parentElement?.children ?? [])].indexOf(this) / 4) * 40;
+  });
+  const { box } = setupFiles();
+  pasteFiles(
+    box,
+    Array.from({ length: 10 }, (_, i) => file(`f${i}.txt`)),
+  );
+  const more = await screen.findByRole("button", { name: "+2 files" });
+  expect(chips().filter((c) => c.hasAttribute("inert"))).toHaveLength(2);
+  await userEvent.click(more);
+  expect(screen.queryByRole("button", { name: /^\+\d+ files?$/ })).toBeNull();
+  expect(chips().filter((c) => c.hasAttribute("inert"))).toHaveLength(0);
+  spy.mockRestore();
+});
+
+test("past 10 files the rest are left out with a note; a folder is refused with a note", () => {
+  const { box, frame } = setupFiles();
+  pasteFiles(
+    box,
+    Array.from({ length: 11 }, (_, i) => file(`f${i}.txt`)),
+  );
+  expect(chips()).toHaveLength(10);
+  expect(screen.getByText(TOO_MANY)).toBeInTheDocument();
+  const folder = file("photos", 0, "");
+  fireEvent.drop(frame, {
+    dataTransfer: {
+      files: [folder],
+      items: [{ kind: "file", webkitGetAsEntry: () => ({ isDirectory: true }) }],
+      types: ["Files"],
+    },
+  });
+  expect(screen.getByText(NO_FOLDERS)).toBeInTheDocument();
+});
+
+test("an image's thumbnail is a 64px bitmap on a canvas, never a full-size <img>", async () => {
+  const bitmap = { width: 64, height: 40, close: vi.fn() };
+  const createImageBitmap = vi.fn(async () => bitmap);
+  const drawImage = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage,
+  } as never);
+  const { box, store } = setupFiles();
+  vi.stubGlobal("createImageBitmap", createImageBitmap);
+  const img = file("shot.png", 20, "image/png");
+  pasteFiles(box, [img]);
+  expect(createImageBitmap).toHaveBeenCalledWith(img, { resizeWidth: 64 });
+  await vi.waitFor(() => expect(document.querySelector("canvas[data-thumb]")).not.toBeNull());
+  expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+  expect(document.querySelector("[data-composer-frame] img")).toBeNull();
+  expect(store.keys()).toHaveLength(1);
+});
+
+test("an upload shows a determinate 2px bar and a tabular percentage, without transition", () => {
+  const { box, frames } = setupFiles();
+  pasteFiles(box, [file("a.txt")]);
+  act(() => {
+    lastXhr().progress(40, 100);
+    frames.flush();
+  });
+  const bar = screen.getByRole("progressbar", { name: "Uploading a.txt" });
+  expect(bar).toHaveAttribute("aria-valuenow", "40");
+  expect(bar).toHaveClass("h-0.5", "transition-none");
+  expect(bar.style.transform).toBe("scaleX(0.4)");
+  expect(screen.getByText("40%")).toHaveClass("tabular-nums");
+  expect(screen.getByRole("button", { name: "Cancel a.txt" })).toBeInTheDocument();
+});
+
+test("a progress tick renders only its own chip, once per frame; not the composer", () => {
+  const { box, frames } = setupFiles();
+  pasteFiles(box, [file("a.txt"), file("b.txt")]);
+  const [xa] = FakeXhr.all as [FakeXhr];
+  const a0 = nameRenders.get("a.txt") ?? 0;
+  const b0 = nameRenders.get("b.txt") ?? 0;
+  const box0 = boxRenders.n;
+  act(() => {
+    xa.progress(10, 100);
+    xa.progress(30, 100);
+    xa.progress(50, 100);
+    frames.flush();
+  });
+  expect(nameRenders.get("a.txt")).toBe(a0 + 1);
+  expect(nameRenders.get("b.txt")).toBe(b0);
+  expect(boxRenders.n).toBe(box0);
+});
+
+test("a refused file shows its reason with Retry and Remove", async () => {
+  const { box } = setupFiles();
+  pasteFiles(box, [file("p.heic", 10, "image/heic")]);
+  act(() =>
+    lastXhr().respond(415, {
+      error: { code: "unsupported_type", message: "HEIC isn't supported; export as JPEG" },
+    }),
+  );
+  expect(chips()[0]).toHaveTextContent("HEIC isn't supported; export as JPEG");
+  await userEvent.click(screen.getByRole("button", { name: "Retry p.heic" }));
+  expect(FakeXhr.all).toHaveLength(2);
+  act(() => lastXhr().respond(415, { error: { message: "HEIC isn't supported; export as JPEG" } }));
+  await userEvent.click(screen.getByRole("button", { name: "Remove p.heic" }));
+  expect(chips()).toHaveLength(0);
+});
+
+test("a non-JSON 413 says the proxy refused it", () => {
+  const { box } = setupFiles();
+  pasteFiles(box, [file("big.txt")]);
+  act(() => lastXhr().respond(413, "<html>413 Request Entity Too Large</html>"));
+  expect(chips()[0]).toHaveTextContent(
+    "The server refused a file this large (check the proxy's upload limit).",
+  );
+});
+
+test("Send waits for uploads, then for a failed file, with the reason as its description", async () => {
+  const { box, onSubmit } = setupFiles();
+  await userEvent.type(box, "see these");
+  pasteFiles(box, [file("a.txt"), file("b.txt")]);
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toBeDisabled();
+  expect(send).toHaveAccessibleDescription("Waiting for 2 uploads");
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(box).toHaveValue("see these");
+  act(() => (FakeXhr.all[0] as FakeXhr).respond(201, ok("u1", "a.txt")));
+  expect(send).toHaveAccessibleDescription("Waiting for 1 upload");
+  act(() => (FakeXhr.all[1] as FakeXhr).fail());
+  expect(send).toBeDisabled();
+  expect(send).toHaveAccessibleDescription("Remove or retry the failed file");
+  await userEvent.click(screen.getByRole("button", { name: "Remove b.txt" }));
+  expect(send).toBeEnabled();
+});
+
+test("Send carries the finished uploads; a failed send puts the chips back", async () => {
+  let fail: (e: unknown) => void = () => {};
+  const onSubmit = vi.fn(
+    (_t: string, _o: SubmitOptions) =>
+      new Promise<void>((_, rej) => {
+        fail = rej;
+      }),
+  );
+  const { box } = setupFiles({ onSubmit });
+  pasteFiles(box, [file("a.txt")]);
+  act(() => lastXhr().respond(201, ok("u1", "a.txt")));
+  await userEvent.type(box, "here{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("here", expect.objectContaining({ attachments: ["u1"] }));
+  expect(chips()).toHaveLength(0);
+  await act(async () => fail(new SubmitError("Boom")));
+  expect(chips()).toHaveLength(1);
+  expect(box).toHaveValue("here");
+});
+
+test("removing a finished chip deletes the upload on the server", async () => {
+  const api = mockApi({ "DELETE /api/agents/dev/uploads/u1": () => json({}, 204) });
+  const { box } = setupFiles();
+  pasteFiles(box, [file("a.txt")]);
+  act(() => lastXhr().respond(201, ok("u1", "a.txt")));
+  await userEvent.click(screen.getByRole("button", { name: "Remove a.txt" }));
+  await vi.waitFor(() =>
+    expect(api.calls).toContainEqual(
+      expect.objectContaining({ method: "DELETE", url: "/api/agents/dev/uploads/u1" }),
+    ),
+  );
+});
+
+test("leaving keeps the uploads: a remounted composer shows them again", () => {
+  installFakeXhr();
+  holdFrames();
+  const store = createUploadStore("dev");
+  const props = {
+    draftKey: "agent:dev",
+    placeholder: "p",
+    label: "Message to Dev",
+    onSubmit: noSubmit,
+  };
+  const first = render(<Composer {...props} attachments={store} />);
+  pasteFiles(screen.getByRole("textbox"), [file("a.txt")]);
+  first.unmount();
+  expect(lastXhr().aborted).toBe(false);
+  render(<Composer {...props} attachments={store} />);
+  expect(chips()).toHaveLength(1);
+});
+
+test("a file dragged over the frame edges it in ink with no animation; dropping attaches it", () => {
+  const { frame } = setupFiles();
+  const f = file("a.txt");
+  const dt = {
+    files: [f],
+    items: [{ kind: "file", webkitGetAsEntry: () => ({ isDirectory: false }) }],
+    types: ["Files"],
+  };
+  expect(fireEvent.dragOver(frame, { dataTransfer: dt })).toBe(false);
+  const edge = frame.querySelector("[data-drop-edge]");
+  expect(edge).not.toBeNull();
+  expect(edge).toHaveClass("border-foreground");
+  expect(edge?.className).not.toMatch(/transition|animate/);
+  expect(fireEvent.drop(frame, { dataTransfer: dt })).toBe(false);
+  expect(frame.querySelector("[data-drop-edge]")).toBeNull();
+  expect(chips()).toHaveLength(1);
+});
+
+test("the attach button picks files", async () => {
+  setupFiles();
+  const input = document.querySelector<HTMLInputElement>("input[type=file]") as HTMLInputElement;
+  expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument();
+  await userEvent.upload(input, [file("a.txt"), file("b.txt")]);
+  expect(chips()).toHaveLength(2);
+});
+
+test("↑ in an empty box recalls your last message's text; not with text or the caret moved", async () => {
+  const recall = vi.fn(() => "see this");
+  const { box } = setupFiles({ recall });
+  fireEvent.keyDown(box, { key: "ArrowUp", isComposing: true });
+  expect(recall).not.toHaveBeenCalled();
+  await userEvent.click(box);
+  await userEvent.keyboard("{ArrowUp}");
+  expect(box).toHaveValue("see this");
+  await userEvent.keyboard("{ArrowUp}");
+  expect(recall).toHaveBeenCalledTimes(1);
 });

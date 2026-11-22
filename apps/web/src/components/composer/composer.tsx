@@ -1,5 +1,5 @@
 import { ApiError } from "@open-factory/shared";
-import { AtSign, CircleAlert, CircleStop, Slash } from "lucide-react";
+import { AtSign, CircleAlert, CircleStop, Paperclip, Slash } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -14,14 +14,25 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
 import { isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
+import {
+  AttachmentChips,
+  type AttachmentStore,
+  NO_FOLDERS,
+  sendBlockedBy,
+  type TakenUploads,
+  TOO_MANY,
+  type UploadSummary,
+} from "./attachments";
 import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
 import { StopButton, type StopHandle } from "./stop-button";
 
@@ -33,6 +44,21 @@ export const UNCONFIRMED_EDITED =
 /** Where attachments aren't supported, a pasted or dropped file is ignored with this note (Q38). */
 export const FILES_NOTE = "Files can be sent in an agent's session";
 const NO_LANDED: ReadonlySet<string> = new Set();
+const NO_UPLOADS: UploadSummary = { count: 0, pending: 0, failed: 0 };
+const noUploads = () => NO_UPLOADS;
+const noSubscribe = () => () => {};
+
+/** A drop's files, without its folders (a folder arrives as a file entry that is a directory). */
+function filesOf(dt: DataTransfer): { files: File[]; folders: number } {
+  const items = Array.from(dt.items ?? []).filter((i) => i.kind === "file");
+  const files: File[] = [];
+  let folders = 0;
+  Array.from(dt.files).forEach((f, i) => {
+    if (items[i]?.webkitGetAsEntry?.()?.isDirectory) folders++;
+    else files.push(f);
+  });
+  return { files, folders };
+}
 
 export type SubmitOptions = { urgent: boolean; clientMessageId: string; attachments: string[] };
 
@@ -129,8 +155,11 @@ export type ComposerProps = {
   completions?: { slash?: CompletionSource; at?: CompletionSource };
   /** A Write/Preview toggle in the toolbar (task comments). */
   preview?: boolean;
-  /** Files can be attached (the session); elsewhere a pasted or dropped file gets `FILES_NOTE`. */
-  attachments?: boolean;
+  /** Files can be attached (the session: its per-agent upload store, a stable object); elsewhere a
+   *  pasted or dropped file gets `FILES_NOTE`. */
+  attachments?: AttachmentStore;
+  /** ↑ in an empty box with the caret at 0: the text to fill it with (U3 §13.2), if any. */
+  recall?(): string | undefined;
   /** Without one there is no hint line. */
   hintMode?: HintMode;
   /** A muted line under the frame that describes the box (who it goes to, why messages wait). */
@@ -163,8 +192,8 @@ function holds(m: OpenMenu, text: string): boolean {
   return hit?.from === m.from && hit.query === m.query;
 }
 
-/** A send whose POST aborted: the box got `sent` back (as `box`, after `before`). */
-type Unconfirmed = { id: string; sent: string; box: string; before: string };
+/** A send whose POST aborted: the box got `sent` back (as `box`, after `before`), and its files. */
+type Unconfirmed = { id: string; sent: string; box: string; before: string; taken?: TakenUploads };
 
 /**
  * The one composer (U3 §13.1, Q21): one plate holding the auto-growing textarea and a 32px toolbar,
@@ -183,7 +212,8 @@ export const Composer = memo(function Composer({
   stopEpoch,
   onStop,
   preview = false,
-  attachments = false,
+  attachments,
+  recall,
   hintMode,
   note,
   waiting = false,
@@ -198,6 +228,15 @@ export const Composer = memo(function Composer({
   const [text, setText, draft] = useDraft(draftKey);
   const [error, setError] = useState<string | undefined>();
   const [filesNote, setFilesNote] = useState(false);
+  // Files (U3 §13.5): the counts Send reads; a progress tick never changes them.
+  const uploads = useSyncExternalStore(
+    attachments?.subscribe ?? noSubscribe,
+    attachments?.summary ?? noUploads,
+  );
+  const [attachNote, setAttachNote] = useState<string | undefined>();
+  const [dragging, setDragging] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [sendTip, setSendTip] = useState(false);
   const [view, setView] = useState<"write" | "preview">("write");
   // Submits still waiting on the server (more than one when sends overlap).
   const [pending, setPending] = useState(0);
@@ -223,9 +262,11 @@ export const Composer = memo(function Composer({
     if (!unconfirmed || !landed.has(unconfirmed.id)) return;
     setText((cur) => (cur === unconfirmed.box ? unconfirmed.before : cur));
     draft.clearSent(unconfirmed.sent);
+    // Its files went with it: their chips go (the uploads now belong to that message).
+    if (unconfirmed.taken) attachments?.forget(unconfirmed.taken);
     setUnconfirmed(undefined);
     setError((e) => (e === UNCONFIRMED ? undefined : e));
-  }, [landed, unconfirmed, setText, draft, setUnconfirmed]);
+  }, [landed, unconfirmed, setText, draft, setUnconfirmed, attachments]);
   // A failed Stop, on the error line; it belongs to that turn (reset on its edge).
   const [stopError, setStopError] = useState<string | undefined>();
   const [errorEpoch, setErrorEpoch] = useState(stopEpoch);
@@ -248,6 +289,7 @@ export const Composer = memo(function Composer({
   const boxId = `${uid}-box`;
   const hintId = `${uid}-hint`;
   const noteId = `${uid}-note`;
+  const sendReasonId = `${uid}-send-reason`;
 
   // Caret menus (U3 §13.3, §13.4). `items` runs only while one is open (review note M3).
   const slash = completions?.slash;
@@ -398,6 +440,8 @@ export const Composer = memo(function Composer({
   );
 
   const empty = text.trim() === "";
+  // A command carries no files, so they never hold it.
+  const blocked = command ? undefined : sendBlockedBy(uploads);
   const retryable = unconfirmed !== undefined && text === unconfirmed.sent;
   const shownError =
     error === UNCONFIRMED && !retryable ? UNCONFIRMED_EDITED : (error ?? stopError);
@@ -464,7 +508,7 @@ export const Composer = memo(function Composer({
 
   async function send(urgent = false) {
     if (command) return runCommand();
-    if (empty || waiting) return;
+    if (empty || waiting || blocked) return;
     const sent = text;
     const invalid = validate?.(sent);
     if (invalid) {
@@ -482,6 +526,9 @@ export const Composer = memo(function Composer({
     setUnconfirmed(undefined);
     setError(undefined);
     setFilesNote(false);
+    setAttachNote(undefined);
+    // The finished files leave the composer with the text (back on a failure).
+    const taken = attachments?.take();
     // Optimistic: the box empties at once; the stored draft keeps the text until the server takes it.
     draft.hold(sent);
     setText("");
@@ -489,7 +536,7 @@ export const Composer = memo(function Composer({
     setPending((n) => n + 1);
     let submitted: Promise<void>;
     try {
-      submitted = onSubmit(sent, { urgent, clientMessageId, attachments: [] });
+      submitted = onSubmit(sent, { urgent, clientMessageId, attachments: taken?.ids ?? [] });
     } catch (e) {
       submitted = Promise.reject(e);
     }
@@ -501,14 +548,18 @@ export const Composer = memo(function Composer({
     try {
       await submitted;
       draft.clearSent(sent);
+      if (taken) attachments?.settle(taken);
     } catch (e) {
       const box = putBack(sent);
+      // The chips come back too, the 15s abort's included (U3 §13.2).
+      if (taken) attachments?.restore(taken);
       if (e instanceof SubmitError && e.unconfirmed) {
         setUnconfirmed({
           id: clientMessageId,
           sent,
           box,
           before: box === sent ? "" : box.slice(0, -sent.length - 1),
+          ...(taken?.ids.length ? { taken } : {}),
         });
         setError(UNCONFIRMED);
       } else setError(e instanceof Error && e.message ? e.message : NETWORK_ERROR);
@@ -568,6 +619,27 @@ export const Composer = memo(function Composer({
       leaveCommand(true);
       return;
     }
+    // Recall (U3 §13.2): ↑ in an empty box with the caret at 0 fills it with your last message's text.
+    if (
+      recall &&
+      e.key === "ArrowUp" &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      !command &&
+      text === "" &&
+      e.currentTarget.selectionStart === 0 &&
+      e.currentTarget.selectionEnd === 0
+    ) {
+      const t = recall();
+      if (t) {
+        e.preventDefault();
+        setText(t);
+        pendingCaret.current = { at: t.length, look: false };
+      }
+      return;
+    }
     const urgent = isUrgentSendKey(e.nativeEvent);
     if (!urgent && !isSendKey(e.nativeEvent)) return;
     e.preventDefault();
@@ -575,22 +647,45 @@ export const Composer = memo(function Composer({
     void (command ? runCommand() : send(urgent));
   };
 
-  // Q38: where files can't go, a file is ignored with a note. Text on the clipboard still pastes.
+  /** Files from a paste, a drop or the picker (U3 §13.5); past the limit the rest are left out. */
+  const addFiles = (files: File[], folders = 0) => {
+    if (!attachments) return;
+    const took = files.length ? attachments.add(files) : 0;
+    setAttachNote(folders > 0 ? NO_FOLDERS : took < files.length ? TOO_MANY : undefined);
+  };
+  // A paste with text inserts the text and ignores its files (a spreadsheet's cells carry a PNG of
+  // them); files attach only when they are all there is. Where files can't go, they get a note (Q38).
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const fileOnly =
       e.clipboardData.files.length > 0 && e.clipboardData.getData("text/plain") === "";
-    if (!fileOnly) pasted.current = true;
-    if (attachments || !fileOnly) return;
+    if (!fileOnly) {
+      pasted.current = true;
+      return;
+    }
     e.preventDefault();
-    setFilesNote(true);
+    if (attachments) addFiles(Array.from(e.clipboardData.files));
+    else setFilesNote(true);
   };
+  const hasFiles = (e: DragEvent<HTMLDivElement>) =>
+    Array.from(e.dataTransfer.types).includes("Files");
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (!attachments && e.dataTransfer.types.includes("Files")) e.preventDefault();
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (attachments && !dragging) setDragging(true);
+  };
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
   };
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    if (attachments || e.dataTransfer.files.length === 0) return;
+    if (e.dataTransfer.files.length === 0) return;
     e.preventDefault();
-    setFilesNote(true);
+    setDragging(false);
+    if (!attachments) {
+      setFilesNote(true);
+      return;
+    }
+    const { files, folders } = filesOf(e.dataTransfer);
+    addFiles(files, folders);
   };
 
   // `/foo` matching nothing, or `//x`: it goes as text, and the box says so (U3 §13.3).
@@ -620,9 +715,19 @@ export const Composer = memo(function Composer({
         <div
           data-composer-frame
           onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
           onDrop={onDrop}
           className="relative rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
         >
+          {dragging && (
+            // The drop target's edge in ink while a file is over it, with no animation (Q43).
+            <span
+              data-drop-edge
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-px rounded-lg border border-foreground"
+            />
+          )}
+          {attachments && <AttachmentChips store={attachments} />}
           {view === "write" ? (
             // Always this wrapper, so entering command mode never remounts the textarea (focus stays).
             <div className="flex min-w-0 items-start">
@@ -644,6 +749,7 @@ export const Composer = memo(function Composer({
                   setText(value);
                   setError(undefined);
                   setFilesNote(false);
+                  setAttachNote(undefined);
                   if (pasted.current) {
                     pasted.current = false;
                     pastedText.current = value;
@@ -729,6 +835,31 @@ export const Composer = memo(function Composer({
                 <AtSign aria-hidden="true" />
               </Button>
             ) : null}
+            {attachments && (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Attach files"
+                  className="shrink-0 text-muted-foreground"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <Paperclip aria-hidden="true" />
+                </Button>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  multiple
+                  hidden
+                  tabIndex={-1}
+                  onChange={(e) => {
+                    addFiles(Array.from(e.currentTarget.files ?? []));
+                    e.currentTarget.value = ""; // the same file can be picked again
+                  }}
+                />
+              </>
+            )}
             {preview && (
               <div className="flex shrink-0 items-center">
                 <Button
@@ -807,13 +938,39 @@ export const Composer = memo(function Composer({
               </div>
             )}
             {/* Primary at once when there is text: a keyboard action, so no transition. */}
-            <Button
-              type="submit"
-              disabled={(empty && !command) || waiting}
-              className="transition-none"
-            >
-              Send
-            </Button>
+            {attachments ? (
+              // While files hold it, the reason is its tooltip and its description (U3 §13.5).
+              <TooltipProvider>
+                <Tooltip open={sendTip && blocked !== undefined} onOpenChange={setSendTip}>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex shrink-0">
+                      <Button
+                        type="submit"
+                        disabled={(empty && !command) || waiting || blocked !== undefined}
+                        aria-describedby={blocked ? sendReasonId : undefined}
+                        className="transition-none"
+                      >
+                        Send
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {blocked && <TooltipContent>{blocked}</TooltipContent>}
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Button
+                type="submit"
+                disabled={(empty && !command) || waiting}
+                className="transition-none"
+              >
+                Send
+              </Button>
+            )}
+            {blocked && (
+              <span id={sendReasonId} className="sr-only">
+                {blocked}
+              </span>
+            )}
           </div>
         </div>
         {note && (
@@ -835,6 +992,14 @@ export const Composer = memo(function Composer({
             className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
           >
             {slashNote}
+          </p>
+        )}
+        {attachNote && (
+          <p
+            role="status"
+            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+          >
+            {attachNote}
           </p>
         )}
         {filesNote && (

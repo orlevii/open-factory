@@ -156,8 +156,9 @@ const PLACE = {
 } as const;
 
 // On coarse pointers the trigger is a visible 32×40 box filling its gutter (U4 §11.3), with no expander over the
-// row's text.
-const COARSE = "pointer-coarse:h-10 pointer-coarse:w-8 after:hidden";
+// row's text. Its height is capped at the row plus its 8px gap less its 4px top offset, so on consecutive one-line
+// rows (24px, 32px apart) a ⋯ never reaches the next row's.
+const COARSE = "pointer-coarse:h-[min(2.5rem,calc(100%+0.25rem))] pointer-coarse:w-8 after:hidden";
 // Shown instantly on hover or focus within the row (fine pointers), always on touch, and always while
 // its menu is open: the modal menu takes the row's hover and focus, and Radix anchors the menu to
 // this element's box, so a hidden trigger would send it to the viewport's corner. The 0.98 press is

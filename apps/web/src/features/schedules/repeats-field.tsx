@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { FieldShell } from "@/components/field-shell";
-import { IN_FORM } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -93,9 +92,9 @@ export function RepeatsField({
                 {summary ? `${summary} (${zone})` : null}
               </p>
               <details className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-                <summary
-                  className={`w-fit cursor-pointer pointer-coarse:content-center ${IN_FORM}`}
-                >
+                {/* 40px tall on touch; no side padding, so it stays aligned with the field's text (it is wider
+                    than 40px). */}
+                <summary className="w-fit cursor-pointer pointer-coarse:min-h-10 pointer-coarse:content-center">
                   Cron help
                 </summary>
                 <p className="mt-1">{CRON_HELP}</p>

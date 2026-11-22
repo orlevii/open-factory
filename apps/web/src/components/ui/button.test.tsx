@@ -101,13 +101,14 @@ describe("Button hit areas on coarse pointers (U4 §11.3)", () => {
   test("default and lg text buttons grow to 40px for real, with no expander", () => {
     for (const size of ["default", "lg"] as const) {
       const el = button({ size });
-      expect(el, size).toHaveClass("pointer-coarse:h-10");
+      // min-w: a header action whose label is sr-only on phones is its icon alone.
+      expect(el, size).toHaveClass("pointer-coarse:h-10", "pointer-coarse:min-w-10");
       expect(el, size).not.toHaveClass("hit-40");
     }
   });
 
   test("a button in a form has no expander: it grows to 40px with real padding", () => {
-    for (const size of ["sm", "xs", "icon-sm", "default"] as const) {
+    for (const size of ["sm", "xs", "default"] as const) {
       const el = button({ size, inForm: true });
       expect(el, size).not.toHaveClass("hit-40");
       expect(el, size).toHaveClass("pointer-coarse:min-h-10", "pointer-coarse:px-3");

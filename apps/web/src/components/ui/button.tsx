@@ -19,10 +19,10 @@ const buttonVariants = cva(
       },
       size: {
         default:
-          "h-8 pointer-coarse:h-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+          "h-8 pointer-coarse:h-10 pointer-coarse:min-w-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-9 pointer-coarse:h-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        lg: "h-9 pointer-coarse:h-10 pointer-coarse:min-w-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         icon: "size-8 pointer-coarse:size-9",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
@@ -39,7 +39,8 @@ const buttonVariants = cva(
 )
 
 /** Sizes under 40px that take the coarse-pointer `::after` expander (`hit-40` in styles.css, U4 §11.3): the glyph
- *  keeps its size and the hit box grows to 40×40. `default` and `lg` grow for real instead. */
+ *  keeps its size and the hit box grows to 40×40. `default` and `lg` grow for real instead (`min-w-10` for a header
+ *  action whose label goes sr-only on phones, leaving only its icon). */
 const EXPANDED = new Set(["icon", "icon-xs", "icon-sm", "icon-lg", "xs", "sm"])
 
 /** A button inside a form: no expander (it would overlap a field or prose); on coarse pointers it grows to 40px

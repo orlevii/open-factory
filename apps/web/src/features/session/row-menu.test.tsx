@@ -418,5 +418,7 @@ test("the handle is stable across renders", async () => {
 test("on coarse pointers the timeline ⋯ is a visible 32×40 box in its gutter, with no expander (U4 §11.3)", () => {
   render(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   const trigger = screen.getByRole("button", { name: "Row actions" });
-  expect(trigger).toHaveClass("pointer-coarse:h-10", "pointer-coarse:w-8", "after:hidden");
+  expect(trigger).toHaveClass("pointer-coarse:w-8", "after:hidden");
+  // 40px, but never past the row's 8px gap: consecutive one-line rows' boxes don't overlap.
+  expect(trigger).toHaveClass("pointer-coarse:h-[min(2.5rem,calc(100%+0.25rem))]");
 });

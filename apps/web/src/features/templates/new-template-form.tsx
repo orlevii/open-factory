@@ -266,6 +266,7 @@ export function NewTemplateForm({
               type="button"
               variant="ghost"
               size="sm"
+              inForm
               onClick={() => update({ revealed: true, name })}
             >
               Change

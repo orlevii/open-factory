@@ -5,12 +5,17 @@ const HOLD_MS = 500;
 const FEEDBACK_MS = 80;
 const SLOP_PX = 8;
 
-let releaseMarked = false;
+// While the finger is still down after a fire the marks stay valid this long; once it lifts they
+// expire RELEASE_GRACE_MS later, so a stale mark never swallows a later, unrelated event.
+const HELD_GRACE_MS = 10_000;
+const RELEASE_GRACE_MS = 1000;
+
+let releaseExpiresAt = 0;
 
 /** True for one pointerup after a long-press fired: menus call it to ignore the lifting finger. */
 export function consumeLongPressRelease(): boolean {
-  const marked = releaseMarked;
-  releaseMarked = false;
+  const marked = Date.now() < releaseExpiresAt;
+  releaseExpiresAt = 0;
   return marked;
 }
 
@@ -30,7 +35,7 @@ export function useLongPress(onLongPress: (at: { x: number; y: number }) => void
   }, [onLongPress]);
 
   const press = useRef<Press | null>(null);
-  const swallowClick = useRef(false);
+  const swallowUntil = useRef(0);
 
   useEffect(() => () => end(press), []);
 
@@ -42,13 +47,14 @@ export function useLongPress(onLongPress: (at: { x: number; y: number }) => void
           end(press);
           return;
         }
-        swallowClick.current = false;
+        swallowUntil.current = 0;
+        releaseExpiresAt = 0;
         const el = e.currentTarget;
         const at = { x: e.clientX, y: e.clientY };
         const hold = setTimeout(() => {
           end(press);
-          swallowClick.current = true;
-          releaseMarked = true;
+          swallowUntil.current = Date.now() + HELD_GRACE_MS;
+          releaseExpiresAt = swallowUntil.current;
           navigator.vibrate?.(10);
           callback.current(at);
         }, HOLD_MS);
@@ -61,19 +67,25 @@ export function useLongPress(onLongPress: (at: { x: number; y: number }) => void
         if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > SLOP_PX) end(press);
       },
       onPointerUp(e: React.PointerEvent) {
-        if (press.current && e.pointerId === press.current.pointerId) end(press);
+        if (press.current && e.pointerId === press.current.pointerId) {
+          end(press);
+        } else if (e.pointerType === "touch" && Date.now() < swallowUntil.current) {
+          // The finger that fired the press is lifting: start the grace window.
+          swallowUntil.current = Date.now() + RELEASE_GRACE_MS;
+          releaseExpiresAt = swallowUntil.current;
+        }
       },
       onPointerCancel(e: React.PointerEvent) {
         if (press.current && e.pointerId === press.current.pointerId) end(press);
       },
       onClickCapture(e: React.MouseEvent) {
-        if (!swallowClick.current) return;
-        swallowClick.current = false;
+        if (Date.now() >= swallowUntil.current) return;
+        swallowUntil.current = 0;
         e.preventDefault();
         e.stopPropagation();
       },
       onContextMenu(e: React.MouseEvent) {
-        if (press.current || swallowClick.current) e.preventDefault();
+        if (press.current || Date.now() < swallowUntil.current) e.preventDefault();
       },
     }),
     [],

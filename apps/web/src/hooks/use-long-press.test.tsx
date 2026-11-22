@@ -196,3 +196,38 @@ test("handlers are identity-stable and call the latest callback", () => {
   expect(first).not.toHaveBeenCalled();
   expect(second).toHaveBeenCalledTimes(1);
 });
+
+test("a stale release mark does not survive the next press or a delay", () => {
+  const { el } = setup();
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(500));
+  fireEvent.pointerUp(el, touch());
+  fireEvent.pointerDown(el, touch());
+  expect(consumeLongPressRelease()).toBe(false);
+  fireEvent.pointerUp(el, touch());
+
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(500));
+  fireEvent.pointerUp(el, touch());
+  act(() => void vi.advanceTimersByTime(1001));
+  expect(consumeLongPressRelease()).toBe(false);
+});
+
+test("a long hold after the fire keeps the mark until the finger lifts", () => {
+  const { el } = setup();
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(3000));
+  expect(consumeLongPressRelease()).toBe(true);
+});
+
+test("contextmenu and click are no longer suppressed once the release grace passes", () => {
+  const onClick = vi.fn();
+  const { el } = setup(onClick);
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(500));
+  fireEvent.pointerUp(el, touch());
+  act(() => void vi.advanceTimersByTime(1001));
+  expect(fireEvent.contextMenu(el)).toBe(true);
+  fireEvent.click(el);
+  expect(onClick).toHaveBeenCalledTimes(1);
+});

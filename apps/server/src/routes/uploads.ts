@@ -14,6 +14,8 @@ const uploadParams = z.object({ slug: slugSchema, id: z.string().min(1).max(64) 
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
 const TOO_LARGE = "The file is larger than 20 MB.";
+const UNSAFE_WORKSPACE =
+  "The agent's .factory folder is a link or isn't a folder; the factory won't write through it.";
 const WORKSPACE_GONE = "This agent's workspace no longer exists.";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
@@ -104,7 +106,11 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
         return err(reply, 410, "workspace_gone", WORKSPACE_GONE);
       if (e instanceof UploadAgentEndedError) return err(reply, 409, e.code, e.message);
       if (e instanceof UploadExistsError) return err(reply, 409, "upload_exists", e.message);
-      if (e instanceof WorkspaceError) return err(reply, 409, "unsafe_workspace", e.message);
+      if (e instanceof WorkspaceError) {
+        // The message reaches the chip: the server's absolute paths stay in the log (finding D16).
+        req.log.warn({ err: e, agent: agent.slug }, "upload refused: unsafe workspace");
+        return err(reply, 409, "unsafe_workspace", UNSAFE_WORKSPACE);
+      }
       throw e;
     }
   });

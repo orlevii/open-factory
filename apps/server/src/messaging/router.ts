@@ -9,6 +9,7 @@ import {
   attachmentOf,
   bodyWithAttachments,
   claimUploads,
+  DUPLICATE_ATTACHMENT,
   INVALID_ATTACHMENT,
   loadAttachments,
 } from "../uploads/attach.ts";
@@ -249,6 +250,8 @@ export class Router {
     // (so the 64 KB limit counts it) and the row's `message_id` is set in the insert's transaction.
     const ids = opts.attachments ?? [];
     const files = ids.length ? await loadAttachments(this.d.db, ids, agent.id, from.userId) : [];
+    if (files === "duplicate")
+      return { ok: false, code: "invalid_attachment", message: DUPLICATE_ATTACHMENT };
     if (!files) return invalidAttachment();
     const fullBody = bodyWithAttachments(body, files);
     if (Buffer.byteLength(fullBody, "utf8") > MAX_BODY_BYTES)

@@ -226,7 +226,13 @@ test("a symlinked .factory refuses the upload and nothing is written outside the
   symlinkSync(outside, path.join(wd("linked"), ".factory"));
   const res = await upload("linked", Buffer.from("hello"), "a.txt");
   expect(res.statusCode).toBe(409);
-  expect(res.json().error.code).toBe("unsafe_workspace");
+  expect(res.json().error).toEqual({
+    code: "unsafe_workspace",
+    message:
+      "The agent's .factory folder is a link or isn't a folder; the factory won't write through it.",
+  });
+  // Finding D16: no server path in what the chip shows.
+  expect(res.body).not.toContain(t.factoryHome);
   expect(readdirSync(outside)).toEqual([]);
   expect(
     await t.db.select().from(schema.uploads).where(eq(schema.uploads.originalName, "a.txt")),

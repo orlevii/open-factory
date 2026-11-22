@@ -5,6 +5,7 @@ import type { Exec } from "../agents/event-store.ts";
 
 const { uploads } = schema;
 
+export const DUPLICATE_ATTACHMENT = "The same file is attached twice.";
 export const INVALID_ATTACHMENT =
   "An attached file isn't available any more; remove it and try again.";
 
@@ -26,8 +27,8 @@ export const attachmentOf = (r: UploadRow): MessageAttachment => ({
 });
 
 /**
- * The uploads `ids` name, in that order, when every one belongs to this agent and this sender and is unused (and none
- * repeats); otherwise undefined. A pre-check for a clear refusal: `claimUploads` settles a race inside the insert's
+ * The uploads `ids` name, in that order, when every one belongs to this agent and this sender and is unused;
+ * "duplicate" when an id repeats, otherwise undefined. A pre-check for a clear refusal: `claimUploads` settles a race inside the insert's
  * transaction.
  */
 export async function loadAttachments(
@@ -35,8 +36,8 @@ export async function loadAttachments(
   ids: string[],
   agentId: string,
   uploaderId: string,
-): Promise<UploadRow[] | undefined> {
-  if (new Set(ids).size !== ids.length) return undefined;
+): Promise<UploadRow[] | "duplicate" | undefined> {
+  if (new Set(ids).size !== ids.length) return "duplicate";
   const rows = await db.select().from(uploads).where(inArray(uploads.id, ids));
   const byId = new Map(rows.map((r) => [r.id, r]));
   const out: UploadRow[] = [];

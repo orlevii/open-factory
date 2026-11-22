@@ -984,6 +984,13 @@ describe("U3 §13.5: attachments on POST /messages", () => {
     const used = await upload("dev", Buffer.from("z\n"), "used.txt");
     expect((await post({ body: "first", attachments: [used] })).statusCode).toBe(202);
     const fresh = await upload("dev", Buffer.from("w\n"), "fresh.txt");
+    // Finding D15: a repeated id has its own copy.
+    const twice = await post({ body: "twice", attachments: [fresh, fresh] });
+    expect(twice.statusCode).toBe(422);
+    expect(twice.json().error).toEqual({
+      code: "invalid_attachment",
+      message: "The same file is attached twice.",
+    });
     for (const bad of [[forOps], [samUpload], [used], ["no-such-upload"], [fresh, fresh]]) {
       const before = await s.sql`select count(*)::int as n from messages`;
       const res = await post({ body: "with a bad file", attachments: bad });

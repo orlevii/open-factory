@@ -2109,6 +2109,7 @@ export class AgentRuntime {
     this.lastActivityAt = Date.now();
     // Pump first: its jobs queue behind this one, and if the append below fails the stop's `exited` is still consumed.
     void this.pump(proc);
+    void this.storeCommands(proc);
     if (container) {
       this.lastImage = container.image;
       await this.append(null, {
@@ -2129,6 +2130,17 @@ export class AgentRuntime {
     await this.snapshotJournal(proc);
     this.publishStatus();
     return true;
+  }
+
+  /** U3 §13.3: the process's command list, stored once `initialize` answers. Never in the event log. */
+  private async storeCommands(proc: HarnessProcess) {
+    try {
+      const list = await proc.commands?.();
+      if (list)
+        await this.d.store.saveCommands(this.agent.id, list, proc.claudeCodeVersion ?? null);
+    } catch (err) {
+      this.d.log.warn({ err, agent: this.agent.slug }, "storing the command list failed");
+    }
   }
 
   /**

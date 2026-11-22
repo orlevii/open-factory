@@ -1,4 +1,4 @@
-import type { TemplateConfig } from "@open-factory/shared";
+import type { Command, TemplateConfig } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -90,6 +90,19 @@ export const agents = pgTable(
       .where(sql`${t.terminatedAt} is not null or ${t.archivedAt} is not null`),
   ],
 );
+
+/**
+ * U3 §13.3: the command list of the agent's last process start (`initialize`). A side table, never a column on
+ * `agents`: agent rows are read wholesale (`select().from(agents)`), and a ~60 KB list must not ride along.
+ */
+export const agentCommands = pgTable("agent_commands", {
+  agentId: text("agent_id")
+    .primaryKey()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  commands: jsonb("commands").$type<Command[]>().notNull(),
+  claudeCodeVersion: text("claude_code_version"),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+});
 
 export const turns = pgTable(
   "turns",

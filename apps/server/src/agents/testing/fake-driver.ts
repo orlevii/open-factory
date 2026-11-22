@@ -100,8 +100,11 @@ export class FakeProcess implements HarnessProcess {
 
 export class FakeDriver implements HarnessDriver {
   readonly starts: FakeProcess[] = [];
+  /** Each new process's `commands()` answer (U3 §13.3); undefined = no list. */
+  commandList: Command[] | undefined;
   start(spec: AgentRuntimeSpec, opts: { resumeSessionId?: string }) {
     const p = new FakeProcess(spec, opts);
+    p.commandList = this.commandList;
     this.starts.push(p);
     return p;
   }

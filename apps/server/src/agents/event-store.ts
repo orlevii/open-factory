@@ -3,6 +3,7 @@ import { type AgentRow, type Db, type RuntimeJournal, schema } from "@open-facto
 import {
   type AnyEvent,
   anyEventSchema,
+  type Command,
   type ErrorKind,
   formatKey,
   type MessageKind,
@@ -140,6 +141,21 @@ export class EventStore {
   /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
   async agentById(id: string, tx: Exec = this.db) {
     return (await tx.select().from(agents).where(eq(agents.id, id)))[0];
+  }
+  /** U3 §13.3: the command list of the agent's latest process start (a side table, never on agent reads). */
+  async saveCommands(agentId: string, commands: Command[], claudeCodeVersion: string | null) {
+    const values = { commands, claudeCodeVersion, at: this.clock() };
+    await this.db
+      .insert(schema.agentCommands)
+      .values({ agentId, ...values })
+      .onConflictDoUpdate({ target: schema.agentCommands.agentId, set: values });
+  }
+  async agentCommands(agentId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.agentCommands)
+      .where(eq(schema.agentCommands.agentId, agentId));
+    return row;
   }
   async setSessionId(agentId: string, sessionId: string | null) {
     await this.db.update(agents).set({ sessionId }).where(eq(agents.id, agentId));

@@ -756,3 +756,100 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     expect(n[0]?.n).toBe(2);
   });
 });
+
+describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let cookie: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    // A template skill is a host skill folder, which a start links into the workdir.
+    const skill = path.join(s.config.hostSkillsDir, "research");
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(path.join(skill, "SKILL.md"), "---\nname: research\ndescription: x\n---\n");
+    await s.seedAgent({ config: { skills: ["research"] } });
+    cookie = (await s.signUpUser({ handle: "or13" })).cookie;
+  });
+  afterAll(() => s.close());
+  const get = (signedIn = true) =>
+    s.app.inject({
+      method: "GET",
+      url: "/api/agents/dev/commands",
+      ...(signedIn ? { headers: { cookie } } : {}),
+    });
+  const list = [
+    { name: "research", description: "Research a topic (project)", argumentHint: "[topic]" },
+    { name: "model", description: "Set the AI model", argumentHint: "<model>", builtin: true },
+    {
+      name: "usage",
+      description: "Show session cost",
+      argumentHint: "",
+      builtin: true,
+      aliases: ["cost", "stats"],
+    },
+    { name: "batch", description: "Plan a large change", argumentHint: "", builtin: true },
+  ];
+
+  test("signed out is 401; an unknown agent is 404", async () => {
+    expect((await get(false)).statusCode).toBe(401);
+    const res = await s.app.inject({
+      method: "GET",
+      url: "/api/agents/nope/commands",
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("agent_not_found");
+  });
+
+  test("before the first start: the template's skills, source template", async () => {
+    const res = await get();
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      commands: [{ name: "research", description: "", argumentHint: "" }],
+      source: "template",
+      at: null,
+      stale: false,
+    });
+  });
+
+  test("after a start: the session's allowed list, stored apart from the agent row", async () => {
+    drv.commandList = list;
+    const sent = await s.app.inject({
+      method: "POST",
+      url: "/api/agents/dev/messages",
+      headers: { cookie },
+      payload: { body: "hi", urgent: false },
+    });
+    expect(sent.statusCode).toBe(202);
+    await expect.poll(async () => (await get()).json().source, { timeout: 5000 }).toBe("session");
+    const body = (await get()).json();
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+    expect(body.stale).toBe(false);
+    expect(Number.isNaN(Date.parse(body.at))).toBe(false);
+    const [row] = await s.db.select().from(schema.agentCommands);
+    expect(row).toMatchObject({ commands: list, claudeCodeVersion: "2.1.327" });
+    // Never on agent reads: not a column of agents, never in a summary.
+    expect(Object.keys(schema.agents)).not.toContain("commands");
+    const detail = await s.app.inject({
+      method: "GET",
+      url: "/api/agents/dev",
+      headers: { cookie },
+    });
+    expect(Object.keys(detail.json().agent)).not.toContain("commands");
+    expect(detail.body).not.toContain("Research a topic");
+    const all = await s.app.inject({ method: "GET", url: "/api/agents", headers: { cookie } });
+    expect(all.body).not.toContain("Research a topic");
+  });
+
+  test("stale when the template's skills changed after the list was stored", async () => {
+    const [agent] = await s.db.select().from(schema.agents);
+    if (!agent) throw new Error("no agent");
+    await s.db
+      .update(schema.agents)
+      .set({ config: { ...agent.config, skills: ["research", "triage"] } });
+    const body = (await get()).json();
+    expect(body).toMatchObject({ source: "session", stale: true });
+    // The session's list stays what the menu shows until the next start.
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+  });
+});

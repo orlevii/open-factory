@@ -85,6 +85,13 @@
       "when": 1795295099431,
       "tag": "0011_clean_talisman",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795320698033,
+      "tag": "0012_black_tattoo",
+      "breakpoints": true
     }
   ]
 }

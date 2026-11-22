@@ -1,4 +1,5 @@
 import {
+  agentCommandsResponseSchema,
   agentDetailSchema,
   agentListQuerySchema,
   agentListSchema,
@@ -19,6 +20,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
+import { commandsResponse } from "../agents/commands.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -84,6 +86,17 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       lastSeq: await app.store.lastSeq(rt.agent.id),
     });
   });
+
+  // U3 §13.3: the commands this agent may run (the allowed set the dispatch route enforces too).
+  app.get(
+    "/api/agents/:slug/commands",
+    { schema: { params: slugParams, response: { 200: agentCommandsResponseSchema } } },
+    async (req, reply) => {
+      const row = await app.store.agentBySlug(req.params.slug);
+      if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      return commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
+    },
+  );
 
   app.patch(
     "/api/agents/:slug",

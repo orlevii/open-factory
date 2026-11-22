@@ -43,6 +43,8 @@ export const UNCONFIRMED_EDITED =
   "Couldn't confirm the send. It may still arrive; check before sending again.";
 /** Where attachments aren't supported, a pasted or dropped file is ignored with this note (Q38). */
 export const FILES_NOTE = "Files can be sent in an agent's session";
+/** Send's reason while a restored command waits for the commands list. */
+export const LOADING_COMMANDS = "Loading this agent's commands…";
 const NO_LANDED: ReadonlySet<string> = new Set();
 const NO_UPLOADS: UploadSummary = { count: 0, pending: 0, failed: 0 };
 const noUploads = () => NO_UPLOADS;
@@ -112,6 +114,12 @@ export type CompletionSource = {
   /** A line in the open menu, given how many rows it has: with none, the menu still opens for it (an
    *  empty state); undefined closes a menu with no rows. */
   menuNote?(rows: number): string | undefined;
+  /** Every row renders and the list scrolls at about 8 rows' height (the `/` menu: a short, fixed list
+   *  where a cap would hide the built-ins behind the skills). Without it, the best 8 (`@`). */
+  allRows?: boolean;
+  /** Whether the data `commandFor` reads has loaded (or failed to): until then a stored `/name args`
+   *  can't be told from text, and Send waits. Without it, always decided. */
+  ready?(): boolean;
   /** Under the box while a token of this source matches no row (`/foo` sends as text). */
   missNote?(): string | undefined;
   /** Under the box for the whole text, at any time (`//x`); cheap, it runs on every render. */
@@ -322,9 +330,19 @@ export const Composer = memo(function Composer({
   // After a reload the list usually isn't loaded at mount: the restore waits for it (the source's
   // `watch`) while the box still holds exactly the stored text; typing gives up on it (evidence D2).
   const pendingRestore = useRef(STORED_COMMAND.test(text) ? text : undefined);
+  // While the list is still loading, Send holds: an Enter would send the stored `/name args` as a
+  // message (re-verification N5). A source without `ready` is taken as decided.
+  const [restoring, setRestoring] = useState(
+    () => pendingRestore.current !== undefined && slash?.ready?.() === false,
+  );
   const textNow = useRef(text);
   useLayoutEffect(() => {
     textNow.current = text;
+    // Typed over: the stored text is the person's now.
+    if (pendingRestore.current !== undefined && text !== pendingRestore.current) {
+      pendingRestore.current = undefined;
+      setRestoring(false);
+    }
   });
   useLayoutEffect(() => {
     if (pendingRestore.current === undefined) return;
@@ -333,13 +351,23 @@ export const Composer = memo(function Composer({
       const stored = pendingRestore.current;
       if (stored === undefined || textNow.current !== stored) {
         pendingRestore.current = undefined;
+        setRestoring(false);
         stop?.();
         return;
       }
       const m = STORED_COMMAND.exec(stored);
       const mode = m ? slash?.commandFor?.(`/${m[1]} `) : undefined;
-      if (!m || !mode) return;
+      if (!m || !mode) {
+        // The list is in and doesn't know the name (or the GET failed): it stays text.
+        if (slash?.ready?.() !== false) {
+          pendingRestore.current = undefined;
+          setRestoring(false);
+          stop?.();
+        }
+        return;
+      }
       pendingRestore.current = undefined;
+      setRestoring(false);
       stop?.();
       setCommand(mode);
       setText(m[2] ?? "");
@@ -366,10 +394,11 @@ export const Composer = memo(function Composer({
   const watched = menu?.source;
   useEffect(() => watched?.watch?.(() => setDataVersion((v) => v + 1)), [watched]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: dataVersion re-reads the source's data
-  const items = useMemo(
-    () => (menu ? menu.source.items(menu.query).slice(0, MAX_ROWS) : NO_ITEMS),
-    [menu, dataVersion],
-  );
+  const items = useMemo(() => {
+    if (!menu) return NO_ITEMS;
+    const rows = menu.source.items(menu.query);
+    return menu.source.allRows ? rows : rows.slice(0, MAX_ROWS);
+  }, [menu, dataVersion]);
   const menuNote = useMemo(() => menu?.source.menuNote?.(items.length), [menu, items]);
   const menuOpen = items.length > 0 || menuNote !== undefined;
   const menuRef = useRef<CaretMenuHandle>(null);
@@ -493,7 +522,9 @@ export const Composer = memo(function Composer({
   const blocked = command ? undefined : sendBlockedBy(uploads);
   // Why Send holds while there are files (U3 §13.5), shown under the box: Send stays focusable
   // (aria-disabled), so the reason is reachable by keyboard too.
-  const held = blocked ?? (uploads.count > 0 && empty && !command ? ADD_A_MESSAGE : undefined);
+  const held = restoring
+    ? LOADING_COMMANDS
+    : (blocked ?? (uploads.count > 0 && empty && !command ? ADD_A_MESSAGE : undefined));
   const retryable = unconfirmed !== undefined && text === unconfirmed.sent;
   const shownError =
     error === UNCONFIRMED && !retryable ? UNCONFIRMED_EDITED : (error ?? stopError);
@@ -570,7 +601,7 @@ export const Composer = memo(function Composer({
 
   async function send(urgent = false) {
     if (command) return runCommand();
-    if (empty || waiting || blocked) return;
+    if (empty || waiting || blocked || restoring) return;
     const sent = text;
     const invalid = validate?.(sent, uploads.count);
     if (invalid) {

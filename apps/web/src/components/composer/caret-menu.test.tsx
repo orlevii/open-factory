@@ -186,11 +186,28 @@ const ROWS: CompletionItem[] = [
   },
 ];
 
-test("the menu never runs past the viewport: its height is capped and the list scrolls", () => {
+test("the list itself scrolls: its height is capped at about 8 rows and at the room above the caret", () => {
+  setup(ROWS);
+  const list = screen.getByRole("listbox");
+  expect(list).toHaveClass("overflow-y-auto");
+  // The cap is on the list (a cap on the popover alone let the list grow past it, re-verification N1).
+  expect(list.className).toContain("--radix-popover-content-available-height");
+  expect(list.className).toContain("--caret-menu-rows-height");
+  expect(list.style.getPropertyValue("--caret-menu-rows-height")).toBe("24rem"); // `/` rows: 8 × 3rem
+});
+
+test("an `@` list caps at 8 of its shorter rows", () => {
+  setup();
+  expect(screen.getByRole("listbox").style.getPropertyValue("--caret-menu-rows-height")).toBe(
+    "16rem",
+  );
+});
+
+test("the menu is never wider than the viewport, even at 200% text on a phone", () => {
   setup(ROWS);
   const content = document.querySelector("[data-caret-menu]") as HTMLElement;
-  expect(content).toHaveClass("max-h-(--radix-popover-content-available-height)");
-  expect(screen.getByRole("listbox")).toHaveClass("overflow-y-auto", "min-h-0");
+  expect(content).toHaveClass("min-w-[min(14rem,calc(100vw-2rem))]");
+  expect(content).not.toHaveClass("min-w-56");
 });
 
 test("a `/` row's name never yields to its hint; a plugin name keeps its `/`, some of its prefix and the part after `:`", () => {

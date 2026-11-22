@@ -1297,6 +1297,7 @@ test("after a reload the stored command comes back once the commands list arrive
   const late: CompletionSource = {
     ...SLASH,
     commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
+    ready: () => loaded,
     watch(onChange) {
       changed = onChange;
       return () => {};
@@ -1321,6 +1322,7 @@ test("a stored command typed over before the list arrives stays text", async () 
   const late: CompletionSource = {
     ...SLASH,
     commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
+    ready: () => loaded,
     watch(onChange) {
       changed = onChange;
       return () => {};
@@ -1344,4 +1346,67 @@ test("Esc out of command mode puts the name back without reopening the menu", as
   expect(screen.queryByRole("listbox")).toBeNull();
   await userEvent.type(box, "x"); // typing brings menus back as usual
   expect(box).toHaveValue("/contextx");
+});
+
+test("the `/` menu renders every row its source gives (the list scrolls); `@` keeps its 8", async () => {
+  const many: CompletionItem[] = Array.from({ length: 13 }, (_, i) => ({
+    id: `c${i}`,
+    label: `/c${i}`,
+    group: i < 8 ? "Skills" : "Commands",
+    kind: "command",
+    exact: true,
+  }));
+  const slash: CompletionSource = {
+    ...SLASH,
+    items: () => many,
+    allRows: true,
+  };
+  const { box } = setupSlash({ completions: { slash } });
+  await userEvent.type(box, "/");
+  expect(screen.getAllByRole("option")).toHaveLength(13);
+});
+
+test("while a stored command waits for the commands list, Enter holds instead of sending it as text", async () => {
+  localStorage.setItem(
+    "of-draft:v1:agent:dev",
+    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
+  );
+  let loaded = false;
+  let changed: () => void = () => {};
+  const late: CompletionSource = {
+    ...SLASH,
+    commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
+    ready: () => loaded,
+    watch(onChange) {
+      changed = onChange;
+      return () => {};
+    },
+  };
+  const { box, onSubmit, onCommand } = setupSlash({ completions: { slash: late } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(box).toHaveValue("/code-review src/");
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  expect(document.querySelector("[data-send-reason]")).toHaveTextContent(
+    "Loading this agent's commands…",
+  );
+  loaded = true;
+  act(() => changed());
+  expect(chip()).toHaveTextContent("/code-review");
+  fireEvent.keyDown(box, { key: "Enter" });
+  await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+test("a stored text whose name the loaded list doesn't know sends as text", () => {
+  localStorage.setItem(
+    "of-draft:v1:agent:dev",
+    JSON.stringify({ text: "/nope src/", at: Date.now() }),
+  );
+  const ready: CompletionSource = { ...SLASH, ready: () => true };
+  const { box, onSubmit } = setupSlash({ completions: { slash: ready } });
+  expect(document.querySelector("[data-send-reason]")).toBeNull();
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(onSubmit).toHaveBeenCalledWith("/nope src/", expect.anything());
 });

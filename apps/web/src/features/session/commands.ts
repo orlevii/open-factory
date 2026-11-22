@@ -163,6 +163,11 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
       return query === "" ? grouped(rows) : rows;
     },
     enterNeedsExact: true,
+    allRows: true,
+    ready: () => {
+      const status = qc.getQueryState(key)?.status;
+      return status === "success" || status === "error";
+    },
     accept: (item) => {
       const c = read()?.commands.find((x) => x.name === item.id);
       return { text: "", caret: 0, command: c ? modeOf(c) : { name: item.id, placeholder: "" } };
@@ -190,7 +195,12 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
       void qc.prefetchQuery(commandsQueryOptions(slug));
       const hash = hashKey(key);
       return qc.getQueryCache().subscribe((e) => {
-        if (e.type === "updated" && e.action.type === "success" && e.query.queryHash === hash)
+        // A failed GET decides too (a stored command then stays text).
+        if (
+          e.type === "updated" &&
+          (e.action.type === "success" || e.action.type === "error") &&
+          e.query.queryHash === hash
+        )
           onChange();
       });
     },

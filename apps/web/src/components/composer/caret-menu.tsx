@@ -1,5 +1,12 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { type Ref, type RefObject, useImperativeHandle, useLayoutEffect, useState } from "react";
+import {
+  type CSSProperties,
+  type Ref,
+  type RefObject,
+  useImperativeHandle,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
@@ -97,6 +104,10 @@ function runs(items: readonly CompletionItem[]): { heading?: string; items: Comp
   }
   return out;
 }
+
+/** About 8 rows of each kind: a `/` row is two lines (3rem), an `@` row one (2rem). */
+const COMMAND_ROWS_HEIGHT = "24rem";
+const MENTION_ROWS_HEIGHT = "16rem";
 
 const itemClass =
   "flex min-h-8 pointer-coarse:min-h-9 cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm select-none data-[selected=true]:bg-accent";
@@ -217,7 +228,8 @@ export function CaretMenu({
         onMouseDown={keepFocus}
         // Capped at the room Radix measures above the caret, the list scrolling inside (at 200% text
         // the menu would otherwise run past the top of the viewport; evidence D6).
-        className="flex max-h-(--radix-popover-content-available-height) w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 flex-col gap-0 p-1"
+        // Never wider than the viewport, 200% text on a phone included (re-verification N4).
+        className="flex max-h-(--radix-popover-content-available-height) w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-[min(14rem,calc(100vw-2rem))] flex-col gap-0 p-1"
       >
         <CommandPrimitive
           label={label}
@@ -230,7 +242,17 @@ export function CaretMenu({
           <CommandPrimitive.List
             ref={setList}
             label={label}
-            className="min-h-0 scroll-py-1 overflow-y-auto"
+            // The list scrolls itself, at about 8 rows' height and within the room above the caret (less
+            // the popover's padding and a note), so the highlighted row is always scrolled into view
+            // (re-verification N1, N2).
+            className={`min-h-0 scroll-py-1 overflow-y-auto ${note ? "max-h-[min(var(--caret-menu-rows-height),calc(var(--radix-popover-content-available-height)-3rem))]" : "max-h-[min(var(--caret-menu-rows-height),calc(var(--radix-popover-content-available-height)-0.5rem))]"}`}
+            style={
+              {
+                "--caret-menu-rows-height": items.some((i) => i.kind === "command")
+                  ? COMMAND_ROWS_HEIGHT
+                  : MENTION_ROWS_HEIGHT,
+              } as CSSProperties
+            }
           >
             {runs(items).map((run) =>
               run.heading ? (

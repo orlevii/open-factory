@@ -209,3 +209,23 @@ test("browsing (`/` alone) groups the rows Skills, Commands, Factory, each heade
   ]);
   expect(src.items("co").some((i) => i.heading)).toBe(false);
 });
+
+test("ready: undecided until the list has loaded or failed; watch hears a failure too", async () => {
+  const src = commandSource(qc, "dev");
+  expect(src.ready?.()).toBe(false);
+  const heard = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { code: "x", message: "no" } }), { status: 500 }),
+    ),
+  );
+  const stop = src.watch?.(heard);
+  await vi.waitFor(() => expect(heard).toHaveBeenCalled());
+  expect(src.ready?.()).toBe(true);
+  stop?.();
+  vi.unstubAllGlobals();
+  respond();
+  expect(src.ready?.()).toBe(true);
+});

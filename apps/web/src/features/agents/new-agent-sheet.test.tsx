@@ -1074,6 +1074,15 @@ test("Add secret opens prefilled with Value focused; success removes the warning
   await waitFor(() => expect(field("Template")).toHaveFocus());
 });
 
+test("leaving an unchosen Template for its own New template button doesn't flag it", async () => {
+  const { dialog } = await open({ templates: [templateSummary("lead")] });
+  await waitFor(() => expect(field("Template")).toHaveFocus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "New template" }));
+  await child("New template");
+  expect(within(dialog).queryByText("Choose a template.")).toBeNull();
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
 test("New template (stacked) selects the new template", async () => {
   const writer = templateConfig({ name: "writer", displayName: "Writer", description: "" });
   const templates = [templateSummary("lead")];

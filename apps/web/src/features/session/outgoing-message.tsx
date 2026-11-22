@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, CircleAlert } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { formatTime } from "./format";
-import { AgentLink, ClampedMarkdown, LINK_CLASS, useAgentName } from "./message-block";
+import { ClampedMarkdown, LINK_CLASS } from "./message-block";
 import type { Row } from "./rows";
+import { SpeakerLine, useSpeakers } from "./speaker-line";
 import { denialText, ToolCallRow } from "./tool-call-row";
 
 type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
@@ -63,11 +64,11 @@ export function OutgoingMessage({
   const sent = parseSendResult(row.result);
   const target = sent?.to ?? input.to;
   const bare = target.replace(/^@/, "");
-  const activeName = useAgentName(bare);
+  const speakers = useSpeakers();
   // A result names agents bare and humans `@handle`; an unanswered call is only the argument.
   const toAgent = sent
     ? !sent.to.startsWith("@")
-    : !target.startsWith("@") || (bare !== "humans" && typeof activeName === "string");
+    : !target.startsWith("@") || (bare !== "humans" && speakers.isAgent(bare));
   const recipient = `@${bare}`;
   const failed = row.result?.isError === true;
   return (
@@ -77,21 +78,13 @@ export function OutgoingMessage({
       showCall={showCall}
       onToggleCall={onToggleCall}
       rowProps={rowProps}
-      sender={
-        <>
-          <span className="font-mono text-foreground">@{slug}</span>
-          <ArrowRight aria-hidden="true" className="size-3.5 text-muted-foreground" />
-          <span>
-            {toAgent ? (
-              <AgentLink slug={bare} />
-            ) : (
-              <span className="font-mono text-foreground">{recipient}</span>
-            )}
-          </span>
+      header={
+        // "Name → Recipient" (U3 §7.2): "You" for you, "All humans" for @humans.
+        <SpeakerLine from={slug} self to={toAgent ? bare : recipient} at={row.at}>
           {input.urgent === true && (
             <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
           )}
-        </>
+        </SpeakerLine>
       }
       footer={
         <>
@@ -114,7 +107,9 @@ export function OutgoingMessage({
         </>
       }
     >
-      <ClampedMarkdown source={input.body} />
+      <div dir="auto">
+        <ClampedMarkdown source={input.body} />
+      </div>
     </CallBlock>
   );
 }
@@ -141,6 +136,7 @@ export function CallBlock({
   row,
   label,
   sender,
+  header,
   footer,
   children,
   showCall,
@@ -149,7 +145,9 @@ export function CallBlock({
 }: {
   row: BlockRow;
   label: string;
-  sender: ReactNode;
+  sender?: ReactNode;
+  /** A whole sender line (a speaker line) in place of `sender` and the time. */
+  header?: ReactNode;
   footer: ReactNode;
   children: ReactNode;
   showCall: boolean;
@@ -169,17 +167,23 @@ export function CallBlock({
     key: row.key,
   };
   return (
-    <article {...rowProps} aria-label={label} className="rounded-lg border border-border px-3 py-2">
-      <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        {sender}
-        <time
-          dateTime={row.at}
-          title={new Date(row.at).toLocaleString()}
-          className="text-muted-foreground"
-        >
-          {formatTime(row.at)}
-        </time>
-      </div>
+    <article
+      {...rowProps}
+      aria-label={label}
+      className="rounded-lg border border-border bg-card px-3 py-2"
+    >
+      {header ?? (
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
+          {sender}
+          <time
+            dateTime={row.at}
+            title={new Date(row.at).toLocaleString()}
+            className="shrink-0 text-muted-foreground"
+          >
+            {formatTime(row.at)}
+          </time>
+        </div>
+      )}
       {children}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
         {footer}

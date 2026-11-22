@@ -452,7 +452,7 @@ test("a row added live gets its controls out of the tab order; the tab row's sta
 });
 
 // itemPropsEqual (spec §9.4): a nested child's own state decides whether its parent item re-renders.
-const child: Row = { kind: "text", seq: 4, text: "nested", key: "4", head: false };
+const child: Row = { kind: "text", seq: 4, at, text: "nested", key: "4", head: false };
 const parent: Row = {
   kind: "tool",
   seq: 3,
@@ -468,6 +468,7 @@ const props = (over: Partial<TimelineItemProps> = {}): TimelineItemProps => ({
   lit: false,
   live: false,
   firstOfSeq: true,
+  gap: "",
   tabKey: "1",
   expanded: new Set(),
   failedIds: new Set(),

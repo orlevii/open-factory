@@ -51,12 +51,13 @@ async function open(
         running: { count: 1, max: 8 },
       }),
   });
-  renderApp("/agents/dev", alice);
+  last.qc = renderApp("/agents/dev", alice).queryClient;
   await screen.findByText(firstText);
   return api;
 }
+const last = { qc: undefined as undefined | import("@tanstack/react-query").QueryClient };
 
-test("an agent sender is a link with @slug and its display name; humans stay plain", async () => {
+test("an agent sender is a chip linking to its session (name and @slug); humans stay plain", async () => {
   await open(
     [
       {
@@ -69,10 +70,9 @@ test("an agent sender is a link with @slug and its display name; humans stay pla
     ],
     "hi from b",
   );
-  const link = await screen.findByRole("link", { name: "Open @b's session" });
+  const link = await screen.findByRole("link", { name: /Builder/ });
   expect(link).toHaveAttribute("href", "/agents/b");
   expect(link).toHaveTextContent("@b");
-  expect(await screen.findByText(/· Builder/)).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
 });
 
@@ -108,11 +108,10 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
         }),
     },
   );
-  const link = await screen.findByRole("link", { name: "Open @tech-lead-ab12's session" });
+  const link = await screen.findByRole("link", { name: /Tech Lead · ab12/ });
   expect(link).toHaveAttribute("href", "/agents/tech-lead-ab12");
-  expect(await screen.findByText("· Tech Lead · ab12")).toBeInTheDocument();
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@old/ })).toBeNull());
-  expect(screen.getByText("@old")).toHaveClass("font-mono");
+  expect(screen.getAllByText("@old").length).toBeGreaterThan(0);
   expect(screen.queryByText(/Old one/)).toBeNull();
 });
 
@@ -131,8 +130,10 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
   await vi.waitFor(() =>
     expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true),
   );
-  const link = await screen.findByRole("link", { name: "Open @gone-ab12's session" });
-  expect(link.parentElement?.textContent).toBe("@gone-ab12");
+  const link = await screen.findByRole("link", { name: "@gone-ab12" });
+  expect(link).toHaveAttribute("href", "/agents/gone-ab12");
+  // No name is known: the slug stands in once, never repeated as the handle.
+  expect(link.textContent).toBe("@gone-ab12");
 });
 
 test("AgentLink: links mounted over time share one ended-list fetch within its stale time", async () => {
@@ -159,7 +160,7 @@ test("AgentLink: links mounted over time share one ended-list fetch within its s
     );
   act(() => window.dispatchEvent(new Event("focus")));
   await screen.findByText("more from gone 4");
-  expect(screen.getAllByRole("link", { name: "Open @gone-ab12's session" })).toHaveLength(4);
+  expect(screen.getAllByRole("link", { name: "@gone-ab12" })).toHaveLength(4);
   expect(endedFetches()).toBe(1);
 });
 
@@ -178,7 +179,7 @@ test("AgentLink: an unknown slug is plain once both lists have loaded and nothin
     },
   );
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@nobody/ })).toBeNull());
-  expect(screen.getByText("@nobody")).toHaveClass("font-mono");
+  expect(screen.getByText("@nobody")).toBeInTheDocument();
 });
 
 test("an update group: heading always shown, the latest part visible, 'Show all (3 updates)' expands", async () => {
@@ -535,7 +536,7 @@ test("Tab walks the focused row's controls: recipient link, View in session, Sho
     "ping b",
   );
   const user = userEvent.setup();
-  const sender = await screen.findByRole("link", { name: "Open @b's session" });
+  const sender = await screen.findByRole("link", { name: /Builder/ });
   await vi.waitFor(() => expect(sender).toHaveAttribute("tabindex", "0"));
   sender.focus();
   await user.tab();
@@ -789,6 +790,8 @@ test("a task_assigned envelope is a Factory message block with a badge linking t
   expect(within(block).getByText("Factory")).toBeInTheDocument();
   const badge = within(block).getByRole("link", { name: "Task T-1: Plan the migration" });
   expect(badge).toHaveAttribute("href", "/tasks/T-1");
+  // The brief is two clamped lines until Show all (U3 §7.2).
+  await userEvent.click(within(block).getByRole("button", { name: "Show all" }));
   expect(within(block).getByRole("blockquote")).toHaveTextContent("Read this");
 });
 
@@ -900,4 +903,126 @@ test("Agent details' open tasks link goes to that agent's tasks", async () => {
     "href",
     "/tasks?assignee=dev",
   );
+});
+
+// ---- U3 §7.2: speaker lines ----
+test("200 message rows create no per-row query observers (one speaker index for the session)", async () => {
+  const messages = Array.from({ length: 200 }, (_, i) =>
+    env({
+      id: `m${i}`,
+      from: i % 2 ? "b" : "@or",
+      kind: "message",
+      body: `body ${i}`,
+    }),
+  );
+  await open([{ type: "message_in", messages }], "body 199", {
+    "GET /api/users": () =>
+      json({
+        users: [
+          {
+            id: "u2",
+            name: "Or Levi",
+            handle: "or",
+            email: "o@x",
+            createdAt: AT,
+            disabledAt: null,
+          },
+        ],
+      }),
+  });
+  await screen.findAllByText("Or Levi");
+  const observers = (key: readonly unknown[]) =>
+    last.qc?.getQueryCache().find({ queryKey: key, exact: true })?.getObserversCount() ?? 0;
+  // The sidebar, the header and the speaker index read these lists: a fixed few, never one per row.
+  expect(observers(["agents", "exclude"])).toBeLessThan(10);
+  expect(observers(["agents", "only"])).toBeLessThan(10);
+  expect(observers(["users"])).toBeLessThan(10);
+  expect(observers(["ended-more"])).toBeLessThan(10);
+});
+
+test("your own message says 'You'; a known human shows their name", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({ id: "m1", from: "@alice", kind: "message", body: "from me" }),
+          env({ id: "m2", from: "@or", kind: "message", body: "from or" }),
+        ],
+      },
+    ],
+    "from me",
+    {
+      "GET /api/users": () =>
+        json({
+          users: [
+            {
+              id: "u2",
+              name: "Or Levi",
+              handle: "or",
+              email: "o@x",
+              createdAt: AT,
+              disabledAt: null,
+            },
+          ],
+        }),
+    },
+  );
+  const [mine, theirs] = [...document.querySelectorAll<HTMLElement>("[data-message-block]")];
+  expect(within(mine as HTMLElement).getByText("You")).toBeInTheDocument();
+  expect(within(mine as HTMLElement).queryByText("@alice")).toBeNull();
+  expect(await within(theirs as HTMLElement).findByText("Or Levi")).toHaveAttribute("dir", "auto");
+  for (const b of [mine, theirs])
+    expect(b?.querySelector("[data-message-body]")).toHaveAttribute("dir", "auto");
+});
+
+test("an outgoing card reads 'Name → Recipient' with the agent's name", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      call({ to: "@alice", body: "ping you" }),
+      result(JSON.stringify({ id: "m9", to: "@alice", status: "delivered" })),
+    ],
+    "ping you",
+  );
+  const block = screen.getByRole("article", { name: "Message from @dev to @alice" });
+  const sender = block.querySelector("[data-speaker-line]") as HTMLElement;
+  expect(sender.textContent).toMatch(/^Dev agent@dev.*You\d\d:\d\d$/);
+  // The session's own agent is never a link.
+  expect(within(sender).queryByRole("link")).toBeNull();
+});
+
+test("a task_assigned notice is a quiet line: the factory mark, the badge, two muted clamped lines with Show all", async () => {
+  const body =
+    "@or assigned you T-1\n\nThe task, written by @or:\n\n> Read this\n\nThen this.\n\nAnd this.";
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "t1",
+            from: "@factory",
+            kind: "task_assigned",
+            taskKey: "T-1",
+            taskTitle: "Plan the migration",
+            body,
+          }),
+        ],
+      },
+    ],
+    /assigned you T-1/,
+  );
+  const notice = document.querySelector("[data-notice]") as HTMLElement;
+  expect(notice).not.toHaveClass("border");
+  expect(notice.querySelector("svg")).not.toBeNull();
+  expect(
+    within(notice).getByRole("link", { name: "Task T-1: Plan the migration" }),
+  ).toBeInTheDocument();
+  const shown = notice.querySelector("[data-message-body]") as HTMLElement;
+  expect(shown).toHaveClass("text-muted-foreground");
+  expect(shown.querySelector(".line-clamp-2")).not.toBeNull();
+  expect(within(notice).queryByText("And this.")).toBeNull();
+  await userEvent.click(within(notice).getByRole("button", { name: "Show all" }));
+  expect(within(notice).getByText("And this.")).toBeInTheDocument();
 });

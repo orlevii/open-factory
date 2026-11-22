@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
+import { SpeakerLine } from "./speaker-line";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
 export const LINK_CLASS =
@@ -158,68 +159,91 @@ export function MessageBlock(props: {
         ...((scheduled.firings ?? 1) > 1 ? [`covers ${scheduled.firings} runs`] : []),
       ]
     : [];
+  const status = sending ? (
+    sending.label ? (
+      <span className="flex items-center gap-1 text-muted-foreground">
+        <Spinner size="text" />
+        {sending.label}
+      </span>
+    ) : null
+  ) : queued ? (
+    <span className="flex items-center gap-1 text-muted-foreground">
+      <Clock aria-hidden="true" className="size-3.5" />
+      {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
+    </span>
+  ) : null;
+  // A delivered factory notice is no card: a quiet line with the factory mark and its badge, the
+  // body two muted lines clamped with Show all (U3 §7.2), so an assignment's brief isn't swallowed.
+  if (system && !queued && !sending)
+    return (
+      <div data-message-block data-notice className="text-[0.8125rem] leading-[1.125rem]">
+        <div className="flex flex-wrap items-center gap-x-2 text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Factory aria-hidden="true" className="size-3.5 shrink-0" />
+            Factory
+          </span>
+          {badge}
+          {at && <Time at={at} />}
+        </div>
+        <div
+          data-message-body
+          dir="auto"
+          className="mt-0.5 pl-5 text-muted-foreground [--foreground:var(--muted-foreground)]"
+        >
+          <ClampedMarkdown
+            source={body}
+            limit={NOTICE_LINES}
+            chars={NOTICE_CHARS}
+            clampClassName="line-clamp-2"
+          />
+        </div>
+      </div>
+    );
+  const extras = (
+    <>
+      {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
+      {scheduled?.by && (
+        <span className="text-muted-foreground">
+          by{" "}
+          {isAgentSender(scheduled.by) ? (
+            <AgentLink slug={scheduled.by} />
+          ) : (
+            <span className="font-mono text-foreground">{scheduled.by}</span>
+          )}
+        </span>
+      )}
+      {badge}
+      {urgent && !system && (
+        <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
+      )}
+    </>
+  );
   return (
     <div
       data-message-block
       {...(sending ? { role: "group", "aria-label": "Sending" } : {})}
-      className={`rounded-lg border px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
+      className={`rounded-lg border bg-card px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
-      <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        {scheduled ? (
+      {scheduled || system ? (
+        // Scheduler and queued factory notices keep their own sender (S9, S5).
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
           <span className="flex items-center gap-1 text-foreground">
-            <CalendarClock aria-hidden="true" className="size-3.5" />
-            Scheduler
-          </span>
-        ) : system ? (
-          <span className="flex items-center gap-1 text-foreground">
-            <Factory aria-hidden="true" className="size-3.5" />
-            Factory
-          </span>
-        ) : isAgentSender(from) ? (
-          <span>
-            <AgentLink slug={from} name />
-          </span>
-        ) : (
-          <span className="font-mono text-foreground">{from}</span>
-        )}
-        {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
-        {scheduled?.by && (
-          <span className="text-muted-foreground">
-            by{" "}
-            {isAgentSender(scheduled.by) ? (
-              <AgentLink slug={scheduled.by} />
+            {scheduled ? (
+              <CalendarClock aria-hidden="true" className="size-3.5" />
             ) : (
-              <span className="font-mono text-foreground">{scheduled.by}</span>
+              <Factory aria-hidden="true" className="size-3.5" />
             )}
+            {scheduled ? "Scheduler" : "Factory"}
           </span>
-        )}
-        {badge}
-        {urgent && !system && (
-          <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
-        )}
-        {sending ? (
-          sending.label ? (
-            <span className="flex items-center gap-1 text-muted-foreground">
-              <Spinner size="text" />
-              {sending.label}
-            </span>
-          ) : null
-        ) : queued ? (
-          <span className="flex items-center gap-1 text-muted-foreground">
-            <Clock aria-hidden="true" className="size-3.5" />
-            {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
-          </span>
-        ) : at ? (
-          <time
-            dateTime={at}
-            title={new Date(at).toLocaleString()}
-            className="text-muted-foreground"
-          >
-            {formatTime(at)}
-          </time>
-        ) : null}
-        {action && <span className="ml-auto">{action}</span>}
-      </div>
+          {extras}
+          {status ?? (at ? <Time at={at} /> : null)}
+          {action && <span className="ml-auto">{action}</span>}
+        </div>
+      ) : (
+        <SpeakerLine from={from} at={at} status={status} action={action}>
+          {extras}
+        </SpeakerLine>
+      )}
       {notes.length > 0 && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
           {notes.join(" · ")}
@@ -234,6 +258,7 @@ export function MessageBlock(props: {
           reads --foreground, so muting it means pointing that at the muted token. */}
       <div
         data-message-body
+        dir="auto"
         className={
           [
             brief && "line-clamp-3",
@@ -249,7 +274,24 @@ export function MessageBlock(props: {
   );
 }
 
+function Time({ at }: { at: string }) {
+  return (
+    <time
+      dateTime={at}
+      title={new Date(at).toLocaleString()}
+      className="shrink-0 text-muted-foreground tabular-nums"
+    >
+      {formatTime(at)}
+    </time>
+  );
+}
+
+/** A factory notice's body: two lines (U3 §7.2). */
+const NOTICE_LINES = 2;
+const NOTICE_CHARS = 240;
+
 const CLAMP_LINES = 40;
+const CLAMP_CHARS = 4000;
 
 /** Message, outgoing and spawn bodies (U3 §7.6; agent text stays unclamped) clamp at 40 lines or 4,000
  *  rendered characters, whichever comes first, cut at a block boundary with "Show all" (bodies may be
@@ -258,16 +300,22 @@ const CLAMP_LINES = 40;
 export function ClampedMarkdown({
   source,
   limit = CLAMP_LINES,
+  chars = CLAMP_CHARS,
+  clampClassName,
 }: {
   source: string;
   limit?: number;
+  chars?: number;
+  /** Classes on the clamped body only (a notice's `line-clamp-2`). */
+  clampClassName?: string;
 }) {
   const [all, setAll] = useState(false);
-  const clamped = useMemo(() => clampSource(source, limit), [source, limit]);
+  const clamped = useMemo(() => clampSource(source, limit, chars), [source, limit, chars]);
   if (all || clamped === undefined) return <Markdown source={source} variant="detail" />;
+  const shown = <Markdown source={clamped} variant="detail" />;
   return (
     <>
-      <Markdown source={clamped} variant="detail" />
+      {clampClassName ? <div className={clampClassName}>{shown}</div> : shown}
       <button
         type="button"
         data-expands

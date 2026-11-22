@@ -14,6 +14,8 @@ export type TimelineItemProps = {
   live: boolean;
   /** The first row of its seq carries `id="event-<seq>"` (a message_in can render several rows). */
   firstOfSeq: boolean;
+  /** The space above this row (U3 §7.1), from `rowGap`: a class name, so a primitive. */
+  gap: string;
   tabKey: string | undefined;
   expanded: ReadonlySet<string>;
   failedIds: ReadonlySet<string>;
@@ -31,10 +33,10 @@ function subtree(row: Row, out: Row[] = []): Row[] {
 /** Re-render only when this row, or something that decides how it or a descendant looks, changed
  *  (spec §9.4). */
 export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
-  return a.live === b.live && contentPropsEqual(a, b);
+  return a.live === b.live && a.gap === b.gap && contentPropsEqual(a, b);
 }
 
-/** Everything but `live`: a `live` flip re-renders only the wrap, never the row inside (U3 §8.3). */
+/** Everything but `live` and `gap`: a flip re-renders only the wrap, never the row inside (U3 §8.3). */
 function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
   if (
     a.row !== b.row ||
@@ -64,6 +66,16 @@ function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean 
   return true;
 }
 
+/** Spacing replaces boxes for grouping (U3 §7.1): 24px before a speaker line or a card and after a
+ *  turn footer, 8px between rows inside a turn; nothing above the first row. From the two rows' kinds
+ *  and `head` only, so the class is a primitive and stays put while neither row changes kind. */
+export function rowGap(row: Row, prev: Row | undefined): string {
+  if (!prev) return "";
+  const speaks =
+    row.kind === "message" || row.kind === "outgoing" || (row.kind === "text" && row.head);
+  return speaks || prev.kind === "turn_footer" ? "mt-6" : "mt-2";
+}
+
 /** The rows' right gutter (room for Copy link): everything under the rows that should line up with them
  *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
 export const ROW_GUTTER = "pr-8";
@@ -77,7 +89,7 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${p.gap} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
     >
       <ItemContent {...p} />
     </div>

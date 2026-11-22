@@ -40,6 +40,8 @@ export type Row =
   | {
       kind: "text";
       seq: number;
+      /** When it was written: the speaker line's time. */
+      at: string;
       text: string;
       key: string;
       /** Opens a speaker line (U3 §7.2): the first text of its turn, or the first after a message row
@@ -262,7 +264,7 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
           headTurn = se.turnId;
         }
         place(
-          { kind: "text", seq: se.seq, text: e.text, key: `${se.seq}`, head },
+          { kind: "text", seq: se.seq, at: se.at, text: e.text, key: `${se.seq}`, head },
           e.parentToolUseId,
         );
         break;

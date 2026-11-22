@@ -1,0 +1,298 @@
+import type { AgentSummary } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight } from "lucide-react";
+import {
+  createContext,
+  memo,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { AgentChip, type ChipAgent } from "@/components/agent-chip";
+import { MiddleTruncate } from "@/components/middle-truncate";
+import { usersQueryOptions } from "@/features/settings/api";
+import { agentsListQueryOptions, endedMoreQueryOptions } from "./api";
+import { formatTime } from "./format";
+
+/** How a slug shows on a speaker line: the chip's identity, and whether it links to a session. */
+export type ResolvedAgent = { agent: ChipAgent; link: boolean };
+
+/**
+ * Who is speaking, for every speaker line in a session (U3 §7.2, React review m7): one value built
+ * once per list change by `SpeakerProvider`, so a timeline of hundreds of messages holds no query
+ * observer per row.
+ */
+export interface SpeakerIndex {
+  /** The session's own agent: its text and its sends are never linked. */
+  sessionAgent: ChipAgent | undefined;
+  /** The signed-in human's handle: their own messages say "You". */
+  selfHandle: string | undefined;
+  /** Live, then ended (terminated keeps its link and name, archived is the plain slug). */
+  agent(slug: string): ResolvedAgent;
+  /** A human's display name from the users list. */
+  userName(handle: string): string | undefined;
+  /** Whether `slug` is a known agent (live or ended). */
+  isAgent(slug: string): boolean;
+  /** A line whose agent isn't live asks once for the ended list (fetched lazily, shared). */
+  requestEnded(): void;
+}
+
+type Ended = { agent: ChipAgent; terminated: boolean };
+
+const stub = (slug: string): ChipAgent => ({ slug, displayName: `@${slug}`, stub: true });
+const noop = () => {};
+
+/** The pure part of the provider: tests build an index from plain lists. `endedMore` is true when
+ *  older ended agents exist beyond the newest 200; `endedFailed` when that lookup failed. */
+export function buildSpeakerIndex(o: {
+  sessionAgent?: ChipAgent;
+  selfHandle?: string;
+  live?: readonly ChipAgent[];
+  ended?: readonly (ChipAgent & { terminated: boolean })[];
+  endedMore?: boolean;
+  endedFailed?: boolean;
+  users?: readonly (readonly [string, string])[];
+  requestEnded?: () => void;
+}): SpeakerIndex {
+  const live = o.live ? new Map(o.live.map((a) => [a.slug, a])) : undefined;
+  const ended = o.ended
+    ? new Map<string, Ended>(o.ended.map((a) => [a.slug, { agent: a, terminated: a.terminated }]))
+    : undefined;
+  const users = new Map(o.users ?? []);
+  const cache = new Map<string, ResolvedAgent>();
+  const resolve = (slug: string): ResolvedAgent => {
+    if (slug === o.sessionAgent?.slug) return { agent: o.sessionAgent, link: false };
+    const a = live?.get(slug);
+    if (a) return { agent: a, link: true };
+    // Until the lists have loaded a slug keeps its link; a failed lookup is the plain slug.
+    if (!live || (!ended && !o.endedFailed)) return { agent: stub(slug), link: true };
+    const e = ended?.get(slug);
+    if (e)
+      return e.terminated ? { agent: e.agent, link: true } : { agent: stub(slug), link: false };
+    // A slug in neither list may be an older terminated agent while more exist: it keeps the link.
+    return { agent: stub(slug), link: !o.endedFailed && o.endedMore === true };
+  };
+  return {
+    sessionAgent: o.sessionAgent,
+    selfHandle: o.selfHandle,
+    agent: (slug) => {
+      let r = cache.get(slug);
+      if (!r) {
+        r = resolve(slug);
+        cache.set(slug, r);
+      }
+      return r;
+    },
+    userName: (handle) => users.get(handle),
+    isAgent: (slug) => !!live?.has(slug) || !!ended?.has(slug) || slug === o.sessionAgent?.slug,
+    requestEnded: o.requestEnded ?? noop,
+  };
+}
+
+const EMPTY = buildSpeakerIndex({});
+export const SpeakerContext = createContext<SpeakerIndex>(EMPTY);
+export const useSpeakers = () => useContext(SpeakerContext);
+
+// Projections to what a chip shows: `select` results are structurally shared, so a status frame
+// (which patches every list) leaves them, and the index built from them, identical.
+const toChips = (l: AgentSummary[]): ChipAgent[] =>
+  l.map((a) => ({
+    slug: a.slug,
+    displayName: a.displayName,
+    template: a.template,
+    kind: a.kind,
+    avatarVersion: a.avatarVersion,
+  }));
+const toEnded = (l: AgentSummary[]) =>
+  l.map((a) => ({
+    slug: a.slug,
+    displayName: a.displayName,
+    template: a.template,
+    kind: a.kind,
+    avatarVersion: a.avatarVersion,
+    terminated: !!a.terminatedAt || a.status === "terminated",
+  }));
+const toUsers = (l: { handle: string; name: string }[]) =>
+  l.map((u) => [u.handle, u.name] as const);
+const ENDED_LOOKUP_STALE_MS = 30_000;
+
+/** One reader of the agents, ended agents and users lists for a whole session (m7). The session
+ *  agent comes in as primitives, so a status frame on it changes nothing here. */
+export function SpeakerProvider({
+  slug,
+  displayName,
+  template,
+  kind,
+  avatarVersion,
+  selfHandle,
+  children,
+}: {
+  slug: string;
+  displayName: string;
+  template: string;
+  kind: AgentSummary["kind"];
+  avatarVersion: string | null;
+  selfHandle: string | undefined;
+  children: ReactNode;
+}) {
+  const [needEnded, setNeedEnded] = useState(false);
+  const requestEnded = useCallback(() => setNeedEnded(true), []);
+  const live = useQuery({
+    ...agentsListQueryOptions("exclude"),
+    refetchOnMount: false,
+    select: toChips,
+  }).data;
+  const ended = useQuery({
+    ...agentsListQueryOptions("only"),
+    select: toEnded,
+    enabled: needEnded,
+    staleTime: ENDED_LOOKUP_STALE_MS,
+    refetchOnWindowFocus: false,
+  });
+  const { data: more } = useQuery(endedMoreQueryOptions);
+  const users = useQuery({ ...usersQueryOptions, select: toUsers, staleTime: 60_000 }).data;
+  const value = useMemo(
+    () =>
+      buildSpeakerIndex({
+        sessionAgent: { slug, displayName, template, kind, avatarVersion },
+        selfHandle,
+        live,
+        ended: ended.data,
+        endedMore: more,
+        endedFailed: ended.isError,
+        users,
+        requestEnded,
+      }),
+    [
+      slug,
+      displayName,
+      template,
+      kind,
+      avatarVersion,
+      selfHandle,
+      live,
+      ended.data,
+      ended.isError,
+      more,
+      users,
+      requestEnded,
+    ],
+  );
+  return <SpeakerContext value={value}>{children}</SpeakerContext>;
+}
+
+/** Below a 20rem container the handle hides (kept in the tooltip). */
+const SLUG_CLASS = "@max-[20rem]:hidden";
+const NAME_CLASS = "font-medium text-foreground";
+
+/** One side of a speaker line: an agent chip, a human's name and handle, "You" or "All humans". */
+function Speaker({ id, self }: { id: string; self: boolean }) {
+  const s = useSpeakers();
+  const human = id.startsWith("@");
+  const handle = id.slice(1);
+  const resolved = human ? undefined : s.agent(id);
+  const needEnded = !human && resolved?.agent.stub === true && !self;
+  const { requestEnded } = s;
+  useEffect(() => {
+    if (needEnded) requestEnded();
+  }, [needEnded, requestEnded]);
+  if (resolved)
+    return (
+      <AgentChip
+        agent={resolved.agent}
+        size={20}
+        showSlug
+        link={resolved.link && !self}
+        className={NAME_CLASS}
+        slugClassName={`font-normal ${SLUG_CLASS}`}
+      />
+    );
+  if (handle === "humans")
+    return (
+      <span dir="auto" className={NAME_CLASS}>
+        All humans
+      </span>
+    );
+  if (s.selfHandle !== undefined && handle === s.selfHandle)
+    return (
+      <span dir="auto" className={NAME_CLASS}>
+        You
+      </span>
+    );
+  const name = s.userName(handle);
+  if (!name)
+    return (
+      <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
+        {id}
+      </span>
+    );
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <span dir="auto" className={`min-w-0 truncate ${NAME_CLASS}`}>
+        {name}
+      </span>
+      <span title={id} className={`min-w-0 font-mono text-muted-foreground ${SLUG_CLASS}`}>
+        <MiddleTruncate text={id} />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * `[avatar 20] Name  @handle  14:02` (U3 §7.2): agents as a chip linking to their session (never
+ * the session's own agent: `self`), humans by name or handle, your own messages "You". With `to`,
+ * an outgoing card's "Name → Recipient". `children` (badges) follow the names; `status` takes the
+ * time's place (queued, sending); `action` sits at the end.
+ */
+export const SpeakerLine = memo(function SpeakerLine({
+  from,
+  to,
+  at,
+  self = false,
+  status,
+  action,
+  children,
+}: {
+  /** A bare agent slug, or a human's `@handle`. */
+  from: string;
+  /** An outgoing card's recipient: a bare slug, `@handle` or `@humans`. */
+  to?: string;
+  at?: string;
+  /** `from` is the session's own agent: no link. */
+  self?: boolean;
+  status?: ReactNode;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div
+      data-speaker-line
+      className="@container mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
+    >
+      <span className="flex min-w-0 items-center gap-1.5">
+        <Speaker id={from} self={self} />
+        {to !== undefined && (
+          <>
+            <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+            <Speaker id={to} self={false} />
+          </>
+        )}
+      </span>
+      {children}
+      {status ??
+        (at ? (
+          <time
+            dateTime={at}
+            title={new Date(at).toLocaleString()}
+            className="shrink-0 text-muted-foreground tabular-nums"
+          >
+            {formatTime(at)}
+          </time>
+        ) : null)}
+      {action && <span className="ml-auto">{action}</span>}
+    </div>
+  );
+});

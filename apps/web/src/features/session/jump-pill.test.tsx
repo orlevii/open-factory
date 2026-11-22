@@ -53,6 +53,7 @@ const msg = (seq: number, i = 0): Row =>
 const text = (seq: number): Row => ({
   kind: "text",
   seq,
+  at: "2026-11-21T00:00:00.000Z",
   text: `t${seq}`,
   key: `${seq}`,
   head: false,

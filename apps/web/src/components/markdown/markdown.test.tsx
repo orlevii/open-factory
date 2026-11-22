@@ -158,3 +158,12 @@ test("re-rendering the parent with the same source does not parse again", () => 
   rerender(<Markdown source="**same**" />);
   expect(markdownCalls.n).toBe(after + 1);
 });
+
+test("block elements take their own direction (dir=auto), so a right-to-left paragraph reads right", () => {
+  const { container } = render(
+    <Markdown source={"# כותרת\n\nשלום עולם\n\n- item\n- [x] done\n\n> quote"} />,
+  );
+  for (const sel of ["h1", "p", "li", "blockquote"])
+    expect(container.querySelector(sel)).toHaveAttribute("dir", "auto");
+  expect(container.querySelector("li.task-list-item")).not.toBeNull();
+});

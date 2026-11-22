@@ -18,7 +18,7 @@ import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
-import { TimelineItem } from "./timeline-item";
+import { rowGap, TimelineItem } from "./timeline-item";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 /** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
@@ -253,10 +253,10 @@ export function Timeline(props: {
           onKeyDown={onKeyDown}
           // clip, not hidden: a leak can never scroll the conversation sideways, and the log
           // doesn't become a scroll container (the scroller around it is overflow-y-auto).
-          className="max-w-[52rem] min-w-0 space-y-3 overflow-x-clip"
+          className="max-w-[52rem] min-w-0 overflow-x-clip"
         >
           {props.hasMoreBefore && (
-            <div className="flex items-center gap-2">
+            <div className="mb-3 flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
                 {loadingEarlier ? "Loading…" : "Load earlier"}
               </Button>
@@ -277,6 +277,7 @@ export function Timeline(props: {
               lit={row.key === litKey}
               live={row.seq > liveAfter && row.kind !== "turn_footer" && !handedOff.has(row.key)}
               firstOfSeq={rows[i - 1]?.seq !== row.seq}
+              gap={rowGap(row, rows[i - 1])}
               tabKey={tabKey}
               expanded={expanded}
               failedIds={props.failedIds}
@@ -285,7 +286,12 @@ export function Timeline(props: {
               onRowFocus={onRowFocus}
             />
           ))}
-          {props.footer}
+          {/* Under the rows (activity line, queue): 12px apart as before, 24px after a turn footer. */}
+          <div
+            className={`space-y-3 empty:hidden ${rows.length === 0 ? "" : rows.at(-1)?.kind === "turn_footer" ? "mt-6" : "mt-3"}`}
+          >
+            {props.footer}
+          </div>
         </div>
       </div>
       {/* Centred on the 52rem column, not the scroller. */}

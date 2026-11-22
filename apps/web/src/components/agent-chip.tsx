@@ -27,10 +27,13 @@ function isTruncated(root: HTMLElement): boolean {
 export function TruncTooltip({
   text,
   className,
+  dir,
   children,
 }: {
   text: string;
   className?: string;
+  /** "auto" for names: a right-to-left name sets its own direction (bidi). */
+  dir?: "auto";
   children: ReactNode;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -46,6 +49,7 @@ export function TruncTooltip({
       onFocus={check}
       onPointerLeave={() => setArmed(false)}
       onBlur={() => setArmed(false)}
+      dir={dir}
       className={cn("flex min-w-0", className)}
     >
       {children}
@@ -62,7 +66,8 @@ export function TruncTooltip({
   );
 }
 
-type Shown = {
+/** What a chip shows: a full summary, or a projection of one (a speaker index, U3 §7.2). */
+export type ChipAgent = {
   slug: string;
   displayName: string;
   kind?: AgentSummary["kind"];
@@ -80,13 +85,15 @@ function ChipView({
   badge,
   link,
   className,
+  slugClassName,
 }: {
-  a: Shown;
+  a: ChipAgent;
   size: Size;
   showSlug: boolean;
   badge: boolean;
   link: boolean;
   className?: string;
+  slugClassName?: string;
 }) {
   const classes = cn(
     "inline-flex min-w-0 items-center gap-1.5 @max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
@@ -105,14 +112,17 @@ function ChipView({
           size={size}
           status={badge ? a.status : undefined}
         />
-        <TruncTooltip text={a.displayName} className="min-w-[min(8rem,45%)]">
+        <TruncTooltip text={a.displayName} dir="auto" className="min-w-[min(8rem,45%)]">
           <AgentName agent={{ displayName: a.displayName, kind: a.kind ?? "persistent" }} />
         </TruncTooltip>
       </span>
       {showSlug && !a.stub ? (
         <TruncTooltip
           text={`@${a.slug}`}
-          className="min-w-24 max-w-full font-mono text-muted-foreground @max-[24rem]:text-xs"
+          className={cn(
+            "min-w-24 max-w-full font-mono text-muted-foreground @max-[24rem]:text-xs",
+            slugClassName,
+          )}
         >
           <MiddleTruncate text={`@${a.slug}`} />
         </TruncTooltip>
@@ -135,6 +145,8 @@ type ChipProps = {
   /** Wrap the chip in a link to the agent's page. Never inside another link (a task-list row). */
   link?: boolean;
   className?: string;
+  /** Extra classes for the `@slug` (a speaker line hides it below a 20rem container). */
+  slugClassName?: string;
 };
 
 function SlugChip({
@@ -145,11 +157,12 @@ function SlugChip({
   badge = false,
   link = false,
   className,
+  slugClassName,
 }: ChipProps & { slug: string; name?: string }) {
   const live = useAgent(slug);
   const ended = useEndedAgent(slug);
   const found = live ?? ended;
-  const a: Shown = found ?? { slug, displayName: name ?? `@${slug}`, stub: !name };
+  const a: ChipAgent = found ?? { slug, displayName: name ?? `@${slug}`, stub: !name };
   return (
     <ChipView
       a={a}
@@ -158,6 +171,7 @@ function SlugChip({
       badge={badge}
       link={link}
       className={className}
+      slugClassName={slugClassName}
     />
   );
 }
@@ -165,10 +179,18 @@ function SlugChip({
 /** Avatar, display name and optionally the muted `@slug`. Pass the agent when you have it; pass
  *  `slug` to resolve it from the cached lists (live, then ended), else the slug stands in. */
 export function AgentChip(
-  props: ({ agent: AgentChipAgent } | { slug: string; name?: string }) & ChipProps,
+  props: ({ agent: AgentChipAgent | ChipAgent } | { slug: string; name?: string }) & ChipProps,
 ) {
   if ("agent" in props) {
-    const { agent, size = 20, showSlug = false, badge = false, link = false, className } = props;
+    const {
+      agent,
+      size = 20,
+      showSlug = false,
+      badge = false,
+      link = false,
+      className,
+      slugClassName,
+    } = props;
     return (
       <ChipView
         a={agent}
@@ -177,6 +199,7 @@ export function AgentChip(
         badge={badge}
         link={link}
         className={className}
+        slugClassName={slugClassName}
       />
     );
   }

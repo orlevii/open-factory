@@ -9,6 +9,7 @@ const at = "2026-11-21T10:00:00.000Z";
 const text = (seq: number): Row => ({
   kind: "text",
   seq,
+  at,
   text: `Text ${seq}`,
   key: `${seq}`,
   head: false,
@@ -62,6 +63,7 @@ test("itemPropsEqual: the live flag is a change", () => {
     lit: false,
     live: false,
     firstOfSeq: true,
+    gap: "",
     tabKey: undefined,
     expanded: new Set(),
     failedIds: new Set(),

@@ -12,6 +12,7 @@ import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
+import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
@@ -338,7 +339,11 @@ export function TimelineRow(props: TimelineRowProps) {
     case "text":
       return (
         <div {...rp}>
-          <Markdown source={row.text} variant="detail" />
+          {/* The turn's first text, and the first after an incoming message (U3 §7.2). */}
+          {row.head && <SpeakerLine from={props.slug} self at={row.at} />}
+          <div dir="auto">
+            <Markdown source={row.text} variant="detail" />
+          </div>
         </div>
       );
     case "tool":

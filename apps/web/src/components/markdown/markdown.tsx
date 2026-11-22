@@ -47,6 +47,20 @@ function makeComponents(newTabNoteId: string): Components {
       );
     },
     code: ({ className, children }) => <code className={className}>{children}</code>,
+    // Bidi (U3 §7.2): each block takes the direction of its own first strong character.
+    p: ({ children }) => <p dir="auto">{children}</p>,
+    li: ({ className, children }) => (
+      <li dir="auto" className={className}>
+        {children}
+      </li>
+    ),
+    blockquote: ({ children }) => <blockquote dir="auto">{children}</blockquote>,
+    h1: ({ children }) => <h1 dir="auto">{children}</h1>,
+    h2: ({ children }) => <h2 dir="auto">{children}</h2>,
+    h3: ({ children }) => <h3 dir="auto">{children}</h3>,
+    h4: ({ children }) => <h4 dir="auto">{children}</h4>,
+    h5: ({ children }) => <h5 dir="auto">{children}</h5>,
+    h6: ({ children }) => <h6 dir="auto">{children}</h6>,
   };
 }
 

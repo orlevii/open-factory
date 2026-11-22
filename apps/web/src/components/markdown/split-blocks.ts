@@ -7,10 +7,10 @@ const QUOTE = /^>/;
 const BLANK = /^\s*$/;
 const COLUMN_ZERO = /^\S/;
 
-type Fence = { char: string; len: number };
+export type Fence = { char: string; len: number };
 
 /** The fence state after `line`: opened, closed (undefined) or unchanged. */
-function stepFence(line: string, open: Fence | undefined): Fence | undefined {
+export function stepFence(line: string, open: Fence | undefined): Fence | undefined {
   const m = FENCE.exec(line);
   if (!m) return open;
   const marker = m[1] as string;

@@ -266,17 +266,17 @@ export function SessionView({
           </p>
         )}
         {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
-        {loaded ? (
-          // One speaker index for every row (U3 §7.2, m7): the agent as primitives, so a status
-          // frame changes nothing in it.
-          <SpeakerProvider
-            slug={agent.slug}
-            displayName={agent.displayName}
-            template={agent.template}
-            kind={agent.kind}
-            avatarVersion={agent.avatarVersion}
-            selfHandle={me?.user.handle}
-          >
+        {/* One speaker index for every row (U3 §7.2, m7): the agent as primitives, so a status frame
+            changes nothing in it. Mounted while the events load, so the users and agents lists
+            fetch alongside them and no name pops in after the first paint. */}
+        <SpeakerProvider
+          slug={agent.slug}
+          displayName={agent.displayName}
+          template={agent.template}
+          kind={agent.kind}
+          avatarVersion={agent.avatarVersion}
+        >
+          {loaded ? (
             <Timeline
               ref={panel.timeline}
               slug={slug}
@@ -327,10 +327,10 @@ export function SessionView({
                 </>
               }
             />
-          </SpeakerProvider>
-        ) : (
-          <TimelineSkeleton />
-        )}
+          ) : (
+            <TimelineSkeleton />
+          )}
+        </SpeakerProvider>
         <div role="status" aria-live="polite" className="sr-only">
           {announce}
         </div>

@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { type ReactNode, useContext } from "react";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { sessionQueryOptions } from "@/lib/session";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import {
@@ -137,7 +138,6 @@ test("the provider's index survives a status frame; a name change builds a new o
         template="dev"
         kind="persistent"
         avatarVersion={null}
-        selfHandle="alice"
       >
         <Probe />
       </SpeakerProvider>
@@ -156,4 +156,54 @@ test("the provider's index survives a status frame; a name change builds a new o
   await tick();
   expect(seen.at(-1)).not.toBe(before);
   expect(seen.at(-1)?.agent("b").agent.displayName).toBe("Builder 2");
+});
+
+test("the provider reads your handle itself, and asks for the ended list only once the live list is in", async () => {
+  const calls: string[] = [];
+  let release: (r: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      calls.push(url);
+      if (url === "/api/agents?ended=exclude")
+        return new Promise<Response>((r) => {
+          release = r;
+        });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ agents: [], users: [], more: false, running: { count: 0, max: 8 } }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    }),
+  );
+  try {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(sessionQueryOptions.queryKey, {
+      user: { handle: "alice" },
+    } as never);
+    renderInRouter(
+      <QueryClientProvider client={qc}>
+        <TooltipProvider>
+          <SpeakerProvider slug="dev">
+            <SpeakerLine from="gone" at={AT} />
+            <SpeakerLine from="@alice" at={AT} />
+          </SpeakerProvider>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("You")).toBeInTheDocument();
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls).not.toContain("/api/agents?ended=only");
+    release(
+      new Response(JSON.stringify({ agents: [], running: { count: 0, max: 8 } }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await waitFor(() => expect(calls).toContain("/api/agents?ended=only"));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

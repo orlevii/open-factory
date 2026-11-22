@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
 import { clampSource } from "@/components/markdown/split-blocks";
 import { Spinner } from "@/components/ui/spinner";
@@ -190,12 +190,7 @@ export function MessageBlock(props: {
           dir="auto"
           className="mt-0.5 pl-5 text-muted-foreground [--foreground:var(--muted-foreground)]"
         >
-          <ClampedMarkdown
-            source={body}
-            limit={NOTICE_LINES}
-            chars={NOTICE_CHARS}
-            clampClassName="line-clamp-2"
-          />
+          <NoticeBody source={body} />
         </div>
       </div>
     );
@@ -286,12 +281,57 @@ function Time({ at }: { at: string }) {
   );
 }
 
-/** A factory notice's body: two lines (U3 §7.2). */
+/** Past these a notice surely runs over two lines, so Show all is offered even where nothing can be
+ *  measured; below them the measurement decides. */
 const NOTICE_LINES = 2;
 const NOTICE_CHARS = 240;
 
+/**
+ * A factory notice's body (U3 §7.2): always two muted lines (`line-clamp-2`), whatever its length,
+ * with Show all when the content runs past them. Overflow is measured after layout and again when
+ * the width changes; the block/character rule backs it up where layout is unknown.
+ */
+function NoticeBody({ source }: { source: string }) {
+  const [all, setAll] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const long = useMemo(
+    () => clampSource(source, NOTICE_LINES, NOTICE_CHARS) !== undefined,
+    [source],
+  );
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (all || !el) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [all]);
+  return (
+    <>
+      <div ref={box} className={all ? undefined : "line-clamp-2"}>
+        <Markdown source={source} variant="detail" />
+      </div>
+      {!all && (long || overflows) && (
+        <button
+          type="button"
+          data-expands
+          onClick={(e) => {
+            e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
+            setAll(true);
+          }}
+          className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Show all
+        </button>
+      )}
+    </>
+  );
+}
+
 const CLAMP_LINES = 40;
-const CLAMP_CHARS = 4000;
 
 /** Message, outgoing and spawn bodies (U3 §7.6; agent text stays unclamped) clamp at 40 lines or 4,000
  *  rendered characters, whichever comes first, cut at a block boundary with "Show all" (bodies may be
@@ -300,22 +340,16 @@ const CLAMP_CHARS = 4000;
 export function ClampedMarkdown({
   source,
   limit = CLAMP_LINES,
-  chars = CLAMP_CHARS,
-  clampClassName,
 }: {
   source: string;
   limit?: number;
-  chars?: number;
-  /** Classes on the clamped body only (a notice's `line-clamp-2`). */
-  clampClassName?: string;
 }) {
   const [all, setAll] = useState(false);
-  const clamped = useMemo(() => clampSource(source, limit, chars), [source, limit, chars]);
+  const clamped = useMemo(() => clampSource(source, limit), [source, limit]);
   if (all || clamped === undefined) return <Markdown source={source} variant="detail" />;
-  const shown = <Markdown source={clamped} variant="detail" />;
   return (
     <>
-      {clampClassName ? <div className={clampClassName}>{shown}</div> : shown}
+      <Markdown source={clamped} variant="detail" />
       <button
         type="button"
         data-expands

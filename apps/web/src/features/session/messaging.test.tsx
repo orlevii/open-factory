@@ -1037,7 +1037,56 @@ test("a task_assigned notice is a quiet line: the factory mark, the badge, two m
   const shown = notice.querySelector("[data-message-body]") as HTMLElement;
   expect(shown).toHaveClass("text-muted-foreground");
   expect(shown.querySelector(".line-clamp-2")).not.toBeNull();
-  expect(within(notice).queryByText("And this.")).toBeNull();
   await userEvent.click(within(notice).getByRole("button", { name: "Show all" }));
   expect(within(notice).getByText("And this.")).toBeInTheDocument();
+  expect(shown.querySelector(".line-clamp-2")).toBeNull();
+  expect(within(notice).queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+const notice = (body: string): AnyEvent => ({
+  type: "message_in",
+  messages: [
+    env({
+      id: "t1",
+      from: "@factory",
+      kind: "task_assigned",
+      taskKey: "T-1",
+      taskTitle: "P",
+      body,
+    }),
+  ],
+});
+
+test("a short notice is still two clamped lines; Show all only when it overflows", async () => {
+  await open([notice("@or assigned you T-1: a short brief")], /a short brief/);
+  const shown = document.querySelector("[data-notice] [data-message-body]") as HTMLElement;
+  expect(shown.querySelector(".line-clamp-2")).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+test("a notice whose two lines overflow (measured) offers Show all", async () => {
+  const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(60);
+  const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(36);
+  try {
+    await open(
+      [notice("@or assigned you T-1: one long line that wraps at phone width")],
+      /long line/,
+    );
+    expect(await screen.findByRole("button", { name: "Show all" })).toBeInTheDocument();
+  } finally {
+    sh.mockRestore();
+    ch.mockRestore();
+  }
+});
+
+test("the users list is fetched alongside the events, not after them (no name pops in later)", async () => {
+  const api = mockApi({
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/agents/dev/events?": () => new Promise<Response>(() => {}),
+    "GET /api/agents?ended=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev", alice);
+  await vi.waitFor(() => expect(api.calls.some((c) => c.url === "/api/users")).toBe(true));
+  expect(document.querySelector("[data-timeline-skeleton]")).not.toBeNull();
 });

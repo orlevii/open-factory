@@ -14,6 +14,8 @@ import {
 import { AgentChip, type ChipAgent } from "@/components/agent-chip";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { usersQueryOptions } from "@/features/settings/api";
+import type { Session } from "@/lib/auth-client";
+import { sessionQueryOptions } from "@/lib/session";
 import { agentsListQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 
@@ -30,6 +32,8 @@ export interface SpeakerIndex {
   sessionAgent: ChipAgent | undefined;
   /** The signed-in human's handle: their own messages say "You". */
   selfHandle: string | undefined;
+  /** The live agents list has loaded: before it, every slug is a stand-in. */
+  ready: boolean;
   /** Live, then ended (terminated keeps its link and name, archived is the plain slug). */
   agent(slug: string): ResolvedAgent;
   /** A human's display name from the users list. */
@@ -78,6 +82,7 @@ export function buildSpeakerIndex(o: {
   return {
     sessionAgent: o.sessionAgent,
     selfHandle: o.selfHandle,
+    ready: live !== undefined,
     agent: (slug) => {
       let r = cache.get(slug);
       if (!r) {
@@ -119,25 +124,28 @@ const toUsers = (l: { handle: string; name: string }[]) =>
   l.map((u) => [u.handle, u.name] as const);
 const ENDED_LOOKUP_STALE_MS = 30_000;
 
-/** One reader of the agents, ended agents and users lists for a whole session (m7). The session
- *  agent comes in as primitives, so a status frame on it changes nothing here. */
+const toHandle = (s: Session | null) => s?.user.handle;
+
+/** One reader of the agents, ended agents and users lists for a whole session (m7), and of your
+ *  handle. The session agent comes in as primitives, so a status frame on it changes nothing here;
+ *  a caller that doesn't have it yet (the inbox pane) passes the slug alone and the live list's
+ *  entry stands in. Mount it before the events load: the lists fetch alongside them. */
 export function SpeakerProvider({
   slug,
   displayName,
   template,
   kind,
   avatarVersion,
-  selfHandle,
   children,
 }: {
   slug: string;
-  displayName: string;
-  template: string;
-  kind: AgentSummary["kind"];
-  avatarVersion: string | null;
-  selfHandle: string | undefined;
+  displayName?: string;
+  template?: string;
+  kind?: AgentSummary["kind"];
+  avatarVersion?: string | null;
   children: ReactNode;
 }) {
+  const selfHandle = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
   const [needEnded, setNeedEnded] = useState(false);
   const requestEnded = useCallback(() => setNeedEnded(true), []);
   const live = useQuery({
@@ -157,7 +165,10 @@ export function SpeakerProvider({
   const value = useMemo(
     () =>
       buildSpeakerIndex({
-        sessionAgent: { slug, displayName, template, kind, avatarVersion },
+        sessionAgent:
+          displayName !== undefined
+            ? { slug, displayName, template, kind, avatarVersion }
+            : (live?.find((a) => a.slug === slug) ?? stub(slug)),
         selfHandle,
         live,
         ended: ended.data,
@@ -194,7 +205,8 @@ function Speaker({ id, self }: { id: string; self: boolean }) {
   const human = id.startsWith("@");
   const handle = id.slice(1);
   const resolved = human ? undefined : s.agent(id);
-  const needEnded = !human && resolved?.agent.stub === true && !self;
+  // Only once the live list is in: before it, every slug is a stand-in.
+  const needEnded = s.ready && !human && resolved?.agent.stub === true && !self;
   const { requestEnded } = s;
   useEffect(() => {
     if (needEnded) requestEnded();

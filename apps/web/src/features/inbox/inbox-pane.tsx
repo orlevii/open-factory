@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
 import { Composer, TerminatedComposer } from "@/features/session/composer";
 import { formatInboxTime } from "@/features/session/format";
+import { SpeakerProvider } from "@/features/session/speaker-line";
 import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
@@ -155,12 +156,22 @@ function MessageContent({
   return (
     <>
       <Body>
-        <SessionExcerpt
-          key={`${slug}:${seq ?? "latest"}`}
+        {/* The excerpt's speaker lines read the same index as the session (U3 §7.2): the agent's
+            name on its text, "You" on your messages. */}
+        <SpeakerProvider
           slug={slug}
-          seq={seq}
-          spawned={agent?.kind === "ephemeral"}
-        />
+          displayName={agent?.displayName}
+          template={agent?.template}
+          kind={agent?.kind}
+          avatarVersion={agent?.avatarVersion}
+        >
+          <SessionExcerpt
+            key={`${slug}:${seq ?? "latest"}`}
+            slug={slug}
+            seq={seq}
+            spawned={agent?.kind === "ephemeral"}
+          />
+        </SpeakerProvider>
       </Body>
       {!agent ? null : agent.archivedAt !== null ? (
         <p className="shrink-0 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-6">

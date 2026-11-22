@@ -176,6 +176,14 @@
   --sidebar-accent-foreground: oklch(0.2 0.008 255);
   --sidebar-border: oklch(0.885 0.005 250);
   --sidebar-ring: oklch(0.6 0.2 37);
+  --syntax-keyword: oklch(0.588 0.193 20.5);
+  --syntax-string: oklch(0.311 0.101 255.9);
+  --syntax-number: oklch(0.495 0.18 257.6);
+  --syntax-comment: oklch(0.551 0.019 251);
+  --syntax-property: oklch(0.495 0.18 257.6);
+  --syntax-punctuation: oklch(0.485 0.018 251.3);
+  --syntax-heading: oklch(0.495 0.18 257.6);
+  --syntax-link: oklch(0.311 0.101 255.9);
 }
 
 :root[data-theme="dark"] {
@@ -245,6 +253,14 @@
   --sidebar-accent-foreground: oklch(0.96 0.003 250);
   --sidebar-border: oklch(0.27 0.008 255);
   --sidebar-ring: oklch(0.682 0.211 37.7);
+  --syntax-keyword: oklch(0.721 0.162 15.5);
+  --syntax-string: oklch(0.829 0.088 252.5);
+  --syntax-number: oklch(0.769 0.121 252.3);
+  --syntax-comment: oklch(0.551 0.019 251);
+  --syntax-property: oklch(0.769 0.121 252.3);
+  --syntax-punctuation: oklch(0.871 0.008 253.9);
+  --syntax-heading: oklch(0.769 0.121 252.3);
+  --syntax-link: oklch(0.938 0.031 248.2);
 }
 
 /* Increased contrast (prefers-contrast: more): rules and field edges harden, secondary text moves
@@ -260,6 +276,14 @@
     --signal: oklch(0.55 0.2 37);
     --ring: oklch(0.55 0.2 37);
     --float-edge: var(--input);
+    --syntax-keyword: oklch(0.5 0.2 20.5);
+    --syntax-string: oklch(0.25 0.1 255.9);
+    --syntax-number: oklch(0.42 0.18 257.6);
+    --syntax-comment: oklch(0.42 0.019 251);
+    --syntax-property: oklch(0.42 0.18 257.6);
+    --syntax-punctuation: oklch(0.38 0.018 251.3);
+    --syntax-heading: oklch(0.42 0.18 257.6);
+    --syntax-link: oklch(0.25 0.1 255.9);
   }
   :focus-visible {
     outline-width: 3px;
@@ -276,6 +300,14 @@
     --signal: oklch(0.682 0.211 37.7);
     --ring: oklch(0.682 0.211 37.7);
     --float-edge: var(--input);
+    --syntax-keyword: oklch(0.82 0.15 15.5);
+    --syntax-string: oklch(0.9 0.08 252.5);
+    --syntax-number: oklch(0.85 0.11 252.3);
+    --syntax-comment: oklch(0.76 0.019 251);
+    --syntax-property: oklch(0.85 0.11 252.3);
+    --syntax-punctuation: oklch(0.93 0.008 253.9);
+    --syntax-heading: oklch(0.85 0.11 252.3);
+    --syntax-link: oklch(0.96 0.03 248.2);
   }
 }
 

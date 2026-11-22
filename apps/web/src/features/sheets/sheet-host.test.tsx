@@ -232,3 +232,28 @@ test("edit-schedule prefetches the detail and the live agents only (edit mode ne
     ["agents", "exclude"],
   ]);
 });
+
+test("each open has its own opener: one started from the page body doesn't return focus to the last one's", async () => {
+  await shell();
+  const button = document.createElement("button");
+  button.textContent = "First opener";
+  document.body.append(button);
+  try {
+    button.focus();
+    act(() => openSheet({ kind: "new-task" }));
+    await screen.findByRole("dialog", { name: "New task" });
+    act(() => closeSheet());
+    await waitFor(() => expect(dialog()).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(button));
+    // A shortcut-style open: focus is on the page body.
+    button.blur();
+    expect(document.activeElement).toBe(document.body);
+    act(() => openSheet({ kind: "new-task" }));
+    await screen.findByRole("dialog", { name: "New task" });
+    act(() => closeSheet());
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(document.activeElement).not.toBe(button);
+  } finally {
+    button.remove();
+  }
+});

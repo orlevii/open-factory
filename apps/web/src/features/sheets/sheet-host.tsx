@@ -145,6 +145,9 @@ function SheetLayer({
           e.preventDefault();
           const el = e.currentTarget as HTMLElement;
           const at = document.activeElement;
+          // Each open has its own opener: one that starts with focus on the page body has none (the layer stays
+          // mounted across opens, so the last open's opener would otherwise linger).
+          opener.current = null;
           if (at instanceof HTMLElement && at !== document.body && !el.contains(at))
             opener.current = at;
           if (!el.contains(at)) el.focus({ preventScroll: true });

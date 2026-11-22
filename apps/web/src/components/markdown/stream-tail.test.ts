@@ -112,7 +112,8 @@ test("a trailing marker line is held until its newline", () => {
     "~",
     "~~",
     "~~~",
-    "`code",
+    "````",
+    "```ts",
   ]) {
     expect(md(`Para\n${line}`), JSON.stringify(line)).toBe("Para\n");
   }
@@ -136,4 +137,53 @@ test("a trailing table row is held until the delimiter row arrives", () => {
 test("inline state starts over at a new list item or a blank line", () => {
   expect(md("- **a\n- b")).toBe("- **a\n- b");
   expect(md("**a\n\nb")).toBe("**a\n\nb");
+});
+
+// Fix round 1 (review-group-c).
+test("prose starting with a backtick or tilde, or holding a pipe, shows (I2)", () => {
+  expect(md("`foo` is the function that does the thing")).toBe(
+    "`foo` is the function that does the thing",
+  );
+  expect(md("~5 minutes later the build passed")).toBe("~5 minutes later the build passed");
+  expect(md("Use a | b to pipe output somewhere")).toBe("Use a | b to pipe output somewhere");
+  // An unclosed code span at a line start closes like any other.
+  expect(md("`code")).toBe("`code`");
+});
+
+test("a line that really ended in a newline is never held (I2)", () => {
+  expect(md("Para\n-")).toBe("Para\n");
+  expect(prepareTail("Para\n-", true)).toEqual({ kind: "markdown", source: "Para\n-" });
+  // A closed fence counts once the live text has its newline.
+  expect(prepareTail("```ts\na\n```", true)).toEqual({ kind: "markdown", source: "```ts\na\n```" });
+  // A table header that ended its line still waits for the delimiter row.
+  expect(prepareTail("Results:\n| a | b |", true)).toEqual({
+    kind: "markdown",
+    source: "Results:\n",
+  });
+  expect(prepareTail("| a |\n| --- |", true)).toEqual({
+    kind: "markdown",
+    source: "| a |\n| --- |",
+  });
+});
+
+test("a half link in a long run of brackets is linear (M1)", () => {
+  const brackets = "[".repeat(64_000);
+  const t0 = performance.now();
+  expect(md(brackets)).toBe(brackets);
+  expect(md(`${brackets}]`)).toBe(`${brackets}]`);
+  expect(md(`${brackets}[a](ht`)).toBe(`${brackets}a`);
+  expect(performance.now() - t0).toBeLessThan(100);
+});
+
+test("a trailing closer shorter than its opener is held (M2)", () => {
+  expect(md("**a*")).toBe("**a**");
+  expect(md("__a_")).toBe("__a__");
+});
+
+test("indented code and open code spans are left alone (M3)", () => {
+  expect(md("    indented code *x")).toBe("    indented code *x");
+  expect(md("Para\n\n    code _x")).toBe("Para\n\n    code _x");
+  expect(md("Use `[a](b")).toBe("Use `[a](b`");
+  // A list item's indented paragraph still closes.
+  expect(md("1. a\n\n    **b")).toBe("1. a\n\n    **b**");
 });

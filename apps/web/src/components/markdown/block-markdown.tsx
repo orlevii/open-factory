@@ -9,20 +9,23 @@ const BIG_TAIL = 4096;
 const THROTTLE_MS = 250;
 const CONTAINER_CLASS = `${PROSE_CLASS}${VARIANT_CLASS.detail}`;
 
-type Split = { text: string; blocks: string[] };
+type Split = { text: string; blocks: string[]; starts: number[] };
 
-/** `splitBlocks(text)`, re-splitting only the last block when live text grew from the previous text:
- *  a split never happens inside a fence, so everything before the last block's start is final. */
+const fullSplit = (text: string): Split => ({ text, ...splitBlocks(text) });
+
+/** `splitBlocks(text)`, re-splitting only from the second-to-last block when live text grew from
+ *  the previous text. The boundary before the last block depends on that block's first line, which
+ *  may still be arriving ("2" before "2. b"); the boundary before the second-to-last is final, since
+ *  a later block can only start after the last one's first line ended. */
 function splitFrom(text: string, prev: Split | undefined): Split {
-  const last = prev?.blocks.at(-1);
-  if (prev && last !== undefined && text.startsWith(prev.text)) {
-    const start = prev.text.lastIndexOf(last);
-    if (start >= 0) {
-      const rest = splitBlocks(text.slice(start)).blocks;
-      return { text, blocks: [...prev.blocks.slice(0, -1), ...rest] };
-    }
-  }
-  return { text, blocks: splitBlocks(text).blocks };
+  if (!prev || prev.blocks.length < 2 || !text.startsWith(prev.text)) return fullSplit(text);
+  const from = prev.starts.at(-2) as number;
+  const rest = splitBlocks(text.slice(from));
+  return {
+    text,
+    blocks: [...prev.blocks.slice(0, -2), ...rest.blocks],
+    starts: [...prev.starts.slice(0, -2), ...rest.starts.map((s) => s + from)],
+  };
 }
 
 /** The blocks of `text`; incremental while `live`. The previous split is read from a ref written
@@ -30,7 +33,7 @@ function splitFrom(text: string, prev: Split | undefined): Split {
 function useBlocks(text: string, live: boolean): string[] {
   const prev = useRef<Split | undefined>(undefined);
   const split = useMemo(
-    () => (live ? splitFrom(text, prev.current) : { text, blocks: splitBlocks(text).blocks }),
+    () => (live ? splitFrom(text, prev.current) : fullSplit(text)),
     [text, live],
   );
   useLayoutEffect(() => {
@@ -39,24 +42,30 @@ function useBlocks(text: string, live: boolean): string[] {
   return split.blocks;
 }
 
-/** The open block's text as rendered: every committed frame under 4 KB; above it, one trailing
- *  update at most every 250ms (never a state update per frame). Keyed by the block's index, so a
- *  new block never shows the previous one's text. */
-function useTail(index: number, tail: string, live: boolean): string {
-  const big = live && tail.length > BIG_TAIL;
-  const [shown, setShown] = useState<{ index: number; text: string } | undefined>(undefined);
+/** Whether live text really ends in a newline after its last block (blocks are trimmed). */
+const ENDS_IN_NEWLINE = /\n\s*$/;
+
+type Tail = { index: number; text: string; newline: boolean };
+
+/** The open block as rendered: every committed frame under 4 KB; above it, one trailing update at
+ *  most every 250ms (never a state update per frame). Keyed by the block's index, so a new block
+ *  never shows the previous one's text. */
+function useTail(current: Tail, live: boolean): Tail {
+  const big = live && current.text.length > BIG_TAIL;
+  const [shown, setShown] = useState<Tail | undefined>(undefined);
   const lastAt = useRef(0);
+  const { index, text, newline } = current;
   useEffect(() => {
     if (!big) return;
     const wait = Math.max(0, lastAt.current + THROTTLE_MS - Date.now());
     const t = setTimeout(() => {
       lastAt.current = Date.now();
-      setShown({ index, text: tail });
+      setShown({ index, text, newline });
     }, wait);
     return () => clearTimeout(t);
-  }, [big, index, tail]);
+  }, [big, index, text, newline]);
   // Crossing 4 KB, the text parsed last is not held yet: the current text until the first update.
-  return big && shown?.index === index && shown.text.length > BIG_TAIL ? shown.text : tail;
+  return big && shown?.index === index && shown.text.length > BIG_TAIL ? shown : current;
 }
 
 /**
@@ -76,20 +85,26 @@ export const BlockMarkdown = memo(function BlockMarkdown({
   const noteId = useId();
   const blocks = useBlocks(text, live);
   const lastIndex = blocks.length - 1;
-  const tailText = useTail(lastIndex, blocks[lastIndex] ?? "", live);
-  const tail = useMemo(() => (live ? prepareTail(tailText) : undefined), [live, tailText]);
+  const newline = live && ENDS_IN_NEWLINE.test(text);
+  const shown = useTail({ index: lastIndex, text: blocks[lastIndex] ?? "", newline }, live);
+  const tail = useMemo(
+    () => (live ? prepareTail(shown.text, shown.newline) : undefined),
+    [live, shown.text, shown.newline],
+  );
   return (
     <>
       <div className={CONTAINER_CLASS}>
         {blocks.map((block, i) => {
-          if (i < lastIndex || !tail)
-            // biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end; the index is their identity
-            return <Markdown key={i} bare noteId={noteId} source={block} />;
-          if (tail.kind === "markdown")
-            // biome-ignore lint/suspicious/noArrayIndexKey: as above
-            return <Markdown key={i} bare noteId={noteId} source={tail.source} />;
-          // biome-ignore lint/suspicious/noArrayIndexKey: as above
-          return <OpenFence key={i} noteId={noteId} lead={tail.lead} slices={tail.slices} />;
+          const open = tail && i === lastIndex ? tail : undefined;
+          return (
+            <Block
+              // biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end; the index is their identity
+              key={i}
+              noteId={noteId}
+              source={open ? (open.kind === "markdown" ? open.source : (open.lead ?? "")) : block}
+              slices={open?.kind === "fence" ? open.slices : undefined}
+            />
+          );
         })}
       </div>
       {/* After the prose, never in it: as its last child it would keep the last block's bottom margin */}
@@ -98,20 +113,22 @@ export const BlockMarkdown = memo(function BlockMarkdown({
   );
 });
 
-/** The tail's open fence: the block's markdown before it, then the plain code. */
-function OpenFence({
+/** One block, completed or open: always its markdown first (an open fence's lead), then, while a
+ *  fence is open, the plain code. One element type for every block, so the markdown part (a lead
+ *  paragraph too) keeps its element as a fence opens and closes and as the block completes. */
+const Block = memo(function Block({
   noteId,
-  lead,
+  source,
   slices,
 }: {
   noteId: string;
-  lead: string | undefined;
-  slices: string[];
+  source: string;
+  slices: string[] | undefined;
 }) {
   return (
     <>
-      {lead ? <Markdown bare noteId={noteId} source={lead} /> : null}
-      <OpenFenceCode slices={slices} />
+      <Markdown bare noteId={noteId} source={source} />
+      {slices ? <OpenFenceCode slices={slices} /> : null}
     </>
   );
-}
+});

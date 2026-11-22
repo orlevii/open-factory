@@ -110,3 +110,16 @@ test("a second mount of a highlighted fence paints highlighted on its first rend
   expect(second.container.querySelector("pre.shiki")).toHaveTextContent("const b = 2");
   expect(pending).toHaveLength(2);
 });
+
+test("the highlight cache keeps to a byte budget and skips very large code (M6)", () => {
+  const big = "x".repeat(20_000);
+  highlightCache.set("ts", big, "<pre>big</pre>");
+  expect(highlightCache.get("ts", big)).toBeUndefined();
+  // ~40 KB per entry: a 4 MB budget holds about a hundred, so the oldest go first.
+  const code = (i: number) => `${i}`.padEnd(10_000, "y");
+  const htmlOf = "h".repeat(10_000);
+  for (let i = 0; i < 150; i++) highlightCache.set("ts", code(i), htmlOf);
+  expect(highlightCache.get("ts", code(0))).toBeUndefined();
+  expect(highlightCache.get("ts", code(149))).toBe(htmlOf);
+  expect(highlightCache.bytes()).toBeLessThanOrEqual(4 * 1024 * 1024);
+});

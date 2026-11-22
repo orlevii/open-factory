@@ -116,6 +116,8 @@ export function ToolCallRow({
           else onToggle();
         }}
         {...rowProps}
+        // The summary line: a long-press opens the row's menu on touch (U4 §11.2).
+        data-longpress-region=""
         // `.of-row`: the hover fill and the instant pressed fill; a full-width row never scales.
         // min-h-8, not h-8: at large text sizes the line wraps rather than clips (Break M9).
         className="of-row flex min-h-8 w-full min-w-0 items-start gap-2 rounded-md px-1 py-1.5 text-left text-sm leading-5"

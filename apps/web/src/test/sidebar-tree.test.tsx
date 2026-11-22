@@ -18,6 +18,7 @@ import { applyStatusFrames } from "@/features/agents/status-frames";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { longPress } from "@/test/long-press";
 import { agentSummary } from "@/test/session-fixtures";
 
 // Render probes: the tree reads `of-tree-expanded` once per render, a row reads its unread count
@@ -482,4 +483,33 @@ test("phone: a row's menu is a drawer titled with the agent's name", async () =>
   } finally {
     window.matchMedia = original;
   }
+});
+
+test("touch: a 500ms press on a row opens its menu at the press point and doesn't navigate", async () => {
+  const { router } = setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  const el = rowEl("b") as HTMLElement;
+  expect(el).toHaveAttribute("data-longpress-region");
+  longPress(el, { x: 40, y: 60 });
+  expect(await screen.findByRole("menu", { name: "Bravo" })).toBeInTheDocument();
+  expect(rowEl("b")).toHaveAttribute("data-menu-open");
+  // The dropdown hangs from the point, not the row's edge.
+  const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");
+  expect(point?.style.left).toBe("40px");
+  expect(point?.style.top).toBe("60px");
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("touch: a press shows the pressed fill on the row after 80ms; a mouse press does nothing", async () => {
+  const { router } = setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  const el = rowEl("b") as HTMLElement;
+  longPress(el, { hold: 80, release: false });
+  expect(el).toHaveAttribute("data-pressed");
+  fireEvent.pointerCancel(el, { pointerType: "touch", pointerId: 1 });
+  expect(el).not.toHaveAttribute("data-pressed");
+  longPress(el, { pointerType: "mouse", hold: 700, release: false });
+  expect(el).not.toHaveAttribute("data-pressed");
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(router.state.location.pathname).toBe("/");
 });

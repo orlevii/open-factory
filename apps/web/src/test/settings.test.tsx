@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { longPress } from "@/test/long-press";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -893,3 +894,46 @@ test.each([
     }
   },
 );
+
+test.each([
+  ["credentials", "Credentials", "work"],
+  ["projects", "Projects", "app"],
+] as const)(
+  "touch: a 500ms press on a %s row opens its menu at the point",
+  async (path, name, item) => {
+    world({ credentials: [cred({ name: "work" })], projects: [project({ name: "app" })] });
+    renderApp(`/settings/${path}`, alice);
+    const region = await section(name);
+    await waitFor(() => expect(row(region, item)).toBeDefined());
+    const li = row(region, item);
+    expect(li).toHaveAttribute("data-longpress-region");
+    longPress(within(li).getByText(item), { x: 15, y: 35 });
+    expect(await screen.findByRole("menu", { name: item })).toBeInTheDocument();
+    expect(document.querySelector<HTMLElement>("[data-menu-stand-in].size-0")?.style.top).toBe(
+      "35px",
+    );
+    // The ⋯ still opens it from its own edge afterwards.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await userEvent.click(within(li).getByRole("button", { name: `Actions for ${item}` }));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(document.querySelector("[data-menu-stand-in].size-0")).toBeNull();
+  },
+);
+
+test("a press that starts in a row's inline field never opens the menu", async () => {
+  world({ credentials: [cred({ name: "work" })] });
+  renderApp("/settings/credentials", alice);
+  const region = await section("Credentials");
+  await waitFor(() => expect(row(region, "work")).toBeDefined());
+  const u = userEvent.setup();
+  await u.click(within(row(region, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: /Replace/ }));
+  const field = await waitFor(() => {
+    const input = row(region, "work").querySelector("input");
+    expect(input).not.toBeNull();
+    return input as HTMLInputElement;
+  });
+  longPress(field);
+  expect(screen.queryByRole("menu")).toBeNull();
+});

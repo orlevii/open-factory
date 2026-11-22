@@ -1,4 +1,5 @@
 import { act, fireEvent, render } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { consumeLongPressRelease, useLongPress } from "./use-long-press";
 
@@ -230,4 +231,76 @@ test("contextmenu and click are no longer suppressed once the release grace pass
   expect(fireEvent.contextMenu(el)).toBe(true);
   fireEvent.click(el);
   expect(onClick).toHaveBeenCalledTimes(1);
+});
+
+function PortalRow({ onLongPress, onItem }: { onLongPress: () => void; onItem: () => void }) {
+  const handlers = useLongPress(onLongPress);
+  return (
+    <div data-testid="row" {...handlers}>
+      row
+      {createPortal(
+        <button type="button" data-testid="item" onClick={onItem}>
+          item
+        </button>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+test("events from a portal in the row's React tree (its open menu) neither press nor get swallowed", () => {
+  const onLongPress = vi.fn();
+  const onItem = vi.fn();
+  const view = render(<PortalRow onLongPress={onLongPress} onItem={onItem} />);
+  const row = view.getByTestId("row");
+  const item = view.getByTestId("item");
+  // A fire with no click after the release (Android, iOS): the swallow window is still open.
+  fireEvent.pointerDown(row, touch());
+  act(() => void vi.advanceTimersByTime(500));
+  fireEvent.pointerUp(row, touch());
+  expect(onLongPress).toHaveBeenCalledTimes(1);
+  fireEvent.click(item);
+  expect(onItem).toHaveBeenCalledTimes(1);
+  // Holding a drawer item never starts a press on the row behind it.
+  fireEvent.pointerDown(item, touch(10, 20, 2));
+  act(() => void vi.advanceTimersByTime(100));
+  expect(row).not.toHaveAttribute("data-pressed");
+  act(() => void vi.advanceTimersByTime(500));
+  expect(onLongPress).toHaveBeenCalledTimes(1);
+});
+
+function PickRow({ onLongPress }: { onLongPress: () => void }) {
+  const handlers = useLongPress(onLongPress, {
+    pick: (e) =>
+      e.target instanceof Element && e.target.closest("[data-region]")
+        ? (e.currentTarget.querySelector("[data-box]") as Element)
+        : null,
+  });
+  return (
+    <div data-testid="row" {...handlers}>
+      <div data-box="" data-testid="box">
+        <span data-region="" data-testid="region">
+          name
+        </span>
+        <p data-testid="prose">text</p>
+      </div>
+    </div>
+  );
+}
+
+test("pick: the press lands on the element it names, and a press outside its regions does nothing", () => {
+  const onLongPress = vi.fn();
+  const view = render(<PickRow onLongPress={onLongPress} />);
+  fireEvent.pointerDown(view.getByTestId("prose"), touch());
+  act(() => void vi.advanceTimersByTime(600));
+  expect(onLongPress).not.toHaveBeenCalled();
+  expect(view.getByTestId("box")).not.toHaveAttribute("data-pressed");
+  fireEvent.pointerUp(view.getByTestId("prose"), touch());
+  fireEvent.pointerDown(view.getByTestId("region"), touch());
+  act(() => void vi.advanceTimersByTime(80));
+  expect(view.getByTestId("box")).toHaveAttribute("data-pressed");
+  expect(view.getByTestId("row")).not.toHaveAttribute("data-pressed");
+  act(() => void vi.advanceTimersByTime(420));
+  expect(onLongPress).toHaveBeenCalledTimes(1);
+  expect(view.getByTestId("box")).not.toHaveAttribute("data-pressed");
 });

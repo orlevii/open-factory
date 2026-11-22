@@ -1,8 +1,9 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { longPress } from "@/test/long-press";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
 import { groupWork, mergeFailures } from "./display-passes";
@@ -757,4 +758,98 @@ test("/context output is untrusted markdown: a mermaid fence shows as code", () 
   expect(row.querySelector("pre")?.textContent).toContain("graph TD");
   // Shown as code (the plain code block with its own Copy), never handed to mermaid.
   expect(within(row).getAllByRole("button", { name: "Copy" })).toHaveLength(2);
+});
+
+// ---- Long-press on touch (U4 §11.2) ----
+
+const pressEvents: AnyEvent[] = [
+  { type: "turn_started" },
+  { type: "assistant_text", text: "first" },
+  { type: "assistant_text", text: "second" },
+  {
+    type: "message_in",
+    messages: [{ id: "m1", from: "@or", kind: "message", body: "a question", urgent: false }],
+  } as AnyEvent,
+];
+function pressTimeline(extra: Row[] = []) {
+  vi.useRealTimers();
+  const { rows } = buildRows(pressEvents.map((e) => se(e)));
+  render(
+    <SpeakerContext value={speakers}>
+      <Timeline
+        slug="dev"
+        rows={[...rows, ...extra]}
+        failedIds={new Set()}
+        interruptedEnds={new Set()}
+        hasMoreBefore={false}
+        onLoadEarlier={async () => false}
+        earlierError={false}
+        footer={null}
+      />
+    </SpeakerContext>,
+  );
+  const card = screen.getByText("a question").closest<HTMLElement>("[data-message-block]");
+  if (!card) throw new Error("no message card");
+  return { rows, card, wrap: card.closest<HTMLElement>("[data-row-wrap]") as HTMLElement };
+}
+
+test("touch: a press on a message's speaker line opens its row menu; the card takes the pressed fill", async () => {
+  const { card, wrap } = pressTimeline();
+  const speaker = card.querySelector<HTMLElement>("[data-speaker-line]") as HTMLElement;
+  expect(speaker).toHaveAttribute("data-longpress-region");
+  longPress(speaker, { hold: 80, release: false });
+  expect(card).toHaveAttribute("data-pressed");
+  expect(wrap).not.toHaveAttribute("data-pressed");
+  expect(speaker).not.toHaveAttribute("data-pressed");
+  fireEvent.pointerCancel(speaker, { pointerType: "touch", pointerId: 1 });
+  expect(card).not.toHaveAttribute("data-pressed");
+  longPress(speaker, { x: 50, y: 90 });
+  expect(await screen.findByRole("menu", { name: /^Message from @or/ })).toBeInTheDocument();
+  expect(document.querySelector<HTMLElement>("[data-menu-stand-in].size-0")?.style.left).toBe(
+    "50px",
+  );
+});
+
+test("touch: a press on a tool row's summary line opens that row's menu, and never toggles it", async () => {
+  pressTimeline([sh(9)]);
+  const summary = rowEl("9") as HTMLElement;
+  expect(summary).toHaveAttribute("data-longpress-region");
+  longPress(summary);
+  expect(await screen.findByRole("menu", { name: /^Bash/ })).toBeInTheDocument();
+  expect(summary).toHaveAttribute("aria-expanded", "false");
+});
+
+test("touch: a press in a row's gutter opens its menu; the row, not the gutter, takes the fill", async () => {
+  pressTimeline();
+  const row = screen.getByText("second").closest<HTMLElement>("[data-row]") as HTMLElement;
+  const wrap = row.closest<HTMLElement>("[data-row-wrap]") as HTMLElement;
+  const gutter = wrap.querySelector<HTMLElement>(":scope > [data-row-gutter]") as HTMLElement;
+  expect(gutter).toHaveAttribute("data-longpress-region");
+  longPress(gutter, { hold: 80, release: false });
+  expect(row).toHaveAttribute("data-pressed");
+  expect(gutter).not.toHaveAttribute("data-pressed");
+  fireEvent.pointerCancel(gutter, { pointerType: "touch", pointerId: 1 });
+  longPress(gutter);
+  expect(await screen.findByRole("menu", { name: /^@dev/ })).toBeInTheDocument();
+});
+
+test("prose is never a long-press region: a press on message text does nothing", () => {
+  const { card } = pressTimeline();
+  const prose = card.querySelector<HTMLElement>(".prose-of") as HTMLElement;
+  expect(prose).not.toBeNull();
+  for (const p of document.querySelectorAll(".prose-of")) {
+    expect(p.closest("[data-longpress-region]")).toBeNull();
+    expect(p.querySelector("[data-longpress-region]")).toBeNull();
+  }
+  longPress(prose.firstElementChild ?? prose, { hold: 700, release: false });
+  expect(card).not.toHaveAttribute("data-pressed");
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+test("a mouse press on a speaker line does nothing", () => {
+  const { card } = pressTimeline();
+  const speaker = card.querySelector<HTMLElement>("[data-speaker-line]") as HTMLElement;
+  longPress(speaker, { pointerType: "mouse", hold: 700, release: false });
+  expect(card).not.toHaveAttribute("data-pressed");
+  expect(screen.queryByRole("menu")).toBeNull();
 });

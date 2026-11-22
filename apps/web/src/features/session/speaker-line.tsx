@@ -283,6 +283,8 @@ export const SpeakerLine = memo(function SpeakerLine({
   return (
     <div
       data-speaker-line
+      // On a timeline row, a long-press here opens the row's menu (U4 §11.2).
+      data-longpress-region=""
       className="@container mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
     >
       {/* The names and the time never wrap apart: alone on its line the group shrinks, and the names

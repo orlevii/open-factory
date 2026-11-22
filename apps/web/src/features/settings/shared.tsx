@@ -3,16 +3,20 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { Ellipsis } from "lucide-react";
 import {
   type ComponentProps,
+  createContext,
   type FormEvent,
   type ReactNode,
+  use,
   useCallback,
   useEffect,
   useRef,
 } from "react";
+import { AdaptiveMenu } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { pickRowOutsideFields, useLongPressMenu } from "@/hooks/use-long-press-menu";
 
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
@@ -186,6 +190,32 @@ export function RowLine({ children, actions }: { children: ReactNode; actions: R
       {children}
       <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
     </div>
+  );
+}
+
+type RowMenuState = ReturnType<typeof useLongPressMenu>["menu"];
+const RowMenuCtx = createContext<RowMenuState | null>(null);
+
+/** A list row whose menu a long-press anywhere on it opens at the point (U4 §11.2); a press that starts
+ *  in one of its inline fields selects text instead. Its menu is a `SettingsRowMenu` inside it. */
+export function SettingsRow({ children, ...props }: ComponentProps<"li">) {
+  const { press, menu } = useLongPressMenu({ pick: pickRowOutsideFields });
+  return (
+    <RowMenuCtx value={menu}>
+      <li {...props} {...press} data-longpress-region="" data-row-box="">
+        {children}
+      </li>
+    </RowMenuCtx>
+  );
+}
+
+/** The row's `AdaptiveMenu`, opened by its ⋯ or by a long-press on its `SettingsRow`. */
+export function SettingsRowMenu({ title, children }: { title: string; children: ReactNode }) {
+  const menu = use(RowMenuCtx);
+  return (
+    <AdaptiveMenu title={title} {...menu}>
+      {children}
+    </AdaptiveMenu>
   );
 }
 

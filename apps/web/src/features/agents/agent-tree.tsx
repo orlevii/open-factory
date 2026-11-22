@@ -9,11 +9,14 @@ import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
 import { formatCost } from "@/features/usage/format";
+import { useLongPress } from "@/hooks/use-long-press";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 /** Indentation per tree level inside the name cell; capped below `md` so names keep room. */
 const INDENT = 20;
+
+type Point = { x: number; y: number };
 const DESKTOP_DEPTH_CAP = 8;
 const MOBILE_DEPTH_CAP = 3;
 
@@ -131,8 +134,11 @@ const AgentTreeRow = memo(function AgentTreeRow({
   focused: boolean;
   now: Date;
   menuOpen: boolean;
-  onMenu: (slug: string, anchor?: HTMLElement) => void;
+  onMenu: (slug: string, anchor?: HTMLElement, at?: Point) => void;
 }) {
+  // A long-press on the row opens the list's one menu at the press point (U4 §11.2).
+  const onLongPress = useCallback((at: Point) => onMenu(a.slug, undefined, at), [onMenu, a.slug]);
+  const press = useLongPress(onLongPress);
   const depth = Math.min(level, cap);
   const beyond = level > cap;
   const ended = a.archivedAt !== null || a.status === "terminated";
@@ -144,6 +150,8 @@ const AgentTreeRow = memo(function AgentTreeRow({
       <Link
         to="/agents/$slug"
         params={{ slug: a.slug }}
+        {...press}
+        data-longpress-region=""
         data-agent-link={a.slug}
         data-focused={focused || undefined}
         data-menu-open={menuOpen || undefined}
@@ -320,13 +328,15 @@ export function AgentTree({
     slug: string | null;
     open: boolean;
     anchor: HTMLElement | null;
+    at?: Point;
   }>({ slug: null, open: false, anchor: null });
   const menuSlug = menu.open ? menu.slug : null;
   const openMenu = useCallback(
-    (slug: string, anchor?: HTMLElement) =>
+    (slug: string, anchor?: HTMLElement, at?: Point) =>
       setMenu({
         slug,
         open: true,
+        at,
         anchor:
           anchor ??
           listRef.current?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(slug)}"]`) ??
@@ -375,6 +385,7 @@ export function AgentTree({
             open: menu.open,
             onOpenChange: onMenuOpenChange,
             anchor: menu.anchor,
+            point: menu.at,
             onClose: () => onMenuClose(menuAgent.slug),
           }}
         />

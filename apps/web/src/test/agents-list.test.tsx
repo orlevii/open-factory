@@ -12,6 +12,7 @@ import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { mockWorld } from "@/test/agent-screens-fixtures";
+import { longPress } from "@/test/long-press";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -354,7 +355,10 @@ function renderTree(initial: AgentSummary[]) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { update: (f: (a: AgentSummary[]) => AgentSummary[]) => act(() => setTreeAgents(f)) };
+  return {
+    router,
+    update: (f: (a: AgentSummary[]) => AgentSummary[]) => act(() => setTreeAgents(f)),
+  };
 }
 
 /** 214 agents in a 14-level chain with wide fan-out below it. */
@@ -414,3 +418,35 @@ test.each([
     await waitFor(() => expect(more).toHaveFocus());
   },
 );
+
+test("touch: a 500ms press on an Agents row opens its menu at the point and doesn't navigate", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({})),
+  );
+  const { router } = renderTree(many());
+  const list = await screen.findByRole("list", { name: "Agents" });
+  const link = list.querySelector('[data-agent-link="a7"]') as HTMLElement;
+  expect(link).toHaveAttribute("data-longpress-region");
+  chipRenders.length = 0;
+  longPress(link, { x: 30, y: 70 });
+  expect(await screen.findByRole("menu", { name: "Agent 7" })).toBeInTheDocument();
+  const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");
+  expect(point?.style.left).toBe("30px");
+  // Only the pressed row re-renders (its menu-open flag), never the others.
+  expect(chipRenders).toEqual(["a7"]);
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("a mouse press on an Agents row opens nothing", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({})),
+  );
+  renderTree(many());
+  const list = await screen.findByRole("list", { name: "Agents" });
+  const link = list.querySelector('[data-agent-link="a7"]') as HTMLElement;
+  longPress(link, { pointerType: "mouse", hold: 700, release: false });
+  expect(link).not.toHaveAttribute("data-pressed");
+  expect(screen.queryByRole("menu")).toBeNull();
+});

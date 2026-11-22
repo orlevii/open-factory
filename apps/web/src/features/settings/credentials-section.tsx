@@ -6,7 +6,6 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { InlineOutcome } from "@/components/inline-outcome";
 import {
-  AdaptiveMenu,
   AdaptiveMenuContent,
   AdaptiveMenuItem,
   AdaptiveMenuSeparator,
@@ -31,6 +30,8 @@ import {
   RowName,
   restartNote,
   SettingsList,
+  SettingsRow,
+  SettingsRowMenu,
   SettingsSection,
   smallClass,
   TimeAgo,
@@ -270,7 +271,7 @@ export function CredentialsSection() {
               const noun = valueNoun(c.kind);
               const busy = verifying.has(c.name);
               return (
-                <li
+                <SettingsRow
                   key={c.name}
                   data-name={c.name}
                   className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
@@ -288,7 +289,7 @@ export function CredentialsSection() {
                           {busy && <Spinner />}
                           {busy ? "Verifying…" : "Verify"}
                         </Button>
-                        <AdaptiveMenu title={c.name}>
+                        <SettingsRowMenu title={c.name}>
                           <AdaptiveMenuTrigger asChild>
                             <MoreButton
                               id={`credential-menu-${c.name}`}
@@ -329,7 +330,7 @@ export function CredentialsSection() {
                               {blocker ? `Delete (${blocker})` : "Delete…"}
                             </AdaptiveMenuItem>
                           </AdaptiveMenuContent>
-                        </AdaptiveMenu>
+                        </SettingsRowMenu>
                       </>
                     }
                   >
@@ -380,7 +381,7 @@ export function CredentialsSection() {
                       }}
                     />
                   )}
-                </li>
+                </SettingsRow>
               );
             })}
           </SettingsList>

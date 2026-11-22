@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { preloadSheet } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { useLongPressMenu } from "@/hooks/use-long-press-menu";
 import { firstLine } from "./first-line";
 import { formatScheduleTime } from "./format";
 import { ScheduleState, STATE_VIEW } from "./schedule-state";
@@ -68,8 +69,15 @@ export function ScheduleRow({
   const same = whoPlain(s.createdBy) === whoPlain(s.bodyAuthor);
   const line = firstLine(s.body);
   const spec = { kind: "edit-schedule", key: s.key } as const;
+  // A long-press anywhere on the row opens its menu at the point (U4 §11.2); the ⋯ stays.
+  const { press, menu } = useLongPressMenu();
   return (
-    <li className="relative border-b border-border last:border-b-0 hover:bg-sidebar-accent">
+    <li
+      {...press}
+      data-longpress-region=""
+      data-row-box=""
+      className="relative border-b border-border last:border-b-0 hover:bg-sidebar-accent"
+    >
       <div className="grid min-h-[4.5rem] gap-y-0.5 px-2 py-2 text-sm">
         <div className="flex min-w-0 items-center gap-x-3">
           <button
@@ -102,7 +110,7 @@ export function ScheduleRow({
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1">
             <ScheduleState state={s.state} className="text-[0.8125rem] leading-5" />
-            <AdaptiveMenu title={s.key}>
+            <AdaptiveMenu title={s.key} {...menu}>
               <AdaptiveMenuTrigger asChild>
                 <Button
                   variant="ghost"

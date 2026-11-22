@@ -1,7 +1,8 @@
 import type { SubagentProgress } from "@open-factory/shared";
-import { memo, type TransitionEvent, useCallback } from "react";
+import { memo, type RefObject, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
-import { RowChrome } from "./row-chrome";
+import { RowChrome, useRowLongPress } from "./row-chrome";
+import type { RowMenuHandle } from "./row-menu";
 import { isNoticeKind, type Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
@@ -113,8 +114,11 @@ export function isCard(row: Row): boolean {
 /** One timeline entry: the wrap (deep-link id, live fade), the row, its gutter time and its menu. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   const { row } = p;
+  // A long-press on the row's chrome opens its menu through the menu's handle (U4 §11.2).
+  const { menu, press } = useRowLongPress();
   return (
     <div
+      {...press}
       data-row-wrap
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
       // A marker only (no style): the deep link's holder, kept for the page's life; the tint is
@@ -123,14 +127,16 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       {...(p.live ? { "data-live": "" } : {})}
       className={`group relative min-w-0 rounded-md ${isCard(row) ? "" : ROW_GUTTER} ${p.gap}`}
     >
-      <ItemContent {...p} />
+      <ItemContent {...p} menuRef={menu} />
     </div>
   );
 }, itemPropsEqual);
 
 /** The row, its gutter time and its menu, memoized apart from the wrap so the tab coming back (every
  *  live row's `live` turning false at once) re-renders only the wrap divs. */
-const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
+const ItemContent = memo(function ItemContent(
+  p: TimelineItemProps & { menuRef: RefObject<RowMenuHandle | null> },
+) {
   const { row, slug, toggle } = p;
   const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
   return (
@@ -172,6 +178,7 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
           callShown={p.expanded.has(row.key)}
           onToggleCall={onToggleCall}
           inCard={isCard(row)}
+          menuRef={p.menuRef}
         />
       )}
     </>

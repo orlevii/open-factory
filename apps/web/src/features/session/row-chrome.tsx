@@ -1,6 +1,7 @@
-import { type ReactNode, useCallback } from "react";
+import { type ReactNode, type Ref, useCallback, useRef } from "react";
+import { type PickPressed, useLongPress } from "@/hooks/use-long-press";
 import { formatTime } from "./format";
-import { RowMenu, rowMenuItems, rowMenuTitle } from "./row-menu";
+import { RowMenu, type RowMenuHandle, rowMenuItems, rowMenuTitle } from "./row-menu";
 import type { Row } from "./rows";
 
 /** Agent text shows its time in the gutter on hover or focus (U3 §7.5); a head text row's speaker
@@ -18,6 +19,29 @@ const TIME_SHOWN = {
   nested: "group-focus-within/call:flex group-hover/call:flex",
 } as const;
 
+/**
+ * A timeline long-press (U4 §11.2) starts only on a row's chrome: its speaker line, a tool row's summary
+ * line or its gutter (`data-longpress-region`), never its prose. The owner is the timeline item's wrap
+ * or a nested row's box, whichever holds the region nearest; it must have a menu. The press lands on
+ * the row's own box: a message's card, otherwise the row.
+ */
+export const pickRowBox: PickPressed = (e) => {
+  const owner = e.currentTarget;
+  const region = e.target instanceof Element ? e.target.closest("[data-longpress-region]") : null;
+  if (!region || region.closest("[data-call], [data-row-wrap]") !== owner) return null;
+  if (!owner.querySelector(":scope > [data-row-menu]")) return null;
+  const row = owner.querySelector("[data-row]");
+  return row ? (row.querySelector(":scope > [data-message-block]") ?? row) : null;
+};
+
+/** Long-press handlers for a row's owner box, opening its menu at the point through the menu's handle,
+ *  so no menu state lives in the (memoized) row. Both are stable. */
+export function useRowLongPress() {
+  const menu = useRef<RowMenuHandle>(null);
+  const onLongPress = useCallback((at: { x: number; y: number }) => menu.current?.openAt(at), []);
+  return { menu, press: useLongPress(onLongPress, { pick: pickRowBox }) };
+}
+
 /** A row's gutter time and its one ⋯ (U3 §7.5), at the right of the nearest `relative` box. The menu's
  *  list is built per row object, and only when the menu first opens. */
 export function RowChrome({
@@ -28,6 +52,7 @@ export function RowChrome({
   onToggleCall,
   nested = false,
   inCard = false,
+  menuRef,
 }: {
   row: Row;
   slug: string;
@@ -39,12 +64,23 @@ export function RowChrome({
   nested?: boolean;
   /** The row is a card: the ⋯ sits inside its padding (U3 §7.1). */
   inCard?: boolean;
+  /** The menu's handle, for a long-press on the row. */
+  menuRef?: Ref<RowMenuHandle>;
 }) {
   const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
   const title = useCallback(() => rowMenuTitle(row, slug), [row, slug]);
   const time = gutterTime(row);
   return (
     <>
+      {/* The gutter column (a card has none): a long-press region on touch. */}
+      {!inCard && (
+        <div
+          aria-hidden="true"
+          data-row-gutter=""
+          data-longpress-region=""
+          className="absolute inset-y-0 right-0 w-8"
+        />
+      )}
       {time !== undefined && (
         // Content | time | ⋯: the time sits just left of the menu, over the text row's end (agent text
         // has nothing there).
@@ -58,6 +94,7 @@ export function RowChrome({
         </time>
       )}
       <RowMenu
+        ref={menuRef}
         items={items}
         title={title}
         focusable={focusable}
@@ -78,11 +115,12 @@ export function RowChrome({
 export function NestedRow({
   children,
   ...chrome
-}: Omit<Parameters<typeof RowChrome>[0], "nested"> & { children: ReactNode }) {
+}: Omit<Parameters<typeof RowChrome>[0], "nested" | "menuRef"> & { children: ReactNode }) {
+  const { menu, press } = useRowLongPress();
   return (
-    <div data-call className="group/call relative -mr-8 pr-8">
+    <div data-call className="group/call relative -mr-8 pr-8" {...press}>
       {children}
-      <RowChrome {...chrome} nested />
+      <RowChrome {...chrome} nested menuRef={menu} />
     </div>
   );
 }

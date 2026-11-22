@@ -61,6 +61,8 @@ export function AgentMenu({
     open: boolean;
     onOpenChange: (open: boolean) => void;
     anchor: HTMLElement | null;
+    /** A long-press's point (U4 §11.2): a dropdown hangs from it rather than the row. */
+    point?: { x: number; y: number };
     onClose: () => void;
   };
 }) {
@@ -241,6 +243,7 @@ export function AgentMenu({
         open={anchored?.open}
         onOpenChange={anchored?.onOpenChange}
         title={agent.displayName}
+        anchor={anchored?.point}
       >
         <AdaptiveMenuTrigger asChild>
           {anchored ? (
@@ -268,7 +271,7 @@ export function AgentMenu({
           )}
         </AdaptiveMenuTrigger>
         <AdaptiveMenuContent
-          align="end"
+          align={anchored?.point ? "start" : "end"}
           // Compact… opens a popover anchored on the ⋯ button, and Agent details may open a sheet:
           // focus belongs to them, not back here.
           onCloseAutoFocus={(e) => {

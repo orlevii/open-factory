@@ -28,11 +28,20 @@ type Press = {
   feedback: ReturnType<typeof setTimeout>;
 };
 
-export function useLongPress(onLongPress: (at: { x: number; y: number }) => void) {
+/** Which element a touch press on `e.currentTarget` presses (it takes `data-pressed`), or null when the
+ *  press started somewhere that isn't a long-press region (prose, a field). Read only on pointerdown. */
+export type PickPressed = (e: React.PointerEvent) => Element | null;
+
+export function useLongPress(
+  onLongPress: (at: { x: number; y: number }) => void,
+  { pick }: { pick?: PickPressed } = {},
+) {
   const callback = useRef(onLongPress);
+  const picker = useRef(pick);
   useEffect(() => {
     callback.current = onLongPress;
-  }, [onLongPress]);
+    picker.current = pick;
+  }, [onLongPress, pick]);
 
   const press = useRef<Press | null>(null);
   const swallowUntil = useRef(0);
@@ -42,14 +51,15 @@ export function useLongPress(onLongPress: (at: { x: number; y: number }) => void
   return useMemo(
     () => ({
       onPointerDown(e: React.PointerEvent) {
-        if (e.pointerType !== "touch") return;
+        if (e.pointerType !== "touch" || !inside(e)) return;
         if (press.current) {
           end(press);
           return;
         }
+        const el = picker.current ? picker.current(e) : e.currentTarget;
+        if (!el) return;
         swallowUntil.current = 0;
         releaseExpiresAt = 0;
-        const el = e.currentTarget;
         const at = { x: e.clientX, y: e.clientY };
         const hold = setTimeout(() => {
           end(press);
@@ -79,17 +89,24 @@ export function useLongPress(onLongPress: (at: { x: number; y: number }) => void
         if (press.current && e.pointerId === press.current.pointerId) end(press);
       },
       onClickCapture(e: React.MouseEvent) {
-        if (Date.now() >= swallowUntil.current) return;
+        if (Date.now() >= swallowUntil.current || !inside(e)) return;
         swallowUntil.current = 0;
         e.preventDefault();
         e.stopPropagation();
       },
       onContextMenu(e: React.MouseEvent) {
+        if (!inside(e)) return;
         if (press.current || Date.now() < swallowUntil.current) e.preventDefault();
       },
     }),
     [],
   );
+}
+
+/** The event happened in the element's own DOM, not in a portal of its React tree (a menu it opened):
+ *  a tap on a drawer item is never swallowed, and holding one never presses the row behind it. */
+function inside(e: React.SyntheticEvent) {
+  return e.target instanceof Node && e.currentTarget.contains(e.target);
 }
 
 function end(ref: React.RefObject<Press | null>) {

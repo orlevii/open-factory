@@ -7,7 +7,6 @@ import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import {
-  AdaptiveMenu,
   AdaptiveMenuContent,
   AdaptiveMenuItem,
   AdaptiveMenuSeparator,
@@ -28,6 +27,8 @@ import {
   RowLine,
   RowName,
   SettingsList,
+  SettingsRow,
+  SettingsRowMenu,
   SettingsSection,
   Usage,
   useFocusLater,
@@ -275,14 +276,14 @@ export function ProjectsSection() {
             {projects.map((p) => {
               const blocker = removeBlocker(p, spawners ?? NO_SPAWNERS);
               return (
-                <li
+                <SettingsRow
                   key={p.name}
                   data-name={p.name}
                   className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
                 >
                   <RowLine
                     actions={
-                      <AdaptiveMenu title={p.name}>
+                      <SettingsRowMenu title={p.name}>
                         <AdaptiveMenuTrigger asChild>
                           <MoreButton
                             id={`project-menu-${p.name}`}
@@ -318,7 +319,7 @@ export function ProjectsSection() {
                             {blocker ? `Remove (${blocker})` : "Remove"}
                           </AdaptiveMenuItem>
                         </AdaptiveMenuContent>
-                      </AdaptiveMenu>
+                      </SettingsRowMenu>
                     }
                   >
                     <RowName>{p.name}</RowName>
@@ -360,7 +361,7 @@ export function ProjectsSection() {
                       }}
                     />
                   )}
-                </li>
+                </SettingsRow>
               );
             })}
           </SettingsList>

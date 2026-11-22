@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { longPress } from "@/test/long-press";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption } from "@/test/select-helpers";
@@ -357,4 +358,18 @@ test("phone: a row's menu is a drawer titled with the schedule's key", async () 
   } finally {
     window.matchMedia = original;
   }
+});
+
+test("touch: a 500ms press on a schedule row opens its menu at the point, not the Edit sheet", async () => {
+  mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([sched(3)]) });
+  renderApp("/schedules", alice);
+  const key = await screen.findByRole("button", { name: /^S-3,/ });
+  const li = key.closest("li") as HTMLElement;
+  expect(li).toHaveAttribute("data-longpress-region");
+  longPress(key, { x: 25, y: 45 });
+  expect(await screen.findByRole("menu", { name: "S-3" })).toBeInTheDocument();
+  expect(document.querySelector<HTMLElement>("[data-menu-stand-in].size-0")?.style.left).toBe(
+    "25px",
+  );
+  expect(getSheetState().parent).toBeUndefined();
 });

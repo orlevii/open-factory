@@ -156,7 +156,11 @@ export function CallBlock({
       className="rounded-lg border border-border bg-card py-2 pr-9 pl-3"
     >
       {header ?? (
-        <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
+        // The sender line: a long-press region, as a speaker line is (U4 §11.2).
+        <div
+          data-longpress-region=""
+          className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
+        >
           {sender}
           <time
             dateTime={row.at}

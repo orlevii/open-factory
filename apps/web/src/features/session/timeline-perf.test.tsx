@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WsContext, type WsHub } from "@/lib/ws-context";
+import { longPress } from "@/test/long-press";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import type { AgentDetailsPanel } from "./agent-details";
@@ -934,4 +935,14 @@ test("200 rows at rest mount no menu root and read no phone or pointer query (me
   } finally {
     window.matchMedia = original;
   }
+});
+
+test("a long-press on a tool row opens its menu without re-rendering any row", async () => {
+  await setup();
+  const tool = document.querySelector<HTMLElement>('button[data-row="3"]');
+  if (!tool) throw new Error("no tool row");
+  longPress(tool);
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+  expect(tool).toHaveAttribute("aria-expanded", "false");
+  expect(count.rows.size).toBe(0);
 });

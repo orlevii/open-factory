@@ -6,7 +6,6 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { InlineOutcome } from "@/components/inline-outcome";
 import {
-  AdaptiveMenu,
   AdaptiveMenuContent,
   AdaptiveMenuItem,
   AdaptiveMenuTrigger,
@@ -30,6 +29,8 @@ import {
   monoClass,
   RowLine,
   SettingsList,
+  SettingsRow,
+  SettingsRowMenu,
   SettingsSection,
   smallClass,
   useFocusLater,
@@ -290,14 +291,14 @@ export function UsersSection() {
             const blocker = disableBlocker(u, meId, users);
             const o = rowOutcome[u.id];
             return (
-              <li
+              <SettingsRow
                 key={u.id}
                 data-name={u.handle}
                 className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
               >
                 <RowLine
                   actions={
-                    <AdaptiveMenu title={`@${u.handle}`}>
+                    <SettingsRowMenu title={`@${u.handle}`}>
                       <AdaptiveMenuTrigger asChild>
                         <MoreButton id={`user-menu-${u.id}`} label={`Actions for @${u.handle}`} />
                       </AdaptiveMenuTrigger>
@@ -330,7 +331,7 @@ export function UsersSection() {
                           </AdaptiveMenuItem>
                         )}
                       </AdaptiveMenuContent>
-                    </AdaptiveMenu>
+                    </SettingsRowMenu>
                   }
                 >
                   <span className="min-w-0 text-[0.8125rem] md:w-36 md:shrink-0">
@@ -359,7 +360,7 @@ export function UsersSection() {
                     {o?.content}
                   </InlineOutcome>
                 </div>
-              </li>
+              </SettingsRow>
             );
           })}
         </SettingsList>

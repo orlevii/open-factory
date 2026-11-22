@@ -140,3 +140,36 @@ test("`@` completes a handle as `@slug ` from the cached agents and users lists"
   expect(box()).toHaveValue("cc @dana and @dev ");
   expect(posts).toEqual([]);
 });
+
+test("while a comment posts a muted Posting… status shows; Send keeps its label", async () => {
+  let release: () => void = () => {};
+  vi.mocked(fetch).mockImplementationOnce(
+    () =>
+      new Promise<Response>((res) => {
+        release = () =>
+          res(
+            json(
+              {
+                comment: {
+                  type: "comment",
+                  id: "c2",
+                  author: { kind: "user", handle: "alice" },
+                  body: "x",
+                  at: "2026-11-22T00:00:00.000Z",
+                },
+                deliveredTo: [],
+                mentionedHumans: [],
+                notReached: [],
+              },
+              201,
+            ),
+          );
+      }),
+  );
+  const { box } = setup();
+  await userEvent.type(box(), "x{Enter}");
+  expect(await screen.findByText("Posting…")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  await act(async () => release());
+  await waitFor(() => expect(screen.queryByText("Posting…")).toBeNull());
+});

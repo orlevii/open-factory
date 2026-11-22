@@ -720,6 +720,22 @@ test("SessionView: a live frame and an agent_status frame render the composer 0 
   expect(count.rows.size).toBe(0);
 });
 
+test("SessionView: a status frame that opens the turn renders the composer once and shows Stop", async () => {
+  await renderSessionView();
+  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  push({
+    type: "agent_status",
+    agent: "dev",
+    status: "working",
+    turnOpen: true,
+    restartPending: false,
+    restartWaitingOn: 0,
+  });
+  frame();
+  expect(count.profiled.get("composer")).toBe(1);
+  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+});
+
 test("SessionView: the announcer reads the unmerged rows, so a repeated failure is announced again", async () => {
   passes.mergeErrors = true;
   await renderSessionView();

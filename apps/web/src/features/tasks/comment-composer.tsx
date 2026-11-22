@@ -114,6 +114,7 @@ export function CommentComposer({
         completions={completions}
         note={isCoarsePointer() ? who : `${who} Enter to post.`}
         preview
+        pendingLabel="Posting…"
       />
       <p
         role="status"

@@ -129,11 +129,25 @@ type SessionComposerProps = {
   onTerminated?: (notice: string) => void;
 };
 
+/** The props compared by identity: every prop but `agent` (keep this list in step with the type). */
+const IDENTITY_KEYS = [
+  "ref",
+  "slug",
+  "stopEpoch",
+  "waiting",
+  "onQueued",
+  "onSending",
+  "onSendFailed",
+  "landed",
+  "onSent",
+  "onTerminated",
+] as const satisfies readonly Exclude<keyof SessionComposerProps, "agent">[];
+
 /** Only the agent fields the composer reads: a status frame that changes nothing here (a new
- *  `turnStartedAt`, a status label) never renders it (U3 M3). Every other prop by identity. */
+ *  `turnStartedAt`, a status label) never renders it (U3 M3). When the wrapper starts reading another
+ *  `agent` field, add it here, or frames that change it won't reach the composer. */
 function sameProps(a: SessionComposerProps, b: SessionComposerProps): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof SessionComposerProps>;
-  for (const k of keys) if (k !== "agent" && a[k] !== b[k]) return false;
+  for (const k of IDENTITY_KEYS) if (a[k] !== b[k]) return false;
   const x = a.agent;
   const y = b.agent;
   return (

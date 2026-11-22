@@ -19,11 +19,11 @@ import { Markdown } from "@/components/markdown/markdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
-import { StopButton, type StopHandle } from "@/features/session/stop-button";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
 import { isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
 import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
+import { StopButton, type StopHandle } from "./stop-button";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
@@ -113,6 +113,9 @@ export type ComposerProps = {
   note?: string;
   /** Sending waits (typing works). */
   waiting?: boolean;
+  /** A muted status line while a submit is pending ("Posting…" for comments, which have no
+   *  optimistic block of their own). */
+  pendingLabel?: string;
   /** A message that stops the send before the box empties. */
   validate?(text: string): string | undefined;
   /** The `clientMessageId`s that showed up: an aborted send among them counts as sent. */
@@ -153,6 +156,7 @@ export const Composer = memo(function Composer({
   hintMode,
   note,
   waiting = false,
+  pendingLabel,
   validate,
   completions,
   landed = NO_LANDED,
@@ -164,6 +168,8 @@ export const Composer = memo(function Composer({
   const [error, setError] = useState<string | undefined>();
   const [filesNote, setFilesNote] = useState(false);
   const [view, setView] = useState<"write" | "preview">("write");
+  // Submits still waiting on the server (more than one when sends overlap).
+  const [pending, setPending] = useState(0);
   // An aborted send survives a remount beside its draft, so its unchanged text resends under its id.
   const [unconfirmed, setUnconfirmedState] = useState<Unconfirmed | undefined>(() => {
     const u = readUnconfirmed(draftKey);
@@ -307,17 +313,26 @@ export const Composer = memo(function Composer({
         setView("write");
         setText((cur) => (cur.startsWith(t) ? cur : `${t}${cur}`));
       },
+      // Emptiness comes from the draft's text as last set (the updater runs at once on it), not the
+      // textarea, which Preview unmounts and whose state may not have committed yet.
       prefillIfEmpty(t) {
-        // The DOM value is the box as it is now (state may not have committed yet).
-        if ((boxRef.current?.value ?? "").trim() !== "") return false;
-        setText(t); // unfocused: useDraft doesn't store it
-        return true;
+        let did = false;
+        setText((cur) => {
+          if (cur.trim() !== "") return cur;
+          did = true;
+          return t;
+        }); // unfocused: useDraft doesn't store it
+        return did;
       },
       putBackIfEmpty(next) {
-        if ((boxRef.current?.value ?? "").trim() !== "") return false;
-        setText(next);
-        draft.persist(); // focus is elsewhere (Cancel): saved now, or a reload loses it
-        return true;
+        let did = false;
+        setText((cur) => {
+          if (cur.trim() !== "") return cur;
+          did = true;
+          return next;
+        });
+        if (did) draft.persist(); // focus is elsewhere (Cancel): saved now, or a reload loses it
+        return did;
       },
       clearIfUnchanged(sent) {
         setText((cur) => (cur === sent ? "" : cur));
@@ -366,13 +381,18 @@ export const Composer = memo(function Composer({
     // Optimistic: the box empties at once; the stored draft keeps the text until the server takes it.
     draft.hold(sent);
     setText("");
+    setPending((n) => n + 1);
     let submitted: Promise<void>;
     try {
       submitted = onSubmit(sent, { urgent, clientMessageId, attachments: [] });
     } catch (e) {
       submitted = Promise.reject(e);
     }
-    boxRef.current?.focus(); // focus stays in the composer after sending (UI §7)
+    // Focus stays in the composer after sending (UI §7); from Preview, back to Write first.
+    if (view === "preview") {
+      setView("write");
+      requestAnimationFrame(() => boxRef.current?.focus());
+    } else boxRef.current?.focus();
     try {
       await submitted;
       draft.clearSent(sent);
@@ -387,6 +407,8 @@ export const Composer = memo(function Composer({
         });
         setError(UNCONFIRMED);
       } else setError(e instanceof Error && e.message ? e.message : NETWORK_ERROR);
+    } finally {
+      setPending((n) => n - 1);
     }
   }
 
@@ -578,7 +600,21 @@ export const Composer = memo(function Composer({
                   )}
                 >
                   <CircleStop />
-                  <span className="before:content-['Stop'] @max-[20rem]:hidden" />
+                  {/* As wide as the widest label Stop shows, so the slot never grows within a turn. */}
+                  <span className="grid @max-[20rem]:hidden">
+                    <span
+                      data-stop-label="Stop"
+                      className="[grid-area:1/1] before:content-['Stop']"
+                    />
+                    <span
+                      data-stop-label="Stopping…"
+                      className="[grid-area:1/1] before:content-['Stopping…']"
+                    />
+                    <span
+                      data-stop-label="Compacting…"
+                      className="[grid-area:1/1] before:content-['Compacting…']"
+                    />
+                  </span>
                 </span>
                 {turnOpen && stopEpoch !== undefined && (
                   <StopButton
@@ -604,6 +640,14 @@ export const Composer = memo(function Composer({
             {note}
           </p>
         )}
+        {pendingLabel && pending > 0 ? (
+          <p
+            role="status"
+            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+          >
+            {pendingLabel}
+          </p>
+        ) : null}
         {filesNote && (
           <p
             role="status"

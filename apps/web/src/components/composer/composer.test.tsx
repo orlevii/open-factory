@@ -376,3 +376,59 @@ test("a click on a row accepts it", async () => {
   expect(box).toHaveValue("@humans ");
   expect(document.activeElement).toBe(box);
 });
+
+test("in Preview the box isn't empty: prefillIfEmpty and putBackIfEmpty leave the typed text alone", async () => {
+  const { ref } = setup({ preview: true, draftKey: "task:T-1" });
+  await userEvent.type(screen.getByRole("textbox"), "my draft");
+  await userEvent.click(screen.getByRole("button", { name: "Preview" }));
+  expect(screen.queryByRole("textbox")).toBeNull();
+  act(() => {
+    expect(ref.current?.prefillIfEmpty("@dev ")).toBe(false);
+    expect(ref.current?.putBackIfEmpty("cancelled")).toBe(false);
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Write" }));
+  expect(screen.getByRole("textbox")).toHaveValue("my draft");
+});
+
+test("sending from Preview returns to Write", async () => {
+  setup({ preview: true });
+  await userEvent.type(screen.getByRole("textbox"), "hello");
+  await userEvent.click(screen.getByRole("button", { name: "Preview" }));
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(screen.getByRole("textbox")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Write" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("pendingLabel: a muted status line while a submit is pending; Send keeps its label", async () => {
+  let done: () => void = () => {};
+  const { box } = setup({
+    pendingLabel: "Posting…",
+    onSubmit: () =>
+      new Promise<void>((res) => {
+        done = res;
+      }),
+  });
+  expect(screen.queryByText("Posting…")).toBeNull();
+  await userEvent.type(box, "hi{Enter}");
+  expect(screen.getByRole("status")).toHaveTextContent("Posting…");
+  expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  await act(async () => done());
+  expect(screen.queryByText("Posting…")).toBeNull();
+});
+
+test("without a pendingLabel nothing shows while a submit is pending", async () => {
+  const { box } = setup({ onSubmit: () => new Promise<void>(() => {}) });
+  await userEvent.type(box, "hi{Enter}");
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+test("Stop's stand-in holds every label Stop can show, so the slot never grows within a turn", () => {
+  setup({ onStop: async () => {}, stopEpoch: 1 });
+  const standIn = document.querySelector("[data-stop-stand-in]") as HTMLElement;
+  const labels = [...standIn.querySelectorAll("[data-stop-label]")].map((el) =>
+    el.getAttribute("data-stop-label"),
+  );
+  expect(labels).toEqual(["Stop", "Stopping…", "Compacting…"]);
+  // No text node: nothing for a text query to find twice.
+  expect(standIn.textContent).toBe("");
+});

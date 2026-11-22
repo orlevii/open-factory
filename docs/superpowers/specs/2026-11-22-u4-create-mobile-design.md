@@ -5,7 +5,7 @@
 - **Source of truth (gitignored, read from the main checkout):** `docs/product/ui-review/decisions.md` (decisions 1, 3, 14, 22, 23 bind here), `docs/product/ui-review/status.md` (U4 rows 1–4 and the "Not owned" items decision 14 gives U4), the seven reviews in `docs/product/ui-review/` (apple-design A2, A3, A6, C1, C3; taste T-H6, T-M6, T-M7, T-M8, T-L3; paperclip H6, M2; emil H4, M4, M6; break-ui M1, M2, M5, M6, M7, L5 and "Redesign 5"), `docs/product/behavior/*.md`.
 - **Builds on:** U1 (#77: adaptive `Sheet`, Vaul `Drawer`, adaptive `ConfirmDialog`, the control system, `data-instant`), U2 (#89: `AgentCombobox`, `AgentAvatar`, `AgentMenu`, Agent details, the shortcut layer, the one-line session header, the task peek), U3 (#103: the shared `Composer`, `RowMenu`, `StopButton`). Stacked on `u3/5-shared-composer` (PR #117).
 - **Inputs from other issues:** #107 (mobile composer and row long-press, from U3 Q25), #102 ("`/agents` overflows horizontally at 390px").
-- **Decision log:** GitHub issue "U4: create flows and mobile — design". Q1–Q27 are the proxy's answers; D1–D20 are tech-lead decisions (§19).
+- **Decision log:** GitHub issue #118 "U4: create flows and mobile — design". Q1–Q27 are the proxy's answers; D1–D20 are tech-lead decisions (§19).
 
 > `docs/product/` is gitignored. Paths into it are relative to the main checkout. Web paths are relative to `apps/web/src/` unless they start with `apps/` or `packages/`.
 
@@ -32,7 +32,7 @@ All run in default CI (`pnpm test`, `pnpm typecheck`, `pnpm lint`) unless marked
 8. **Hit areas.** On a coarse pointer every standalone control has a hit box of at least 40×40px and no expander overlaps a form control or prose (a probe hit-tests the 40px box corners with `elementFromPoint` in the evidence pass; unit tests assert the class contract).
 9. **No sideways page on phones.** `/agents` (214 agents, 14-level chain), `/templates`, `/tasks` with a 25-blocker task, every sheet with 80-char names, 40-char slugs and 64-char secret names, and a session with the composer open have `scrollWidth <= clientWidth` at 320 and 390 and at 200% text (scripted probe).
 10. **Template editor.** Either CodeMirror passes all five decision-23 checks (§12.6), loads in a lazy chunk of at most 135 kB gzip that no other route loads (build manifest check), and replaces the textarea on the template route only; or the textarea stays and the PR reports the failing check with evidence to Or.
-11. **Leftovers.** Task rows show at most 3 blocker keys plus "+N more" (test); an 81-char user name and a 255-char email are refused at sign-up and profile edit, in the form and by the server (tests); Back to `/agents` after scrolling restores within one row of the clicked row (manual), or §13.3 defers it.
+11. **Leftovers.** Task rows show at most 3 blocker keys plus "+N more" (test); an 81-char user name and a 255-char email are refused at sign-up (form and server) and by the server on `/update-user` (tests); Back to `/agents` after scrolling restores within one row of the clicked row (manual), or §13.3 defers it.
 12. **Restore.** An archived agent can be restored from its session's menu, from the Agents page Ended view's row menu, and from the "This agent is archived" notices in the session and inbox (tests).
 
 ## 3. Scope
@@ -83,7 +83,7 @@ type ChildSpec =
   | { kind: "add-secret"; name: string }
   | { kind: "new-template"; then: "return" };
 
-openSheet(spec: SheetSpec, opts?: { instant?: boolean }): void
+openSheet(spec: SheetSpec, opts?: { instant?: boolean; at?: string }): void // at = the pathname it belongs to; default the current resolved pathname
 openChildSheet(spec: ChildSpec, onDone: (name: string) => void): void // only while a parent is open
 closeChildSheet(): void
 closeSheet(): void
@@ -100,7 +100,7 @@ useSheet(): { parent?: SheetSpec & { id: number }; child?: ChildSpec & { id: num
 One `<SheetHost />` in the `_app` layout, beside the shortcuts sheet. It renders the parent `Sheet` and, over it, the child `Sheet`.
 
 - **Lazy bodies.** Each kind's body is a `React.lazy` chunk (the agent and schedule forms stay out of the shell chunk). Every entry point preloads its chunk on `pointerenter`, `focus` and `pointerdown` (a shared `preloadSheet(kind)`), and the shell preloads all of them on idle after first paint, so the skeleton is rare. While a chunk loads, the sheet shows its header and a static skeleton at the form's real field and footer heights (test: each form's height matches its skeleton). The swap is instant. Focus-on-open runs when the body mounts, not in Radix's `onOpenAutoFocus`.
-- **Closing on navigation.** The host subscribes to the router's `onResolved` event and closes both sheets (drafts kept) when the event's `pathChanged` is true and it arrived after the sheet opened. Search-only changes don't close it. A close caused by navigation is stamped `data-instant`, so the sheet doesn't slide out over the new page.
+- **Closing on navigation.** Each open records `at`: the redirect target's pathname for a redirect (§5.4), the current resolved pathname for an in-app open. The host subscribes to the router's `onResolved` event and closes both sheets (drafts kept) only when the event's `toLocation.pathname !== at`. So the navigation that a redirect opened the sheet for (whose `pathChanged` is true, and always true on a fresh load) doesn't close it, and search-only changes don't either. A close caused by navigation is stamped `data-instant`, so the sheet doesn't slide out over the new page.
 - **Stacking (Q24).** The child is 48px narrower than the parent on desktop (`w-[min(27rem,100%)]`), so a dimmed 48px strip of the parent shows; clicking that strip closes only the child. On phones the child drawer caps at 82svh so the parent's top edge and handle show above it. The child's description names its parent ("For New agent"). Desktop: a second Radix Dialog sheet with its own scrim; the parent doesn't move. Phones: a second Vaul `Root` (not `NestedRoot`, which scales the parent), with `noBodyStyles` on the child Root: Vaul 1.1.2 keeps one module-level saved body position, so a child closing would otherwise unfix the body and scroll the page under the still-open parent on Safari (`vaul/dist/index.mjs:886-888`, `:899-901`). U1's `Sheet` gains a `stacked` prop that sets the width cap, the height cap and `noBodyStyles`. Esc, the scrim and a drag close only the topmost sheet. In dark mode the evidence pass checks the two scrims' combined darkness and halves the child's scrim if it reads as near-black.
 - **Esc and keyboard closes.** Esc stamps both the content and the overlay `data-instant` (today only the content), and `closeSheet()` after a submit made with Enter or ⌘Enter stamps both, so every keyboard close is instant (DESIGN.md Motion).
 - **Shortcuts.** An open sheet is a modal layer, so single-key shortcuts are off (`lib/shortcuts.ts` already treats an open modal dialog this way).
@@ -109,7 +109,7 @@ One `<SheetHost />` in the `_app` layout, beside the shortcuts sheet. It renders
 
 ### 5.4 Legacy routes (Q1, Q21)
 
-Each route keeps its file and holds no form code: `beforeLoad({ preload, search, params })` returns at once when `preload` is true (the router preloads on intent, `router.tsx:12`), otherwise calls `openSheet(spec, { instant: isInitialNavigation })` and throws `redirect({ ..., replace: true })` so Back doesn't loop.
+Each route keeps its file and holds no form code: `beforeLoad({ preload, search, params })` returns at once when `preload` is true (the router preloads on intent, `router.tsx:12`), otherwise calls `openSheet(spec, { at: <target pathname>, instant: !router.state.resolvedLocation })` (no resolved location yet means the initial navigation, where the sheet appears without sliding) and throws `redirect({ ..., replace: true })` so Back doesn't loop.
 
 | URL | Lands on | Opens |
 |---|---|---|
@@ -219,7 +219,7 @@ Header "Edit agent", description "@slug · Template `name`" (mono, wrapping, nev
 - **Re-sync from template…** keeps exactly today's confirmation behaviour (none added, none dropped). Its outcome toasts (the menu is gone).
 - **Archive…** keeps today's blockers (reports, templates) and confirmation, if any; success toasts "Archived @slug." with Undo (`unarchive`).
 - **Restore** (archived agents) runs `unarchive`. From a menu it toasts "Restored @slug."; from the "This agent is archived" notices in the session (`session-view.tsx:404-412`) and the inbox pane (`inbox-pane.tsx:185-193`), which become a "Restore" button, the outcome is inline (the control is still there).
-- **Agents page rows** (`agent-tree.tsx`) get the same `AgentMenu` ⋯ (Q22): one menu for an agent everywhere. The Ended view's archived rows offer Restore through it.
+- **Agents page rows** (`agent-tree.tsx`) get the same `AgentMenu` ⋯ (Q22): one menu for an agent everywhere. The Ended view's archived rows offer Restore through it. Terminated persistent agents and ended spawned agents get only Usage and Open tasks there (nothing else applies). `agents.index.tsx`'s `validateSearch` stays tolerant of the old `justArchived` param, which the S4 bookmark redirect (`agents.index.tsx:21-31`) still passes; it is ignored.
 - The timeline's `resync` fix link (`timeline-row.tsx:241-246`) runs the Re-sync action directly.
 
 ## 7. Inline setup: stacked sheets (Q4, Q12)
@@ -307,8 +307,8 @@ notify({ text: string; action?: { label: string; run(): void }; undo?: () => Pro
 
 - **Look:** `toastOptions={{ unstyled: true, classNames }}` (in 2.0.8 `unstyled` is a toast option, not a Toaster prop): a floating plate (`bg-popover`, `border-float-edge`, 6px radius), no shadow (decision 11), 13/18 text, the action and Undo as ghost buttons. `expand` is on, so toasts list with an 8px gap instead of Sonner's scaled, peeking stack.
 - **Overrides:** Sonner injects unlayered CSS that applies even when unstyled: 400ms `transform`, `opacity` and `height` transitions, an enter from `translateY(100%)`, a collapsed stack scaled 5% per toast, and under reduced motion `transition: none !important`. `styles.css` gets an unlayered `!important` block beside the Vaul block, pinned to 2.0.8 with a guard test (as `drawer.test.tsx` guards Vaul's attributes): enter opacity + `translateY(8px)` → 0 over 200ms `--ease-out`; exit back to that start over 150ms (Sonner unmounts at 200ms); stack shifts as a `transform` transition, 200ms `--ease-out`; no `height` transition; reduced motion keeps the opacity fade only.
-- **Position (Q7, Q27, D2):** chosen from `useIsMobile()` (Sonner's own `mobileOffset` only applies under its 600px media query). Desktop: bottom-left of the content area; the left offset is the sidebar's current width variable plus 16px, applied as a `transform` transition of 200ms `--ease-in-out` that follows the sidebar's collapse (instant under `data-instant`, for ⌘B). Phones: bottom-centre. On every width the bottom offset is 16px plus `--composer-h`, a CSS variable the mounted `Composer` sets on `<html>` through a `ResizeObserver` (0 when none is mounted), so a toast never covers a composer; on phones also above `env(safe-area-inset-bottom)`.
-- **Layering:** the Toaster sits at z-40, below the z-50 sheet and dialog scrims, so an open sheet dims any toast; closing a sheet and the toast appearing read as one gesture. A dimmed toast is still announced through Sonner's live region (Q27; tested).
+- **Position (Q7, Q27, D2):** chosen from `useIsMobile()` (Sonner's own `mobileOffset` only applies under its 600px media query). Desktop: bottom-left of the content area; the left offset is the sidebar's current width variable plus 16px, applied as a `transform` transition of 200ms `--ease-in-out` that follows the sidebar's collapse (instant under `data-instant`, for ⌘B). Phones: bottom-centre. On every width the bottom offset is 16px plus `--composer-h`, a CSS variable on `<html>`: bottom-docked composers (the session and inbox-reply composers, not a task comment composer mid-page) register their `ResizeObserver` height in a module-level set, and the variable is the set's maximum (0 when empty), so one composer unmounting never zeroes it while another is mounted and a toast never covers a docked composer; on phones also above `env(safe-area-inset-bottom)`.
+- **Layering:** the Toaster sits at z-40 (the `!important` override block sets `z-index` on `[data-sonner-toaster]`, whose injected value is 999999999), below the z-50 sheet and dialog scrims, so an open sheet dims any toast; closing a sheet and the toast appearing read as one gesture. A modal Radix Dialog or Vaul drawer marks its body siblings `aria-hidden`, toaster included, so a toast raised while a modal layer is open would not be announced: `notify()` holds toasts while a modal layer is open (the same selector `lib/shortcuts.ts` uses) and shows them when the last one closes. A toast already showing when a modal opens stays visible, dimmed; it was announced when it appeared (Q27).
 - **Timing:** at most 3 visible; `duration` = max(5000ms, 60ms per character of the text) (touch has no hover-pause); paused on hover, focus and hidden tab (Sonner's built-ins).
 - **Undo:** the first click disables it, runs `undo()` and dismisses the toast; a failure shows a new toast with the server's message, or "Couldn't undo: can't reach the server." Archive/unarchive and schedule restore have no server time limit (`apps/server/src/routes/agents.ts:126-134`, `scheduling/schedule-service.ts:500`), so a toast never outlasts the server's undo.
 - **Gesture:** Sonner's swipe-to-dismiss stays on touch; DESIGN.md Gesture UI lists it as an accepted exception (a CSS snap-back, like Vaul's).
@@ -404,11 +404,11 @@ Markdown uses `new LanguageSupport(markdownLanguage)`, not `markdown()`, which e
 
 ### 12.2 Wrapper
 
-`features/templates/code-editor.tsx`, loaded with `React.lazy` from `template-editor.tsx` only, preloaded by the template route's loader. Props as `CodeTextarea` (`value`, `onChange`, `onBlur`, `onSave`, `id`, `describedBy`) plus `language: "yaml" | "json" | "markdown"`, `fileKey` (template + file), `states` (the state map), `diagnostics: { line: number; column?: number; message: string; severity }[]`, and an imperative handle `{ focusLine(line: number): void }` replacing the textarea ref the jump code uses (`serveJump`).
+`features/templates/code-editor.tsx`, loaded with `React.lazy` from `template-editor.tsx` only, preloaded by the template route's loader when it runs for a real navigation (`if (!preload)`), so hovering a template link elsewhere doesn't fetch it. Props as `CodeTextarea` (`value`, `onChange`, `onBlur`, `onSave`, `id`, `describedBy`) plus `language: "yaml" | "json" | "markdown"`, `fileKey` (template + file), `states` (the state map), `diagnostics: { line: number; column?: number; message: string; severity }[]`, and an imperative handle `{ focusLine(line: number): void }` replacing the textarea ref the jump code uses (`serveJump`).
 
-- **Per-file state:** `TabsContent key={f}` (`template-editor.tsx:345`) unmounts inactive tabs, so the `EditorState` map lives in `TemplateEditor` (a ref keyed by `fileKey`) and is passed down; a remounted tab restores its state, so undo history survives tab switches and never crosses files (Q11).
+- **Per-file state:** `TabsContent key={f}` (`template-editor.tsx:345`) unmounts inactive tabs, so the `EditorState` map lives in `TemplateEditor` (a ref keyed by `fileKey`) and is passed down; a remounted tab restores its state, so undo history survives tab switches and never crosses files (Q11). A reload or a conflict's "Use theirs" replaces that file's entry; the map is dropped when `TemplateEditor` unmounts.
 - **Controlled the CodeMirror way:** user edits flow out through an update listener (`onChange(doc)`); an external value change (reload, a conflict's "Use theirs") dispatches one replace transaction with `addToHistory: false` and a `external` annotation the listener ignores, so a reload doesn't mark the file dirty. No effect recreates the view on a keystroke.
-- **Extensions:** `lineNumbers`, `history`, `drawSelection`, `bracketMatching`, `indentOnInput`, the language, a `HighlightStyle` from tokens (§12.3), `keymap` with `defaultKeymap`, `historyKeymap`, `indentWithTab` and Mod-s → `onSave`, `EditorView.lineWrapping` for AGENTS.md only, the lint gutter and `setDiagnostics` with `hoverTime: 400` (DESIGN.md tooltip delay). No live linter: validation stays on blur and save.
+- **Extensions:** `lineNumbers`, `history`, `drawSelection`, `bracketMatching`, `indentOnInput`, the language, a `HighlightStyle` from tokens (§12.3), `keymap` with `defaultKeymap`, `historyKeymap`, `indentWithTab` and Mod-s → `onSave`, `EditorView.lineWrapping` for AGENTS.md only, `lintGutter({ hoverTime: 400 })` (DESIGN.md tooltip delay) and `setDiagnostics`. No live linter: validation stays on blur and save.
 - **Leaving with the keyboard:** Esc then Tab moves focus out (CodeMirror's tab-focus mode with `indentWithTab`, verified headless); the "Esc then Tab to leave the editor" hint stays in the description.
 - **Accessibility:** `EditorView.contentAttributes` sets `id`, `aria-labelledby` (the tab's label), `aria-describedby` (field descriptions + hint) and `aria-multiline`; the gutters are `aria-hidden`.
 - **AGENTS.md:** its Write view uses the shared `MarkdownEditor` (also used by the task and schedule forms). `MarkdownEditor` gains a `writeSurface` render prop; only the template editor passes the CodeMirror surface. Preview is unchanged.
@@ -416,7 +416,7 @@ Markdown uses `new LanguageSupport(markdownLanguage)`, not `markdown()`, which e
 
 ### 12.3 Theme
 
-`EditorView.theme` uses DESIGN.md tokens only: the surface `--code-bg`, edge `--code-border` with the field focus ring on `focus-within`, Geist Mono 13/20 (16px on coarse pointers, so iOS doesn't zoom on focus), the signal caret, and `.cm-selectionBackground` (and its `.cm-focused` variant) at the 26% signal tint. Syntax colours are new CSS variables `--syntax-keyword`, `--syntax-string`, `--syntax-number`, `--syntax-comment`, `--syntax-property`, `--syntax-punctuation`, `--syntax-heading`, `--syntax-link` for light, dark and `prefers-contrast: more`, taken from the Shiki GitHub themes the markdown code blocks use, except that no token may fall in the signal hue band (about 30–50° in oklch: GitHub's `#e36209` and `#ffab70` are swapped for the nearest non-orange), because orange means live or focused (Pilot Light rule). Below 48rem the lint marker is drawn on the line number instead of a separate gutter, saving ~16px.
+`EditorView.theme` uses DESIGN.md tokens only: the surface `--code-bg`, edge `--code-border` with the field focus ring on `focus-within`, Geist Mono 13/20 (16px on coarse pointers, so iOS doesn't zoom on focus), the signal caret, and `.cm-selectionBackground` (and its `.cm-focused` variant) at the 26% signal tint. Syntax colours are new CSS variables `--syntax-keyword`, `--syntax-string`, `--syntax-number`, `--syntax-comment`, `--syntax-property`, `--syntax-punctuation`, `--syntax-heading`, `--syntax-link` for light, dark and `prefers-contrast: more`, taken from the Shiki GitHub themes the markdown code blocks use, except that no token may fall in the signal hue band (about 30–50° in oklch: GitHub's `#e36209` and `#ffab70` are swapped for the nearest non-orange), because orange means live or focused (Pilot Light rule). Below 48rem the separate lint gutter is dropped and the line number of a line with a diagnostic takes the marker's colour and shape through a small `gutterLineClass` extension on the line-number gutter, saving ~16px.
 
 ### 12.4 Markers
 
@@ -448,7 +448,7 @@ If any check is worse than the textarea, the editor ships nowhere: `CodeTextarea
 
 ### 13.2 Name and email lengths (L5)
 
-`packages/shared/src/schemas.ts`: user `name` `max(80)` and `email` `max(254)` in `signUpSchema` (client form) and the profile-edit schema. The server enforces them where sign-up and profile edit actually run, better-auth's `hooks.before` middleware (`apps/server/src/auth/options.ts:70-71`, already scoped to `/sign-up/email` and `/update-user`), answering with the same field errors. Invites carry no email (`users/invites.ts`), so they need no change. Input only: no migration; stored longer values stay readable and aren't validated on read; a profile edit that doesn't send `name` doesn't fail on an old long name.
+`packages/shared/src/schemas.ts`: user `name` `max(80)` and `email` `max(254)` in `signUpSchema` (the sign-up form; there is no profile-edit form or schema in the app). The server enforces both in better-auth's `hooks.before` middleware (`apps/server/src/auth/options.ts:70-73`, scoped to `/sign-up/email` and `/update-user`), with the length checks placed **before** that middleware's existing early returns (`!p.nameTaken`, no `handle` in the body), so they always run. A refusal throws better-auth's `APIError` with a field-shaped body the sign-up form already maps to field errors (the plan names the mapping from `routes/sign-up.tsx`). `/update-user` is checked server-side only. Invites carry no email (`users/invites.ts`). Input only: no migration; stored longer values stay readable and aren't validated on read; an update that doesn't send `name` doesn't fail on an old long name.
 
 ### 13.3 Scroll restoration on Back (M5), last and timeboxed
 
@@ -504,10 +504,10 @@ Parallelism: dev A runs PR1 → PR2 → PR3. Dev B starts PR4 at once in its own
 
 ## 18. Follow-up issues
 
-1. Android Back closes the top drawer or sheet (Q1).
-2. Sheets addressable by URL with reload restore, if ever wanted (Q1 rejected it for now).
-3. Row menus (and long-press) for task, inbox and Templates rows (Q23).
-4. Update `docs/product/behavior/agents-and-sessions.md:19` and `administration.md:24` for toast Undo and the moved lifecycle actions (gitignored; owner's docs).
+1. #119 Android Back closes the top drawer or sheet (Q1).
+2. #120 Sheets addressable by URL with reload restore, if ever wanted (Q1 rejected it for now).
+3. #121 Row menus (and long-press) for task, inbox and Templates rows (Q23).
+4. #122 Update `docs/product/behavior/agents-and-sessions.md:19` and `administration.md:24` for toast Undo and the moved lifecycle actions (gitignored; owner's docs).
 5. M5 scroll restoration, only if §13.3 defers it.
 6. CodeMirror, only if §12.6 falls back: what failed and what would need to change.
 7. #83: close if U2's comboboxes cover the timezone and agent pickers; otherwise narrow it (checked during PR1).

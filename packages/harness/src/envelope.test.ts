@@ -292,3 +292,16 @@ test("order: notice, then message and scheduled by created order, then updates",
 test("scheduled rendering is deterministic", () => {
   expect(render([sched()])).toBe(render([sched()]));
 });
+
+test("attachments ride on the envelope for the UI and are never rendered into the model's text", () => {
+  const attachments = [
+    { uploadId: "u1", name: "a.png", kind: "image" as const, width: 2, height: 3 },
+  ];
+  const body = "see\n\n[attached: .factory/uploads/20261122-u1-a.png]";
+  const [env] = groupEnvelopes([msg({ body, attachments })]);
+  expect(env?.attachments).toEqual(attachments);
+  expect(renderEnvelopes(groupEnvelopes([msg({ body, attachments })]))).toBe(
+    `<factory-message from="@or" kind="message" urgent="false" id="m1">\n${body}\n</factory-message>`,
+  );
+  expect(groupEnvelopes([msg()])[0]).not.toHaveProperty("attachments");
+});

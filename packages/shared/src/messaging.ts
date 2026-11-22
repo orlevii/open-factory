@@ -37,6 +37,16 @@ export const subjectSchema = z.object({
 });
 
 /** One item of `message_in.messages[]`. */
+/** U3 §13.5: a confirmed upload on a message, for the UI's chips (the model reads only the `[attached: …]` line). */
+export const messageAttachmentSchema = z.object({
+  uploadId: z.string(),
+  name: z.string(),
+  kind: z.enum(["image", "text"]),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+});
+export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
+
 export const envelopeSchema = z.object({
   id: z.string(),
   from: z.string(),
@@ -59,6 +69,8 @@ export const envelopeSchema = z.object({
   subject: subjectSchema.optional(),
   /** UI-only: the sender's optimistic-row id. Never rendered into the model's text. */
   clientMessageId: z.string().optional(),
+  /** UI-only (U3 §13.5): the message's confirmed uploads. Never rendered into the model's text. */
+  attachments: z.array(messageAttachmentSchema).optional(),
 });
 export type Envelope = z.infer<typeof envelopeSchema>;
 

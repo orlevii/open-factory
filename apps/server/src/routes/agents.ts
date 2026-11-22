@@ -207,9 +207,15 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           req.params.slug,
           req.body.body,
           req.body.urgent,
-          req.body.clientMessageId ? { clientMessageId: req.body.clientMessageId } : {},
+          {
+            ...(req.body.clientMessageId ? { clientMessageId: req.body.clientMessageId } : {}),
+            ...(req.body.attachments?.length ? { attachments: req.body.attachments } : {}),
+          },
         );
         if (!r.ok) {
+          if (r.code === "invalid_attachment") return err(reply, 422, r.code, r.message);
+          // The `[attached: …]` lines pushed the body over the limit the schema checks without them.
+          if (r.code === "too_large") return err(reply, 400, "validation_error", r.message);
           if (r.code === "archived") {
             const e = new AgentArchivedError(req.params.slug);
             return err(reply, 409, "agent_archived", e.message);

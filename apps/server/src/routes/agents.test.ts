@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -10,6 +10,7 @@ import { AgentEndedError } from "../agents/message-cancel.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { png } from "../uploads/fixtures.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
@@ -851,5 +852,161 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     expect(body).toMatchObject({ source: "session", stale: true });
     // The session's list stays what the menu shows until the next start.
     expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+  });
+});
+
+describe("U3 §13.5: attachments on POST /messages", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let or: string;
+  let sam: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    await s.seedAgent({ slug: "dev" });
+    await s.seedAgent({ slug: "ops" });
+    or = (await s.signUpUser({ handle: "or9" })).cookie;
+    sam = (await s.signUpUser({ handle: "sam9" })).cookie;
+  });
+  afterAll(() => s.close());
+
+  const upload = async (slug: string, data: Buffer, name: string, cookie = or) => {
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/agents/${slug}/uploads`,
+      headers: {
+        cookie,
+        "content-type": "application/octet-stream",
+        "x-upload-name": encodeURIComponent(name),
+      },
+      payload: data,
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().uploadId as string;
+  };
+  const post = (payload: object, cookie = or, slug = "dev") =>
+    s.app.inject({
+      method: "POST",
+      url: `/api/agents/${slug}/messages`,
+      headers: { cookie },
+      payload: { urgent: false, ...payload },
+    });
+  const uploadRow = async (id: string) =>
+    (await s.db.select().from(schema.uploads)).find((r) => r.id === id);
+  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
+
+  test("each file adds one [attached: …] line, sets message_id, and the envelope carries the list", async () => {
+    const img = await upload("dev", png(64, 32), "screen shot.png");
+    const txt = await upload("dev", Buffer.from("log line\n"), "run.log");
+    const res = await post({ body: "look at these", attachments: [img, txt] });
+    expect(res.statusCode).toBe(202);
+    const messageId = res.json().item.id as string;
+    const imgRow = await uploadRow(img);
+    const txtRow = await uploadRow(txt);
+    expect(imgRow?.messageId).toBe(messageId);
+    expect(txtRow?.messageId).toBe(messageId);
+    const [msg] = await s.sql`select body, attachments from messages where id = ${messageId}`;
+    expect(msg?.body).toBe(
+      `look at these\n\n[attached: ${imgRow?.storedPath}]\n[attached: ${txtRow?.storedPath}]`,
+    );
+    const attachments = [
+      { uploadId: img, name: "screen shot.png", kind: "image", width: 64, height: 32 },
+      { uploadId: txt, name: "run.log", kind: "text" },
+    ];
+    expect(msg?.attachments).toEqual(attachments);
+
+    // The process gets the envelope with the UI list; the model's text is the body with the lines.
+    const sent = drv.last.sent.flat().find((m) => m.id === messageId);
+    expect(sent?.attachments).toEqual(attachments);
+    expect(sent?.body).toContain(`[attached: ${imgRow?.storedPath}]`);
+    // §22 (R3): the path is relative to the cwd the fake process was started with, and names the uploaded file.
+    const rel = /\[attached: ([^\]]+)\]/.exec(sent?.body ?? "")?.[1] ?? "";
+    expect(path.isAbsolute(rel)).toBe(false);
+    const abs = path.resolve(drv.last.spec.cwd, rel);
+    expect(readFileSync(abs)).toEqual(png(64, 32));
+    expect(statSync(abs).mode & 0o004).toBe(0o004);
+
+    // The stored message_in event carries the list for the UI.
+    drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+    await settled();
+    const page = (
+      await s.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie: or } })
+    ).json();
+    const msgIn = page.events
+      .map((e: { event: { type: string; messages?: { id: string }[] } }) => e.event)
+      .find(
+        (e: { type: string; messages?: { id: string }[] }) =>
+          e.type === "message_in" && e.messages?.some((m) => m.id === messageId),
+      );
+    expect(msgIn.messages.find((m: { id: string }) => m.id === messageId).attachments).toEqual(
+      attachments,
+    );
+  });
+
+  test("the clientMessageId dedupe runs first: a retry with now-used attachments gets the original 202", async () => {
+    const a = await upload("dev", Buffer.from("a\n"), "a.txt");
+    const cid = randomUUID();
+    const first = await post({ body: "once", clientMessageId: cid, attachments: [a] });
+    expect(first.statusCode).toBe(202);
+    const again = await post({ body: "once", clientMessageId: cid, attachments: [a] });
+    expect(again.statusCode).toBe(202);
+    expect(again.json()).toEqual(first.json());
+  });
+
+  test("an upload of another agent, another sender, already used or unknown is 422, and nothing is sent", async () => {
+    const forOps = await upload("ops", Buffer.from("x\n"), "ops.txt");
+    const samUpload = await upload("dev", Buffer.from("y\n"), "sam.txt", sam);
+    const used = await upload("dev", Buffer.from("z\n"), "used.txt");
+    expect((await post({ body: "first", attachments: [used] })).statusCode).toBe(202);
+    const fresh = await upload("dev", Buffer.from("w\n"), "fresh.txt");
+    for (const bad of [[forOps], [samUpload], [used], ["no-such-upload"], [fresh, fresh]]) {
+      const before = await s.sql`select count(*)::int as n from messages`;
+      const res = await post({ body: "with a bad file", attachments: bad });
+      expect(res.statusCode, JSON.stringify(bad)).toBe(422);
+      expect(res.json().error.code).toBe("invalid_attachment");
+      const after = await s.sql`select count(*)::int as n from messages`;
+      expect(after[0]?.n).toBe(before[0]?.n);
+    }
+    // Nothing was claimed by the refused sends.
+    expect((await uploadRow(fresh))?.messageId).toBeNull();
+    expect((await uploadRow(forOps))?.messageId).toBeNull();
+    expect((await uploadRow(samUpload))?.messageId).toBeNull();
+  });
+
+  test("the attached lines count in the 64 KB limit", async () => {
+    const a = await upload("dev", Buffer.from("q\n"), "q.txt");
+    const res = await post({ body: "x".repeat(64 * 1024 - 20), attachments: [a] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({
+      code: "validation_error",
+      message: "Message is larger than 64 KB",
+    });
+    expect((await uploadRow(a))?.messageId).toBeNull();
+    // Without the file the same body fits.
+    expect((await post({ body: "x".repeat(64 * 1024 - 20) })).statusCode).toBe(202);
+  });
+
+  test("at most 10 attachments", async () => {
+    const res = await post({
+      body: "many",
+      attachments: Array.from({ length: 11 }, (_, i) => `u${i}`),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("a sent upload previews for any signed-in human; its delete is refused", async () => {
+    const a = await upload("dev", png(4, 4), "p.png");
+    expect((await post({ body: "pic", attachments: [a] })).statusCode).toBe(202);
+    const get = await s.app.inject({
+      method: "GET",
+      url: `/api/agents/dev/uploads/${a}`,
+      headers: { cookie: sam },
+    });
+    expect(get.statusCode).toBe(200);
+    const del = await s.app.inject({
+      method: "DELETE",
+      url: `/api/agents/dev/uploads/${a}`,
+      headers: { cookie: or },
+    });
+    expect(del.statusCode).toBe(409);
   });
 });

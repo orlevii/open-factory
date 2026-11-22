@@ -45,6 +45,8 @@ export interface FactoryMessage {
   subject?: Envelope["subject"];
   /** U3 §13.2: the sender's optimistic-row id, for the UI only; never rendered into the model's text. */
   clientMessageId?: string;
+  /** U3 §13.5: the message's confirmed uploads, for the UI only; the model reads the body's `[attached: …]` lines. */
+  attachments?: Envelope["attachments"];
 }
 
 export interface ExitInfo {

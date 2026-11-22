@@ -1,4 +1,4 @@
-import type { Command, TemplateConfig } from "@open-factory/shared";
+import type { Command, MessageAttachment, TemplateConfig } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -184,6 +184,8 @@ export const messages = pgTable(
     late: boolean("late"),
     // U3: the sender's optimistic-row id; idempotent per sender forever.
     clientMessageId: text("client_message_id"),
+    // U3 §13.5: the confirmed uploads, for the envelope's UI field (the body carries the `[attached: …]` lines).
+    attachments: jsonb("attachments").$type<MessageAttachment[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },

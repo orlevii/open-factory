@@ -321,6 +321,8 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   ...(e.row.kind === "task_update" && e.row.notice ? { fact: e.row.notice } : {}),
   // U3 §13.2: a UI field on the envelope; never part of the text the model reads.
   ...(e.row.clientMessageId ? { clientMessageId: e.row.clientMessageId } : {}),
+  // U3 §13.5: a UI field too; the body already carries the `[attached: …]` lines the model reads.
+  ...(e.row.attachments?.length ? { attachments: e.row.attachments } : {}),
 });
 
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */

@@ -6,6 +6,7 @@ import {
   type Command,
   type ErrorKind,
   formatKey,
+  type MessageAttachment,
   type MessageKind,
   type SessionEvent,
   type TaskNotice,
@@ -747,6 +748,7 @@ export class EventStore {
       urgent: boolean;
       fromToolUseId?: string | null;
       clientMessageId?: string | null;
+      attachments?: MessageAttachment[] | null;
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -755,6 +757,7 @@ export class EventStore {
       id,
       kind: "message",
       clientMessageId: m.clientMessageId ?? null,
+      attachments: m.attachments?.length ? m.attachments : null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
       toAgentId: m.toAgentId,
       body: m.body,
@@ -769,20 +772,25 @@ export class EventStore {
    * `client_message_id`) decides: a repeat (the same sender and id, at any later time, or concurrently) inserts
    * nothing and returns the original row with `created: false`.
    */
-  async createClientMessage(m: {
-    fromUserId: string;
-    toAgentId: string;
-    body: string;
-    urgent: boolean;
-    clientMessageId: string;
-  }): Promise<{ row: PendingRow; created: boolean }> {
+  async createClientMessage(
+    m: {
+      fromUserId: string;
+      toAgentId: string;
+      body: string;
+      urgent: boolean;
+      clientMessageId: string;
+      attachments?: MessageAttachment[] | null;
+    },
+    tx: Exec = this.db,
+  ): Promise<{ row: PendingRow; created: boolean }> {
     const id = randomUUID();
-    const inserted = await this.db
+    const inserted = await tx
       .insert(messages)
       .values({
         id,
         kind: "message",
         clientMessageId: m.clientMessageId,
+        attachments: m.attachments?.length ? m.attachments : null,
         fromUserId: m.fromUserId,
         toAgentId: m.toAgentId,
         body: m.body,
@@ -794,8 +802,8 @@ export class EventStore {
         where: sql`${messages.clientMessageId} is not null`,
       })
       .returning({ id: messages.id });
-    if (inserted.length) return { row: await this.pendingRow(id), created: true };
-    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId);
+    if (inserted.length) return { row: await this.pendingRow(id, tx), created: true };
+    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId, tx);
     if (!existing)
       throw new Error(`client message ${m.clientMessageId} conflicted but isn't there`);
     return { row: existing, created: false };
@@ -804,8 +812,9 @@ export class EventStore {
   async byClientMessageId(
     fromUserId: string,
     clientMessageId: string,
+    tx: Exec = this.db,
   ): Promise<PendingRow | undefined> {
-    const [r] = await this.joined(this.db).where(
+    const [r] = await this.joined(tx).where(
       and(eq(messages.fromUserId, fromUserId), eq(messages.clientMessageId, clientMessageId)),
     );
     return r;

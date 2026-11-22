@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
-import { clampSource } from "@/components/markdown/split-blocks";
+import { clampSource, longestFence } from "@/components/markdown/split-blocks";
 import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
@@ -286,8 +286,10 @@ const CUT_CHARS = 1200;
 /** Past this many rendered characters per line a body surely runs over its lines, so Show all is
  *  offered where nothing can be measured; once layout has measured the box, the measurement decides. */
 const CHARS_PER_LINE = 120;
-/** Literal classes per line count (Tailwind reads the source): the clamp, and a code block capped at
- *  the same number of 24px lines, since a `pre` escapes `line-clamp`. */
+/** Literal classes per line count (Tailwind reads the source): the clamp, and a code plate capped at
+ *  the box's height. A `pre` is its own formatting context, so `line-clamp` skips its lines and its
+ *  clipped lines never reach the box's `scrollHeight`; inside its 24px of padding the cap shows about
+ *  `lines - 1` code lines (13/1.55, about 20px each). Show all is offered for any fence longer. */
 const CLAMP_CLASS = {
   2: "line-clamp-2 [&_pre]:max-h-12 [&_pre]:overflow-hidden",
   3: "line-clamp-3 [&_pre]:max-h-[4.5rem] [&_pre]:overflow-hidden",
@@ -317,18 +319,26 @@ function LinesBody({
     () => cut !== undefined || clampSource(source, lines, lines * CHARS_PER_LINE) !== undefined,
     [source, cut, lines],
   );
+  // A fence the capped plate can't show whole: offered however the box measures.
+  const longCode = useMemo(() => longestFence(source) >= lines, [source, lines]);
   useLayoutEffect(() => {
     const el = box.current;
     if (all || !el) return;
+    // The box, and each capped plate on its own: a plate's hidden lines never reach the box.
+    const over = (n: HTMLElement) => n.scrollHeight > n.clientHeight + 1;
     const measure = () =>
-      setOverflows(el.clientHeight > 0 ? el.scrollHeight > el.clientHeight + 1 : undefined);
+      setOverflows(
+        el.clientHeight > 0
+          ? over(el) || [...el.querySelectorAll<HTMLElement>("pre")].some(over)
+          : undefined,
+      );
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [all]);
-  const more = !all && (cut !== undefined || (overflows ?? long));
+  const more = !all && (cut !== undefined || longCode || (overflows ?? long));
   return (
     <>
       <div

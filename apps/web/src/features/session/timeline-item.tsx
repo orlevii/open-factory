@@ -2,7 +2,7 @@ import { memo, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
 import { formatTime } from "./format";
 import { RowMenu, rowMenuItems } from "./row-menu";
-import type { Row } from "./rows";
+import { isNoticeKind, type Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
 /** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
@@ -97,9 +97,7 @@ export const ROW_GUTTER = "pr-8";
 /** A card (U3 §7.1): an envelope that crossed a session boundary. A factory notice is a quiet line. */
 export function isCard(row: Row): boolean {
   if (row.kind === "outgoing" || row.kind === "spawn") return true;
-  if (row.kind !== "message") return false;
-  const k = row.message.kind;
-  return k !== "system" && k !== "task_assigned" && k !== "task_update";
+  return row.kind === "message" && !isNoticeKind(row.message.kind);
 }
 
 /** One timeline entry: the wrap (deep-link id, live fade), the row, its gutter time and its menu. */

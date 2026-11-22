@@ -109,3 +109,33 @@ test("a notice keeps its soft line breaks", () => {
   const box = document.querySelector("[data-notice] .line-clamp-2") as HTMLElement;
   expect(box).toHaveClass("[&_p]:whitespace-pre-line");
 });
+
+test("once layout has measured it, a queued body with a short code block still offers Show all (the capped plate hides lines)", () => {
+  const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(72);
+  const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(72);
+  try {
+    render(<MessageBlock from="@alice" body={fence(6)} brief queued={{}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(screen.getByText(/line 5/)).toBeInTheDocument();
+  } finally {
+    sh.mockRestore();
+    ch.mockRestore();
+  }
+});
+
+test("a measured code plate that overflows its cap offers Show all", () => {
+  const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.tagName === "PRE" ? 200 : 72;
+  });
+  const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(72);
+  try {
+    // Two long code lines: within the box's line count, but wider plates wrap nothing; the plate measures over.
+    render(<MessageBlock from="@alice" body={"```\na\nb\n```"} brief queued={{}} />);
+    expect(screen.getByRole("button", { name: "Show all" })).toBeInTheDocument();
+  } finally {
+    sh.mockRestore();
+    ch.mockRestore();
+  }
+});

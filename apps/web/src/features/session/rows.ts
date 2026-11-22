@@ -171,6 +171,11 @@ export function isSpeechRow(row: Row): boolean {
   return row.kind === "message" || row.kind === "outgoing" || row.kind === "text";
 }
 
+/** A factory notice (U3 §7.2): a quiet line, never a card. The one list, for the card rule and the
+ *  message block alike, so a new notice kind can't become a card with a notice's body. */
+export const isNoticeKind = (kind: string): boolean =>
+  kind === "system" || kind === "task_assigned" || kind === "task_update";
+
 const NOT_SPEECH = new Set(["member_update", "peer_joined", "peer_left"]);
 
 /** The top-level speech rows one event becomes: a windowed view counts events, not rows. */

@@ -10,7 +10,7 @@ import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
-import type { Row } from "./rows";
+import { isNoticeKind, type Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
 import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
@@ -277,11 +277,7 @@ export function TimelineRow(props: TimelineRowProps) {
           <MessageBlock
             from={row.message.from}
             // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
-            system={
-              row.message.kind === "system" ||
-              row.message.kind === "task_assigned" ||
-              row.message.kind === "task_update"
-            }
+            system={isNoticeKind(row.message.kind)}
             body={row.message.body}
             urgent={row.message.urgent}
             at={row.at}

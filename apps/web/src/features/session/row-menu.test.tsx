@@ -314,6 +314,8 @@ test("a tool row's gutter time sits in the row's own line after its state, never
   expect(time).not.toBeNull();
   expect(time).not.toHaveClass("bg-background");
   expect(time).not.toHaveClass("absolute");
+  // Not part of the row's accessible name: the title and, on touch, the menu carry the time.
+  expect(time).toHaveAttribute("aria-hidden", "true");
   // Content | time | ⋯: the time is the line's last item, after the state when there is one.
   expect(row.lastElementChild).toBe(time);
 });

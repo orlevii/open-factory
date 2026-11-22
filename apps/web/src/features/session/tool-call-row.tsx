@@ -97,6 +97,8 @@ export function ToolCallRow({
         {time !== undefined && (
           <time
             data-gutter-time
+            // Not part of the row's name: the title carries it, and on touch the row menu.
+            aria-hidden="true"
             dateTime={time}
             title={new Date(time).toLocaleString()}
             className="hidden shrink-0 text-[0.8125rem] text-muted-foreground tabular-nums group-focus-within:inline group-hover:inline pointer-coarse:hidden!"

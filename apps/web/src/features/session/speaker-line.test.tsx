@@ -223,3 +223,14 @@ test("a human's name carries the handle in its title (kept when the handle hides
   await show(<SpeakerLine from="@or" at={AT} />);
   expect(within(line()).getByText("Or Levi")).toHaveAttribute("title", "Or Levi @or");
 });
+
+test("badges sit outside the names-and-time group, so a long badge wraps below instead of squeezing the names", async () => {
+  await show(
+    <SpeakerLine from="b" at={AT}>
+      <span data-testid="badge">T-1 a very long task title</span>
+    </SpeakerLine>,
+  );
+  const group = (line().querySelector("time") as HTMLElement).parentElement as HTMLElement;
+  expect(group).not.toContainElement(screen.getByTestId("badge"));
+  expect(screen.getByTestId("badge").parentElement).toBe(line());
+});

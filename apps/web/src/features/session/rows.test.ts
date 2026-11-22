@@ -5,6 +5,7 @@ import {
   buildRows,
   deliveryFailedIds,
   interruptedTurnEnds,
+  isNoticeKind,
   type Row,
   stabilizeRows,
   stableSet,
@@ -653,4 +654,9 @@ test("stabilizeRows recurses through childrenOf: an unchanged nested child keeps
   if (a?.kind !== "tool" || b?.kind !== "tool") throw new Error("rows");
   expect(b).not.toBe(a);
   expect(b.children[0]).toBe(a.children[0]);
+});
+
+test("isNoticeKind: factory notices (system, task assigned, task update), never a message or comment", () => {
+  expect(["system", "task_assigned", "task_update"].every(isNoticeKind)).toBe(true);
+  expect(["message", "task_comment", "scheduled"].some(isNoticeKind)).toBe(false);
 });

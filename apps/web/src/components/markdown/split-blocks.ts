@@ -92,6 +92,21 @@ function closeFence(text: string): string {
 
 const lineCount = (s: string) => s.split("\n").length;
 
+/** The most code lines any one fenced block holds (an unclosed fence counts to the end). */
+export function longestFence(md: string): number {
+  let fence: Fence | undefined;
+  let longest = 0;
+  let n = 0;
+  for (const line of md.split("\n")) {
+    const next = stepFence(line, fence);
+    if (fence && next) n++;
+    else if (fence && !next) longest = Math.max(longest, n);
+    if (!fence && next) n = 0;
+    fence = next;
+  }
+  return fence ? Math.max(longest, n) : longest;
+}
+
 /** A first block too big on its own: cut by lines, then by characters, its fence closed virtually. */
 function cutBlock(block: string, maxLines: number, maxChars: number): string {
   // One line is kept back for a virtual fence closer.

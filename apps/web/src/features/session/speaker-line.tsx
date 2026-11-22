@@ -285,8 +285,9 @@ export const SpeakerLine = memo(function SpeakerLine({
       data-speaker-line
       className="@container mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
     >
-      {/* Names, badges and the time never wrap apart: alone on its line the group shrinks, and the
-          names truncate before the time (which never does). A status or action may wrap below. */}
+      {/* The names and the time never wrap apart: alone on its line the group shrinks, and the names
+          truncate before the time (which never does). Badges, a status or an action may wrap below,
+          so a long badge never squeezes the names away. */}
       <span className="flex min-w-0 flex-nowrap items-center gap-x-2">
         <span className="flex min-w-0 items-center gap-1.5">
           <Speaker id={from} self={self} />
@@ -297,7 +298,6 @@ export const SpeakerLine = memo(function SpeakerLine({
             </>
           )}
         </span>
-        {children}
         {status == null && at ? (
           <time
             dateTime={at}
@@ -308,6 +308,7 @@ export const SpeakerLine = memo(function SpeakerLine({
           </time>
         ) : null}
       </span>
+      {children}
       {status}
       {action && <span className="ml-auto">{action}</span>}
     </div>

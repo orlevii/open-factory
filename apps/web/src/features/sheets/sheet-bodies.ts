@@ -103,9 +103,9 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
     prefetch(qc, spec: { key: string }) {
+      // Edit mode reads the live agents only (the stale-target check and its ended list are create-only).
       void qc.prefetchQuery(scheduleDetailOptions(spec.key));
       void qc.prefetchQuery(agentsListQueryOptions("exclude"));
-      void qc.prefetchQuery(agentsListQueryOptions("only"));
     },
     title: (spec: { key: string }) => spec.key,
     titleClass: "font-mono",

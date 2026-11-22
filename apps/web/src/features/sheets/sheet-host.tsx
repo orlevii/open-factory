@@ -12,12 +12,14 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  closeSheetInstantly,
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { lastInputModality } from "@/lib/input-modality";
 import { BodySkeleton } from "./body-skeleton";
 import { HeaderSlotContext } from "./header-slot";
 import {
@@ -114,12 +116,20 @@ function SheetLayer({
 }) {
   // Kept after close so the exit animation still has its content.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const content = useRef<HTMLDivElement | null>(null);
+  /** What had focus when the sheet opened (a row's menu button, a header button): Close returns there. */
+  const opener = useRef<HTMLElement | null>(null);
   const last = useRef(spec);
   if (spec) last.current = spec;
   const shown = last.current;
   if (!shown) return null;
   const title = sheetTitle(shown.kind, shown);
   const description = parentTitle ? childDescription(shown.kind, parentTitle) : undefined;
+  // A body's own close (after a submit): from the keyboard it is instant, on this layer only (§5.3).
+  const close = () => {
+    if (lastInputModality() === "keyboard") closeSheetInstantly(content.current);
+    onClose();
+  };
   return (
     <Sheet
       open={open}
@@ -128,9 +138,18 @@ function SheetLayer({
       onStripClick={onClose}
     >
       <SheetContent
-        // Focus-on-open is the body's job, on mount.
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        returnFocus={returnFocus}
+        ref={content}
+        // Focus-on-open is the body's job, on mount (`useFocusOnOpen`). Until then the panel itself holds focus,
+        // inside the trap; on phones that is the drawer content's own rule.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          const el = e.currentTarget as HTMLElement;
+          const at = document.activeElement;
+          if (at instanceof HTMLElement && at !== document.body && !el.contains(at))
+            opener.current = at;
+          if (!el.contains(at)) el.focus({ preventScroll: true });
+        }}
+        returnFocus={() => returnFocus?.() ?? (opener.current?.isConnected ? opener.current : null)}
         data-instant={"instant" in shown && shown.instant ? "" : undefined}
       >
         <SheetHeader>
@@ -149,7 +168,7 @@ function SheetLayer({
         >
           <Suspense fallback={<BodySkeleton kind={shown.kind} />}>
             <HeaderSlotContext value={slot}>
-              <BodyView spec={shown} close={onClose} />
+              <BodyView key={shown.id} spec={shown} close={close} />
             </HeaderSlotContext>
           </Suspense>
         </BodyBoundary>

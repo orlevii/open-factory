@@ -221,3 +221,14 @@ test("typing in a body's field re-renders neither SheetHost nor the shell above 
   await userEvent.type(input, "abc");
   expect(hostRenders).toBe(before);
 });
+
+test("edit-schedule prefetches the detail and the live agents only (edit mode never reads the ended list)", () => {
+  const prefetchQuery = vi.fn(() => Promise.resolve());
+  restoreBodies["edit-schedule"]?.prefetch({ prefetchQuery } as never, { key: "S-3" });
+  expect(
+    prefetchQuery.mock.calls.map((c) => (c as unknown as [{ queryKey: unknown }])[0].queryKey),
+  ).toEqual([
+    ["schedules", "detail", "S-3"],
+    ["agents", "exclude"],
+  ]);
+});

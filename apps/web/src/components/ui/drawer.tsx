@@ -78,7 +78,7 @@ const DrawerTitle = ({ className, ...p }: React.ComponentProps<typeof Vaul.Title
   <Vaul.Title data-slot="drawer-title" className={cn("min-w-0 flex-1 font-heading text-base leading-5 font-semibold tracking-[-0.01em] [overflow-wrap:anywhere] line-clamp-2", className)} {...p} />
 );
 const DrawerDescription = ({ className, ...p }: React.ComponentProps<typeof Vaul.Description>) => (
-  <Vaul.Description data-slot="drawer-description" className={cn("text-sm text-muted-foreground", className)} {...p} />
+  <Vaul.Description data-slot="drawer-description" className={cn("text-sm text-muted-foreground [overflow-wrap:anywhere]", className)} {...p} />
 );
 const DrawerBody = ({ className, ...p }: React.ComponentProps<"div">) => (
   <div data-slot="drawer-body" className={cn("@container min-h-0 flex-1 overflow-y-auto p-4", className)} {...p} />

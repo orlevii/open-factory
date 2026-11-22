@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft } from "@/features/sheets/drafts";
+import { clearDraft, hasDraft, peekDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -68,10 +68,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function fillAndSubmit() {
+async function fill() {
   await pickComboOption(await target(), /@ceo/);
   await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Daily at 09:00");
   await userEvent.type(screen.getByLabelText("Message"), "Review");
+}
+async function fillAndSubmit() {
+  await fill();
   await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
 }
 
@@ -120,6 +123,40 @@ test("an unknown target stays empty and says so", async () => {
   act(() => openSheet({ kind: "new-schedule", target: "nobody" }));
   expect(await screen.findByText("There is no agent @nobody.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
+});
+
+test("a stale target cleared from the spec leaves no draft, so the next target still applies", async () => {
+  mockApi(base());
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  expect(hasDraft("new-schedule")).toBe(false);
+  act(() => openSheet({ kind: "new-schedule", target: "dev" }));
+  await waitFor(async () => expect(await target()).toHaveTextContent("Dev"));
+  expect(screen.queryByText(/Draft restored/)).toBeNull();
+});
+
+test("Discard over a stale preset leaves no phantom draft", async () => {
+  mockApi(base());
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "new-schedule" }));
+  await userEvent.type(await screen.findByLabelText("Message"), "Mine");
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  expect(hasDraft("new-schedule")).toBe(false);
+  act(() => openSheet({ kind: "new-schedule", target: "dev" }));
+  expect(await target()).toHaveTextContent("Dev");
+  expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
 
 test("success closes, clears the draft and toasts Created with Open for the Edit sheet", async () => {
@@ -217,10 +254,11 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   expect(await screen.findByLabelText("Message")).toHaveTextContent("Review");
 });
 
-test("a late success leaves a draft restored by reopening in the meantime", async () => {
+/** Fills and submits with POST held until `release()`, and closes the sheet while it is pending. */
+async function submitThenClose() {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
-  mockApi({
+  const api = mockApi({
     ...base(),
     "POST /api/schedules": async () => {
       await gate;
@@ -234,12 +272,58 @@ test("a late success leaves a draft restored by reopening in the meantime", asyn
   await screen.findByRole("button", { name: "Creating…" });
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  return { release, api };
+}
+
+test("a late success over a reopened New schedule still holding the sent values clears the draft and closes it", async () => {
+  const { release, api } = await submitThenClose();
   act(() => openSheet({ kind: "new-schedule" }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   release();
-  await waitFor(() => expect(notify).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Created S-8.",
+      action: { label: "Open", run: expect.any(Function) },
+    }),
+  );
+  expect(hasDraft("new-schedule")).toBe(false);
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  act(() => openSheet({ kind: "new-schedule" }));
+  expect(await screen.findByLabelText("Message")).not.toHaveTextContent("Review");
+  expect(screen.queryByText(/Draft restored/)).toBeNull();
+});
+
+test("a late success keeps edits made in a reopened New schedule, closed again or still open", async () => {
+  const { release } = await submitThenClose();
+  act(() => openSheet({ kind: "new-schedule" }));
+  await userEvent.type(await screen.findByLabelText("Message"), " later");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   act(() => openSheet({ kind: "new-schedule" }));
-  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  expect(await screen.findByLabelText("Message")).toHaveTextContent("Review later");
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  expect(hasDraft("new-schedule")).toBe(true);
+  expect(screen.getByRole("dialog", { name: "New schedule" })).toBeInTheDocument();
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  act(() => openSheet({ kind: "new-schedule" }));
+  expect(await screen.findByLabelText("Message")).toHaveTextContent("Review later");
+});
+
+test("a result landing after a sign-out neither toasts nor clears a draft", async () => {
+  const { release } = await submitThenClose();
+  const sent = peekDraft("new-schedule");
+  act(() => resetDrafts());
+  // A draft equal to the sent one, written after the sign-out, must not be taken for it.
+  act(() => openSheet({ kind: "new-schedule" }));
+  await fill();
+  expect(peekDraft("new-schedule")).toEqual(sent);
+  release();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("new-schedule")).toBe(true);
 });

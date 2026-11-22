@@ -1,6 +1,14 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, test } from "vitest";
-import { clearDraft, draftGeneration, hasDraft, resetDrafts, useSheetDraft } from "./drafts";
+import {
+  clearDraft,
+  clearDraftIf,
+  draftGeneration,
+  hasDraft,
+  peekDraft,
+  resetDrafts,
+  useSheetDraft,
+} from "./drafts";
 import { mergeServer } from "./merge-server";
 
 beforeEach(() => resetDrafts());
@@ -45,11 +53,47 @@ test("saving a value equal to initial deletes the draft", () => {
   expect(renderHook(() => useSheetDraft("new-agent", initial)).result.current.restored).toBe(false);
 });
 
+test("rebase makes the given values the untouched baseline", () => {
+  const a = renderHook(() => useSheetDraft("new-task", () => ({ name: "stale" })));
+  act(() => a.result.current.rebase({ name: "" }));
+  act(() => a.result.current.save({ name: "" }));
+  expect(hasDraft("new-task")).toBe(false);
+  act(() => a.result.current.save({ name: "x" }));
+  expect(hasDraft("new-task")).toBe(true);
+});
+
 test("clearDraft removes one key", () => {
   const a = renderHook(() => useSheetDraft("new-agent", initial));
   act(() => a.result.current.save({ name: "x" }));
   clearDraft("new-agent");
   expect(hasDraft("new-agent")).toBe(false);
+});
+
+test("clearDraftIf clears only a draft that still equals the snapshot", () => {
+  const a = renderHook(() => useSheetDraft("new-task", initial));
+  act(() => a.result.current.save({ name: "sent" }));
+  const snapshot = peekDraft("new-task");
+  expect(snapshot).toEqual({ name: "sent" });
+  // Edited since: kept.
+  act(() => a.result.current.save({ name: "sent, then edited" }));
+  expect(clearDraftIf("new-task", snapshot)).toBe(false);
+  expect(peekDraft("new-task")).toEqual({ name: "sent, then edited" });
+  // Back to the sent values: cleared.
+  act(() => a.result.current.save({ name: "sent" }));
+  expect(clearDraftIf("new-task", snapshot)).toBe(true);
+  expect(hasDraft("new-task")).toBe(false);
+  // No draft, or no snapshot: nothing to clear.
+  expect(clearDraftIf("new-task", snapshot)).toBe(false);
+  act(() => a.result.current.save({ name: "y" }));
+  expect(clearDraftIf("new-task", undefined)).toBe(false);
+  expect(hasDraft("new-task")).toBe(true);
+});
+
+test("peekDraft is a copy, not the stored reference", () => {
+  const a = renderHook(() => useSheetDraft("new-task", () => ({ list: [] as string[] })));
+  act(() => a.result.current.save({ list: ["a"] }));
+  (peekDraft("new-task") as { list: string[] }).list.push("b");
+  expect(peekDraft("new-task")).toEqual({ list: ["a"] });
 });
 
 test("initial runs once, save and clear keep their identity, saving does not re-render", () => {

@@ -182,7 +182,9 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   useEffect(() => {
     const el = form.current;
     const content = el?.closest<HTMLElement>(SHEET_CONTENT);
-    if (!el || content?.contains(document.activeElement)) return;
+    const at = document.activeElement;
+    // The host parks focus on the panel itself until the body mounts; only focus elsewhere inside it is kept.
+    if (!el || (at && at !== content && content?.contains(at))) return;
     if (isMobileNow()) content?.focus();
     else el.querySelector<HTMLElement>("#field-displayName")?.focus();
   }, []);

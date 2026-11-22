@@ -124,7 +124,12 @@ export function AgentCombobox({
     (v: string): ReactNode => {
       const f = fixed?.find((o) => o.value === v);
       if (f) return f.label;
-      return renderValueOverride ? renderValueOverride(v) : <AgentChip slug={v} badge showSlug />;
+      // Inline: the trigger keeps the one control height; a narrow trigger truncates rather than stacking.
+      return renderValueOverride ? (
+        renderValueOverride(v)
+      ) : (
+        <AgentChip slug={v} badge showSlug inline />
+      );
     },
     [fixed, renderValueOverride],
   );

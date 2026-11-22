@@ -681,6 +681,20 @@ test("drawer: a finger lifted off the items after a long-press doesn't cost the 
   }
 });
 
+test("drawer: when the lift's click lands on the row, it was the lifting finger's: the next click on an item selects (evidence D6)", () => {
+  phone();
+  vi.useFakeTimers();
+  try {
+    const { onEdit, edit } = holdRow(1500);
+    fireEvent.pointerUp(screen.getByTestId("row"), finger);
+    fireEvent.click(screen.getByTestId("row"));
+    fireEvent.click(edit());
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("drawer: opened by a tap (no long-press), the first tap on an item selects", () => {
   phone();
   const onEdit = vi.fn();

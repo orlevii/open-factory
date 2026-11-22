@@ -13,15 +13,19 @@ const RELEASE_GRACE_MS = 1000;
 let releaseExpiresAt = 0;
 
 // D6: a phone's drawer opened by a long-press rises under the finger, so the click its lift sends must not
-// select the item it lands on. Armed when a press fires, the guard lasts while the finger is held
-// (HELD_GRACE_MS) and RELEASE_GRACE_MS past the lift, and ends at the first drawer click it swallows or at
-// the next pointerdown (that's a genuine tap). Watched on the document: the lift can land anywhere.
+// select the item it lands on. Armed when a press fires, the guard marks the first click after it, wherever
+// it lands (the row, the overlay, an item), as the lifting finger's. It lasts while the finger is held
+// (HELD_GRACE_MS) and RELEASE_GRACE_MS past the lift, and the next pointerdown (a genuine tap) ends it.
+// Watched on the document in the capture phase: the lift can land anywhere, and the mark must precede React.
 let liftGuardUntil = 0;
+let liftClick: Event | null = null;
 
 function armLiftGuard() {
   liftGuardUntil = Date.now() + HELD_GRACE_MS;
+  liftClick = null;
   document.addEventListener("pointerup", onLift, true);
   document.addEventListener("touchend", onLift, true);
+  document.addEventListener("click", onFirstClick, true);
   document.addEventListener("pointerdown", disarmLiftGuard, true);
 }
 
@@ -31,19 +35,25 @@ function onLift(e: Event) {
   else disarmLiftGuard();
 }
 
+function onFirstClick(e: Event) {
+  const guarded = Date.now() < liftGuardUntil;
+  disarmLiftGuard();
+  if (guarded) liftClick = e;
+}
+
 function disarmLiftGuard() {
   liftGuardUntil = 0;
+  liftClick = null;
   document.removeEventListener("pointerup", onLift, true);
   document.removeEventListener("touchend", onLift, true);
+  document.removeEventListener("click", onFirstClick, true);
   document.removeEventListener("pointerdown", disarmLiftGuard, true);
 }
 
-/** True for the first click after a long-press fired, whenever the finger lifted (it's that finger's click):
- *  a drawer's items call it to ignore the lift. Consumed by the call. */
-export function consumeLongPressLift(): boolean {
-  const guarded = Date.now() < liftGuardUntil;
-  disarmLiftGuard();
-  return guarded;
+/** Whether `e` (a native click) is the first click after a long-press fired, whenever the finger lifted: the
+ *  lifting finger's. A drawer's items ignore it. Any later click, or one after a fresh pointerdown, is not. */
+export function isLongPressLiftClick(e: Event): boolean {
+  return e === liftClick;
 }
 
 /** True for one pointerup after a long-press fired: menus call it to ignore the lifting finger. */

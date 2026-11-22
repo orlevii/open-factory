@@ -1,7 +1,7 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { consumeLongPressLift, consumeLongPressRelease, useLongPress } from "./use-long-press";
+import { consumeLongPressRelease, isLongPressLiftClick, useLongPress } from "./use-long-press";
 
 function Row({
   onLongPress,
@@ -31,7 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   consumeLongPressRelease();
-  consumeLongPressLift();
+  fireEvent.pointerDown(document.body, { pointerType: "touch", pointerId: 99 });
 });
 
 function setup(onClick?: () => void) {
@@ -49,34 +49,41 @@ test("fires at 500ms with the press point, not at 499", () => {
   expect(onLongPress).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 20 });
 });
 
-test("consumeLongPressLift: the first check after a fire is true however long the finger is held, then false", () => {
+/** Dispatches a click on `el` and returns it, as a drawer item would see it. */
+const click = (el: Element) => {
+  const e = new MouseEvent("click", { bubbles: true, cancelable: true });
+  el.dispatchEvent(e);
+  return e;
+};
+
+test("isLongPressLiftClick: the first click after a fire, however long the finger was held, and no other", () => {
   const { el } = setup();
-  expect(consumeLongPressLift()).toBe(false);
+  expect(isLongPressLiftClick(click(document.body))).toBe(false);
   fireEvent.pointerDown(el, touch());
   act(() => void vi.advanceTimersByTime(499));
-  expect(consumeLongPressLift()).toBe(false);
+  expect(isLongPressLiftClick(click(document.body))).toBe(false);
   act(() => void vi.advanceTimersByTime(1));
-  // Held 3s more, then lifted: the lift's click is still the guarded one.
+  // Held 3s more, then lifted: the lift's click is the marked one, wherever it lands.
   act(() => void vi.advanceTimersByTime(3000));
   fireEvent.pointerUp(document.body, touch());
   act(() => void vi.advanceTimersByTime(900));
-  expect(consumeLongPressLift()).toBe(true);
-  expect(consumeLongPressLift()).toBe(false);
+  expect(isLongPressLiftClick(click(document.body))).toBe(true);
+  expect(isLongPressLiftClick(click(document.body))).toBe(false);
 });
 
-test("consumeLongPressLift: the guard ends at the next pointerdown or a second after the lift", () => {
+test("isLongPressLiftClick: the guard ends at the next pointerdown or a second after the lift", () => {
   const { el } = setup();
   fireEvent.pointerDown(el, touch());
   act(() => void vi.advanceTimersByTime(500));
   fireEvent.pointerUp(el, touch());
   fireEvent.pointerDown(document.body, touch(10, 20, 2));
-  expect(consumeLongPressLift()).toBe(false);
+  expect(isLongPressLiftClick(click(document.body))).toBe(false);
 
   fireEvent.pointerDown(el, touch());
   act(() => void vi.advanceTimersByTime(1500));
   fireEvent.touchEnd(document.body);
   act(() => void vi.advanceTimersByTime(1000));
-  expect(consumeLongPressLift()).toBe(false);
+  expect(isLongPressLiftClick(click(document.body))).toBe(false);
 });
 
 test("vibrates on fire when available", () => {

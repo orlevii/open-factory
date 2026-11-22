@@ -2,7 +2,7 @@ import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { runInstant } from "@/lib/run-instant";
 import type { ToolRow } from "./rows";
-import { rendererFor, type ToolRenderer } from "./tools";
+import { rendererFor } from "./tools";
 import { firstLine } from "./tools/output";
 
 export { toolSummary } from "./tools/generic";
@@ -22,12 +22,18 @@ const STATE_LABEL = {
   done: null,
 } as const;
 
-/** The state chip: one word for where the call stands (spec §9.2); a background task's state
- *  (U3 §9.5) comes from the tool's renderer. */
-function chipOf(row: ToolRow, R: ToolRenderer): string | null {
+const TASK_CHIP = {
+  running: "In background",
+  finished: "Finished",
+  failed: "Failed",
+  stopped: "Stopped",
+} as const;
+
+/** The state chip: one word for where the call stands (spec §9.2). A background task the call
+ *  started speaks for it, whatever the tool (U3 §9.5). */
+function chipOf(row: ToolRow): string | null {
   if (row.denial) return "Denied";
-  const own = R.chip?.(row);
-  if (own) return own;
+  if (row.backgroundTask) return TASK_CHIP[row.backgroundTask.state];
   const meta = row.result?.meta;
   if (meta?.tool === "Bash" && meta.interrupted) return "Interrupted";
   return STATE_LABEL[row.state];
@@ -37,12 +43,13 @@ const failedIcon = (
   <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
 );
 
-/** The detail under a collapsed row (`pl-7`, two lines at most): a denial, a failure's first error
- *  line, or the tool's own (a background task's summary); never inside the row's toggle. */
-function Detail({ row, R, chip }: { row: ToolRow; R: ToolRenderer; chip: string | null }) {
+/** The detail under a collapsed row (`pl-7`, two lines at most): a denial, a settled background
+ *  task's summary (U3 §9.5), or a failure's first error line; never inside the row's toggle. */
+function Detail({ row, chip }: { row: ToolRow; chip: string | null }) {
   let icon: ReactNode;
   let text: string;
-  const own = R.detail?.(row);
+  const task = row.backgroundTask;
+  const own = task && task.state !== "running" ? task.summary : undefined;
   if (row.denial) {
     icon = <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />;
     text = denialText(row.denial.reason);
@@ -78,7 +85,7 @@ export function ToolCallRow({
   children?: ReactNode;
 }) {
   const R = rendererFor(row.call.name);
-  const chip = chipOf(row, R);
+  const chip = chipOf(row);
   return (
     <div>
       <button
@@ -103,7 +110,7 @@ export function ToolCallRow({
         </span>
         {chip && <span className="shrink-0 text-[0.8125rem] text-muted-foreground">{chip}</span>}
       </button>
-      <Detail row={row} R={R} chip={chip} />
+      <Detail row={row} chip={chip} />
       {expanded && (
         <div className="mt-1 space-y-2 pl-6">
           <R.Body row={row} />

@@ -14,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
-import { childrenOf, heldSeqs, innerKey } from "./display-passes";
+import { childrenOf, groupOpen, heldSeqs, innerKey } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
@@ -298,7 +298,9 @@ export function Timeline(props: {
         if (inner) {
           // A group (U3 §9.4): open while it or a call is (`groupOpen`), so closing it collapses its
           // calls too; opening it opens only the group.
-          if (n.has(k) || inner.some((c) => n.has(c))) for (const x of [k, ...inner]) n.delete(x);
+          // A call's inner-key mirror goes too, so a stale one can't reopen a later group.
+          if (n.has(k) || inner.some((c) => n.has(c)))
+            for (const x of [k, ...inner, ...inner.map(innerKey)]) n.delete(x);
           else n.add(k);
           return n;
         }
@@ -393,9 +395,15 @@ function maxSeq(rows: Row[]): number {
   return max;
 }
 
-/** Only rows that are mounted: children of collapsed rows are not. */
+/** Only rows that are mounted: children of collapsed rows are not. A group is open through its own
+ *  key or any call's (`groupOpen`). */
 const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>): boolean =>
-  rows.some((r) => r.key === key || (expanded.has(r.key) && hasKey(childrenOf(r), key, expanded)));
+  rows.some(
+    (r) =>
+      r.key === key ||
+      ((r.kind === "work_group" ? groupOpen(r, expanded) : expanded.has(r.key)) &&
+        hasKey(childrenOf(r), key, expanded)),
+  );
 
 /** True when the row shows the envelope (or one of its merged ids / parts). */
 function rowHasMessage(row: Row, id: string): boolean {
@@ -426,7 +434,11 @@ export function targetPath(rows: Row[], seq: number): string[] | undefined {
   // A group shares its first call's seq but lands on the call itself (U3 §9.4).
   while (row && (row.kind === "work_group" || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
     const kids = childrenOf(row);
-    row = kids.find((c) => c.seq === seq) ?? kids.find((c) => containsSeq(childrenOf(c), seq));
+    row =
+      kids.find((c) => c.seq === seq) ??
+      kids.find((c) => containsSeq(childrenOf(c), seq)) ??
+      // A hidden event between a group's calls: the next call, as at the top level.
+      (row.kind === "work_group" ? kids.find((c) => c.seq > seq) : undefined);
     if (row) path.push(row.key);
   }
   return path;
@@ -439,7 +451,8 @@ export function targetRowKey(rows: Row[], seq: number): string | undefined {
   return (
     rows.find((r) => r.seq === seq)?.key ??
     rows.find((r) => heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq))?.key ??
-    rows.find((r) => r.seq > seq)?.key ??
+    // A group or merged failure holding a later seq is nearer than the next row.
+    rows.find((r) => r.seq > seq || (heldSeqs(r)?.at(-1) ?? 0) > seq)?.key ??
     rows.at(-1)?.key
   );
 }

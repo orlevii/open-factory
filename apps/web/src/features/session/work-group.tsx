@@ -6,7 +6,8 @@ import { formatDuration } from "./format";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-const VERB: Record<string, (n: number) => string> = {
+type Family = "read" | "ran" | "edited" | "other";
+const VERB: Record<Family, (n: number) => string> = {
   read: (n) => `read ${plural(n, "file", "files")}`,
   ran: (n) => `ran ${plural(n, "command", "commands")}`,
   edited: (n) => `edited ${plural(n, "file", "files")}`,
@@ -16,9 +17,11 @@ const VERB: Record<string, (n: number) => string> = {
 /** The verbs of a finished run, from its flat `verbsKey`: "Read 6 files, ran 4 commands". A run of
  *  nothing but other calls says "3 calls". */
 function verbsText(verbsKey: string, callCount: number): string {
-  const parts = verbsKey.split(",").map((p) => p.split(":") as [string, string]);
+  // `verbsKey` is built by `groupWork` from these families only.
+  const parts = verbsKey.split(",").map((p) => p.split(":") as [Family, string]);
+  // "2 other calls" with nothing else named reads as if something were missing.
   if (parts.length === 1 && parts[0]?.[0] === "other") return plural(callCount, "call", "calls");
-  const text = parts.map(([f, n]) => (VERB[f] ?? VERB.other)?.(Number(n))).join(", ");
+  const text = parts.map(([f, n]) => VERB[f](Number(n))).join(", ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 

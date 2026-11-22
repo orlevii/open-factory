@@ -259,3 +259,10 @@ test("a group holds its calls' seqs, so a call joining it after the reader left 
   expect(arrivedSince([g as Row], 5, new Set())).toEqual({ speech: 0, other: true });
   expect(arrivedSince([g as Row], 7, new Set())).toEqual({ speech: 0, other: false });
 });
+
+test("a deep link to a hidden event between a group's calls lands inside the group, on the next call", () => {
+  const rows = groupWork([text(1), bash(3), bash(5), text(7)]);
+  expect(targetRowKey(rows, 4)).toBe("3");
+  expect(targetPath(rows, 4)).toEqual(["3", "5"]);
+  expect(targetRowKey(rows, 6)).toBe("7");
+});

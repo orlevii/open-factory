@@ -15,10 +15,6 @@ import { webRenderer } from "./web";
 export type ToolRenderer = {
   Summary: ComponentType<{ row: ToolRow }>;
   Body: ComponentType<{ row: ToolRow }>;
-  /** A state chip of the tool's own (a background task's), else the row's state decides. */
-  chip?(row: ToolRow): string | undefined;
-  /** A detail line of the tool's own (a background task's summary), under the collapsed row. */
-  detail?(row: ToolRow): string | undefined;
 };
 
 /** Renderers by tool name; a module constant, so a row's renderer never changes identity. */

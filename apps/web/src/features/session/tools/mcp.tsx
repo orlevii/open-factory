@@ -19,15 +19,19 @@ const entriesOf = (input: unknown): [string, unknown][] =>
     ? Object.entries(input).sort(([a], [b]) => rank(a) - rank(b))
     : [];
 
-/** "server · tool" (the server truncates first), then the first string argument, muted (spec §9.2). */
+/** "server · tool" (the server truncates first), then the telling string argument, muted (spec
+ *  §9.2). The name isn't capped at 60%: the argument shrinking first is what keeps the tool readable
+ *  at 320px. */
 function McpSummary({ row }: { row: ToolRow }) {
   const { name, input } = row.call;
   const first = entriesOf(input).find(([, v]) => typeof v === "string")?.[1] as string | undefined;
   return (
     <>
-      <McpName name={name} title={name} className="max-w-[60%] shrink-0 font-mono" />
+      {/* The name keeps its width as long as it can; the argument takes only the room it leaves
+          (flex-basis 0), so at narrow widths it gives way first. */}
+      <McpName name={name} title={name} className="font-mono" />
       {first && (
-        <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-muted-foreground">
+        <span className="min-w-0 flex-1 basis-0 truncate text-[0.8125rem] text-muted-foreground">
           {first}
         </span>
       )}

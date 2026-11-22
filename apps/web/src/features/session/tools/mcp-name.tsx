@@ -1,19 +1,24 @@
 import { mcpParts } from "../activity";
 
-/** The characters a long server keeps at the narrowest (its ellipses included). */
-const SERVER_MIN = 8;
+/** The server's last characters, which always stay (its head shrinks instead). */
+const TAIL_KEEP = 6;
+/** The head's least width in characters: 3 of its own and the ellipsis (below that a lone "g…"
+ *  reads like a name). A head no longer than this never shrinks. */
+const HEAD_MIN = 4;
 
-/** A name split in half by characters (never inside a surrogate pair): the head shrinks first. */
-function halves(s: string): [string, string] {
+/** A server split into a head that shrinks and its last few characters, which stay (never inside a
+ *  surrogate pair). */
+function split(s: string): [string, string] {
   const chars = Array.from(s);
-  const mid = Math.ceil(chars.length / 2);
-  return [chars.slice(0, mid).join(""), chars.slice(mid).join("")];
+  const keep = Math.min(TAIL_KEEP, Math.floor(chars.length / 2));
+  return [chars.slice(0, chars.length - keep).join(""), chars.slice(chars.length - keep).join("")];
 }
 
-/** "server · tool" for an MCP tool name (spec §9.2): the server middle-truncates (its head shrinks
- *  to an ellipsis, then its tail ends in one) down to 8 characters, and the tool keeps its tail,
- *  cutting from its start only once the server is at that minimum. Any other name renders as itself, end-truncating. Shared by the tool row
- *  and the activity line. */
+/** "server · tool" for an MCP tool name (spec §9.2). The server middle-truncates: its head shrinks
+ *  first (shrink 100 to the tool's 1), down to 3 characters and an ellipsis, while its last 6 stay.
+ *  Only then does the tool shrink, from its start, so it keeps its tail. " · " sits between them,
+ *  outside both truncations, so it always shows. Any other name renders as itself, end-truncating.
+ *  Shared by the tool row and the activity line. */
 export function McpName({
   name,
   className = "",
@@ -30,25 +35,36 @@ export function McpName({
         {name}
       </span>
     );
-  const [head, tail] = halves(mcp.server);
-  // A long server gives way first (shrink 100 to the tool's 1) but never below 8 characters, so it
-  // never collapses to nothing; a shorter one never shrinks.
-  const long = Array.from(mcp.server).length > SERVER_MIN;
+  const [head, tail] = split(mcp.server);
+  const shrinks = Array.from(head).length > HEAD_MIN;
+  // An intrinsic minimum would be the whole text (truncation doesn't lower it), so the least widths
+  // are explicit: the head's 4 characters (3 and the ellipsis), and the server's that plus the tail.
+  // The name is set in mono, where a `ch` is a character; the extra pixel absorbs rounding, which
+  // otherwise drops a character before the ellipsis.
+  const headLeast = { minWidth: `calc(${HEAD_MIN}ch + 1px)` };
+  const least = { minWidth: `calc(${HEAD_MIN + Array.from(tail).length}ch + 1px)` };
   return (
     <span title={title} className={`flex min-w-0 ${className}`}>
       <span
         data-mcp-server
-        className={`flex overflow-hidden whitespace-pre ${long ? "min-w-[8ch] shrink-[100]" : "shrink-0"}`}
+        style={shrinks ? least : undefined}
+        className={`flex overflow-hidden whitespace-pre ${shrinks ? "shrink-[100]" : "shrink-0"}`}
       >
-        {/* The head shrinks to its ellipsis first; then the tail ends in one. */}
-        <span className="min-w-[1ch] shrink-[100] truncate">{head}</span>
-        <span className="min-w-0 truncate">{tail}</span>
+        <span data-mcp-head {...(shrinks ? { style: headLeast, className: "truncate" } : {})}>
+          {head}
+        </span>
+        <span className="shrink-0">{tail}</span>
       </span>
       {mcp.tool !== undefined && (
-        // A right-to-left box puts the ellipsis at the start; the text inside stays left-to-right.
-        <span data-mcp-tool dir="rtl" className="min-w-0 truncate text-left whitespace-pre">
-          <span dir="ltr"> · {mcp.tool}</span>
-        </span>
+        <>
+          <span data-mcp-sep className="shrink-0 whitespace-pre">
+            {" · "}
+          </span>
+          {/* A right-to-left box puts the ellipsis at the start; the text inside stays left-to-right. */}
+          <span data-mcp-tool dir="rtl" className="min-w-0 truncate text-left whitespace-pre">
+            <span dir="ltr">{mcp.tool}</span>
+          </span>
+        </>
       )}
     </span>
   );

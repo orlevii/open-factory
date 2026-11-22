@@ -231,7 +231,7 @@ test("a denied terminate is a failed quiet line with the denial sentence", async
 test("malformed spawn_agent input falls back to the tool row", async () => {
   await open(
     [{ type: "turn_started" }, spawn({ prompt: 42 }), result("bad", true)],
-    /· spawn_agent$/, // the tool row reads "factory · spawn_agent" (U3 §9.2)
+    /^spawn_agent$/, // the tool row reads "factory · spawn_agent": the tool is its own span (U3 §9.2)
   );
   expect(screen.queryByRole("article", { name: /spawn/ })).toBeNull();
 });

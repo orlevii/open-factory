@@ -84,8 +84,9 @@ test("collapsed: the path middle-truncated, then +N −M that never shrinks", ()
   const row = screen.getByRole("button", { expanded: false });
   expect(row).toHaveTextContent(`${PATH} · +2 −1`);
   expect(within(row).getByText("+2 −1")).toHaveClass("shrink-0");
-  // MiddleTruncate keeps the file name: the tail is its own non-shrinking span.
-  expect(within(row).getByText("/retry.ts")).toHaveClass("shrink-0");
+  // MiddleTruncate keeps the file name: the tail is its own non-shrinking span (its text sits in an
+  // inner left-to-right span, so its end stays when even it is too wide).
+  expect(within(row).getByText("/retry.ts").parentElement).toHaveClass("shrink-0");
 });
 
 test("expanded: one gutter column (new line numbers; old on − lines), signs, code in ink", () => {
@@ -289,4 +290,13 @@ test("a create whose content was capped says N+ lines", () => {
   if (row?.kind !== "tool") throw new Error("no tool row");
   render(<Harness row={row} />);
   expect(screen.getByText("created · 3+ lines")).toBeInTheDocument();
+});
+
+test("collapsed: the path keeps its file name's end (its extension) when even that is too wide", () => {
+  render(<Harness row={edit([HUNK])} />);
+  // The path's two halves: the head, then the last segment.
+  const tail = [...document.querySelectorAll("span[aria-hidden=true]")]
+    .filter((e) => e.textContent?.startsWith("/"))
+    .at(-1);
+  expect(tail).toHaveAttribute("dir", "rtl");
 });

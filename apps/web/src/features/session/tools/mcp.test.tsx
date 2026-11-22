@@ -52,6 +52,23 @@ test("expanded: the preferred keys lead the input list, the rest keep their orde
   expect(terms).toEqual(["title", "base", "head", "body"]);
 });
 
+test("at narrow widths the argument gives way before the name: it only takes the room the name leaves", () => {
+  render(
+    <RowHarness
+      row={toolRow(
+        "mcp__github-cloud-connector__create_pull_request",
+        { title: "Fix the nightly deploy" },
+        { content: "ok" },
+      )}
+    />,
+  );
+  const arg = within(rowToggle()).getByText("Fix the nightly deploy");
+  expect(arg).toHaveClass("min-w-0", "flex-1", "basis-0", "truncate");
+  const name = rowToggle().querySelector("[data-mcp-server]")?.parentElement as HTMLElement;
+  expect(name).not.toHaveClass("shrink-0");
+  expect(name).toHaveClass("min-w-0");
+});
+
 test("expanded: the input as a key/value list", () => {
   const { container } = render(
     <RowHarness

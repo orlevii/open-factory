@@ -424,7 +424,7 @@ test("an error shows the tool's sentence and no link", async () => {
 test("malformed send_message input falls back to the tool row", async () => {
   await open(
     [{ type: "turn_started" }, call({ body: 42 }), result("bad input", true)],
-    /· send_message$/, // the tool row reads "factory · send_message" (U3 §9.2)
+    /^send_message$/, // the tool row reads "factory · send_message": the tool is its own span (U3 §9.2)
   );
   expect(screen.queryByRole("article", { name: /Message from/ })).toBeNull();
 });

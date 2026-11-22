@@ -22,3 +22,14 @@ test("a handle (no '/') truncates in the middle: its head and its tail both stay
   expect(tail).toHaveClass("shrink-0");
   expect(container.querySelector(".sr-only")).toHaveTextContent("@marketing-team");
 });
+
+test("a file name that must keep its extension cuts its last segment from the start", () => {
+  const { container } = render(
+    <MiddleTruncate keepEnd text="/work/src/features/session/a-very-long-component-name.tsx" />,
+  );
+  const tail = container.querySelectorAll("[aria-hidden=true]")[1] as HTMLElement;
+  expect(tail).toHaveAttribute("dir", "rtl");
+  expect(tail).toHaveClass("shrink-0", "max-w-full", "truncate");
+  expect(tail.firstElementChild).toHaveAttribute("dir", "ltr");
+  expect(tail).toHaveTextContent("/a-very-long-component-name.tsx");
+});

@@ -114,7 +114,7 @@ function DiffSummary({ row }: { row: ToolRow }) {
   return (
     <span className="flex min-w-0 flex-1 items-baseline">
       <span className="flex min-w-0 font-mono text-[0.8125rem]">
-        <MiddleTruncate text={inputStr(row, "file_path")} />
+        <MiddleTruncate keepEnd text={inputStr(row, "file_path")} />
       </span>
       <span className="shrink-0 whitespace-pre text-muted-foreground"> · </span>
       <span className="shrink-0 font-medium tabular-nums">{stat}</span>

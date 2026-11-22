@@ -10,6 +10,9 @@ export type Notification = {
   undo?: () => Promise<void>;
 };
 
+/** Sonner's container label (it appends the hotkey hint, so select by prefix); the release check and the tests select by it, never by Sonner's default. */
+export const TOASTER_LABEL = "Toast notifications";
+
 const MIN_MS = 5000;
 const PER_CHAR_MS = 60;
 /** Touch has no hover-pause, so a longer text stays longer. */
@@ -48,6 +51,7 @@ export function Toaster() {
       position={mobile ? "bottom-center" : "bottom-left"}
       offset={mobile ? PHONE_OFFSET : DESKTOP_OFFSET}
       mobileOffset={mobile ? PHONE_OFFSET : DESKTOP_OFFSET}
+      containerAriaLabel={TOASTER_LABEL}
       visibleToasts={3}
       gap={8}
       expand
@@ -69,7 +73,7 @@ function modalOpen() {
 /** Radix's hideOthers marks the toaster's subtree aria-hidden while a modal is open and clears it a
  *  moment after the modal's state flips to closed; a toast shown before then would not be announced. */
 function hidden() {
-  return document.querySelector('section[aria-label^="Notifications"]')?.closest('[aria-hidden="true"]') != null;
+  return document.querySelector(`section[aria-label^="${TOASTER_LABEL}"]`)?.closest('[aria-hidden="true"]') != null;
 }
 
 function release() {

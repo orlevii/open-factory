@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, test } from "vitest";
 import { clearDraft, draftGeneration, hasDraft, resetDrafts, useSheetDraft } from "./drafts";
+import { mergeServer } from "./merge-server";
 
 beforeEach(() => resetDrafts());
 const initial = () => ({ name: "" });
@@ -72,8 +73,7 @@ test("initial runs once, save and clear keep their identity, saving does not re-
   expect(calls).toBe(1);
 });
 
-test("edit drafts keep {values, base} so a server change to an untouched field shows on reopen", async () => {
-  const { mergeServer } = await import("./merge-server");
+test("edit drafts keep {values, base} so a server change to an untouched field shows on reopen", () => {
   type V = { a: string; b: string };
   const base: V = { a: "1", b: "2" };
   const h = renderHook(() =>
@@ -85,4 +85,36 @@ test("edit drafts keep {values, base} so a server change to an untouched field s
   );
   const d = re.result.current.start;
   expect(mergeServer(d.values, d.base, { a: "1", b: "S" })).toEqual({ a: "mine", b: "S" });
+});
+
+type EV = { a: string };
+const editInit = (server: EV) => () => ({ values: server, base: server });
+
+test("an untouched edit form saving against a newer server copy is no draft", () => {
+  const h = renderHook(() => useSheetDraft("edit-agent:u", editInit({ a: "1" })));
+  act(() => h.result.current.save({ values: { a: "2" }, base: { a: "2" } }));
+  expect(hasDraft("edit-agent:u")).toBe(false);
+});
+
+test("a new key restarts from that key's draft or initial", () => {
+  const seed = renderHook(() => useSheetDraft("edit-agent:b", editInit({ a: "1" })));
+  act(() => seed.result.current.save({ values: { a: "mine" }, base: { a: "1" } }));
+  const h = renderHook(
+    ({ k }: { k: "edit-agent:a" | "edit-agent:b" }) => useSheetDraft(k, editInit({ a: "1" })),
+    {
+      initialProps: { k: "edit-agent:a" },
+    },
+  );
+  expect(h.result.current.restored).toBe(false);
+  h.rerender({ k: "edit-agent:b" });
+  expect(h.result.current.restored).toBe(true);
+  expect(h.result.current.start.values.a).toBe("mine");
+});
+
+test("start is a copy, not the stored reference", () => {
+  const a = renderHook(() => useSheetDraft("new-task", initial));
+  act(() => a.result.current.save({ name: "x" }));
+  const b = renderHook(() => useSheetDraft("new-task", initial));
+  b.result.current.start.name = "mutated";
+  expect(renderHook(() => useSheetDraft("new-task", initial)).result.current.start.name).toBe("x");
 });

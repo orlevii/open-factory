@@ -14,6 +14,15 @@ let generation = 0;
 /** Plain values only (strings, numbers, arrays, plain objects), so JSON is a sound equality. */
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/** Edit drafts hold `{ values, base }`: untouched means the values equal their own base, whatever the server holds now. */
+function isUntouched(key: DraftKey, v: unknown, initial: unknown) {
+  if (key.startsWith("edit-")) {
+    const d = v as { values: unknown; base: unknown };
+    return same(d.values, d.base);
+  }
+  return same(v, initial);
+}
+
 /**
  * Start values come from the draft when one exists, else from `initial()` (called once). Writes go to the map through a
  * ref and never re-render the host. `restored` is true when the start came from a draft. Saving a value equal to
@@ -23,16 +32,22 @@ export function useSheetDraft<T>(
   key: DraftKey,
   initial: () => T,
 ): { start: T; restored: boolean; save(v: T): void; clear(): void } {
-  const ref = useRef<{ start: T; restored: boolean; initial: T } | null>(null);
-  if (ref.current === null) {
+  // Start values are read once per key: a new key (a different entity in the same host) starts over.
+  const ref = useRef<{ key: DraftKey; start: T; restored: boolean; initial: T } | null>(null);
+  if (ref.current === null || ref.current.key !== key) {
     const base = initial();
     const has = drafts.has(key);
-    ref.current = { start: has ? (drafts.get(key) as T) : base, restored: has, initial: base };
+    ref.current = {
+      key,
+      start: has ? structuredClone(drafts.get(key) as T) : base,
+      restored: has,
+      initial: base,
+    };
   }
   const save = useCallback(
     (v: T) => {
-      if (same(v, ref.current?.initial)) drafts.delete(key);
-      else drafts.set(key, v);
+      if (isUntouched(key, v, ref.current?.initial)) drafts.delete(key);
+      else drafts.set(key, structuredClone(v));
     },
     [key],
   );

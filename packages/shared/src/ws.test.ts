@@ -47,3 +47,59 @@ test("S10 frames parse", () => {
   ])
     expect(serverMessageSchema.parse(f).type).toBe(f.type);
 });
+
+test("live_snapshot client message parses", () => {
+  expect(clientMessageSchema.parse({ type: "live_snapshot", agent: "dev" })).toEqual({
+    type: "live_snapshot",
+    agent: "dev",
+  });
+  expect(clientMessageSchema.safeParse({ type: "live_snapshot" }).success).toBe(false);
+});
+
+test("live frame: absent means unchanged, null means cleared", () => {
+  const minimal = serverMessageSchema.parse({ type: "live", agent: "dev" });
+  expect(minimal).toEqual({ type: "live", agent: "dev" });
+  expect("toolInput" in minimal).toBe(false);
+  expect("thinking" in minimal).toBe(false);
+
+  const cleared = serverMessageSchema.parse({
+    type: "live",
+    agent: "dev",
+    toolInput: null,
+    thinking: null,
+  });
+  expect(cleared).toEqual({ type: "live", agent: "dev", toolInput: null, thinking: null });
+
+  const full = {
+    type: "live",
+    agent: "dev",
+    texts: [{ messageId: "msg_1", index: 1, offset: 0, append: "Hel", capped: false }],
+    retire: ["msg_0:0"],
+    toolInput: { toolUseId: "t1", name: "Write", bytes: 120, target: "a.md" },
+    thinking: { tokens: 40 },
+    subagents: [
+      {
+        toolUseId: "t2",
+        description: "Look around",
+        subagentType: "Explore",
+        toolUses: 4,
+        tokens: 23000,
+        durationMs: 9000,
+        lastTool: "Read",
+      },
+    ],
+    reset: true,
+  };
+  expect(serverMessageSchema.parse(full)).toEqual(full);
+});
+
+test("live frame rejects bad shapes", () => {
+  const bad = [
+    { type: "live", agent: "dev", reset: false },
+    { type: "live", agent: "dev", texts: [{ messageId: "m", index: 0.5, offset: 0, append: "" }] },
+    { type: "live", agent: "dev", texts: [{ messageId: "m", index: 0, offset: 1.5, append: "" }] },
+    { type: "live", agent: "dev", texts: null },
+    { type: "live", agent: "dev", subagents: [{ toolUseId: "t" }] },
+  ];
+  for (const f of bad) expect(serverMessageSchema.safeParse(f).success).toBe(false);
+});

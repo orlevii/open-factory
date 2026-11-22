@@ -225,3 +225,51 @@ test("interrupt_unconfirmed is a factory event", () => {
     "interrupt_unconfirmed",
   );
 });
+
+describe("reconcile keys and Agent usage (U3 §11.1, §9.1)", () => {
+  test("assistant_text and tool_call keep messageId and blockIndex; old rows parse without them", () => {
+    const text = anyEventSchema.parse({
+      type: "assistant_text",
+      text: "hi",
+      messageId: "msg_1",
+      blockIndex: 1,
+    });
+    expect(text).toEqual({ type: "assistant_text", text: "hi", messageId: "msg_1", blockIndex: 1 });
+    const call = anyEventSchema.parse({
+      type: "tool_call",
+      toolUseId: "t1",
+      name: "Write",
+      input: {},
+      messageId: "msg_1",
+      blockIndex: 2,
+    });
+    expect(call).toMatchObject({ messageId: "msg_1", blockIndex: 2 });
+    expect(anyEventSchema.parse({ type: "assistant_text", text: "old" })).toEqual({
+      type: "assistant_text",
+      text: "old",
+    });
+    expect(
+      anyEventSchema.safeParse({ type: "assistant_text", text: "x", blockIndex: 1.5 }).success,
+    ).toBe(false);
+  });
+
+  test("background_task_finished carries optional usage", () => {
+    const done = anyEventSchema.parse({
+      type: "background_task_finished",
+      taskId: "b1",
+      status: "completed",
+      summary: "ok",
+      usage: { toolUses: 4, tokens: 23000, durationMs: 41000 },
+    });
+    expect(done).toMatchObject({ usage: { toolUses: 4, tokens: 23000, durationMs: 41000 } });
+    expect(
+      anyEventSchema.safeParse({
+        type: "background_task_finished",
+        taskId: "b1",
+        status: "completed",
+        summary: "ok",
+        usage: { toolUses: 4 },
+      }).success,
+    ).toBe(false);
+  });
+});

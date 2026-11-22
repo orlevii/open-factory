@@ -236,3 +236,67 @@ test("a restored draft's gone credential reads as empty, with the reason", async
   act(() => second.result.current.set("credential", "work"));
   expect(second.result.current.staleNotes.credential).toBeUndefined();
 });
+
+test("a late edit success after dismiss and reopen keeps the reopened draft", async () => {
+  const first = mount(edit());
+  act(() => first.result.current.set("displayName", "First"));
+  let release = () => {};
+  let late: Promise<string> | undefined;
+  await act(async () => {
+    late = first.result.current.submit(
+      () =>
+        new Promise<typeof lead>((res) => (release = () => res({ ...lead, displayName: "First" }))),
+    );
+  });
+  first.unmount();
+  const reopened = mount(edit());
+  act(() => reopened.result.current.set("displayName", "Reopened"));
+  await act(async () => {
+    release();
+    await late;
+  });
+  reopened.unmount();
+  const again = mount(edit());
+  expect(again.result.current.restored).toBe(true);
+  expect(again.result.current.values.displayName).toBe("Reopened");
+});
+
+test("a late create success after dismiss leaves the draft for the host to clear", async () => {
+  const first = mount(create({ prefill: { template: "lead" } }));
+  await waitFor(() => expect(first.result.current.credentials).toBeDefined());
+  act(() => {
+    first.result.current.set("slug", "late");
+    first.result.current.set("displayName", "Late");
+  });
+  let release = () => {};
+  let late: Promise<string> | undefined;
+  await act(async () => {
+    late = first.result.current.submit(() => new Promise<void>((res) => (release = res)));
+  });
+  first.unmount();
+  await act(async () => {
+    release();
+    await late;
+  });
+  expect(mount(create()).result.current.restored).toBe(true);
+});
+
+test("two prefilled fields set in one event both stay the user's when the template lands", async () => {
+  const { result } = mount(create({ prefill: { template: "lead" } }));
+  act(() => {
+    result.current.set("displayName", "Mine");
+    result.current.set("description", "Also mine");
+  });
+  await waitFor(() => expect(result.current.config).toBeDefined());
+  expect(result.current.shown.displayName).toBe("Mine");
+  expect(result.current.shown.description).toBe("Also mine");
+  expect(result.current.touched).toEqual({ displayName: true, description: true });
+});
+
+test("no restored banner when the draft equals the server copy", () => {
+  const first = mount(edit());
+  act(() => first.result.current.set("displayName", "Server will catch up"));
+  first.unmount();
+  const caught = mount(edit({ ...lead, displayName: "Server will catch up" }));
+  expect(caught.result.current.restored).toBe(false);
+});

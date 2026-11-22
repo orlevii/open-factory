@@ -144,7 +144,10 @@ export function useAgentFormState({
     saveDraft(base ? { values: next, base } : next);
   };
 
-  const [restored, setRestored] = useState(draft.restored);
+  // No banner when the restored draft holds nothing the server copy doesn't (a later refetch caught up with it).
+  const [restored, setRestored] = useState(
+    draft.restored && !(start.base && same(start.values, start.base)),
+  );
   const [errors, setErrors] = useState<Errors>({});
   const [outcome, setOutcome] = useState<{ tone: "success" | "error"; content: ReactNode }>();
   const [pending, setPending] = useState(false);
@@ -181,6 +184,7 @@ export function useAgentFormState({
   // References a restored draft (or an edit made earlier) holds that no longer point at anything read as empty, with
   // the reason under the field. Edit leaves a value alone while it is still the saved one: an archived manager stays.
   const staleNotes: Partial<Record<Field, string>> = {};
+  // Compares with `base`, the server copy the values were edited against (possibly stale until the next refetch merges).
   const changed = (f: keyof Values) => create || !base || !same(values[f], base[f]);
   if (
     values.reportsTo &&
@@ -242,8 +246,8 @@ export function useAgentFormState({
   // filling it would mix the prefill into what they are about to type.
   const awaitingPrefill = create && values.template !== "" && !config;
   const claim = (f: "displayName" | "description") => {
-    if (!awaitingPrefill || values.touched[f]) return;
-    update({ touched: { ...values.touched, [f]: true }, [f]: shown[f] });
+    if (!awaitingPrefill || latest.current.touched[f]) return;
+    update({ touched: { ...latest.current.touched, [f]: true }, [f]: shown[f] });
   };
 
   // "Installing plugins…" after 3 s of creating, only when the template installs any.
@@ -292,7 +296,9 @@ export function useAgentFormState({
   const set = <K extends keyof Values>(f: K, v: Values[K]) => {
     update({
       [f]: v,
-      ...(create && !values.touched[f] ? { touched: { ...values.touched, [f]: true } } : {}),
+      ...(create && !latest.current.touched[f]
+        ? { touched: { ...latest.current.touched, [f]: true } }
+        : {}),
     });
     setErrors((e) => ({ ...e, [f]: undefined }));
     // A success line describes the saved state; editing makes it stale.
@@ -309,8 +315,8 @@ export function useAgentFormState({
     update({
       projects: next,
       custom: !sameAsTemplate,
-      ...(create && !values.touched.projects
-        ? { touched: { ...values.touched, projects: true } }
+      ...(create && !latest.current.touched.projects
+        ? { touched: { ...latest.current.touched, projects: true } }
         : {}),
     });
     setErrors((e) => ({ ...e, projects: undefined }));
@@ -379,13 +385,16 @@ export function useAgentFormState({
     try {
       const saved = await onSubmit(b);
       if (create) {
+        // Unmounted (the sheet was dismissed while creating): the draft stays; the sheet host clears it when no sheet
+        // of this kind is open, or toasts "Open form" on a late failure.
         if (mounted.current) clearDraft();
       } else {
         const a = saved as AgentSummary;
         const wasRunning = agent?.status === "working" || agent?.status === "idle";
         // The saved copy is the new base; the fields stay as the user left them (they equal it).
         setBase(storedOf(a));
-        clearDraft();
+        // Only this instance's draft: after a dismiss the key may hold a draft the user reopened and edited since.
+        if (mounted.current) clearDraft();
         setOutcome({
           tone: "success",
           content:

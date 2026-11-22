@@ -38,6 +38,7 @@ import {
 import { SheetBody } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
+import { leavesForOwnAdd } from "@/features/agents/add-for";
 import { AddressLine } from "@/features/agents/address-line";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { FIELDS, useAgentFormState } from "@/features/agents/agent-form-state";
@@ -164,7 +165,13 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       serve(() => set("template", name), byId("field-template")),
     );
   const addCredential = (
-    <Button type="button" variant="ghost" size="sm" onClick={onAddCredential}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-add-for="credential"
+      onClick={onAddCredential}
+    >
       <Plus aria-hidden="true" data-icon="inline-start" />
       Add credential
     </Button>
@@ -413,7 +420,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
                       id={a.id}
                       aria-invalid={a.invalid || undefined}
                       aria-describedby={a.describedBy}
-                      onBlur={() => blur("credential")}
+                      onBlur={(e) => !leavesForOwnAdd(e, "credential") && blur("credential")}
                     >
                       <SelectValue placeholder="Choose a credential" />
                     </SelectTrigger>

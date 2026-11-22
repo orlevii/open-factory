@@ -658,6 +658,19 @@ test("Add credential stacks over Edit agent and names it", async () => {
   ).toBeInTheDocument();
 });
 
+test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
+  const { dialog } = await open({
+    agents: [lead({ credential: null })],
+    credentials: [credential("work"), credential("prod")],
+  });
+  const trigger = field("Credential");
+  expect(trigger).toHaveTextContent("Choose a credential");
+  act(() => trigger.focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  expect(trigger).not.toHaveAttribute("aria-invalid");
+});
+
 test("Add project stacks over Edit agent", async () => {
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Add project" }));

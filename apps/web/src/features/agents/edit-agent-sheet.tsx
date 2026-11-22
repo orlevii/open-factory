@@ -32,6 +32,7 @@ import {
 import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
+import { leavesForOwnAdd } from "@/features/agents/add-for";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { FIELDS, type PatchField, useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
@@ -213,7 +214,13 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       ),
     );
   const addCredential = (
-    <Button type="button" variant="ghost" size="sm" onClick={onAddCredential}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-add-for="credential"
+      onClick={onAddCredential}
+    >
       <Plus aria-hidden="true" data-icon="inline-start" />
       Add credential
     </Button>
@@ -436,7 +443,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
                     id={a.id}
                     aria-invalid={a.invalid || undefined}
                     aria-describedby={a.describedBy}
-                    onBlur={() => blur("credential")}
+                    onBlur={(e) => !leavesForOwnAdd(e, "credential") && blur("credential")}
                   >
                     <SelectValue placeholder="Choose a credential">
                       {credentials ? undefined : shown.credential || "Loading…"}

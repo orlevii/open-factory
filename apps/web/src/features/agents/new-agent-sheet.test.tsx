@@ -123,6 +123,27 @@ test("several credentials and the restored draft's one is gone: Choose a credent
   expect(within(dialog).getByText("Credential prod was deleted.")).toBeInTheDocument();
 });
 
+test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
+  mockWorld({ credentials: [credential("work"), credential("prod")] });
+  const first = renderApp("/agents", alice);
+  await screen.findByRole("heading", { level: 1, name: "Agents" });
+  act(() => openSheet({ kind: "new-agent" }));
+  await sheet();
+  await userEvent.click(await screen.findByRole("button", { name: "More options" }));
+  await pickOption(field("Credential"), /^prod/);
+  act(() => closeSheet());
+  first.unmount();
+  // The restored draft's credential is gone: with two left, none is chosen.
+  const { dialog } = await open({ credentials: [credential("work"), credential("other")] });
+  const trigger = field("Credential");
+  expect(trigger).toHaveTextContent("Choose a credential");
+  expect(trigger).not.toHaveAttribute("aria-invalid");
+  act(() => trigger.focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  expect(trigger).not.toHaveAttribute("aria-invalid");
+});
+
 test("a template secret that isn't set opens More options and says so", async () => {
   const { dialog } = await open(
     { details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) }, secrets: [] },

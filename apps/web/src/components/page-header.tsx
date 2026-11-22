@@ -29,7 +29,7 @@ export function PageHeader({
   /** The title is data (an agent or task name): it truncates down to a 4rem floor. A static title never shrinks. */
   titleFromData?: boolean;
   /** The header may take a second line: an item that can't fit (a view switch at 200% text on a phone) moves
-   *  under the title with `@max-[…]:order-last @max-[…]:basis-full` instead of painting over its neighbours. */
+   *  under the title with an `@max-` container variant (order-last, basis-full) instead of painting over its neighbours. */
   wrap?: boolean;
 }) {
   const shell = useShell();

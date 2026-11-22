@@ -790,7 +790,7 @@ test.each([
   renderApp(path, alice);
   await screen.findByRole("navigation", { name: "Settings" });
   await waitFor(() => expect(settingsCalls(api)).toEqual(expect.arrayContaining(expected)));
-  await screen.findByRole("region");
+  await screen.findByRole("region", { name: (n) => !n.startsWith("Notifications") });
   // Not deduplicated: the loader fetches, and the section skips its own mount fetch.
   expect(settingsCalls(api).sort()).toEqual([...expected].sort());
 });

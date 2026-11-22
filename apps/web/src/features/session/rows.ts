@@ -17,7 +17,8 @@ const taskState = (status: string): BackgroundTask["state"] =>
       ? "stopped"
       : "finished";
 /** Where a subagent stands (U3 §12): "background" for an auto-backgrounded call until its
- *  `background_task_finished`; "stopped" when the process exited (or the turn ended) first. */
+ *  `background_task_finished`; "stopped" when the process exited first, or, for a foreground call,
+ *  when its turn ended with no result. */
 export type SubagentState = "running" | "done" | "failed" | "background" | "stopped";
 
 /** A factory tool call shown as its own block or line, paired with its result by `toolUseId`. */
@@ -370,7 +371,10 @@ export function buildRows(events: SessionEvent[]): {
         }
         if (call.kind === "subagent") {
           call.async = true;
-          if (call.state === "running" || call.state === "done") call.state = "background";
+          // "stopped" too: an ended turn marks its open calls stopped, but a backgrounded subagent
+          // outlives its turn; only an exit with no finish (below, in event order) stops it (U3 §12).
+          if (call.state === "running" || call.state === "done" || call.state === "stopped")
+            call.state = "background";
           backgrounded.add(call);
         } else call.backgroundTask = { taskId: e.taskId, state: "running" };
         tasks.set(e.taskId, call);
@@ -502,7 +506,8 @@ export function buildRows(events: SessionEvent[]): {
           if (meta?.async || call.async) {
             // The launch notice: the card stays in the background until the task finishes.
             call.async = true;
-            if (call.state === "running") call.state = "background";
+            // Lifted from "stopped" too: the main turn ending never stops a backgrounded subagent.
+            if (call.state === "running" || call.state === "stopped") call.state = "background";
             backgrounded.add(call);
           } else {
             call.state = e.isError ? "failed" : "done";

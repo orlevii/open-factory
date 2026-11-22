@@ -6,8 +6,12 @@ import { splitBlocks } from "./split-blocks";
 import { prepareTail } from "./stream-tail";
 
 const calls = vi.hoisted(() => [] as string[]);
+const warm = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./highlight", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./highlight")>()),
+  warmHighlighter: () => {
+    warm.count++;
+  },
   highlight: async (code: string) => {
     calls.push(code);
     return `<pre class="shiki"><code>${code}</code></pre>`;
@@ -16,6 +20,7 @@ vi.mock("./highlight", async (importOriginal) => ({
 
 beforeEach(() => {
   calls.length = 0;
+  warm.count = 0;
   highlightCache.clear();
   vi.useFakeTimers();
 });
@@ -192,4 +197,14 @@ test("the lead paragraph keeps its element when a fence opens and closes (M4)", 
   expect(container.querySelector("p")).toBe(p);
   rerender(<BlockMarkdown text={"Here it is:\n```ts\nconst a\n```\n"} live />);
   expect(container.querySelector("p")).toBe(p);
+});
+
+test("live text warms the highlighter once, so the first fence that closes doesn't wait on the import; saved text never does", () => {
+  const saved = render(<BlockMarkdown text={"Done.\n\n```ts\nconst a = 1;\n```"} />);
+  expect(warm.count).toBe(0);
+  saved.unmount();
+  const live = render(<BlockMarkdown text="Hel" live />);
+  live.rerender(<BlockMarkdown text="Hello" live />);
+  live.rerender(<BlockMarkdown text="Hello there" live />);
+  expect(warm.count).toBe(1);
 });

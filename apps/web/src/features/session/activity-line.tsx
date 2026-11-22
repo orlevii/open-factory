@@ -226,7 +226,9 @@ export const TurnActivity = memo(function TurnActivity({
   const activity = useFallbackHold(useActivity(open, live), turnKey);
   const input = live?.toolInput;
   const shown = compacting ? COMPACTING : activity;
-  const bytes = shown.kind === "tool_input" ? input?.bytes : undefined;
+  // Shown from 1 KB on: under that, `formatBytes` would read "0 KB" for a short write.
+  const bytes =
+    shown.kind === "tool_input" && (input?.bytes ?? 0) >= 1000 ? input?.bytes : undefined;
   return (
     <ActivityLine
       activity={shown}

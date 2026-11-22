@@ -1,5 +1,6 @@
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { OpenFenceCode } from "./code-block";
+import { warmHighlighter } from "./highlight";
 import { Markdown, NewTabNote, PROSE_CLASS, VARIANT_CLASS } from "./markdown";
 import { splitBlocks } from "./split-blocks";
 import { prepareTail } from "./stream-tail";
@@ -83,6 +84,10 @@ export const BlockMarkdown = memo(function BlockMarkdown({
   live?: boolean;
 }) {
   const noteId = useId();
+  // Live text may open a fence any moment: the highlighter's import lands in idle time first.
+  useEffect(() => {
+    if (live) warmHighlighter();
+  }, [live]);
   const blocks = useBlocks(text, live);
   const lastIndex = blocks.length - 1;
   const newline = live && ENDS_IN_NEWLINE.test(text);

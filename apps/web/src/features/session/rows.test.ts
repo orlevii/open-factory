@@ -814,3 +814,49 @@ test("a finished async subagent takes only the usage figures it knows", () => {
     durationMs: 9,
   });
 });
+
+test("a background subagent stays In background after the main turn ends; only an exit with no finish stops it", () => {
+  seq = 0;
+  const launched = [
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
+    e({
+      type: "tool_result",
+      toolUseId: "ag",
+      content: "launched",
+      isError: false,
+      meta: { tool: "Agent", async: true },
+    }),
+    e({ type: "background_task_started", taskId: "k", toolUseId: "ag", taskType: "local_agent" }),
+    e({ type: "turn_end", isError: false, numTurns: 1 }),
+  ];
+  expect(rowsOf(launched)[0]).toMatchObject({ kind: "subagent", state: "background" });
+  // Launched without a background_task_started line: the async result alone keeps it backgrounded.
+  seq = 0;
+  const bare = [
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
+    e({
+      type: "tool_result",
+      toolUseId: "ag",
+      content: "launched",
+      isError: false,
+      meta: { tool: "Agent", async: true },
+    }),
+    e({ type: "turn_end", isError: false, numTurns: 1 }),
+  ];
+  expect(rowsOf(bare)[0]).toMatchObject({ state: "background" });
+  const exited = rowsOf([
+    ...launched,
+    e({ type: "exited", code: 0, signal: null, stderrTail: "", expected: true }),
+  ]);
+  expect(exited[0]).toMatchObject({ state: "stopped" });
+  // A foreground call left open when its turn ended is stopped.
+  seq = 0;
+  const open = rowsOf([
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "fg", name: "Agent", input: {} }),
+    e({ type: "turn_end", isError: true, numTurns: 1 }),
+  ]);
+  expect(open[0]).toMatchObject({ state: "stopped" });
+});

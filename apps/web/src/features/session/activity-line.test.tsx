@@ -303,3 +303,11 @@ test("a text block ending and the next tool starting within 400ms never shows Wo
   record();
   expect(shown).toEqual(["Writing a reply", "Writing app.ts"]);
 });
+
+test("the KB counter waits until there is at least 1 KB (never '0 KB')", () => {
+  const view = render(<TurnActivity open={undefined} live={writing(400)} turnKey="1" />);
+  expect(label()).toBe("Writing app.ts");
+  expect(counter()).toBeUndefined();
+  view.rerender(<TurnActivity open={undefined} live={writing(1200)} turnKey="1" />);
+  expect(counter()).toBe("1 KB");
+});

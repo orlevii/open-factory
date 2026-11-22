@@ -117,6 +117,18 @@ function getHighlighter() {
   return highlighter;
 }
 
+let warmed = false;
+/** Loads the highlighter in idle time, once per page (U3 §11.4): called as live text starts, so the
+ *  dynamic import has landed before the first fence closes and highlighting never blocks the stream.
+ *  Grammars still load on first use; nothing here runs per frame. */
+export function warmHighlighter(): void {
+  if (warmed) return;
+  warmed = true;
+  const load = () => void getHighlighter().catch(() => {});
+  if (typeof requestIdleCallback === "function") requestIdleCallback(load, { timeout: 2000 });
+  else setTimeout(load, 200);
+}
+
 const loading = new Map<string, Promise<void>>();
 function loadGrammar(h: HighlighterCore, id: string, load: GrammarLoader) {
   let p = loading.get(id);

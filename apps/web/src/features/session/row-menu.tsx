@@ -151,6 +151,9 @@ const PLACE = {
   card: { trigger: "top-1.5 right-1.5", failed: "top-1.5 right-9" },
 } as const;
 
+// On coarse pointers the trigger is a visible 32×40 box filling its gutter (U4 §11.3), with no expander over the
+// row's text.
+const COARSE = "pointer-coarse:h-10 pointer-coarse:w-8 after:hidden";
 // Shown instantly on hover or focus within the row (fine pointers), always on touch, and always while
 // its menu is open: the modal menu takes the row's hover and focus, and Radix anchors the menu to
 // this element's box, so a hidden trigger would send it to the viewport's corner. The 0.98 press is
@@ -320,7 +323,7 @@ function TriggerButton({
       aria-label={label}
       tabIndex={focusable ? 0 : -1}
       // Feedback stays visible after the pointer leaves.
-      className={`${shown ? "inline-flex" : "hidden"} ${position} ${nested ? TRIGGER_NESTED : TRIGGER}`}
+      className={`${shown ? "inline-flex" : "hidden"} ${position} ${nested ? TRIGGER_NESTED : TRIGGER} ${COARSE}`}
       {...rest}
     >
       {children}

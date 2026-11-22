@@ -212,7 +212,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       ),
     );
   const addCredential = (
-    <Button type="button" variant="ghost" size="sm" onClick={onAddCredential}>
+    <Button type="button" variant="ghost" size="sm" inForm onClick={onAddCredential}>
       <Plus aria-hidden="true" data-icon="inline-start" />
       Add credential
     </Button>

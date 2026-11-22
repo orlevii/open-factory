@@ -164,7 +164,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       serve(() => set("template", name), byId("field-template")),
     );
   const addCredential = (
-    <Button type="button" variant="ghost" size="sm" onClick={onAddCredential}>
+    <Button type="button" variant="ghost" size="sm" inForm onClick={onAddCredential}>
       <Plus aria-hidden="true" data-icon="inline-start" />
       Add credential
     </Button>

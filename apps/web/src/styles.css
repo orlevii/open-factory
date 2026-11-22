@@ -735,6 +735,19 @@
   }
 }
 
+/* A 40×40 hit box on coarse pointers (U4 §11.3): a positioned control's ::after grows to 40px on each axis it
+   is short of, so the glyph keeps its size. Never on a control among form fields or over prose. */
+@layer components {
+  @media (pointer: coarse) {
+    .hit-40::after {
+      content: "";
+      position: absolute;
+      inset-block: min(0px, calc((100% - 2.5rem) / 2));
+      inset-inline: min(0px, calc((100% - 2.5rem) / 2));
+    }
+  }
+}
+
 /* Vaul drawer timing. At the end of the file, OUTSIDE any @layer.
    Vaul 1.1.2 (pinned exactly) appends unlayered rules to <head> after this file:
    [data-vaul-drawer]{animation-duration:.5s}, [data-vaul-overlay][data-vaul-snap-points=false]{animation-duration:.5s}

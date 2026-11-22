@@ -1,7 +1,7 @@
 import { XIcon } from "lucide-react";
 import { Dialog as SheetPrimitive } from "radix-ui";
 import * as React from "react";
-import { Button } from "@/components/ui/button";
+import { Button, COARSE_ICON_GROUP } from "@/components/ui/button";
 import {
   Drawer,
   DrawerBody,
@@ -218,7 +218,14 @@ function SheetHeader({ className, children, ...props }: React.ComponentProps<"di
   return (
     <div
       data-slot="sheet-header"
-      className={cn("flex min-h-12 items-start gap-2 border-b px-4 py-3", className)}
+      // On coarse pointers its icon buttons (Close, a body's header action) are 40px boxes 4px apart; the negative
+      // margin keeps the row's height.
+      className={cn(
+        "flex min-h-12 items-start gap-2 border-b px-4 py-3",
+        COARSE_ICON_GROUP,
+        "pointer-coarse:[&_[data-slot=button][data-size^=icon]]:-my-1.5",
+        className
+      )}
       {...props}
     >
       {children}

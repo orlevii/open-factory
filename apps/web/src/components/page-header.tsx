@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect } from "react";
 import { useShell } from "@/components/shell-context";
+import { COARSE_ICON_GROUP } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
@@ -58,7 +59,13 @@ export function PageHeader({
         {/* No box of its own: the badge and slug are the header's items, so a truncating title can't
             squeeze a wrapper to 0px under a shrink-0 badge (the actions would paint over it). */}
         {meta && <div className="contents">{meta}</div>}
-        {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
+        {/* On coarse pointers neighbouring icon actions are 40px boxes 4px apart, not overlapping expanders
+            (U4 §11.3). */}
+        {actions && (
+          <div className={`ml-auto flex shrink-0 items-center gap-2 ${COARSE_ICON_GROUP}`}>
+            {actions}
+          </div>
+        )}
       </header>
       {shell && <ReconnectStrip lost={shell.connectionLost} />}
     </>

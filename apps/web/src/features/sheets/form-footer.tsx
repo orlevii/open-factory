@@ -47,7 +47,7 @@ export function SheetFormFooter({
           {restored && (
             <span className="inline-flex items-center">
               Draft restored ·
-              <Button type="button" variant="ghost" size="sm" onClick={onDiscard}>
+              <Button type="button" variant="ghost" size="sm" inForm onClick={onDiscard}>
                 Discard
               </Button>
             </span>

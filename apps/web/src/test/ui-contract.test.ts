@@ -229,3 +229,61 @@ describe("row menus", () => {
     expect(users).toEqual(PICKERS);
   });
 });
+
+describe("hit areas (U4 §11.3)", () => {
+  const read = (f: string) => readFileSync(join(SRC, f), "utf8");
+  // The element that holds `label`: the source from the last opening control tag before it to the label.
+  const controlBefore = (src: string, label: string) => {
+    const at =
+      src.indexOf(`>${label}<`) >= 0
+        ? src.indexOf(`>${label}<`)
+        : src.search(new RegExp(`>\\s*${label}\\s*<`));
+    if (at < 0) return undefined;
+    const head = src.slice(0, at + 1);
+    const open = Math.max(
+      head.lastIndexOf("<Button"),
+      head.lastIndexOf("<button"),
+      head.lastIndexOf("<summary"),
+    );
+    return head.slice(open);
+  };
+  // Buttons among form fields grow for real instead of taking an expander over a field or prose.
+  const FORM: [string, string][] = [
+    ["features/agents/address-line.tsx", "Change"],
+    ["features/agents/template-field.tsx", "New template"],
+    ["features/agents/template-field.tsx", "Add secret"],
+    ["features/agents/new-agent-sheet.tsx", "Add credential"],
+    ["features/agents/edit-agent-sheet.tsx", "Add credential"],
+    ["features/agents/project-grant-picker.tsx", "Add project"],
+    ["features/schedules/repeats-field.tsx", "Cron help"],
+    ["features/sheets/more-options.tsx", "More options"],
+    ["features/sheets/form-footer.tsx", "Discard"],
+  ];
+  for (const [f, label] of FORM)
+    test(`${f}: "${label}" is a form button (inForm), not an expander`, () => {
+      const tag = controlBefore(read(f), label);
+      expect(tag, label).toBeDefined();
+      expect(tag).toMatch(/\binForm\b|\bIN_FORM\b/);
+    });
+
+  // An expander is clipped by an overflow-hidden ancestor: the known wrappers of header and toolbar icon
+  // buttons never clip.
+  const CLIP =
+    /(?<![\w-])(?:overflow-hidden|overflow-clip|overflow-x-hidden|overflow-y-hidden|truncate)(?![\w-])/;
+  const classOf = (src: string, marker: string, end: string) => {
+    const from = src.indexOf(marker);
+    expect(from, marker).toBeGreaterThanOrEqual(0);
+    return src.slice(from, src.indexOf(end, from));
+  };
+  test("no clipping wrapper around PageHeader, SheetHeader or composer toolbar icon buttons", () => {
+    const header = read("components/page-header.tsx");
+    expect(classOf(header, "<header", ">")).not.toMatch(CLIP);
+    expect(classOf(header, "{actions && (", "{actions}")).not.toMatch(CLIP);
+    expect(
+      classOf(read("components/ui/sheet.tsx"), 'data-slot="sheet-header"', "{...props}"),
+    ).not.toMatch(CLIP);
+    expect(
+      classOf(read("components/composer/composer.tsx"), "data-composer-toolbar", ">\n"),
+    ).not.toMatch(CLIP);
+  });
+});

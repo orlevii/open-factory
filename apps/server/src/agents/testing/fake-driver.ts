@@ -40,17 +40,42 @@ export class FakeProcess implements HarnessProcess {
     return this.writes.filter((w) => w.kind === "control");
   }
 
+  /** Stdout line numbers of events emitted with `emitAt` (U3 §11.2); others have none. */
+  private readonly lines = new WeakMap<object, number>();
+  private lastLine = 0;
+  lineOf(event: object): number | undefined {
+    return this.lines.get(event);
+  }
+
   emit(...evs: HarnessEvent[]) {
     for (const e of evs) this.events.push(e);
   }
+  /** Emits events as if read from stdout line `line`. */
+  emitAt(line: number, ...evs: HarnessEvent[]) {
+    this.lastLine = Math.max(this.lastLine, line);
+    for (const e of evs) {
+      this.lines.set(e, line);
+      this.events.push(e);
+    }
+  }
   emitLive(...evs: LiveEvent[]) {
-    for (const e of evs) this.live.push(e);
+    for (const e of evs) {
+      this.lastLine = Math.max(this.lastLine, e.line);
+      this.live.push(e);
+    }
+  }
+  /** The `exited` event, on the line after the last one (as ClaudeProcess stamps it). */
+  private exitEvent(e: HarnessEvent) {
+    this.lines.set(e, this.lastLine + 1);
+    return e;
   }
   /** Unexpected exit. */
   exit(code = 1, stderrTail = "") {
     if (this.done) return;
     this.done = true;
-    this.events.push({ type: "exited", code, signal: null, stderrTail, expected: false });
+    this.events.push(
+      this.exitEvent({ type: "exited", code, signal: null, stderrTail, expected: false }),
+    );
     this.events.end();
     this.live.end();
   }
@@ -87,7 +112,9 @@ export class FakeProcess implements HarnessProcess {
     if (this.holdStop) await this.released;
     if (!this.done && this.emitExitOnStop) {
       this.done = true;
-      this.events.push({ type: "exited", code: 0, signal: null, stderrTail: "", expected: true });
+      this.events.push(
+        this.exitEvent({ type: "exited", code: 0, signal: null, stderrTail: "", expected: true }),
+      );
       this.events.end();
       this.live.end();
     }

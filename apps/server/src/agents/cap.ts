@@ -4,8 +4,8 @@ export const CAP_BYTES = 64 * 1024;
 const enc = new TextEncoder();
 const dec = new TextDecoder("utf-8", { fatal: false });
 
-/** Cut to at most CAP_BYTES of UTF-8 without splitting a code point. */
-function cut(s: string): string {
+/** Cut to at most CAP_BYTES of UTF-8 without splitting a code point (capPayload's rule; a capped live block uses it too, U3 §11.2). */
+export function cut(s: string): string {
   const bytes = enc.encode(s);
   let end = CAP_BYTES;
   while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--; // back off continuation bytes

@@ -50,6 +50,13 @@ vi.mock("./queue-items", async (orig) => {
   const m = await orig<typeof import("./queue-items")>();
   return { ...m, QueueItems: await profiled("queue", m.QueueItems) };
 });
+const warm = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/components/markdown/highlight", async (orig) => ({
+  ...(await orig<typeof import("@/components/markdown/highlight")>()),
+  warmHighlighter: () => {
+    warm.count++;
+  },
+}));
 vi.mock("./stop-crons", async (orig) => {
   const m = await orig<typeof import("./stop-crons")>();
   return { ...m, CronsStopLayer: await profiled("crons", m.CronsStopLayer) };
@@ -827,4 +834,21 @@ test("SessionView: a progress frame re-renders only its subagent card; a text-on
   push(livePatch("m1", 1, 0, "Hel"));
   frame();
   expect(Object.fromEntries(count.rows)).toEqual({ "t:m1:1": 1 });
+});
+
+test("the bare timeline (rows rendering markdown outside a session view) never warms the highlighter", async () => {
+  warm.count = 0;
+  await setup();
+  expect(warm.count).toBe(0);
+});
+
+test("SessionView: warms the highlighter once on open, not per frame", async () => {
+  warm.count = 0;
+  await renderSessionView();
+  expect(warm.count).toBe(1);
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  push(livePatch("m1", 1, 3, "lo"));
+  frame();
+  expect(warm.count).toBe(1);
 });

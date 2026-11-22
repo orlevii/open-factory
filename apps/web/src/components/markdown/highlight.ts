@@ -118,9 +118,10 @@ function getHighlighter() {
 }
 
 let warmed = false;
-/** Loads the highlighter in idle time, once per page (U3 §11.4): called as live text starts, so the
- *  dynamic import has landed before the first fence closes and highlighting never blocks the stream.
- *  Grammars still load on first use; nothing here runs per frame. */
+/** Loads the highlighter in idle time, once per page (U3 §11.4): called when a session view opens, so
+ *  the dynamic import has landed before a stream starts and the first closing fence never blocks it
+ *  (warming at the first live text still put the import inside the stream). Grammars still load on
+ *  first use; nothing here runs per frame. */
 export function warmHighlighter(): void {
   if (warmed) return;
   warmed = true;

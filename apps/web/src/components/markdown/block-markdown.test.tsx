@@ -199,12 +199,10 @@ test("the lead paragraph keeps its element when a fence opens and closes (M4)", 
   expect(container.querySelector("p")).toBe(p);
 });
 
-test("live text warms the highlighter once, so the first fence that closes doesn't wait on the import; saved text never does", () => {
+test("BlockMarkdown never warms the highlighter itself (the session view does, when it opens)", () => {
   const saved = render(<BlockMarkdown text={"Done.\n\n```ts\nconst a = 1;\n```"} />);
-  expect(warm.count).toBe(0);
   saved.unmount();
   const live = render(<BlockMarkdown text="Hel" live />);
   live.rerender(<BlockMarkdown text="Hello" live />);
-  live.rerender(<BlockMarkdown text="Hello there" live />);
-  expect(warm.count).toBe(1);
+  expect(warm.count).toBe(0);
 });

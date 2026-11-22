@@ -6,6 +6,7 @@ import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import { createPortal } from "react-dom";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { InlineOutcome } from "@/components/inline-outcome";
+import { warmHighlighter } from "@/components/markdown/highlight";
 import { PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,8 @@ export function SessionView({
   sheetHost: HTMLElement | null;
 }) {
   const s = useSession(slug, eventSeq, messageId);
+  // The highlighter's import lands in idle time while the session opens, before any stream (U3 §11.4).
+  useEffect(() => warmHighlighter(), []);
   const { data: me } = useQuery(sessionQueryOptions);
   // Cancel puts the message back into an empty box; Undo takes it out again if untouched (U3 §6.4).
   const composerRef = useRef<ComposerHandle>(null);

@@ -36,7 +36,9 @@ export default function NewScheduleSheet({ spec, sheetId, close }: BodyProps<Spe
           });
           return;
         }
-        clearDraft("new-schedule");
+        // A late success must not wipe a draft the user restored by reopening New schedule while this was in flight.
+        if (getSheetState().parent?.kind !== "new-schedule" || stillOpen())
+          clearDraft("new-schedule");
         void qc.invalidateQueries({ queryKey: schedulesQueryKey });
         if (stillOpen()) close();
         notify({

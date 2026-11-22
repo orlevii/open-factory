@@ -216,3 +216,30 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   act(() => n?.action?.run());
   expect(await screen.findByLabelText("Message")).toHaveTextContent("Review");
 });
+
+test("a late success leaves a draft restored by reopening in the meantime", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockApi({
+    ...base(),
+    "POST /api/schedules": async () => {
+      await gate;
+      return json({ schedule: item }, 201);
+    },
+  });
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "new-schedule" }));
+  await fillAndSubmit();
+  await screen.findByRole("button", { name: "Creating…" });
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  act(() => openSheet({ kind: "new-schedule" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  act(() => openSheet({ kind: "new-schedule" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+});

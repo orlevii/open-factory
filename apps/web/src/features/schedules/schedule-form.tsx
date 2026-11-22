@@ -39,6 +39,9 @@ type Field = (typeof FIELDS)[number];
 type Errors = Partial<Record<Field, string>>;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
+/** Stand-in start values for forms that keep no draft (edit); never read. */
+const NO_DRAFT = {};
+
 export type FormValues = {
   target: string;
   mode: WhenMode;
@@ -103,8 +106,10 @@ export function ScheduleForm({
     zone: browserZone(),
     body: "",
   });
-  const draft = useSheetDraft<FormValues>(draftKey ?? "new-schedule", blank);
   const drafting = Boolean(draftKey) && !initial;
+  const draft = useSheetDraft<FormValues>(draftKey ?? "new-schedule", () =>
+    drafting ? blank() : (NO_DRAFT as FormValues),
+  );
   const [restored, setRestored] = useState(drafting && draft.restored);
   // The start values are read once: valuesOf formats the instant, and browserZone asks Intl.
   const [start] = useState<FormValues>(() => (initial ? valuesOf(initial) : draft.start));
@@ -153,7 +158,8 @@ export function ScheduleForm({
     setPreview(previewText({ mode: out.mode, cron: out.cron, local: out.local, zone: out.zone }));
   }, [serverValues]);
 
-  // The draft follows the values; an untouched form (equal to its start values) holds none.
+  // An effect, not a write in each setter: the many field handlers all go through `v`, and the draft only has to be
+  // current when the sheet closes. An untouched form (equal to its start values) holds no draft.
   const { save: saveDraft } = draft;
   useEffect(() => {
     if (drafting) saveDraft(v);

@@ -1,6 +1,8 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { Button } from "@/components/ui/button";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import {
   AdaptiveMenu,
@@ -228,12 +230,74 @@ test("the next opening follows the viewport", () => {
   expect(screen.getByRole("dialog")).toHaveAttribute("data-slot", "drawer-content");
 });
 
-test("a trailing destructive item is preceded by a separator", () => {
+test("a destructive last item is separated from Cancel by a rule", () => {
   phone();
   render(<Menu />);
   touchTap(trigger());
   const destructive = screen.getByRole("button", { name: "Terminate…" });
-  expect(destructive.previousElementSibling).toHaveAttribute("role", "separator");
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  // The items' list ends with the destructive item; the rule and Cancel follow it.
+  expect(destructive.nextElementSibling).toBeNull();
+  const rule = cancel.previousElementSibling;
+  expect(rule).toHaveAttribute("data-slot", "adaptive-menu-cancel-rule");
+  expect(rule?.previousElementSibling).toContainElement(destructive);
+});
+
+test("a touch pointerdown on a phone does not open the drawer; the click does", () => {
+  phone();
+  render(<Menu />);
+  fireEvent.pointerDown(trigger(), { button: 0, pointerType: "touch" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(trigger());
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+test("on a phone the trigger announces a dialog and controls nothing absent", () => {
+  phone();
+  render(<Menu />);
+  expect(trigger()).toHaveAttribute("aria-haspopup", "dialog");
+  touchTap(trigger());
+  expect(trigger()).toHaveAttribute("aria-haspopup", "dialog");
+  expect(trigger()).not.toHaveAttribute("aria-controls");
+});
+
+test("on a phone a focus handoff in onCloseAutoFocus wins over the trigger", async () => {
+  phone();
+  function Handoff() {
+    return (
+      <>
+        <input aria-label="Next overlay" />
+        <AdaptiveMenu title="Priya Nair">
+          <AdaptiveMenuTrigger asChild>
+            <button type="button">More</button>
+          </AdaptiveMenuTrigger>
+          <AdaptiveMenuContent
+            onCloseAutoFocus={(e) => {
+              e.preventDefault();
+              document.querySelector<HTMLInputElement>("[aria-label='Next overlay']")?.focus();
+            }}
+          >
+            <AdaptiveMenuItem opensOverlay onSelect={() => {}}>
+              Edit
+            </AdaptiveMenuItem>
+          </AdaptiveMenuContent>
+        </AdaptiveMenu>
+      </>
+    );
+  }
+  render(<Handoff />);
+  trigger().focus();
+  touchTap(trigger());
+  const content = document.querySelector("[data-slot=drawer-content]") as HTMLElement;
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  // Vaul animates the drawer out with a keyframe jsdom never runs: end it, so the content unmounts.
+  const end = new Event("animationend", { bubbles: true });
+  Object.defineProperty(end, "animationName", { value: getComputedStyle(content).animationName });
+  act(() => {
+    content.dispatchEvent(end);
+  });
+  const next = document.querySelector("[aria-label='Next overlay']");
+  await waitFor(() => expect(document.activeElement).toBe(next));
 });
 
 test("on a phone a consumer's separator is a rule too", () => {
@@ -295,8 +359,60 @@ test("with an anchor, the dropdown hangs from a stand-in at that point", () => {
   expect(standIn).not.toBeNull();
   expect(standIn?.style.left).toBe("40px");
   expect(standIn?.style.top).toBe("120px");
-  expect(screen.getByRole("menu")).toHaveAttribute("aria-labelledby", standIn?.id);
+  expect(screen.getByRole("menu", { name: "Priya Nair" })).not.toHaveAttribute("aria-labelledby");
   expect(trigger()).toHaveAttribute("aria-expanded", "true");
+});
+
+function AnchoredButton({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Long-press
+      </button>
+      <AdaptiveMenu
+        title="Priya Nair"
+        open={open}
+        onOpenChange={(o) => {
+          onOpenChange?.(o);
+          setOpen(o);
+        }}
+        anchor={{ x: 40, y: 120 }}
+      >
+        <AdaptiveMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label="Actions for Priya Nair">
+            <MoreHorizontal aria-hidden="true" />
+          </Button>
+        </AdaptiveMenuTrigger>
+        <AdaptiveMenuContent>
+          <AdaptiveMenuItem onSelect={() => {}}>Edit</AdaptiveMenuItem>
+        </AdaptiveMenuContent>
+      </AdaptiveMenu>
+    </>
+  );
+}
+
+test("anchored, a Button trigger is still a button", () => {
+  desktop();
+  render(<AnchoredButton />);
+  fireEvent.click(screen.getByRole("button", { name: "Long-press" }));
+  const more = screen.getByRole("button", { name: "Actions for Priya Nair", hidden: true });
+  expect(more.tagName).toBe("BUTTON");
+  expect(more).not.toHaveAttribute("asChild");
+  expect(more).toHaveAttribute("aria-expanded", "true");
+});
+
+test("anchored, a mouse press on the trigger while open reports the close once", async () => {
+  desktop();
+  const onOpenChange = vi.fn();
+  render(<AnchoredButton onOpenChange={onOpenChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "Long-press" }));
+  const more = screen.getByRole("button", { name: "Actions for Priya Nair", hidden: true });
+  // Radix registers its outside-pointerdown listener a tick after the menu opens.
+  await act(() => new Promise((r) => setTimeout(r, 0)));
+  mouseDown(more);
+  expect(onOpenChange.mock.calls.filter(([o]) => o === false)).toHaveLength(1);
+  expect(screen.queryByRole("menu")).toBeNull();
 });
 
 test("controlled: open and onOpenChange drive it", () => {

@@ -97,6 +97,7 @@ function AdaptiveMenu({
 /** Opens on `click` for touch and pen and on `pointerdown` only for a mouse, so starting a scroll on the
  *  trigger never opens a menu (spec §11.1). */
 function AdaptiveMenuTrigger({
+  asChild,
   onPointerDown,
   onClick,
   onKeyDown,
@@ -113,6 +114,8 @@ function AdaptiveMenuTrigger({
   const shared = {
     "aria-expanded": open,
     "data-state": state,
+    // On a phone it opens a drawer (a dialog), and the dropdown content it would control never renders.
+    ...(mobile ? { "aria-haspopup": "dialog" as const, "aria-controls": undefined } : null),
     onPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
       onPointerDown?.(e);
       if (e.defaultPrevented) return;
@@ -123,9 +126,10 @@ function AdaptiveMenuTrigger({
         return;
       }
       tapping.current = false;
-      if (standIn && e.button === 0 && !e.ctrlKey) {
-        if (!open) e.preventDefault();
-        setOpen(!open);
+      // Closing is left to the dropdown's own outside-pointerdown, so onOpenChange(false) fires once.
+      if (standIn && !open && e.button === 0 && !e.ctrlKey) {
+        e.preventDefault();
+        setOpen(true);
       }
     },
     onClick(e: React.MouseEvent<HTMLButtonElement>) {
@@ -135,7 +139,8 @@ function AdaptiveMenuTrigger({
       setOpen(!open);
     },
   };
-  if (standIn && anchor)
+  if (standIn && anchor) {
+    const Comp = asChild ? Slot.Root : "button";
     return (
       <>
         <DropdownMenuTrigger asChild>
@@ -146,7 +151,8 @@ function AdaptiveMenuTrigger({
             style={{ left: anchor.x, top: anchor.y }}
           />
         </DropdownMenuTrigger>
-        <Slot.Root
+        <Comp
+          {...(asChild ? null : { type: "button" as const })}
           aria-haspopup="menu"
           {...props}
           {...shared}
@@ -160,34 +166,47 @@ function AdaptiveMenuTrigger({
           }}
         >
           {children}
-        </Slot.Root>
+        </Comp>
       </>
     );
+  }
   return (
-    <DropdownMenuTrigger {...props} {...shared} onKeyDown={onKeyDown}>
+    <DropdownMenuTrigger asChild={asChild} {...props} {...shared} onKeyDown={onKeyDown}>
       {children}
     </DropdownMenuTrigger>
   );
 }
 
-/** Content props reach the desktop dropdown only; the drawer has one fixed look. */
+/** Content props reach the desktop dropdown; the drawer has one fixed look and takes only the focus and
+ *  dismiss handlers (a focus handoff to the overlay an item opened works on both surfaces). */
 function AdaptiveMenuContent({
   children,
   onPointerUpCapture,
+  onCloseAutoFocus,
+  onEscapeKeyDown,
+  onInteractOutside,
+  onPointerDownOutside,
   ...props
 }: React.ComponentProps<typeof DropdownMenuContent>) {
   const { open, setOpen, mobile, title, anchor } = useMenu("AdaptiveMenuContent");
   if (mobile)
     return (
       <Drawer open={open} onOpenChange={setOpen} direction="bottom">
-        <DrawerContent aria-describedby={undefined}>
+        <DrawerContent
+          aria-describedby={undefined}
+          onCloseAutoFocus={onCloseAutoFocus}
+          onEscapeKeyDown={onEscapeKeyDown}
+          onInteractOutside={onInteractOutside}
+          onPointerDownOutside={onPointerDownOutside}
+        >
           <DrawerTitle className="px-4 pt-1 pb-2 font-sans text-sm font-normal tracking-normal text-muted-foreground line-clamp-1">
             {title}
           </DrawerTitle>
           <div data-slot="adaptive-menu-items" className="flex min-h-0 flex-col overflow-y-auto">
             {children}
           </div>
-          <div aria-hidden="true" className="mt-2 h-px shrink-0 bg-border" />
+          {/* A rule and 8px between the items (a destructive last item among them) and Cancel. */}
+          <div aria-hidden="true" data-slot="adaptive-menu-cancel-rule" className="mt-2 h-px shrink-0 bg-border" />
           <button
             type="button"
             data-slot="adaptive-menu-item"
@@ -201,8 +220,15 @@ function AdaptiveMenuContent({
     );
   return (
     <DropdownMenuContent
-      {...(anchor ? { align: "start" as const, side: "bottom" as const } : null)}
+      {...(anchor
+        ? // The stand-in it hangs from is empty and hidden: name the menu by its target instead.
+          { align: "start" as const, side: "bottom" as const, "aria-label": title, "aria-labelledby": undefined }
+        : null)}
       {...props}
+      onCloseAutoFocus={onCloseAutoFocus}
+      onEscapeKeyDown={onEscapeKeyDown}
+      onInteractOutside={onInteractOutside}
+      onPointerDownOutside={onPointerDownOutside}
       onPointerUpCapture={(e) => {
         onPointerUpCapture?.(e);
         // The finger that long-pressed the row lifts over the menu: that release selects nothing.
@@ -268,12 +294,6 @@ function AdaptiveMenuItem({
   const Comp = asChild ? Slot.Root : "button";
   const { onClick, ...rest } = props as React.ComponentProps<"button">;
   return (
-    <>
-      {variant === "destructive" ? (
-        // A trailing destructive item sits under a rule and 8px; the rule shows only when this item is
-        // last, and replaces a separator the consumer already put there.
-        <div role="separator" data-slot="adaptive-menu-rule" className={RULE} />
-      ) : null}
       <Comp
         {...(asChild ? null : { type: "button" as const })}
         {...rest}
@@ -295,11 +315,8 @@ function AdaptiveMenuItem({
       >
         {children}
       </Comp>
-    </>
   );
 }
-
-const RULE = "my-2 h-px shrink-0 bg-border [&:not(:has(+:last-child))]:hidden";
 
 function AdaptiveMenuSeparator({ className, ...props }: React.ComponentProps<typeof DropdownMenuSeparator>) {
   const { mobile } = useMenu("AdaptiveMenuSeparator");
@@ -308,11 +325,7 @@ function AdaptiveMenuSeparator({ className, ...props }: React.ComponentProps<typ
     <div
       role="separator"
       data-slot="adaptive-menu-separator"
-      className={cn(
-        // Hidden when the automatic rule of a trailing destructive item follows, so the rule isn't doubled.
-        "my-1 h-px shrink-0 bg-border [&:has(+[data-slot=adaptive-menu-rule]+:last-child)]:hidden",
-        className,
-      )}
+      className={cn("my-1 h-px shrink-0 bg-border", className)}
       {...(props as React.ComponentProps<"div">)}
     />
   );

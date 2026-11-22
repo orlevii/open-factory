@@ -109,7 +109,7 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
   test("a skill alias that names a refused built-in is 422, never sent as /model", async () => {
     const res = await dispatch({ name: "model", args: "opus" });
     expect(res.statusCode).toBe(422);
-    expect(commandWrites().map((w) => w.text)).not.toContainEqual(expect.stringMatching(/model/));
+    expect(await queue()).toEqual([]);
   });
 
   test.each(["src/\n/model opus", "a\rb", "a\u2028b", "a\u0000b"])(
@@ -122,11 +122,19 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
     },
   );
 
-  test("over 64 KB as `/name args` is 413 too_large", async () => {
+  test("over 64 KB as `/name args` is 413 too_large, audited with the entry's name and never the args", async () => {
+    const info = vi.spyOn(s.app.log, "info");
     // "/code-review " is 13 bytes: exactly at the limit is accepted, one byte over is not.
     const over = await dispatch({ name: "code-review", args: "a".repeat(MAX_BODY_BYTES - 12) });
     expect(over.statusCode).toBe(413);
     expect(over.json().error.code).toBe("too_large");
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "code-review", refused: "too_large" }),
+      "command refused",
+    );
+    const audits = info.mock.calls.filter((c) => c[1] === "command refused");
+    expect(JSON.stringify(audits)).not.toContain("aaaaaaaa");
+    info.mockRestore();
     expect(await queue()).toEqual([]);
     const at = await dispatch({ name: "code-review", args: "a".repeat(MAX_BODY_BYTES - 13) });
     expect(at.statusCode).toBe(202);
@@ -166,17 +174,17 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
     expect(res.json().item).toMatchObject({ kind: "compact", focus: "keep the API", from: "@orc" });
   });
 
-  test("clear runs the reset flow, with its refusals", async () => {
-    const rt = await s.app.runtimes.bySlug("dev");
-    if (!rt) throw new Error("no runtime");
-    const refused = await dispatch({ name: "new" });
-    expect(refused.statusCode).toBe(409);
-    expect(refused.json().error.code).toBe("reset_not_allowed");
-    const spy = vi.spyOn(rt, "resetSession").mockResolvedValueOnce();
-    const ok = await dispatch({ name: "clear", args: "ignored" });
-    expect(ok.statusCode).toBe(202);
-    expect(spy).toHaveBeenCalledWith({ byHandle: "orc" });
-    spy.mockRestore();
+  test("clear, new and reset are 422 and the list leaves clear out (no healthy-session reset yet)", async () => {
+    for (const name of ["clear", "new", "reset"]) {
+      const res = await dispatch({ name });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe("unknown_command");
+    }
+    const names = (await call(or, "GET", "/api/agents/dev/commands"))
+      .json()
+      .commands.map((c: { name: string }) => c.name);
+    expect(names).not.toContain("clear");
+    expect(names).toContain("compact");
   });
 
   test("written raw when the turn ends, then the event; a written command can't be cancelled", async () => {
@@ -199,5 +207,33 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
     const del = await call(or, "DELETE", `/api/agents/dev/queue/${res.json().item.id}`);
     expect(del.statusCode).toBe(409);
     expect(del.json().error.code).toBe("already_delivered");
+  });
+
+  test("on an idle agent an alias is written by its canonical name and a refused name writes nothing", async () => {
+    drv.last.emit(ev.end({ command: "usage", numTurns: 0 })); // the /usage above ends: idle
+    await settled();
+    const before = commandWrites().length;
+    for (const name of ["model", "Model", "clear", "batch"]) {
+      expect((await dispatch({ name, args: "x" })).statusCode).toBe(422);
+    }
+    expect(commandWrites()).toHaveLength(before);
+    expect(await queue()).toEqual([]);
+    expect((await dispatch({ name: "review", args: "x" })).statusCode).toBe(202);
+    await settled();
+    expect(commandWrites().slice(before)).toEqual([{ kind: "command", text: "/code-review x" }]);
+    drv.last.emit(ev.turn(), ev.usage(), ev.end());
+    await settled();
+  });
+
+  test("a process that can't run commands is 501 commands_unsupported and queues nothing", async () => {
+    Reflect.set(drv.last, "command", undefined);
+    try {
+      const res = await dispatch({ name: "research" });
+      expect(res.statusCode).toBe(501);
+      expect(res.json().error.code).toBe("commands_unsupported");
+      expect(await queue()).toEqual([]);
+    } finally {
+      Reflect.deleteProperty(drv.last, "command");
+    }
   });
 });

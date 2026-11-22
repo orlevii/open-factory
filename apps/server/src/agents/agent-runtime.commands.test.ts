@@ -156,3 +156,92 @@ test("a passive notice at the head never holds a command back", async () => {
   await run("init");
   expect(commandWrites()).toEqual([{ kind: "command", text: "/init" }]);
 });
+
+test("a retry with the same clientMessageId after the write returns the earlier item and writes nothing", async () => {
+  await startedIdle();
+  const id = crypto.randomUUID();
+  const dispatch = () =>
+    h.rt.command({
+      name: "code-review",
+      args: "",
+      userId: "u1",
+      byHandle: "or",
+      clientMessageId: id,
+    });
+  const a = await dispatch();
+  expect(commandWrites()).toHaveLength(1);
+  const b = await dispatch();
+  expect(b.id).toBe(a.id);
+  expect(commandWrites()).toHaveLength(1);
+  expect(h.rt.queueItems()).toEqual([]);
+  // Another sender's same id is their own command.
+  await h.rt.command({
+    name: "init",
+    args: "",
+    userId: "u2",
+    byHandle: "sam",
+    clientMessageId: id,
+  });
+  expect(h.rt.queueItems().map((q) => q.body)).toEqual(["/init"]);
+});
+
+test("two commands back to back: the second waits for the first one's turn_end", async () => {
+  await startedIdle();
+  await run("code-review", "a/");
+  await run("security-review");
+  expect(commandWrites().map((w) => w.text)).toEqual(["/code-review a/"]);
+  expect(h.rt.queueItems().map((q) => q.body)).toEqual(["/security-review"]);
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(commandWrites().map((w) => w.text)).toEqual(["/code-review a/", "/security-review"]);
+});
+
+test("an urgent message during a command's turn interrupts it and goes once that turn ends", async () => {
+  await startedIdle();
+  await run("code-review");
+  h.driver.last.emit(ev.turn());
+  await h.rt.settled();
+  await sendAs(h.store, h.rt, { fromUserId: "u1", fromHandle: "or", body: "STOP", urgent: true });
+  expect(h.driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["boot"]);
+  h.driver.last.emit(ev.usage(), ev.end({ terminalReason: "aborted_streaming" }));
+  await h.rt.settled();
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["STOP"]);
+});
+
+test("Stop clears a command barrier that never opened a turn (no turn_end will come)", async () => {
+  await startedIdle();
+  await run("context");
+  await send("held behind it");
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["boot"]);
+  await h.rt.interrupt({ byHandle: "or" });
+  await h.rt.settled();
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["held behind it"]);
+  expect((await events()).filter((e) => e.type === "control").at(-1)).toEqual({
+    type: "control",
+    cmd: "interrupt",
+    by: "@or",
+  });
+  // Nothing in flight and no turn open: Stop is refused again.
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await h.rt.settled();
+  await expect(h.rt.interrupt({ byHandle: "or" })).rejects.toMatchObject({
+    name: "NoOpenTurnError",
+  });
+});
+
+test("a turn_end that names compact still ends a command's barrier", async () => {
+  await startedIdle();
+  await run("code-review");
+  await send("next");
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end({ command: "compact" }));
+  await h.rt.settled();
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["next"]);
+});
+
+test("a process that can't run commands refuses the dispatch: nothing queued, nothing dropped silently", async () => {
+  await startedIdle();
+  Reflect.set(h.driver.last, "command", undefined);
+  await expect(run("code-review")).rejects.toMatchObject({ code: "commands_unsupported" });
+  expect(h.rt.queueItems()).toEqual([]);
+});

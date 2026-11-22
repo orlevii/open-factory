@@ -33,7 +33,6 @@ test("allowed: non-builtin entries plus the built-in allowlist, nothing else", (
     [
       "spike-echo",
       "spike-manual",
-      "clear",
       "code-review",
       "compact",
       "context",
@@ -79,7 +78,9 @@ test("findCommand canonicalizes aliases and matches non-builtin aliases", () => 
   );
   expect(findCommand(allowed, "cost")?.name).toBe("usage");
   expect(findCommand(allowed, "review")?.name).toBe("code-review");
-  expect(findCommand(allowed, "reset")?.name).toBe("clear");
+  // `/clear` is out until a healthy session can be reset (Task 55 review I1): neither it nor its aliases resolve.
+  for (const n of ["clear", "new", "reset", "Clear"])
+    expect(findCommand(allowed, n)).toBeUndefined();
   expect(findCommand(allowed, "plover-fact")?.name).toBe("spike-plugin:plover-fact");
   expect(findCommand(allowed, "nonexistent")).toBeUndefined();
 });
@@ -152,4 +153,16 @@ test("before a session list exists, template skills named like terminal commands
   expect(
     names(allowedCommands([], ["login", "logout", "exit", "resume", "status", "research"])),
   ).toEqual(["research"]);
+});
+
+test("clear and its aliases are refused, even as a template or project skill's name (no healthy-session reset yet)", () => {
+  const stored: Command[] = [
+    { name: "clear", description: "Clear the conversation", argumentHint: "", builtin: true },
+    { name: "new", description: "A skill named new (project)", argumentHint: "" },
+    { name: "ok-skill", description: "Fine (project)", argumentHint: "", aliases: ["reset"] },
+  ];
+  const allowed = allowedCommands(stored, []);
+  expect(names(allowed)).toEqual(["ok-skill"]);
+  expect(allowed[0]?.aliases).toBeUndefined();
+  expect(names(allowedCommands([], ["clear", "reset", "new", "triage"]))).toEqual(["triage"]);
 });

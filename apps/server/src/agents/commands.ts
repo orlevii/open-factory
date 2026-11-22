@@ -4,10 +4,13 @@ import { type AgentCommandsResponse, type Command, commandSchema } from "@open-f
  * U3 §13.3, Q36: the built-ins a human may run from the composer. Every other built-in is refused (the template owns
  * it, it is terminal-only, or it starts costly work outside the factory's view), and so is any `builtin: true` bundled
  * workflow or skill. The server enforces this set; the menu shows the same one.
+ *
+ * `clear` (and its aliases `new`, `reset`) is left out for now (Task 55 review I1): the server's only reset flow,
+ * Start a new session, works only after a failed resume, so `/clear` would always be refused on a healthy agent.
+ * A healthy-session reset path is future work; until it exists `clear` is refused like any other built-in.
  */
 export const BUILTIN_ALLOWLIST: ReadonlySet<string> = new Set([
   "compact",
-  "clear",
   "context",
   "usage",
   "code-review",
@@ -31,6 +34,10 @@ const ALIASES: Readonly<Record<string, string>> = {
  * caught by the session list's own `builtin` marks after the first start.
  */
 const REFUSED_BUILTINS: ReadonlySet<string> = new Set([
+  // Out until a healthy session can be reset (see BUILTIN_ALLOWLIST), with its aliases.
+  "clear",
+  "new",
+  "reset",
   // The spec's list (U3 §13.3) and their aliases.
   "model",
   "effort",

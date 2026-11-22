@@ -29,6 +29,7 @@ import {
   AgentArchivedError,
   AgentStartError,
   AgentTerminatedError,
+  CommandsUnsupportedError,
   CompactingError,
   NoOpenTurnError,
   RecoveryRefusedError,
@@ -322,7 +323,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
    * U3 §13.3 (dispatch): a human runs a slash command. Humans only: an agent has no session (the REST API never reads
    * agent tokens), and its `send_message` text is never a command. The name resolves against the same allowed set the
    * GET returns (422 `unknown_command` otherwise), and the raw text is built from the allowed entry's own name, never
-   * the typed token. `compact` and `clear` take the server's own flows; everything else is held and written raw.
+   * the typed token. `compact` takes the server's Compact flow; everything else is held and written raw. (`clear` is
+   * not allowed yet: see BUILTIN_ALLOWLIST.) Every outcome is audited with the entry's name, never the typed text.
    */
   app.post(
     "/api/agents/:slug/commands",
@@ -337,25 +339,21 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const allowed = commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
       const entry = findCommand(allowed.commands, name);
       const audit = { user: u.id, agent: row.slug, command: entry?.name ?? null };
-      if (!entry) {
-        app.log.info({ ...audit, refused: "unknown_command" }, "command refused");
-        return err(reply, 422, "unknown_command", `/${name} isn't a command this agent can run.`);
-      }
+      const refuse = (status: number, code: string, message: string) => {
+        app.log.info({ ...audit, refused: code }, "command refused");
+        return err(reply, status, code, message);
+      };
+      if (!entry)
+        return refuse(422, "unknown_command", `/${name} isn't a command this agent can run.`);
       if (utf8.encode(commandText(entry.name, args)).length > MAX_BODY_BYTES)
-        return err(reply, 413, "too_large", "The command is larger than 64 KB.");
+        return refuse(413, "too_large", "The command is larger than 64 KB.");
+      if (entry.name === "compact" && args.length > MAX_FOCUS_CHARS)
+        return refuse(
+          400,
+          "validation_error",
+          `The compact focus is longer than ${MAX_FOCUS_CHARS} characters.`,
+        );
       try {
-        if (entry.name === "clear") {
-          await rt.resetSession({ byHandle: u.handle });
-          app.log.info(audit, "command run");
-          return reply.code(202).send({});
-        }
-        if (entry.name === "compact" && args.length > MAX_FOCUS_CHARS)
-          return err(
-            reply,
-            400,
-            "validation_error",
-            `The compact focus is longer than ${MAX_FOCUS_CHARS} characters.`,
-          );
         const item =
           entry.name === "compact"
             ? await rt.compact({ ...(args ? { focus: args } : {}), byHandle: u.handle })
@@ -369,11 +367,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         app.log.info(audit, "command queued");
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
-        if (e instanceof RecoveryRefusedError) return err(reply, 409, e.code, e.message);
-        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
-        if (e instanceof AgentTerminatedError)
-          return err(reply, 409, "agent_terminated", e.message);
-        if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
+        if (e instanceof CommandsUnsupportedError) return refuse(501, e.code, e.message);
+        if (e instanceof AgentArchivedError) return refuse(409, "agent_archived", e.message);
+        if (e instanceof AgentTerminatedError) return refuse(409, "agent_terminated", e.message);
+        if (e instanceof AgentStartError) return refuse(503, "agent_start_failed", e.message);
         throw e;
       }
     },

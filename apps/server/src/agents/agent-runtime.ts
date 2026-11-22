@@ -47,6 +47,7 @@ import {
   AgentArchivedError,
   AgentStartError,
   AgentTerminatedError,
+  CommandsUnsupportedError,
   CompactingError,
   forSpawnedAgent,
   NoOpenTurnError,
@@ -219,6 +220,8 @@ type CommandEntry = {
 type Entry = MessageEntry | CompactEntry | CommandEntry;
 /** U3 §13.3: how many written command ids the runtime remembers, so a late Cancel says "already delivered". */
 const WRITTEN_COMMANDS_KEPT = 100;
+/** U3 §13.3: how many (sender, clientMessageId) dispatches the runtime remembers, so a retry never runs twice. */
+const COMMAND_RETRIES_KEPT = 200;
 
 type Subject = NonNullable<Envelope["subject"]>;
 
@@ -414,6 +417,8 @@ export class AgentRuntime {
   private commandInFlight = false;
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
   private readonly writtenCommands = new Map<string, string>();
+  /** U3 §13.3: `userId \0 clientMessageId` → the dispatch's entry, queued or written (the newest few). */
+  private readonly commandRetries = new Map<string, CommandEntry>();
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
   private archived: boolean;
@@ -790,18 +795,28 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      const dup = c.clientMessageId
-        ? this.queue.find(
-            (e) =>
-              e.kind === "command" &&
-              e.userId === c.userId &&
-              e.clientMessageId === c.clientMessageId,
-          )
-        : undefined;
+      // A retry (a lost 202) returns the earlier dispatch, queued, written or cancelled, and writes nothing.
+      const retryKey = c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
+      const dup = retryKey ? this.commandRetries.get(retryKey) : undefined;
       if (dup) return this.itemOf(dup);
+      if (this.proc && !this.proc.command) throw new CommandsUnsupportedError();
       this.queue.push(entry);
+      if (retryKey) {
+        this.commandRetries.set(retryKey, entry);
+        if (this.commandRetries.size > COMMAND_RETRIES_KEPT) {
+          const [oldest] = this.commandRetries.keys();
+          if (oldest !== undefined) this.commandRetries.delete(oldest);
+        }
+      }
       this.publishQueue();
       await this.wakeInline("command");
+      // A process started just now that can't write commands: take it back rather than drop it later.
+      if (this.proc && !this.proc.command) {
+        this.queue = this.queue.filter((e) => e !== entry);
+        if (retryKey) this.commandRetries.delete(retryKey);
+        this.publishQueue();
+        throw new CommandsUnsupportedError();
+      }
       await this.flush();
       this.publishStatus();
       return this.itemOf(entry);
@@ -819,6 +834,16 @@ export class AgentRuntime {
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       if (this.compactInFlight) throw new CompactingError();
       if (this.hold) return;
+      // U3 §13.3 (review M1): a written command whose turn never opened has nothing to interrupt, and its turn_end may
+      // never come; Stop ends its barrier so the queue moves again.
+      if (this.proc && this.commandInFlight && !this.openTurnId) {
+        this.commandInFlight = false;
+        await this.append(null, { type: "control", cmd: "interrupt", by: `@${c.byHandle}` });
+        this.publishQueue();
+        await this.flush();
+        this.publishStatus();
+        return;
+      }
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
         await this.beginInterruptHold(`@${c.byHandle}`);
@@ -1764,6 +1789,7 @@ export class AgentRuntime {
             err instanceof AgentTerminatedError ||
             err instanceof NoOpenTurnError ||
             err instanceof CompactingError ||
+            err instanceof CommandsUnsupportedError ||
             err instanceof RecoveryRefusedError ||
             err instanceof NotSenderError ||
             err instanceof AlreadyDeliveredError ||
@@ -2545,8 +2571,8 @@ export class AgentRuntime {
         this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
         if (e.command === "compact") this.compactInFlight = false;
-        // U3 §13.3: the command's turn (the first one the factory didn't see start itself) ends its barrier.
-        else if (!e.originKind) this.commandInFlight = false;
+        // U3 §13.3: the command's turn (the first origin-less one after the write) ends its barrier.
+        if (!e.originKind) this.commandInFlight = false;
         if (e.originKind === "task-notification")
           this.owedNotifications = Math.max(0, this.owedNotifications - 1);
         this.armOwedBound();
@@ -3460,7 +3486,7 @@ export class AgentRuntime {
       }
       if (head.kind === "command") {
         if (this.openTurnId || this.awaiting.length || this.inFlight.length) break;
-        if (!(await this.writeCommand(head))) break;
+        await this.writeCommand(head);
         break;
       }
       const batch: MessageEntry[] = [];
@@ -3493,23 +3519,23 @@ export class AgentRuntime {
   }
 
   /**
-   * U3 §13.3: writes the head command raw, on its own, then sets the barrier and records `control{command}`. False
-   * when the write was rejected (the command stays at the head). A driver without `command()` can't run it: it is
-   * dropped with an error log rather than blocking the queue.
+   * U3 §13.3: writes the head command raw, on its own, then sets the barrier and records `control{command}`. A
+   * rejected write leaves it at the head. A process without `command()` (dispatch refuses one already running) can't
+   * run it: it is dropped with an error log rather than blocking the queue.
    */
-  private async writeCommand(head: CommandEntry): Promise<boolean> {
-    if (!this.proc) return false;
+  private async writeCommand(head: CommandEntry): Promise<void> {
+    if (!this.proc) return;
     this.queue.shift();
     if (!this.proc.command) {
       this.d.log.error({ agent: this.agent.slug }, "the harness can't run slash commands; dropped");
       this.publishQueue();
-      return true;
+      return;
     }
     try {
       await this.proc.command(head.text);
     } catch {
       this.queue.unshift(head);
-      return false;
+      return;
     }
     this.commandInFlight = true;
     this.writtenCommands.set(head.id, head.userId);
@@ -3519,7 +3545,6 @@ export class AgentRuntime {
     }
     await this.append(null, { type: "control", cmd: "command", arg: head.text, by: `@${head.by}` });
     this.publishQueue();
-    return true;
   }
 
   /**

@@ -2,6 +2,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { Markdown } from "./markdown";
 
+// Counts ReactMarkdown calls while still rendering for real, so the other tests keep their output.
+const markdownCalls = vi.hoisted(() => ({ n: 0 }));
+vi.mock("react-markdown", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-markdown")>();
+  const Counting: typeof actual.default = (props) => {
+    markdownCalls.n++;
+    return actual.default(props);
+  };
+  return { ...actual, default: Counting };
+});
+
 // "bad" sources fail with a multi-line parser-style error; "slow" sources never resolve.
 vi.mock("mermaid", () => ({
   default: {
@@ -130,4 +141,13 @@ test("variant detail wraps in .prose-of-detail, the default does not", () => {
   expect(container.querySelector(".prose-of-detail")).not.toBeNull();
   rerender(<Markdown source="# A" />);
   expect(container.querySelector(".prose-of-detail")).toBeNull();
+});
+
+test("re-rendering the parent with the same source does not parse again", () => {
+  const { rerender } = render(<Markdown source="**same**" variant="detail" />);
+  const after = markdownCalls.n;
+  rerender(<Markdown source="**same**" variant="detail" />);
+  expect(markdownCalls.n).toBe(after);
+  rerender(<Markdown source="**same**" />);
+  expect(markdownCalls.n).toBe(after + 1);
 });

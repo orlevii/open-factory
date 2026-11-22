@@ -102,6 +102,7 @@ export function SessionView({
         actions={
           <SessionActions
             agent={agent}
+            turnEpoch={s.state.turnEpoch}
             archived={archived}
             onTerminateStart={() => {
               selfTerminating.current = true;
@@ -339,11 +340,13 @@ function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
 
 function SessionActions({
   agent,
+  turnEpoch,
   archived,
   onTerminateStart,
   onTerminated,
 }: {
   agent: AgentSummary;
+  turnEpoch: number;
   archived: boolean;
   onTerminateStart(): void;
   onTerminated(a: AgentSummary, ok: boolean): void;
@@ -373,7 +376,7 @@ function SessionActions({
       {live && agent.status !== "errored" && (
         <>
           <CompactPopover slug={slug} />
-          <InterruptButton slug={slug} turnOpen={agent.turnOpen} />
+          <InterruptButton slug={slug} turnOpen={agent.turnOpen} turnEpoch={turnEpoch} />
         </>
       )}
       {live && <RecoveryActions agent={agent} />}

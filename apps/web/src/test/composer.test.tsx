@@ -339,6 +339,7 @@ test("interrupt: re-enables when the turn closes and a new one opens", async () 
   await userEvent.click(interrupt());
   await vi.waitFor(() => expect(posted).toHaveLength(1));
   expect(interrupt()).toHaveAttribute("aria-disabled", "true");
+  // Both frames land in one commit (spec §9.6): the button still sees the turn change.
   status(false);
   expect(interrupt()).toHaveAttribute("aria-disabled", "true");
   status(true);

@@ -1,5 +1,6 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -15,11 +16,19 @@ import {
   sessionReducer,
 } from "./session-state";
 
+/** The session's composer reads the cached agents and users lists for `@` (U3 §13.4). */
+let qc: QueryClient;
+const render = (ui: ReactNode) =>
+  rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+  });
+
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 let posted: { url: string; body: unknown }[];
 let reply: (url: string, init?: RequestInit) => Response | Promise<Response>;
 beforeEach(() => {
+  qc = new QueryClient();
   localStorage.clear();
   posted = [];
   reply = (url) =>
@@ -628,4 +637,30 @@ test("a remount after an abort resends the unchanged text under the same id", as
   fireEvent.keyDown(again, { key: "Enter" });
   expect(messageSends()).toHaveLength(2);
   expect(messageSends()[1]?.clientMessageId).toBe(messageSends()[0]?.clientMessageId);
+});
+
+// ---- `@` (U3 §13.4, Q23) ----
+
+test("`@` inserts an agent's handle as plain text; nothing in the session says mention", async () => {
+  qc.setQueryData(
+    ["agents", "exclude"],
+    [agentSummary({ slug: "dev" }), agentSummary({ slug: "qa", displayName: "QA agent" })],
+  );
+  const { box } = setup(agentSummary());
+  const button = screen.getByRole("button", { name: "Insert an agent's handle" });
+  await userEvent.type(box, "ask @q");
+  expect(screen.getByRole("option", { name: /QA agent/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  expect(box).toHaveValue("ask @qa ");
+  expect(posted).toEqual([]);
+  await userEvent.click(button);
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  const composer = document.querySelector("#composer") as HTMLElement;
+  const copy = [
+    composer.textContent,
+    ...[...document.querySelectorAll("[aria-label], [title]")].map(
+      (e) => `${e.getAttribute("aria-label")} ${e.getAttribute("title")}`,
+    ),
+  ].join(" ");
+  expect(copy.toLowerCase()).not.toContain("mention");
 });

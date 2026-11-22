@@ -4,12 +4,15 @@ import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { readDraft } from "@/lib/drafts";
 import {
+  type CompletionItem,
+  type CompletionSource,
   Composer,
   type ComposerHandle,
   FILES_NOTE,
   SubmitError,
   type SubmitOptions,
 } from "./composer";
+import { acceptMention, mentionOpensAt } from "./mentions";
 
 /** Renders of the composer's textarea: the composer rendered. */
 const boxRenders = vi.hoisted(() => ({ n: 0 }));
@@ -256,4 +259,120 @@ test("memo: a parent render with the same props renders the composer 0 times; a 
   await userEvent.type(screen.getByRole("textbox"), "a");
   expect(parentRenders).toBe(0);
   expect(boxRenders.n).toBeGreaterThan(0);
+});
+
+// ---- `@` completion (U3 §13.4) ----
+
+const PEOPLE: CompletionItem[] = [
+  { id: "dev", label: "Dev", detail: "@dev", group: "agents" },
+  { id: "dana", label: "Dana", detail: "@dana", group: "humans" },
+  { id: "humans", label: "Humans", detail: "@humans", group: "humans" },
+];
+const askedFor = vi.hoisted(() => ({ queries: [] as string[] }));
+const AT: CompletionSource = {
+  trigger: "@",
+  label: "Insert an agent's handle",
+  opensAt: mentionOpensAt,
+  items(query) {
+    askedFor.queries.push(query);
+    return PEOPLE.filter((p) => p.id.startsWith(query));
+  },
+  accept: (item, text, from, caret) => acceptMention(text, item.id, from, caret),
+};
+const AT_ONLY = { at: AT };
+const highlighted = () =>
+  screen.getAllByRole("option").find((o) => o.getAttribute("aria-selected") === "true");
+
+test("`@` anywhere opens the menu; items are asked for only while it is open", async () => {
+  askedFor.queries = [];
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "hello there");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(askedFor.queries).toEqual([]);
+  await userEvent.type(box, " @d");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  expect(box).toHaveAttribute("aria-expanded", "true");
+  expect(box.getAttribute("aria-activedescendant")).toBe(highlighted()?.id);
+  expect(document.activeElement).toBe(box);
+});
+
+test("↑/↓ move the highlight; Enter accepts with `@slug ` and sends nothing", async () => {
+  const { box, onSubmit } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "ask @");
+  expect(highlighted()).toHaveTextContent("Dev");
+  await userEvent.keyboard("{ArrowDown}");
+  expect(highlighted()).toHaveTextContent("Dana");
+  await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+  expect(highlighted()).toHaveTextContent("Humans");
+  await userEvent.keyboard("{ArrowDown}{Enter}");
+  expect(box).toHaveValue("ask @dev ");
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(box).toHaveAttribute("aria-expanded", "false");
+  // The caret lands after the inserted handle, so typing carries on.
+  await userEvent.type(box, "now");
+  expect(box).toHaveValue("ask @dev now");
+});
+
+test("Tab accepts too", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "@da");
+  await userEvent.keyboard("{Tab}");
+  expect(box).toHaveValue("@dana ");
+  expect(document.activeElement).toBe(box);
+});
+
+test("Esc closes the menu and leaves the text; it doesn't stop the turn", async () => {
+  const onStop = vi.fn(async () => {});
+  const { box } = setup({ completions: AT_ONLY, turnOpen: true, stopEpoch: 1, onStop });
+  await userEvent.type(box, "hi @d");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(box).toHaveValue("hi @d");
+  expect(onStop).not.toHaveBeenCalled();
+  // Typing on in the same token doesn't bring it back; a new `@` does.
+  await userEvent.type(box, "e");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await userEvent.type(box, " @");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  // With the menu closed, Esc goes on to stop the turn.
+  await userEvent.keyboard("{Escape}{Escape}");
+  expect(onStop).toHaveBeenCalledTimes(1);
+});
+
+test("an IME composition never accepts", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "@d");
+  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(box, { key: "Tab", keyCode: 229 });
+  expect(box).toHaveValue("@d");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+});
+
+test("no match: no menu, and Enter sends", async () => {
+  const { box, onSubmit } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "@zz");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("@zz", expect.anything());
+});
+
+test("the toolbar's `@` button inserts `@` at the caret and opens the same menu", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "ask");
+  await userEvent.click(screen.getByRole("button", { name: "Insert an agent's handle" }));
+  expect(box).toHaveValue("ask @");
+  expect(document.activeElement).toBe(box);
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  expect(box).toHaveValue("ask @dev ");
+});
+
+test("a click on a row accepts it", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "@");
+  await userEvent.click(screen.getByRole("option", { name: /Humans/ }));
+  expect(box).toHaveValue("@humans ");
+  expect(document.activeElement).toBe(box);
 });

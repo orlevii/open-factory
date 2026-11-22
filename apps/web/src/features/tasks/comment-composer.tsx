@@ -1,7 +1,8 @@
 import type { TaskCommentResponse } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { type Ref, useCallback, useImperativeHandle, useRef, useState } from "react";
+import { type Ref, useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Composer, type ComposerHandle, SubmitError } from "@/components/composer/composer";
+import { useMentionSource } from "@/components/composer/mentions";
 import { taskDraftKey } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
 import { postComment, taskDetailOptions, tasksQueryKey } from "./api";
@@ -26,6 +27,8 @@ export function notReachedLine(list: TaskCommentResponse["notReached"]): string 
   return `Not reached: ${parts.join(", ")}.`;
 }
 
+/** The comment toolbar's `@` button (people and agents both). */
+const COMMENT_AT_LABEL = "Insert a handle";
 export const POST_FAILED = "Couldn't post the comment. Try again.";
 
 export type CommentComposerHandle = {
@@ -94,6 +97,9 @@ export function CommentComposer({
     },
     [qc, taskKey, onPosted],
   );
+  // `@` completes a handle as `@slug ` (routing as today, U3 §13.4).
+  const at = useMentionSource(COMMENT_AT_LABEL);
+  const completions = useMemo(() => ({ at }), [at]);
   const who = assignee
     ? `Goes to @${assignee} and anyone you @mention.`
     : "No assignee: only the people and agents you @mention are notified.";
@@ -105,6 +111,7 @@ export function CommentComposer({
         label="Comment"
         placeholder=""
         onSubmit={onSubmit}
+        completions={completions}
         note={isCoarsePointer() ? who : `${who} Enter to post.`}
         preview
       />

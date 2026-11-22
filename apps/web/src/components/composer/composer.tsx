@@ -1,5 +1,5 @@
 import { ApiError } from "@open-factory/shared";
-import { CircleAlert, CircleStop } from "lucide-react";
+import { AtSign, CircleAlert, CircleStop } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -10,6 +10,8 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -21,6 +23,7 @@ import { StopButton, type StopHandle } from "@/features/session/stop-button";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
 import { isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
+import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
@@ -50,10 +53,14 @@ export type CompletionItem = {
   hint?: string;
   group: string;
   exact?: boolean;
+  /** An agent row's face (16px). */
+  avatar?: { slug: string; template?: string; avatarVersion?: string | null };
 };
 /** A `/` or `@` menu's source (Tasks 52 and 56); a module constant or built with `useMemo`. */
 export type CompletionSource = {
   trigger: "/" | "@";
+  /** The toolbar button's accessible name; without one there is no button. */
+  label?: string;
   opensAt(text: string, caret: number): { query: string; from: number } | undefined;
   items(query: string): CompletionItem[];
   accept(
@@ -116,6 +123,13 @@ export type ComposerProps = {
   ref?: Ref<ComposerHandle>;
 };
 
+/** At most this many rows in a caret menu (U3 §13.3, §13.4). */
+const MAX_ROWS = 8;
+const NO_ITEMS: CompletionItem[] = [];
+const NO_SOURCES: CompletionSource[] = [];
+/** An open caret menu: its source, the trigger's index, the text typed after it, where it hangs. */
+type OpenMenu = { source: CompletionSource; from: number; query: string; anchor: CaretAnchor };
+
 /** A send whose POST aborted: the box got `sent` back (as `box`, after `before`). */
 type Unconfirmed = { id: string; sent: string; box: string; before: string };
 
@@ -140,6 +154,7 @@ export const Composer = memo(function Composer({
   note,
   waiting = false,
   validate,
+  completions,
   landed = NO_LANDED,
   id: formId,
   className,
@@ -196,6 +211,84 @@ export const Composer = memo(function Composer({
   const boxId = `${uid}-box`;
   const hintId = `${uid}-hint`;
   const noteId = `${uid}-note`;
+
+  // Caret menus (U3 §13.3, §13.4). `items` runs only while one is open (review note M3).
+  const slash = completions?.slash;
+  const at = completions?.at;
+  const sources = useMemo(
+    () => (slash || at ? [slash, at].filter((c) => c !== undefined) : NO_SOURCES),
+    [slash, at],
+  );
+  const [menu, setMenu] = useState<OpenMenu | undefined>();
+  const items = useMemo(
+    () => (menu ? menu.source.items(menu.query).slice(0, MAX_ROWS) : NO_ITEMS),
+    [menu],
+  );
+  const menuOpen = items.length > 0;
+  const menuRef = useRef<CaretMenuHandle>(null);
+  // The trigger whose menu Esc closed: typing on in that token doesn't bring it back.
+  const dismissedAt = useRef<number | undefined>(undefined);
+  // After an accept or the `@` button, where the caret goes and whether to look for a menu there.
+  const pendingCaret = useRef<{ at: number; look: boolean } | undefined>(undefined);
+
+  /** Opens, updates or closes the menu for the box's text and caret. */
+  const lookForMenu = (box: HTMLTextAreaElement) => {
+    const caret = box.selectionStart === box.selectionEnd ? box.selectionStart : null;
+    for (const source of caret === null ? NO_SOURCES : sources) {
+      const hit = source.opensAt(box.value, caret as number);
+      if (!hit) continue;
+      if (dismissedAt.current === hit.from) break;
+      dismissedAt.current = undefined;
+      if (menu?.source === source && menu.from === hit.from) {
+        if (menu.query !== hit.query) setMenu({ ...menu, query: hit.query });
+      } else setMenu({ source, ...hit, anchor: caretAnchor(box, hit.from) });
+      return;
+    }
+    if (caret !== null && !sources.some((c) => c.opensAt(box.value, caret))) {
+      dismissedAt.current = undefined;
+    }
+    if (menu) setMenu(undefined);
+  };
+  const closeMenu = () => {
+    if (menu) dismissedAt.current = menu.from;
+    setMenu(undefined);
+  };
+  const pick = useCallback(
+    (item: CompletionItem) => {
+      const box = boxRef.current;
+      if (!box || !menu) return;
+      const caret = box.selectionStart ?? box.value.length;
+      const r = menu.source.accept(item, box.value, menu.from, caret);
+      setMenu(undefined);
+      setText(r.text);
+      pendingCaret.current = { at: r.caret, look: false };
+      box.focus();
+    },
+    [menu, setText],
+  );
+  /** The toolbar's `@`: inserts the trigger at the caret (after a space when it follows a word). */
+  const insertTrigger = (trigger: string) => {
+    setView("write");
+    const box = boxRef.current;
+    const cur = box?.value ?? text;
+    const caret = box?.selectionStart ?? cur.length;
+    const before = cur.slice(0, caret);
+    const insert = before === "" || /\s$/.test(before) ? trigger : ` ${trigger}`;
+    setText(before + insert + cur.slice(caret));
+    pendingCaret.current = { at: caret + insert.length, look: true };
+    if (box) box.focus();
+  };
+  // Runs after the text an accept or the button produced has rendered: the caret goes after it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the text that render committed
+  useLayoutEffect(() => {
+    const p = pendingCaret.current;
+    const box = boxRef.current;
+    if (!p || !box) return;
+    pendingCaret.current = undefined;
+    box.focus();
+    box.setSelectionRange(p.at, p.at);
+    if (p.look) lookForMenu(box);
+  }, [text, view]);
 
   useImperativeHandle(
     ref,
@@ -297,9 +390,31 @@ export const Composer = memo(function Composer({
     }
   }
 
-  // U3 §6.2, in order: IME guard, Esc, ⌥Enter, Enter. Menus, command mode and recall join later.
+  // U3 §6.2, in order: IME guard, the caret menu, Esc, ⌥Enter, Enter. Command mode and recall join later.
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (menuOpen) {
+      const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+      if (plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        menuRef.current?.move(e.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
+      // Tab commits too (Q43).
+      if (plain && (e.key === "Enter" || e.key === "Tab")) {
+        e.preventDefault();
+        menuRef.current?.accept();
+        return;
+      }
+      // Esc closes the menu first and leaves the text; it never goes on to stop the turn. The popover
+      // may already have closed it (its own Esc listener runs first).
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu();
+        return;
+      }
+    }
     if (e.key === "Escape") {
       // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
       if (e.nativeEvent.defaultPrevented) return;
@@ -354,7 +469,7 @@ export const Composer = memo(function Composer({
           data-composer-frame
           onDragOver={onDragOver}
           onDrop={onDrop}
-          className="rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
+          className="relative rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
         >
           {view === "write" ? (
             <Textarea
@@ -365,7 +480,11 @@ export const Composer = memo(function Composer({
                 setText(e.target.value);
                 setError(undefined);
                 setFilesNote(false);
+                if (sources.length) lookForMenu(e.target);
               }}
+              onSelect={sources.length ? (e) => lookForMenu(e.currentTarget) : undefined}
+              aria-expanded={sources.length ? menuOpen : undefined}
+              aria-autocomplete={sources.length ? "list" : undefined}
               onFocus={draft.bind.onFocus}
               onBlur={draft.bind.onBlur}
               onKeyDown={onKeyDown}
@@ -384,10 +503,33 @@ export const Composer = memo(function Composer({
               )}
             </div>
           )}
+          {menuOpen && menu ? (
+            <CaretMenu
+              ref={menuRef}
+              input={boxRef}
+              label={menu.source.label ?? label}
+              anchor={menu.anchor}
+              items={items}
+              onPick={pick}
+              onClose={closeMenu}
+            />
+          ) : null}
           <div
             data-composer-toolbar
             className="mx-1 mb-1 flex h-8 flex-nowrap items-center gap-2 pointer-coarse:h-9"
           >
+            {at?.label ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={at.label}
+                className="shrink-0 text-muted-foreground"
+                onClick={() => insertTrigger("@")}
+              >
+                <AtSign aria-hidden="true" />
+              </Button>
+            ) : null}
             {preview && (
               <div className="flex shrink-0 items-center">
                 <Button

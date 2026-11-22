@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -18,6 +19,7 @@ import {
   type SubmitOptions,
   UNCONFIRMED,
 } from "@/components/composer/composer";
+import { SESSION_AT_LABEL, useMentionSource } from "@/components/composer/mentions";
 import { Button } from "@/components/ui/button";
 import { agentDraftKey, readDraft, writeDraft } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
@@ -225,6 +227,9 @@ export const Composer = memo(function SessionComposer({
     [slug, onSending, onQueued, onSent, onSendFailed, onTerminated],
   );
   const onStop = useCallback(() => postInterrupt(slug), [slug]);
+  // `@` inserts a handle as plain text; the session never calls it a mention (Q23).
+  const at = useMentionSource(SESSION_AT_LABEL);
+  const completions = useMemo(() => ({ at }), [at]);
 
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
@@ -247,6 +252,7 @@ export const Composer = memo(function SessionComposer({
       stopEpoch={stopEpoch}
       onStop={stopEpoch === undefined ? undefined : onStop}
       hintMode={hintMode}
+      completions={completions}
       note={waitsForNewSession ? "Messages wait until a new session is started." : undefined}
       attachments
     />

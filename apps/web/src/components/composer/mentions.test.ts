@@ -1,0 +1,103 @@
+import { QueryClient } from "@tanstack/react-query";
+import { expect, test } from "vitest";
+import {
+  acceptMention,
+  type MentionAgent,
+  mentionOpensAt,
+  mentionSource,
+  rankMentions,
+} from "./mentions";
+
+const agent = (slug: string, displayName: string, over: Partial<MentionAgent> = {}) =>
+  ({
+    slug,
+    displayName,
+    reportsTo: "lead",
+    template: "t",
+    avatarVersion: null,
+    archivedAt: null,
+    ...over,
+  }) as MentionAgent;
+
+const agents = [
+  agent("zed", "Zed"),
+  agent("lead", "Lead", { reportsTo: null }),
+  agent("alpha", "Alpha"),
+  agent("bravo", "Bravo"),
+  agent("gone", "Gone", { terminatedAt: "2026-01-01T00:00:00Z" }),
+  agent("old", "Old", { archivedAt: "2026-01-01T00:00:00Z" }),
+];
+const humans = [
+  { handle: "or", name: "Or Levi", disabledAt: null },
+  { handle: "dana", name: "Dana", disabledAt: null },
+  { handle: "ex", name: "Ex", disabledAt: "2026-01-01T00:00:00Z" },
+];
+const handles = (q: string, recent: string[] = []) =>
+  rankMentions(q, { agents, humans, me: "or", recent }).map((m) => m.handle);
+
+test("your reports and recent senders first, then alphabetical; live agents only; @humans", () => {
+  expect(handles("", ["zed"])).toEqual(["zed", "lead", "alpha", "bravo", "dana", "humans"]);
+});
+
+test("without recent senders your reports lead, then everyone by name", () => {
+  expect(handles("")).toEqual(["lead", "alpha", "bravo", "dana", "humans", "zed"]);
+});
+
+test("an agent reporting to you counts as your report", () => {
+  const list = [agent("a", "A"), agent("b", "B", { reportsTo: "or" })];
+  expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
+    "b",
+    "a",
+    "humans",
+  ]);
+});
+
+test("the query matches a handle or a name; prefix matches rank above the rest", () => {
+  expect(handles("a")).toEqual(["alpha", "lead", "bravo", "dana", "humans"]);
+  expect(handles("levi", [])).toEqual([]);
+  expect(rankMentions("levi", { agents, humans, me: "dana" }).map((m) => m.handle)).toEqual(["or"]);
+  expect(handles("lev")).toEqual([]); // yourself is never offered
+  expect(handles("DA")).toEqual(["dana"]);
+  expect(handles("hum")).toEqual(["humans"]);
+});
+
+test("`@` opens anywhere after a non-word character; not inside an email or a path", () => {
+  expect(mentionOpensAt("@", 1)).toEqual({ query: "", from: 0 });
+  expect(mentionOpensAt("hi @de", 6)).toEqual({ query: "de", from: 3 });
+  expect(mentionOpensAt("line\n(@de", 9)).toEqual({ query: "de", from: 6 });
+  expect(mentionOpensAt("hi @de there", 6)).toEqual({ query: "de", from: 3 });
+  expect(mentionOpensAt("a@b", 3)).toBeUndefined();
+  expect(mentionOpensAt("src/@x", 6)).toBeUndefined();
+  expect(mentionOpensAt("@de x", 5)).toBeUndefined();
+});
+
+test("accepting replaces the typed token with `@handle `", () => {
+  expect(acceptMention("hi @de", "dev", 3, 6)).toEqual({ text: "hi @dev ", caret: 8 });
+  // An existing space after the token is reused, not doubled.
+  expect(acceptMention("@d and", "dev", 0, 2)).toEqual({ text: "@dev and", caret: 5 });
+});
+
+test("the source reads the cached lists when asked, and only then", () => {
+  const qc = new QueryClient();
+  const source = mentionSource(qc, "Insert an agent's handle");
+  expect(source.items("")).toEqual([
+    expect.objectContaining({ id: "humans", label: "Humans", detail: "@humans" }),
+  ]);
+  qc.setQueryData(["agents", "exclude"], [agent("dev", "Dev")]);
+  qc.setQueryData(["users"], [{ handle: "dana", name: "Dana", disabledAt: null }]);
+  expect(source.items("d").map((i) => i.id)).toEqual(["dana", "dev"]);
+  expect(source.items("dev")[0]).toEqual(
+    expect.objectContaining({ label: "Dev", detail: "@dev", avatar: expect.anything() }),
+  );
+});
+
+test("recent agent senders come from the cached inbox", () => {
+  const qc = new QueryClient();
+  qc.setQueryData(["agents", "exclude"], [agent("a", "A"), agent("z", "Z")]);
+  qc.setQueryData(["inbox"], {
+    pages: [{ items: [{ from: { kind: "agent", name: "z" } }], nextCursor: null }],
+    pageParams: [undefined],
+  });
+  const source = mentionSource(qc, "x");
+  expect(source.items("").map((i) => i.id)).toEqual(["z", "a", "humans"]);
+});

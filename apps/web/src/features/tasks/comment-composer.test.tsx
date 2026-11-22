@@ -38,10 +38,10 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup() {
+function setup(qc = new QueryClient()) {
   const ref = createRef<CommentComposerHandle>();
   render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={qc}>
       <CommentComposer ref={ref} taskKey="T-1" assignee="dev" />
     </QueryClientProvider>,
   );
@@ -112,4 +112,31 @@ test("the draft lives in localStorage under of-draft:v1:task:<key>", async () =>
     text: "half a thought",
   });
   expect(sessionStorage.getItem("of-comment-draft:T-1")).toBeNull();
+});
+
+test("`@` completes a handle as `@slug ` from the cached agents and users lists", async () => {
+  const qc = new QueryClient();
+  qc.setQueryData(
+    ["agents", "exclude"],
+    [
+      {
+        slug: "dev",
+        displayName: "Dev",
+        reportsTo: null,
+        template: "t",
+        avatarVersion: null,
+        archivedAt: null,
+      },
+    ],
+  );
+  qc.setQueryData(["users"], [{ handle: "dana", name: "Dana", disabledAt: null }]);
+  const { box } = setup(qc);
+  await userEvent.type(box(), "cc @da");
+  expect(screen.getByRole("option", { name: /Dana/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Tab}");
+  expect(box()).toHaveValue("cc @dana ");
+  await userEvent.type(box(), "and @");
+  await userEvent.keyboard("{Enter}");
+  expect(box()).toHaveValue("cc @dana and @dev ");
+  expect(posts).toEqual([]);
 });

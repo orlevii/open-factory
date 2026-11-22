@@ -959,3 +959,19 @@ test("list header (class contract, jsdom has no layout): the h1 gives way to the
   await userEvent.hover(link);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("New template");
 });
+
+test("list header at 200% text on a phone (class contract): below a 17rem header the switch takes its own line instead of covering New template (evidence D4)", async () => {
+  mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
+  renderApp("/templates", alice);
+  const h1 = await screen.findByRole("heading", { level: 1, name: "Templates" });
+  const header = h1.closest("header");
+  // The header may take a second line (a fixed h-12 row would make the two overlap).
+  expect(header).toHaveClass("flex-wrap", "min-h-12");
+  expect(header).not.toHaveClass("h-12");
+  const nav = screen.getByRole("navigation", { name: "Templates views" });
+  expect(nav).toHaveClass("@max-[17rem]:order-last", "@max-[17rem]:basis-full");
+  // New template stays on the first line, at its end.
+  const action = screen.getByRole("button", { name: "New template" });
+  expect(action.parentElement).toHaveClass("ml-auto");
+  expect(nav.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

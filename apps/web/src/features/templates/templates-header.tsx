@@ -12,14 +12,24 @@ const VIEWS = [
 ] as const;
 
 /** Spec §14: one header for both views. The h1 stays "Templates" (visible from a 25rem header,
- *  sr-only below, where the switch takes its place); New template goes icon-only below sm. */
+ *  sr-only below, where the switch takes its place); New template goes icon-only below sm. Below a 17rem
+ *  header the switch moves to a second line. */
 export function TemplatesHeader({ documentTitle }: { documentTitle?: string }) {
   return (
     <PageHeader
       title="Templates"
       documentTitle={documentTitle}
       titleClassName="@max-[25rem]:sr-only"
-      meta={<SegmentedLinks label="Templates views" items={VIEWS} className="shrink-0" />}
+      // Below a 17rem header (390px at 200% text) the switch and New template don't fit one line: the switch
+      // takes a line of its own instead of covering the button (evidence D4).
+      wrap
+      meta={
+        <SegmentedLinks
+          label="Templates views"
+          items={VIEWS}
+          className="shrink-0 @max-[17rem]:order-last @max-[17rem]:basis-full"
+        />
+      }
       actions={
         <Tooltip>
           <TooltipTrigger asChild>

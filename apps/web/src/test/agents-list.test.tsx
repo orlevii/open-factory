@@ -185,6 +185,19 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   vi.useRealTimers();
 });
 
+test("header at 200% text on a phone (class contract): Active/Ended never shrink, and below an 18rem header they take a line of their own (evidence D3)", async () => {
+  listWith([agentSummary({ slug: "a", displayName: "Ada" })]);
+  renderApp("/agents", alice);
+  const radios = await screen.findByRole("group", { name: "Show" });
+  // Squeezed, the nowrap labels printed over each other and over New agent.
+  expect(radios).toHaveClass("shrink-0", "@max-[18rem]:order-last", "@max-[18rem]:basis-full");
+  const header = radios.closest("header");
+  expect(header).toHaveClass("flex-wrap", "min-h-12");
+  expect(header).not.toHaveClass("h-12");
+  const action = within(header as HTMLElement).getByRole("button", { name: "New agent" });
+  expect(action.parentElement).toHaveClass("ml-auto");
+});
+
 test("a terminated frame shows Terminated (no dot) at once, then the list refetches without it", async () => {
   // The refetch waits until released, so the patched row can be seen first.
   let release: () => void = () => {};

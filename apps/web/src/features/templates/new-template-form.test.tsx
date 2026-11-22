@@ -120,12 +120,13 @@ test("submit sends the derived name once and reports it", async () => {
   });
 });
 
-test("a missing display name is an error on submit and sends nothing", async () => {
+test("a missing display name is an error on submit and sends nothing, Name stays folded", async () => {
   const api = mockApi({ "GET /api/templates": list() });
   mount();
   const d = await dialog();
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   expect(await within(d).findByText("Enter a display name.")).toBeInTheDocument();
+  expect(within(d).queryByLabelText("Name")).toBeNull();
   expect(within(d).getByLabelText("Display name")).toHaveFocus();
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);
 });
@@ -195,4 +196,32 @@ test("a draft is kept for the editor sheet and announced with Discard, never for
   d = await dialog();
   expect(within(d).getByLabelText("Display name")).toHaveValue("");
   expect(within(d).queryByText(/Draft restored/)).toBeNull();
+});
+
+test("a display name with no usable letters opens Name with the format error", async () => {
+  mockApi({ "GET /api/templates": list() });
+  mount();
+  const d = await dialog();
+  await userEvent.type(within(d).getByLabelText("Display name"), "!!!");
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  const name = await within(d).findByLabelText("Name");
+  expect(name).toHaveAccessibleDescription(/Use lowercase letters/);
+  expect(name).toHaveFocus();
+});
+
+test("an error that reveals Name keeps the revealed name in the draft", async () => {
+  mockApi({
+    "GET /api/templates": list(),
+    "POST /api/templates": () =>
+      json({ error: { code: "template_exists", message: "Taken." } }, 409),
+  });
+  const first = mount();
+  let d = await dialog();
+  await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  await within(d).findByLabelText("Name");
+  first.unmount();
+  mount();
+  d = await dialog();
+  expect(within(d).getByLabelText("Name")).toHaveValue("lead");
 });

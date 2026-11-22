@@ -96,8 +96,11 @@ export function NewTemplateForm({
   const name = v.revealed ? v.name : derived;
   // The reserved names are in `taken`, so "Images" derives images-2: only a hand-typed one is reserved.
 
+  // The latest values, so two updates in one event never build on a stale closure.
+  const latest = useRef(v);
   const update = (patch: Partial<Values>) => {
-    const next = { ...v, ...patch };
+    const next = { ...latest.current, ...patch };
+    latest.current = next;
     setV(next);
     if (!stacked) draft.save(next);
   };
@@ -107,7 +110,7 @@ export function NewTemplateForm({
   const show = (e: Errors) => {
     flushSync(() => {
       setErrors(e);
-      if (e.name && !v.revealed) setV((s) => ({ ...s, name, revealed: true }));
+      if (e.name && !latest.current.revealed) update({ name, revealed: true });
     });
     const first = ORDER.find((f) => e[f]);
     if (first) focus(first);
@@ -121,7 +124,16 @@ export function NewTemplateForm({
       const values = { ...v, name };
       const found: Errors = {};
       for (const f of ORDER) {
-        const m = f === "name" && !name && !v.revealed ? MESSAGES.name : check(f, values);
+        // Name stays folded unless the display name is there but yields no folder ("!!!"): an empty display
+        // name is its own error, not a reason to open Name.
+        const m =
+          f === "name" && !v.revealed
+            ? v.displayName.trim() !== "" && !name
+              ? MESSAGES.name
+              : name
+                ? check(f, values)
+                : undefined
+            : check(f, values);
         if (m) found[f] = m;
       }
       show(found);
@@ -176,7 +188,8 @@ export function NewTemplateForm({
               size="sm"
               onClick={() => {
                 draft.clear();
-                setV(blank());
+                latest.current = blank();
+                setV(latest.current);
                 setErrors({});
                 setRestored(false);
               }}

@@ -85,7 +85,7 @@ export function FormFrame({
       </SheetBody>
       <SheetFooter>
         {left && (
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground @sm:mr-auto">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground mr-auto">
             {left}
           </div>
         )}

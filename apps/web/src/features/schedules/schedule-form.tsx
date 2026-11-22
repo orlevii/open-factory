@@ -65,6 +65,7 @@ export function ScheduleForm({
   onSubmit,
   lead,
   footerLeft,
+  locked,
 }: {
   initial?: ScheduleItem | undefined;
   presetTarget?: string | undefined;
@@ -74,7 +75,9 @@ export function ScheduleForm({
   /** Above the first field, inside the scrolling body (the edit sheet's state line). */
   lead?: ReactNode;
   /** The footer's left side (the edit sheet's Delete). */
-  footerLeft?: ReactNode;
+  footerLeft?: (pending: boolean) => ReactNode;
+  /** Another action (Delete) is in flight: Save waits. */
+  locked?: boolean;
 }) {
   const create = !initial;
   const blank = (): FormValues => ({
@@ -147,8 +150,10 @@ export function ScheduleForm({
   // An effect, not a write in each setter: the many field handlers all go through `v`, and the draft only has to be
   // current when the sheet closes. An untouched form (equal to its start values, or to its base) holds no draft.
   const { save: saveDraft } = draft;
+  // Not after a successful submit: the refreshed copy changes `base` and would write the draft back.
+  const submitted = useRef(false);
   useEffect(() => {
-    saveDraft(create ? v : { values: v, base });
+    if (!submitted.current) saveDraft(create ? v : { values: v, base });
   }, [create, saveDraft, v, base]);
 
   // A draft or link may name an agent that has since ended or never existed: clear it, with the reason under Target.
@@ -234,7 +239,7 @@ export function ScheduleForm({
 
   async function submit(ev: FormEvent) {
     ev.preventDefault();
-    if (pending) return;
+    if (pending || locked) return;
     setFailed(false);
     const found: Errors = {};
     for (const f of FIELDS) if (relevant(f)) found[f] = check[f]();
@@ -245,6 +250,7 @@ export function ScheduleForm({
     setPending(true);
     try {
       await onSubmit(payload());
+      submitted.current = true;
       if (!create) setPending(false); // `base` follows the saved values through the refreshed `initial`
     } catch (err) {
       setPending(false);
@@ -263,7 +269,7 @@ export function ScheduleForm({
   }
 
   const fields = (
-    <fieldset disabled={pending} className="grid min-w-0 gap-5">
+    <fieldset disabled={pending || locked} className="grid min-w-0 gap-5">
       <FieldShell
         name="target"
         label="Target"
@@ -392,7 +398,7 @@ export function ScheduleForm({
         pendingLabel={create ? "Creating…" : "Saving…"}
         pending={pending}
         restored={restored}
-        left={footerLeft}
+        left={footerLeft?.(pending)}
         onDiscard={() => {
           draft.clear();
           const fresh = server ?? blank();

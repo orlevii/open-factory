@@ -1,7 +1,7 @@
 import { ApiError, type ScheduleItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePause, CirclePlay } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
 import { Markdown } from "@/components/markdown/markdown";
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,8 @@ import {
   schedulesQueryKey,
 } from "./api";
 import { describeCron } from "./describe-cron";
+import { firstLine } from "./first-line";
 import { ScheduleForm } from "./schedule-form";
-import { firstLine } from "./schedule-row";
 import { ScheduleState } from "./schedule-state";
 import { ScheduleTime } from "./schedule-time";
 
@@ -218,21 +218,40 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
   // A late result must not wipe a draft the user restored by reopening this schedule while it was in flight.
   const reopened = () => {
     const p = getSheetState().parent;
-    return p?.kind === "edit-schedule" && p.key === key && p.id !== sheetId;
+    return (
+      p?.kind === "edit-schedule" && p.key.toUpperCase() === key.toUpperCase() && p.id !== sheetId
+    );
   };
   const refresh = () => qc.invalidateQueries({ queryKey: schedulesQueryKey });
 
+  const [deleting, setDeleting] = useState(false);
+  const deleteBusy = useRef(false);
   async function remove() {
+    if (deleteBusy.current) return;
+    deleteBusy.current = true;
+    setDeleting(true);
     setActionFailed(null);
     try {
       await deleteSchedule(key);
-    } catch {
-      setActionFailed(`Couldn't delete ${key}.`);
+    } catch (err) {
+      deleteBusy.current = false;
+      setDeleting(false);
+      if (stillOpen()) {
+        setActionFailed(`Couldn't delete ${key}.`);
+        return;
+      }
+      notify({
+        text:
+          err instanceof ApiError
+            ? err.message
+            : "Couldn't delete the schedule: can't reach the server.",
+        action: { label: "Open form", run: () => openSheet({ kind: "edit-schedule", key }) },
+      });
       return;
     }
     if (!reopened()) clearDraft(draftKey);
-    void refresh();
     if (stillOpen()) close();
+    void refresh();
     notify({
       text: `Deleted ${key}.`,
       undo: async () => {
@@ -250,16 +269,18 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
         initial={s}
         agentAuthored={s.bodyAuthor.kind === "agent"}
         lead={<StateLine s={s} actionFailed={actionFailed} />}
-        footerLeft={
+        locked={deleting}
+        footerLeft={(saving) => (
           <Button
             type="button"
             variant="ghost"
             className="text-destructive hover:text-destructive"
+            disabled={saving || deleting}
             onClick={() => void remove()}
           >
             Delete schedule
           </Button>
-        }
+        )}
         onSubmit={async (body) => {
           try {
             await patchSchedule(key, body as PatchScheduleBody);

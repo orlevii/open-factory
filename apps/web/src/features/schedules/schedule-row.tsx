@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { preloadSheet } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { firstLine } from "./first-line";
 import { formatScheduleTime } from "./format";
 import { ScheduleState, STATE_VIEW } from "./schedule-state";
 import { ScheduleTime } from "./schedule-time";
@@ -20,9 +21,6 @@ const who = (a: ScheduleAuthor) =>
     ? `@${a.handle}`
     : `@${a.slug}${a.terminated ? " (terminated)" : a.archived ? " (archived)" : ""}`;
 const whoPlain = (a: ScheduleAuthor) => (a.kind === "user" ? `@${a.handle}` : `@${a.slug}`);
-
-/** The first line of a message as plain text: never rendered markdown, never HTML. */
-export const firstLine = (body: string) => body.split("\n").find((l) => l.trim() !== "") ?? "";
 
 function when(s: ScheduleItem, now: Date) {
   const t = (iso: string) => <ScheduleTime at={iso} zone={s.timezone} now={now} />;

@@ -444,3 +444,100 @@ test("the old page URL opens the sheet over the list, key upper-cased, replacing
   expect(router.state.location.pathname).toBe("/schedules");
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
 });
+
+test("a late Delete failure toasts the error with Open form", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockApi({
+    ...common(sched()),
+    "DELETE /api/schedules/S-3": async () => {
+      await gate;
+      return json({ error: { code: "internal_error", message: "Database is down" } }, 500);
+    },
+  });
+  await openOver("/inbox");
+  await message();
+  await userEvent.click(screen.getByRole("button", { name: "Delete schedule" }));
+  act(() => closeSheet());
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  const n = vi.mocked(notify).mock.calls[0]?.[0];
+  expect(n?.text).toBe("Database is down");
+  expect(n?.action?.label).toBe("Open form");
+});
+
+test("a double click on Delete sends one DELETE, and Delete waits while a Save is pending", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const api = mockApi({
+    ...common(sched()),
+    "DELETE /api/schedules/S-3": async () => {
+      await gate;
+      return json({ schedule: sched({ deleted: true }) });
+    },
+  });
+  await openOver();
+  await message();
+  const del = screen.getByRole("button", { name: "Delete schedule" });
+  await userEvent.dblClick(del);
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  expect(api.calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+});
+
+test("Delete is disabled while a Save is pending", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockApi({
+    ...common(sched()),
+    "PATCH /api/schedules/S-3": async () => {
+      await gate;
+      return json({ schedule: sched({ body: "x" }) });
+    },
+  });
+  await openOver();
+  await userEvent.type(await message(), " x");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await screen.findByRole("button", { name: "Saving…" });
+  expect(screen.getByRole("button", { name: "Delete schedule" })).toBeDisabled();
+  release();
+});
+
+test("after a successful Save no draft exists once the refresh lands", async () => {
+  const api = mockApi({
+    ...common(sched()),
+    "PATCH /api/schedules/S-3": () => json({ schedule: sched({ body: "Evening" }) }),
+  });
+  await openOver("/inbox");
+  const body = await message();
+  await userEvent.clear(body);
+  await userEvent.type(body, "Evening");
+  api.on("GET /api/schedules/S-3", detail(sched({ body: "Evening" })));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved S-3." }));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  expect(hasDraft("edit-schedule:S-3")).toBe(false);
+});
+
+test("a late save success with no reopen clears the draft", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockApi({
+    ...common(sched()),
+    "PATCH /api/schedules/S-3": async () => {
+      await gate;
+      return json({ schedule: sched({ body: "x" }) });
+    },
+  });
+  await openOver("/inbox");
+  await userEvent.type(await message(), " x");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await screen.findByRole("button", { name: "Saving…" });
+  act(() => closeSheet());
+  expect(hasDraft("edit-schedule:S-3")).toBe(true);
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved S-3." }));
+  expect(hasDraft("edit-schedule:S-3")).toBe(false);
+});

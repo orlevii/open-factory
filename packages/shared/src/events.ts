@@ -166,12 +166,13 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "spawned",
         "task_message",
         "scheduled",
+        "command",
       ])
       .optional(),
   }),
   z.object({
     type: z.literal("control"),
-    cmd: z.enum(["compact", "interrupt", "clear", "restart"]),
+    cmd: z.enum(["compact", "interrupt", "clear", "restart", "command"]),
     arg: z.string().optional(),
     by: z.string(),
   }),

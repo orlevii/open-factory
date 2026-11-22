@@ -5,13 +5,17 @@ import {
   agentListSchema,
   agentResponseSchema,
   agentUsageSchema,
+  commandText,
   compactBodySchema,
   createAgentBodySchema,
   eventsPageSchema,
   eventsQuerySchema,
+  MAX_BODY_BYTES,
+  MAX_FOCUS_CHARS,
   patchAgentBodySchema,
   queueItemResponseSchema,
   resyncResponseSchema,
+  runCommandBodySchema,
   sendMessageBodySchema,
   slugSchema,
   stopCronsResponseSchema,
@@ -20,7 +24,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
-import { commandsResponse } from "../agents/commands.ts";
+import { commandsResponse, findCommand } from "../agents/commands.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -42,6 +46,7 @@ const slugParams = z.object({ slug: slugSchema });
 const queueItemParams = z.object({ slug: slugSchema, messageId: z.string().min(1) });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
+const utf8 = new TextEncoder();
 
 export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   // onRequest, not preHandler: Fastify validates before preHandler, so auth must come first (401 before 400).
@@ -304,6 +309,67 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
+        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+        if (e instanceof AgentTerminatedError)
+          return err(reply, 409, "agent_terminated", e.message);
+        if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
+        throw e;
+      }
+    },
+  );
+
+  /**
+   * U3 §13.3 (dispatch): a human runs a slash command. Humans only: an agent has no session (the REST API never reads
+   * agent tokens), and its `send_message` text is never a command. The name resolves against the same allowed set the
+   * GET returns (422 `unknown_command` otherwise), and the raw text is built from the allowed entry's own name, never
+   * the typed token. `compact` and `clear` take the server's own flows; everything else is held and written raw.
+   */
+  app.post(
+    "/api/agents/:slug/commands",
+    { schema: { params: slugParams, body: runCommandBodySchema } },
+    async (req, reply) => {
+      const u = user(req);
+      const row = await app.store.agentBySlug(req.params.slug);
+      const rt = row && (await app.runtimes.bySlug(req.params.slug));
+      if (!row || !rt)
+        return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const { name, args, clientMessageId } = req.body;
+      const allowed = commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
+      const entry = findCommand(allowed.commands, name);
+      const audit = { user: u.id, agent: row.slug, command: entry?.name ?? null };
+      if (!entry) {
+        app.log.info({ ...audit, refused: "unknown_command" }, "command refused");
+        return err(reply, 422, "unknown_command", `/${name} isn't a command this agent can run.`);
+      }
+      if (utf8.encode(commandText(entry.name, args)).length > MAX_BODY_BYTES)
+        return err(reply, 413, "too_large", "The command is larger than 64 KB.");
+      try {
+        if (entry.name === "clear") {
+          await rt.resetSession({ byHandle: u.handle });
+          app.log.info(audit, "command run");
+          return reply.code(202).send({});
+        }
+        if (entry.name === "compact" && args.length > MAX_FOCUS_CHARS)
+          return err(
+            reply,
+            400,
+            "validation_error",
+            `The compact focus is longer than ${MAX_FOCUS_CHARS} characters.`,
+          );
+        const item =
+          entry.name === "compact"
+            ? await rt.compact({ ...(args ? { focus: args } : {}), byHandle: u.handle })
+            : await rt.command({
+                name: entry.name,
+                args,
+                userId: u.id,
+                byHandle: u.handle,
+                ...(clientMessageId ? { clientMessageId } : {}),
+              });
+        app.log.info(audit, "command queued");
+        return reply.code(202).send(queueItemResponseSchema.parse({ item }));
+      } catch (e) {
+        if (e instanceof RecoveryRefusedError) return err(reply, 409, e.code, e.message);
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof AgentTerminatedError)
           return err(reply, 409, "agent_terminated", e.message);

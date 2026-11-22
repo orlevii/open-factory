@@ -52,3 +52,37 @@ export const agentCommandsResponseSchema = z.object({
   stale: z.boolean(),
 });
 export type AgentCommandsResponse = z.infer<typeof agentCommandsResponseSchema>;
+
+/**
+ * A character that could end the line or hide in it: C0 controls but tab, DEL, NEL and the Unicode line and paragraph
+ * separators. Args stay one line of data, so `"/" + name + " " + args` is always one command and never reads as a
+ * second message or a second command.
+ */
+const breaksLine = (s: string): boolean => {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if ((c < 0x20 && c !== 0x09) || c === 0x7f || c === 0x85 || c === 0x2028 || c === 0x2029)
+      return true;
+  }
+  return false;
+};
+
+/**
+ * `POST /api/agents/:slug/commands` (U3 §13.3). `name` is the typed token: the server resolves it against the allowed
+ * set and sends the allowed entry's own name, never this string. The 64 KB bound on `/name args` is checked by the
+ * route (413), after the name resolves.
+ */
+export const runCommandBodySchema = z.object({
+  name: z.string().min(1).max(MAX_COMMAND_NAME),
+  args: z
+    .string()
+    .trim()
+    .refine((s) => !breaksLine(s), "Command arguments must be one line")
+    .default(""),
+  clientMessageId: z.string().uuid().optional(),
+});
+export type RunCommandBody = z.infer<typeof runCommandBodySchema>;
+
+/** The raw line a command is written as (U3 §13.3): `/name`, then one space and the args when there are any. */
+export const commandText = (name: string, args: string): string =>
+  args ? `/${name} ${args}` : `/${name}`;

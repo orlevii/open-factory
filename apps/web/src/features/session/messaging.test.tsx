@@ -329,7 +329,7 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
   // Outgoing cards have no footer links (U3 §7.5).
   expect(within(block).queryByRole("link", { name: /View this message/ })).toBeNull();
   expect(within(block).queryByRole("button", { name: "Show tool call" })).toBeNull();
-  expect(screen.queryByText("mcp__factory__send_message")).toBeNull();
+  expect(screen.queryByTitle("mcp__factory__send_message")).toBeNull();
   const menu = await rowMenu(block);
   expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
   // The message in the recipient's session (U3 lead ruling R1).
@@ -337,7 +337,7 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
   expect(view).toHaveAttribute("href", "/agents/b?message=m9");
   expect(view).toHaveTextContent("View in @b's session");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "View tool call" }));
-  expect(screen.getByText("mcp__factory__send_message")).toBeInTheDocument();
+  expect(screen.getByTitle("mcp__factory__send_message")).toBeInTheDocument();
   const again = await rowMenu(block);
   expect(within(again).getByRole("menuitem", { name: "Hide tool call" })).toBeInTheDocument();
 });
@@ -424,7 +424,7 @@ test("an error shows the tool's sentence and no link", async () => {
 test("malformed send_message input falls back to the tool row", async () => {
   await open(
     [{ type: "turn_started" }, call({ body: 42 }), result("bad input", true)],
-    "mcp__factory__send_message",
+    /^send_message$/, // the tool row reads "factory · send_message": the tool is its own span (U3 §9.2)
   );
   expect(screen.queryByRole("article", { name: /Message from/ })).toBeNull();
 });

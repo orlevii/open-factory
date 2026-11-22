@@ -260,7 +260,7 @@ test("applyTo skips the trigger: only the tab row's trigger is tabbable", async 
 
 test("tool rows and agent text show their time in the gutter; the footer has none", async () => {
   renderInRouter(timeline([text(1), tool("Bash", { command: "ls" }), footer]));
-  await screen.findByText("ls");
+  await screen.findByText("$ ls");
   const wrapOf = (key: string) =>
     document.querySelector(`[data-row="${key}"]`)?.closest("[data-row-wrap]") as HTMLElement;
   expect(wrapOf("1").querySelector("time[data-gutter-time]")).toHaveAttribute("datetime", at);
@@ -270,7 +270,7 @@ test("tool rows and agent text show their time in the gutter; the footer has non
 
 test("tool rows take the .of-row pressed fill", async () => {
   renderInRouter(timeline([tool("Bash", { command: "ls" })]));
-  expect(await screen.findByRole("button", { name: /Bash/ })).toHaveClass("of-row");
+  expect(await screen.findByRole("button", { name: /ls/ })).toHaveClass("of-row");
 });
 
 const card = (kind: "system" | "message", seq: number): Row => ({
@@ -309,7 +309,8 @@ test("cards span the column with ⋯ inside their padding; unboxed rows keep the
 
 test("a tool row's gutter time sits in the row's own line after its state, never painted over it", async () => {
   renderInRouter(timeline([tool("Bash", { command: "ls" })]));
-  const row = await screen.findByRole("button", { name: /Bash/ });
+  // The Bash renderer's summary is the command (`$ ls`), not the tool's name.
+  const row = await screen.findByRole("button", { name: /\$ ls/ });
   const time = row.querySelector("time[data-gutter-time]") as HTMLElement;
   expect(time).not.toBeNull();
   expect(time).not.toHaveClass("bg-background");

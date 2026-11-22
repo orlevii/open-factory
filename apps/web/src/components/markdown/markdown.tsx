@@ -5,18 +5,97 @@ import remarkGfm from "remark-gfm";
 import { CodeBlock, PlainCode } from "./code-block";
 import { MermaidBlock } from "./mermaid-block";
 
-function makeComponents(newTabNoteId: string): Components {
+/** The bit of a hast node the image rewrite reads (react-markdown's tree, without importing hast). */
+type HastNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+  value?: string;
+};
+
+const IMAGE_ALT_MAX = 80;
+const SCHEME = /^[a-z][a-z\d+.-]*:/i;
+const SAFE_SCHEME = /^(?:https?|mailto):/i;
+
+/** A link worth an `<a>`: http(s), mailto, or a path or fragment in the app. Not an empty href (the
+ *  sanitizer's answer to `javascript:`), another scheme, or a protocol-relative `//host` (another
+ *  site, opened in this tab). */
+function safeHref(href: unknown): href is string {
+  if (typeof href !== "string") return false;
+  const h = href.trim();
+  if (!h || h.startsWith("//")) return false;
+  return SCHEME.test(h) ? SAFE_SCHEME.test(h) : true;
+}
+const HTTP = /^https?:\/\//i;
+
+/** "Image: <alt>", the alt cut to 80 characters, else the source's host (U3 §9.3). */
+function imageLabel(alt: string, src: string): string {
+  const a = alt.trim();
+  if (a) return `Image: ${a.length > IMAGE_ALT_MAX ? `${a.slice(0, IMAGE_ALT_MAX - 1)}…` : a}`;
+  try {
+    return `Image: ${new URL(src).host}`;
+  } catch {
+    return "Image";
+  }
+}
+
+/** Nothing loads from arbitrary hosts (U3 §9.3): every `img` becomes a link to its source reading
+ *  "Image: <alt>", or plain text when it is already inside a link or its source isn't http(s).
+ *  A rehype step, so the result goes through the same `a` renderer and URL sanitizing as any link. */
+function imagesAsLinks() {
+  const walk = (node: HastNode, inLink: boolean) => {
+    const children = node.children;
+    if (!children) return;
+    for (const [i, child] of children.entries()) {
+      if (child.type !== "element") continue;
+      if (child.tagName === "img") {
+        const src = typeof child.properties?.src === "string" ? child.properties.src : "";
+        const alt = typeof child.properties?.alt === "string" ? child.properties.alt : "";
+        const text: HastNode = { type: "text", value: imageLabel(alt, src) };
+        children[i] =
+          inLink || !HTTP.test(src)
+            ? text
+            : {
+                type: "element",
+                tagName: "a",
+                properties: { href: src, ...(alt.trim() ? { title: alt } : {}) },
+                children: [text],
+              };
+      } else walk(child, inLink || child.tagName === "a");
+    }
+  };
+  return (tree: HastNode) => walk(tree, false);
+}
+
+function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
   return {
-    a: ({ href, children }) => {
-      const external = typeof href === "string" && /^https?:\/\//.test(href);
+    a: ({ href, title, children }) => {
+      // The sanitizer empties a javascript: href rather than dropping the link, and an empty or
+      // foreign-scheme href would still navigate the whole app away: such a link is its text only.
+      if (!safeHref(href))
+        return (
+          <span data-inert-link title={title}>
+            {children}
+          </span>
+        );
+      const external = typeof href === "string" && HTTP.test(href);
       return external ? (
         // The accessible name stays the link text; "Opens in a new tab" is a shared description.
-        <a href={href} target="_blank" rel="noopener noreferrer" aria-describedby={newTabNoteId}>
+        <a
+          href={href}
+          title={title}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-describedby={newTabNoteId}
+        >
           {children}
           <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3 align-[-0.1em]" />
         </a>
       ) : (
-        <a href={href}>{children}</a>
+        <a href={href} title={title}>
+          {children}
+        </a>
       );
     },
     // Wide tables scroll inside their own box instead of widening the page.
@@ -38,8 +117,12 @@ function makeComponents(newTabNoteId: string): Components {
               .join("")
               .replace(/\n$/, "")
           : "";
-      if (lang === "mermaid") return <MermaidBlock source={text} />;
-      if (lang) return <CodeBlock code={text} lang={lang} />;
+      // Untrusted text (tool output) never drives the diagram renderer: its source shows as code.
+      if (lang === "mermaid")
+        return untrusted ? <PlainCode code={text} /> : <MermaidBlock source={text} />;
+      // Every fence this renderer sees is closed (persisted text); the streaming tail renders its
+      // open fence with `closed={false}` (U3 §10).
+      if (lang) return <CodeBlock code={text} lang={lang} closed />;
       return <PlainCode code={text} />;
     },
     code: ({ className, children }) => <code className={className}>{children}</code>,
@@ -58,27 +141,39 @@ function makeComponents(newTabNoteId: string): Components {
 }
 
 const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [imagesAsLinks];
 const VARIANT_CLASS = { default: "", detail: " prose-of-detail", work: " prose-of-work" } as const;
 
-/** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. Callers constrain the width.
- *  Memoized on `source` and `variant`: a parent re-render with the same props doesn't parse again. */
+/** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing, no image ever loads (each is a
+ *  link). Callers constrain the width. Memoized on its props: a parent re-render with the same props
+ *  doesn't parse again. */
 export const Markdown = memo(function Markdown({
   source,
   variant = "default",
+  untrusted = false,
 }: {
   source: string;
   /** "detail": a task body, comment or any speaker's markdown in a session; headings step down one
    *  size (a document never outranks its title). "work": tool output, 13/20 (U3 §7.3). */
   variant?: "default" | "detail" | "work";
+  /** Text from outside (tool results, fetched pages, U3 §9.3): mermaid fences render as code. */
+  untrusted?: boolean;
 }) {
   const newTabNoteId = useId();
-  const components = useMemo(() => makeComponents(newTabNoteId), [newTabNoteId]);
+  const components = useMemo(
+    () => makeComponents(newTabNoteId, untrusted),
+    [newTabNoteId, untrusted],
+  );
   // The link note sits after the prose, never in it: as its last child it would keep the last block's
   // bottom margin (typography zeroes only the last child's), and rows inside a turn would drift apart.
   return (
     <>
       <div className={`prose prose-sm prose-of max-w-none${VARIANT_CLASS[variant]}`}>
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+          components={components}
+        >
           {source}
         </ReactMarkdown>
       </div>

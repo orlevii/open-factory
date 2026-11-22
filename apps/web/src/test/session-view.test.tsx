@@ -69,9 +69,9 @@ test("renders the conversation: sender badge, collapsed tool call, text, compact
   expect(within(log).getByText("Urgent")).toBeInTheDocument();
   expect(within(log).getByText("list")).toBeInTheDocument(); // markdown rendered
   expect(log.textContent).not.toMatch(/factory-message/);
-  const tool = within(log).getByRole("button", { name: /Bash/ });
+  // A Bash row reads "$ command" (U3 §9.2).
+  const tool = within(log).getByRole("button", { name: /\$ ls -la/ });
   expect(tool).toHaveAttribute("aria-expanded", "false");
-  expect(within(log).getByText("ls -la")).toBeInTheDocument();
   expect(within(log).queryByText(/README\.md/)).not.toBeInTheDocument();
   await userEvent.click(tool);
   expect(tool).toHaveAttribute("aria-expanded", "true");
@@ -434,7 +434,7 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
   renderApp("/agents/dev", alice);
   await screen.findByText("docs");
   const log = screen.getByRole("log", { name: "Session" });
-  await userEvent.click(within(log).getByRole("button", { name: /Bash/ })); // expanded: code plates
+  await userEvent.click(within(log).getByRole("button", { name: /ls -la/ })); // expanded: code plates
   const tabbable = () =>
     [...log.querySelectorAll<HTMLElement>("a[href],button,summary,pre,input,[tabindex]")].filter(
       (el) => el.getAttribute("tabindex") !== "-1",
@@ -485,7 +485,7 @@ test("a capped tool input shows its truncation note", async () => {
     ]);
   };
   renderApp("/agents/dev", alice);
-  await userEvent.click(await screen.findByRole("button", { name: /Bash/ }));
+  await userEvent.click(await screen.findByRole("button", { name: /echo/ }));
   expect(screen.getByText("Truncated (1.2 MB)")).toBeInTheDocument();
 });
 
@@ -737,13 +737,14 @@ test("a paired denial shows inside its call: Denied state and the reason line; n
   };
   routes["/api/agents/dev"] = () => json(detail({}, [], 7));
   renderApp("/agents/dev", alice);
-  const read = await screen.findByRole("button", { name: /Read/ });
+  // A Read row names its file, not the tool (spec §9.2); the full path is the name's title.
+  const read = (await screen.findByTitle("/etc/x")).closest("button") as HTMLElement;
   expect(within(read).getByText("Denied")).toBeInTheDocument();
   expect(within(read).queryByText("Failed")).not.toBeInTheDocument();
   expect(
     screen.getByText("Denied: Permission to read /etc/x has been denied."),
   ).toBeInTheDocument();
-  const bash = screen.getByRole("button", { name: /Bash/ });
+  const bash = screen.getByRole("button", { name: /rm -rf x/ });
   expect(within(bash).getByText("Denied")).toBeInTheDocument();
   expect(screen.getByText("Denied by a permission rule")).toBeInTheDocument();
   expect(screen.queryByText(/^Denied: Read$/)).not.toBeInTheDocument();

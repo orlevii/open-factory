@@ -656,6 +656,71 @@ test("stabilizeRows recurses through childrenOf: an unchanged nested child keeps
   expect(b.children[0]).toBe(a.children[0]);
 });
 
+// Background tasks on their call row (U3 §9.5).
+const bgCall = () => [
+  e({ type: "tool_call", toolUseId: "tu-bg", name: "Bash", input: { command: "make watch" } }),
+  e({ type: "tool_result", toolUseId: "tu-bg", content: "Running in background", isError: false }),
+];
+const started = (toolUseId?: string) =>
+  e({
+    type: "background_task_started",
+    taskId: "bg1",
+    taskType: "local_bash",
+    description: "make watch",
+    ...(toolUseId ? { toolUseId } : {}),
+  });
+const finished = (status: string) =>
+  e({ type: "background_task_finished", taskId: "bg1", status, summary: "Build ok" });
+const toolOf = (rows: Row[]) =>
+  rows.find((r) => r.kind === "tool") as Extract<Row, { kind: "tool" }>;
+
+test("a started background task lives on its call row: running, and no quiet line", () => {
+  seq = 0;
+  const rows = rowsOf([...bgCall(), started("tu-bg")]);
+  expect(rows.map((r) => r.kind)).toEqual(["tool"]);
+  expect(toolOf(rows).backgroundTask).toEqual({ taskId: "bg1", state: "running" });
+});
+
+test("a finished task says finished with its summary; a failed one failed", () => {
+  seq = 0;
+  const done = rowsOf([...bgCall(), started("tu-bg"), finished("completed")]);
+  expect(done.map((r) => r.kind)).toEqual(["tool"]);
+  expect(toolOf(done).backgroundTask).toEqual({
+    taskId: "bg1",
+    state: "finished",
+    summary: "Build ok",
+  });
+  seq = 0;
+  const failed = rowsOf([...bgCall(), started("tu-bg"), finished("failed")]);
+  expect(toolOf(failed).backgroundTask).toMatchObject({ state: "failed", summary: "Build ok" });
+  seq = 0;
+  const killed = rowsOf([...bgCall(), started("tu-bg"), finished("killed")]);
+  expect(toolOf(killed).backgroundTask).toMatchObject({ state: "stopped", summary: "Build ok" });
+});
+
+test("an unmatched task keeps its quiet lines", () => {
+  seq = 0;
+  const rows = rowsOf([...bgCall(), started(), finished("completed")]);
+  expect(rows.map((r) => r.kind)).toEqual(["tool", "quiet", "quiet"]);
+  expect(toolOf(rows).backgroundTask).toBeUndefined();
+  seq = 0;
+  // A toolUseId with no loaded call (a resume, or an earlier page) is unmatched too.
+  expect(rowsOf([started("tu-gone"), finished("completed")]).map((r) => r.kind)).toEqual([
+    "quiet",
+    "quiet",
+  ]);
+});
+
+test("a later exit with no finish stops the task; a finish before the exit stays", () => {
+  seq = 0;
+  const exit = () => e({ type: "exited", code: 0, signal: null, expected: true } as AnyEvent, null);
+  const stopped = rowsOf([...bgCall(), started("tu-bg"), exit()]);
+  expect(toolOf(stopped).backgroundTask).toEqual({ taskId: "bg1", state: "stopped" });
+  seq = 0;
+  const kept = rowsOf([...bgCall(), started("tu-bg"), finished("completed"), exit()]);
+  expect(toolOf(kept).backgroundTask).toMatchObject({ state: "finished" });
+});
+
 test("isNoticeKind: factory notices (system, task assigned, task update), never a message or comment", () => {
   expect(["system", "task_assigned", "task_update"].every(isNoticeKind)).toBe(true);
   expect(["message", "task_comment", "scheduled"].some(isNoticeKind)).toBe(false);

@@ -104,6 +104,9 @@ const PLACE = {
 // explicit: Button leaves it off popup triggers.
 const TRIGGER =
   "absolute text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
+/** A nested row's (a folded run's call): its own `group/call` box decides, never the item's. */
+const TRIGGER_NESTED =
+  "absolute text-muted-foreground group-focus-within/call:inline-flex group-hover/call:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
 
 /**
  * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots;
@@ -117,6 +120,7 @@ export function RowMenu({
   label = "Row actions",
   callShown = false,
   onToggleCall,
+  nested = false,
   inCard = false,
 }: {
   /** The list, or a stable function that builds it: called only once the menu is first opened, so a
@@ -128,6 +132,8 @@ export function RowMenu({
   /** The raw call is showing: its item reads "Hide tool call". */
   callShown?: boolean;
   onToggleCall?(): void;
+  /** Inside another row (`NestedRow`): shown on its own box's hover and focus. */
+  nested?: boolean;
   /** The row is a card: the trigger sits inside its padding. */
   inCard?: boolean;
 }) {
@@ -154,6 +160,7 @@ export function RowMenu({
       label={state === "copied" ? "Copied" : label}
       focusable={focusable}
       shown={state !== "idle"}
+      nested={nested}
       position={place.trigger}
       {...(mounted ? {} : { onPointerDown: activate, onKeyDown: activate })}
     >
@@ -191,6 +198,7 @@ function TriggerButton({
   label,
   focusable,
   shown,
+  nested,
   position,
   children,
   ...rest
@@ -199,6 +207,7 @@ function TriggerButton({
   label: string;
   focusable: boolean;
   shown: boolean;
+  nested: boolean;
   position: string;
   children: ReactNode;
   onPointerDown?(e: PointerEvent): void;
@@ -211,11 +220,12 @@ function TriggerButton({
       variant="ghost"
       size="icon-xs"
       data-copy-link
+      data-row-menu
       aria-haspopup="menu"
       aria-label={label}
       tabIndex={focusable ? 0 : -1}
       // Feedback stays visible after the pointer leaves.
-      className={`${shown ? "inline-flex" : "hidden"} ${position} ${TRIGGER}`}
+      className={`${shown ? "inline-flex" : "hidden"} ${position} ${nested ? TRIGGER_NESTED : TRIGGER}`}
       {...rest}
     >
       {children}

@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
+import { rowOf } from "./row-of";
 import { SpeakerLine } from "./speaker-line";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
@@ -361,7 +362,8 @@ function ShowAll({ onShow }: { onShow(): void }) {
       type="button"
       data-expands
       onClick={(e) => {
-        e.currentTarget.closest<HTMLElement>("[data-row]")?.focus({ preventScroll: true });
+        // `rowOf`: a body control (a tool body's) belongs to the row above it, not an ancestor.
+        rowOf(e.currentTarget)?.focus({ preventScroll: true });
         onShow();
       }}
       className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"

@@ -1,7 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import { Profiler } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { Activity } from "./activity";
+import { type Activity, deriveActivity } from "./activity";
 import { ActivityLine, Elapsed, TurnActivity, useFallbackHold } from "./activity-line";
 import { ROW_GUTTER } from "./timeline-item";
 
@@ -171,4 +171,57 @@ test("a file tool's path middle-truncates", () => {
   render(<ActivityLine activity={{ kind: "tool_input", tool: "Write", target: "src/app.ts" }} />);
   const lbl = document.querySelector("[data-activity-label]") as HTMLElement;
   expect(within(lbl).getByText("/app.ts")).toBeInTheDocument(); // the tail kept apart from the head
+});
+
+test("an MCP label truncates its server first, as the tool row does", () => {
+  render(
+    <ActivityLine
+      activity={{
+        kind: "tool",
+        tool: "mcp__github-cloud-connector__create_pr",
+        target: "github-cloud-connector · create_pr",
+      }}
+    />,
+  );
+  const label = document.querySelector("[data-activity-label]") as HTMLElement;
+  const server = label.querySelector("[data-mcp-server]") as HTMLElement;
+  expect(server).toHaveTextContent(/^github-cloud-connector$/);
+  // The same structure as the tool row: the server gives way first, its head to 3 characters and an
+  // ellipsis; " · " outside the tool's truncation.
+  expect(server).toHaveClass("shrink-[100]");
+  expect(server.firstElementChild).toHaveClass("truncate");
+  expect((server.firstElementChild as HTMLElement).style.minWidth).toBe("calc(4ch + 1px)");
+  expect(label.querySelector("[data-mcp-sep]")).toHaveTextContent("·");
+  expect(label.querySelector("[data-mcp-tool]")).toHaveClass("min-w-0", "truncate");
+  expect(label.querySelector("[data-mcp-tool]")).toHaveTextContent("create_pr");
+});
+
+test("a Bash call with a description reads as that description, in prose, with no 'Running' before it", () => {
+  render(
+    <ActivityLine
+      activity={deriveActivity(
+        {
+          openSubagents: [],
+          newestOpenTool: {
+            kind: "tool",
+            seq: 1,
+            at: "2026-11-18T10:00:00.000Z",
+            call: {
+              type: "tool_call",
+              toolUseId: "t",
+              name: "Bash",
+              input: { command: "pnpm test", description: "Run the tests" },
+            },
+            state: "running",
+            children: [],
+            key: "1",
+          },
+        },
+        undefined,
+      )}
+    />,
+  );
+  const label = document.querySelector("[data-activity-label]") as HTMLElement;
+  expect(label).toHaveTextContent(/^Run the tests$/);
+  expect(label.querySelector(".font-mono")).toBeNull();
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { activityKey, deriveActivity, formatTarget } from "./activity";
+import { activityKey, deriveActivity, formatTarget, mcpParts } from "./activity";
 import type { ToolRow } from "./rows";
 
 let n = 0;
@@ -39,7 +39,7 @@ test("priority: subagents, then the newest open tool, then working", () => {
       { openSubagents: [], newestOpenTool: bash("pnpm test", "Run the tests") },
       undefined,
     ),
-  ).toEqual({ kind: "tool", tool: "Bash", target: "Run the tests" });
+  ).toEqual({ kind: "tool", tool: "Bash", target: "Run the tests", prose: true });
   expect(deriveActivity({ openSubagents: [] }, undefined)).toEqual({ kind: "working" });
   expect(deriveActivity(undefined, undefined)).toEqual({ kind: "working" });
 });
@@ -74,4 +74,14 @@ test("activityKey is a primitive per distinct activity", () => {
   expect(activityKey({ kind: "subagents", target: "a", more: 2 })).not.toBe(
     activityKey({ kind: "subagents", target: "a", more: 3 }),
   );
+});
+
+test("mcpParts: server and tool, shared by the activity line and the tool row", () => {
+  expect(mcpParts("mcp__github__create_pull_request")).toEqual({
+    server: "github",
+    tool: "create_pull_request",
+  });
+  expect(mcpParts("mcp__srv__a__b")).toEqual({ server: "srv", tool: "a__b" });
+  expect(mcpParts("mcp__solo")).toEqual({ server: "solo" });
+  expect(mcpParts("Bash")).toBeUndefined();
 });

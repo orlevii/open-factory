@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { anyEventSchema, type HarnessEvent } from "@open-factory/shared";
+import { anyEventSchema, type HarnessEvent, toolMetaSchema } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
 import { FIXTURES_DIR, fixtureNames, readFixture } from "../test-fixtures.ts";
-import { createMapperState, flushMapper, mapLine } from "./mapper.ts";
+import { createMapperState, flushMapper, mapLine, toolMetaOf } from "./mapper.ts";
 
 /** Maps a whole fixture. `manualCompactAt` lists 1-based line numbers before which the driver would
  *  have written `/compact` (so the mapper knows a following compaction failure is manual). */
@@ -772,5 +772,211 @@ test("session_started passes through any MCP status string, including pending", 
       { name: "plugin:vplug:plugsrv", status: "connected" },
       { name: "proj", status: "connected" },
     ],
+  });
+});
+
+// Spec §9.1 (Q16): per-tool meta on tool_result, built from `tool_use_result` and bounded.
+describe("tool_result.meta", () => {
+  // biome-ignore lint/suspicious/noExplicitAny: fixture lines are parsed JSON
+  type Line = Record<string, any>;
+  /** The mapped tool_result for the first fixture `user` line matching `pick`. */
+  function mapFixtureLine(name: string, pick: (l: Line) => unknown) {
+    const line = (readFixture(name) as Line[]).find((l) => l.type === "user" && pick(l));
+    if (!line) throw new Error(`no matching line in ${name}`);
+    const id = line.message.content.find((b: Line) => b.type === "tool_result").tool_use_id;
+    const { events } = mapFixture(name);
+    return ofType(events, "tool_result").filter((e) => e.toolUseId === id);
+  }
+  const toolResult = (out: Extract<HarnessEvent, { type: "tool_result" }>[]) => {
+    expect(out).toHaveLength(1);
+    return out[0] as Extract<HarnessEvent, { type: "tool_result" }>;
+  };
+
+  test("Edit meta from factory-mcp-and-project-symlink-edits: hunks, no originalFile", () => {
+    const out = mapFixtureLine(
+      "factory-mcp-and-project-symlink-edits",
+      (l) => l.tool_use_result?.structuredPatch,
+    );
+    const meta = toolResult(out).meta;
+    expect(meta).toMatchObject({ tool: "Edit" });
+    expect(meta).toEqual({
+      tool: "Edit",
+      hunks: [expect.objectContaining({ oldStart: 1, oldLines: 4, newStart: 1, newLines: 4 })],
+    });
+    expect(JSON.stringify(meta)).not.toContain("originalFile");
+    expect(JSON.stringify(meta)).not.toContain("retries: 3,\n  timeoutMs");
+  });
+
+  test("Write create from project-edits-with-additional-directories: type create, empty hunks", () => {
+    const out = mapFixtureLine(
+      "project-edits-with-additional-directories",
+      (l) => l.tool_use_result?.type === "create",
+    );
+    expect(toolResult(out).meta).toEqual({ tool: "Write", type: "create", hunks: [] });
+  });
+
+  test("Bash meta from background-bash-start-finish: backgroundTaskId, interrupted", () => {
+    const out = mapFixtureLine(
+      "background-bash-start-finish",
+      (l) => l.tool_use_result?.backgroundTaskId,
+    );
+    expect(toolResult(out).meta).toEqual({
+      tool: "Bash",
+      interrupted: false,
+      backgroundTaskId: "bu2glf4ey",
+    });
+  });
+
+  test("text Read from factory-mcp-and-project-symlink-edits: line range, never the content", () => {
+    const out = mapFixtureLine(
+      "factory-mcp-and-project-symlink-edits",
+      (l) => l.tool_use_result?.type === "text",
+    );
+    expect(toolResult(out).meta).toEqual({
+      tool: "Read",
+      kind: "text",
+      startLine: 1,
+      numLines: 5,
+      totalLines: 5,
+    });
+  });
+
+  test("image Read never copies file.base64 (spike attach-file-path trace)", () => {
+    const out = mapFixtureLine("u3/attach-file-path", (l) => l.tool_use_result?.type === "image");
+    const meta = toolResult(out).meta;
+    expect(meta).toEqual({ tool: "ReadImage", bytes: 185, width: 64, height: 128 });
+    expect(JSON.stringify(meta)).not.toContain("base64");
+  });
+
+  test("Agent meta: async launch (background-subagent-stdin-closed)", () => {
+    const out = mapFixtureLine(
+      "background-subagent-stdin-closed",
+      (l) => l.tool_use_result?.isAsync,
+    );
+    expect(toolResult(out).meta).toEqual({ tool: "Agent", async: true });
+  });
+
+  test("Agent meta: foreground totals (spike partial-thinking-summaries-forward-subagent)", () => {
+    const out = mapFixtureLine(
+      "u3/partial-thinking-summaries-forward-subagent",
+      (l) => l.tool_use_result?.totalToolUseCount !== undefined,
+    );
+    expect(toolResult(out).meta).toEqual({
+      tool: "Agent",
+      toolUses: 0,
+      tokens: 12512,
+      durationMs: 1082,
+    });
+  });
+
+  test("Agent meta under the older Task name", () => {
+    expect(
+      toolMetaOf("Task", { totalToolUseCount: 3, totalTokens: 900, totalDurationMs: 42 }),
+    ).toEqual({ tool: "Agent", toolUses: 3, tokens: 900, durationMs: 42 });
+    expect(toolMetaOf("Task", { status: "async_launched" })).toEqual({
+      tool: "Agent",
+      async: true,
+    });
+  });
+
+  test("a tool with no meta shape (CronCreate) carries none", () => {
+    const out = mapFixtureLine("cron-create-fire-delete", (l) => l.tool_use_result?.humanSchedule);
+    expect(toolResult(out)).not.toHaveProperty("meta");
+  });
+
+  test("a failed Edit (string tool_use_result) carries none", () => {
+    expect(toolMetaOf("Edit", "Error: String to replace not found")).toBeUndefined();
+  });
+
+  const hunkOf = (n: number, width: number) => ({
+    oldStart: n,
+    oldLines: 1,
+    newStart: n,
+    newLines: 1,
+    lines: [`-${"a".repeat(width)}`, `+${"b".repeat(width)}`],
+  });
+
+  test("hunks stop at 32 KiB serialized and set partial", () => {
+    const structuredPatch = Array.from({ length: 40 }, (_, i) => hunkOf(i + 1, 1000));
+    const meta = toolMetaOf("MultiEdit", { structuredPatch, originalFile: "x" });
+    expect(meta).toMatchObject({ tool: "MultiEdit", partial: true });
+    const hunks = (meta as { hunks: unknown[] }).hunks;
+    expect(hunks.length).toBeGreaterThan(0);
+    expect(hunks.length).toBeLessThan(40);
+    expect(Buffer.byteLength(JSON.stringify(hunks))).toBeLessThanOrEqual(32 * 1024);
+    expect(hunks).toEqual(structuredPatch.slice(0, hunks.length));
+    // one more hunk would have crossed the limit
+    expect(
+      Buffer.byteLength(JSON.stringify(structuredPatch.slice(0, hunks.length + 1))),
+    ).toBeGreaterThan(32 * 1024);
+  });
+
+  test("hunks under the limit are all kept, without partial", () => {
+    const structuredPatch = Array.from({ length: 3 }, (_, i) => hunkOf(i + 1, 10));
+    expect(toolMetaOf("Write", { type: "update", structuredPatch })).toEqual({
+      tool: "Write",
+      type: "update",
+      hunks: structuredPatch,
+    });
+  });
+
+  test("stderr is cut at 16 KiB, keeping its tail (the final error)", () => {
+    const meta = toolMetaOf("Bash", {
+      stdout: "",
+      stderr: `warning: first\n${"é".repeat(20 * 1024)}\nError: the final failure`,
+      interrupted: true,
+      isImage: false,
+      noOutputExpected: false,
+    });
+    expect(meta).toMatchObject({ tool: "Bash", interrupted: true });
+    const stderr = (meta as { stderr: string }).stderr;
+    expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(16 * 1024);
+    expect(Buffer.byteLength(stderr)).toBeGreaterThan(16 * 1024 - 4);
+    expect(stderr).not.toContain("warning: first");
+    expect(stderr.endsWith("\nError: the final failure")).toBe(true);
+    const lead = stderr.slice(0, stderr.indexOf("\n"));
+    expect(lead).toBe("é".repeat(lead.length)); // no split code point
+  });
+
+  test("a line with two tool_results carries no meta", () => {
+    const state = createMapperState({ resumed: false });
+    mapLine(
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "toolu_a", name: "Bash", input: { command: "ls" } },
+            { type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "pwd" } },
+          ],
+        },
+        ...SID,
+      },
+      state,
+    );
+    const out = mapLine(
+      {
+        type: "user",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_a", content: "a" },
+            { type: "tool_result", tool_use_id: "toolu_b", content: "b" },
+          ],
+        },
+        tool_use_result: { stdout: "b", stderr: "", interrupted: false },
+        ...SID,
+      },
+      state,
+    );
+    const results = ofType(out, "tool_result");
+    expect(results).toHaveLength(2);
+    for (const r of results) expect(r).not.toHaveProperty("meta");
+  });
+
+  test("every mapped meta parses with the shared schema", () => {
+    for (const name of fixtureNames()) {
+      const { events } = mapFixture(name, { resumed: name.includes("resume") });
+      for (const e of ofType(events, "tool_result"))
+        if (e.meta) expect(toolMetaSchema.safeParse(e.meta).success).toBe(true);
+    }
   });
 });

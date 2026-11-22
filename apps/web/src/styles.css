@@ -64,6 +64,8 @@
   --color-info: var(--info);
   --color-code: var(--code-bg);
   --color-code-border: var(--code-border);
+  --color-diff-add: var(--diff-add);
+  --color-diff-remove: var(--diff-remove);
   --color-diagram: var(--diagram-bg);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -141,6 +143,9 @@
   /* code + diagrams */
   --code-bg: oklch(0.985 0.002 250);
   --code-border: oklch(0.89 0.005 250);
+  /* diff line tints under ink code: success and crimson hues, opaque so a sticky gutter can repeat them */
+  --diff-add: oklch(0.955 0.035 150);
+  --diff-remove: oklch(0.955 0.03 20);
   --diagram-bg: oklch(0.995 0.001 250); /* mermaid always renders on a light plate */
 
   /* the unlit roofline under the loading mark */
@@ -217,6 +222,8 @@
 
   --code-bg: oklch(0.228 0.007 255);
   --code-border: oklch(0.305 0.008 255);
+  --diff-add: oklch(0.3 0.045 150);
+  --diff-remove: oklch(0.3 0.05 20);
   --diagram-bg: oklch(0.94 0.004 250); /* a light plate inside the dark UI */
 
   --mark-track: color-mix(in oklch, var(--foreground) 14%, transparent);
@@ -300,6 +307,12 @@
 [data-row]:focus-visible,
 [data-row][data-focus-ring] {
   outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* A row's ⋯ sits flush with the log's right edge, which clips horizontally: its ring goes inset too,
+   or its right side is cut off. */
+[data-row-menu]:focus-visible {
   outline-offset: -2px;
 }
 

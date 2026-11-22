@@ -1,21 +1,12 @@
 import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { runInstant } from "@/lib/run-instant";
-import { formatBytes, formatTime } from "./format";
-import { CodePlate } from "./quiet-line";
-import type { Row } from "./rows";
+import { formatTime } from "./format";
+import type { ToolRow } from "./rows";
+import { rendererFor } from "./tools";
+import { firstLine } from "./tools/output";
 
-/** One-line summary: Bash → command, Read/Edit/Write → file path, Grep/Glob → pattern, else the first string. */
-export const toolSummary = (name: string, input: unknown): string => {
-  const i = (input ?? {}) as Record<string, unknown>;
-  if (name === "Bash" && typeof i.command === "string") return i.command;
-  for (const k of ["file_path", "path", "pattern", "url", "description"]) {
-    const v = i[k];
-    if (typeof v === "string") return v;
-  }
-  const first = Object.values(i).find((v) => typeof v === "string");
-  return typeof first === "string" ? first : "";
-};
+export { toolSummary } from "./tools/generic";
 
 const RULE_DENIAL = "Denied by a permission rule";
 
@@ -32,6 +23,63 @@ const STATE_LABEL = {
   done: null,
 } as const;
 
+const TASK_CHIP = {
+  running: "In background",
+  finished: "Finished",
+  failed: "Failed",
+  stopped: "Stopped",
+} as const;
+
+/** The state chip: one word for where the call stands (spec §9.2). A background task the call
+ *  started speaks for it, whatever the tool (U3 §9.5). */
+function chipOf(row: ToolRow): string | null {
+  if (row.denial) return "Denied";
+  if (row.backgroundTask) return TASK_CHIP[row.backgroundTask.state];
+  if (row.interrupted) return "Interrupted";
+  const meta = row.result?.meta;
+  if (meta?.tool === "Bash" && meta.interrupted) return "Interrupted";
+  return STATE_LABEL[row.state];
+}
+
+const failedIcon = (
+  <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+);
+
+/** The detail under a collapsed row (`pl-7`, two lines at most): a denial, a settled background
+ *  task's summary (U3 §9.5), or a failure's first error line; never inside the row's toggle. */
+function Detail({ row, chip }: { row: ToolRow; chip: string | null }) {
+  let icon: ReactNode;
+  let text: string;
+  const task = row.backgroundTask;
+  const own = task && task.state !== "running" ? task.summary : undefined;
+  if (row.denial) {
+    icon = <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />;
+    text = denialText(row.denial.reason);
+  } else if (own) {
+    if (chip === "Failed") icon = failedIcon;
+    text = own;
+  } else if (row.state === "failed" && chip === "Failed") {
+    icon = failedIcon;
+    text = firstLine(row.result?.content ?? "");
+    if (!text) return null;
+  } else return null;
+  return (
+    <p className="flex items-start gap-1.5 pl-7 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+      {icon}
+      <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">{text}</span>
+    </p>
+  );
+}
+
+// Shown on hover or focus within the row's own box: the timeline item's `group`, or a folded run's
+// call's `group/call` (so hovering one call never shows its siblings' time).
+const TIME_SHOWN = {
+  top: "group-focus-within:inline group-hover:inline",
+  nested: "group-focus-within/call:inline group-hover/call:inline",
+} as const;
+
+/** A tool call (spec §9.2): one `min-h-8` line (chevron, the tool's summary, a state chip), a detail
+ *  line, and while expanded the tool's body, then its nested rows. */
 export function ToolCallRow({
   row,
   expanded,
@@ -39,61 +87,52 @@ export function ToolCallRow({
   rowProps,
   children,
   time,
+  nested = false,
 }: {
-  row: Extract<Row, { kind: "tool" }>;
+  row: ToolRow;
   expanded: boolean;
   onToggle(): void;
   rowProps: Record<string, unknown>;
   children?: ReactNode;
-  /** A top-level row's time, shown at the line's end on hover or focus (U3 §7.5): content | time | ⋯,
+  /** The row's time, shown at the line's end on hover or focus (U3 §7.5): content | time | ⋯,
    *  in the line itself, so it never covers the state. */
   time?: string;
+  /** A folded run's call (`NestedRow`): its time shows on its own box's hover and focus only. */
+  nested?: boolean;
 }) {
-  const summary = toolSummary(row.call.name, row.call.input);
-  const state = row.denial ? "Denied" : STATE_LABEL[row.state];
-  // capPayload records the capped path (input.command, input.new_string, result.content, …).
-  const truncatedNote = (prefix: "input." | "result.") => {
-    const capped = Object.entries(row.truncated ?? {}).filter(([k]) => k.startsWith(prefix));
-    return capped.map(([k, n]) => (
-      <p key={k} className="mt-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        {capped.length > 1 ? `Truncated ${k.slice(prefix.length)}` : "Truncated"} ({formatBytes(n)})
-      </p>
-    ));
-  };
+  const R = rendererFor(row.call.name);
+  const chip = chipOf(row);
+  // Nothing to show (an image read): a plain row, no chevron, no expanded state.
+  const expandable = R.hasBody?.(row) !== false || Boolean(children);
   return (
     <div>
       <button
         type="button"
-        aria-expanded={expanded}
+        {...(expandable ? { "aria-expanded": expanded } : {})}
         onClick={(e) => {
+          if (!expandable) return;
           // A keyboard-triggered click (Enter/Space) has detail 0: it toggles without the transition.
           if (e.detail === 0) runInstant(onToggle);
           else onToggle();
         }}
         {...rowProps}
         // `.of-row`: the hover fill and the instant pressed fill; a full-width row never scales.
-        className="of-row flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm"
+        // min-h-8, not h-8: at large text sizes the line wraps rather than clips (Break M9).
+        className="of-row flex min-h-8 w-full min-w-0 items-start gap-2 rounded-md px-1 py-1.5 text-left text-sm leading-5"
       >
-        <ChevronRight
-          aria-hidden="true"
-          className={`size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
-        />
-        <span className="shrink-0 font-mono">{row.call.name}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] text-muted-foreground">
-          {summary}
-        </span>
-        {state && (
-          <span className="flex shrink-0 items-center gap-1 text-[0.8125rem] text-muted-foreground">
-            {row.denial ? (
-              <TriangleAlert aria-hidden="true" className="size-3.5 text-warning" />
-            ) : (
-              row.state === "failed" && (
-                <CircleAlert aria-hidden="true" className="size-3.5 text-destructive" />
-              )
-            )}
-            {state}
-          </span>
+        {expandable ? (
+          <ChevronRight
+            aria-hidden="true"
+            className={`mt-0.5 size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
+          />
+        ) : (
+          // The chevron's width stays, so the summary lines up with its neighbours'.
+          <span aria-hidden="true" className="size-4 shrink-0" />
         )}
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <R.Summary row={row} />
+        </span>
+        {chip && <span className="shrink-0 text-[0.8125rem] text-muted-foreground">{chip}</span>}
         {time !== undefined && (
           <time
             data-gutter-time
@@ -101,26 +140,17 @@ export function ToolCallRow({
             aria-hidden="true"
             dateTime={time}
             title={new Date(time).toLocaleString()}
-            className="hidden shrink-0 text-[0.8125rem] text-muted-foreground tabular-nums group-focus-within:inline group-hover:inline pointer-coarse:hidden!"
+            className={`hidden shrink-0 text-[0.8125rem] text-muted-foreground tabular-nums ${nested ? TIME_SHOWN.nested : TIME_SHOWN.top} pointer-coarse:hidden!`}
           >
             {formatTime(time)}
           </time>
         )}
       </button>
-      {row.denial && (
-        <p className="flex items-start gap-1.5 pl-7 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
-          <span className="min-w-0 [overflow-wrap:anywhere]">{denialText(row.denial.reason)}</span>
-        </p>
-      )}
-      {expanded && (
-        <div className="mt-1 space-y-2 pl-6">
-          <CodePlate>
-            {row.call.name === "Bash" ? summary : JSON.stringify(row.call.input, null, 2)}
-          </CodePlate>
-          {truncatedNote("input.")}
-          {row.result && <CodePlate>{row.result.content}</CodePlate>}
-          {truncatedNote("result.")}
+      <Detail row={row} chip={chip} />
+      {expanded && expandable && (
+        // Its controls belong to the row above (`rowOf`): tab order, Esc, focus and scroll anchor.
+        <div data-row-body={row.key} className="mt-1 space-y-2 pl-6">
+          <R.Body row={row} />
           {children && <div className="space-y-3 pl-4">{children}</div>}
         </div>
       )}

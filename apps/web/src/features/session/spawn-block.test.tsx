@@ -102,13 +102,13 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   expect(within(block).getByText("Spawned")).toBeInTheDocument();
   // Never an id.
   expect(block.textContent).not.toContain("0f9e-secret-id");
-  expect(screen.queryByText("mcp__factory__spawn_agent")).toBeNull();
+  expect(screen.queryByTitle("mcp__factory__spawn_agent")).toBeNull();
   // The raw call is in the row menu (U3 §7.5), not a footer button.
   expect(within(block).queryByRole("button", { name: "Show tool call" })).toBeNull();
   const wrap = block.closest("[data-row-wrap]") as HTMLElement;
   fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), { button: 0 });
   await userEvent.click(await screen.findByRole("menuitem", { name: "View tool call" }));
-  expect(screen.getByText("mcp__factory__spawn_agent")).toBeInTheDocument();
+  expect(screen.getByTitle("mcp__factory__spawn_agent")).toBeInTheDocument();
 });
 
 test("a description holding markup stays literal text", async () => {
@@ -231,7 +231,7 @@ test("a denied terminate is a failed quiet line with the denial sentence", async
 test("malformed spawn_agent input falls back to the tool row", async () => {
   await open(
     [{ type: "turn_started" }, spawn({ prompt: 42 }), result("bad", true)],
-    "mcp__factory__spawn_agent",
+    /^spawn_agent$/, // the tool row reads "factory · spawn_agent": the tool is its own span (U3 §9.2)
   );
   expect(screen.queryByRole("article", { name: /spawn/ })).toBeNull();
 });

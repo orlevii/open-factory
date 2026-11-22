@@ -8,11 +8,13 @@ import {
   COMPACTING,
   deriveActivity,
   formatTarget,
+  mcpParts,
   WORKING,
 } from "./activity";
 import { formatDuration } from "./format";
 import type { OpenTurnRows } from "./rows";
 import { ROW_GUTTER } from "./timeline-item";
+import { McpName } from "./tools/mcp-name";
 
 /** Time elapsed since `since`, ticking on whole seconds; paused while the tab is hidden and recomputed
  *  at once when it returns (or `since` changes), never as a second render on mount. Its own state, so
@@ -72,6 +74,8 @@ function labelParts(a: Activity): {
   target?: string;
   code?: boolean;
   path?: boolean;
+  /** An MCP tool's full name: the target renders as `McpName` (the tool row's truncation). */
+  mcp?: string;
   suffix?: string;
 } {
   const plain = PLAIN[a.kind];
@@ -79,11 +83,14 @@ function labelParts(a: Activity): {
   if (a.kind === "subagent") return { prefix: "Subagent: ", target: a.target };
   if (a.kind === "subagents")
     return { prefix: "Subagents: ", target: a.target, suffix: ` and ${a.more} more` };
+  // "Run the tests", not "Running Run the tests" in code.
+  if (a.prose && a.target) return { target: a.target };
   const tool = a.tool ?? "";
   const verb = VERB[tool];
   if (verb && a.target)
     return { prefix: `${verb} `, target: a.target, code: true, path: PATH_TOOLS.has(tool) };
-  // An MCP tool reads "server · tool"; any other tool its name.
+  // An MCP tool reads "server · tool", the server truncating first; any other tool its name.
+  if (mcpParts(tool)) return { target: a.target ?? tool, code: true, mcp: tool };
   return { target: a.target ?? tool, code: true };
 }
 
@@ -96,7 +103,7 @@ export const ActivityLine = memo(function ActivityLine({
   activity: Activity;
   startedAt?: string;
 }) {
-  const { prefix, target, code, path, suffix } = labelParts(activity);
+  const { prefix, target, code, path, mcp, suffix } = labelParts(activity);
   const full = `${prefix ?? ""}${target ?? ""}${suffix ?? ""}`;
   return (
     <p
@@ -118,7 +125,9 @@ export const ActivityLine = memo(function ActivityLine({
       <span data-activity-label title={full} className="flex min-w-0 items-baseline">
         {prefix !== undefined && <span className="shrink-0 whitespace-pre">{prefix}</span>}
         {target !== undefined &&
-          (path ? (
+          (mcp !== undefined ? (
+            <McpName name={mcp} className="font-mono" />
+          ) : path ? (
             <span className={`flex min-w-0 ${code ? "font-mono" : ""}`}>
               <MiddleTruncate text={target} />
             </span>

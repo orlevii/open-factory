@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { Markdown } from "./markdown";
 
 // Counts ReactMarkdown calls while still rendering for real, so the other tests keep their output.
@@ -91,6 +91,26 @@ test("renders mermaid blocks with strict security", async () => {
   );
 });
 
+test("a link that would not go anywhere safe is plain text: no <a>, so no click navigates the app away", () => {
+  render(
+    <Markdown
+      untrusted
+      source={
+        "[js](javascript:alert(1)) [data](data:text/html,x) [vb](vbscript:x) [proto](//evil.example/x) [ok](https://example.com) [mail](mailto:a@b.co) [in](/inbox) [frag](#top)"
+      }
+    />,
+  );
+  for (const name of ["js", "data", "vb", "proto"]) {
+    const el = screen.getByText(name);
+    expect(el.closest("a")).toBeNull();
+    expect(el.tagName).toBe("SPAN");
+  }
+  expect(screen.getByRole("link", { name: "ok" })).toHaveAttribute("rel", "noopener noreferrer");
+  expect(screen.getByRole("link", { name: "mail" })).toHaveAttribute("href", "mailto:a@b.co");
+  expect(screen.getByRole("link", { name: "in" })).toHaveAttribute("href", "/inbox");
+  expect(screen.getByRole("link", { name: "frag" })).toHaveAttribute("href", "#top");
+});
+
 test("javascript: links are not rendered as executable hrefs", () => {
   render(<Markdown source={"[x](javascript:alert(1))"} />);
   const a = screen.getByText("x").closest("a");
@@ -166,6 +186,118 @@ test("block elements take their own direction (dir=auto), so a right-to-left par
   for (const sel of ["h1", "p", "li", "blockquote"])
     expect(container.querySelector(sel)).toHaveAttribute("dir", "auto");
   expect(container.querySelector("li.task-list-item")).not.toBeNull();
+});
+
+describe("images never load (U3 §9.3)", () => {
+  test.each(["default", "detail", "work"] as const)(
+    "%s: an image is a link Image: alt, and no <img>",
+    (variant) => {
+      const { container } = render(
+        <Markdown
+          source={"See ![the chart](https://evil.example/x.png) here."}
+          variant={variant}
+        />,
+      );
+      expect(container.querySelector("img")).toBeNull();
+      const a = screen.getByRole("link", { name: "Image: the chart" });
+      expect(a).toHaveAttribute("href", "https://evil.example/x.png");
+      expect(a).toHaveAttribute("target", "_blank");
+      expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    },
+  );
+
+  test("untrusted markdown too", () => {
+    const { container } = render(
+      <Markdown source={"![a](https://evil.example/x.png)"} untrusted />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("link", { name: "Image: a" })).toBeInTheDocument();
+  });
+
+  test("an alt over 80 characters is cut to 80 with an ellipsis; the full alt is its title", () => {
+    const alt = "x".repeat(120);
+    render(<Markdown source={`![${alt}](https://evil.example/x.png)`} />);
+    const a = screen.getByRole("link", { name: /^Image: x+…$/ });
+    const shown = (a.textContent ?? "").replace(/^Image: /, "");
+    expect(shown).toHaveLength(80);
+    expect(a).toHaveAttribute("title", alt);
+  });
+
+  test("no alt: the host", () => {
+    render(<Markdown source={"![](https://cdn.evil.example/a/b.png?x=1)"} />);
+    expect(screen.getByRole("link", { name: "Image: cdn.evil.example" })).toBeInTheDocument();
+  });
+
+  test("a reference-style image is a link too", () => {
+    const { container } = render(
+      <Markdown source={"![logo][l]\n\n[l]: https://evil.example/l.png"} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("link", { name: "Image: logo" })).toBeInTheDocument();
+  });
+
+  test("an image inside a link stays inside one link", () => {
+    const { container } = render(
+      <Markdown source={"[![badge](https://evil.example/b.svg)](https://example.com)"} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll("a a")).toHaveLength(0);
+    expect(screen.getByRole("link", { name: "Image: badge" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+  });
+
+  test("a javascript: image source is not a link", () => {
+    const { container } = render(<Markdown source={"![x](javascript:alert(1))"} />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('a[href^="javascript"]')).toBeNull();
+    expect(screen.getByText("Image: x")).toBeInTheDocument();
+  });
+});
+
+describe("untrusted markdown", () => {
+  test("a mermaid fence renders as plain code, never a diagram", async () => {
+    const mermaid = (await import("mermaid")).default;
+    vi.mocked(mermaid.render).mockClear();
+    const { container } = render(
+      <Markdown source={"```mermaid\ngraph TD; A-->B\n```"} variant="work" untrusted />,
+    );
+    const code = container.querySelector("pre > code");
+    expect(code).toHaveTextContent("graph TD; A-->B");
+    expect(container.querySelector(".md-diagram")).toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("mermaid-svg")).not.toBeInTheDocument();
+    expect(mermaid.render).not.toHaveBeenCalled();
+  });
+
+  test("trusted markdown still renders mermaid", async () => {
+    render(<Markdown source={"```mermaid\ngraph TD; A-->B\n```"} variant="work" />);
+    await waitFor(() => expect(screen.getByTestId("mermaid-svg")).toBeInTheDocument());
+  });
+
+  test("other fences still highlight", async () => {
+    const { container } = render(<Markdown source={"```ts\nconst a = 1;\n```"} untrusted />);
+    await waitFor(() => expect(container.querySelector("pre.shiki")).toBeInTheDocument());
+  });
+});
+
+test("an upper-case HTTP:// link (or image) still opens safely in a new tab", () => {
+  render(<Markdown source={"[x](HTTP://example.com) ![pic](HTTPS://evil.example/p.png)"} />);
+  for (const name of ["x", "Image: pic"]) {
+    const a = screen.getByRole("link", { name });
+    expect(a).toHaveAttribute("target", "_blank");
+    expect(a).toHaveAttribute("rel", "noopener noreferrer");
+  }
+});
+
+test("data: and protocol-relative image sources are plain text, never links or images", () => {
+  const { container } = render(
+    <Markdown source={"![d](data:image/png;base64,AAAA) ![p](//evil.example/p.png)"} />,
+  );
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("a")).toBeNull();
+  expect(container).toHaveTextContent("Image: d Image: p");
 });
 
 test("the bidi overrides keep hast props: GFM footnotes keep their sr-only label and item ids", () => {

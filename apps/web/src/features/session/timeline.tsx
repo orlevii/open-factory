@@ -14,8 +14,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
-import { childrenOf, heldSeqs } from "./display-passes";
+import { childrenOf, groupOpen, heldSeqs, innerKey } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
+import { rowOf } from "./row-of";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
@@ -92,6 +93,9 @@ export function Timeline(props: {
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
+  // The focused row's key and element, for the rows layout effect (refs: focus moving re-runs nothing).
+  const activeKeyRef = useRef<string | undefined>(undefined);
+  const focusedEl = useRef<HTMLElement | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [highlight] = useState(props.highlightSeq);
   // The deep link's path: the top-level holder first, the row it lands on last (U3 §7.4).
@@ -105,10 +109,26 @@ export function Timeline(props: {
   const arrivedKey = litPath?.at(-1);
   const [arrival, setArrival] = useState<Arrival>();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every rows commit (the height changed).
+  // Runs after every rows commit (the height changed).
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    // A focused call that joined a group left the DOM with its old row: focus moves to the group's
+    // header (U3 §9.4). Only when focus was dropped, never taken from wherever it went since.
+    const lost = focusedEl.current;
+    if (lost && !lost.isConnected) {
+      focusedEl.current = null;
+      const key = activeKeyRef.current;
+      const active = document.activeElement;
+      const holder =
+        key === undefined || (active && active !== document.body)
+          ? undefined
+          : rows.find((r) => r.kind === "work_group" && (r.key === key || containsKey(r, key)));
+      if (holder)
+        el.querySelector<HTMLElement>(`[data-row="${CSS.escape(holder.key)}"]`)?.focus({
+          preventScroll: true,
+        });
+    }
     if (litPath !== undefined && !centred.current) {
       // Inside a group or a call's children: the holders open first, the row is reached next commit.
       const closed = litPath.slice(0, -1).filter((k) => !expanded.has(k));
@@ -188,7 +208,7 @@ export function Timeline(props: {
     const active = document.activeElement as HTMLElement | null;
     if (!active) return;
     if (e.key === "Escape" && !active.hasAttribute("data-row")) {
-      const row = active.closest<HTMLElement>("[data-row]");
+      const row = rowOf(active);
       if (row) {
         e.preventDefault();
         row.focus();
@@ -235,8 +255,8 @@ export function Timeline(props: {
     const sel = `[data-row-wrap] :is(${INTERACTIVE})`;
     const set = (el: HTMLElement) => {
       if (el.hasAttribute("data-row") || el.hasAttribute("data-copy-link")) return;
-      // Only a row's own content counts; the Copy link actions and tool plates stay at -1.
-      const owner = el.closest<HTMLElement>("[data-row]");
+      // A row's content and its tool body count (`rowOf`); plates that never scroll stay at -1.
+      const owner = el.hasAttribute("data-plate") ? null : rowOf(el);
       el.setAttribute("tabindex", owner?.dataset.row === tabKeyRef.current ? "0" : "-1");
     };
     if (root instanceof HTMLElement && root.matches(sel)) set(root);
@@ -262,17 +282,38 @@ export function Timeline(props: {
     if (!content) return;
     for (const key of [prev, tabKey]) {
       if (key === undefined) continue;
-      const row = content.querySelector(`[data-row="${CSS.escape(key)}"]`);
-      if (row) applyTo(row);
+      const k = CSS.escape(key);
+      // The row and, for a tool call, its body (a sibling).
+      for (const el of content.querySelectorAll(`[data-row="${k}"], [data-row-body="${k}"]`))
+        applyTo(el);
     }
   }, [tabKey, applyTo]);
-  const onRowFocus = useCallback((k: string) => setActiveKey(k), []);
+  const onRowFocus = useCallback((k: string) => {
+    activeKeyRef.current = k;
+    focusedEl.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setActiveKey(k);
+  }, []);
   const toggle = useCallback(
-    (k: string) =>
+    (k: string, inner?: readonly string[]) =>
       setExpanded((s) => {
         const n = new Set(s);
-        if (n.has(k)) n.delete(k);
-        else n.add(k);
+        if (inner) {
+          // A group (U3 §9.4): open while it or a call is (`groupOpen`), so closing it collapses its
+          // calls too; opening it opens only the group.
+          // A call's inner-key mirror goes too, so a stale one can't reopen a later group.
+          if (n.has(k) || inner.some((c) => n.has(c)))
+            for (const x of [k, ...inner, ...inner.map(innerKey)]) n.delete(x);
+          else n.add(k);
+          return n;
+        }
+        // A call's key also keys its copy as a group's first call, so an expanded call stays open
+        // when it becomes one (U3 §9.4). Nothing else is keyed by the inner key.
+        const open = !n.has(k);
+        for (const x of k.startsWith(innerKey("")) ? [k] : [k, innerKey(k)]) {
+          if (open) n.add(x);
+          else n.delete(x);
+        }
         return n;
       }),
     [],
@@ -349,17 +390,23 @@ export function Timeline(props: {
   );
 }
 
-/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq, and a merged failure
- *  its first while holding later ones (the Jump pill compares its last). */
+/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq, and a folded run or a
+ *  merged failure its first while holding later ones (the Jump pill compares the last). */
 function maxSeq(rows: Row[]): number {
   let max = 0;
   for (const r of rows) max = Math.max(max, r.seq, heldSeqs(r)?.at(-1) ?? 0);
   return max;
 }
 
-/** Only rows that are mounted: children of collapsed rows are not. */
+/** Only rows that are mounted: children of collapsed rows are not. A group is open through its own
+ *  key or any call's (`groupOpen`). */
 const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>): boolean =>
-  rows.some((r) => r.key === key || (expanded.has(r.key) && hasKey(childrenOf(r), key, expanded)));
+  rows.some(
+    (r) =>
+      r.key === key ||
+      ((r.kind === "work_group" ? groupOpen(r, expanded) : expanded.has(r.key)) &&
+        hasKey(childrenOf(r), key, expanded)),
+  );
 
 /** True when the row shows the envelope (or one of its merged ids / parts). */
 function rowHasMessage(row: Row, id: string): boolean {
@@ -370,6 +417,9 @@ function rowHasMessage(row: Row, id: string): boolean {
   if (row.kind === "peer") return has(row.envelope);
   return false;
 }
+
+const containsKey = (row: Row, key: string): boolean =>
+  childrenOf(row).some((c) => c.key === key || containsKey(c, key));
 
 const containsSeq = (rows: readonly Row[], seq: number): boolean =>
   rows.some(
@@ -384,9 +434,14 @@ export function targetPath(rows: Row[], seq: number): string[] | undefined {
   if (top === undefined) return undefined;
   const path = [top];
   let row = rows.find((r) => r.key === top);
-  while (row && row.seq !== seq && !heldSeqs(row)?.includes(seq)) {
+  // A group shares its first call's seq but lands on the call itself (U3 §9.4).
+  while (row && (row.kind === "work_group" || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
     const kids = childrenOf(row);
-    row = kids.find((c) => c.seq === seq) ?? kids.find((c) => containsSeq(childrenOf(c), seq));
+    row =
+      kids.find((c) => c.seq === seq) ??
+      kids.find((c) => containsSeq(childrenOf(c), seq)) ??
+      // A hidden event between a group's calls: the next call, as at the top level.
+      (row.kind === "work_group" ? kids.find((c) => c.seq > seq) : undefined);
     if (row) path.push(row.key);
   }
   return path;
@@ -399,7 +454,8 @@ export function targetRowKey(rows: Row[], seq: number): string | undefined {
   return (
     rows.find((r) => r.seq === seq)?.key ??
     rows.find((r) => heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq))?.key ??
-    rows.find((r) => r.seq > seq)?.key ??
+    // A group or merged failure holding a later seq is nearer than the next row.
+    rows.find((r) => r.seq > seq || (heldSeqs(r)?.at(-1) ?? 0) > seq)?.key ??
     rows.at(-1)?.key
   );
 }

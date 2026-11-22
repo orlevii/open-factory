@@ -1,0 +1,80 @@
+import { useId } from "react";
+import type { ToolRow } from "../rows";
+import { OutputPlate, OutputTail, ShowInput, TruncatedNote } from "./parts";
+
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+
+function bashInput(input: unknown) {
+  const i = (input ?? {}) as Record<string, unknown>;
+  return { command: str(i.command), description: str(i.description).trim() };
+}
+
+/** Collapsed: the description, then the command muted and truncating on the same line; with no
+ *  description, `$ command` (spec §9.2). */
+function BashSummary({ row }: { row: ToolRow }) {
+  const { command, description } = bashInput(row.call.input);
+  if (!description)
+    return <span className="min-w-0 flex-1 truncate font-mono text-[0.8125rem]">$ {command}</span>;
+  return (
+    <>
+      <span className="min-w-0 truncate">{description}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] text-muted-foreground">
+        {command}
+      </span>
+    </>
+  );
+}
+
+/** stdout and stderr apart, when the result's `meta.stderr` ends its content (the CLI appends it). */
+function splitStderr(row: ToolRow): { output: string; stderr?: string } {
+  const content = row.result?.content ?? "";
+  const meta = row.result?.meta;
+  const stderr = meta?.tool === "Bash" ? meta.stderr : undefined;
+  if (!stderr || !content.endsWith(stderr)) return { output: content };
+  return { output: content.slice(0, content.length - stderr.length), stderr };
+}
+
+/** The command adds to the collapsed line when it is multi-line, longer than the row shows at the
+ *  usual width (80 characters, the description beside it or not), or was capped. */
+const commandAdds = (row: ToolRow, command: string) =>
+  command.includes("\n") ||
+  command.length > 80 ||
+  Object.keys(row.truncated ?? {}).some((k) => k.startsWith("input."));
+
+/** Expanded: the output's tail first, stderr in its own plate, then the command behind "Show input"
+ *  when it adds something (spec §9.2). Before the result lands, the command itself. */
+function BashBody({ row }: { row: ToolRow }) {
+  const { command } = bashInput(row.call.input);
+  const { output, stderr } = splitStderr(row);
+  const stderrId = useId();
+  const input = (
+    <>
+      <OutputPlate>{`$ ${command}`}</OutputPlate>
+      <TruncatedNote row={row} prefix="input." />
+    </>
+  );
+  if (!row.result) return input;
+  return (
+    <>
+      {output.trim() ? (
+        <OutputTail text={output} />
+      ) : (
+        !stderr && <p className="text-[0.8125rem] text-muted-foreground">No output</p>
+      )}
+      {stderr && (
+        // The label names its plate for assistive technology too.
+        // biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls, not an output plate
+        <div role="group" aria-labelledby={stderrId}>
+          <p id={stderrId} className="text-[0.8125rem] leading-[1.125rem] text-destructive/80">
+            stderr
+          </p>
+          <OutputTail text={stderr} />
+        </div>
+      )}
+      <TruncatedNote row={row} prefix="result." />
+      {commandAdds(row, command) && <ShowInput>{input}</ShowInput>}
+    </>
+  );
+}
+
+export const bashRenderer = { Summary: BashSummary, Body: BashBody };

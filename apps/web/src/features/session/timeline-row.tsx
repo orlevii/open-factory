@@ -6,16 +6,19 @@ import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { CompactionMarker } from "./compaction-marker";
+import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
+import { NestedRow } from "./row-chrome";
 import { isNoticeKind, type Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
 import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
+import { WorkGroup } from "./work-group";
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono">{children}</span>
@@ -259,12 +262,16 @@ export interface TimelineRowProps {
   spawned?: boolean;
   row: Row;
   expanded: ReadonlySet<string>;
-  toggle(key: string): void;
+  /** Flips a row's key; for a group, `inner` names its calls: closing it collapses them too. */
+  toggle(key: string, inner?: readonly string[]): void;
   rowProps(row: Row): Record<string, unknown>;
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
-  /** A top-level tool row's time, in its own line on hover or focus (U3 §7.5); never its children's. */
+  /** A tool row's time, in its own line on hover or focus (U3 §7.5): a top-level row's or a folded
+   *  run's call's, never a tool's nested children's. */
   toolTime?: string;
+  /** The row is a folded run's call (`NestedRow`): its time follows its own box's hover and focus. */
+  nested?: boolean;
 }
 
 export function TimelineRow(props: TimelineRowProps) {
@@ -352,12 +359,45 @@ export function TimelineRow(props: TimelineRowProps) {
           onToggle={() => toggle(row.key)}
           rowProps={rp}
           time={props.toolTime}
+          nested={props.nested}
         >
           {row.children.map((c) => (
-            <TimelineRow key={c.key} {...props} toolTime={undefined} row={c} />
+            <TimelineRow key={c.key} {...props} toolTime={undefined} nested={false} row={c} />
           ))}
         </ToolCallRow>
       );
+    case "work_group": {
+      const open = groupOpen(row, expanded);
+      return (
+        <WorkGroup
+          row={row}
+          open={open}
+          onToggle={() =>
+            toggle(
+              row.key,
+              row.children.map((c) => c.key),
+            )
+          }
+          rowProps={rp}
+        >
+          {open &&
+            row.children.map((c) => (
+              // Each call keeps its own ⋯ (U3 §7.5) and, like a top-level tool row, its time in its
+              // own line; its tab stop is rowProps'.
+              <NestedRow
+                key={c.key}
+                row={c}
+                slug={props.slug}
+                focusable={rowProps(c).tabIndex === 0}
+                callShown={expanded.has(c.key)}
+                onToggleCall={() => toggle(c.key)}
+              >
+                <TimelineRow {...props} row={c} toolTime={c.at} nested />
+              </NestedRow>
+            ))}
+        </WorkGroup>
+      );
+    }
     case "orphan_result":
       return <QuietLine rowProps={rp}>Result for an earlier call</QuietLine>;
     case "compaction":

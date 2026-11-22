@@ -1,7 +1,7 @@
 import type { HarnessEvent } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
 import { readFixture } from "../test-fixtures.ts";
-import { BlockIndexer, type LiveEvent } from "./live.ts";
+import { BlockIndexer, createStreamState, type LiveEvent, mapStreamEvent } from "./live.ts";
 import { createMapperState, flushMapper, mapLine } from "./mapper.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: fixture lines are parsed JSON
@@ -209,5 +209,89 @@ describe("BlockIndexer", () => {
     expect(b.indexFor("other", 0)).toBe(0);
     b.reset();
     expect(b.indexFor("m", 0)).toBe(0);
+  });
+});
+
+describe("BlockIndexer keeps subagent messages across a main turn_end", () => {
+  const sub = (text: string): Line => ({
+    type: "assistant",
+    parent_tool_use_id: "toolu_agent",
+    message: { id: "msg_sub", model: "m", content: [{ type: "text", text }] },
+  });
+  const result: Line = { type: "result", subtype: "success", is_error: false, num_turns: 1 };
+
+  test("two text blocks of one subagent message split by a main result get distinct keys", () => {
+    const s = createMapperState({ resumed: false });
+    const init: Line = { type: "system", subtype: "init", session_id: "s", model: "m" };
+    const all = [init, sub("first"), result, sub("second")].map((l, i) => mapLine(l, s, i + 1));
+    // the result really ends a main turn in between
+    expect(all[2]?.events.some((e) => e.type === "turn_end")).toBe(true);
+    const keys = all
+      .flatMap((m) => m.events)
+      .filter((e) => e.type === "assistant_text")
+      .map((e) => [e.messageId, e.blockIndex]);
+    expect(keys).toEqual([
+      ["msg_sub", 0],
+      ["msg_sub", 1],
+    ]);
+  });
+
+  test("main-session messages still reset at turn_end; a finished subagent is forgotten", () => {
+    const b = new BlockIndexer();
+    b.seeLine("main", 2);
+    b.seeLine("sub", 1, "toolu_agent");
+    b.reset();
+    expect(b.indexFor("main", 0)).toBe(0);
+    expect(b.indexFor("sub", 0)).toBe(1);
+    b.forgetParent("toolu_agent");
+    expect(b.indexFor("sub", 0)).toBe(0);
+  });
+
+  test("the subagent's task_notification forgets its messages", () => {
+    const s = createMapperState({ resumed: false });
+    mapLine(sub("first"), s, 1);
+    mapLine(
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "t1",
+        tool_use_id: "toolu_agent",
+        status: "completed",
+        summary: "",
+      },
+      s,
+      2,
+    );
+    expect(s.blocks.indexFor("msg_sub", 0)).toBe(0);
+  });
+});
+
+describe("tool_input buffering", () => {
+  test("stops holding the partial input once the target is known; bytes keep counting", () => {
+    const st = createStreamState();
+    const ev = (event: Line): Line => ({ type: "stream_event", api_message_id: "m1", event });
+    mapStreamEvent(
+      ev({
+        type: "content_block_start",
+        index: 1,
+        content_block: { type: "tool_use", id: "t", name: "Write" },
+      }),
+      st,
+    );
+    const delta = (partial_json: string) =>
+      mapStreamEvent(
+        ev({
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json },
+        }),
+        st,
+      );
+    delta('{"file_path":"/a.md",');
+    const out = delta('"content":"hello"}');
+    expect(out).toEqual([
+      { type: "tool_input", messageId: "m1", index: 1, bytes: 39, target: "/a.md" },
+    ]);
+    expect(st.tools.get(1)?.json).toBe("");
   });
 });

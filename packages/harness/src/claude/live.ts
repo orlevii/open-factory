@@ -28,21 +28,40 @@ export type LiveEvent = LiveEventBody & { line: number };
 /**
  * The reconcile key's index (U3 §11.1): a block's index in its API message is the content blocks
  * seen on earlier `assistant` lines with that id (including the thinking and empty-text blocks the
- * mapper drops) plus its position in this line. Cleared at `turn_end`.
+ * mapper drops) plus its position in this line. Cleared at `turn_end`, except for subagent
+ * messages (lines with `parent_tool_use_id`): a background subagent's message can straddle the
+ * main turn's end, so its count is kept until that subagent finishes (`forgetParent`).
  */
 export class BlockIndexer {
   private readonly seen = new Map<string, number>();
+  /** Subagent message ids, by the parent tool call that runs them. */
+  private readonly parented = new Map<string, Set<string>>();
 
   indexFor(messageId: string, positionInLine: number): number {
     return (this.seen.get(messageId) ?? 0) + positionInLine;
   }
 
-  seeLine(messageId: string, blocks: number): void {
+  seeLine(messageId: string, blocks: number, parentToolUseId?: string): void {
     this.seen.set(messageId, (this.seen.get(messageId) ?? 0) + blocks);
+    if (parentToolUseId === undefined) return;
+    const ids = this.parented.get(parentToolUseId) ?? new Set<string>();
+    this.parented.set(parentToolUseId, ids);
+    ids.add(messageId);
   }
 
+  /** Turn end: forgets every main-session message; subagent messages keep their counts. */
   reset(): void {
-    this.seen.clear();
+    const keep = new Set<string>();
+    for (const ids of this.parented.values()) for (const id of ids) keep.add(id);
+    for (const id of this.seen.keys()) if (!keep.has(id)) this.seen.delete(id);
+  }
+
+  /** A subagent finished: its messages are complete, so their counts can go. */
+  forgetParent(parentToolUseId: string): void {
+    const ids = this.parented.get(parentToolUseId);
+    if (!ids) return;
+    for (const id of ids) this.seen.delete(id);
+    this.parented.delete(parentToolUseId);
   }
 }
 
@@ -155,9 +174,11 @@ export function mapStreamEvent(line: Json, st: StreamState): LiveEventBody[] {
         const t = st.tools.get(index);
         const chunk = String(d.partial_json ?? "");
         if (!t || !chunk) return [];
-        t.json += chunk;
+        // Once the target is known only the byte count matters: stop holding the input.
+        if (t.target === undefined) t.json += chunk;
         t.bytes += enc.encode(chunk).length;
         scanTarget(t);
+        if (t.target !== undefined) t.json = "";
         return [
           {
             type: "tool_input",

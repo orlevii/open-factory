@@ -353,6 +353,21 @@ test("events are stamped with increasing stdout line numbers; the shape is uncha
   expect(p.lineOf({ type: "turn_started" })).toBeUndefined();
 });
 
+test("a non-JSON stdout line consumes a line number", async () => {
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t, { debug() {}, warn() {}, error() {} });
+  t.emitStdout(
+    JSON.stringify({ type: "system", subtype: "init", session_id: "s", model: "m" }),
+    "not json",
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "a" }] } }),
+  );
+  t.exitWith(0);
+  const events: HarnessEvent[] = [];
+  await collectUntil(p.events, () => false, events);
+  const text = events.find((e) => e.type === "assistant_text");
+  expect(text && p.lineOf(text)).toBe(3);
+});
+
 test("the live queue exists and ends with the process", async () => {
   const t = new FakeTransport();
   const p = new ClaudeProcess(spec("c"), {}, t);

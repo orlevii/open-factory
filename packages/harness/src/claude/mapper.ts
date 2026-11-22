@@ -207,6 +207,7 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
       ];
     case "task_notification": {
       const id = String(e.task_id);
+      if (e.tool_use_id) s.blocks.forgetParent(String(e.tool_use_id));
       if (s.foregroundTasks.delete(id)) return [];
       const u = e.usage;
       const usage =
@@ -323,7 +324,12 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
     }
     // thinking blocks are dropped (all S0 thinking blocks are empty)
   });
-  if (id) s.blocks.seeLine(id, content.length);
+  if (id)
+    s.blocks.seeLine(
+      id,
+      content.length,
+      e.parent_tool_use_id ? String(e.parent_tool_use_id) : undefined,
+    );
   if (msg.stop_reason === "refusal")
     out.push(...errorOnce(s, "refusal", "The model refused this request."));
   return out;

@@ -1,25 +1,15 @@
-import { ApiError } from "@open-factory/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { createQueryClient } from "./lib/query-client";
 import { initTheme } from "./lib/theme";
 import { createAppRouter } from "./router";
 import "./styles.css";
 
 initTheme();
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // Loader-prefetched data is fresh on mount instead of refetched; WebSocket events invalidate
-      // whatever changes on the server, so a short window is enough.
-      staleTime: 30_000,
-      // A 4xx won't change on retry: show it now. Network and 5xx failures still retry.
-      retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 3,
-    },
-  },
-});
+const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);
 
 const root = document.getElementById("root");

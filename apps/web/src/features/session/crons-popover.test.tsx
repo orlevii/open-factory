@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { browserZone } from "@/features/schedules/format";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
@@ -129,6 +129,29 @@ test("Stop closes the popover, opens the confirmation with Cancel focused, then 
     expect(api.calls.some((c) => c.url === "/api/agents/dev/stop-crons")).toBe(true),
   );
   expect(await screen.findByText("Stopped @dev's crons.")).toBeInTheDocument();
+});
+
+test("the confirmation's focus return does nothing once the strip has unmounted", async () => {
+  mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
+  // A composer outside the strip's tree, standing in for the next page's (or the next test's).
+  const other = document.body.appendChild(document.createElement("div"));
+  other.id = "composer";
+  const textarea = other.appendChild(document.createElement("textarea"));
+  onTestFinished(() => other.remove());
+  const { unmount } = strip();
+  const u = userEvent.setup();
+  await u.click(await screen.findByRole("button", { name: "2 crons: show and stop" }));
+  await u.click(await screen.findByRole("button", { name: "Stop 2 crons" }));
+  await u.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Stop 2 crons" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  // Radix calls onCloseAutoFocus on a timer after the dialog unmounts, and the strip defers the
+  // focus to the next frame: both land after this unmount.
+  unmount();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  expect(textarea).not.toHaveFocus();
 });
 
 test("a pending stop is announced as pending; no_crons and stopping count as done; other failures stay in the dialog", async () => {

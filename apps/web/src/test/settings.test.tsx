@@ -144,6 +144,17 @@ test("sections are Usage, Credentials, Secrets, Projects, Users, Factory, each w
   expect(screen.queryByText("Nothing to configure yet.")).not.toBeInTheDocument();
 });
 
+test("cold entry fetches each settings list once: the loader's answer is reused on mount", async () => {
+  const { api } = world();
+  renderApp("/settings", alice);
+  await section("Credentials");
+  await section("Projects");
+  const count = (path: string) => api.calls.filter((c) => c.url === path).length;
+  expect(count("/api/credentials")).toBe(1);
+  expect(count("/api/secrets")).toBe(1);
+  expect(count("/api/projects")).toBe(1);
+});
+
 test("add credential: kind radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
   let release: (r: Response) => void = () => {};
   const { api, state } = world({

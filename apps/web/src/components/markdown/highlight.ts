@@ -34,6 +34,11 @@ const make = () => import("shiki/langs/make.mjs");
 const scss = () => import("shiki/langs/scss.mjs");
 const ini = () => import("shiki/langs/ini.mjs");
 const lua = () => import("shiki/langs/lua.mjs");
+const shellsession = () => import("shiki/langs/shellsession.mjs");
+const powershell = () => import("shiki/langs/powershell.mjs");
+const hcl = () => import("shiki/langs/hcl.mjs");
+const proto = () => import("shiki/langs/proto.mjs");
+const dotenv = () => import("shiki/langs/dotenv.mjs");
 
 type GrammarLoader = () => Promise<{ default: LanguageInput }>;
 
@@ -47,7 +52,7 @@ add("javascript", javascript, ["js", "mjs", "cjs"]);
 add("jsx", jsx);
 add("json", json);
 add("jsonc", jsonc, ["json5"]);
-add("shellscript", shell, ["bash", "sh", "shell", "zsh", "console"]);
+add("shellscript", shell, ["bash", "sh", "shell", "zsh"]);
 add("python", python, ["py"]);
 add("diff", diff, ["patch"]);
 add("yaml", yaml, ["yml"]);
@@ -73,6 +78,11 @@ add("make", make, ["makefile"]);
 add("scss", scss);
 add("ini", ini, ["properties"]);
 add("lua", lua);
+add("shellsession", shellsession, ["console"]);
+add("powershell", powershell, ["ps1"]);
+add("hcl", hcl, ["terraform"]);
+add("proto", proto);
+add("dotenv", dotenv, ["env"]);
 
 /** The grammar id for a fence language, or undefined when we don't highlight it. */
 export function resolveLang(lang: string): string | undefined {
@@ -85,18 +95,19 @@ const THEMES = { light: "github-light", dark: "github-dark" } as const;
 // shipping Oniguruma's WASM.
 let highlighter: Promise<HighlighterCore> | undefined;
 function getHighlighter() {
-  highlighter ??= Promise.all([import("shiki/core"), import("shiki/engine/javascript")]).then(
-    ([{ createHighlighterCore }, { createJavaScriptRegexEngine }]) =>
+  // A failed chunk load shouldn't poison every later attempt, so the reset is attached once, with the promise.
+  highlighter ??= Promise.all([import("shiki/core"), import("shiki/engine/javascript")])
+    .then(([{ createHighlighterCore }, { createJavaScriptRegexEngine }]) =>
       createHighlighterCore({
         themes: [import("shiki/themes/github-light.mjs"), import("shiki/themes/github-dark.mjs")],
         langs: [],
         engine: createJavaScriptRegexEngine(),
       }),
-  );
-  // A failed chunk load shouldn't poison every later attempt.
-  highlighter.catch(() => {
-    highlighter = undefined;
-  });
+    )
+    .catch((e) => {
+      highlighter = undefined;
+      throw e;
+    });
   return highlighter;
 }
 

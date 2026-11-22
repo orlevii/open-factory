@@ -123,7 +123,9 @@ export function AgentForm(props: Props) {
     content: ReactNode;
   }>();
   const [pending, setPending] = useState(false);
-  const [slow, setSlow] = useState(false);
+  /** Submit attempts, so a slow flag belongs to one attempt and a resubmit starts without it. */
+  const [attempt, setAttempt] = useState(0);
+  const [firedFor, setFiredFor] = useState<number | null>(null);
   const form = useRef<HTMLFormElement>(null);
 
   const templates = useQuery({ ...templatesQueryOptions, enabled: create });
@@ -175,13 +177,11 @@ export function AgentForm(props: Props) {
   // "Installing plugins…" after 3 s of creating, only when the template installs any.
   const pluginCount = create ? (config?.plugins.length ?? 0) : 0;
   useEffect(() => {
-    if (!pending || pluginCount === 0) {
-      setSlow(false);
-      return;
-    }
-    const t = setTimeout(() => setSlow(true), 3000);
+    if (!pending || pluginCount === 0) return;
+    const t = setTimeout(() => setFiredFor(attempt), 3000);
     return () => clearTimeout(t);
-  }, [pending, pluginCount]);
+  }, [pending, pluginCount, attempt]);
+  const slow = pending && pluginCount > 0 && firedFor === attempt;
 
   function check(f: Field, v: Values): string | undefined {
     switch (f) {
@@ -296,6 +296,7 @@ export function AgentForm(props: Props) {
       setOutcome({ tone: "success", content: "Nothing to save: no field changed." });
       return;
     }
+    setAttempt((n) => n + 1);
     setPending(true);
     try {
       if (props.mode === "create") {

@@ -1,9 +1,27 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
+import { afterEach, expect } from "vitest";
 import type { Session } from "@/lib/auth-client";
+import { createQueryClient } from "@/lib/query-client";
 import { sessionQueryOptions } from "@/lib/session";
 import { createAppRouter } from "@/router";
+
+type AppRouter = ReturnType<typeof createAppRouter>;
+const rendered = new Set<AppRouter>();
+
+// A test can end on an assertion made while a navigation is still loading (the location changes when
+// it starts; the route chunk and loaders come after). Left running, it commits after this file's
+// jsdom is torn down and React throws "window is not defined" as an unhandled rejection, which fails
+// the run. So each test's navigations settle before cleanup unmounts it (after-hooks run in reverse,
+// so this runs before the setup file's cleanup).
+afterEach(async () => {
+  const routers = [...rendered];
+  rendered.clear();
+  await waitFor(() => {
+    for (const router of routers) expect(router.state.status).toBe("idle");
+  });
+});
 
 export const alice = {
   user: { id: "u1", name: "Alice", handle: "alice", email: "alice@example.com" },
@@ -13,9 +31,10 @@ export const alice = {
 /** Renders the real route tree at `path` with the session query pre-seeded. `undefined` leaves the
  *  query empty, so the guard really calls the (mocked) auth client. */
 export function renderApp(path: string, session: Session | null | undefined) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = createQueryClient({ queries: { retry: false } });
   if (session !== undefined) queryClient.setQueryData(sessionQueryOptions.queryKey, session);
   const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: [path] }));
+  rendered.add(router);
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />

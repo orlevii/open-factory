@@ -1,13 +1,10 @@
-import { ApiError, type SecretSummary, secretNameSchema } from "@open-factory/shared";
+import { ApiError, type SecretSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Plus } from "lucide-react";
-import { type ChangeEvent, type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
-import { FieldShell } from "@/components/field-shell";
-import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
-import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import { deleteSecret, putSecret, secretsQueryOptions } from "@/features/settings/api";
 import {
@@ -24,147 +21,11 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
+import { AddSecretForm, ValueField } from "./forms/add-secret-form";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
 const withNote = (head: string, users: string[]) => `${head} ${restartNote(users)}`.trim();
-
-function ValueField({
-  name,
-  label,
-  value,
-  error,
-  onChange,
-  onBlur,
-}: {
-  name: string;
-  label: string;
-  value: string;
-  error?: string;
-  onChange(v: string): void;
-  onBlur?(): void;
-}) {
-  return (
-    <FieldShell name={name} label={label} error={error}>
-      {(a) => (
-        <PasswordInput
-          id={a.id}
-          name={name}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          spellCheck={false}
-          aria-invalid={a.invalid || undefined}
-          aria-describedby={a.describedBy}
-        />
-      )}
-    </FieldShell>
-  );
-}
-
-function AddSecretForm({
-  initialName,
-  existing,
-  onDone,
-  onCancel,
-}: {
-  initialName: string;
-  existing: string[];
-  onDone(s: SecretSummary): void;
-  onCancel(): void;
-}) {
-  const [name, setName] = useState(initialName);
-  const [value, setValue] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; value?: string }>({});
-  const [formError, setFormError] = useState<string>();
-  const [pending, setPending] = useState(false);
-
-  const checkName = (n: string) => {
-    const r = secretNameSchema.safeParse(n);
-    if (!r.success) return r.error.issues[0]?.message;
-    return existing.includes(n)
-      ? `A secret named ${n} already exists. Use Update to change its value.`
-      : undefined;
-  };
-  const checkValue = (v: string) => (v === "" ? "Enter a value." : undefined);
-  const focus = (f: "name" | "value") => document.getElementById(`field-secret-${f}`)?.focus();
-
-  // Uppercase as the user types, keeping the caret where it was: the DOM value is set first,
-  // so React finds it already matching and leaves the selection alone.
-  const onName = (e: ChangeEvent<HTMLInputElement>) => {
-    const el = e.target;
-    const up = el.value.toUpperCase();
-    if (up !== el.value) {
-      const { selectionStart: s, selectionEnd: t } = el;
-      el.value = up;
-      el.setSelectionRange(s, t);
-    }
-    setName(up);
-    setErrors((x) => ({ ...x, name: undefined }));
-  };
-
-  async function submit() {
-    const found = { name: checkName(name), value: checkValue(value) };
-    setErrors(found);
-    setFormError(undefined);
-    if (found.name || found.value) return focus(found.name ? "name" : "value");
-    setPending(true);
-    try {
-      onDone(await putSecret(name, value));
-    } catch (err) {
-      if (!(err instanceof ApiError)) return setFormError("Couldn't add the secret. Try again.");
-      // Server field errors land under their fields whatever the code; a reserved name is a
-      // Name error even when the server sends no `fields`.
-      const fields = (err.body.fields ?? {}) as Record<string, string | undefined>;
-      if (err.code === "secret_name_reserved" && !fields.name) fields.name = err.message;
-      if (fields.name || fields.value) {
-        setErrors({ name: fields.name, value: fields.value });
-        focus(fields.name ? "name" : "value");
-      } else setFormError(err.message);
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <InlineForm
-      label="Add secret"
-      onSubmit={() => void submit()}
-      onCancel={onCancel}
-      submitLabel="Add secret"
-      pendingLabel="Adding…"
-      pending={pending}
-      formError={formError}
-      autoFocusId={initialName ? "field-secret-value" : undefined}
-      reveal={Boolean(initialName)}
-    >
-      <FormField
-        name="secret-name"
-        label="Name"
-        help="Uppercase letters, numbers and underscores, like GH_TOKEN."
-        error={errors.name}
-        value={name}
-        onChange={onName}
-        onBlur={() => setErrors((x) => ({ ...x, name: checkName(name) }))}
-        autoComplete="off"
-        autoCapitalize="characters"
-        spellCheck={false}
-        className="font-mono"
-      />
-      <ValueField
-        name="secret-value"
-        label="Value"
-        value={value}
-        error={errors.value}
-        onChange={(v) => {
-          setValue(v);
-          setErrors((x) => ({ ...x, value: undefined }));
-        }}
-        onBlur={() => setErrors((x) => ({ ...x, value: checkValue(value) }))}
-      />
-    </InlineForm>
-  );
-}
 
 function UpdateForm({
   secret,
@@ -374,6 +235,7 @@ export function SecretsSection({ addSecret }: { addSecret?: string }) {
           name would be silently overwritten instead of refused on the Name field. */}
       {!data ? null : adding ? (
         <AddSecretForm
+          frame="inline"
           // A later ?addSecret remounts the open form with the new name and refocuses Value.
           key={prefill}
           initialName={prefill}

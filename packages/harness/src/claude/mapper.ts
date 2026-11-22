@@ -1,4 +1,4 @@
-import type { HarnessEvent } from "@open-factory/shared";
+import { type HarnessEvent, type ToolMeta, toolMetaSchema } from "@open-factory/shared";
 
 // Stream-json is untyped JSON from another program; read it defensively.
 // biome-ignore lint/suspicious/noExplicitAny: stream-json lines are parsed JSON
@@ -269,6 +269,103 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
   return out;
 }
 
+/** Spec §9.1: meta stays small whatever the tool printed. */
+const HUNKS_CAP_BYTES = 32 * 1024;
+const STDERR_CAP_BYTES = 16 * 1024;
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+/** At most `cap` bytes of UTF-8, never splitting a code point. */
+function cutBytes(s: string, cap: number): string {
+  const bytes = enc.encode(s);
+  if (bytes.length <= cap) return s;
+  let end = cap;
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--; // back off continuation bytes
+  return dec.decode(bytes.subarray(0, end));
+}
+
+/** Hunks in order until the array would pass 32 KiB serialized; the rest is dropped and marked. */
+function boundedHunks(patch: unknown[]): { hunks: unknown[]; partial?: true } {
+  const hunks: unknown[] = [];
+  let size = 2; // "[]"
+  for (const h of patch) {
+    const add = enc.encode(JSON.stringify(h)).length + (hunks.length ? 1 : 0); // "," between
+    if (size + add > HUNKS_CAP_BYTES) return { hunks, partial: true };
+    size += add;
+    hunks.push(h);
+  }
+  return { hunks };
+}
+
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const defined = <T extends object>(o: T) =>
+  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+
+/**
+ * Per-tool meta from a result's `tool_use_result` (spec §9.1). Picks named fields only, so
+ * `originalFile`, `file.base64` and `file.content` are never copied; anything that does not
+ * fit the shared schema (an error string, a renamed field) yields no meta.
+ */
+export function toolMetaOf(name: string, r: unknown): ToolMeta | undefined {
+  if (!r || typeof r !== "object" || Array.isArray(r)) return undefined;
+  const j = r as Json;
+  let meta: unknown;
+  const patched = Array.isArray(j.structuredPatch);
+  switch (name) {
+    case "Edit":
+    case "MultiEdit":
+      if (patched) meta = { tool: name, ...boundedHunks(j.structuredPatch) };
+      break;
+    case "Write":
+      if (patched) meta = { tool: "Write", type: j.type, ...boundedHunks(j.structuredPatch) };
+      break;
+    case "Bash":
+      meta = defined({
+        tool: "Bash",
+        interrupted: j.interrupted === true,
+        backgroundTaskId: typeof j.backgroundTaskId === "string" ? j.backgroundTaskId : undefined,
+        stderr:
+          typeof j.stderr === "string" && j.stderr
+            ? cutBytes(j.stderr, STDERR_CAP_BYTES)
+            : undefined,
+      });
+      break;
+    case "Read": {
+      const f = j.file ?? {};
+      if (j.type === "text")
+        meta = {
+          tool: "Read",
+          kind: "text",
+          startLine: f.startLine,
+          numLines: f.numLines,
+          totalLines: f.totalLines,
+        };
+      else if (j.type === "image")
+        meta = defined({
+          tool: "ReadImage",
+          bytes: f.originalSize,
+          width: num(f.dimensions?.originalWidth ?? f.dimensions?.displayWidth),
+          height: num(f.dimensions?.originalHeight ?? f.dimensions?.displayHeight),
+        });
+      break;
+    }
+    case "Agent": {
+      const agent = defined({
+        tool: "Agent" as const,
+        async: j.isAsync === true || j.status === "async_launched" ? true : undefined,
+        toolUses: num(j.totalToolUseCount),
+        tokens: num(j.totalTokens),
+        durationMs: num(j.totalDurationMs),
+      });
+      if (Object.keys(agent).length > 1) meta = agent;
+      break;
+    }
+  }
+  if (meta === undefined) return undefined;
+  const parsed = toolMetaSchema.safeParse(meta);
+  return parsed.success ? parsed.data : undefined;
+}
+
 const stripToolUseError = (t: string) => t.replace(/<\/?tool_use_error>/g, "").trim();
 
 function user(e: Json, s: MapperState): HarnessEvent[] {
@@ -276,6 +373,8 @@ function user(e: Json, s: MapperState): HarnessEvent[] {
   const content = e.message?.content;
   if (!Array.isArray(content)) return [];
   const out: HarnessEvent[] = [];
+  // `tool_use_result` belongs to the line, so it can only be attributed when the line holds one result.
+  const single = content.filter((b: Json) => b?.type === "tool_result").length === 1;
   for (const b of content) {
     if (b.type !== "tool_result") continue; // plain user text (interrupt notes, synthetic text) is dropped
     const meta = Array.isArray(e.tool_result_meta)
@@ -292,11 +391,13 @@ function user(e: Json, s: MapperState): HarnessEvent[] {
         reason: stripToolUseError(textOf(b.content)) || "Denied by a permission rule",
       });
     }
+    const toolMeta = single ? toolMetaOf(s.toolNames.get(id) ?? "", e.tool_use_result) : undefined;
     out.push({
       type: "tool_result",
       toolUseId: String(b.tool_use_id),
       content: textOf(b.content),
       isError: b.is_error === true,
+      ...(toolMeta ? { meta: toolMeta } : {}),
       ...parentOf(e),
     });
     const r = e.tool_use_result;

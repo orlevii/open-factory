@@ -3,6 +3,7 @@ import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Button } from "@/components/ui/button";
+import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import {
   AdaptiveMenu,
@@ -517,4 +518,61 @@ test("the visible trigger keeps its element across an anchored then a plain open
   fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await waitFor(() => expect(more()).toHaveFocus());
+});
+
+/** A long-pressable row whose ⋯ isn't rendered on this pointer (it can't take focus), as a touch-only row. */
+function RowWithHiddenTrigger() {
+  const [menu, setMenu] = useState<{ open: boolean; anchor?: { x: number; y: number } }>({ open: false });
+  return (
+    <div data-longpress-region="">
+      <a href="#row">Priya's row</a>
+      <button type="button" onClick={() => setMenu({ open: true, anchor: { x: 40, y: 120 } })}>
+        Long-press
+      </button>
+      <AdaptiveMenu
+        title="Priya Nair"
+        open={menu.open}
+        onOpenChange={(open) => setMenu((m) => (open ? { open } : { ...m, open }))}
+        anchor={menu.anchor}
+      >
+        <AdaptiveMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Actions for Priya Nair"
+            // jsdom focuses anything; a browser won't focus a ⋯ that is display:none.
+            ref={(el) => {
+              if (el) el.focus = () => {};
+            }}
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </Button>
+        </AdaptiveMenuTrigger>
+        <AdaptiveMenuContent>
+          <AdaptiveMenuItem onSelect={() => {}}>Edit</AdaptiveMenuItem>
+        </AdaptiveMenuContent>
+      </AdaptiveMenu>
+    </div>
+  );
+}
+const rowLink = () => screen.getByRole("link", { name: "Priya's row", hidden: true });
+
+test("anchored dropdown: when the ⋯ can't take focus, closing returns it to the pressed row", async () => {
+  desktop();
+  render(<RowWithHiddenTrigger />);
+  fireEvent.click(screen.getByRole("button", { name: "Long-press" }));
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(rowLink()).toHaveFocus());
+});
+
+test("drawer: when the ⋯ can't take focus, closing returns it to the pressed row", async () => {
+  phone();
+  render(<RowWithHiddenTrigger />);
+  fireEvent.click(screen.getByRole("button", { name: "Long-press" }));
+  const content = document.querySelector("[data-slot=drawer-content]") as HTMLElement;
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  endAnimation(content);
+  await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
+  await waitFor(() => expect(rowLink()).toHaveFocus());
 });

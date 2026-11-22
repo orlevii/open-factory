@@ -17,6 +17,7 @@ import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
 import { applyStatusFrames } from "@/features/agents/status-frames";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { createQueryClient } from "@/lib/query-client";
+import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
 import { agentSummary } from "@/test/session-fixtures";
@@ -541,4 +542,30 @@ test("touch: a press shows the pressed fill on the row after 80ms; a mouse press
   expect(el).not.toHaveAttribute("data-pressed");
   expect(screen.queryByRole("menu")).toBeNull();
   expect(router.state.location.pathname).toBe("/");
+});
+
+test("touch: closing a long-pressed row's dropdown returns focus to that row, not <body>", async () => {
+  setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  longPress(rowEl("b") as HTMLElement, { x: 40, y: 60 });
+  fireEvent.keyDown(await screen.findByRole("menu", { name: "Bravo" }), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(rowEl("b")).toHaveFocus());
+});
+
+test("phone: closing a long-pressed row's drawer returns focus to that row, not <body>", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    setup({ activeSlug: "a" });
+    await screen.findByRole("tree");
+    longPress(rowEl("b") as HTMLElement, { x: 40, y: 60 });
+    const drawer = await screen.findByRole("dialog", { name: "Bravo" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "Cancel" }));
+    endAnimation(drawer);
+    await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
+    await waitFor(() => expect(rowEl("b")).toHaveFocus());
+  } finally {
+    window.matchMedia = original;
+  }
 });

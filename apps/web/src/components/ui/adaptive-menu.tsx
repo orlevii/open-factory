@@ -180,6 +180,24 @@ function AdaptiveMenuTrigger({
   );
 }
 
+const FOCUSABLE =
+  "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+/** Where a closing menu with no handoff puts focus: its visible trigger, or, when that can't take focus
+ *  (a ⋯ that isn't rendered on this pointer), the long-pressed row itself or the row's first control
+ *  that can. Never left on <body>. */
+function returnFocus(trigger: HTMLElement | null) {
+  if (!trigger) return;
+  const took = (el: HTMLElement) => {
+    el.focus({ preventScroll: true });
+    return el.ownerDocument.activeElement === el;
+  };
+  if (took(trigger)) return;
+  const row = trigger.closest<HTMLElement>("[data-longpress-region]");
+  if (!row || (row.matches(FOCUSABLE) && took(row))) return;
+  for (const el of row.querySelectorAll<HTMLElement>(FOCUSABLE)) if (el !== trigger && took(el)) return;
+}
+
 /** Content props reach the desktop dropdown; the drawer has one fixed look and takes only the focus and
  *  dismiss handlers (a focus handoff to the overlay an item opened works on both surfaces). */
 function AdaptiveMenuContent({
@@ -202,7 +220,7 @@ function AdaptiveMenuContent({
             if (e.defaultPrevented) return;
             // Vaul's dialog would focus its own trigger, which a menu doesn't have: back to ours.
             e.preventDefault();
-            triggerRef.current?.focus({ preventScroll: true });
+            returnFocus(triggerRef.current);
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onInteractOutside={onInteractOutside}
@@ -239,7 +257,7 @@ function AdaptiveMenuContent({
         if (e.defaultPrevented || !anchor) return;
         // Radix would focus the trigger it hung from, the hidden stand-in, which can't take focus: ours instead.
         e.preventDefault();
-        triggerRef.current?.focus({ preventScroll: true });
+        returnFocus(triggerRef.current);
       }}
       onEscapeKeyDown={onEscapeKeyDown}
       onInteractOutside={onInteractOutside}

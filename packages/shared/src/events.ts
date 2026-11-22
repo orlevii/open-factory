@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { envelopeSchema } from "./messaging.ts";
+import { toolMetaSchema } from "./tool-meta.ts";
 
 const parent = { parentToolUseId: z.string().optional() };
 
@@ -30,6 +31,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     toolUseId: z.string(),
     content: z.string(),
     isError: z.boolean(),
+    meta: toolMetaSchema.optional(),
     ...parent,
   }),
   z.object({

@@ -13,6 +13,7 @@ export * from "./settings.ts";
 export * from "./status.ts";
 export * from "./tasks.ts";
 export * from "./templates.ts";
+export * from "./tool-meta.ts";
 export * from "./tree.ts";
 export * from "./usage.ts";
 export * from "./users.ts";

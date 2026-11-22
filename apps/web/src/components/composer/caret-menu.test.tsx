@@ -220,3 +220,40 @@ test("a `/` row's name never yields to its hint; a plugin name keeps its `/`, so
   expect(head).toHaveClass("min-w-[4ch]");
   expect(plugin).toHaveTextContent("a-really-long-skill-name");
 });
+
+test("moving the highlight past the visible rows scrolls the list so the active row stays in view", () => {
+  // A list 160px tall showing 4 rows of 40px; each row's box follows the list's scroll position.
+  const ROW = 40;
+  const LIST_H = 160;
+  const rect = (top: number, h: number) =>
+    ({ top, bottom: top + h, left: 0, right: 100, width: 100, height: h, x: 0, y: top }) as DOMRect;
+  const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    const list = this.closest("[cmdk-list]") as HTMLElement | null;
+    if (this.hasAttribute("cmdk-list")) return rect(0, LIST_H);
+    if (list && this.hasAttribute("data-caret-item")) {
+      const i = [...list.querySelectorAll("[data-caret-item]")].indexOf(this);
+      return rect(i * ROW - list.scrollTop, ROW);
+    }
+    return rect(0, 0);
+  });
+  const many: CompletionItem[] = Array.from({ length: 12 }, (_, i) => ({
+    id: `r${i}`,
+    label: `Row ${i}`,
+    group: "agents",
+  }));
+  const { menu, box } = setup(many);
+  for (let i = 0; i < 9; i++) act(() => menu.current?.move(1));
+  const active = document.getElementById(box.getAttribute("aria-activedescendant") ?? "");
+  expect(active).toHaveAttribute("data-caret-item", "r9");
+  const list = screen.getByRole("listbox");
+  const r = (active as HTMLElement).getBoundingClientRect();
+  const l = list.getBoundingClientRect();
+  expect(r.top).toBeGreaterThanOrEqual(l.top);
+  expect(r.bottom).toBeLessThanOrEqual(l.bottom);
+  // ↑ back to the top scrolls back up.
+  for (let i = 0; i < 9; i++) act(() => menu.current?.move(-1));
+  expect(list.scrollTop).toBe(0);
+  spy.mockRestore();
+});

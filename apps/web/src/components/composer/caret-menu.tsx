@@ -186,6 +186,14 @@ export function CaretMenu({
     box.setAttribute("aria-controls", list.id);
     if (row) box.setAttribute("aria-activedescendant", row.id);
     else box.removeAttribute("aria-activedescendant");
+    // The highlight is ours, not cmdk's, so cmdk never scrolls it into view: keep it inside the list's
+    // box ("nearest"), scrolling the list only, never the page (re-verification N1b).
+    if (row) {
+      const r = row.getBoundingClientRect();
+      const l = list.getBoundingClientRect();
+      if (r.top < l.top) list.scrollTop -= l.top - r.top;
+      else if (r.bottom > l.bottom) list.scrollTop += r.bottom - l.bottom;
+    }
   }, [input, activeId, list]);
   useLayoutEffect(() => {
     const box = input.current;

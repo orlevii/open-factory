@@ -87,6 +87,8 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     error: z.string(),
   }),
   z.object({ type: z.literal("model_fallback"), message: z.string() }),
+  /** U3 §13.3: the text a local command (`/context`, `/usage` and its aliases) printed. */
+  z.object({ type: z.literal("command_output"), command: z.string(), text: z.string() }),
   z.object({
     type: z.literal("usage"),
     model: z.string(),

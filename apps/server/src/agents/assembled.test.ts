@@ -59,7 +59,7 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
         .agent.status === "idle",
   );
 
-  const stdin = fake.log().filter((e) => e.kind === "stdin");
+  const stdin = fake.log().filter((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
   expect(stdin).toHaveLength(1);
   expect(JSON.parse(stdin[0]?.kind === "stdin" ? stdin[0].line : "{}").message.content).toMatch(
     /^<factory-message from="@or" kind="message" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
@@ -255,7 +255,11 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
     expect(resumed?.argv).toContain("--resume");
     const written = f
       .log()
-      .flatMap((e) => (e.kind === "stdin" ? [JSON.parse(e.line).message.content as string] : []));
+      .flatMap((e) =>
+        e.kind === "stdin" && JSON.parse(e.line).type === "user"
+          ? [JSON.parse(e.line).message.content as string]
+          : [],
+      );
     const restartedNotices = written.filter((l) =>
       l.includes("The factory restarted while you were working."),
     );

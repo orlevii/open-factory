@@ -173,6 +173,18 @@ async function main() {
       interrupt?.();
       return;
     }
+    if (msg.type === "control_request" && msg.request?.subtype === "initialize") {
+      // U3 §13.3: answered at once, no turn. The scenario's `commands` (none by default).
+      out({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: msg.request_id,
+          response: { commands: scenario.commands ?? [], claude_code_version: "2.1.327" },
+        },
+      });
+      return;
+    }
     if (msg.type === "user") {
       work.push(msg);
       void startup.then(drain);

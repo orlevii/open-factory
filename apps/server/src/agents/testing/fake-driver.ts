@@ -7,11 +7,12 @@ import {
   type HarnessProcess,
   ProcessNotRunningError,
 } from "@open-factory/harness";
-import type { HarnessEvent } from "@open-factory/shared";
+import type { Command, HarnessEvent } from "@open-factory/shared";
 
 export type Write =
   | { kind: "send"; messages: FactoryMessage[] }
-  | { kind: "control"; cmd: string; arg?: string };
+  | { kind: "control"; cmd: string; arg?: string }
+  | { kind: "command"; text: string };
 
 export class FakeProcess implements HarnessProcess {
   readonly events = new AsyncQueue<HarnessEvent>();
@@ -54,6 +55,16 @@ export class FakeProcess implements HarnessProcess {
   async control(cmd: "compact" | "clear" | "interrupt", arg?: string) {
     if (this.done || this.failWrites) throw new ProcessNotRunningError();
     this.writes.push({ kind: "control", cmd, ...(arg ? { arg } : {}) });
+  }
+  /** What `commands()` resolves with (U3 §13.3): set before the start, or undefined (no list). */
+  commandList: Command[] | undefined;
+  claudeCodeVersion: string | undefined = "2.1.327";
+  async commands() {
+    return this.commandList;
+  }
+  async command(text: string) {
+    if (this.done || this.failWrites) throw new ProcessNotRunningError();
+    this.writes.push({ kind: "command", text });
   }
   /** Set by the first `stop()` call. */
   stopped = false;

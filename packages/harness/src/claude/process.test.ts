@@ -3,8 +3,9 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessEvent } from "@open-factory/shared";
-import { expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createFakeClaude, FakeTransport } from "../../testing/index.ts";
+import { readFixture } from "../test-fixtures.ts";
 import { localTransport } from "../transport/local.ts";
 import { type AgentRuntimeSpec, ProcessNotRunningError } from "../types.ts";
 import { buildClaudeArgs } from "./args.ts";
@@ -75,8 +76,8 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
     "turn_end",
   ]);
   const log = fake.log();
-  const stdin = log.find((e) => e.kind === "stdin");
-  expect(stdin && JSON.parse(stdin.line)).toEqual({
+  const stdin = log.find((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
+  expect(stdin?.kind === "stdin" && JSON.parse(stdin.line)).toEqual({
     type: "user",
     message: {
       role: "user",
@@ -87,6 +88,21 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
   const start = log.find((e) => e.kind === "start");
   expect(start?.kind === "start" && start.env.CLAUDE_CONFIG_DIR).toBe("/tmp/cfg");
   expect(start?.kind === "start" && start.env.DATABASE_URL).toBeUndefined();
+  await p.stop({ graceMs: 2000 });
+});
+
+test("the fake answers initialize with its scenario's commands", async () => {
+  const fake = createFakeClaude({
+    scenario: {
+      onUser: [],
+      commands: [{ name: "spike-echo", description: "Echo (project)", argumentHint: "[words]" }],
+    },
+  });
+  const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
+  await expect(p.commands?.()).resolves.toEqual([
+    { name: "spike-echo", description: "Echo (project)", argumentHint: "[words]" },
+  ]);
+  expect(p.claudeCodeVersion).toBe("2.1.327");
   await p.stop({ graceMs: 2000 });
 });
 
@@ -111,7 +127,9 @@ test("compact writes /compact with focus and marks the mapper so a failure is ma
   const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
   await p.control("compact", "keep the API");
   await done;
-  expect(fake.log().find((e) => e.kind === "stdin")).toMatchObject({
+  expect(
+    fake.log().find((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user"),
+  ).toMatchObject({
     line: JSON.stringify({
       type: "user",
       message: { role: "user", content: "/compact keep the API" },
@@ -138,7 +156,7 @@ test("interrupt writes a control_request", async () => {
     .log()
     .filter((e) => e.kind === "stdin")
     .map((e) => (e.kind === "stdin" ? JSON.parse(e.line) : null));
-  expect(ctl[1]).toMatchObject({ type: "control_request", request: { subtype: "interrupt" } });
+  expect(ctl.map((l) => l.request?.subtype ?? l.type)).toEqual(["initialize", "user", "interrupt"]);
   await p.stop({ graceMs: 2000 });
 });
 
@@ -324,4 +342,153 @@ test("FakeTransport.write rejects after endInput and after exit", async () => {
   const b = new FakeTransport();
   b.exitWith(0);
   await expect(b.write("x")).rejects.toBeInstanceOf(ProcessNotRunningError);
+});
+
+// U3 §13.3: `initialize` lists the commands; the result never enters the event log.
+const initTrace = readFixture("u3/control-initialize-commands") as {
+  dir: string;
+  type: string;
+  response?: { request_id: string };
+}[];
+const tick = () => new Promise((r) => setImmediate(r));
+const written = (t: FakeTransport) => t.writes.map((w) => JSON.parse(w));
+/** The spike's `initialize` answer, re-addressed to the request this process wrote. */
+const initAnswer = (requestId: string) => {
+  const out = initTrace.find((l) => l.dir === "out" && l.type === "control_response");
+  if (!out?.response) throw new Error("no control_response in the trace");
+  const { t: _t, dir: _d, ...line } = out as typeof out & { t: number };
+  return JSON.stringify({ ...line, response: { ...line.response, request_id: requestId } });
+};
+
+describe("commands", () => {
+  test("start writes one initialize control_request; its control_response resolves commands()", async () => {
+    const t = new FakeTransport();
+    const p = new ClaudeProcess(spec("c"), {}, t);
+    await tick();
+    const [init, ...rest] = written(t);
+    expect(rest).toEqual([]);
+    expect(init).toMatchObject({ type: "control_request", request: { subtype: "initialize" } });
+    expect(typeof init.request_id).toBe("string");
+    t.emitStdout(initAnswer(init.request_id));
+    const list = await p.commands();
+    expect(list).toHaveLength(57);
+    expect(list?.find((c) => c.name === "spike-echo")).toEqual({
+      name: "spike-echo",
+      description:
+        "Spike test skill. Replies with the marker ECHO-SKILL-RAN and the arguments it received. (project)",
+      argumentHint: "[words]",
+    });
+    expect(list?.find((c) => c.name === "usage")).toMatchObject({
+      builtin: true,
+      aliases: ["cost", "stats"],
+    });
+    expect(p.claudeCodeVersion).toBe("2.1.327");
+    // Never an event: the list goes to the runtime directly.
+    t.exitWith(0);
+    const events: HarnessEvent[] = [];
+    await collectUntil(p.events, () => false, events);
+    expect(events.map((e) => e.type)).toEqual(["exited"]);
+  });
+
+  test("a send before the list arrives is written at once", async () => {
+    const t = new FakeTransport();
+    const p = new ClaudeProcess(spec("c"), {}, t);
+    await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }]);
+    expect(written(t).map((w) => w.type)).toEqual(["control_request", "user"]);
+    t.exitWith(0);
+    await expect(p.commands()).resolves.toBeUndefined();
+  });
+
+  test("an error response resolves to no list", async () => {
+    const t = new FakeTransport();
+    const p = new ClaudeProcess(spec("c"), {}, t);
+    await tick();
+    const [init] = written(t);
+    t.emitStdout(
+      JSON.stringify({
+        type: "control_response",
+        response: { subtype: "error", request_id: init.request_id, error: "nope" },
+      }),
+    );
+    await expect(p.commands()).resolves.toBeUndefined();
+  });
+
+  test("no answer within 5s resolves to no list", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = new FakeTransport();
+      const p = new ClaudeProcess(spec("c"), {}, t);
+      const list = p.commands();
+      await vi.advanceTimersByTimeAsync(4_999);
+      let settled = false;
+      void list.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(list).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("an interrupt's control_response resolves only its own request", async () => {
+    const t = new FakeTransport();
+    const p = new ClaudeProcess(spec("c"), {}, t);
+    await tick();
+    await p.control("interrupt");
+    const [init, interrupt] = written(t);
+    expect(interrupt.request.subtype).toBe("interrupt");
+    expect(interrupt.request_id).not.toBe(init.request_id);
+    let settled = false;
+    const list = p.commands().then((l) => {
+      settled = true;
+      return l;
+    });
+    t.emitStdout(
+      JSON.stringify({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: interrupt.request_id,
+          response: { still_queued: [] },
+        },
+      }),
+    );
+    await tick();
+    expect(settled).toBe(false);
+    t.emitStdout(initAnswer(init.request_id));
+    expect(await list).toHaveLength(57);
+  });
+
+  test("an inbound control_request from Claude is answered with an error", async () => {
+    const t = new FakeTransport();
+    new ClaudeProcess(spec("c"), {}, t);
+    t.emitStdout(
+      JSON.stringify({
+        type: "control_request",
+        request_id: "cc-1",
+        request: { subtype: "can_use_tool", tool_name: "Bash", input: {} },
+      }),
+    );
+    await tick();
+    expect(written(t).at(-1)).toEqual({
+      type: "control_response",
+      response: {
+        subtype: "error",
+        request_id: "cc-1",
+        error: "Not supported by this host",
+      },
+    });
+  });
+
+  test("command() writes the raw text as one user line", async () => {
+    const t = new FakeTransport();
+    const p = new ClaudeProcess(spec("c"), {}, t);
+    await p.command("/code-review src/");
+    expect(t.writes.at(-1)).toBe(
+      '{"type":"user","message":{"role":"user","content":"/code-review src/"}}',
+    );
+  });
 });

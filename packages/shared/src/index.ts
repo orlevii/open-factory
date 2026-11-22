@@ -1,5 +1,6 @@
 export * from "./agents.ts";
 export * from "./api-fetch.ts";
+export * from "./commands.ts";
 export * from "./cron.ts";
 export * from "./events.ts";
 export * from "./handle.ts";

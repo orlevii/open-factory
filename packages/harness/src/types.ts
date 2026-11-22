@@ -1,4 +1,4 @@
-import type { Envelope, HarnessEvent, MessageKind } from "@open-factory/shared";
+import type { Command, Envelope, HarnessEvent, MessageKind } from "@open-factory/shared";
 
 export interface Mount {
   source: string;
@@ -58,6 +58,15 @@ export interface HarnessProcess {
   /** One user turn. Resolves on the write callback; rejects with ProcessNotRunningError or the write error. */
   send(messages: FactoryMessage[]): Promise<void>;
   control(cmd: "compact" | "clear" | "interrupt", arg?: string): Promise<void>;
+  /**
+   * U3 §13.3: the command list from this process's `initialize`; undefined on an error or after 5 s. Never blocks a
+   * send, and never enters the event log.
+   */
+  commands?(): Promise<Command[] | undefined>;
+  /** The Claude Code version `initialize` reported, once it answered. */
+  readonly claudeCodeVersion?: string | undefined;
+  /** U3 §13.3: writes `text` (a raw `/name args`) as one user line. The caller validates it. */
+  command?(text: string): Promise<void>;
   stop(opts?: { graceMs?: number; termWaitMs?: number }): Promise<ExitInfo>;
   /** SIGKILL-equivalent, for a process that outlived stop(). */
   forceKill(): Promise<void>;

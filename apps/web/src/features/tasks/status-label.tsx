@@ -59,13 +59,28 @@ export function StatusLabel({
   );
 }
 
-/** "Blocked by T-41, T-44": the marker (a `warning` icon with an ink label). */
-export function BlockedMarker({ keys, className = "" }: { keys: string[]; className?: string }) {
+/** "Blocked by T-41, T-44": the marker (a `warning` icon with an ink label). With `max` and more keys it
+ *  shows the first `max` and "+N more", the full list in `title`. */
+export function BlockedMarker({
+  keys,
+  max,
+  className = "",
+}: {
+  keys: string[];
+  max?: number;
+  className?: string;
+}) {
   if (!keys.length) return null;
+  const capped = max !== undefined && keys.length > max;
+  const shown = capped ? keys.slice(0, max) : keys;
   return (
-    <span className={`inline-flex items-center gap-1.5 text-foreground ${className}`}>
+    <span
+      title={capped ? keys.join(", ") : undefined}
+      className={`inline-flex items-center gap-1.5 text-foreground ${className}`}
+    >
       <CircleMinus aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-      Blocked by {keys.join(", ")}
+      Blocked by {shown.join(", ")}
+      {capped ? ` +${keys.length - shown.length} more` : ""}
     </span>
   );
 }

@@ -263,3 +263,23 @@ test("the assignee shows as a chip (avatar and name), a human creator as @handle
   expect(within(ended).getByText("Gone")).toBeInTheDocument();
   expect(ended).toHaveTextContent("terminated");
 });
+
+test("a row caps the blockers at three with a count and keeps the full list in the title", async () => {
+  const keys = Array.from({ length: 25 }, (_, i) => `T-${i + 15}`);
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks?": () =>
+      json(page([task(90, { blockedBy: keys }), task(91, { blockedBy: ["T-1", "T-2", "T-3"] })])),
+  });
+  renderApp("/tasks", alice);
+  const many = await screen.findByRole("link", { name: /^T-90,/ });
+  const marker = within(many).getByText("Blocked by T-15, T-16, T-17 +22 more");
+  expect(marker).toHaveAttribute("title", keys.join(", "));
+  // The separator is drawn by the marker, never a standalone sibling that could orphan on a wrap.
+  expect(marker).toHaveClass("after:content-['·']");
+  expect(marker.nextElementSibling?.textContent ?? "").not.toBe("·");
+  const three = screen.getByRole("link", { name: /^T-91,/ });
+  const all = within(three).getByText("Blocked by T-1, T-2, T-3");
+  expect(all).not.toHaveAttribute("title");
+  expect(three).not.toHaveTextContent("more");
+});

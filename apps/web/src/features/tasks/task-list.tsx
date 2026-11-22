@@ -106,10 +106,11 @@ const Row = memo(function Row({
           </span>
           <span className="contents md:col-span-3 md:col-start-2 md:row-start-2 md:flex md:flex-wrap md:items-center md:gap-x-1.5">
             {t.blockedBy.length > 0 && (
-              <>
-                <BlockedMarker keys={t.blockedBy} />
-                <span aria-hidden="true">·</span>
-              </>
+              <BlockedMarker
+                keys={t.blockedBy}
+                max={3}
+                className="after:mx-1.5 after:content-['·']"
+              />
             )}
             <span className="max-md:hidden">
               <span className="inline-flex items-center gap-1.5 align-middle">

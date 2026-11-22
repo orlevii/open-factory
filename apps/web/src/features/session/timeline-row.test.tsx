@@ -1,13 +1,14 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
-import { mergeFailures } from "./display-passes";
-import { buildRows } from "./rows";
+import { groupWork, mergeFailures } from "./display-passes";
+import { buildRows, type Row } from "./rows";
 import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
 import { Timeline } from "./timeline";
 import { TimelineRow } from "./timeline-row";
+import { workGroupText } from "./work-group";
 
 const NOW = new Date(2026, 10, 19, 10, 0);
 const todayAt = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
@@ -501,4 +502,125 @@ test("a 55-character MCP tool name truncates, with the full name in its title", 
   expect(label).toHaveTextContent("a_long_server_name_here · create_pull_request_now_x");
   expect(within(row).getByText("a_long_server_name_here")).toHaveClass("truncate");
   expect(row).toHaveTextContent("Fix");
+});
+
+// Folded tool runs (U3 §9.4).
+type ToolR = Extract<Row, { kind: "tool" }>;
+type Group = Extract<Row, { kind: "work_group" }>;
+const t0 = Date.parse("2026-11-19T09:00:00.000Z");
+const isoAt = (s: number) => new Date(t0 + s * 1000).toISOString();
+const call = (seq: number, name: string, input: unknown, over: Partial<ToolR> = {}): ToolR => ({
+  kind: "tool",
+  seq,
+  at: isoAt(seq),
+  resultAt: isoAt(seq + 1),
+  call: { type: "tool_call", toolUseId: `tu${seq}`, name, input },
+  state: "done",
+  children: [],
+  key: `${seq}`,
+  ...over,
+});
+const sh = (seq: number, over: Partial<ToolR> = {}) =>
+  call(seq, "Bash", { command: `cmd ${seq}` }, over);
+const rd = (seq: number) => call(seq, "Read", { file_path: `f${seq}.ts` });
+
+function timeline(rows: Row[], extra: Partial<Parameters<typeof Timeline>[0]> = {}) {
+  const props = {
+    slug: "dev",
+    failedIds: new Set<string>(),
+    interruptedEnds: new Set<number>(),
+    hasMoreBefore: false,
+    onLoadEarlier: async () => false,
+    earlierError: false,
+    footer: null,
+    ...extra,
+  };
+  const view = render(<Timeline {...props} rows={rows} />);
+  return { ...view, update: (next: Row[]) => view.rerender(<Timeline {...props} rows={next} />) };
+}
+const rowEl = (key: string) => document.querySelector<HTMLElement>(`[data-row="${key}"]`);
+
+test("final copy: 'Read 6 files, ran 4 commands · 1m 40s'", () => {
+  const reads = [1, 2, 3, 4, 5, 6].map(rd);
+  const cmds = [7, 8, 9, 10].map((s) => sh(s, s === 10 ? { resultAt: isoAt(101) } : {}));
+  const [g] = groupWork([
+    ...reads,
+    ...cmds,
+    { kind: "turn_footer", seq: 11, key: "11", durationMs: 1, costUsd: 0 },
+  ]);
+  expect(workGroupText(g as Group)).toBe("Read 6 files, ran 4 commands · 1m 40s");
+  const [one] = groupWork([
+    call(1, "Edit", { file_path: "a" }),
+    call(2, "Grep", { pattern: "x" }),
+    { kind: "turn_footer", seq: 3, key: "3", durationMs: 1, costUsd: 0 },
+  ]);
+  expect(workGroupText(one as Group)).toBe("Edited 1 file, 1 other call · 2s");
+});
+
+test("live header says '4 calls so far'", () => {
+  const [g] = groupWork([sh(1), rd(2), sh(3), sh(4, { state: "running", resultAt: undefined })]);
+  expect(workGroupText(g as Group)).toBe("4 calls so far");
+  timeline([g as Row]);
+  expect(rowEl("1")?.textContent).toBe("4 calls so far");
+  expect(rowEl("1")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a single call stays a plain row; growing to two keeps the wrapper (no remount, no fade)", () => {
+  const first = sh(3);
+  const view = timeline([first], { liveAfter: 0 });
+  const wrap = rowEl("3")?.closest("[data-row-wrap]");
+  expect(wrap).not.toBeNull();
+  view.update(groupWork([first, sh(5)]));
+  expect(rowEl("3")?.closest("[data-row-wrap]")).toBe(wrap);
+  expect(document.querySelectorAll("[data-row-wrap]")).toHaveLength(1);
+  // The children stay unmounted until the group opens.
+  expect(rowEl("c:3")).toBeNull();
+  expect(rowEl("5")).toBeNull();
+});
+
+test("the group opens and closes; closing collapses its children, reopening leaves them collapsed", async () => {
+  vi.useRealTimers();
+  const user = userEvent.setup();
+  timeline(groupWork([sh(3), sh(5)]));
+  await user.click(rowEl("3") as HTMLElement);
+  expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
+  await user.click(rowEl("5") as HTMLElement);
+  expect(rowEl("5")).toHaveAttribute("aria-expanded", "true");
+  await user.click(rowEl("3") as HTMLElement);
+  expect(rowEl("3")).toHaveAttribute("aria-expanded", "false");
+  expect(rowEl("5")).toBeNull();
+  await user.click(rowEl("3") as HTMLElement);
+  expect(rowEl("5")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("an expanded child opens its new group; focus on a child moves to the header", async () => {
+  vi.useRealTimers();
+  const user = userEvent.setup();
+  // The first call, expanded and focused, becomes the group's first child.
+  const first = sh(3);
+  const view = timeline([first]);
+  await user.click(rowEl("3") as HTMLElement);
+  expect(rowEl("3")).toHaveFocus();
+  view.update(groupWork([first, sh(5)]));
+  expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
+  expect(rowEl("c:3")).toHaveAttribute("aria-expanded", "true");
+  expect(rowEl("3")).toHaveFocus();
+  view.unmount();
+  // A later call (a page of earlier rows lands before it) joins a group keyed by another row.
+  const later = sh(5);
+  const v2 = timeline([later]);
+  await user.click(rowEl("5") as HTMLElement);
+  v2.update(groupWork([sh(3), later]));
+  expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
+  expect(rowEl("5")).toHaveAttribute("aria-expanded", "true");
+  expect(rowEl("3")).toHaveFocus();
+  expect(rowEl("3")).toHaveAttribute("tabindex", "0");
+});
+
+test("a deep link into a group expands it and lands on the child", async () => {
+  vi.useRealTimers();
+  timeline(groupWork([sh(3), sh(5), sh(7)]), { highlightSeq: 5 });
+  await waitFor(() => expect(rowEl("5")).not.toBeNull());
+  expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
+  expect(rowEl("5")).toHaveFocus();
 });

@@ -125,7 +125,8 @@ const ev = (seq: number, event: AnyEvent, turnId: string | null = "t1"): Session
   at,
   event,
 });
-/** 200 events: a message, a finished tool, a running tool, then 195 assistant texts. */
+/** 200 events: a message, a failed tool, a running tool, then 195 assistant texts. The failed call
+ *  keeps the two tools apart (a failure ends a folded run, U3 §9.4), so each is its own row. */
 const initial: SessionEvent[] = [
   ev(1, { type: "turn_started" }),
   ev(
@@ -137,7 +138,7 @@ const initial: SessionEvent[] = [
     null,
   ),
   ev(3, { type: "tool_call", toolUseId: "tu-done", name: "Bash", input: { command: "ls" } }),
-  ev(4, { type: "tool_result", toolUseId: "tu-done", content: "a\nb", isError: false }),
+  ev(4, { type: "tool_result", toolUseId: "tu-done", content: "a\nb", isError: true }),
   ev(5, { type: "tool_call", toolUseId: "tu-run", name: "Bash", input: { command: "make" } }),
   ...Array.from({ length: 195 }, (_, i) =>
     ev(6 + i, { type: "assistant_text", text: `Text ${6 + i}` }),
@@ -385,6 +386,95 @@ test("a tool_result for a running tool re-renders exactly that tool row", async 
   frame();
   expect(Object.fromEntries(count.rows)).toEqual({ "5": 1 });
   expect(count.markdown).toBe(0);
+});
+
+const bashCall = (seq: number) =>
+  sessionEvent(
+    ev(seq, {
+      type: "tool_call",
+      toolUseId: `tu${seq}`,
+      name: "Bash",
+      input: { command: `c${seq}` },
+    }),
+  );
+const bashDone = (seq: number, of: number) =>
+  sessionEvent(
+    ev(seq, { type: "tool_result", toolUseId: `tu${of}`, content: "ok", isError: false }),
+  );
+
+test("a tool row joining a group re-renders only that group, in the same wrapper", async () => {
+  await setup();
+  push(bashCall(201));
+  push(bashDone(202, 201));
+  frame();
+  const wrap = document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]");
+  expect(wrap).not.toBeNull();
+  const wraps = document.querySelectorAll("[data-row-wrap]").length;
+  reset();
+  push(bashCall(203));
+  frame();
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+  expect(count.markdown).toBe(0);
+  expect(document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]")).toBe(wrap);
+  expect(document.querySelectorAll("[data-row-wrap]")).toHaveLength(wraps);
+  expect(document.querySelector('[data-row="201"]')?.textContent).toBe("2 calls so far");
+  // A third call: still only the group.
+  reset();
+  push(bashDone(204, 203));
+  push(bashCall(205));
+  frame();
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+  expect(document.querySelector('[data-row="201"]')?.textContent).toBe("3 calls so far");
+});
+
+test("the final summary lands with turn_end in one commit", async () => {
+  await setup();
+  push(bashCall(201));
+  push(bashDone(202, 201));
+  push(bashCall(203));
+  push(bashDone(204, 203));
+  frame();
+  expect(document.querySelector('[data-row="201"]')?.textContent).toBe("2 calls so far");
+  reset();
+  push(
+    sessionEvent(
+      ev(205, {
+        type: "usage",
+        durationMs: 4000,
+        costUsd: 0,
+        inputTokens: 1,
+        outputTokens: 1,
+      } as AnyEvent),
+    ),
+  );
+  push(sessionEvent(ev(206, { type: "turn_end", isError: false } as AnyEvent)));
+  frame();
+  expect(commits).toBe(1);
+  expect(document.querySelector('[data-row="201"]')?.textContent).toBe("Ran 2 commands · 0s");
+  // The group, and the fixture's running call, which the turn's end settles as "No result".
+  expect(rerendered(["206"])).toEqual({ "5": 1, "201": 1 });
+});
+
+test("expanding a group, then a child inside it, re-renders only that group", async () => {
+  await setup();
+  push(bashCall(201));
+  push(bashDone(202, 201));
+  push(bashCall(203));
+  frame();
+  reset();
+  const header = document.querySelector<HTMLElement>('button[data-row="201"]');
+  act(() => {
+    if (header) fireEvent.click(header);
+  });
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+  reset();
+  const child = document.querySelector<HTMLElement>('button[data-row="203"]');
+  if (!child) throw new Error("no child");
+  act(() => {
+    fireEvent.click(child);
+  });
+  expect(child).toHaveAttribute("aria-expanded", "true");
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
 });
 
 test("a delivery_failed re-renders exactly the affected message row", async () => {

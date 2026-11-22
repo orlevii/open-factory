@@ -79,6 +79,22 @@ export type Row =
     }
   | { kind: "denied"; seq: number; event: Ev<"permission_denied">; key: string }
   | { kind: "quiet"; seq: number; event: AnyEvent; key: string }
+  /** Two or more consecutive foldable calls (U3 §9.4), keyed by the first; its summary is flat
+   *  primitives only, so the shallow stabilization compares it. */
+  | {
+      kind: "work_group";
+      key: string;
+      seq: number;
+      /** The calls; the first is a copy under the inner key (`innerKey`). */
+      children: ToolRow[];
+      /** "read:6,ran:4": each tool family and its count, in order of first appearance. */
+      verbsKey: string;
+      callCount: number;
+      /** The last call's result time minus the first call's time; absent while the last runs. */
+      durationMs?: number;
+      /** The newest row of an open turn: the header counts calls so far. */
+      live: boolean;
+    }
   /** "Worked 2m 13s · 14 tool calls · $0.42 est." after a finished turn (U3 §5.3). */
   | {
       kind: "turn_footer";
@@ -433,10 +449,11 @@ function stabilizeRow(old: Row, row: Row): Row {
   if (old === row) return old;
   if (old.kind !== row.kind) return row;
   let base = row;
-  if ("children" in row) {
-    const kids = childrenOf(row);
+  // `childrenOf` alone says which rows have children: a kind it doesn't list is a leaf here too.
+  const kids = childrenOf(row);
+  if (kids.length > 0) {
     const children = stabilizeRows(childrenOf(old), kids);
-    if (children !== kids) base = { ...row, children };
+    if (children !== kids) base = { ...row, children } as Row;
   }
   const o = old as Record<string, unknown>;
   const r = base as Record<string, unknown>;

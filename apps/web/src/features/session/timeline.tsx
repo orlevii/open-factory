@@ -14,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
-import { childrenOf, heldSeqs } from "./display-passes";
+import { childrenOf, heldSeqs, innerKey } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
@@ -92,6 +92,9 @@ export function Timeline(props: {
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
+  // The focused row's key and element, for the rows layout effect (refs: focus moving re-runs nothing).
+  const activeKeyRef = useRef<string | undefined>(undefined);
+  const focusedEl = useRef<HTMLElement | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [highlight] = useState(props.highlightSeq);
   // The deep link's path: the top-level holder first, the row it lands on last (U3 §7.4).
@@ -105,10 +108,26 @@ export function Timeline(props: {
   const arrivedKey = litPath?.at(-1);
   const [arrival, setArrival] = useState<Arrival>();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every rows commit (the height changed).
+  // Runs after every rows commit (the height changed).
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    // A focused call that joined a group left the DOM with its old row: focus moves to the group's
+    // header (U3 §9.4). Only when focus was dropped, never taken from wherever it went since.
+    const lost = focusedEl.current;
+    if (lost && !lost.isConnected) {
+      focusedEl.current = null;
+      const key = activeKeyRef.current;
+      const active = document.activeElement;
+      const holder =
+        key === undefined || (active && active !== document.body)
+          ? undefined
+          : rows.find((r) => r.kind === "work_group" && (r.key === key || containsKey(r, key)));
+      if (holder)
+        el.querySelector<HTMLElement>(`[data-row="${CSS.escape(holder.key)}"]`)?.focus({
+          preventScroll: true,
+        });
+    }
     if (litPath !== undefined && !centred.current) {
       // Inside a group or a call's children: the holders open first, the row is reached next commit.
       const closed = litPath.slice(0, -1).filter((k) => !expanded.has(k));
@@ -266,13 +285,30 @@ export function Timeline(props: {
       if (row) applyTo(row);
     }
   }, [tabKey, applyTo]);
-  const onRowFocus = useCallback((k: string) => setActiveKey(k), []);
+  const onRowFocus = useCallback((k: string) => {
+    activeKeyRef.current = k;
+    focusedEl.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setActiveKey(k);
+  }, []);
   const toggle = useCallback(
-    (k: string) =>
+    (k: string, inner?: readonly string[]) =>
       setExpanded((s) => {
         const n = new Set(s);
-        if (n.has(k)) n.delete(k);
-        else n.add(k);
+        if (inner) {
+          // A group (U3 §9.4): open while it or a call is (`groupOpen`), so closing it collapses its
+          // calls too; opening it opens only the group.
+          if (n.has(k) || inner.some((c) => n.has(c))) for (const x of [k, ...inner]) n.delete(x);
+          else n.add(k);
+          return n;
+        }
+        // A call's key also keys its copy as a group's first call, so an expanded call stays open
+        // when it becomes one (U3 §9.4). Nothing else is keyed by the inner key.
+        const open = !n.has(k);
+        for (const x of k.startsWith(innerKey("")) ? [k] : [k, innerKey(k)]) {
+          if (open) n.add(x);
+          else n.delete(x);
+        }
         return n;
       }),
     [],
@@ -349,10 +385,11 @@ export function Timeline(props: {
   );
 }
 
-/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq. */
+/** A plain loop: rows are seq-ordered, but a group or a merged failure keeps its first seq and holds
+ *  later ones. */
 function maxSeq(rows: Row[]): number {
   let max = 0;
-  for (const r of rows) if (r.seq > max) max = r.seq;
+  for (const r of rows) max = Math.max(max, r.seq, heldSeqs(r)?.at(-1) ?? 0);
   return max;
 }
 
@@ -370,6 +407,9 @@ function rowHasMessage(row: Row, id: string): boolean {
   return false;
 }
 
+const containsKey = (row: Row, key: string): boolean =>
+  childrenOf(row).some((c) => c.key === key || containsKey(c, key));
+
 const containsSeq = (rows: readonly Row[], seq: number): boolean =>
   rows.some(
     (r) => r.seq === seq || !!heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq),
@@ -383,7 +423,8 @@ export function targetPath(rows: Row[], seq: number): string[] | undefined {
   if (top === undefined) return undefined;
   const path = [top];
   let row = rows.find((r) => r.key === top);
-  while (row && row.seq !== seq && !heldSeqs(row)?.includes(seq)) {
+  // A group shares its first call's seq but lands on the call itself (U3 §9.4).
+  while (row && (row.kind === "work_group" || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
     const kids = childrenOf(row);
     row = kids.find((c) => c.seq === seq) ?? kids.find((c) => containsSeq(childrenOf(c), seq));
     if (row) path.push(row.key);

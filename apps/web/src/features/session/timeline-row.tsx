@@ -6,6 +6,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { CompactionMarker } from "./compaction-marker";
+import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
@@ -16,6 +17,7 @@ import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
+import { WorkGroup } from "./work-group";
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono">{children}</span>
@@ -259,7 +261,8 @@ export interface TimelineRowProps {
   spawned?: boolean;
   row: Row;
   expanded: ReadonlySet<string>;
-  toggle(key: string): void;
+  /** Flips a row's key; for a group, `inner` names its calls: closing it collapses them too. */
+  toggle(key: string, inner?: readonly string[]): void;
   rowProps(row: Row): Record<string, unknown>;
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
@@ -359,6 +362,24 @@ export function TimelineRow(props: TimelineRowProps) {
           ))}
         </ToolCallRow>
       );
+    case "work_group": {
+      const open = groupOpen(row, expanded);
+      return (
+        <WorkGroup
+          row={row}
+          open={open}
+          onToggle={() =>
+            toggle(
+              row.key,
+              row.children.map((c) => c.key),
+            )
+          }
+          rowProps={rp}
+        >
+          {open && row.children.map((c) => <TimelineRow key={c.key} {...props} row={c} />)}
+        </WorkGroup>
+      );
+    }
     case "orphan_result":
       return <QuietLine rowProps={rp}>Result for an earlier call</QuietLine>;
     case "compaction":

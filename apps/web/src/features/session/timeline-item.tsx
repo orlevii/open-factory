@@ -30,7 +30,7 @@ export type TimelineItemProps = {
   expanded: ReadonlySet<string>;
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
-  toggle(key: string): void;
+  toggle(key: string, inner?: readonly string[]): void;
   onRowFocus(key: string): void;
 };
 

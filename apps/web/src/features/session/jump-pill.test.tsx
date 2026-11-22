@@ -115,6 +115,16 @@ test("scrolled up, speech rows count as messages; other rows alone say New outpu
   expect(pill()).toHaveAccessibleName("3 new messages");
 });
 
+test("a merged failure as the last row: scrolling up shows no false New output", () => {
+  const merged = { ...quiet(3), count: 3, seqs: [3, 4, 5] } as Row;
+  const t = setup({ rows: [msg(1), text(2), merged] });
+  t.scrollUp();
+  expect(pill()).not.toHaveAttribute("data-shown");
+  // A real repeat folded into it is still new.
+  t.rerender([msg(1), text(2), { ...merged, count: 4, seqs: [3, 4, 5, 6] } as Row]);
+  expect(pill()).toHaveAccessibleName("New output");
+});
+
 test("a handed-off row doesn't count again", () => {
   const t = setup();
   t.scrollUp();

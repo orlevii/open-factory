@@ -349,10 +349,11 @@ export function Timeline(props: {
   );
 }
 
-/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq. */
+/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq, and a merged failure
+ *  its first while holding later ones (the Jump pill compares its last). */
 function maxSeq(rows: Row[]): number {
   let max = 0;
-  for (const r of rows) if (r.seq > max) max = r.seq;
+  for (const r of rows) max = Math.max(max, r.seq, heldSeqs(r)?.at(-1) ?? 0);
   return max;
 }
 

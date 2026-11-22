@@ -1,6 +1,6 @@
 import type { TaskStatus } from "@open-factory/shared";
 import { Circle, CircleCheck, CircleDot, CircleMinus, CircleSlash } from "lucide-react";
-import type { ComponentType } from "react";
+import { type ComponentType, Fragment } from "react";
 
 /** UI design §1: an icon plus the label, never colour alone and never orange (a task status is not "live"). */
 export const STATUS: Record<
@@ -83,7 +83,13 @@ export function BlockedMarker({
         className="mt-[calc((1lh-0.875rem)/2)] size-3.5 shrink-0 text-warning"
       />
       <span title={capped ? keys.join(", ") : undefined} className={`min-w-0 ${labelClassName}`}>
-        Blocked by {shown.join(", ")}
+        Blocked by{" "}
+        {shown.map((key, i) => (
+          <Fragment key={key}>
+            {i > 0 ? ", " : null}
+            <span className="whitespace-nowrap">{key}</span>
+          </Fragment>
+        ))}
         {capped ? ` +${keys.length - shown.length} more` : ""}
       </span>
     </span>

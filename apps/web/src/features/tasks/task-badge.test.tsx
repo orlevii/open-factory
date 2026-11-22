@@ -4,6 +4,10 @@ import { renderInRouter } from "@/test/render-in-router";
 import { BlockedMarker, StatusLabel } from "./status-label";
 import { TaskBadge } from "./task-badge";
 
+/** The marker's label span, matched on its whole text (the keys are separate spans, so getByText(string) can't). */
+const blockedLabel = (text: string) => (_: string, el: Element | null) =>
+  !!el && el.classList.contains("min-w-0") && el.textContent === text;
+
 test("a linked badge: mono key, muted separator, title; its name is 'Task T-42: Plan the billing migration'", async () => {
   renderInRouter(<TaskBadge taskKey="T-42" title="Plan the billing migration" link />);
   const link = await screen.findByRole("link", { name: "Task T-42: Plan the billing migration" });
@@ -45,6 +49,6 @@ test.each([
 
 test("the blocked marker lists the keys and renders nothing when none", async () => {
   const { container } = renderInRouter(<BlockedMarker keys={["T-41", "T-44"]} />);
-  expect(await screen.findByText("Blocked by T-41, T-44")).toBeInTheDocument();
+  expect(await screen.findByText(blockedLabel("Blocked by T-41, T-44"))).toBeInTheDocument();
   expect(container.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
 });

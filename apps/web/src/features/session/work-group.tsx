@@ -50,7 +50,11 @@ export function WorkGroup({
   rowProps: Record<string, unknown>;
   children?: ReactNode;
 }) {
-  const [clicked, setClicked] = useState(false);
+  // The state a pointer click on this chevron asked for: it animates only while the group is in
+  // that state, so a later open from anywhere else (a deep link, an expanded call joining) is
+  // instant.
+  const [clickedTo, setClickedTo] = useState<boolean | null>(null);
+  const animate = clickedTo === open;
   const text = workGroupText(row);
   const cut = text.lastIndexOf(" · ");
   return (
@@ -60,7 +64,7 @@ export function WorkGroup({
         aria-expanded={open}
         onClick={(e) => {
           // A keyboard-triggered click (Enter/Space) has detail 0: it toggles without the transition.
-          setClicked(e.detail !== 0);
+          setClickedTo(e.detail !== 0 ? !open : null);
           if (e.detail === 0) runInstant(onToggle);
           else onToggle();
         }}
@@ -69,7 +73,7 @@ export function WorkGroup({
       >
         <ChevronRight
           aria-hidden="true"
-          className={`mt-0.5 size-4 shrink-0 ${clicked ? "transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none" : ""} ${open ? "rotate-90" : ""}`}
+          className={`mt-0.5 size-4 shrink-0 ${animate ? "transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none" : ""} ${open ? "rotate-90" : ""}`}
         />
         <span className="min-w-0 flex-1 tabular-nums [overflow-wrap:anywhere]">
           {cut < 0 ? (

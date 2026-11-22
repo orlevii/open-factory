@@ -90,3 +90,19 @@ test("each call in an open group has its own row menu and gutter time (Copy comm
   expect(within(menu).getByRole("menuitem", { name: "Copy command" })).toBeInTheDocument();
   expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
 });
+
+test("after a pointer click, an open that came from elsewhere turns the chevron at once", async () => {
+  const user = userEvent.setup();
+  const text: Row = { kind: "text", seq: 6, at, text: "t", key: "6", head: false };
+  const [a, b, c] = [sh(3), sh(5), sh(7)];
+  const view = timeline([...groupWork([a, b]), text, c]);
+  const chevron = () => rowEl("3")?.querySelector("svg") as SVGElement;
+  await user.click(rowEl("3") as HTMLElement); // pointer open: animates
+  expect(chevron()).toHaveClass("transition-transform");
+  await user.click(rowEl("3") as HTMLElement); // pointer close
+  await user.click(rowEl("7") as HTMLElement); // expand the call standing alone
+  // The text between is gone (a re-split): the expanded call joins and opens the group.
+  view.update(groupWork([a, b, c]));
+  expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
+  expect(chevron()).not.toHaveClass("transition-transform");
+});

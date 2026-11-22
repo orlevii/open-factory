@@ -92,7 +92,6 @@ function setup({
   const router = createRouter({
     routeTree: root.addChildren([
       stub("/agents/$slug"),
-      stub("/agents/$slug/edit"),
       stub("/agents/$slug/usage"),
       stub("/tasks"),
       stub("/agents/new"),

@@ -108,7 +108,6 @@ function setup(props: Props = {}) {
       stub("/templates/$name"),
       stub("/agents/"),
       stub("/agents/$slug"),
-      stub("/agents/$slug/edit"),
       stub("/agents/$slug/usage"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),

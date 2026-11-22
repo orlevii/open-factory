@@ -261,14 +261,46 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   }, [pending, errors]);
 
   const running = isRunning(agent);
-  const restartNotice =
-    running && changes.length > 0
-      ? `Saving restarts @${slug} the next time it is idle, to apply ${andList(
-          changes.map((f) => APPLIES[f]),
-        )}. Crons it set in this session stop.`
-      : undefined;
+  // A display name or description change also restarts the agent's live direct reports (their prompt names their
+  // manager); only the running ones restart anything.
+  const textChanges = changes.filter((f) => f === "displayName" || f === "description");
+  const runningReports =
+    textChanges.length > 0
+      ? (activeAgents.data ?? [])
+          .filter((a) => a.reportsTo === slug && isRunning(a))
+          .map((a) => `@${a.slug}`)
+      : [];
+  const notice: string[] = [];
+  if (running && changes.length > 0)
+    notice.push(
+      `Saving restarts @${slug} the next time it is idle, to apply ${andList(
+        changes.map((f) => APPLIES[f]),
+      )}. Crons it set in this session stop.`,
+    );
+  if (runningReports.length > 0)
+    notice.push(
+      running
+        ? runningReports.length === 1
+          ? `Its direct report ${runningReports[0]} restarts too, the next time it is idle.`
+          : `Its direct reports ${andList(runningReports)} restart too, the next time they are idle.`
+        : `Saving restarts its direct ${runningReports.length === 1 ? "report" : "reports"} ${andList(
+            runningReports,
+          )} the next time ${runningReports.length === 1 ? "it is" : "they are"} idle, to apply ${andList(
+            textChanges.map((f) => APPLIES[f]),
+          )}.`,
+    );
+  const restartNotice = notice.length > 0 ? notice.join(" ") : undefined;
 
-  const stillOpen = () => getSheetState().parent?.id === sheetId;
+  // The form is gone while the sheet shows another state (archived or terminated elsewhere mid-save): a result then
+  // has no form to land in, though the sheet is still open.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const stillOpen = () => mounted.current && getSheetState().parent?.id === sheetId;
   async function save(body: CreateAgentBody | PatchAgentBody): Promise<AgentSummary | undefined> {
     // A patch never names a template; a create body always does.
     if ("template" in body) return undefined;
@@ -280,7 +312,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     try {
       saved = await updateAgent(slug, body);
     } catch (err) {
-      // Dismissed while saving: the error has no form to land in. The draft is kept for "Open form".
+      // Dismissed (or the form replaced by another state) while saving: the error has no form to land in. The draft
+      // is kept for "Open form".
       if (!stillOpen())
         notify({
           text: `Couldn't save @${slug}: ${err instanceof ApiError ? err.message : "can't reach the server."}`,
@@ -296,6 +329,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     void qc.invalidateQueries({ queryKey: ["agent", slug] });
     if (sheetOpens(draftKey) === opensAtSubmit) clearDraft(draftKey);
     const late = !stillOpen();
+    // Late: dismissed, or the sheet now shows another state the user is reading; it stays.
     if (!late) closeSheet();
     // Silent only when the session under the sheet already shows the result (its header shows the name).
     if (saved.restartPending || restartsNow)
@@ -381,7 +415,11 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
               action={addCredential}
             >
               {(a) => (
-                <Select value={shown.credential} onValueChange={(v) => set("credential", v)}>
+                <Select
+                  disabled={!credentials}
+                  value={shown.credential}
+                  onValueChange={(v) => set("credential", v)}
+                >
                   <SelectTrigger
                     id={a.id}
                     aria-invalid={a.invalid || undefined}

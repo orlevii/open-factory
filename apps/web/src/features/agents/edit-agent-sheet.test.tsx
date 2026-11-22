@@ -128,6 +128,9 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   await open({ agents });
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
+  // The closed trigger shows the name and @slug, without the item's indent.
+  expect(select).toHaveTextContent("@cto");
+  expect(select.querySelector("[style*=padding]")).toBeNull();
   expect((await comboOptionNames(select)).map((n) => n.replace(/@.*/, ""))).toEqual([
     "No manager (reports to the humans)",
     "CTO",
@@ -165,6 +168,63 @@ test("the restart notice names every changed kind", async () => {
       "Saving restarts @lead the next time it is idle, to apply the new credential and the new projects. Crons it set in this session stop.",
     ),
   ).toBeInTheDocument();
+});
+
+test("Save is described by the restart notice, so it is heard", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    credentials: [credential("work"), credential("prod")],
+  });
+  expect(saveButton()).not.toHaveAccessibleDescription();
+  await pickOption(field("Credential"), /^prod/);
+  await vi.waitFor(() =>
+    expect(saveButton()).toHaveAccessibleDescription(
+      "Saving restarts @lead the next time it is idle, to apply the new credential. Crons it set in this session stop.",
+    ),
+  );
+});
+
+test("a text change names the running direct reports that restart too", async () => {
+  await open({
+    agents: [
+      lead({ status: "idle" }),
+      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
+      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "hibernated", depth: 1 }),
+    ],
+    credentials: [credential("work"), credential("prod")],
+  });
+  await pickOption(field("Credential"), /^prod/);
+  // A credential is the agent's own: its reports don't restart.
+  expect(await screen.findByText(/^Saving restarts @lead/)).not.toHaveTextContent("dev-1");
+  await rename("Boss");
+  expect(
+    await screen.findByText(
+      "Saving restarts @lead the next time it is idle, to apply the new display name and the new credential. Crons it set in this session stop. Its direct report @dev-1 restarts too, the next time it is idle.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("a stopped agent's text change still names its running reports", async () => {
+  await open({
+    agents: [
+      lead(),
+      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "idle", depth: 1 }),
+      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "working", depth: 1 }),
+    ],
+  });
+  await userEvent.clear(field("Description"));
+  await userEvent.type(field("Description"), "New");
+  expect(
+    await screen.findByText(
+      "Saving restarts its direct reports @dev-1 and @dev-2 the next time they are idle, to apply the new description.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("the credential select is disabled while the list loads", async () => {
+  await open({ extra: { "GET /api/credentials": () => new Promise<Response>(() => {}) } });
+  expect(field("Credential")).toBeDisabled();
+  expect(field("Credential")).toHaveTextContent("work");
 });
 
 test("no restart notice for an agent that isn't running", async () => {
@@ -373,6 +433,48 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   await sheet();
   expect(await screen.findByLabelText("Display name")).toHaveValue("Kept");
   expect(screen.getByText(/Draft restored/)).toBeInTheDocument();
+});
+
+test("archived elsewhere while saving: success keeps the archived state open and toasts", async () => {
+  const patch = held();
+  const agent = lead();
+  const { dialog, queryClient } = await open({
+    agents: [agent],
+    extra: { "PATCH /api/agents/lead": patch.route },
+  });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  agent.archivedAt = "2026-11-20T10:00:00.000Z";
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await within(dialog).findByText("This agent is archived.");
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead.");
+  expect(getSheetState().parent?.kind).toBe("edit-agent");
+});
+
+test("archived elsewhere while saving: a failure toasts with Open form", async () => {
+  const patch = held();
+  const agent = lead();
+  const { dialog, queryClient } = await open({
+    agents: [agent],
+    extra: { "PATCH /api/agents/lead": patch.route },
+  });
+  await rename("Kept");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  agent.archivedAt = "2026-11-20T10:00:00.000Z";
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await within(dialog).findByText("This agent is archived.");
+  await act(async () =>
+    patch.answer(json({ error: { code: "agent_archived", message: "@lead is archived." } }, 409)),
+  );
+  await waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  const toast = vi.mocked(notify).mock.calls[0]?.[0];
+  expect(toast?.text).toBe("Couldn't save @lead: @lead is archived.");
+  expect(toast?.action?.label).toBe("Open form");
+  expect(hasDraft("edit-agent:lead")).toBe(true);
 });
 
 // --- States ---

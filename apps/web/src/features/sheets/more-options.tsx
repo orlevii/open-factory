@@ -26,7 +26,7 @@ export function MoreOptions({
         <button
           type="button"
           aria-expanded={open}
-          aria-controls={id}
+          aria-controls={open ? id : undefined}
           onClick={() => {
             setClicked(true);
             onOpenChange(!open);

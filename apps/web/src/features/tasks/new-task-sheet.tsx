@@ -48,7 +48,8 @@ export default function NewTaskSheet({ spec, sheetId, close }: BodyProps<Spec>) 
             });
             return;
           }
-          clearDraft("new-task");
+          // A late success must not wipe a draft the user has since restored by reopening New task.
+          if (getSheetState().parent?.kind !== "new-task" || stillOpen()) clearDraft("new-task");
           void qc.invalidateQueries({ queryKey: tasksQueryKey });
           if (stillOpen()) close();
           notify({

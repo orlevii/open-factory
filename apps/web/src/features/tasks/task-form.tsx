@@ -1,6 +1,6 @@
 import { ApiError, type TaskSummary, taskBodySchema, taskTitleSchema } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
@@ -73,17 +73,23 @@ export function TaskForm({
     setV(values.current);
     draft.save(values.current);
   };
-  const { title, body, assignee, deps, rows } = v;
+  const { title, body, deps, rows } = v;
 
-  // A reference that no longer points at a live agent is cleared, with its reason under the field.
-  if (
-    assignee &&
-    active.data &&
-    !active.data.some((a) => a.slug === assignee && !a.archivedAt && !a.terminatedAt)
-  ) {
+  // A reference that no longer points at a live agent reads as empty at once, with its reason under the field;
+  // the stored value is cleared in the effect below.
+  const stale = Boolean(
+    v.assignee &&
+      active.data &&
+      !active.data.some((a) => a.slug === v.assignee && !a.archivedAt && !a.terminatedAt),
+  );
+  const assignee = stale ? "" : v.assignee;
+  const staleSlug = v.assignee;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `update` only writes the ref, the draft and state
+  useEffect(() => {
+    if (!stale) return;
     update({ assignee: "" });
-    setErrors((e) => ({ ...e, assignee: `@${assignee} has ended; pick another.` }));
-  }
+    setErrors((e) => ({ ...e, assignee: `@${staleSlug} has ended; pick another.` }));
+  }, [stale, staleSlug]);
 
   const hasValues = deps.trim() !== "" || rows.length > 0;
   const hasError = Boolean(errors.dependsOn || errors.links);
@@ -222,6 +228,7 @@ export function TaskForm({
               resolved={resolved}
               error={errors.dependsOn}
               onChange={(next) => {
+                setUserOpen((o) => o ?? true);
                 update({ deps: next });
                 setError("dependsOn", undefined);
               }}
@@ -231,6 +238,7 @@ export function TaskForm({
               <LinkEditor
                 rows={rows}
                 onChange={(next) => {
+                  setUserOpen((o) => o ?? true);
                   update({ rows: next });
                   setError("links", undefined);
                 }}

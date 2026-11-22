@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft } from "@/features/sheets/drafts";
+import { clearDraft, hasDraft } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -103,7 +103,7 @@ test("a non-empty draft keeps its own assignee over the context prefill", async 
   const { router } = renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   press("c");
-  await userEvent.type(within(await sheet()).getByLabelText("Title"), "Mine");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
   await userEvent.click(await assignee());
   await userEvent.click(await screen.findByRole("option", { name: /Bo\s*@bo/ }));
   act(() => closeSheet());
@@ -119,7 +119,7 @@ test("a draft whose assignee has ended clears it and says so", async () => {
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   press("c");
-  await userEvent.type(within(await sheet()).getByLabelText("Title"), "Mine");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
   await userEvent.click(await assignee());
   await userEvent.click(await screen.findByRole("option", { name: /Ada\s*@ada/ }));
   act(() => closeSheet());
@@ -149,7 +149,7 @@ test("a late success toasts Created · Open and does not navigate", async () => 
   })();
   await screen.findByRole("heading", { level: 1 });
   press("c");
-  await userEvent.type(within(await sheet()).getByLabelText("Title"), "Plan");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Plan");
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   await screen.findByRole("button", { name: "Creating…" });
   act(() => closeSheet());
@@ -176,7 +176,7 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   press("c");
-  await userEvent.type(within(await sheet()).getByLabelText("Title"), "Plan");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Plan");
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   await screen.findByRole("button", { name: "Creating…" });
   act(() => closeSheet());
@@ -188,4 +188,30 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
   act(() => n?.action?.run());
   expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("Plan");
+});
+
+test("a late success does not wipe a draft restored by reopening New task", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockApi({
+    ...base,
+    "POST /api/tasks": async () => {
+      await gate;
+      return json({ task: detail(42) }, 201);
+    },
+  });
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Plan");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await screen.findByRole("button", { name: "Creating…" });
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Another");
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  expect(hasDraft("new-task")).toBe(true);
+  expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("PlanAnother");
 });

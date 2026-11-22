@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { anyEventSchema, type HarnessEvent, toolMetaSchema } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
 import { FIXTURES_DIR, fixtureNames, readFixture } from "../test-fixtures.ts";
-import { createMapperState, flushMapper, mapLine, toolMetaOf } from "./mapper.ts";
+import type { LiveEvent } from "./live.ts";
+import { createMapperState, flushMapper, type MapperState, mapLine, toolMetaOf } from "./mapper.ts";
 
 /** Maps a whole fixture. `manualCompactAt` lists 1-based line numbers before which the driver would
  *  have written `/compact` (so the mapper knows a following compaction failure is manual). */
@@ -13,15 +15,20 @@ function mapFixture(name: string, opts: { resumed?: boolean; manualCompactAt?: n
     onUnmapped: (k) => unmapped.push(k),
   });
   const events: HarnessEvent[] = [];
+  const live: LiveEvent[] = [];
   readFixture(name).forEach((line, i) => {
     if (opts.manualCompactAt?.includes(i + 1)) state.manualCompactPending = true;
-    events.push(...mapLine(line, state));
+    const out = mapLine(line, state);
+    events.push(...out.events);
+    live.push(...out.live);
   });
   events.push(...flushMapper(state));
   // `rate_limit_status` is not a timeline event and shows up wherever the CLI interleaves one: sequences ignore it.
   const types = events.map((e) => e.type).filter((t) => t !== "rate_limit_status");
-  return { events, unmapped, types };
+  return { events, live, unmapped, types };
 }
+/** The persisted events of one line. */
+const mapEvents = (line: unknown, s: MapperState) => mapLine(line, s).events;
 const ofType = <T extends HarnessEvent["type"]>(evs: HarnessEvent[], t: T) =>
   evs.filter((e): e is Extract<HarnessEvent, { type: T }> => e.type === t);
 
@@ -37,6 +44,13 @@ describe("every fixture", () => {
       (l) => (l as { subtype?: string }).subtype === "init",
     ).length;
     expect(ofType(events, "turn_started")).toHaveLength(inits);
+  });
+
+  test.each(fixtureNames())("%s: no stream_event lines, no live events", (name) => {
+    expect(readFixture(name).some((l) => (l as { type?: string }).type === "stream_event")).toBe(
+      false,
+    );
+    expect(mapFixture(name).live).toEqual([]);
   });
 });
 
@@ -276,9 +290,9 @@ test("every rate limit event maps to rate_limit_status; only rejected also emits
     resetsAt: 1795027800,
     utilization,
   });
-  expect(mapLine(rl("allowed", 0.1), s)).toEqual([status("allowed", 0.1)]);
-  expect(mapLine(rl("allowed_warning", 0.82), s)).toEqual([status("allowed_warning", 0.82)]);
-  expect(mapLine(rl("rejected"), s)).toEqual([
+  expect(mapEvents(rl("allowed", 0.1), s)).toEqual([status("allowed", 0.1)]);
+  expect(mapEvents(rl("allowed_warning", 0.82), s)).toEqual([status("allowed_warning", 0.82)]);
+  expect(mapEvents(rl("rejected"), s)).toEqual([
     status("rejected", 0.97),
     {
       type: "rate_limited",
@@ -296,7 +310,7 @@ test("a real rate_limit_event carries utilization only inside unifiedWindows", (
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l));
   const s = createMapperState({ resumed: false });
-  const out = lines.flatMap((l) => mapLine(l, s));
+  const out = lines.flatMap((l) => mapEvents(l, s));
   expect(out).toEqual([
     {
       type: "rate_limit_status",
@@ -310,7 +324,7 @@ test("a real rate_limit_event carries utilization only inside unifiedWindows", (
 
 test("a real-shape rejected event: rate_limited carries the window's utilization and reset too", () => {
   const s = createMapperState({ resumed: false });
-  const out = mapLine(
+  const out = mapEvents(
     {
       type: "rate_limit_event",
       rate_limit_info: {
@@ -342,7 +356,7 @@ test("a real-shape rejected event: rate_limited carries the window's utilization
 test("a rate_limit_event without rateLimitType: the status has no type rather than an invented one", () => {
   const s = createMapperState({ resumed: false });
   expect(
-    mapLine(
+    mapEvents(
       { type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1795209600 } },
       s,
     ),
@@ -351,7 +365,7 @@ test("a rate_limit_event without rateLimitType: the status has no type rather th
 
 test("rate_limit_status without a known status is not invented", () => {
   const s = createMapperState({ resumed: false });
-  expect(mapLine({ type: "rate_limit_event", rate_limit_info: { status: "weird" } }, s)).toEqual(
+  expect(mapEvents({ type: "rate_limit_event", rate_limit_info: { status: "weird" } }, s)).toEqual(
     [],
   );
 });
@@ -359,9 +373,9 @@ test("rate_limit_status without a known status is not invented", () => {
 test("unknown types are reported once and yield nothing", () => {
   const seen: string[] = [];
   const s = createMapperState({ resumed: false, onUnmapped: (k) => seen.push(k) });
-  expect(mapLine({ type: "brand_new" }, s)).toEqual([]);
-  expect(mapLine({ type: "brand_new" }, s)).toEqual([]);
-  expect(mapLine({ type: "system", subtype: "brand_new" }, s)).toEqual([]);
+  expect(mapEvents({ type: "brand_new" }, s)).toEqual([]);
+  expect(mapEvents({ type: "brand_new" }, s)).toEqual([]);
+  expect(mapEvents({ type: "system", subtype: "brand_new" }, s)).toEqual([]);
   expect(seen).toEqual(["brand_new", "system/brand_new"]);
 });
 
@@ -548,7 +562,7 @@ describe("spec §6.2 drops", () => {
     const seen: string[] = [];
     // Mid-turn state (init seen), the realistic context for every dropped line.
     const s = createMapperState({ resumed: false, onUnmapped: (k) => seen.push(k) });
-    mapLine(
+    mapEvents(
       {
         type: "system",
         subtype: "init",
@@ -559,7 +573,7 @@ describe("spec §6.2 drops", () => {
       },
       s,
     );
-    expect(mapLine(line, s)).toEqual([]);
+    expect(mapEvents(line, s)).toEqual([]);
     expect(seen).toEqual([]);
   });
 });
@@ -584,9 +598,9 @@ test("usage falls back to cumulative modelUsage/total_cost_usd deltas without mo
     total_cost_usd: total,
     modelUsage,
   });
-  mapLine(init, s);
+  mapEvents(init, s);
   const t1 = ofType(
-    mapLine(
+    mapEvents(
       result(
         {
           "m-a": {
@@ -614,9 +628,9 @@ test("usage falls back to cumulative modelUsage/total_cost_usd deltas without mo
   });
   expect(t1?.costUsd).toBeCloseTo(0.01, 10);
 
-  mapLine(init, s);
+  mapEvents(init, s);
   const t2 = ofType(
-    mapLine(
+    mapEvents(
       result(
         {
           "m-a": {
@@ -653,7 +667,7 @@ test("usage falls back to cumulative modelUsage/total_cost_usd deltas without mo
 
 test("system/model_refusal_fallback maps to a quiet model_fallback, not an error", () => {
   const s = createMapperState({ resumed: false });
-  mapLine(
+  mapEvents(
     {
       type: "system",
       subtype: "init",
@@ -665,7 +679,7 @@ test("system/model_refusal_fallback maps to a quiet model_fallback, not an error
     s,
   );
   expect(
-    mapLine(
+    mapEvents(
       {
         type: "system",
         subtype: "model_refusal_fallback",
@@ -677,7 +691,7 @@ test("system/model_refusal_fallback maps to a quiet model_fallback, not an error
     ),
   ).toEqual([{ type: "model_fallback", message: "Switched to a fallback model" }]);
   expect(
-    mapLine(
+    mapEvents(
       { type: "system", subtype: "model_refusal_fallback", fallback_model: "m-2", ...SID },
       s,
     ),
@@ -717,15 +731,15 @@ test("permission-denied (classifier): no derived duplicate", () => {
 
 test("permission_denials fallback on result for an unreported id", () => {
   const s = createMapperState({ resumed: false });
-  mapLine({ type: "system", subtype: "init", session_id: "s", model: "m" }, s);
-  mapLine(
+  mapEvents({ type: "system", subtype: "init", session_id: "s", model: "m" }, s);
+  mapEvents(
     {
       type: "assistant",
       message: { model: "m", content: [{ type: "tool_use", id: "t1", name: "Edit", input: {} }] },
     },
     s,
   );
-  const out = mapLine(
+  const out = mapEvents(
     {
       type: "result",
       is_error: false,
@@ -745,9 +759,9 @@ test("permission_denials fallback on result for an unreported id", () => {
 
 test("session_state_changed yields nothing", () => {
   const st = createMapperState({ resumed: false });
-  expect(mapLine({ type: "system", subtype: "session_state_changed", state: "idle" }, st)).toEqual(
-    [],
-  );
+  expect(
+    mapEvents({ type: "system", subtype: "session_state_changed", state: "idle" }, st),
+  ).toEqual([]);
 });
 
 test("the rejected rate-limit fixture maps to rate_limited", () => {
@@ -940,7 +954,7 @@ describe("tool_result.meta", () => {
 
   test("a line with two tool_results carries no meta", () => {
     const state = createMapperState({ resumed: false });
-    mapLine(
+    mapEvents(
       {
         type: "assistant",
         message: {
@@ -953,7 +967,7 @@ describe("tool_result.meta", () => {
       },
       state,
     );
-    const out = mapLine(
+    const out = mapEvents(
       {
         type: "user",
         message: {
@@ -978,5 +992,29 @@ describe("tool_result.meta", () => {
       for (const e of ofType(events, "tool_result"))
         if (e.meta) expect(toolMetaSchema.safeParse(e.meta).success).toBe(true);
     }
+  });
+});
+
+// U3 §11.1: live events ride beside the persisted ones and never change them. The digest strips
+// the reconcile keys (messageId, blockIndex) so it keeps guarding every other field once they land.
+describe("persisted events stay the same", () => {
+  const U3 = readdirSync(`${FIXTURES_DIR}u3`)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => `u3/${f.replace(/\.jsonl$/, "")}`);
+  test.each([...fixtureNames(), ...U3])("%s", (name) => {
+    const { events } = mapFixture(name, { resumed: name.includes("resume") });
+    const stripped = events.map((e) => {
+      const {
+        messageId: _m,
+        blockIndex: _b,
+        ...rest
+      } = e as HarnessEvent & {
+        messageId?: string;
+        blockIndex?: number;
+      };
+      return rest;
+    });
+    const digest = createHash("sha256").update(JSON.stringify(stripped)).digest("hex");
+    expect(`${events.length} ${digest}`).toMatchSnapshot();
   });
 });

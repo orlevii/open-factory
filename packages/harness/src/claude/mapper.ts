@@ -1,4 +1,5 @@
 import { type HarnessEvent, type ToolMeta, toolMetaSchema } from "@open-factory/shared";
+import type { LiveEvent } from "./live.ts";
 
 // Stream-json is untyped JSON from another program; read it defensively.
 // biome-ignore lint/suspicious/noExplicitAny: stream-json lines are parsed JSON
@@ -32,6 +33,8 @@ export interface MapperState {
   toolNames: Map<string, string>;
   /** tool_use ids already reported as denied, per process, never reset. */
   deniedIds: Set<string>;
+  /** The stdout line being mapped (1-based), stamped on every live event (U3 §11.2). */
+  line: number;
 }
 
 export function createMapperState(opts: {
@@ -55,6 +58,7 @@ export function createMapperState(opts: {
     reported: new Set(),
     toolNames: new Map(),
     deniedIds: new Set(),
+    line: 0,
   };
 }
 
@@ -505,16 +509,27 @@ function result(e: Json, s: MapperState): HarnessEvent[] {
   return out;
 }
 
-export function mapLine(line: unknown, s: MapperState): HarnessEvent[] {
+export interface MappedLine {
+  events: HarnessEvent[];
+  live: LiveEvent[];
+}
+
+/**
+ * Maps one stdout line. `lineNo` is its stdout line number (the process counts them); without it,
+ * the mapper counts calls. Live events are stamped with it; persisted events are returned as is.
+ */
+export function mapLine(line: unknown, s: MapperState, lineNo?: number): MappedLine {
+  s.line = lineNo ?? s.line + 1;
   const e = (line ?? {}) as Json;
   const out: HarnessEvent[] = [];
+  const live: LiveEvent[] = [];
   if (s.heldCompacted) {
     const held = s.heldCompacted;
     s.heldCompacted = undefined;
     if (e.type === "user" && e.isSynthetic === true && !e.isReplay) {
       const summary = textOf(e.message?.content);
       out.push(summary ? { ...held, summary } : held);
-      return out;
+      return { events: out, live };
     }
     out.push(held);
   }
@@ -567,7 +582,7 @@ export function mapLine(line: unknown, s: MapperState): HarnessEvent[] {
     default:
       out.push(...unmapped(String(e.type), s));
   }
-  return out;
+  return { events: out, live };
 }
 
 /** End of stream: emit a compacted event still waiting for its summary. */

@@ -1,12 +1,9 @@
-import {
-  type AgentSummary,
-  ApiError,
-  type CreateAgentBody,
-  createAgentBodySchema,
-  type PatchAgentBody,
-  slugSchema,
-  type TemplateConfig,
-  type TemplateIssue,
+import type {
+  AgentSummary,
+  CreateAgentBody,
+  PatchAgentBody,
+  TemplateConfig,
+  TemplateIssue,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -27,37 +24,12 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
+import { type Errors, FIELDS, useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
-import { ShowOutput } from "@/features/agents/show-output";
-import {
-  credentialsQueryOptions,
-  projectsQueryOptions,
-  secretsQueryOptions,
-} from "@/features/settings/api";
+import { projectsQueryOptions } from "@/features/settings/api";
+import { clearDraft, type DraftKey } from "@/features/sheets/drafts";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
-
-const FIELDS = [
-  "template",
-  "slug",
-  "displayName",
-  "description",
-  "reportsTo",
-  "credential",
-  "projects",
-] as const;
-type Field = (typeof FIELDS)[number];
-type Errors = Partial<Record<Field, string>>;
-type Values = {
-  template: string;
-  slug: string;
-  displayName: string;
-  description: string;
-  /** "" is "No manager". */
-  reportsTo: string;
-  credential: string;
-  projects: string[];
-};
 
 const NO_MANAGER: ComboOption[] = [
   { value: "", label: "No manager (reports to the humans)", fixed: true },
@@ -78,64 +50,23 @@ type Props =
       onSubmit: (body: PatchAgentBody) => Promise<AgentSummary>;
     };
 
-const fromAgent = (a: AgentSummary): Values => ({
-  template: a.template,
-  slug: a.slug,
-  displayName: a.displayName,
-  description: a.description,
-  reportsTo: a.reportsTo ?? "",
-  credential: a.credential ?? "",
-  projects: a.projects,
-});
-
-/** Every slug in use, archived agents included; undefined until both lists answered. */
-function useTakenSlugs(enabled: boolean): Set<string> | undefined {
-  const active = useQuery({ ...agentsListQueryOptions("exclude"), enabled });
-  const archived = useQuery({ ...agentsListQueryOptions("only"), enabled });
-  // One Set per answer, not one per render.
-  return useMemo(
-    () =>
-      active.data && archived.data
-        ? new Set([...active.data, ...archived.data].map((a) => a.slug))
-        : undefined,
-    [active.data, archived.data],
-  );
-}
-
 /** The New agent and Edit agent form. Fields validate on blur and all together on submit; server
  *  field errors land under their fields. */
 export function AgentForm(props: Props) {
   const { mode } = props;
   const create = mode === "create";
   const agent = mode === "edit" ? props.initial : undefined;
-
-  const [baseline, setBaseline] = useState<Values | undefined>(agent && fromAgent(agent));
-  const [values, setValues] = useState<Values>(
-    agent
-      ? fromAgent(agent)
-      : {
-          template: props.initial?.template ?? "",
-          slug: "",
-          displayName: "",
-          description: "",
-          reportsTo: "",
-          credential: "",
-          projects: [],
-        },
-  );
-  const [custom, setCustom] = useState(agent?.grantsOverridden ?? false);
-  const [projectsTouched, setProjectsTouched] = useState(false);
-  /** Fields the user has made theirs: the template prefill and the credential default stop there. */
-  const [touched, setTouched] = useState<Partial<Record<Field, boolean>>>({});
-  const [errors, setErrors] = useState<Errors>({});
-  const [outcome, setOutcome] = useState<{
-    tone: "success" | "error";
-    content: ReactNode;
-  }>();
-  const [pending, setPending] = useState(false);
-  /** Submit attempts, so a slow flag belongs to one attempt and a resubmit starts without it. */
-  const [attempt, setAttempt] = useState(0);
-  const [firedFor, setFiredFor] = useState<number | null>(null);
+  const draftKey: DraftKey = agent ? `edit-agent:${agent.slug}` : "new-agent";
+  const s = useAgentFormState({
+    mode,
+    agent,
+    draftKey,
+    prefill: create ? props.initial : undefined,
+  });
+  const { values, shown, errors, set, blur, claim, pending, slow, outcome, config } = s;
+  const { missingSecrets, noCredentials, credentials } = s;
+  // Until the sheets replace these pages, a draft lives only as long as the page.
+  useEffect(() => () => clearDraft(draftKey), [draftKey]);
   const form = useRef<HTMLFormElement>(null);
 
   const templates = useQuery({ ...templatesQueryOptions, enabled: create });
@@ -144,104 +75,22 @@ export function AgentForm(props: Props) {
     enabled: values.template !== "",
     retry: false,
   });
-  const config: TemplateConfig | undefined = detail.data?.config;
-  // The last template that landed keeps prefilling while the next one loads, so switching
-  // templates doesn't blank the fields in between.
-  const [landed, setLanded] = useState(config);
-  if (config && config !== landed) setLanded(config);
-  const prefill = config ?? landed;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
-  const taken = useTakenSlugs(create);
-  const credentials = useQuery(credentialsQueryOptions);
   const projects = useQuery(projectsQueryOptions);
-  const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
 
-  // What the form shows and submits. New agent: the chosen template fills the fields the user
-  // hasn't edited, and the slug takes the template's name when that slug is free and valid. A
-  // credential has to be picked; with exactly one there is nothing to choose.
-  const shown: Values = !create
-    ? values
-    : {
-        ...values,
-        slug:
-          touched.slug || !prefill || !taken
-            ? values.slug
-            : !taken.has(prefill.name) && slugSchema.safeParse(prefill.name).success
-              ? prefill.name
-              : "",
-        displayName: touched.displayName || !prefill ? values.displayName : prefill.displayName,
-        description: touched.description || !prefill ? values.description : prefill.description,
-        credential: values.credential || credentials.data?.[0]?.name || "",
-        projects: custom || !prefill ? values.projects : prefill.projects,
-      };
-  // The detail (and the taken slugs) land asynchronously, so a field the user enters while they
-  // are still on the way is theirs as it stands: filling it would mix the prefill into what they
-  // are about to type.
-  const awaitingPrefill = create && values.template !== "" && (!config || !taken);
-  const claim = (f: "slug" | "displayName" | "description") => {
-    if (!awaitingPrefill || touched[f]) return;
-    setTouched((t) => ({ ...t, [f]: true }));
-    setValues((v) => ({ ...v, [f]: shown[f] }));
+  const focusFirst = (e: Errors) => {
+    const first = FIELDS.find((f) => e[f]);
+    if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
   };
-
-  // "Installing plugins…" after 3 s of creating, only when the template installs any.
-  const pluginCount = create ? (config?.plugins.length ?? 0) : 0;
+  // Focus moves to the first error once it renders, and once the fieldset is enabled again after a server answer.
+  const wantFocus = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the errors or a request settle
   useEffect(() => {
-    if (!pending || pluginCount === 0) return;
-    const t = setTimeout(() => setFiredFor(attempt), 3000);
-    return () => clearTimeout(t);
-  }, [pending, pluginCount, attempt]);
-  const slow = pending && pluginCount > 0 && firedFor === attempt;
+    if (pending || !wantFocus.current) return;
+    wantFocus.current = false;
+    focusFirst(errors);
+  }, [pending, errors]);
 
-  function check(f: Field, v: Values): string | undefined {
-    switch (f) {
-      case "template": {
-        if (!create) return undefined;
-        if (v.template === "") return "Choose a template.";
-        const t = templates.data?.templates.find((x) => x.name === v.template);
-        // A name that isn't listed (a stale ?template=) shows as unchosen, so it is.
-        if (templates.data && !t) return "Choose a template.";
-        if (t && t.errors > 0) return `Template ${v.template} has errors. Fix them first.`;
-        return undefined;
-      }
-      case "slug": {
-        if (!create) return undefined;
-        if (v.slug === "") return "Enter a slug.";
-        const r = slugSchema.safeParse(v.slug);
-        return r.success ? undefined : r.error.issues[0]?.message;
-      }
-      case "displayName": {
-        if (createAgentBodySchema.shape.displayName.safeParse(v.displayName).success) return;
-        return v.displayName.trim() === ""
-          ? "Enter a display name."
-          : "Keep the display name to 80 characters or fewer.";
-      }
-      case "description":
-        return createAgentBodySchema.shape.description.safeParse(v.description).success
-          ? undefined
-          : "Keep the description to 500 characters or fewer.";
-      case "credential":
-        return v.credential === "" ? "Choose a credential." : undefined;
-      default:
-        return undefined;
-    }
-  }
-
-  const set = <K extends keyof Values>(f: K, v: Values[K]) => {
-    setTouched((t) => (t[f] ? t : { ...t, [f]: true }));
-    setValues((s) => ({ ...s, [f]: v }));
-    setErrors((e) => ({ ...e, [f]: undefined }));
-    // A success line describes the saved state; editing makes it stale.
-    setOutcome((o) => (o?.tone === "success" ? undefined : o));
-  };
-  const focusAfterPending = useRef<Errors>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when a request settles
-  useEffect(() => {
-    if (pending || !focusAfterPending.current) return;
-    focusFirst(focusAfterPending.current);
-    focusAfterPending.current = undefined;
-  }, [pending]);
-  const blur = (f: Field) => setErrors((e) => ({ ...e, [f]: check(f, shown) }));
   // Opening a Radix Select moves focus into its list, so the trigger blurs on open. The template
   // validates when its list closes (this effect sees the chosen value), not while it is open.
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -252,120 +101,15 @@ export function AgentForm(props: Props) {
     templateOpened.current = false;
     blur("template");
   }, [templateOpen]);
-  const focusFirst = (e: Errors) => {
-    const first = FIELDS.find((f) => e[f]);
-    if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
-  };
 
-  const setProjects = (next: string[]) => {
-    setProjectsTouched(true);
-    // Back to exactly the template's set is the template default again, not an override.
-    const sameAsTemplate =
-      config !== undefined &&
-      next.length === config.projects.length &&
-      config.projects.every((p) => next.includes(p));
-    setCustom(!sameAsTemplate);
-    set("projects", next);
-  };
-  const applyTemplateDefault = () => {
-    setProjectsTouched(true);
-    setCustom(false);
-    setErrors((e) => ({ ...e, projects: undefined }));
-    // The template's set when it's known; the server resolves it either way (projects: null).
-    if (config) set("projects", config.projects);
-  };
-
-  function body(): CreateAgentBody | PatchAgentBody | null {
-    const displayName = shown.displayName.trim();
-    const description = shown.description.trim();
-    const reportsTo = shown.reportsTo || null;
-    if (create) {
-      return {
-        template: shown.template,
-        slug: shown.slug,
-        displayName,
-        description,
-        reportsTo,
-        credential: shown.credential,
-        ...(custom ? { projects: shown.projects } : {}),
-      };
-    }
-    const base = baseline as Values;
-    const patch: PatchAgentBody = {};
-    if (displayName !== base.displayName) patch.displayName = displayName;
-    if (description !== base.description) patch.description = description;
-    if (reportsTo !== (base.reportsTo || null)) patch.reportsTo = reportsTo;
-    if (shown.credential !== base.credential) patch.credential = shown.credential;
-    if (projectsTouched) patch.projects = custom ? shown.projects : null;
-    return Object.keys(patch).length > 0 ? patch : null;
-  }
-
-  async function submit(ev: FormEvent) {
+  function submit(ev: FormEvent) {
     ev.preventDefault();
-    if (pending || noCredentials) return;
-    const found: Errors = {};
-    for (const f of FIELDS) {
-      const m = check(f, shown);
-      if (m) found[f] = m;
-    }
-    setErrors(found);
-    setOutcome(undefined);
-    if (Object.keys(found).length > 0) return focusFirst(found);
-    const b = body();
-    if (!b) {
-      setOutcome({ tone: "success", content: "Nothing to save: no field changed." });
-      return;
-    }
-    setAttempt((n) => n + 1);
-    setPending(true);
-    try {
-      if (props.mode === "create") {
-        await props.onSubmit(b as CreateAgentBody);
-      } else {
-        const wasRunning = agent?.status === "working" || agent?.status === "idle";
-        const saved = await props.onSubmit(b as PatchAgentBody);
-        setBaseline(fromAgent(saved));
-        setProjectsTouched(false);
-        setCustom(saved.grantsOverridden);
-        setOutcome({
-          tone: "success",
-          content:
-            saved.restartPending || wasRunning
-              ? "Saved. The agent restarts when idle to apply the changes. Its crons from this session stop."
-              : "Saved.",
-        });
-      }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        const fields = (err.body.fields ?? {}) as Record<string, string>;
-        const e: Errors = {};
-        for (const f of FIELDS) if (fields[f]) e[f] = fields[f];
-        if (Object.keys(e).length > 0) {
-          setErrors(e);
-          // The fieldset is still disabled here; focus once it's enabled again.
-          focusAfterPending.current = e;
-        } else {
-          setOutcome({
-            tone: "error",
-            content: (
-              <>
-                {err.message}
-                {err.code === "plugin_install_failed" && <ShowOutput output={err.body.output} />}
-              </>
-            ),
-          });
-        }
-      } else {
-        setOutcome({
-          tone: "error",
-          content: create
-            ? "Couldn't create the agent. Check that the server is running, then try again."
-            : "Couldn't save. Check that the server is running, then try again.",
-        });
-      }
-    } finally {
-      setPending(false);
-    }
+    wantFocus.current = true;
+    return s.submit((b) =>
+      props.mode === "create"
+        ? props.onSubmit(b as CreateAgentBody)
+        : props.onSubmit(b as PatchAgentBody),
+    );
   }
 
   // Who can manage: persistent agents (a spawned agent never manages). On Edit the agent and everything
@@ -402,12 +146,6 @@ export function AgentForm(props: Props) {
     () => (managerMissing ? (slug: string) => `@${slug} (archived)` : undefined),
     [managerMissing],
   );
-
-  const noCredentials = credentials.data !== undefined && credentials.data.length === 0;
-  const missingSecrets =
-    create && config && secrets.data
-      ? config.secrets.filter((s) => !secrets.data.some((x) => x.name === s))
-      : [];
 
   return (
     <form ref={form} onSubmit={submit} noValidate className="grid max-w-[36rem] gap-6">
@@ -472,7 +210,6 @@ export function AgentForm(props: Props) {
             error={errors.slug}
             value={shown.slug}
             onChange={(e) => set("slug", e.target.value)}
-            onFocus={() => claim("slug")}
             onBlur={() => blur("slug")}
             autoComplete="off"
             autoCapitalize="none"
@@ -537,7 +274,7 @@ export function AgentForm(props: Props) {
           <FieldShell name="credential" label="Credential" error={errors.credential}>
             {(a) => (
               <Select
-                disabled={!credentials.data}
+                disabled={!credentials}
                 value={shown.credential}
                 onValueChange={(v) => set("credential", v)}
               >
@@ -548,11 +285,11 @@ export function AgentForm(props: Props) {
                   onBlur={() => blur("credential")}
                 >
                   <SelectValue>
-                    {credentials.data ? undefined : shown.credential || "Loading…"}
+                    {credentials ? undefined : shown.credential || "Loading…"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {credentials.data?.map((c) => (
+                  {credentials?.map((c) => (
                     <SelectItem key={c.name} value={c.name}>
                       {`${c.name}: ${KIND_LABEL[c.kind]}`}
                     </SelectItem>
@@ -565,10 +302,10 @@ export function AgentForm(props: Props) {
         <ProjectGrantPicker
           projects={projects.data}
           value={shown.projects}
-          custom={custom}
+          custom={s.custom}
           error={errors.projects}
-          onChange={setProjects}
-          onUseDefault={applyTemplateDefault}
+          onChange={s.setProjects}
+          onUseDefault={s.applyTemplateDefault}
         />
       </fieldset>
       <div className="grid gap-2">

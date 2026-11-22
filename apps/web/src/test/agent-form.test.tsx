@@ -59,15 +59,8 @@ test("?template=lead preselects it and fills the fields and grants from it", asy
   expect(screen.getByRole("checkbox", { name: /docs/ })).not.toBeChecked();
 });
 
-test("the slug is prefilled from the template name only when it's free", async () => {
+test("the slug is not prefilled from the template name", async () => {
   mockWorld();
-  const first = renderApp("/agents/new?template=lead", alice);
-  await ready();
-  expect(field("Slug").value).toBe("lead");
-  first.unmount();
-  vi.unstubAllGlobals();
-
-  mockWorld({ agents: [agentSummary({ slug: "lead" })] });
   renderApp("/agents/new?template=lead", alice);
   await ready();
   expect(field("Slug").value).toBe("");
@@ -168,6 +161,7 @@ test("a 400 with fields.slug puts the error under Slug and focuses it", async ()
   });
   renderApp("/agents/new?template=lead", alice);
   await ready();
+  await userEvent.type(field("Slug"), "lead");
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   expect(await screen.findByText("That slug is taken.")).toBeInTheDocument();
   expect(field("Slug")).toHaveFocus();
@@ -264,6 +258,7 @@ test("while creating the fields are disabled; Installing plugins… appears afte
   await ready();
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  await user.type(field("Slug"), "lead");
   await user.click(screen.getByRole("button", { name: "Create agent" }));
   expect(await screen.findByRole("button", { name: /Creating…/ })).toBeInTheDocument();
   expect(field("Display name")).toBeDisabled();
@@ -292,6 +287,7 @@ test("the slow line is per attempt: a resubmit after a slow failure starts witho
   await ready();
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  await user.type(field("Slug"), "lead");
   await user.click(screen.getByRole("button", { name: "Create agent" }));
   await screen.findByRole("button", { name: /Creating…/ });
   await act(async () => {
@@ -301,6 +297,7 @@ test("the slow line is per attempt: a resubmit after a slow failure starts witho
   await act(async () => failNext.current());
   await screen.findByRole("button", { name: "Create agent" });
   expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
+  await user.type(field("Slug"), "lead");
   await user.click(screen.getByRole("button", { name: "Create agent" }));
   await screen.findByRole("button", { name: /Creating…/ });
   expect(n).toBe(2);
@@ -329,6 +326,7 @@ test("a 502 shows the form error with a collapsed Show output", async () => {
   });
   renderApp("/agents/new?template=lead", alice);
   await ready();
+  await userEvent.type(field("Slug"), "lead");
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   const alert = await screen.findByText("Plugin install failed: superpowers@market.");
   expect(alert.closest("[role=alert]")).not.toBeNull();
@@ -350,6 +348,7 @@ test("success navigates to the new agent's session view", async () => {
   });
   const { router } = renderApp("/agents/new?template=lead", alice);
   await ready();
+  await userEvent.type(field("Slug"), "lead");
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/lead"));
 });
@@ -399,6 +398,7 @@ test("a server projects error shows under Projects and focuses the group (create
   mockWorld({ extra: { "POST /api/agents": projectsError } });
   renderApp("/agents/new?template=lead", alice);
   await ready();
+  await userEvent.type(field("Slug"), "lead");
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   const msg = await screen.findByText("Project docs isn't registered.");
   const group = screen.getByRole("group", { name: /Projects/ });
@@ -425,13 +425,13 @@ test("Edit: a toggle sends the project array, Use template default sends null", 
   const api = mockWorld({
     agents: [lead],
     extra: {
-      "PATCH /api/agents/lead": (body) =>
-        json({
-          agent: {
-            ...lead,
-            grantsOverridden: (body as { projects: unknown }).projects !== null,
-          },
-        }),
+      // The server keeps what it saved, so the refetch after Save agrees with the response.
+      "PATCH /api/agents/lead": (body) => {
+        const projects = (body as { projects: string[] | null }).projects;
+        lead.grantsOverridden = projects !== null;
+        lead.projects = projects ?? ["app"];
+        return json({ agent: { ...lead } });
+      },
     },
   });
   renderApp("/agents/lead/edit", alice);
@@ -460,6 +460,7 @@ test("toggling the grants back to the template's set is not Custom", async () =>
   expect(within(group).getByText("Custom")).toBeInTheDocument();
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
   expect(within(group).getByText("From the template")).toBeInTheDocument();
+  await userEvent.type(field("Slug"), "lead");
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
   expect(api.calls.find((c) => c.method === "POST")?.body).not.toHaveProperty("projects");
@@ -604,13 +605,13 @@ test("switching templates re-prefills only the fields the user hasn't edited", a
   await userEvent.type(field("Display name"), "Mine");
   await pickOption(field("Template"), "writer");
   await vi.waitFor(() => expect(field("Description").value).toBe("Writes docs"));
-  expect(field("Slug").value).toBe("writer");
   expect(field("Display name").value).toBe("Mine");
+  await userEvent.type(field("Slug"), "lead");
   await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
   expect(api.calls.find((c) => c.method === "POST")?.body).toMatchObject({
     template: "writer",
-    slug: "writer",
+    slug: "lead",
     displayName: "Mine",
     description: "Writes docs",
     credential: "work",

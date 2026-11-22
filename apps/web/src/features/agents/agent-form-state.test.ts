@@ -1,0 +1,238 @@
+import { ApiError, type CreateAgentBody, type PatchAgentBody } from "@open-factory/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { useAgentFormState } from "@/features/agents/agent-form-state";
+import { resetDrafts } from "@/features/sheets/drafts";
+import { agentSummary, mockWorld } from "@/test/agent-screens-fixtures";
+
+beforeEach(() => {
+  resetDrafts();
+  mockWorld();
+});
+afterEach(() => vi.unstubAllGlobals());
+
+function wrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children);
+}
+
+type Args = Parameters<typeof useAgentFormState>[0];
+const mount = (args: Args) =>
+  renderHook((a: Args) => useAgentFormState(a), { initialProps: args, wrapper: wrapper() });
+const create = (over: Partial<Args> = {}): Args => ({
+  mode: "create",
+  draftKey: "new-agent",
+  ...over,
+});
+const lead = agentSummary({ slug: "lead", displayName: "Lead", description: "Leads" });
+const edit = (agent = lead): Args => ({
+  mode: "edit",
+  agent,
+  draftKey: `edit-agent:${agent.slug}`,
+});
+
+test("each field validates on blur, with the form's messages", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  act(() => result.current.set("slug", "Bad_Slug"));
+  act(() => result.current.blur("slug"));
+  expect(result.current.errors.slug).toBeTruthy();
+  act(() => result.current.blur("displayName"));
+  expect(result.current.errors.displayName).toBe("Enter a display name.");
+  act(() => result.current.set("displayName", "x".repeat(81)));
+  act(() => result.current.blur("displayName"));
+  expect(result.current.errors.displayName).toBe(
+    "Keep the display name to 80 characters or fewer.",
+  );
+  act(() => result.current.set("description", "x".repeat(501)));
+  act(() => result.current.blur("description"));
+  expect(result.current.errors.description).toBe(
+    "Keep the description to 500 characters or fewer.",
+  );
+  act(() => result.current.blur("template"));
+  expect(result.current.errors.template).toBe("Choose a template.");
+  // Typing clears a field's error.
+  act(() => result.current.set("slug", "ok"));
+  expect(result.current.errors.slug).toBeUndefined();
+});
+
+test("submit with invalid fields reports them all and sends nothing", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  const onSubmit = vi.fn();
+  let r: string | undefined;
+  await act(async () => {
+    r = await result.current.submit(onSubmit);
+  });
+  expect(r).toBe("invalid");
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(Object.keys(result.current.errors).sort()).toEqual(["displayName", "slug", "template"]);
+});
+
+test("New agent: the template fills untouched fields, and the slug is not prefilled", async () => {
+  const { result } = mount(create({ prefill: { template: "lead" } }));
+  await waitFor(() => expect(result.current.shown.displayName).toBe("Team Lead"));
+  expect(result.current.shown.description).toBe("Leads the team");
+  expect(result.current.shown.slug).toBe("");
+  expect(result.current.shown.credential).toBe("work");
+  act(() => result.current.set("displayName", "Mine"));
+  expect(result.current.shown.displayName).toBe("Mine");
+  const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody) => undefined);
+  act(() => result.current.set("slug", "mine"));
+  await act(async () => {
+    await result.current.submit(onSubmit);
+  });
+  // Untouched grants are left to the template.
+  expect(onSubmit).toHaveBeenCalledWith({
+    template: "lead",
+    slug: "mine",
+    displayName: "Mine",
+    description: "Leads the team",
+    reportsTo: null,
+    credential: "work",
+  });
+});
+
+test("Edit: the body is the diff from the saved agent, and no change is nothing to save", async () => {
+  const { result } = mount(edit());
+  const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody) => ({
+    ...lead,
+    displayName: "Boss",
+  }));
+  let r: string | undefined;
+  await act(async () => {
+    r = await result.current.submit(onSubmit);
+  });
+  expect(r).toBe("nothing");
+  expect(result.current.outcome?.content).toBe("Nothing to save: no field changed.");
+  act(() => result.current.set("displayName", " Boss "));
+  await act(async () => {
+    r = await result.current.submit(onSubmit);
+  });
+  expect(r).toBe("ok");
+  expect(onSubmit).toHaveBeenCalledOnce();
+  expect(onSubmit).toHaveBeenCalledWith({ displayName: "Boss" });
+  expect(result.current.outcome).toMatchObject({ tone: "success" });
+  // The saved copy is the new base: saving again changes nothing.
+  await act(async () => {
+    r = await result.current.submit(onSubmit);
+  });
+  expect(r).toBe("nothing");
+});
+
+test("a server field error lands under its field; any other error is the outcome", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  act(() => {
+    result.current.set("slug", "taken");
+    result.current.set("displayName", "T");
+    result.current.set("template", "lead");
+  });
+  let r: string | undefined;
+  await act(async () => {
+    r = await result.current.submit(async () => {
+      throw new ApiError(409, "slug_taken", "That slug is taken.", {
+        fields: { slug: "That slug is taken." },
+      });
+    });
+  });
+  expect(r).toBe("failed");
+  expect(result.current.errors.slug).toBe("That slug is taken.");
+  expect(result.current.pending).toBe(false);
+  await act(async () => {
+    r = await result.current.submit(async () => {
+      throw new Error("offline");
+    });
+  });
+  expect(r).toBe("failed");
+  expect(result.current.outcome).toMatchObject({ tone: "error" });
+});
+
+test("a second submit while one is in flight is ignored", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  act(() => {
+    result.current.set("slug", "dup");
+    result.current.set("displayName", "D");
+    result.current.set("template", "lead");
+  });
+  let release = () => {};
+  const onSubmit = vi.fn(() => new Promise<void>((res) => (release = res)));
+  let first: Promise<string> | undefined;
+  let second: string | undefined;
+  await act(async () => {
+    first = result.current.submit(onSubmit);
+    second = await result.current.submit(onSubmit);
+  });
+  expect(second).toBe("nothing");
+  expect(onSubmit).toHaveBeenCalledOnce();
+  await act(async () => {
+    release();
+    await first;
+  });
+});
+
+test("a draft is restored by the next mount, and a successful submit clears it", async () => {
+  const first = mount(create());
+  act(() => first.result.current.set("displayName", "Half typed"));
+  first.unmount();
+  const second = mount(create());
+  expect(second.result.current.restored).toBe(true);
+  expect(second.result.current.shown.displayName).toBe("Half typed");
+  act(() => second.result.current.discard());
+  expect(second.result.current.restored).toBe(false);
+  expect(second.result.current.shown.displayName).toBe("");
+  second.unmount();
+  expect(mount(create()).result.current.restored).toBe(false);
+});
+
+test("an edit draft keeps the touched field and follows the server for the rest (M1)", () => {
+  const first = mount(edit());
+  act(() => first.result.current.set("displayName", "Mine"));
+  first.unmount();
+  // The server changed an untouched field (description) in between.
+  const changed = { ...lead, description: "Changed on the server" };
+  const second = mount(edit(changed));
+  expect(second.result.current.restored).toBe(true);
+  expect(second.result.current.values.displayName).toBe("Mine");
+  expect(second.result.current.values.description).toBe("Changed on the server");
+});
+
+test("a live refetch updates untouched fields and keeps edited ones", () => {
+  const { result, rerender } = mount(edit());
+  act(() => result.current.set("displayName", "Mine"));
+  rerender(edit({ ...lead, displayName: "Server name", description: "Fresh" }));
+  expect(result.current.values.displayName).toBe("Mine");
+  expect(result.current.values.description).toBe("Fresh");
+  // The body is the diff against the refreshed copy.
+  const onSubmit = vi.fn(async () => lead);
+  return act(async () => {
+    await result.current.submit(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith({ displayName: "Mine" });
+  });
+});
+
+test("an edit with no change holds no draft", () => {
+  const first = mount(edit());
+  act(() => first.result.current.set("displayName", "Changed"));
+  act(() => first.result.current.set("displayName", lead.displayName));
+  first.unmount();
+  expect(mount(edit()).result.current.restored).toBe(false);
+});
+
+test("a restored draft's gone credential reads as empty, with the reason", async () => {
+  const first = mount(create());
+  act(() => first.result.current.set("credential", "prod"));
+  first.unmount();
+  const second = mount(create());
+  await waitFor(() =>
+    expect(second.result.current.staleNotes.credential).toBe("Credential prod was deleted."),
+  );
+  // One credential left: it is the default again.
+  expect(second.result.current.shown.credential).toBe("work");
+  act(() => second.result.current.set("credential", "work"));
+  expect(second.result.current.staleNotes.credential).toBeUndefined();
+});

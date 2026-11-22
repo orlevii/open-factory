@@ -366,13 +366,13 @@ Long-press opens the row's menu through that menu's handle (`openAt`), without l
 
 ### 11.3 Hit areas (Q15)
 
-On coarse pointers every standalone control has a hit box of at least 40×40px:
+On coarse pointers every standalone control has a hit box of at least 40×40px, except the timeline's gutter ⋯ (below):
 - **Icon buttons** (`icon`, `icon-sm`, `icon-xs`, `icon-lg`) and small text buttons outside forms get a `pointer-coarse:` `::after` expander (`absolute`, inset `min(0px, (100% - 2.5rem) / 2)` on each axis) so the glyph keeps its size. The button is `relative`.
-- **An expander never overlaps a form control or prose.** Buttons inside forms ("Change", "Add credential", "New template", "Add project", "Add secret", "Cron help", More options, "Discard") grow to 40px on coarse pointers with real padding, and the form's gaps grow to fit, instead of an overlay. The timeline ⋯ on coarse pointers is a 32×40px visible box in its gutter (chat M5), with no expander over the text.
-- **Neighbours:** in toolbars and header groups whose expanders would overlap, the visible size on coarse pointers becomes 40px (`size-10`) with a 4px gap.
+- **An expander never overlaps a form control or prose.** Buttons inside forms ("Change", "Add credential", "New template", "Add project", "Add secret", "Cron help", More options, "Discard") grow to 40px on coarse pointers with real padding, and the form's gaps grow to fit, instead of an overlay. The timeline ⋯ on coarse pointers is a visible 32px-wide box in its gutter (chat M5), with no expander over the text. It is 40px tall at most, capped at its row's height plus 4px (`min(2.5rem, 100% + 0.25rem)`: the row's 8px gap less the ⋯'s 4px top offset), so on a one-line row it is 32×28px and never reaches the next row's ⋯. It is the one standalone control under 40px.
+- **Neighbours:** in toolbars and header groups whose expanders would overlap, the visible size on coarse pointers becomes 40px (`size-10`) with a 4px gap. A lone `icon-sm` ⋯ 4px from a neighbour (a Settings row's actions, the Agents-page row) is 32px on coarse pointers (`size-8`), so its expander reaches only 4px.
 - **Clipping:** no ancestor of an expanded control may clip it (`overflow: hidden` truncation wrappers, the sheet header); the probe in §2.8 hit-tests the box corners with `elementFromPoint`.
 - **Non-Button controls:** the sidebar `+` and row actions use `after:-inset-2` (36px, `sidebar.tsx:420,552`); they move to the same 40px rule.
-- `default`, `lg` and `sm` text buttons outside forms are 40px tall on coarse pointers.
+- `default` and `lg` text buttons outside forms grow to 40px tall on coarse pointers. `sm` and `xs` keep their drawn height and take the expander, like the icon sizes. Fields (input, select) are 36px on coarse pointers.
 - Dense rows keep their heights (sidebar 36px on touch); drawer menu items are 44px (§11.1).
 
 ### 11.4 Phone composer (#107, Q16)

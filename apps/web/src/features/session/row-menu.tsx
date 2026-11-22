@@ -155,9 +155,9 @@ const PLACE = {
   card: { trigger: "top-1.5 right-1.5", failed: "top-1.5 right-9" },
 } as const;
 
-// On coarse pointers the trigger is a visible 32×40 box filling its gutter (U4 §11.3), with no expander over the
-// row's text. Its height is capped at the row plus its 8px gap less its 4px top offset, so on consecutive one-line
-// rows (24px, 32px apart) a ⋯ never reaches the next row's.
+// On coarse pointers the trigger is a visible box 32px wide in its gutter (U4 §11.3), with no expander over the
+// row's text. It is 40px tall at most, capped at the row plus its 8px gap less its 4px top offset, so on a one-line
+// row (24px, the next 32px on) it is 32×28 and never reaches the next row's ⋯.
 const COARSE = "pointer-coarse:h-[min(2.5rem,calc(100%+0.25rem))] pointer-coarse:w-8 after:hidden";
 // Shown instantly on hover or focus within the row (fine pointers), always on touch, and always while
 // its menu is open: the modal menu takes the row's hover and focus, and Radix anchors the menu to

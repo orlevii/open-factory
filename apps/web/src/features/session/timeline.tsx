@@ -349,7 +349,7 @@ const containsSeq = (rows: Row[], seq: number): boolean =>
 
 /** The row a deep link lands on: its own row, else the tool row holding it, else the nearest later
  *  row (hidden events such as `usage` have none), else the last row. */
-function targetRowKey(rows: Row[], seq: number): string | undefined {
+export function targetRowKey(rows: Row[], seq: number): string | undefined {
   return (
     rows.find((r) => r.seq === seq)?.key ??
     rows.find((r) => r.kind === "tool" && containsSeq(r.children, seq))?.key ??

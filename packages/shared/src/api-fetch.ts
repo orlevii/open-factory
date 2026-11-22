@@ -20,6 +20,8 @@ export interface ApiFetchOptions<T> {
   body?: unknown;
   schema: z.ZodType<T>;
   fetchImpl?: typeof fetch;
+  /** Aborts the request (React Query passes one so a query nobody watches any more is cancelled). */
+  signal?: AbortSignal;
 }
 
 export async function apiFetch<T>(path: string, opts: ApiFetchOptions<T>): Promise<T> {
@@ -31,6 +33,7 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions<T>): Promi
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     credentials: "include",
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const text = await res.text();
   let data: unknown;

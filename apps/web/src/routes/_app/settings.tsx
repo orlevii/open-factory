@@ -37,8 +37,14 @@ function SettingsLayout() {
                   <li key={p.to}>
                     <Link
                       to={p.to}
-                      className="flex h-8 items-center rounded-md px-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-                      activeProps={{ className: "bg-accent font-medium text-foreground" }}
+                      className="flex h-8 items-center rounded-md px-2.5 text-sm"
+                      // The current page takes the selected fill and keeps it under the pointer:
+                      // only the other pages get the hover fill. The muted text is theirs too: in
+                      // the base class it would beat the current page's text-foreground by CSS order.
+                      activeProps={{ className: "bg-selected font-medium text-foreground" }}
+                      inactiveProps={{
+                        className: "text-muted-foreground hover:bg-accent hover:text-foreground",
+                      }}
                     >
                       {p.title}
                     </Link>

@@ -1,4 +1,5 @@
 import {
+  inboxItemResponseSchema,
   inboxPageSchema,
   readAllBodySchema,
   readAllResponseSchema,
@@ -130,6 +131,23 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
         throw new ApiError(404, "inbox_item_not_found", "No such inbox item");
       app.bus.publishToUser(userId, { type: "inbox_changed" });
       return { ok: true as const };
+    },
+  );
+
+  // Registered after the static segments (unread-count): the router prefers them anyway.
+  app.get(
+    "/api/inbox/:id",
+    {
+      schema: {
+        params: z.object({ id: z.string().min(1).max(64) }),
+        response: { 200: inboxItemResponseSchema },
+      },
+    },
+    async (req) => {
+      // Scoped by user: someone else's item is simply not found.
+      const item = await app.store.inboxItem(userOf(req), req.params.id);
+      if (!item) throw new ApiError(404, "inbox_item_not_found", "No such inbox item");
+      return { item };
     },
   );
 };

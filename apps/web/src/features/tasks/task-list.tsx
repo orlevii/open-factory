@@ -1,14 +1,17 @@
 import type { TaskSummary } from "@open-factory/shared";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { type KeyboardEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
-import { onRowKeyDown } from "@/lib/row-nav";
-import { type TaskFilters, tasksListOptions } from "./api";
+import { onRowKeyDown, skipFocusPreload } from "@/lib/row-nav";
+import { runInstantOn } from "@/lib/run-instant";
+import { shouldIgnore } from "@/lib/shortcuts";
+import { PREFETCH_REST_MS } from "@/lib/timing";
+import { type TaskFilters, taskDetailOptions, tasksListOptions } from "./api";
 import { BlockedMarker, STATUS, StatusLabel } from "./status-label";
 import { isDefault } from "./task-filters";
 
@@ -37,7 +40,41 @@ function label(t: TaskSummary) {
   return `${t.key}, ${t.title}, ${STATUS[t.status].label}${blocked}, ${assignee}`;
 }
 
-function Row({ t, now }: { t: TaskSummary; now: Date }) {
+/** Space peeks only when the list keeps 24rem beside the 30rem sheet (spec §12); else the page opens. */
+const PEEK_MIN_REM = 54;
+function roomToPeek(list: HTMLElement): boolean {
+  const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  return list.clientWidth >= PEEK_MIN_REM * rem;
+}
+
+/** The list's row for a task (the peek's close returns focus to it), if it is shown. */
+export function findTaskRow(key: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `ul[data-task-list] a[data-task-key="${CSS.escape(key)}"]`,
+  );
+}
+
+/** The page's one task peek, as the list drives it. */
+export type TaskPeekControl = {
+  /** The task shown, or null when closed. */
+  key: string | null;
+  show(key: string): void;
+  /** Closes it at once (a key closed it). */
+  close(): void;
+  /** Moves focus into it (F6). */
+  focus(): void;
+};
+
+const Row = memo(function Row({
+  t,
+  now,
+  selected,
+}: {
+  t: TaskSummary;
+  now: Date;
+  /** The peek shows this task. */
+  selected: boolean;
+}) {
   const at = new Date(t.updatedAt);
   const time = formatInboxTime(at, now);
   return (
@@ -47,6 +84,8 @@ function Row({ t, now }: { t: TaskSummary; now: Date }) {
         params={{ key: t.key }}
         search={{}}
         aria-label={label(t)}
+        aria-current={selected ? "true" : undefined}
+        onFocus={skipFocusPreload}
         data-task-key={t.key}
         className="of-row grid min-h-14 grid-cols-[3.5rem_minmax(0,1fr)] content-center gap-x-3 gap-y-0.5 px-2 py-2 text-sm md:grid-cols-[3.5rem_minmax(0,1fr)_7rem_10rem]"
       >
@@ -91,18 +130,69 @@ function Row({ t, now }: { t: TaskSummary; now: Date }) {
       </Link>
     </li>
   );
-}
+});
 
-/** The Tasks page's list (UI design §5): a plain `<ul>` of links, newest updated first, 50 per page. */
+/** The Tasks page's list (UI design §5): a plain `<ul>` of links, newest updated first, 50 per page.
+ *  A click or Enter opens the task's page; with `peek`, Space peeks the focused row (or opens the page
+ *  when the list is too narrow to keep room beside the sheet), retargets an open peek to it, or closes
+ *  the peek on the row it shows; `j`/`k` retarget the open peek. */
 export function TaskList({
   filters,
   onChange,
+  peek,
 }: {
   filters: TaskFilters;
   onChange(next: TaskFilters): void;
+  peek?: TaskPeekControl;
 }) {
   const q = useInfiniteQuery(tasksListOptions(filters));
+  const qc = useQueryClient();
+  const navigate = useNavigate();
   const list = useRef<HTMLUListElement>(null);
+  const tasks = q.data;
+  // The rows' times are relative to when the data last changed, so a retarget doesn't re-render every row.
+  const now = useMemo(() => (tasks ? new Date() : new Date(0)), [tasks]);
+
+  // The open peek's neighbours, once the selection has rested (a j/k sweep fetches nothing extra).
+  const peekKey = peek?.key ?? null;
+  const index = peekKey && tasks ? tasks.findIndex((t) => t.key === peekKey) : -1;
+  const prevKey = index > 0 ? tasks?.[index - 1]?.key : undefined;
+  const nextKey = index >= 0 ? tasks?.[index + 1]?.key : undefined;
+  useEffect(() => {
+    if (!prevKey && !nextKey) return;
+    const timer = setTimeout(() => {
+      for (const k of [prevKey, nextKey]) if (k) void qc.prefetchQuery(taskDetailOptions(k));
+    }, PREFETCH_REST_MS);
+    return () => clearTimeout(timer);
+  }, [prevKey, nextKey, qc]);
+
+  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
+    const row = onRowKeyDown(e);
+    const el = list.current;
+    if (!peek || !el) return;
+    if (row && peek.key !== null && (e.key === "j" || e.key === "k")) {
+      const key = row.dataset.taskKey;
+      if (key && key !== peek.key) runInstantOn(el, () => peek.show(key));
+      return;
+    }
+    if (e.key === "F6" && peek.key !== null) {
+      e.preventDefault();
+      peek.focus();
+      return;
+    }
+    if (e.key !== " " || !(e.target instanceof HTMLAnchorElement) || shouldIgnore(e.nativeEvent))
+      return;
+    const key = e.target.dataset.taskKey;
+    if (!key) return;
+    e.preventDefault(); // Space would scroll the page
+    // Space on the row the peek shows closes it; on another row it swaps the peek to that task in
+    // place (the j/k swap), so the sheet doesn't close and reopen.
+    if (peek.key === key) peek.close();
+    else if (peek.key !== null) runInstantOn(el, () => peek.show(key));
+    else if (roomToPeek(el)) runInstantOn(el, () => peek.show(key));
+    else void navigate({ to: "/tasks/$key", params: { key }, search: {} });
+  };
+
   const [focusAfter, setFocusAfter] = useState<string | null>(null);
   useEffect(() => {
     if (focusAfter === null) return;
@@ -111,7 +201,6 @@ export function TaskList({
     const i = links.findIndex((l) => l.dataset.taskKey === focusAfter) + 1;
     (links[i] ?? links.at(-1))?.focus();
   }, [focusAfter]);
-  const tasks = q.data;
   if (!tasks)
     return q.isError ? (
       <ErrorLine text="Couldn't load tasks." onRetry={() => void q.refetch()} />
@@ -143,17 +232,17 @@ export function TaskList({
       if (r.isSuccess && last !== undefined) setFocusAfter(last);
     });
   };
-  const now = new Date();
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <ul
         ref={list}
         aria-label="Tasks"
-        onKeyDown={onRowKeyDown}
+        data-task-list=""
+        onKeyDown={onKeyDown}
         className="border-y border-border [overflow-anchor:auto]"
       >
         {tasks.map((t) => (
-          <Row key={t.key} t={t} now={now} />
+          <Row key={t.key} t={t} now={now} selected={t.key === peekKey} />
         ))}
       </ul>
       {q.isFetchNextPageError ? (

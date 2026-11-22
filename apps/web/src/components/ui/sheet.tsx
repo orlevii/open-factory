@@ -149,7 +149,7 @@ function SheetContent({
         onCloseAutoFocus={closeAutoFocus}
         onEscapeKeyDown={(e) => {
           onEscapeKeyDown?.(e);
-          contentRef.current?.setAttribute("data-instant", "");
+          if (!e.defaultPrevented) contentRef.current?.setAttribute("data-instant", "");
         }}
         onInteractOutside={(e) => {
           onInteractOutside?.(e);

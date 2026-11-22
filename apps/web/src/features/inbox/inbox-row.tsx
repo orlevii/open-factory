@@ -1,52 +1,52 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import { type MouseEvent, memo, useMemo } from "react";
+import { AgentChip } from "@/components/agent-chip";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
+import { skipFocusPreload } from "@/lib/row-nav";
 import type { InboxItem } from "./api";
+import { plainPreview } from "./preview";
 
 const PREVIEW_MAX = 280;
-const previewOf = (s: string) => (s.length > PREVIEW_MAX ? `${s.slice(0, PREVIEW_MAX)}…` : s);
+const previewOf = (markdown: string) => {
+  const s = plainPreview(markdown);
+  return s.length > PREVIEW_MAX ? `${s.slice(0, PREVIEW_MAX)}…` : s;
+};
 
-const Mono = ({ children }: { children: ReactNode }) => (
-  <span className="font-mono text-foreground">{children}</span>
-);
-
-/** "Factory about ops" for factory items, "dev" for agents, `@alice` for humans. */
+/** The agent as a 16px chip, "Factory" (about whom) or the human's name: the first thing on line one. */
 function Sender({ item }: { item: InboxItem }) {
   if (item.from.kind === "factory")
     return (
       <>
-        <span className="text-foreground">Factory</span>
+        <span className="shrink-0">Factory</span>
         {item.about && (
-          <span className="text-muted-foreground">
-            {" "}
+          <span className="min-w-0 truncate text-muted-foreground">
             about <span className="font-mono">@{item.about}</span>
           </span>
         )}
       </>
     );
-  return <Mono>@{item.from.name}</Mono>;
+  if (item.from.kind === "agent") return <AgentChip slug={item.from.name} size={16} />;
+  return <span className="truncate font-mono">@{item.from.name}</span>;
 }
 
-/** The part of the sender line before the badge, by kind (UI design §3). It never truncates. */
+/** Line one, left of the time: the sender and the kind word (what happened). It never wraps. */
 function SenderLine({ item }: { item: InboxItem }) {
+  const muted = item.read ? "text-muted-foreground" : "text-foreground";
   if (item.kind === "mention")
     return (
       <>
         <Sender item={item} />
-        <span className="text-muted-foreground">
+        <span className="shrink-0 text-muted-foreground">
           {item.to === "@humans" ? (
             <>
-              {" "}
               mentioned <span className="font-mono">@humans</span>
             </>
           ) : (
-            " mentioned you"
+            "mentioned you"
           )}
         </span>
-        {item.task && <TaskBadge taskKey={item.task.key} title={item.task.title} />}
       </>
     );
   if (item.kind === "task_event")
@@ -54,19 +54,33 @@ function SenderLine({ item }: { item: InboxItem }) {
       <>
         <Sender item={item} />
         {item.fact && <StatusLabel status={item.fact} />}
-        {item.task && <TaskBadge taskKey={item.task.key} title={item.task.title} />}
       </>
     );
   return (
     <>
       <Sender item={item} />
-      <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="font-mono text-muted-foreground">{item.to}</span>
       {item.urgent && (
-        <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
+        // 16px of text inside the border: the badge fits line one's 18px.
+        <span className={`shrink-0 rounded-sm border border-border px-1.5 leading-4 ${muted}`}>
+          Urgent
+        </span>
       )}
     </>
   );
+}
+
+/** Line two: the task (`T-6 · title`) or, for a message, the recipient unless it is the viewer. Truncates. */
+function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undefined }) {
+  const tone = item.read ? "text-muted-foreground" : "text-foreground";
+  if (item.task)
+    return (
+      <span className={`flex min-w-0 ${tone}`}>
+        <TaskBadge taskKey={item.task.key} title={item.task.title} />
+      </span>
+    );
+  if (item.kind === "message" && !(viewer && item.to === `@${viewer}`))
+    return <span className={`min-w-0 truncate font-mono ${tone}`}>→ {item.to}</span>;
+  return null;
 }
 
 function labelOf(item: InboxItem, time: string): string {
@@ -85,35 +99,54 @@ function labelOf(item: InboxItem, time: string): string {
   return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
 }
 
-const LINK_CLASS = "of-row flex min-h-14 flex-col justify-center gap-0.5 py-2 pr-2 pl-0 text-sm";
+// A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it
+// (a two-line row's line one grew to 27px): `content-center` keeps the track at its content and
+// centres it, so line one is always one 18px line with the time on the name's baseline.
+const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
 
 /**
- * One inbox row (shared with Home's panel): a single link, two lines, an ink dot in a fixed slot when unread.
- * Opening it (click, Cmd/Ctrl-click, middle-click via `onAuxClick`, Enter) calls `onOpen` and then follows the link.
+ * One inbox row (shared with Home's panel): a single link, three lines, an ink dot in a fixed slot when unread.
+ * Opening it (click, Cmd/Ctrl-click, middle-click via `onAuxClick`, Enter) calls `onOpen`, which may
+ * `preventDefault` to select the row instead of following the link.
  */
-export function InboxRow({
+export const InboxRow = memo(function InboxRow({
   item,
   now,
   onOpen,
+  selected = false,
+  selectable = false,
+  viewer,
 }: {
   item: InboxItem;
   now: Date;
-  onOpen(item: InboxItem): void;
+  onOpen(item: InboxItem, e: MouseEvent): void;
+  /** The reading pane shows this row. */
+  selected?: boolean;
+  /** A plain click selects rather than navigates, so the link's target isn't preloaded on hover or focus
+   *  (a j/k sweep would otherwise start a loader per row). */
+  selectable?: boolean;
+  /** The viewer's handle: a message to them doesn't repeat "→ @them". */
+  viewer?: string;
 }) {
   const at = new Date(item.createdAt);
   const time = formatInboxTime(at, now);
   const previewId = `inbox-preview-${item.id}`;
+  const preview = useMemo(() => previewOf(item.preview), [item.preview]);
   const common = {
     "data-inbox-id": item.id,
     "aria-label": labelOf(item, time),
     "aria-describedby": previewId,
-    onClick: () => onOpen(item),
+    "aria-current": selected ? ("true" as const) : undefined,
+    preload: selectable ? (false as const) : undefined,
+    // Below 1024 rows keep hover preload, but a keyboard sweep through them preloads nothing.
+    onFocus: skipFocusPreload,
+    onClick: (e: MouseEvent) => onOpen(item, e),
     // Middle-click only: Chrome fires auxclick for the right button too, and opening the context
     // menu must not mark the row read.
     onAuxClick: (e: MouseEvent) => {
-      if (e.button === 1) onOpen(item);
+      if (e.button === 1) onOpen(item, e);
     },
-    className: `${LINK_CLASS} grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
+    className: `${LINK_CLASS} grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
   } as const;
   const body = (
     <>
@@ -127,22 +160,25 @@ export function InboxRow({
         <span
           className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-[0.8125rem] leading-[1.125rem] ${item.read ? "" : "font-medium"}`}
         >
-          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+          <span
+            className={`flex min-w-0 items-center gap-x-1.5 overflow-hidden whitespace-nowrap ${item.read ? "text-muted-foreground" : ""}`}
+          >
             <SenderLine item={item} />
           </span>
           <time
             dateTime={item.createdAt}
             title={at.toLocaleString()}
-            className="shrink-0 font-normal text-muted-foreground"
+            className="shrink-0 font-normal tabular-nums text-muted-foreground"
           >
             {time}
           </time>
         </span>
+        <ContextLine item={item} viewer={viewer} />
         <span
           id={previewId}
-          className="line-clamp-2 text-muted-foreground md:line-clamp-1 [overflow-wrap:anywhere]"
+          className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}
         >
-          {previewOf(item.preview)}
+          {preview}
         </span>
       </span>
     </>
@@ -171,4 +207,4 @@ export function InboxRow({
       )}
     </li>
   );
-}
+});

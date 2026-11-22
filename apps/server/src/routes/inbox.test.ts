@@ -346,3 +346,23 @@ test.each([
   });
   expect(r.statusCode).toBe(401);
 });
+
+test("GET /api/inbox/:id: the owner's item equals the list entry; another user's or unknown id is 404; static routes still win", async () => {
+  const { or, agent, sam } = await actors();
+  await h.app.tasks.create(or, { title: "t" });
+  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  const entries = (await get("/api/inbox")).json().items as { id: string }[];
+  const mine = entries[0] as { id: string };
+  const theirs = (
+    (await get("/api/inbox", { cookie: sam.cookie })).json().items as { id: string }[]
+  )[0]?.id as string;
+  const r = await get(`/api/inbox/${mine.id}`);
+  expect(r.statusCode).toBe(200);
+  expect(r.json()).toEqual({ item: mine });
+  const other = await get(`/api/inbox/${theirs}`);
+  expect(other.statusCode).toBe(404);
+  expect(other.json().error.code).toBe("inbox_item_not_found");
+  expect((await get("/api/inbox/nope")).statusCode).toBe(404);
+  expect((await get("/api/inbox/unread-count")).json()).toHaveProperty("count");
+  expect((await get(`/api/inbox/${mine.id}`, {})).statusCode).toBe(401);
+});

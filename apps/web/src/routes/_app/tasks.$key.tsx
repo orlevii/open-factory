@@ -54,8 +54,10 @@ function TaskPage() {
     <>
       <TaskDetailHeader taskKey={key} title={data?.title} />
       {data ? (
-        // Keyed by task: editors and the draft are per task, and survive refetches of it.
-        <TaskDetailView key={key} taskKey={key} commentId={comment} />
+        <PageBody>
+          {/* Keyed by task: editors and the draft are per task, and survive refetches of it. */}
+          <TaskDetailView key={key} taskKey={key} commentId={comment} />
+        </PageBody>
       ) : (
         error && (
           <PageBody>

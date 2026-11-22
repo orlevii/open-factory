@@ -2,10 +2,12 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
+import taskDetailSource from "./task-detail.tsx?raw";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({ push: (_m: ServerMessage) => {} }));
@@ -484,6 +486,31 @@ test("composer: with nothing typed during the post the draft clears", async () =
   await waitFor(() => expect(box).toHaveValue(""));
 });
 
+test("composer: a throwing sessionStorage (private mode) neither breaks typing nor posting", async () => {
+  const blocked = () => {
+    throw new DOMException("blocked", "SecurityError");
+  };
+  vi.stubGlobal("sessionStorage", {
+    getItem: blocked,
+    setItem: blocked,
+    removeItem: blocked,
+    clear: blocked,
+    key: blocked,
+    length: 0,
+  });
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("hello"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "hello");
+  expect(box).toHaveValue("hello");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await waitFor(() => expect(box).toHaveValue(""));
+  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/tasks/T-42/comments")).toBe(
+    true,
+  );
+});
+
 test("links editor: the agent lists load on the Edit click and Save waits for them", async () => {
   const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
   const releases: (() => void)[] = [];
@@ -765,7 +792,7 @@ test("layout: the grid cannot be widened by long content; every grid and aside c
   const grid = document.querySelector("aside")?.parentElement;
   expect(grid).toHaveClass(
     "grid-cols-[minmax(0,1fr)]",
-    "lg:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)]",
+    "@[45rem]/task:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)]",
   );
   const aside = grid?.querySelector(":scope > aside") as HTMLElement;
   expect(aside).toBeTruthy();
@@ -971,4 +998,23 @@ test("a human creator and comment author show as @handle without an avatar; an a
   const created = document.querySelector("[data-created-by]") as HTMLElement;
   expect(created).toHaveTextContent("@or");
   expect(created.querySelector("svg")).toBeNull();
+});
+
+// §12: the view lays out by its own width (the page and the 30rem peek), not the viewport's. jsdom
+// can't evaluate container queries, so this checks the classes; the layout is a browser check.
+test("the task view is a container: its two columns answer to its own width, and the route owns the page padding", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  const log = await screen.findByRole("list", { name: "Activity" });
+  const root = log.closest(".\\@container\\/task");
+  expect(root).not.toBeNull();
+  const grid = root?.querySelector("[class*='@[45rem]/task:grid-cols-']");
+  expect(grid).not.toBeNull();
+  expect(grid?.contains(log)).toBe(true);
+  expect(root?.querySelector("aside")?.className).toMatch(/@\[45rem\]\/task:col-start-2/);
+  // No viewport breakpoint is left to fight the container one.
+  expect(taskDetailSource).not.toMatch(/(^|[\s"'`])lg:/m);
+  expect(taskDetailSource).not.toMatch(/\bPageBody\b/);
+  // The page keeps its padding: the route wraps the view.
+  expect(taskRouteSource).toMatch(/<PageBody>\s*(\{\/\*[\s\S]*?\*\/\}\s*)?<TaskDetailView/);
 });

@@ -80,15 +80,15 @@ test("the palette's New task action and c land on the same page", async () => {
   await waitFor(() => expect(router.state.location.pathname).toBe("/tasks/new"));
 });
 
-test("? (typed with Shift) opens a non-modal Keyboard shortcuts sheet with Global and Session groups", async () => {
+test("? (typed with Shift) opens a non-modal Keyboard shortcuts sheet with Global, Lists and Session groups", async () => {
   await shell();
   press("?", { shiftKey: true });
   const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
   expect(dialog).toHaveAttribute("data-modal", "false");
   expect(within(dialog).getByText("Global")).toBeInTheDocument();
   expect(within(dialog).getByText("Session")).toBeInTheDocument();
-  expect(within(dialog).queryByText("Lists")).toBeNull();
-  expect(within(dialog).queryByText("j")).toBeNull();
+  expect(within(dialog).getByText("Lists")).toBeInTheDocument();
+  expect(within(dialog).getByText("j")).toBeInTheDocument();
   // Non-modal: a single-key binding is still live behind it.
   const fired = vi.fn();
   render(<Probe on={fired} />);

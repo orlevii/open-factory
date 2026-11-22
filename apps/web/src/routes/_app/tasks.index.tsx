@@ -1,11 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
+import { useRef, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { closeInstantly } from "@/components/ui/sheet";
 import type { TaskFilters } from "@/features/tasks/api";
 import { TaskFiltersBar } from "@/features/tasks/task-filters";
-import { TaskList } from "@/features/tasks/task-list";
+import { findTaskRow, TaskList, type TaskPeekControl } from "@/features/tasks/task-list";
+import { focusTaskPeek, TaskPeek } from "@/features/tasks/task-peek";
 
 const STATUSES = ["open_in_progress", "open", "in_progress", "done", "cancelled", "all"] as const;
 
@@ -28,6 +31,22 @@ function TasksPage() {
     assignee: search.assignee,
     unassigned: search.unassigned,
     creator: search.creator,
+  };
+  // One peek per page (spec §5.2), not in the URL (D11).
+  const [peekKey, setPeekKey] = useState<string | null>(null);
+  // New filters, a new list: the peek closes rather than show a task the list may no longer have.
+  const filtersKey = JSON.stringify(filters);
+  const [peekFilters, setPeekFilters] = useState(filtersKey);
+  if (peekFilters !== filtersKey) {
+    setPeekFilters(filtersKey);
+    setPeekKey(null);
+  }
+  const peekContent = useRef<HTMLDivElement>(null);
+  const peek: TaskPeekControl = {
+    key: peekKey,
+    show: setPeekKey,
+    close: () => closeInstantly(peekContent.current, () => setPeekKey(null)),
+    focus: () => focusTaskPeek(peekContent.current),
   };
   const onChange = (next: TaskFilters) =>
     void navigate({
@@ -58,9 +77,15 @@ function TasksPage() {
       <PageBody>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
           <TaskFiltersBar value={filters} onChange={onChange} />
-          <TaskList filters={filters} onChange={onChange} />
+          <TaskList filters={filters} onChange={onChange} peek={peek} />
         </div>
       </PageBody>
+      <TaskPeek
+        taskKey={peekKey}
+        onClose={() => setPeekKey(null)}
+        contentRef={peekContent}
+        returnFocus={findTaskRow}
+      />
     </>
   );
 }

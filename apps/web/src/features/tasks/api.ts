@@ -69,7 +69,9 @@ export const agentTasksOptions = (slug: string) =>
 export const taskDetailOptions = (key: string) =>
   queryOptions({
     queryKey: [...tasksQueryKey, "detail", key] as const,
-    queryFn: () => apiFetch(`/api/tasks/${encodeURIComponent(key)}`, { schema: taskDetailSchema }),
+    // The signal: a task nobody shows any more (a pane moved on, a page left) is cancelled.
+    queryFn: ({ signal }) =>
+      apiFetch(`/api/tasks/${encodeURIComponent(key)}`, { schema: taskDetailSchema, signal }),
   });
 
 /** The task's row from any cached list page, so its page can render the title and status while the

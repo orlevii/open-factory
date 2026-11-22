@@ -179,3 +179,54 @@ test("past times: today, yesterday, this year, another year", () => {
   expect(formatInboxTime(new Date(2026, 8, 27, 9, 10), now)).toBe("27 Sep 09:10");
   expect(formatInboxTime(new Date(2025, 10, 27, 9, 10), now)).toBe("27 Nov 2025 09:10");
 });
+
+test("a row shows the preview as plain text, the context on its own line and an unclipped time", async () => {
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({
+        items: [
+          item(1, {
+            read: false,
+            kind: "mention",
+            to: "@humans",
+            preview: "see **the** [PR](https://x/y) `now`",
+            task: { key: "T-6", title: "Ship it" },
+            link: { kind: "task", key: "T-6" },
+          }),
+        ],
+        nextCursor: null,
+      }),
+  });
+  renderApp("/inbox", alice);
+  const link = await screen.findByRole("link", { name: /mentioned @humans/ });
+  expect(link).toHaveAccessibleDescription("see the PR now");
+  const row = within(link);
+  expect(row.getByText("T-6")).toBeInTheDocument();
+  expect(row.getByText("Ship it")).toBeInTheDocument();
+  const time = row.getByText("14:32");
+  expect(time.className).toContain("shrink-0");
+  expect(time.className).toContain("tabular-nums");
+  expect(row.getByText("see the PR now").className).toContain("truncate");
+});
+
+test("a message row's context line names the recipient; the sender is an agent chip", async () => {
+  mockApi({ "GET /api/inbox?": () => json({ items: [item(1)], nextCursor: null }) });
+  renderApp("/inbox", alice);
+  const link = await screen.findByRole("link", { name: /From @dev/ });
+  expect(within(link).getByText("→ @humans")).toBeInTheDocument();
+  expect(link.querySelector("[data-agent-avatar], img, svg")).not.toBeNull();
+});
+
+test("read rows are muted, unread rows are not", async () => {
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({ items: [item(1, { read: true }), item(2, { read: false })], nextCursor: null }),
+  });
+  renderApp("/inbox", alice);
+  const read = await screen.findByRole("link", { name: /^From @dev/, description: "preview 1" });
+  const unread = screen.getByRole("link", { name: /^Unread, From @dev/ });
+  expect(within(read).getByText("preview 1").className).toContain("text-muted-foreground");
+  expect(within(read).getByText("→ @humans").className).toContain("text-muted-foreground");
+  expect(unread.className).toContain("");
+  expect(within(unread).getByText("→ @humans").className).not.toContain("text-muted-foreground");
+});

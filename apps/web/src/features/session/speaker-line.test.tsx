@@ -207,3 +207,19 @@ test("the provider reads your handle itself, and asks for the ended list only on
     vi.unstubAllGlobals();
   }
 });
+
+test("a long name never pushes the time onto its own line: names and time share a line that doesn't wrap", async () => {
+  await show(<SpeakerLine from="b" at={AT} />);
+  const time = line().querySelector("time") as HTMLElement;
+  const group = time.parentElement as HTMLElement;
+  expect(group).toHaveClass("flex-nowrap", "min-w-0");
+  expect(group).toContainElement(within(line()).getByText("Builder"));
+  // The agent's chip never stacks name over handle.
+  const chip = within(line()).getByRole("link");
+  expect(chip.className).not.toMatch(/flex-col/);
+});
+
+test("a human's name carries the handle in its title (kept when the handle hides)", async () => {
+  await show(<SpeakerLine from="@or" at={AT} />);
+  expect(within(line()).getByText("Or Levi")).toHaveAttribute("title", "Or Levi @or");
+});

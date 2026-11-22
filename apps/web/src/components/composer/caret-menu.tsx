@@ -215,16 +215,23 @@ export function CaretMenu({
           if (e.target === input.current) e.preventDefault();
         }}
         onMouseDown={keepFocus}
-        className="w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 gap-0 p-1"
+        // Capped at the room Radix measures above the caret, the list scrolling inside (at 200% text
+        // the menu would otherwise run past the top of the viewport; evidence D6).
+        className="flex max-h-(--radix-popover-content-available-height) w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 flex-col gap-0 p-1"
       >
         <CommandPrimitive
           label={label}
+          className="flex min-h-0 flex-col"
           shouldFilter={false}
           loop
           value={value}
           onValueChange={setValue}
         >
-          <CommandPrimitive.List ref={setList} label={label} className="scroll-py-1">
+          <CommandPrimitive.List
+            ref={setList}
+            label={label}
+            className="min-h-0 scroll-py-1 overflow-y-auto"
+          >
             {runs(items).map((run) =>
               run.heading ? (
                 <CommandPrimitive.Group
@@ -262,18 +269,29 @@ function CommandRow({ item }: { item: CompletionItem }) {
   return (
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="flex min-w-0 items-baseline gap-2">
+        {/* The name never yields to the hint (evidence D8). A plugin name keeps its `/` and a few
+            characters of its prefix, then the part after `:` (D10). */}
         {colon > 0 ? (
-          <span className="flex min-w-0 font-mono text-[0.8125rem]">
-            <span aria-hidden="true" className="truncate text-muted-foreground">
+          <span data-command-name className="flex max-w-full shrink-0 font-mono text-[0.8125rem]">
+            <span
+              aria-hidden="true"
+              data-command-prefix
+              className="min-w-[4ch] truncate text-muted-foreground"
+            >
               {name.slice(0, colon + 1)}
             </span>
-            <span aria-hidden="true" className="max-w-full shrink-0 truncate">
+            <span aria-hidden="true" className="max-w-[calc(100%-4ch)] shrink-0 truncate">
               {name.slice(colon + 1)}
             </span>
             <span className="sr-only">{name}</span>
           </span>
         ) : (
-          <span className="min-w-0 truncate font-mono text-[0.8125rem]">{name}</span>
+          <span
+            data-command-name
+            className="max-w-full shrink-0 truncate font-mono text-[0.8125rem]"
+          >
+            {name}
+          </span>
         )}
         {item.hint ? (
           <span

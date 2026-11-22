@@ -1284,3 +1284,63 @@ test("a failed chip's reason takes up to two lines instead of being cut to a few
   expect(reason).toHaveClass("line-clamp-2");
   expect(reason).not.toHaveClass("truncate");
 });
+
+test("after a reload the stored command comes back once the commands list arrives, if the box is untouched", () => {
+  localStorage.setItem(
+    "of-draft:v1:agent:dev",
+    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
+  );
+  // The list isn't loaded at mount: nothing is known until `watch` says it changed.
+  let loaded = false;
+  let changed: () => void = () => {};
+  const late: CompletionSource = {
+    ...SLASH,
+    commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
+    watch(onChange) {
+      changed = onChange;
+      return () => {};
+    },
+  };
+  const { box } = setupSlash({ completions: { slash: late } });
+  expect(chip()).toBeNull();
+  expect(box).toHaveValue("/code-review src/");
+  loaded = true;
+  act(() => changed());
+  expect(chip()).toHaveTextContent("/code-review");
+  expect(box).toHaveValue("src/");
+});
+
+test("a stored command typed over before the list arrives stays text", async () => {
+  localStorage.setItem(
+    "of-draft:v1:agent:dev",
+    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
+  );
+  let loaded = false;
+  let changed: () => void = () => {};
+  const late: CompletionSource = {
+    ...SLASH,
+    commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
+    watch(onChange) {
+      changed = onChange;
+      return () => {};
+    },
+  };
+  const { box } = setupSlash({ completions: { slash: late } });
+  await userEvent.type(box, "x");
+  loaded = true;
+  act(() => changed());
+  expect(chip()).toBeNull();
+  expect(box).toHaveValue("/code-review src/x");
+});
+
+test("Esc out of command mode puts the name back without reopening the menu", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "/context ");
+  expect(chip()).not.toBeNull();
+  await userEvent.keyboard("{Escape}");
+  expect(box).toHaveValue("/context");
+  fireEvent.select(box); // the caret placed after the name
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await userEvent.type(box, "x"); // typing brings menus back as usual
+  expect(box).toHaveValue("/contextx");
+});

@@ -319,14 +319,36 @@ export const Composer = memo(function Composer({
   }, []);
   // A stored `/name args` comes back in command mode when the list knows the name (one look, at
   // mount); otherwise it stays plain text.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on the draft the box mounted with
+  // After a reload the list usually isn't loaded at mount: the restore waits for it (the source's
+  // `watch`) while the box still holds exactly the stored text; typing gives up on it (evidence D2).
+  const pendingRestore = useRef(STORED_COMMAND.test(text) ? text : undefined);
+  const textNow = useRef(text);
   useLayoutEffect(() => {
-    const m = STORED_COMMAND.exec(text);
-    const mode = m ? slash?.commandFor?.(`/${m[1]} `) : undefined;
-    if (!m || !mode) return;
-    setCommand(mode);
-    setText(m[2] ?? "");
-  }, []);
+    textNow.current = text;
+  });
+  useLayoutEffect(() => {
+    if (pendingRestore.current === undefined) return;
+    let stop: (() => void) | undefined;
+    const tryRestore = () => {
+      const stored = pendingRestore.current;
+      if (stored === undefined || textNow.current !== stored) {
+        pendingRestore.current = undefined;
+        stop?.();
+        return;
+      }
+      const m = STORED_COMMAND.exec(stored);
+      const mode = m ? slash?.commandFor?.(`/${m[1]} `) : undefined;
+      if (!m || !mode) return;
+      pendingRestore.current = undefined;
+      stop?.();
+      setCommand(mode);
+      setText(m[2] ?? "");
+    };
+    tryRestore();
+    if (pendingRestore.current === undefined || !slash?.watch) return;
+    stop = slash.watch(tryRestore);
+    return stop;
+  }, [slash, setCommand, setText]);
   const menuSources = useMemo(
     () => (command ? sources.filter((c) => c.trigger !== "/") : sources),
     [command, sources],
@@ -494,6 +516,8 @@ export const Composer = memo(function Composer({
     const t = text ? `/${command.name} ${text}` : `/${command.name}`;
     setCommand(undefined);
     setText(t);
+    // Esc leaves the menu closed on the name it put back (only typing opens it again; evidence D12).
+    if (!look) dismissedAt.current = 0;
     pendingCaret.current = { at: t.length, look };
   };
 

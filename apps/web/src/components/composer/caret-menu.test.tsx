@@ -169,3 +169,37 @@ test("caretAnchor: a mirror with the textarea's type, direction and wrap width, 
     box.remove();
   }
 });
+
+const ROWS: CompletionItem[] = [
+  {
+    id: "code-review",
+    label: "/code-review",
+    hint: "[low|medium|high|xhigh|max|ultra] [--fix] [--comment]",
+    group: "Commands",
+    kind: "command",
+  },
+  {
+    id: "very-long-plugin-namespace:a-really-long-skill-name",
+    label: "/very-long-plugin-namespace:a-really-long-skill-name",
+    group: "Skills",
+    kind: "command",
+  },
+];
+
+test("the menu never runs past the viewport: its height is capped and the list scrolls", () => {
+  setup(ROWS);
+  const content = document.querySelector("[data-caret-menu]") as HTMLElement;
+  expect(content).toHaveClass("max-h-(--radix-popover-content-available-height)");
+  expect(screen.getByRole("listbox")).toHaveClass("overflow-y-auto", "min-h-0");
+});
+
+test("a `/` row's name never yields to its hint; a plugin name keeps its `/`, some of its prefix and the part after `:`", () => {
+  setup(ROWS);
+  const [review, plugin] = screen.getAllByRole("option") as [HTMLElement, HTMLElement];
+  expect(review.querySelector("[data-command-name]")).toHaveClass("shrink-0");
+  expect(review.querySelector("[data-arg-hint]")).toHaveClass("min-w-0", "truncate");
+  const head = plugin.querySelector("[data-command-prefix]") as HTMLElement;
+  expect(head).toHaveTextContent("/very-long-plugin-namespace:");
+  expect(head).toHaveClass("min-w-[4ch]");
+  expect(plugin).toHaveTextContent("a-really-long-skill-name");
+});

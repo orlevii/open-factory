@@ -9,7 +9,8 @@ import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/componen
 import { notify } from "@/components/ui/toaster";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { BodySkeleton } from "@/features/sheets/body-skeleton";
-import { clearDraft } from "@/features/sheets/drafts";
+import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
+import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetHeaderActions } from "@/features/sheets/header-slot";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import { getSheetState, openSheet } from "@/features/sheets/sheet-store";
@@ -35,7 +36,7 @@ const who = (a: ScheduleItem["createdBy"]) => (a.kind === "user" ? `@${a.handle}
 
 function Description({ s }: { s: ScheduleItem }) {
   return (
-    <SheetDescription className="truncate px-4 pt-3" title={firstLine(s.body)}>
+    <SheetDescription className="shrink-0 truncate px-4 pt-3" title={firstLine(s.body)}>
       {firstLine(s.body)}
     </SheetDescription>
   );
@@ -64,9 +65,11 @@ function Plain({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Pause or Resume: the header's action before Close, icon only with a tooltip. */
+/** Pause or Resume: the header's action before Close, icon only with a tooltip. One request at a time: `s.paused`
+ *  is stale until the refresh lands, so a second click would send the same action again. */
 function PauseResume({ s, onError }: { s: ScheduleItem; onError(text: string | null): void }) {
   const qc = useQueryClient();
+  const busy = useRef(false);
   if (s.done) return null;
   const what = s.paused ? "resume" : "pause";
   const label = `${s.paused ? "Resume" : "Pause"} ${s.key}`;
@@ -82,12 +85,16 @@ function PauseResume({ s, onError }: { s: ScheduleItem; onError(text: string | n
             className="shrink-0"
             aria-label={label}
             onClick={async () => {
+              if (busy.current) return;
+              busy.current = true;
               onError(null);
               try {
                 await (s.paused ? resumeSchedule : pauseSchedule)(s.key);
                 await qc.invalidateQueries({ queryKey: schedulesQueryKey });
               } catch {
                 onError(`Couldn't ${what} ${s.key}.`);
+              } finally {
+                busy.current = false;
               }
             }}
           >
@@ -148,6 +155,8 @@ function StateLine({ s, actionFailed }: { s: ScheduleItem; actionFailed: string 
 function Deleted({ s }: { s: ScheduleItem }) {
   const qc = useQueryClient();
   const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
+  const body = useRef<HTMLDivElement>(null);
+  useFocusOnOpen(body, "button");
   const restore = async () => {
     setState("pending");
     try {
@@ -162,7 +171,7 @@ function Deleted({ s }: { s: ScheduleItem }) {
   return (
     <>
       <Description s={s} />
-      <SheetBody className="grid content-start gap-4">
+      <SheetBody ref={body} className="grid content-start gap-4">
         <div className="grid justify-items-start gap-2">
           <p className="text-sm">{s.key} was deleted.</p>
           {!s.target.terminated && (
@@ -215,12 +224,11 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
   const [actionFailed, setActionFailed] = useState<string | null>(null);
   const draftKey = `edit-schedule:${key}` as const;
   const stillOpen = () => getSheetState().parent?.id === sheetId;
-  // A late result must not wipe a draft the user restored by reopening this schedule while it was in flight.
-  const reopened = () => {
-    const p = getSheetState().parent;
-    return (
-      p?.kind === "edit-schedule" && p.key.toUpperCase() === key.toUpperCase() && p.id !== sheetId
-    );
+  /** A late result clears the draft only if it still holds what was sent: edits made in a reopened sheet are kept.
+   *  After a sign-out (the draft generation changed) it neither touches drafts nor toasts. */
+  const settle = (snapshot: unknown) => {
+    if (stillOpen()) clearDraft(draftKey);
+    else clearDraftIf(draftKey, snapshot);
   };
   const refresh = () => qc.invalidateQueries({ queryKey: schedulesQueryKey });
 
@@ -231,6 +239,8 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
     deleteBusy.current = true;
     setDeleting(true);
     setActionFailed(null);
+    const snapshot = peekDraft(draftKey);
+    const generation = draftGeneration();
     try {
       await deleteSchedule(key);
     } catch (err) {
@@ -240,6 +250,7 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
         setActionFailed(`Couldn't delete ${key}.`);
         return;
       }
+      if (draftGeneration() !== generation) return;
       notify({
         text:
           err instanceof ApiError
@@ -249,7 +260,8 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
       });
       return;
     }
-    if (!reopened()) clearDraft(draftKey);
+    if (draftGeneration() !== generation) return;
+    settle(snapshot);
     if (stillOpen()) close();
     void refresh();
     notify({
@@ -282,10 +294,13 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
           </Button>
         )}
         onSubmit={async (body) => {
+          const snapshot = peekDraft(draftKey);
+          const generation = draftGeneration();
           try {
             await patchSchedule(key, body as PatchScheduleBody);
           } catch (err) {
             if (stillOpen()) throw err;
+            if (draftGeneration() !== generation) return;
             notify({
               text:
                 err instanceof ApiError
@@ -295,7 +310,8 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
             });
             return;
           }
-          if (!reopened()) clearDraft(draftKey);
+          if (draftGeneration() !== generation) return;
+          settle(snapshot);
           void refresh();
           const late = !stillOpen();
           if (!late) close();

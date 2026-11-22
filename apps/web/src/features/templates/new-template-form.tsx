@@ -20,7 +20,13 @@ import { notify } from "@/components/ui/toaster";
 import { deriveSlug } from "@/features/agents/derive-slug";
 import { FormFrame, type FormFrameKind } from "@/features/settings/forms/form-frame";
 import { refreshList, withItem, writeToList } from "@/features/sheets/add-to-list";
-import { clearDraft, draftGeneration, useSheetDraft } from "@/features/sheets/drafts";
+import {
+  clearDraft,
+  clearDraftIf,
+  draftGeneration,
+  peekDraft,
+  useSheetDraft,
+} from "@/features/sheets/drafts";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import {
   closeChildSheet,
@@ -83,7 +89,8 @@ export function NewTemplateForm({
 }: {
   frame: FormFrameKind;
   then: "open-editor" | "return";
-  onDone(name: string): void;
+  /** `snapshot` is the draft as it was at submit (`peekDraft`), for judging a late success. */
+  onDone(name: string, snapshot: unknown): void;
   onCancel(): void;
   stillOpen?(): boolean;
   onLateError?(message: string): void;
@@ -159,6 +166,7 @@ export function NewTemplateForm({
       setPending(true);
       // A sign-out while creating drops the result: it belongs to the old session.
       const generation = draftGeneration();
+      const snapshot = stacked ? undefined : peekDraft("new-template");
       try {
         const t = await createTemplate({
           name,
@@ -173,12 +181,15 @@ export function NewTemplateForm({
           templates: withItem(summaryOf(t))(old.templates),
         }));
         if (draftGeneration() !== generation) return;
-        onDone(t.name);
+        onDone(t.name, snapshot);
         refreshList(qc, listKey);
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : "Couldn't create the template. Try again.";
-        if (!stillOpen()) return onLateError?.(message);
+        if (!stillOpen()) {
+          if (draftGeneration() === generation) onLateError?.(message);
+          return;
+        }
         if (err instanceof ApiError && err.code === "template_exists") {
           show({ name: err.message });
         } else if (err instanceof ApiError && err.code === "validation_error") {
@@ -325,7 +336,7 @@ export default function NewTemplateSheet({ spec, sheetId, close }: BodyProps<Spe
               },
         })
       }
-      onDone={(name) => {
+      onDone={(name, snapshot) => {
         if (stacked) {
           if (stillOpen()) {
             completeChild(sheetId, name);
@@ -334,8 +345,15 @@ export default function NewTemplateSheet({ spec, sheetId, close }: BodyProps<Spe
           return;
         }
         const open = stillOpen();
-        // A late success must not wipe a draft the user restored by reopening New template meanwhile.
-        if (getSheetState().parent?.kind !== "new-template" || open) clearDraft("new-template");
+        // A late success clears the draft only if it still holds the submitted values; a New template reopened on
+        // those untouched values closes, so the same template can't be created twice. Edits made since are kept.
+        if (open) clearDraft("new-template");
+        else if (
+          clearDraftIf("new-template", snapshot) &&
+          getSheetState().parent?.kind === "new-template" &&
+          !getSheetState().child
+        )
+          closeSheet();
         if (open) {
           closeSheet();
           void router.navigate({ to: "/templates/$name", params: { name } });

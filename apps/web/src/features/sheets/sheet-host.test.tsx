@@ -2,6 +2,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { createQueryClient } from "@/lib/query-client";
+import { agentSummary } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -220,4 +222,62 @@ test("typing in a body's field re-renders neither SheetHost nor the shell above 
   const before = hostRenders;
   await userEvent.type(input, "abc");
   expect(hostRenders).toBe(before);
+});
+
+test("edit-schedule prefetches the detail and the live agents only (edit mode never reads the ended list)", () => {
+  const prefetchQuery = vi.fn(() => Promise.resolve());
+  restoreBodies["edit-schedule"]?.prefetch({ prefetchQuery } as never, { key: "S-3" });
+  expect(
+    prefetchQuery.mock.calls.map((c) => (c as unknown as [{ queryKey: unknown }])[0].queryKey),
+  ).toEqual([
+    ["schedules", "detail", "S-3"],
+    ["agents", "exclude"],
+  ]);
+});
+
+test("intent prefetch has its own freshness window: hover, press and open fetch each list once", async () => {
+  const api = mockApi({
+    "GET /api/credentials": () => json({ credentials: [] }),
+    "GET /api/projects": () => json({ projects: [] }),
+    "GET /api/agents/lead": () =>
+      json({ agent: agentSummary({ slug: "lead" }), queue: [], lastSeq: 0 }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+  });
+  const qc = createQueryClient({ queries: { retry: false } });
+  const prefetch = restoreBodies["edit-agent"]?.prefetch;
+  for (let i = 0; i < 3; i++) {
+    prefetch?.(qc, { kind: "edit-agent", slug: "lead" });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  const gets = (url: string) => api.calls.filter((c) => c.url === url).length;
+  expect(gets("/api/credentials")).toBe(1);
+  expect(gets("/api/projects")).toBe(1);
+  expect(gets("/api/agents/lead")).toBe(1);
+});
+
+test("each open has its own opener: one started from the page body doesn't return focus to the last one's", async () => {
+  await shell();
+  const button = document.createElement("button");
+  button.textContent = "First opener";
+  document.body.append(button);
+  try {
+    button.focus();
+    act(() => openSheet({ kind: "new-task" }));
+    await screen.findByRole("dialog", { name: "New task" });
+    act(() => closeSheet());
+    await waitFor(() => expect(dialog()).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(button));
+    // A shortcut-style open: focus is on the page body.
+    button.blur();
+    expect(document.activeElement).toBe(document.body);
+    act(() => openSheet({ kind: "new-task" }));
+    await screen.findByRole("dialog", { name: "New task" });
+    act(() => closeSheet());
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(document.activeElement).not.toBe(button);
+  } finally {
+    button.remove();
+  }
 });

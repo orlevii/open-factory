@@ -52,6 +52,7 @@ export function TemplateField({
 }) {
   const [listOpen, setListOpen] = useState(false);
   const opened = useRef(false);
+  const newTemplate = useRef<HTMLButtonElement>(null);
   // Opening a Radix Select moves focus into its list, so the trigger blurs on open: validate when the list closes,
   // once the chosen value has rendered.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the list closes
@@ -74,7 +75,14 @@ export function TemplateField({
       ) : (
         <p className="text-[0.8125rem] font-medium">Template</p>
       )}
-      <Button type="button" variant="ghost" size="sm" inForm onClick={onNewTemplate}>
+      <Button
+        ref={newTemplate}
+        type="button"
+        variant="ghost"
+        size="sm"
+        inForm
+        onClick={onNewTemplate}
+      >
         <Plus aria-hidden="true" data-icon="inline-start" />
         New template
       </Button>
@@ -106,7 +114,8 @@ export function TemplateField({
         </p>
       ) : (
         <Select
-          value={value}
+          // A name no ready template has (an unknown or broken `?template=`) shows unchosen: the placeholder.
+          value={ready.some((t) => t.name === value) ? value : ""}
           onValueChange={onChange}
           onOpenChange={(open) => {
             setListOpen(open);
@@ -119,7 +128,8 @@ export function TemplateField({
             aria-describedby={
               [error ? errorId : undefined, describedBy].filter(Boolean).join(" ") || undefined
             }
-            onBlur={() => !listOpen && onBlur?.()}
+            // Leaving for the field's own New template isn't leaving it unchosen: its result fills the field.
+            onBlur={(e) => !listOpen && e.relatedTarget !== newTemplate.current && onBlur?.()}
           >
             <SelectValue placeholder="Choose a template" />
           </SelectTrigger>

@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
@@ -8,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { instantOnKeyboard } from "@/features/session/quiet-line";
 import { describeCron, presetOf, REPEATS_PRESETS } from "./describe-cron";
 
 const CUSTOM = "__custom";
@@ -75,7 +77,7 @@ export function RepeatsField({
               <Input
                 id={a.id}
                 name="cron"
-                aria-label="Cron pattern"
+                aria-label="Repeats cron pattern"
                 value={cron}
                 autoComplete="off"
                 spellCheck={false}
@@ -91,10 +93,18 @@ export function RepeatsField({
               >
                 {summary ? `${summary} (${zone})` : null}
               </p>
-              <details className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+              <details className="group text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
                 {/* 40px tall on touch; no side padding, so it stays aligned with the field's text (it is wider
                     than 40px). */}
-                <summary className="w-fit cursor-pointer pointer-coarse:min-h-10 pointer-coarse:content-center">
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is the native disclosure button. */}
+                <summary
+                  onClick={instantOnKeyboard}
+                  className="inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded-md pointer-coarse:min-h-10 [&::-webkit-details-marker]:hidden"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
+                  />
                   Cron help
                 </summary>
                 <p className="mt-1">{CRON_HELP}</p>

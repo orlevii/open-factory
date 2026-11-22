@@ -2,6 +2,7 @@ import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-fac
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
+import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
@@ -797,7 +798,7 @@ test.each([
   renderApp(path, alice);
   await screen.findByRole("navigation", { name: "Settings" });
   await waitFor(() => expect(settingsCalls(api)).toEqual(expect.arrayContaining(expected)));
-  await screen.findByRole("region", { name: (n) => !n.startsWith("Notifications") });
+  await screen.findByRole("region", { name: (n) => !n.startsWith(TOASTER_LABEL) });
   // Not deduplicated: the loader fetches, and the section skips its own mount fetch.
   expect(settingsCalls(api).sort()).toEqual([...expected].sort());
 });

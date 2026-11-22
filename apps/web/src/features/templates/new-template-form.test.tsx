@@ -112,7 +112,7 @@ test("submit sends the derived name once and reports it", async () => {
   await userEvent.type(within(d).getByLabelText("Display name"), "Priya Nair");
   await userEvent.type(within(d).getByLabelText("Description (optional)"), "Reviews");
   await userEvent.type(within(d).getByLabelText("Display name"), "{Enter}");
-  await waitFor(() => expect(onDone).toHaveBeenCalledWith("priya-nair"));
+  await waitFor(() => expect(onDone).toHaveBeenCalledWith("priya-nair", expect.anything()));
   expect(posts).toBe(1);
   expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
     name: "priya-nair",

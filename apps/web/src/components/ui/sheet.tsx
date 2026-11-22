@@ -22,6 +22,8 @@ const SheetCtx = React.createContext<{ mobile: boolean; modal: boolean; stacked:
   stacked: false,
 });
 const useMobile = () => React.useContext(SheetCtx).mobile;
+/** Whether the enclosing sheet renders as a phone drawer (latched per opening). */
+const useSheetMobile = useMobile;
 
 /** One sheet for create/edit forms and peeks (DESIGN.md → Overlays): a 480px right panel on desktop, a
  *  bottom drawer below md. The choice is made per opening (spec §5.1). Dismissing never asks. */
@@ -78,7 +80,11 @@ function closeSheetInstantly(contentEl: HTMLElement | null | undefined, onOpenCh
 function stampPair(contentEl: HTMLElement | null | undefined) {
   if (!contentEl) return;
   contentEl.setAttribute("data-instant", "");
-  overlayOf.get(contentEl)?.setAttribute("data-instant", "");
+  // A drawer's overlay is its content's sibling in the same Vaul portal.
+  const prev = contentEl.previousElementSibling;
+  const overlay =
+    overlayOf.get(contentEl) ?? (prev?.matches("[data-slot=drawer-overlay]") ? prev : undefined);
+  overlay?.setAttribute("data-instant", "");
 }
 
 const WIDTH = { sheet: "w-[min(30rem,100%)]", panel: "w-[min(20rem,100%)]" } as const;
@@ -173,7 +179,7 @@ function SheetContent({
         data-modal={modal ? undefined : "false"}
         ref={stampedRef}
         className={cn(
-          "fixed right-0 z-50 flex flex-col border-l border-float-edge bg-popover text-sm text-popover-foreground",
+          "fixed right-0 z-50 flex flex-col border-l border-float-edge bg-popover text-sm text-popover-foreground outline-none", // ui-contract:allow the panel holds focus only until its body focuses a field; the ring belongs on controls
           "duration-250 ease-(--ease-drawer) data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right data-closed:duration-200 data-closed:ease-(--ease-out)",
           "motion-reduce:data-open:fade-in-0 motion-reduce:data-closed:fade-out-0",
           "[@media(max-height:30rem)]:overflow-y-auto",
@@ -257,7 +263,7 @@ function SheetDescription({ className, ...props }: React.ComponentProps<typeof S
   return (
     <SheetPrimitive.Description
       data-slot="sheet-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn("text-sm text-muted-foreground [overflow-wrap:anywhere]", className)}
       {...props}
     />
   );
@@ -308,4 +314,5 @@ export {
   SheetFooter,
   SheetHeader,
   SheetTitle,
+  useSheetMobile,
 };

@@ -123,6 +123,27 @@ test("several credentials and the restored draft's one is gone: Choose a credent
   expect(within(dialog).getByText("Credential prod was deleted.")).toBeInTheDocument();
 });
 
+test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
+  mockWorld({ credentials: [credential("work"), credential("prod")] });
+  const first = renderApp("/agents", alice);
+  await screen.findByRole("heading", { level: 1, name: "Agents" });
+  act(() => openSheet({ kind: "new-agent" }));
+  await sheet();
+  await userEvent.click(await screen.findByRole("button", { name: "More options" }));
+  await pickOption(field("Credential"), /^prod/);
+  act(() => closeSheet());
+  first.unmount();
+  // The restored draft's credential is gone: with two left, none is chosen.
+  const { dialog } = await open({ credentials: [credential("work"), credential("other")] });
+  const trigger = field("Credential");
+  expect(trigger).toHaveTextContent("Choose a credential");
+  expect(trigger).not.toHaveAttribute("aria-invalid");
+  act(() => trigger.focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  expect(trigger).not.toHaveAttribute("aria-invalid");
+});
+
 test("a template secret that isn't set opens More options and says so", async () => {
   const { dialog } = await open(
     { details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) }, secrets: [] },
@@ -418,6 +439,10 @@ test("a server projects error opens More options and focuses the group", async (
 
 test("an unknown ?template= counts as unchosen", async () => {
   const { api } = await open({}, { template: "nope" });
+  // Shown unchosen: the trigger reads its placeholder and focus opens on Template, as with no template at all.
+  const template = screen.getByRole("combobox", { name: "Template" });
+  expect(template).toHaveTextContent("Choose a template");
+  await waitFor(() => expect(template).toHaveFocus());
   await userEvent.type(field("Display name"), "Ada");
   await userEvent.click(createButton());
   expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
@@ -521,6 +546,95 @@ test("a late success keeps a draft reopened, typed into and closed again meanwhi
   await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
   await waitFor(() => expect(notify).toHaveBeenCalled());
   expect(hasDraft("new-agent")).toBe(true);
+});
+
+test("a late success over a New agent reopened on the sent values clears the draft and closes it", async () => {
+  const post = held();
+  const { api } = await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Team Lead");
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "new-agent" }));
+  await sheet();
+  expect(await screen.findByLabelText("Display name")).toHaveValue("Team Lead");
+  expect(screen.getByText(/Draft restored/)).toBeInTheDocument();
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Created @team-lead.",
+      action: { label: "Open", run: expect.any(Function) },
+    }),
+  );
+  expect(hasDraft("new-agent")).toBe(false);
+  // The form holding the created values closes instead of inviting a second Create.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New agent" })).toBeNull());
+  expect(posts(api)).toHaveLength(1);
+});
+
+test("a late success over a reopened, untouched New agent keeps it open while a stacked child is on it", async () => {
+  const post = held();
+  await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Team Lead");
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "new-agent" }));
+  const parent = await sheet();
+  expect(await screen.findByLabelText("Display name")).toHaveValue("Team Lead");
+  await userEvent.click(more());
+  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  // The child (and whatever the user is typing in it) stays; the sent draft is still cleared.
+  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect(getSheetState().parent?.kind).toBe("new-agent");
+  expect(hasDraft("new-agent")).toBe(false);
+});
+
+test("a late success after a sign-out neither toasts nor touches the next user's draft", async () => {
+  const post = held();
+  await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Team Lead");
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  // The next user types the same values: the late success must not take them for the sent draft.
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  await sheet();
+  const name = await screen.findByLabelText("Display name");
+  await vi.waitFor(() => expect(name).toHaveValue("Team Lead"));
+  await userEvent.clear(name);
+  await userEvent.type(name, "Team Lead");
+  expect(hasDraft("new-agent")).toBe(true);
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("new-agent")).toBe(true);
+  expect(screen.getByRole("dialog", { name: "New agent" })).toBeInTheDocument();
+});
+
+test("a late failure after a sign-out doesn't toast", async () => {
+  const post = held();
+  await openLead({ extra: { "POST /api/agents": post.route } });
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  await act(async () =>
+    post.answer(json({ error: { code: "boom", message: "The server fell over." } }, 500)),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
 });
 
 test("a late failure toasts the error with Open form, which reopens the kept draft", async () => {
@@ -1001,6 +1115,15 @@ test("Add secret opens prefilled with Value focused; success removes the warning
   expect(warning).not.toBeInTheDocument();
   expect(within(dialog).queryByText(/isn't set/)).not.toBeInTheDocument();
   await waitFor(() => expect(field("Template")).toHaveFocus());
+});
+
+test("leaving an unchosen Template for its own New template button doesn't flag it", async () => {
+  const { dialog } = await open({ templates: [templateSummary("lead")] });
+  await waitFor(() => expect(field("Template")).toHaveFocus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "New template" }));
+  await child("New template");
+  expect(within(dialog).queryByText("Choose a template.")).toBeNull();
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
 });
 
 test("New template (stacked) selects the new template", async () => {

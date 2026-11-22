@@ -10,6 +10,7 @@ import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
+import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { MoreOptions } from "@/features/sheets/more-options";
 import type { CreateTaskBody } from "./api";
@@ -43,10 +44,13 @@ export function TaskForm({
   draftKey,
   prefill,
   onSubmit,
+  onDiscard,
 }: {
   draftKey: DraftKey;
   prefill?: { assignee?: string };
   onSubmit(body: CreateTaskBody): Promise<void>;
+  /** After Discard: the form is back to its blank start, prefill included. */
+  onDiscard?(): void;
 }) {
   const draft = useSheetDraft<Values>(draftKey, () => blank(prefill));
   const values = useRef<Values>(draft.start);
@@ -60,6 +64,7 @@ export function TaskForm({
   const [failed, setFailed] = useState(false);
   const inFlight = useRef(false);
   const form = useRef<HTMLFormElement>(null);
+  useFocusOnOpen(form);
   const active = useQuery(agentsListQueryOptions("exclude"));
   const ended = useQuery(agentsListQueryOptions("only"));
   const known =
@@ -80,16 +85,30 @@ export function TaskForm({
   const stale = Boolean(
     v.assignee &&
       active.data &&
+      ended.data &&
       !active.data.some((a) => a.slug === v.assignee && !a.archivedAt && !a.terminatedAt),
   );
   const assignee = stale ? "" : v.assignee;
   const staleSlug = v.assignee;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `update` only writes the ref, the draft and state
+  const staleEnded =
+    stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.slug === staleSlug);
+  // The reason shows in the same commit that empties the field; the effect keeps it once the value is cleared.
+  const staleError = stale
+    ? staleEnded
+      ? `@${staleSlug} has ended; pick another.`
+      : `There is no agent @${staleSlug}.`
+    : undefined;
+  const assigneeError = errors.assignee ?? staleError;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `update` and `draft.rebase` only write refs, the draft and state
   useEffect(() => {
-    if (!stale) return;
+    if (!staleError) return;
+    // A stale prefill cleared is not an edit: the cleared form is the new baseline, so it leaves no draft. `restored`
+    // is the form's own state, so after Discard the prefill counts as a fresh one.
+    if (!restored && staleSlug === prefill?.assignee)
+      draft.rebase({ ...blank(prefill), assignee: "" });
     update({ assignee: "" });
-    setErrors((e) => ({ ...e, assignee: `@${staleSlug} has ended; pick another.` }));
-  }, [stale, staleSlug]);
+    setErrors((e) => ({ ...e, assignee: staleError }));
+  }, [staleError]);
 
   const hasValues = deps.trim() !== "" || rows.length > 0;
   const hasError = Boolean(errors.dependsOn || errors.links);
@@ -189,7 +208,7 @@ export function TaskForm({
           <FieldShell
             name="assignee"
             label="Assignee"
-            error={errors.assignee}
+            error={assigneeError}
             help="Assigning sends the task to the agent's session right away."
           >
             {(a) => (
@@ -274,6 +293,7 @@ export function TaskForm({
           setResolved([]);
           setUserOpen(undefined);
           setRestored(false);
+          onDiscard?.();
         }}
       />
     </form>

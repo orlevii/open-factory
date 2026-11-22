@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
 import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -812,7 +813,7 @@ test("layout: the grid cannot be widened by long content; every grid and aside c
   // 4-column table, a 40-char assignee), so every grid on the way down declares a shrinkable track.
   const isGrid = (el: Element) => el.classList.contains("grid");
   const inner = [...kids, ...kids.flatMap((k) => [...k.children])].filter(isGrid);
-  inner.push(...document.querySelectorAll('section:not([aria-label^="Notifications"])'));
+  inner.push(...document.querySelectorAll(`section:not([aria-label^="${TOASTER_LABEL}"])`));
   inner.push(screen.getByRole("list", { name: "Activity" }));
   expect(inner.length).toBeGreaterThan(8);
   for (const g of inner) expect(g).toHaveClass("grid-cols-[minmax(0,1fr)]");

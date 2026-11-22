@@ -397,6 +397,81 @@ test("a late success keeps the draft of the same agent reopened and typed into m
   expect(hasDraft("edit-agent:lead")).toBe(true);
 });
 
+test("a late success over the same agent's Edit reopened on the sent values clears the draft and closes it", async () => {
+  const patch = held();
+  const { api } = await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  await sheet();
+  await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
+  expect(hasDraft("edit-agent:lead")).toBe(false);
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull());
+  expect(patches(api)).toHaveLength(1);
+});
+
+test("a late success over the same agent's reopened, untouched Edit keeps it open while a stacked child is on it", async () => {
+  const patch = held();
+  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  const parent = await sheet();
+  await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
+  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
+  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect(getSheetState().parent?.kind).toBe("edit-agent");
+  expect(hasDraft("edit-agent:lead")).toBe(false);
+});
+
+test("a save landing after a sign-out neither toasts nor touches a draft", async () => {
+  const patch = held();
+  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  // The next user types the same value: the late success must not take it for the sent draft.
+  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  await sheet();
+  await vi.waitFor(() => expect(field("Display name")).toBeEnabled());
+  await rename("Boss");
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(screen.getByRole("dialog", { name: "Edit agent" })).toBeInTheDocument();
+});
+
+test("a failed save landing after a sign-out doesn't toast", async () => {
+  const patch = held();
+  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Kept");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  await act(async () =>
+    patch.answer(json({ error: { code: "boom", message: "The server fell over." } }, 500)),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+});
+
 test("a late success still clears its draft when only another agent's Edit opened meanwhile", async () => {
   const patch = held();
   await open({
@@ -600,6 +675,19 @@ test("Add credential stacks over Edit agent and names it", async () => {
       "For Edit agent. Saved to Settings → Credentials; other agents can use it.",
     ),
   ).toBeInTheDocument();
+});
+
+test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
+  const { dialog } = await open({
+    agents: [lead({ credential: null })],
+    credentials: [credential("work"), credential("prod")],
+  });
+  const trigger = field("Credential");
+  expect(trigger).toHaveTextContent("Choose a credential");
+  act(() => trigger.focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await screen.findByRole("dialog", { name: "Add credential" });
+  expect(trigger).not.toHaveAttribute("aria-invalid");
 });
 
 test("Add project stacks over Edit agent", async () => {

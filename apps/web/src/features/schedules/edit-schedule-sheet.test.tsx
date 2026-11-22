@@ -3,13 +3,14 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft, hasDraft } from "@/features/sheets/drafts";
+import { clearDraft, hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
+import { scheduleDetailOptions } from "./api";
 import { ScheduleBadge } from "./schedule-badge";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -95,6 +96,56 @@ test("the footer has Save changes, Close and a ghost crimson Delete schedule on 
   expect(del).toHaveClass("text-destructive");
   const footer = del.closest("[data-slot=sheet-footer]") as HTMLElement;
   expect(footer.firstElementChild?.contains(del)).toBe(true);
+  // A viewport breakpoint: the footer is not inside the body's @container, so a container query never matched.
+  expect(footer.firstElementChild).toHaveClass("sm:mr-auto");
+});
+
+test("phones: the footer stacks Save changes first and Close last, Delete between", async () => {
+  fakeMatchMedia.install(true);
+  mockApi(common(sched()));
+  await openOver();
+  await message();
+  const footer = (await sheet()).querySelector("[data-slot=drawer-footer]") as HTMLElement;
+  const names = within(footer)
+    .getAllByRole("button")
+    .map((b) => b.textContent);
+  expect(names).toEqual(["Save changes", "Delete schedule", "Close"]);
+});
+
+test("desktop: the first field takes focus when the form mounts", async () => {
+  mockApi(common(sched()));
+  await openOver();
+  await message();
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole("dialog", { name: "S-3" })).getByLabelText("Target"),
+    ).toHaveFocus(),
+  );
+});
+
+test("deleted: Restore takes focus on open", async () => {
+  mockApi(common(sched({ deleted: true })));
+  await openOver();
+  const dialog = await sheet();
+  const restore = await within(dialog).findByRole("button", { name: "Restore" });
+  await waitFor(() => expect(restore).toHaveFocus());
+});
+
+test("swapping to another schedule in place shows that schedule's values, not the first one's edits", async () => {
+  clearDraft("edit-schedule:S-4");
+  mockApi({
+    ...common(sched()),
+    "GET /api/schedules/S-4": detail(sched({ key: "S-4", body: "Evening wrap" })),
+  });
+  const { queryClient } = await openOver();
+  await userEvent.type(await message(), " edited");
+  // S-4 already cached, so the body swaps without a skeleton in between (the case a key on the body guards).
+  await queryClient.fetchQuery(scheduleDetailOptions("S-4"));
+  act(() => openSheet({ kind: "edit-schedule", key: "S-4" }));
+  const s4 = await screen.findByRole("dialog", { name: "S-4" });
+  expect(await within(s4).findByLabelText("Message")).toHaveValue("Evening wrap");
+  expect(within(s4).queryByText(/Draft restored/)).toBeNull();
+  clearDraft("edit-schedule:S-4");
 });
 
 test("Pause and Resume are the header action; a state line sits above the form", async () => {
@@ -382,7 +433,8 @@ test("a draft saved before the server changed an untouched field shows the serve
   await waitFor(() => expect(zone).toHaveTextContent(/Tokyo/));
 });
 
-test("a late save success keeps a draft reopened meanwhile, and does not close the new sheet", async () => {
+/** Edits the message to "Evening" and saves with PATCH held until `release()`, closing the sheet while it is pending. */
+async function saveThenClose() {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
   mockApi({
@@ -400,12 +452,89 @@ test("a late save success keeps a draft reopened meanwhile, and does not close t
   await screen.findByRole("button", { name: "Saving…" });
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "S-3" })).toBeNull());
+  return release;
+}
+
+test("a late save success clears the draft a reopened sheet still holds unchanged, and leaves that sheet open", async () => {
+  const release = await saveThenClose();
   act(() => openSheet({ kind: "edit-schedule", key: "S-3" }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   release();
   await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved S-3." }));
-  expect(hasDraft("edit-schedule:S-3")).toBe(true);
+  expect(hasDraft("edit-schedule:S-3")).toBe(false);
   expect(screen.getByRole("dialog", { name: "S-3" })).toBeInTheDocument();
+});
+
+test("a late save success keeps edits made in a reopened sheet that was closed again", async () => {
+  const release = await saveThenClose();
+  act(() => openSheet({ kind: "edit-schedule", key: "S-3" }));
+  await userEvent.type(await message(), " late");
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "S-3" })).toBeNull());
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved S-3." }));
+  expect(hasDraft("edit-schedule:S-3")).toBe(true);
+  act(() => openSheet({ kind: "edit-schedule", key: "S-3" }));
+  expect(await message()).toHaveTextContent("Evening late");
+});
+
+test("a save landing after a sign-out neither toasts nor clears a draft", async () => {
+  const release = await saveThenClose();
+  act(() => resetDrafts());
+  act(() => openSheet({ kind: "edit-schedule", key: "S-3" }));
+  const body = await message();
+  await userEvent.clear(body);
+  await userEvent.type(body, "Evening");
+  act(() => closeSheet());
+  release();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("edit-schedule:S-3")).toBe(true);
+});
+
+test("a Delete landing after a sign-out does not toast", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  mockApi({
+    ...common(sched()),
+    "DELETE /api/schedules/S-3": async () => {
+      await gate;
+      return json({ schedule: sched({ deleted: true }) });
+    },
+  });
+  await openOver("/inbox");
+  await message();
+  await userEvent.click(screen.getByRole("button", { name: "Delete schedule" }));
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  release();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+});
+
+test("a double click on Pause sends one request", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const api = mockApi({
+    ...common(sched()),
+    "POST /api/schedules/S-3/pause": async () => {
+      await gate;
+      return json({ schedule: sched({ paused: true }) });
+    },
+  });
+  await openOver();
+  await message();
+  await userEvent.dblClick(screen.getByRole("button", { name: "Pause S-3" }));
+  release();
+  await waitFor(() => expect(api.calls.some((c) => c.url.includes("/pause"))).toBe(true));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(api.calls.filter((c) => c.url.includes("/pause"))).toHaveLength(1);
 });
 
 test("a late save failure toasts the error with Open form", async () => {

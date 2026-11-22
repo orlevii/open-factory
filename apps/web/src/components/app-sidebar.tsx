@@ -43,6 +43,7 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { resetToasts } from "@/components/ui/toaster";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Mark, Wordmark } from "@/components/wordmark";
 import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
@@ -120,6 +121,7 @@ export function AppSidebar() {
     resetUploads();
     resetSheets();
     resetDrafts();
+    resetToasts();
     await authClient.signOut();
     await refreshSession(qc);
     await navigate({ to: "/sign-in" });

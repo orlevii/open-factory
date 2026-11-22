@@ -7,13 +7,13 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AgentDetails } from "@/features/session/agent-details";
 import { type StopCrons, useStopCrons } from "@/features/session/stop-crons";
-import { getSheetState } from "@/features/sheets/sheet-store";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi, validQuery } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -357,6 +357,42 @@ test("Work: at most 5 tasks and 5 schedules, with the counts that link to the fu
   expect(q.get("limit")).toBe("5");
   // Open and in progress is the server's default: no status parameter.
   expect(q.has("status")).toBe(false);
+});
+
+test("Work: on phones a schedule key closes the Agent details drawer at once before the sheet opens", async () => {
+  mockApi({
+    "GET /api/schedules?": () => json({ schedules: [1, 2].map(scheduleRow), more: false }),
+  });
+  act(() => closeSheet());
+  let parentAtClose: unknown = "not called";
+  const onClose = vi.fn(() => {
+    parentAtClose = getSheetState().parent;
+  });
+  const { container } = setup({ agent: agentSummary({ scheduleCount: 2 }), onClose });
+  const work = within(await section("Work"));
+  // The phone drawer: Agent details' content carries this id and the drawer slot.
+  const drawer = container.firstElementChild as HTMLElement;
+  drawer.id = "agent-details";
+  drawer.setAttribute("data-slot", "drawer-content");
+  await userEvent.click(await work.findByRole("button", { name: "S-2" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(parentAtClose).toBeUndefined();
+  expect(drawer).toHaveAttribute("data-instant");
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-2" });
+  act(() => closeSheet());
+});
+
+test("Work: wider than phones, a schedule key leaves Agent details open", async () => {
+  mockApi({
+    "GET /api/schedules?": () => json({ schedules: [1].map(scheduleRow), more: false }),
+  });
+  const onClose = vi.fn();
+  setup({ agent: agentSummary({ scheduleCount: 1 }), onClose });
+  const work = within(await section("Work"));
+  await userEvent.click(await work.findByRole("button", { name: "S-1" }));
+  expect(onClose).not.toHaveBeenCalled();
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-1" });
+  act(() => closeSheet());
 });
 
 test("Work: nothing is fetched, and no section shows, for an agent with no tasks or schedules", async () => {

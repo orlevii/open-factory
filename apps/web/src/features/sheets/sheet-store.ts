@@ -25,15 +25,8 @@ let nextId = 1;
 let pathnameSource: () => string = () => window.location.pathname;
 const listeners = new Set<() => void>();
 const pending = new Map<number, { parentId: number; onDone: (name: string) => void }>();
-const opens = new Map<OpenKey, number>();
 // Where focus lands when a child that served its parent closes (set by the parent's `onDone`).
 let childReturnFocus: (() => HTMLElement | null) | undefined;
-
-/** A kind, or one agent's Edit sheet (whose draft is per agent). */
-type OpenKey = SheetSpec["kind"] | `edit-agent:${string}`;
-/** How many times a kind (or one agent's Edit) has been opened: a late result compares it with the count at submit,
- *  to tell whether the user opened it again since (and may have edited its draft). */
-export const sheetOpens = (key: OpenKey) => opens.get(key) ?? 0;
 
 function set(next: SheetState) {
   state = next;
@@ -47,11 +40,6 @@ export function setPathnameSource(fn: () => string) {
 
 export function openSheet(spec: SheetSpec, opts?: { instant?: boolean; at?: string }) {
   pending.clear();
-  opens.set(spec.kind, sheetOpens(spec.kind) + 1);
-  if (spec.kind === "edit-agent") {
-    const key = `edit-agent:${spec.slug}` as const;
-    opens.set(key, sheetOpens(key) + 1);
-  }
   set({
     parent: {
       ...spec,

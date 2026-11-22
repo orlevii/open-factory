@@ -1,7 +1,8 @@
-import type { ServerMessage } from "@open-factory/shared";
+import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { flushStatusFrames } from "@/features/agents/status-frames";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
@@ -1113,4 +1114,101 @@ test("?event= asks for its window only after the detail", async () => {
   gate.release(json(detail()));
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
   expect(requested("/api/agents/dev/events?")).toBe(1);
+});
+
+test("a saved summary written to the agent's detail cache (Edit agent over the session) renames the header at once", async () => {
+  const { queryClient } = renderApp("/agents/dev", alice);
+  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
+  await screen.findByText("Two entries.");
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
+    ),
+  );
+  expect(await screen.findByRole("heading", { level: 1, name: "Renamed" })).toBeInTheDocument();
+});
+
+test("a status-frame write to the detail cache never overwrites the session's live turn fields", async () => {
+  const { queryClient } = renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  await vi.waitFor(() =>
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 }),
+  );
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      turnStartedAt: new Date(Date.now() - 65_000).toISOString(),
+      compacting: true,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  const line = () => document.querySelector("[data-activity-line]");
+  await vi.waitFor(() => expect(line()).toHaveTextContent("Compacting"));
+  await vi.waitFor(() => expect(line()).toHaveTextContent(/1m/));
+  // The global status-frame writer patches the cached detail without the live turn fields (a manual write).
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, status: "working", turnOpen: true } } : d,
+    ),
+  );
+  // An Edit save afterwards still renames the header, and keeps the turn live too.
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
+    ),
+  );
+  expect(await screen.findByRole("heading", { level: 1, name: "Renamed" })).toBeInTheDocument();
+  expect(line()).toHaveTextContent("Compacting");
+  expect(line()).toHaveTextContent(/1m/);
+});
+
+// The global status-frame flush writes the same detail cache, without a turn's start or a compaction: the session must
+// keep its live values whichever of the two rAF flushes lands last.
+const nextFrame = () => act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+test("a status flush into the detail cache keeps the open turn's elapsed timer", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      turnStartedAt: new Date(Date.now() - 5000).toISOString(),
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelector("[data-activity-line] .tabular-nums")).toBeInTheDocument(),
+  );
+  act(() => flushStatusFrames());
+  await nextFrame();
+  expect(document.querySelector("[data-activity-line] .tabular-nums")).toBeInTheDocument();
+});
+
+test("a status flush into the detail cache keeps a running compaction", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      compacting: true,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  const line = () => document.querySelector("[data-activity-line]")?.textContent ?? "";
+  await vi.waitFor(() => expect(line()).toContain("Compacting"));
+  act(() => flushStatusFrames());
+  await nextFrame();
+  expect(line()).toContain("Compacting");
 });

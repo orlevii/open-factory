@@ -216,7 +216,7 @@ Under `prefers-contrast: more`, the surfaces and the Pilot Light Rule stay the s
 ## Typography
 
 - **Archivo** (variable, self-hosted via `@fontsource-variable/archivo`) is the `font-heading` face. It is the typeface the wordmark is cut from. Use it for page titles (16px/600), auth titles (22px/700), error and not-found headings, card and sheet titles, and markdown headings. Tracking scales with size (see Named Rules).
-- **Geist** covers all UI and body text. Base UI text is 14px, labels and secondary text are 13px, and long-form prose is 14/22.
+- **Geist** covers all UI and body text. Base UI text is 14px, labels and secondary text are 13px, and reading prose (speech, task bodies, comments) is 15/24.
 - **Geist Mono** is only for things that are literally identifiers or code: code, handles (`@alice`), slugs, keys. It is never a "technical" costume for labels.
 
 ### Hierarchy
@@ -227,19 +227,21 @@ Under `prefers-contrast: more`, the surfaces and the Pilot Light Rule stay the s
 | Page title (h1 in the 48px header) | Archivo | 16 / 20 | 600 |
 | Detail title (task, in the page body) | Archivo | 20 / 28 | 650 |
 | State heading (error, not found) | Archivo | 16 / 20 | 600 |
-| Markdown h1 / h2 / h3 | Archivo | 20 / 17 / 15 (in a detail body or comment: 17 / 15 / 14) | 650 |
+| Markdown h1 / h2 / h3 | Archivo | 20 / 17 / 15 (demoted, in a detail body, comment or session timeline: 17 / 16 / 15) | 650 |
+| Reading prose | Geist | 15 / 24 | 400 |
 | Body / UI | Geist | 14 / 22 | 400 |
 | Label, secondary, panel heading | Geist | 13 / 18 | 400–500 |
+| Tool output as markdown | Geist | 13 / 20 (headings 14 / 13 / 13) | 400 |
 | Code | Geist Mono | 13 / 1.55 | 400 |
 
-Reading prose stays 14/22 for now; the reading size of the timeline, task bodies and comments is decided with U3's timeline tiers.
+Reading prose is 15/24: speech in the session timeline, task bodies and comments. Base UI text stays 14/22, and tool output stays at 13/20, so the work tier reads quieter than speech.
 
 ### Named Rules
 
 - **Never retype the wordmark.** "OpenFactory" in Archivo is a drawing, not text. Render it with the `Wordmark` component, which is built from the outlined master.
 - **Type is set in rem, never px.** Sizes and line heights follow the reader's browser font-size setting, not just page zoom. The pixel values in the table are at the 16px default: 13px is `0.8125rem`, 14px is `0.875rem`, 18px is `1.125rem`, 22px is `1.375rem`.
-- **Tracking scales with size.** −0.015em at 20px and above, −0.01em at 15–17px, 0 at 14px and below (Body, labels and a demoted h3).
-- **A document never outranks its title.** Inside a detail body or a comment, markdown headings drop one step.
+- **Tracking scales with size.** −0.015em at 20px and above and −0.01em at 15–17px apply to Archivo headings; Geist body and UI text stays at 0 at every size, reading prose included.
+- **A document never outranks its title.** Inside a detail body, a comment or the session timeline, markdown headings drop to the demoted scale. Nothing in a session outranks the page title.
 - **Sentence case everywhere.** The voice is a calm senior engineer (PRODUCT.md).
 
 ## Layout
@@ -277,6 +279,14 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   - Clear space is 2× the roofline stroke on every side.
 - **Buttons:** primary is a graphite fill with steel text (inverted in dark mode); a disabled button keeps its variant's shape with muted text and no opacity fade: primary becomes a plate with a rule border, outline keeps its plate and rule edge, and ghost stays borderless with no plate, so a disabled control never looks like a different enabled one and never heavier than an enabled button. Standalone secondary buttons are ghost for actions inside a section (rail and section-header actions, repeated per item: Add a description, Edit dependencies, Edit links stay ghost); outline, a plate with a rule edge, only for page- or header-level standalone actions (Edit beside a title, Verify). Ghost is also for icon buttons, toolbar items and actions repeated on every item of a list (Reply on each comment). Danger uses crimson. Buttons name their action. Controls are 32px tall on fine pointers and 36px on touch.
 - **Form controls:** Select, radio, checkbox, segmented control and inputs share one height, one plate fill, the `field-edge` boundary and one focus ring (2px signal, offset 2px). Checked boxes and radios are graphite. A segmented control is a steel-deep track whose selected segment is a raised plate. Where search beats a list (agents, time zones), the picker is a Combobox; there are no native selects.
+- **Session timeline:** the timeline of a session has three tiers. Spacing, not boxes, groups them.
+  - **Speech** is incoming messages, outgoing `send_message` calls and the agent's text, with a speaker line and prose at 15/24. A message that crossed a session boundary is a card (a plate with a 1px rule and the 6px radius); the agent's own text is never boxed. A factory notice (system, task assigned, task update) is no card: a quiet line with the factory mark, its body below as two muted lines with "Show all".
+  - **Work** is tool rows, spawn and terminate blocks, at 13px, with tool names in mono only where they are identifiers.
+  - **System** is lifecycle lines, the turn footer and the compaction marker, at 13px muted.
+  - **Spacing:** 24px before a speaker line or a card and after a turn footer, 8px between the other rows of a turn. Repeated identical failures merge into one row ("3 times · last 19:32"). A long message, outgoing or spawn body is clamped at 40 lines or 4,000 characters, cut between blocks and closed with "Show all", which expands in place; agent text is never clamped.
+  - **Speaker line:** avatar (20px), name in Geist 13px medium, a muted mono handle that hides in a narrow row (the tooltip keeps it) and a muted time that is never truncated. Your own messages say "You", humans have no avatar, and an outgoing card reads "Name → Recipient".
+  - **Deep-link arrival:** the linked row scrolls to the centre and takes focus, with the inset focus ring. A 6% signal tint on the row's own box (the card, never its gutter) holds for 2s of visible time, then fades over 300ms; the fade stays under reduced motion.
+  - **One row menu:** every row has a single ⋯ in its right gutter, shown on hover and focus within on fine pointers and always on touch. It lists only what applies: Copy link, Copy text, Copy command, View tool call, Open in inbox, and on touch the time. A copy turns the icon into a check for 1.5s. The menu is the only row action, so rows carry no footers of their own.
 - **Rows:** Linked rows take the `steel-hover` fill on hover (fine pointers only, 150ms colour) and a 6% deeper fill the instant they are pressed (on touch after 80ms, so a scroll doesn't flash them). Full-width rows never scale. Rows, sidebar items and timeline rows take the focus ring inset (offset −2px), so it never spills over a divider. Menu and select items show focus as the `steel-hover` fill instead of a ring.
 - **Inputs:** a plate fill with a `field-edge` boundary, a signal focus ring (2px, offset 2px) and a signal caret. Errors appear inline below the field in crimson with an icon.
 - **Validation:** the two short auth forms validate on submit and then move focus to the first invalid field. Editing a field clears its error. Longer forms (templates, schedules) validate each field when you leave it, never while you type, and still check everything on submit.
@@ -337,7 +347,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 - **Deliberately not used:**
   - Staggered list entrances, because live lists would ripple on every websocket update.
   - Springs and the Motion library. Drawers can be dragged now, through Vaul's CSS transitions (see Gesture UI); Motion waits for drag-to-reorder.
-  - Blur crossfades and hold-to-delete, until a specific component needs them.
+  - Blur crossfades, except for copy feedback (150ms in, blur of 1px at most), and hold-to-delete, until a specific component needs them.
   - Animated status: dots change colour over 150ms; the working tooth never pulses.
 - **Performance:** Motion is only as smooth as the main thread: the timeline commits at most once per frame, and unchanged rows don't re-render.
 - The loading mark is the only authored animation.

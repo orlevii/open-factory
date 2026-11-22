@@ -43,7 +43,7 @@ function Row({ t, now }: { t: TaskSummary; now: Date }) {
         search={{}}
         aria-label={label(t)}
         data-task-key={t.key}
-        className="grid min-h-14 grid-cols-[3.5rem_minmax(0,1fr)] content-center gap-x-3 gap-y-0.5 px-2 py-2 text-sm hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:grid-cols-[3.5rem_minmax(0,1fr)_7rem_10rem]"
+        className="of-row grid min-h-14 grid-cols-[3.5rem_minmax(0,1fr)] content-center gap-x-3 gap-y-0.5 px-2 py-2 text-sm md:grid-cols-[3.5rem_minmax(0,1fr)_7rem_10rem]"
       >
         <span className="font-mono text-[0.8125rem] leading-5 text-foreground">{t.key}</span>
         <span className="min-w-0 truncate leading-5 text-foreground">{t.title}</span>

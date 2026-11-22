@@ -1,7 +1,10 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import sidebarSource from "@/components/ui/sidebar.tsx?raw";
+import { installInputModality } from "@/lib/input-modality";
 import type { WsOptions, WsStatus } from "@/lib/ws";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -120,4 +123,60 @@ test("a short blip never shows the strip", async () => {
   act(() => ws.onStatus?.("open"));
   await act(() => vi.advanceTimersByTimeAsync(10_000));
   expect(strip()).toBeNull();
+});
+
+test("sidebar.tsx no longer animates menu-item or group-label layout", () => {
+  expect(sidebarSource).not.toContain("transition-[width,height,padding]");
+  expect(sidebarSource).not.toContain("transition-[margin,opacity]");
+});
+
+test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens instantly, a click reopen does not", async () => {
+  const original = window.matchMedia;
+  const off = installInputModality();
+  fakeMatchMedia.install(true);
+  try {
+    renderApp("/inbox", alice);
+    await screen.findByRole("heading", { level: 1, name: "Inbox" });
+    const node = () => document.querySelector<HTMLElement>("[data-slot=drawer-content]");
+    const content = () => (node()?.getAttribute("data-state") === "open" ? node() : null);
+    // jsdom never fires animationend, so Radix Presence would keep the closed node mounted: end it by hand.
+    const settleClosed = async () => {
+      await vi.waitFor(() => expect(content()).toBeNull());
+      const n = node();
+      if (n) {
+        const e = new Event("animationend", { bubbles: true });
+        Object.assign(e, { animationName: getComputedStyle(n).animationName });
+        fireEvent(n, e);
+      }
+      await vi.waitFor(() => expect(node()).toBeNull());
+    };
+    expect(content()).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    let c = content();
+    expect(c).not.toBeNull();
+    expect(c).toHaveAttribute("data-sidebar", "sidebar");
+    expect(c).toHaveAttribute("data-mobile", "true");
+    expect(c?.style.getPropertyValue("--sidebar-width")).toBe("18rem");
+    expect(c).toHaveClass("bg-sidebar");
+    expect(within(c as HTMLElement).getByRole("link", { name: "Agents" })).toBeInTheDocument();
+    expect(c).not.toHaveAttribute("data-instant");
+
+    await userEvent.keyboard("{Escape}");
+    await settleClosed();
+
+    await userEvent.keyboard("{Meta>}b{/Meta}");
+    await vi.waitFor(() => expect(content()).not.toBeNull());
+    expect(content()).toHaveAttribute("data-instant");
+    await userEvent.keyboard("{Meta>}b{/Meta}");
+    await settleClosed();
+
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    c = content();
+    expect(c).not.toBeNull();
+    expect(c).not.toHaveAttribute("data-instant");
+  } finally {
+    off();
+    window.matchMedia = original;
+  }
 });

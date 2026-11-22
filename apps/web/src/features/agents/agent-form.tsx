@@ -10,13 +10,14 @@ import {
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { NativeSelect } from "@/components/native-select";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
@@ -468,7 +469,6 @@ export function AgentForm(props: Props) {
               onChange={(e) => set("description", e.target.value)}
               onFocus={() => claim("description")}
               onBlur={() => blur("description")}
-              className="bg-card dark:bg-card"
             />
           )}
         </FieldShell>
@@ -555,7 +555,7 @@ export function AgentForm(props: Props) {
             aria-disabled={pending || noCredentials || undefined}
             className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
           >
-            {pending && <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />}
+            {pending && <Spinner />}
             {pending
               ? create
                 ? "Creating…"

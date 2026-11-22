@@ -28,7 +28,7 @@ export function MarkdownEditor(props: {
       {...(view
         ? { value: view, onValueChange: (v: string) => onViewChange?.(v as "write" | "preview") }
         : { defaultValue: "write" })}
-      className="gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20"
+      className="gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
     >
       <TabsList
         variant="line"
@@ -56,7 +56,7 @@ export function MarkdownEditor(props: {
           aria-describedby={props["aria-describedby"]}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent"
+          className="field-sizing-fixed min-h-40 resize-y rounded-none border-0 bg-transparent p-3 font-mono text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent" // ui-contract:allow the frame shows focus-within
         />
       </TabsContent>
       <TabsContent value="preview" className="mt-0 min-h-40 p-3">

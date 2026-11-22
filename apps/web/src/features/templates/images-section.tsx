@@ -35,7 +35,7 @@ export function ImagesSection() {
       <h2
         id="images-title"
         tabIndex={-1}
-        className="font-heading text-[0.9375rem] font-semibold focus-visible:outline-none"
+        className="font-heading text-[0.9375rem] font-semibold focus-visible:outline-none" // ui-contract:allow programmatic focus target, not interactive
       >
         Images
       </h2>

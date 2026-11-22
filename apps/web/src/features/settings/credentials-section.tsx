@@ -5,7 +5,7 @@ import {
   nameSchema,
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { CircleAlert, Plus, TriangleAlert } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
@@ -18,8 +18,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import {
   createCredential,
   credentialsQueryOptions,
@@ -492,9 +494,7 @@ export function CredentialsSection() {
                           aria-disabled={busy || undefined}
                           onClick={() => void verify(c)}
                         >
-                          {busy && (
-                            <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />
-                          )}
+                          {busy && <Spinner />}
                           {busy ? "Verifying…" : "Verify"}
                         </Button>
                         <DropdownMenu>
@@ -523,7 +523,9 @@ export function CredentialsSection() {
                             >
                               {`Replace ${noun}`}
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
+                              variant="destructive"
                               disabled={Boolean(blocker)}
                               onSelect={() => {
                                 menuHandsOff.current = ""; // the dialog places focus
@@ -642,6 +644,7 @@ export function CredentialsSection() {
           )
         }
         confirmLabel={`Delete ${confirming?.name ?? ""}`}
+        pendingLabel="Deleting…"
         onConfirm={() => (confirming ? remove(confirming) : undefined)}
         onCloseAutoFocus={(e) => {
           e.preventDefault();

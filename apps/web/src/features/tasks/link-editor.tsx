@@ -100,7 +100,7 @@ export function LinkEditor({
                 autoComplete="off"
                 onChange={(e) => patch(r.id, { target: e.target.value })}
                 onBlur={() => onBlurRow(r.id)}
-                className="h-9 min-w-0 flex-1 bg-card dark:bg-card"
+                className="h-9 min-w-0 flex-1"
               />
               <Input
                 aria-label={`Link ${i + 1} title`}
@@ -108,7 +108,7 @@ export function LinkEditor({
                 value={r.title}
                 autoComplete="off"
                 onChange={(e) => patch(r.id, { title: e.target.value })}
-                className="h-9 w-full bg-card md:w-48 dark:bg-card max-md:order-last"
+                className="h-9 w-full md:w-48 max-md:order-last"
               />
               <Button
                 type="button"

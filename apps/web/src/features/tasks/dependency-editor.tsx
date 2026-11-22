@@ -67,7 +67,7 @@ export function DependencyEditor({
             autoComplete="off"
             onChange={(e) => onChange(e.target.value)}
             onBlur={onBlur}
-            className="h-9 bg-card font-mono dark:bg-card"
+            className="h-9 font-mono"
           />
           {resolved.length > 0 && (
             <ul aria-label="Resolved dependencies" className="grid gap-1">

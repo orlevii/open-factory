@@ -50,7 +50,7 @@ export function AssigneeMenu({
             <ChevronDown aria-hidden="true" data-icon="inline-end" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent>
+        <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width)">
           <DropdownMenuRadioGroup
             value={current}
             onValueChange={(v) => {

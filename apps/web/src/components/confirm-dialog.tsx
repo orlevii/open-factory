@@ -1,6 +1,5 @@
 import { ApiError } from "@open-factory/shared";
-import { Loader2 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,8 +10,29 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Drawer,
+  DrawerBody,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { Spinner } from "@/components/ui/spinner";
+import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 
-/** For destructive, irreversible actions only. The action is named in the title and on the button. */
+/** A button that carries a name wraps to two lines; it is never truncated (DESIGN.md → Overlays).
+ *  `shrink min-w-0 max-w-full` undo Button's `shrink-0`, which held the max-content width in the flex footer;
+ *  the touch-height override keeps `pointer-coarse:h-9` from pinning a wrapped label to one line. */
+const ACTION_CLASS =
+  "shrink min-w-0 max-w-full whitespace-normal h-auto min-h-8 pointer-coarse:h-auto pointer-coarse:min-h-9 py-1.5 text-center [overflow-wrap:anywhere]";
+/** Body, detail and error stacked; the error line takes no room while empty. */
+const MIDDLE_CLASS = "flex flex-col gap-3";
+
+/** For destructive, irreversible actions only. The action is named in the title and on the button.
+ *  A centered dialog on desktop, a bottom drawer on phones (decided per opening). */
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -31,12 +51,14 @@ export function ConfirmDialog({
   /** A muted line under the body, outside the description (e.g. the error that led here). */
   detail?: ReactNode;
   confirmLabel: string;
-  /** The action button's text while the request is out ("Stopping…"); the label stays when absent. */
-  pendingLabel?: string;
+  /** The action button's text while the request is out ("Terminating…"), next to a spinner. */
+  pendingLabel: string;
   onConfirm(): Promise<void> | void;
   /** Where focus goes on close, when there is no trigger to return to (opened from a menu). */
   onCloseAutoFocus?: (e: Event) => void;
 }) {
+  const mobile = useLatchedMobile(open);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   // The error belongs to one opening of the dialog.
@@ -57,24 +79,82 @@ export function ConfirmDialog({
       setPending(false);
     }
   }
-  // While pending, Escape, outside click and Cancel are ignored: the request cannot be
+  // While pending, Escape, outside click, drag and Cancel are ignored: the request cannot be
   // abandoned, so the dialog says so by staying put and showing the action's pending label.
   // The action uses aria-disabled (not disabled) so focus stays on it instead of falling to <body>.
+  const action = (
+    <Button
+      variant="destructive"
+      className={ACTION_CLASS}
+      aria-busy={pending || undefined}
+      aria-disabled={pending || undefined}
+      onClick={confirm}
+    >
+      {pending && <Spinner />}
+      {pending ? pendingLabel : confirmLabel}
+    </Button>
+  );
+  const errorLine = (
+    <div role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive empty:hidden">
+      {error}
+    </div>
+  );
+
+  if (mobile) {
+    return (
+      <Drawer open={open} onOpenChange={(o) => !pending && onOpenChange(o)} dismissible={!pending}>
+        <DrawerContent
+          role="alertdialog"
+          aria-modal="true"
+          onPointerDownOutside={(e) => pending && e.preventDefault()}
+          onEscapeKeyDown={(e) => pending && e.preventDefault()}
+          onCloseAutoFocus={onCloseAutoFocus}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            cancelRef.current?.focus();
+          }}
+        >
+          <DrawerHeader>
+            <DrawerTitle className="line-clamp-none">{title}</DrawerTitle>
+          </DrawerHeader>
+          <DrawerBody className={MIDDLE_CLASS}>
+            <DrawerDescription className="[overflow-wrap:anywhere]">{body}</DrawerDescription>
+            {detail}
+            {errorLine}
+          </DrawerBody>
+          <DrawerFooter>
+            {action}
+            <Button
+              ref={cancelRef}
+              variant="outline"
+              aria-disabled={pending || undefined}
+              onClick={() => !pending && onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+    );
+  }
+
   return (
     <AlertDialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
-      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
+      <AlertDialogContent
+        className="sm:max-w-md max-h-[calc(100svh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{body}</AlertDialogDescription>
+          <AlertDialogTitle className="[overflow-wrap:anywhere]">{title}</AlertDialogTitle>
         </AlertDialogHeader>
-        {detail}
-        <div
-          role="alert"
-          className="text-[0.8125rem] leading-[1.125rem] text-destructive empty:hidden"
-        >
-          {error}
+        <div className={`min-h-0 overflow-y-auto ${MIDDLE_CLASS}`}>
+          <AlertDialogDescription className="[overflow-wrap:anywhere]">
+            {body}
+          </AlertDialogDescription>
+          {detail}
+          {errorLine}
         </div>
-        <AlertDialogFooter>
+        <AlertDialogFooter className="flex-wrap">
           <AlertDialogCancel
             autoFocus
             aria-disabled={pending || undefined}
@@ -82,14 +162,7 @@ export function ConfirmDialog({
           >
             Cancel
           </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            aria-disabled={pending || undefined}
-            onClick={confirm}
-          >
-            {pending && <Loader2 aria-hidden="true" className="animate-spin" />}
-            {pending && pendingLabel ? pendingLabel : confirmLabel}
-          </AlertDialogAction>
+          <AlertDialogAction asChild>{action}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

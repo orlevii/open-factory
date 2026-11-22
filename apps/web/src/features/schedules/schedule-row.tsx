@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatScheduleTime } from "./format";
@@ -76,7 +77,7 @@ export function ScheduleRow({
             aria-label={accessibleName(s, now)}
             aria-describedby={`first-line-${s.key}`}
             data-schedule-key={s.key}
-            className="w-14 shrink-0 font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-3 focus-visible:after:ring-ring/50"
+            className="w-14 shrink-0 font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-transparent focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
           >
             {s.key}
           </Link>
@@ -122,7 +123,10 @@ export function ScheduleRow({
                   ) : (
                     <DropdownMenuItem onSelect={onPause}>Pause</DropdownMenuItem>
                   ))}
-                <DropdownMenuItem onSelect={onDelete}>Delete</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  Delete
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </span>

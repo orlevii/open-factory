@@ -111,6 +111,9 @@ test("Disable is unavailable for the last enabled user, with the reason", async 
   expect(
     within(menu).getByRole("menuitem", { name: "Disable (last enabled user)" }),
   ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    within(menu).getByRole("menuitem", { name: "Disable (last enabled user)" }),
+  ).toHaveAttribute("data-variant", "destructive");
 });
 
 test("Disable is unavailable for yourself, with the reason", async () => {

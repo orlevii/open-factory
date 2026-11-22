@@ -1,12 +1,12 @@
 import { ApiError, createTemplateBodySchema } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { createTemplate } from "@/features/templates/api";
 
@@ -135,7 +135,6 @@ function NewTemplate() {
                 value={values.description}
                 onChange={(e) => set("description", e.target.value)}
                 onBlur={() => blur("description")}
-                className="bg-card dark:bg-card"
               />
             )}
           </FieldShell>
@@ -148,7 +147,7 @@ function NewTemplate() {
             </div>
             <div>
               <Button type="submit" size="lg" aria-disabled={pending || undefined}>
-                {pending && <Loader2 aria-hidden="true" className="animate-spin" />}
+                {pending && <Spinner />}
                 {pending ? "Creating…" : "Create template"}
               </Button>
               <span role="status" className="sr-only">

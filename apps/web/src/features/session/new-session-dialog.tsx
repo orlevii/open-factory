@@ -38,6 +38,7 @@ export function NewSessionDialog({
         )
       }
       confirmLabel={`Start new session for ${handle}`}
+      pendingLabel="Starting…"
       onConfirm={async () => {
         await postResetSession(slug);
         confirmed.current = true;

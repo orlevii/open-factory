@@ -418,6 +418,10 @@ test("a server projects error opens More options and focuses the group", async (
 
 test("an unknown ?template= counts as unchosen", async () => {
   const { api } = await open({}, { template: "nope" });
+  // Shown unchosen: the trigger reads its placeholder and focus opens on Template, as with no template at all.
+  const template = screen.getByRole("combobox", { name: "Template" });
+  expect(template).toHaveTextContent("Choose a template");
+  await waitFor(() => expect(template).toHaveFocus());
   await userEvent.type(field("Display name"), "Ada");
   await userEvent.click(createButton());
   expect(await screen.findByText("Choose a template.")).toBeInTheDocument();

@@ -170,6 +170,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     </Button>
   );
 
+  // An unknown or broken template name counts as none (the field shows it unchosen).
+  const chosen = templates.some((t) => t.name === values.template && t.errors === 0);
   // Focus on open: phones the drawer content (the keyboard doesn't rise mid-slide); desktop Template when none is
   // chosen, else Display name. Not when focus is already somewhere in the sheet (the user moved it while the skeleton
   // showed). Once, on mount.
@@ -185,7 +187,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       return;
     }
     const target =
-      (values.template ? null : el.querySelector<HTMLElement>("#field-template")) ??
+      (chosen ? null : el.querySelector<HTMLElement>("#field-template")) ??
       el.querySelector<HTMLElement>("#field-displayName");
     target?.focus({ preventScroll: true });
   }, []);

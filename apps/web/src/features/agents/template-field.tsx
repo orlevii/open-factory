@@ -106,7 +106,8 @@ export function TemplateField({
         </p>
       ) : (
         <Select
-          value={value}
+          // A name no ready template has (an unknown or broken `?template=`) shows unchosen: the placeholder.
+          value={ready.some((t) => t.name === value) ? value : ""}
           onValueChange={onChange}
           onOpenChange={(open) => {
             setListOpen(open);

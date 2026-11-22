@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { gif, heic, jpeg, png, webp } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
@@ -501,6 +502,10 @@ describe("security review fixes", () => {
     await new Promise((r) => setTimeout(r, 50));
     const fourth = await upload("quota", Buffer.from("x\n"), "4.txt");
     expect(fourth.statusCode).toBe(429);
+    // Review m3: the slots are per uploader; another human still gets through.
+    expect(
+      (await upload("quota", Buffer.from("x\n"), "kim2.txt", { cookie: kim })).statusCode,
+    ).toBe(201);
     for (const r of releases) r();
     await Promise.all(running);
     expect((await upload("quota", Buffer.from("x\n"), "5.txt")).statusCode).toBe(201);
@@ -549,4 +554,22 @@ describe("security review fixes", () => {
     expect(res.statusCode).toBe(415);
     expect(res.json().error.code).toBe("unsupported_media_type");
   });
+});
+
+test("review m3: a stalled body is abandoned and its temp file deleted", async () => {
+  await t.seedAgent({ slug: "stall" });
+  const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "stall"));
+  const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+  if (!agent || !me) throw new Error("seed");
+  async function* stalled() {
+    yield Buffer.from("partial");
+    await new Promise(() => {});
+  }
+  const err = await t.app.uploads
+    .create(agent, me.id, "s.txt", bodyStream(stalled(), 50))
+    .catch((e) => e);
+  expect(err).toBeInstanceOf(UploadIdleError);
+  expect(listUploads("stall")).toEqual([]);
+  // The slot was released.
+  expect((await upload("stall", Buffer.from("ok\n"), "ok.txt")).statusCode).toBe(201);
 });

@@ -33,10 +33,11 @@ export const uploadInfo = (r: UploadRow): UploadInfo => ({
   name: r.originalName,
 });
 
-/** Review M1: per (agent, uploader) unsent caps, and concurrent streams per agent. */
+/** Review M1/m3: per (agent, uploader) unsent caps; concurrent streams per (agent, uploader) and per agent. */
 export const MAX_UNSENT_FILES = 20;
 export const MAX_UNSENT_BYTES = 200 * 1024 * 1024;
-export const MAX_IN_FLIGHT_PER_AGENT = 3;
+export const MAX_IN_FLIGHT_PER_UPLOADER = 3;
+export const MAX_IN_FLIGHT_PER_AGENT = 6;
 
 /** Too many unsent uploads, or too many streaming at once (429 `too_many_uploads`). */
 export class UploadLimitError extends Error {
@@ -106,16 +107,25 @@ export class UploadService {
       throw new UploadLimitError(
         "Too many files are waiting to be sent; send or remove some first.",
       );
-    const busy = this.inFlight.get(agent.id) ?? 0;
-    if (busy >= MAX_IN_FLIGHT_PER_AGENT)
+    // Review m3: slots per (agent, uploader) under a per-agent total, so one slow uploader can't hold them all.
+    const mine = `${agent.id}:${uploaderId}`;
+    if (
+      (this.inFlight.get(mine) ?? 0) >= MAX_IN_FLIGHT_PER_UPLOADER ||
+      (this.inFlight.get(agent.id) ?? 0) >= MAX_IN_FLIGHT_PER_AGENT
+    )
       throw new UploadLimitError("Too many uploads at once; wait for one to finish.");
-    this.inFlight.set(agent.id, busy + 1);
+    const bump = (key: string, by: number) => {
+      const n = (this.inFlight.get(key) ?? 0) + by;
+      if (n > 0) this.inFlight.set(key, n);
+      else this.inFlight.delete(key);
+    };
+    bump(mine, 1);
+    bump(agent.id, 1);
     try {
       return await this.createLocked(agent, uploaderId, name, source);
     } finally {
-      const left = (this.inFlight.get(agent.id) ?? 1) - 1;
-      if (left > 0) this.inFlight.set(agent.id, left);
-      else this.inFlight.delete(agent.id);
+      bump(mine, -1);
+      bump(agent.id, -1);
     }
   }
 

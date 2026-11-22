@@ -3,6 +3,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
+import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { UploadAgentEndedError, UploadLimitError } from "../uploads/service.ts";
 import { IMAGE_TOO_LARGE, type Refusal } from "../uploads/sniff.ts";
 import { MAX_UPLOAD_BYTES, UploadExistsError, UploadTooLargeError } from "../uploads/store.ts";
@@ -18,20 +19,6 @@ const WORKSPACE_GONE = "This agent's workspace no longer exists.";
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The longest original name kept for the chip (characters, after decoding). */
 const MAX_NAME_CHARS = 255;
-
-/**
- * The request body as an iterable whose early exit (over the cap, a refused write) doesn't destroy the request: a
- * `for await` would call `return()`, which destroys the stream with an AbortError before the 413 is sent. The unread
- * rest is dropped with the connection (`Connection: close`).
- */
-function unclosed(raw: AsyncIterable<Buffer>): AsyncIterable<Buffer> {
-  return {
-    [Symbol.asyncIterator]() {
-      const it = raw[Symbol.asyncIterator]();
-      return { next: () => it.next() };
-    },
-  };
-}
 
 const refusalCode = (r: Refusal) =>
   r.status === 415
@@ -104,7 +91,7 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
     if (agent.archivedAt) return err(reply, 409, "agent_archived", `@${agent.slug} is archived.`);
 
     try {
-      const r = await app.uploads.create(agent, user(req).id, name, unclosed(req.raw));
+      const r = await app.uploads.create(agent, user(req).id, name, bodyStream(req.raw));
       if ("status" in r) return err(reply, r.status, refusalCode(r), r.reason);
       return reply.code(201).send(r);
     } catch (e) {
@@ -112,6 +99,7 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
       reply.header("connection", "close");
       if (e instanceof UploadTooLargeError) return err(reply, 413, "too_large", TOO_LARGE);
       if (e instanceof UploadLimitError) return err(reply, 429, "too_many_uploads", e.message);
+      if (e instanceof UploadIdleError) return err(reply, 408, "upload_stalled", e.message);
       if ((e as NodeJS.ErrnoException).code === "ENOENT")
         return err(reply, 410, "workspace_gone", WORKSPACE_GONE);
       if (e instanceof UploadAgentEndedError) return err(reply, 409, e.code, e.message);

@@ -57,6 +57,7 @@ export type Written = { rel: string; bytes: number; sha256: string; sniffed: Sni
 export interface StoreHooks {
   beforeOpen?: (abs: string) => Promise<void>;
   beforeLink?: (abs: string) => Promise<void>;
+  beforeUnlink?: (abs: string) => Promise<void>;
 }
 
 const sameInode = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino;
@@ -269,8 +270,7 @@ export class UploadStore {
         ? st.mtime < o.tmpBefore
         : st.mtime < o.orphanBefore && !o.known.has(id as string);
       if (!stale) continue;
-      await unlink(path.join(this.root, rel)).catch(() => {});
-      n++;
+      if (await this.unlinkChecked(rel, st).catch(() => false)) n++;
     }
     return n;
   }
@@ -281,8 +281,28 @@ export class UploadStore {
     const st = await this.fs.entry(rel);
     if (!st) return;
     if (st.isDirectory()) throw new WorkspaceError(`${path.join(this.root, rel)} is a folder.`);
-    await unlink(path.join(this.root, rel)).catch((err: unknown) => {
-      if (code(err) !== "ENOENT") throw err;
-    });
+    await this.unlinkChecked(rel, st);
+  }
+
+  /**
+   * Review m1: unlink by path is a separate syscall from the walk, so right before it the parent must still resolve to
+   * the real uploads folder and the entry must still be the inode the walk saw. A swap in between refuses (or skips,
+   * in the sweep) instead of unlinking a same-named entry elsewhere. Returns whether the entry was unlinked.
+   */
+  private async unlinkChecked(rel: string, seen: Stats): Promise<boolean> {
+    const abs = path.join(this.root, rel);
+    await this.hooks.beforeUnlink?.(abs);
+    if ((await realpath(path.dirname(abs)).catch(() => undefined)) !== this.uploadsAbs)
+      throw new UnsafePathError(path.join(this.root, ".factory"));
+    const now = await lstat(abs).catch(() => undefined);
+    if (!now) return false;
+    if (!sameInode(now, seen)) throw new UnsafePathError(abs);
+    try {
+      await unlink(abs);
+      return true;
+    } catch (err) {
+      if (code(err) === "ENOENT") return false;
+      throw err;
+    }
   }
 }

@@ -69,6 +69,45 @@ function jpegSize(b: Buffer): { width: number; height: number } | undefined {
   return undefined;
 }
 
+/**
+ * Review m2: a GIF's logical screen can be small while its frames are huge, so the size is the largest extent of the
+ * screen and every image descriptor (`0x2C`: left, top, width, height) found in the head. Block structure only: color
+ * tables and data sub-blocks are skipped by their lengths, nothing is decoded.
+ */
+function gifSize(b: Buffer): { width: number; height: number } | undefined {
+  if (b.length < 13) return undefined;
+  let width = b.readUInt16LE(6);
+  let height = b.readUInt16LE(8);
+  const flags = b[10] as number;
+  let i = 13 + (flags & 0x80 ? 3 * 2 ** ((flags & 7) + 1) : 0);
+  const skipSubBlocks = () => {
+    while (i < b.length) {
+      const len = b[i] as number;
+      i += 1 + len;
+      if (len === 0) return;
+    }
+  };
+  while (i < b.length) {
+    const block = b[i];
+    if (block === 0x3b) break; // trailer
+    if (block === 0x21) {
+      i += 2; // introducer and label
+      skipSubBlocks();
+    } else if (block === 0x2c) {
+      if (i + 10 > b.length) break;
+      const left = b.readUInt16LE(i + 1);
+      const top = b.readUInt16LE(i + 3);
+      width = Math.max(width, left + b.readUInt16LE(i + 5));
+      height = Math.max(height, top + b.readUInt16LE(i + 7));
+      const f = b[i + 9] as number;
+      i += 10 + (f & 0x80 ? 3 * 2 ** ((f & 7) + 1) : 0);
+      i += 1; // LZW minimum code size
+      skipSubBlocks();
+    } else break; // not a GIF block: stop at what the header said
+  }
+  return { width, height };
+}
+
 function webpSize(b: Buffer): { width: number; height: number } | undefined {
   if (b.length < 30) return undefined;
   if (ascii(b, 12, "VP8X"))
@@ -96,9 +135,7 @@ export function imageDimensions(
         ? { width: head.readUInt32BE(16), height: head.readUInt32BE(20) }
         : undefined;
     case "image/gif":
-      return head.length >= 10
-        ? { width: head.readUInt16LE(6), height: head.readUInt16LE(8) }
-        : undefined;
+      return gifSize(head);
     case "image/jpeg":
       return jpegSize(head);
     case "image/webp":

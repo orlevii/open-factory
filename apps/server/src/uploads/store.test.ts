@@ -370,3 +370,49 @@ test("sweepFiles deletes unreferenced old upload files and stale temp files, reg
   );
   expect(readFileSync(secret, "utf8")).toBe("secret");
 });
+
+// Review m1 (PR5 final).
+test("remove and the file sweep refuse an uploads folder swapped between the walk and the unlink", async () => {
+  const wd = tmp("wd-");
+  const outside = tmp("outside-");
+  const { renameSync } = await import("node:fs");
+  const name = "20261120-00000000-0000-4000-8000-000000000001-a.txt";
+  mkdirSync(path.join(outside, "uploads"));
+  writeFileSync(path.join(outside, "uploads", name), "victim");
+  let swapped = false;
+  const swap = async () => {
+    if (swapped) return;
+    swapped = true;
+    renameSync(path.join(wd, ".factory"), path.join(wd, ".factory-moved"));
+    symlinkSync(outside, path.join(wd, ".factory"));
+  };
+  const store = await UploadStore.open(wd, { beforeUnlink: swap });
+  await store.ensureDir();
+  writeFileSync(path.join(uploadsOf(wd), name), "mine");
+  await expect(store.remove(`.factory/uploads/${name}`)).rejects.toBeInstanceOf(UnsafePathError);
+  expect(readFileSync(path.join(outside, "uploads", name), "utf8")).toBe("victim");
+
+  const wd2 = tmp("wd-");
+  swapped = false;
+  const sweeper = await UploadStore.open(wd2, {
+    beforeUnlink: async () => {
+      if (swapped) return;
+      swapped = true;
+      renameSync(path.join(wd2, ".factory"), path.join(wd2, ".factory-moved"));
+      symlinkSync(outside, path.join(wd2, ".factory"));
+    },
+  });
+  await sweeper.ensureDir();
+  const { utimesSync } = await import("node:fs");
+  writeFileSync(path.join(uploadsOf(wd2), name), "orphan");
+  const old = new Date(Date.now() - 48 * 3_600_000);
+  utimesSync(path.join(uploadsOf(wd2), name), old, old);
+  expect(
+    await sweeper.sweepFiles({
+      known: new Set(),
+      orphanBefore: new Date(Date.now() - 24 * 3_600_000),
+      tmpBefore: new Date(),
+    }),
+  ).toBe(0);
+  expect(readFileSync(path.join(outside, "uploads", name), "utf8")).toBe("victim");
+});

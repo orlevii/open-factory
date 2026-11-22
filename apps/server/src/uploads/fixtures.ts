@@ -92,3 +92,22 @@ export function heic(): Buffer {
   b.write("ftypheic", 4, "ascii");
   return b;
 }
+
+/** A GIF whose small logical screen hides a frame of `frameW`×`frameH` (after an extension block). */
+export function gifWithFrame(
+  width: number,
+  height: number,
+  frameW: number,
+  frameH: number,
+): Buffer {
+  const head = gif(width, height);
+  // A graphic control extension: 21 F9 04 <4 bytes> 00.
+  const ext = Buffer.from([0x21, 0xf9, 0x04, 0, 0, 0, 0, 0x00]);
+  const desc = Buffer.alloc(10);
+  desc[0] = 0x2c;
+  desc.writeUInt16LE(frameW, 5);
+  desc.writeUInt16LE(frameH, 7);
+  // LZW code size, one data sub-block, terminator, trailer.
+  const data = Buffer.from([0x02, 0x02, 0x44, 0x01, 0x00, 0x3b]);
+  return Buffer.concat([head, ext, desc, data]);
+}

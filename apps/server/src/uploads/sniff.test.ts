@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { gif, heic, jpeg, png, webp, webpLossless, webpLossy } from "./fixtures.ts";
+import { gif, gifWithFrame, heic, jpeg, png, webp, webpLossless, webpLossy } from "./fixtures.ts";
 import { IMAGE_TOO_LARGE, imageDimensions, Sniffer, sniffType } from "./sniff.ts";
 
 test("png, jpeg, gif and webp are recognised by their bytes, with header dimensions", () => {
@@ -100,4 +100,17 @@ test("an empty file is refused", () => {
 test("imageDimensions reads a header without decoding", () => {
   expect(imageDimensions(png(3, 4), "image/png")).toEqual({ width: 3, height: 4 });
   expect(imageDimensions(Buffer.alloc(4), "image/gif")).toBeUndefined();
+});
+
+test("review m2: a GIF frame larger than its logical screen is held to the same caps", () => {
+  expect(sniffType(gifWithFrame(10, 10, 30000, 30000))).toEqual({
+    status: 422,
+    reason: IMAGE_TOO_LARGE,
+  });
+  expect(sniffType(gifWithFrame(10, 10, 20, 30))).toMatchObject({
+    kind: "image",
+    width: 20,
+    height: 30,
+  });
+  expect(sniffType(gifWithFrame(100, 100, 20, 30))).toMatchObject({ width: 100, height: 100 });
 });

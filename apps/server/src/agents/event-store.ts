@@ -3,11 +3,13 @@ import { type AgentRow, type Db, type RuntimeJournal, schema } from "@open-facto
 import {
   type AnyEvent,
   anyEventSchema,
+  boundVersion,
   type Command,
   type ErrorKind,
   formatKey,
   type MessageAttachment,
   type MessageKind,
+  parseCommands,
   type SessionEvent,
   type TaskNotice,
   taskKey,
@@ -143,13 +145,28 @@ export class EventStore {
   async agentById(id: string, tx: Exec = this.db) {
     return (await tx.select().from(agents).where(eq(agents.id, id)))[0];
   }
-  /** U3 §13.3: the command list of the agent's latest process start (a side table, never on agent reads). */
-  async saveCommands(agentId: string, commands: Command[], claudeCodeVersion: string | null) {
-    const values = { commands, claudeCodeVersion, at: this.clock() };
+  /**
+   * U3 §13.3: the command list of the agent's latest process start (a side table, never on agent reads). Only
+   * well-formed entries are stored (name format and sizes, at most MAX_COMMANDS), and a version only when it is a
+   * short plain string. Resolves how many entries were dropped.
+   */
+  async saveCommands(
+    agentId: string,
+    list: Command[],
+    claudeCodeVersion: string | null,
+  ): Promise<{ dropped: number }> {
+    const commands = parseCommands(list);
+    const dropped = list.length - commands.length; // malformed, or past the cap
+    const values = {
+      commands,
+      claudeCodeVersion: boundVersion(claudeCodeVersion) ?? null,
+      at: this.clock(),
+    };
     await this.db
       .insert(schema.agentCommands)
       .values({ agentId, ...values })
       .onConflictDoUpdate({ target: schema.agentCommands.agentId, set: values });
+    return { dropped };
   }
   async agentCommands(agentId: string) {
     const [row] = await this.db

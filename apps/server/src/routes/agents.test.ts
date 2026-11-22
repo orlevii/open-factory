@@ -842,6 +842,25 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     expect(all.body).not.toContain("Research a topic");
   });
 
+  test("the stored list keeps only well-formed entries, at most 500, and a plain version", async () => {
+    const [agent] = await s.db.select().from(schema.agents);
+    if (!agent) throw new Error("no agent");
+    const many = Array.from({ length: 520 }, (_, i) => ({
+      name: `s${i}`,
+      description: "",
+      argumentHint: "",
+    }));
+    const bad = { name: "x\nmodel", description: "", argumentHint: "" };
+    const r = await s.app.store.saveCommands(agent.id, [bad, ...many], "v".repeat(65));
+    expect(r.dropped).toBe(21);
+    const row = await s.app.store.agentCommands(agent.id);
+    expect(row?.commands).toHaveLength(500);
+    expect(row?.commands[0]?.name).toBe("s0");
+    expect(row?.claudeCodeVersion).toBeNull();
+    // Put the session's list back for the next test.
+    await s.app.store.saveCommands(agent.id, list, "2.1.327");
+  });
+
   test("stale when the template's skills changed after the list was stored", async () => {
     const [agent] = await s.db.select().from(schema.agents);
     if (!agent) throw new Error("no agent");

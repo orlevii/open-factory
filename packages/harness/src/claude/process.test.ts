@@ -371,7 +371,9 @@ describe("commands", () => {
     expect(typeof init.request_id).toBe("string");
     t.emitStdout(initAnswer(init.request_id));
     const list = await p.commands();
-    expect(list).toHaveLength(57);
+    // 57 in the trace; `__remote-workflow` (a refused built-in) fails the name format and is dropped.
+    expect(list).toHaveLength(56);
+    expect(list?.find((c) => c.name === "__remote-workflow")).toBeUndefined();
     expect(list?.find((c) => c.name === "spike-echo")).toEqual({
       name: "spike-echo",
       description:
@@ -459,7 +461,7 @@ describe("commands", () => {
     await tick();
     expect(settled).toBe(false);
     t.emitStdout(initAnswer(init.request_id));
-    expect(await list).toHaveLength(57);
+    expect(await list).toHaveLength(56);
   });
 
   test("an inbound control_request from Claude is answered with an error", async () => {
@@ -491,4 +493,36 @@ describe("commands", () => {
       '{"type":"user","message":{"role":"user","content":"/code-review src/"}}',
     );
   });
+});
+
+test("malformed command entries are dropped with a warning; a bad version is ignored", async () => {
+  const warns: string[] = [];
+  const t = new FakeTransport();
+  const p = new ClaudeProcess(spec("c"), {}, t, {
+    debug() {},
+    error() {},
+    warn: (_o, msg) => void warns.push(msg),
+  });
+  await tick();
+  const [init] = t.writes.map((w) => JSON.parse(w));
+  t.emitStdout(
+    JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: init.request_id,
+        response: {
+          claude_code_version: "x".repeat(65),
+          commands: [
+            { name: "ok", description: "", argumentHint: "" },
+            { name: "x\nmodel", description: "", argumentHint: "" },
+            { name: "model", description: "", argumentHint: "", builtin: "true" },
+          ],
+        },
+      },
+    }),
+  );
+  expect((await p.commands())?.map((c) => c.name)).toEqual(["ok"]);
+  expect(p.claudeCodeVersion).toBeUndefined();
+  expect(warns.filter((m) => m === "dropped a malformed command entry")).toHaveLength(2);
 });

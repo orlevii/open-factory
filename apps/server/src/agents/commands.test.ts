@@ -102,3 +102,54 @@ test("template skills missing from the list are added, refused built-in names ne
   expect(both.filter((c) => c.name === "spike-echo")).toHaveLength(1);
   expect(both.find((c) => c.name === "spike-echo")?.description).toMatch(/\(project\)$/);
 });
+
+test("a skill's alias never names a built-in; findCommand ignores such an alias", () => {
+  const stored: Command[] = [
+    ...spikeList(),
+    {
+      name: "foo",
+      description: "A planted skill (project)",
+      argumentHint: "",
+      aliases: ["model", "MODEL", "cost", "Usage", "batch", "foo-short"],
+    },
+    { name: "bar", description: "x (project)", argumentHint: "", aliases: ["mcp"] },
+  ];
+  const allowed = allowedCommands(stored, []);
+  expect(allowed.find((c) => c.name === "foo")?.aliases).toEqual(["foo-short"]);
+  expect(allowed.find((c) => c.name === "bar")).toEqual({
+    name: "bar",
+    description: "x (project)",
+    argumentHint: "",
+  });
+  expect(findCommand(allowed, "model")).toBeUndefined();
+  expect(findCommand(allowed, "foo-short")?.name).toBe("foo");
+  // Even over an unchecked list, an alias naming a built-in never resolves.
+  const raw: Command[] = [{ name: "foo", description: "", argumentHint: "", aliases: ["model"] }];
+  expect(findCommand(raw, "model")).toBeUndefined();
+});
+
+test("refusal and shadowing are case-insensitive", () => {
+  const stored: Command[] = [
+    { name: "model", description: "", argumentHint: "", builtin: true },
+    { name: "Model", description: "(project)", argumentHint: "" },
+    { name: "BATCH", description: "(project)", argumentHint: "" },
+    { name: "Compact", description: "(project)", argumentHint: "" },
+    { name: "fine", description: "(project)", argumentHint: "" },
+  ];
+  expect(names(allowedCommands(stored, []))).toEqual(["fine"]);
+  expect(names(allowedCommands([], ["MCP", "Login", "fine"]))).toEqual(["fine"]);
+});
+
+test("malformed stored entries and template skills are dropped", () => {
+  const stored = [
+    { name: "two words", description: "", argumentHint: "" },
+    { name: "ok", description: "", argumentHint: "" },
+  ] as Command[];
+  expect(names(allowedCommands(stored, ["bad name", "good"]))).toEqual(["good", "ok"]);
+});
+
+test("before a session list exists, template skills named like terminal commands are refused", () => {
+  expect(
+    names(allowedCommands([], ["login", "logout", "exit", "resume", "status", "research"])),
+  ).toEqual(["research"]);
+});

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Command, commandSchema, type HarnessEvent } from "@open-factory/shared";
+import { boundVersion, type Command, type HarnessEvent, parseCommands } from "@open-factory/shared";
 import { AsyncQueue } from "../async-queue.ts";
 import { renderEnvelopes } from "../envelope.ts";
 import type { Transport } from "../transport/types.ts";
@@ -26,13 +26,12 @@ export const COMMANDS_TIMEOUT_MS = 5000;
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null;
 
-/** Keeps the well-formed entries of `initialize`'s `commands`; anything else is no list. */
-function commandsOf(response: Json | undefined): Command[] | undefined {
+/** Keeps the well-formed entries of `initialize`'s `commands` (bounded, a warning per dropped one); else no list. */
+function commandsOf(response: Json | undefined, log: DriverLog): Command[] | undefined {
   if (!Array.isArray(response?.commands)) return undefined;
-  return response.commands.flatMap((c) => {
-    const r = commandSchema.safeParse(c);
-    return r.success ? [r.data] : [];
-  });
+  return parseCommands(response.commands, (entry) =>
+    log.warn({ entry: JSON.stringify(entry)?.slice(0, 300) }, "dropped a malformed command entry"),
+  );
 }
 const STDERR_BYTES = 8 * 1024;
 
@@ -161,9 +160,8 @@ export class ClaudeProcess implements HarnessProcess {
     });
     // Sent first, as the Agent SDK does (spike §2). Re-sending it later in a process is unverified.
     this.commandList = this.request({ subtype: "initialize" }, COMMANDS_TIMEOUT_MS).then((r) => {
-      if (typeof r?.claude_code_version === "string")
-        this.claudeCodeVersion = r.claude_code_version;
-      return commandsOf(r);
+      this.claudeCodeVersion = boundVersion(r?.claude_code_version);
+      return commandsOf(r, this.log);
     });
   }
 
@@ -204,7 +202,8 @@ export class ClaudeProcess implements HarnessProcess {
       return true;
     }
     if (line.type === "system" && line.subtype === "commands_changed") {
-      const list = commandsOf(line);
+      // The spike never saw it fire; the runtime reads `commands()` once per start, so a later change isn't stored.
+      const list = commandsOf(line, this.log);
       if (list) this.commandList = Promise.resolve(list);
     }
     return false;

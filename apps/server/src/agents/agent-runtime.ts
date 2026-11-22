@@ -2138,8 +2138,14 @@ export class AgentRuntime {
   private async storeCommands(proc: HarnessProcess) {
     try {
       const list = await proc.commands?.();
-      if (list)
-        await this.d.store.saveCommands(this.agent.id, list, proc.claudeCodeVersion ?? null);
+      if (!list) return;
+      const { dropped } = await this.d.store.saveCommands(
+        this.agent.id,
+        list,
+        proc.claudeCodeVersion ?? null,
+      );
+      if (dropped)
+        this.d.log.warn({ agent: this.agent.slug, dropped }, "dropped malformed command entries");
     } catch (err) {
       this.d.log.warn({ err, agent: this.agent.slug }, "storing the command list failed");
     }

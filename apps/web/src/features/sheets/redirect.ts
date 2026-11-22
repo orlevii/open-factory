@@ -4,7 +4,8 @@ import { openSheet, type SheetSpec } from "./sheet-store";
 /**
  * For a legacy form URL's `beforeLoad`: open the sheet over the page `to` and redirect there.
  * Preloads (hover or focus) do nothing. No resolved location yet means the initial navigation,
- * where the sheet appears without sliding.
+ * where the sheet appears without sliding. `openSheet` runs inside `beforeLoad`, so it fires once
+ * per navigation, before the redirect target loads. Pass `context.router` as `router`.
  */
 export function sheetRedirect(
   spec: SheetSpec,

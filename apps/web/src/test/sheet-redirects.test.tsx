@@ -1,7 +1,9 @@
+import type { QueryClient } from "@tanstack/react-query";
 import {
   type AnyRouter,
   createMemoryHistory,
   createRootRoute,
+  createRootRouteWithContext,
   createRoute,
   createRouter,
   RouterProvider,
@@ -10,6 +12,8 @@ import { render, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test } from "vitest";
 import { sheetRedirect } from "@/features/sheets/redirect";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { createQueryClient } from "@/lib/query-client";
+import { createAppRouter } from "@/router";
 
 beforeEach(() => resetSheets());
 
@@ -56,4 +60,23 @@ test("a preload opens nothing", async () => {
   await router.preloadRoute({ to: "/to-form" as "/" });
   expect(getSheetState().parent).toBeUndefined();
   expect(router.state.location.pathname).toBe("/from");
+});
+
+test("through createAppRouter, context.router is the live router", async () => {
+  const root = createRootRouteWithContext<{ queryClient: QueryClient; router: AnyRouter }>()();
+  const to = createRoute({ getParentRoute: () => root, path: "/to", component: () => null });
+  const form = createRoute({
+    getParentRoute: () => root,
+    path: "/to-form",
+    beforeLoad: ({ preload, context }) =>
+      sheetRedirect({ kind: "new-task" }, "/to", { preload, router: context.router }),
+  });
+  const router = createAppRouter(
+    createQueryClient({ queries: { retry: false } }),
+    createMemoryHistory({ initialEntries: ["/to-form"] }),
+    root.addChildren([to, form]) as never,
+  );
+  render(<RouterProvider router={router} />);
+  await waitFor(() => expect(router.state.location.pathname).toBe("/to"));
+  expect(getSheetState().parent).toMatchObject({ kind: "new-task", at: "/to", instant: true });
 });

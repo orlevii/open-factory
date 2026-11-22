@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { RepeatsField } from "./repeats-field";
 
 export type WhenMode = "repeats" | "once";
 
@@ -22,7 +24,10 @@ export function WhenField({
   onLocal,
   errors,
   onBlurCron,
+  onPreset,
   onBlurLocal,
+  zone,
+  preview,
 }: {
   mode: WhenMode;
   onMode(m: WhenMode): void;
@@ -32,7 +37,11 @@ export function WhenField({
   onLocal(v: string): void;
   errors: { cron?: string | undefined; at?: string | undefined };
   onBlurCron(): void;
+  onPreset?(cron: string): void;
   onBlurLocal(): void;
+  zone: string;
+  /** The next-runs preview, shown right under the Repeats field. */
+  preview?: ReactNode;
 }) {
   return (
     <div className="grid min-w-0 gap-3">
@@ -47,27 +56,17 @@ export function WhenField({
         onChange={onMode}
       />
       {mode === "repeats" ? (
-        <FieldShell
-          name="cron"
-          label="Repeats"
-          error={errors.cron}
-          help="A 5-field cron expression: minute hour day-of-month month day-of-week. Examples: 0 9 * * 1-5 (weekdays at 09:00), */30 * * * * (every 30 minutes), 0 8 1 * * (the 1st of each month at 08:00)."
-        >
-          {(a) => (
-            <Input
-              id={a.id}
-              name="cron"
-              value={cron}
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={a.invalid || undefined}
-              aria-describedby={a.describedBy}
-              className="h-9 font-mono"
-              onChange={(e) => onCron(e.target.value)}
-              onBlur={onBlurCron}
-            />
-          )}
-        </FieldShell>
+        <>
+          <RepeatsField
+            cron={cron}
+            onCron={onCron}
+            zone={zone}
+            error={errors.cron}
+            onBlurCron={onBlurCron}
+            {...(onPreset ? { onPreset } : {})}
+          />
+          {preview}
+        </>
       ) : (
         <FieldShell name="at" label="Date and time" error={errors.at}>
           {(a) => (

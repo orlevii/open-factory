@@ -299,6 +299,13 @@ export function ScheduleForm({
             setError("at", check.at());
             refresh();
           }}
+          onPreset={(cron) => {
+            set({ cron });
+            setError("cron", undefined);
+            refresh({ cron });
+          }}
+          zone={v.zone}
+          preview={<RunPreview text={preview} />}
         />
         <FieldShell
           name="timezone"
@@ -321,7 +328,7 @@ export function ScheduleForm({
             />
           )}
         </FieldShell>
-        <RunPreview text={preview} />
+        {v.mode === "once" && <RunPreview text={preview} />}
         <FieldShell
           name="body"
           label="Message"
@@ -338,6 +345,7 @@ export function ScheduleForm({
             <MarkdownEditor
               id={a.id}
               value={v.body}
+              proportional
               onChange={(body) => {
                 set({ body });
                 setError("body", undefined);

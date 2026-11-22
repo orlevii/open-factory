@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -208,6 +209,7 @@ test("live: the preview is the summary of the merged value (edited cron kept, un
   try {
     const api = mockApi(common(sched()));
     renderApp("/schedules/S-3", alice);
+    await pickOption(await screen.findByRole("combobox", { name: "Repeats" }), "Custom cron…");
     const cron = (await screen.findByLabelText("Repeats", {
       selector: "input:not([type=radio])",
     })) as HTMLInputElement;

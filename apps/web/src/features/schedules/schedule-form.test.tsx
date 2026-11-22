@@ -48,6 +48,11 @@ async function pick(slug: string) {
   await pickOption(await screen.findByLabelText("Target"), new RegExp(`@${slug}$`));
 }
 
+/** Repeats starts unchosen; the cron input exists once Custom is chosen. */
+async function chooseCustom() {
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Custom cron…");
+}
+
 async function openNew() {
   const api = mockApi({ ...base(), "POST /api/schedules": () => json({ schedule: item }, 201) });
   renderApp("/schedules/new", alice);
@@ -57,6 +62,7 @@ async function openNew() {
 
 test("the When fieldset: two radios, only the chosen field in the DOM, the other's value kept", async () => {
   await openNew();
+  await chooseCustom();
   const when = screen.getByRole("group", { name: "When" });
   expect(
     within(when)
@@ -80,9 +86,8 @@ test("the When fieldset: two radios, only the chosen field in the DOM, the other
   expect(screen.getByLabelText("Date and time")).toBeInTheDocument();
   expect(screen.queryByLabelText("Repeats", { selector: "input:not([type=radio])" })).toBeNull();
   await userEvent.click(screen.getByRole("radio", { name: "Repeats" }));
-  expect(screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" })).toHaveValue(
-    "0 9 * * *",
-  );
+  // Back on Repeats the value is read again: "0 9 * * *" is a preset, so the Select names it.
+  expect(screen.getByRole("combobox", { name: "Repeats" })).toHaveTextContent("Daily at 09:00");
 });
 
 test("the zone select is grouped by region, always holds UTC and the current value, and names its value", async () => {
@@ -95,6 +100,7 @@ test("the zone select is grouped by region, always holds UTC and the current val
 
 test("the preview updates on blur and zone change, not per keystroke, with 'your time' when zones differ", async () => {
   await openNew();
+  await chooseCustom();
   const cron = screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" });
   await userEvent.type(cron, "0 9 * * 1-5");
   expect(screen.queryByText(/^Next runs:/)).toBeNull(); // not per keystroke
@@ -110,6 +116,7 @@ test("the preview updates on blur and zone change, not per keystroke, with 'your
 
 test("validates on leave with each sentence; submit focuses the first invalid field", async () => {
   await openNew();
+  await chooseCustom();
   const cron = screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" });
   await userEvent.click(cron);
   await userEvent.tab();
@@ -128,7 +135,7 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await userEvent.clear(cron);
   await userEvent.type(cron, "61 * * * *");
   await userEvent.tab();
-  expect(await screen.findByText(/minute/i, { selector: "p" })).toBeInTheDocument();
+  expect(await screen.findByText(/minute/i, { selector: "#field-cron-error" })).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "0 0 30 2 *");
   await userEvent.tab();
@@ -153,6 +160,7 @@ test("the target picker starts at 'Choose an agent…' and a spawned agent adds 
 
 test("creating sends the form's values and returns to the list with Created S-8.", async () => {
   const api = await openNew();
+  await chooseCustom();
   await pick("ceo");
   await userEvent.type(
     screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" }),
@@ -188,6 +196,7 @@ test("a server field error maps to its field", async () => {
   });
   renderApp("/schedules/new", alice);
   await pick("ceo");
+  await chooseCustom();
   await userEvent.type(
     screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" }),
     "0 9 * * *",
@@ -234,4 +243,19 @@ test("a zone's offset is computed once and cached", () => {
   expect(spy.mock.calls.length).toBe(calls);
   expect(first).toMatch(/GMT\+9/);
   spy.mockRestore();
+});
+
+test("Repeats starts unchosen, Time zone follows When, the preview sits under Repeats, the message is not mono", async () => {
+  await openNew();
+  expect(screen.getByRole("combobox", { name: "Repeats" })).toHaveTextContent("Choose…");
+  const when = screen.getByRole("group", { name: "When" });
+  const zone = screen.getByRole("combobox", { name: /^Time zone, / });
+  expect(when.compareDocumentPosition(zone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const repeats = screen.getByRole("combobox", { name: "Repeats" });
+  await pickOption(repeats, "Weekdays at 09:00");
+  const zoneLabel = screen.getByText("Time zone");
+  const live = await screen.findByText(/^Next runs:/);
+  expect(repeats.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(live.compareDocumentPosition(zoneLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByLabelText("Message").className).not.toContain("font-mono");
 });

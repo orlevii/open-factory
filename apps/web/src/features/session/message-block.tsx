@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
+import { clampSource } from "@/components/markdown/split-blocks";
 import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
@@ -250,7 +251,10 @@ export function MessageBlock(props: {
 
 const CLAMP_LINES = 40;
 
-/** Bodies over 40 lines clamp with "Show all" (bodies may be up to 64 KB); update parts clamp at 8. */
+/** Message, outgoing and spawn bodies (U3 §7.6; agent text stays unclamped) clamp at 40 lines or 4,000
+ *  rendered characters, whichever comes first, cut at a block boundary with "Show all" (bodies may be
+ *  up to 64 KB); update parts clamp at 8 lines. "Show all" is a `data-expands` toggle: the timeline's
+ *  click capture calls `expandAnchor` on its row before this expands, so nothing above moves. */
 export function ClampedMarkdown({
   source,
   limit = CLAMP_LINES,
@@ -259,11 +263,11 @@ export function ClampedMarkdown({
   limit?: number;
 }) {
   const [all, setAll] = useState(false);
-  const lines = source.split("\n");
-  if (lines.length <= limit || all) return <Markdown source={source} variant="detail" />;
+  const clamped = useMemo(() => clampSource(source, limit), [source, limit]);
+  if (all || clamped === undefined) return <Markdown source={source} variant="detail" />;
   return (
     <>
-      <Markdown source={lines.slice(0, limit).join("\n")} variant="detail" />
+      <Markdown source={clamped} variant="detail" />
       <button
         type="button"
         data-expands

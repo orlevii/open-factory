@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { Markdown } from "./markdown";
 
 // Counts ReactMarkdown calls while still rendering for real, so the other tests keep their output.
@@ -166,4 +166,98 @@ test("block elements take their own direction (dir=auto), so a right-to-left par
   for (const sel of ["h1", "p", "li", "blockquote"])
     expect(container.querySelector(sel)).toHaveAttribute("dir", "auto");
   expect(container.querySelector("li.task-list-item")).not.toBeNull();
+});
+
+describe("images never load (U3 §9.3)", () => {
+  test.each(["default", "detail", "work"] as const)(
+    "%s: an image is a link Image: alt, and no <img>",
+    (variant) => {
+      const { container } = render(
+        <Markdown
+          source={"See ![the chart](https://evil.example/x.png) here."}
+          variant={variant}
+        />,
+      );
+      expect(container.querySelector("img")).toBeNull();
+      const a = screen.getByRole("link", { name: "Image: the chart" });
+      expect(a).toHaveAttribute("href", "https://evil.example/x.png");
+      expect(a).toHaveAttribute("target", "_blank");
+      expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    },
+  );
+
+  test("untrusted markdown too", () => {
+    const { container } = render(
+      <Markdown source={"![a](https://evil.example/x.png)"} untrusted />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("link", { name: "Image: a" })).toBeInTheDocument();
+  });
+
+  test("an alt over 80 characters is cut to 80 with an ellipsis; the full alt is its title", () => {
+    const alt = "x".repeat(120);
+    render(<Markdown source={`![${alt}](https://evil.example/x.png)`} />);
+    const a = screen.getByRole("link", { name: /^Image: x+…$/ });
+    const shown = (a.textContent ?? "").replace(/^Image: /, "");
+    expect(shown).toHaveLength(80);
+    expect(a).toHaveAttribute("title", alt);
+  });
+
+  test("no alt: the host", () => {
+    render(<Markdown source={"![](https://cdn.evil.example/a/b.png?x=1)"} />);
+    expect(screen.getByRole("link", { name: "Image: cdn.evil.example" })).toBeInTheDocument();
+  });
+
+  test("a reference-style image is a link too", () => {
+    const { container } = render(
+      <Markdown source={"![logo][l]\n\n[l]: https://evil.example/l.png"} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("link", { name: "Image: logo" })).toBeInTheDocument();
+  });
+
+  test("an image inside a link stays inside one link", () => {
+    const { container } = render(
+      <Markdown source={"[![badge](https://evil.example/b.svg)](https://example.com)"} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll("a a")).toHaveLength(0);
+    expect(screen.getByRole("link", { name: "Image: badge" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+  });
+
+  test("a javascript: image source is not a link", () => {
+    const { container } = render(<Markdown source={"![x](javascript:alert(1))"} />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('a[href^="javascript"]')).toBeNull();
+    expect(screen.getByText("Image: x")).toBeInTheDocument();
+  });
+});
+
+describe("untrusted markdown", () => {
+  test("a mermaid fence renders as plain code, never a diagram", async () => {
+    const mermaid = (await import("mermaid")).default;
+    vi.mocked(mermaid.render).mockClear();
+    const { container } = render(
+      <Markdown source={"```mermaid\ngraph TD; A-->B\n```"} variant="work" untrusted />,
+    );
+    const code = container.querySelector("pre > code");
+    expect(code).toHaveTextContent("graph TD; A-->B");
+    expect(container.querySelector(".md-diagram")).toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("mermaid-svg")).not.toBeInTheDocument();
+    expect(mermaid.render).not.toHaveBeenCalled();
+  });
+
+  test("trusted markdown still renders mermaid", async () => {
+    render(<Markdown source={"```mermaid\ngraph TD; A-->B\n```"} variant="work" />);
+    await waitFor(() => expect(screen.getByTestId("mermaid-svg")).toBeInTheDocument());
+  });
+
+  test("other fences still highlight", async () => {
+    const { container } = render(<Markdown source={"```ts\nconst a = 1;\n```"} untrusted />);
+    await waitFor(() => expect(container.querySelector("pre.shiki")).toBeInTheDocument());
+  });
 });

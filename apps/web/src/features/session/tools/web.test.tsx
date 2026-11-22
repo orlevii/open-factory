@@ -1,9 +1,15 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { resetSeq } from "@/test/session-fixtures";
 import { RowHarness, rowToggle, toolRow } from "./test-row";
 
 beforeEach(() => resetSeq());
+
+// A diagram renders only if mermaid is ever asked to: the mock answers at once with a marker.
+const mermaidRender = vi.hoisted(() =>
+  vi.fn(async () => ({ svg: '<svg data-testid="mermaid-svg"></svg>' })),
+);
+vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), render: mermaidRender } }));
 
 const fetchRow = (url: unknown, content?: string, isError = false) =>
   toolRow(
@@ -58,4 +64,22 @@ test("WebSearch: the query", () => {
     />,
   );
   expect(rowToggle()).toHaveTextContent(/^pg-boss retry backoff$/);
+});
+
+test("expanded: the result is outside content: a mermaid fence stays code, an image is a link", async () => {
+  const { container } = render(
+    <RowHarness
+      open
+      row={fetchRow(
+        "https://example.com",
+        "```mermaid\ngraph TD; A-->B\n```\n\n![diagram](https://evil.example/d.png)",
+      )}
+    />,
+  );
+  expect(container.querySelector("pre > code")).toHaveTextContent("graph TD; A-->B");
+  await new Promise((r) => setTimeout(r, 20));
+  expect(container.querySelector(".md-diagram")).toBeNull();
+  expect(mermaidRender).not.toHaveBeenCalled();
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByRole("link", { name: "Image: diagram" })).toBeInTheDocument();
 });

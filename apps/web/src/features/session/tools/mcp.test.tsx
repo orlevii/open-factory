@@ -1,9 +1,15 @@
 import { render, within } from "@testing-library/react";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { resetSeq } from "@/test/session-fixtures";
 import { RowHarness, rowToggle, toolRow } from "./test-row";
 
 beforeEach(() => resetSeq());
+
+// A diagram renders only if mermaid is ever asked to: the mock answers at once with a marker.
+const mermaidRender = vi.hoisted(() =>
+  vi.fn(async () => ({ svg: '<svg data-testid="mermaid-svg"></svg>' })),
+);
+vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), render: mermaidRender } }));
 
 const NAME = "mcp__linear__create_issue";
 
@@ -63,4 +69,17 @@ test("an input that is not an object still renders", () => {
 test("other factory tools (not task or schedule) render as MCP tools", () => {
   render(<RowHarness row={toolRow("mcp__factory__list_peers", {}, { content: "[]" })} />);
   expect(rowToggle()).toHaveTextContent(/^factory · list_peers$/);
+});
+
+test("expanded: a text result is outside content: a mermaid fence stays code", async () => {
+  const { container } = render(
+    <RowHarness
+      open
+      row={toolRow(NAME, { title: "x" }, { content: "```mermaid\ngraph TD; A-->B\n```" })}
+    />,
+  );
+  expect(container.querySelector("pre > code")).toHaveTextContent("graph TD; A-->B");
+  await new Promise((r) => setTimeout(r, 20));
+  expect(container.querySelector(".md-diagram")).toBeNull();
+  expect(mermaidRender).not.toHaveBeenCalled();
 });

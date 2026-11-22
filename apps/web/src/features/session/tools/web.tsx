@@ -45,7 +45,7 @@ function WebBody({ row }: { row: ToolRow }) {
         (row.state === "failed" ? (
           <OutputTail text={result.content} />
         ) : (
-          <Markdown source={result.content} variant="work" />
+          <Markdown source={result.content} variant="work" untrusted />
         ))}
       <TruncatedNote row={row} prefix="result." />
     </>

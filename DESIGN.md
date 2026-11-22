@@ -65,12 +65,12 @@ typography:
     fontSize: "22px"
     fontWeight: 700
     lineHeight: "28px"
-    letterSpacing: "-0.01em"
+    letterSpacing: "-0.015em"
   prose-h1:
     fontFamily: "Archivo Variable, Geist Variable, sans-serif"
     fontSize: "1.25rem"
     fontWeight: 650
-    letterSpacing: "-0.01em"
+    letterSpacing: "-0.015em"
   prose-h2:
     fontFamily: "Archivo Variable, Geist Variable, sans-serif"
     fontSize: "1.0625rem"

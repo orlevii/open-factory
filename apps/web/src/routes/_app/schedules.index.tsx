@@ -46,6 +46,7 @@ function SchedulesPage() {
             <Link
               to="/schedules/new"
               search={search.target ? { target: search.target } : {}}
+              /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only link, and repeats the visible text above it */
               title="New schedule"
             >
               <Plus aria-hidden="true" data-icon="inline-start" />
@@ -55,7 +56,7 @@ function SchedulesPage() {
         }
       />
       <PageBody>
-        <div className="grid gap-4">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
           <ScheduleFiltersBar value={filters} onChange={onChange} />
           <ScheduleList filters={filters} onChange={onChange} initial={initial} />
         </div>

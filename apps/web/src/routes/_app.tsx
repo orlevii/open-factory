@@ -176,7 +176,7 @@ function AppLayout() {
           <SidebarInset
             id="content"
             tabIndex={-1}
-            className="min-w-0 outline-none" // ui-contract:allow skip-link target, not interactive
+            className="relative min-w-0 outline-none" // ui-contract:allow skip-link target, not interactive
           >
             <Outlet />
           </SidebarInset>

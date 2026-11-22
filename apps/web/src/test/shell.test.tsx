@@ -35,6 +35,9 @@ test("every screen has one page h1 in the shared header; the dashboard is Home",
     "href",
     "/agents",
   );
+  // An implicit (auto) column would take the inbox card's min-content (a long sender line) and push
+  // the card past the screen below md.
+  expect(inbox.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]", "md:grid-cols-2");
 });
 
 test("the skip link is the first focusable element and targets main#content", async () => {

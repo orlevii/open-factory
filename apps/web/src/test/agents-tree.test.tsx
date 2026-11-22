@@ -441,6 +441,8 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(list).toHaveClass("@container");
     expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
     expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
+    // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320.
+    expect(within(lead).getByText("lead").parentElement).toHaveClass("min-w-0", "flex-wrap");
     expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
       "md:col-start-3",
       "md:row-start-1",

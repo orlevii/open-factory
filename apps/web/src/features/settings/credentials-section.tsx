@@ -21,6 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Spinner } from "@/components/ui/spinner";
 import {
   createCredential,
@@ -236,20 +237,22 @@ function AddCredentialForm({
       />
       <FieldShell name="credential-kind" label="Kind" legend>
         {() => (
-          <div className="grid gap-1.5">
+          <RadioGroup
+            name="credential-kind"
+            value={kind}
+            onValueChange={(v) => {
+              setKind(v as typeof kind);
+              setVerdict({});
+            }}
+            className="gap-1.5"
+          >
             {(["oauth_token", "api_key"] as const).map((k) => (
-              <label key={k} className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="credential-kind"
-                  value={k}
-                  checked={kind === k}
-                  onChange={() => {
-                    setKind(k);
-                    setVerdict({});
-                  }}
-                  className="size-4"
-                />
+              <label
+                key={k}
+                htmlFor={`credential-kind-${k}`}
+                className="flex items-center gap-2 text-sm"
+              >
+                <RadioGroupItem id={`credential-kind-${k}`} value={k} />
                 {k === "oauth_token" ? (
                   <span>
                     OAuth token (from{" "}
@@ -260,7 +263,7 @@ function AddCredentialForm({
                 )}
               </label>
             ))}
-          </div>
+          </RadioGroup>
         )}
       </FieldShell>
       <TokenField
@@ -489,7 +492,7 @@ export function CredentialsSection() {
                       <>
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
                           aria-disabled={busy || undefined}
                           onClick={() => void verify(c)}

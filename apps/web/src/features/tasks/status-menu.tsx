@@ -32,11 +32,11 @@ export function StatusMenu({
           variant="outline"
           disabled={disabled}
           aria-label={`Status: ${s.label}`}
-          className="w-full justify-between"
+          className="w-full min-w-0 justify-between"
         >
-          <span className="flex items-center gap-1.5">
+          <span className="flex min-w-0 items-center gap-1.5">
             <s.Icon aria-hidden="true" className={`size-3.5 ${s.icon}`} />
-            {s.label}
+            <span className="truncate">{s.label}</span>
           </span>
           <ChevronDown aria-hidden="true" data-icon="inline-end" />
         </Button>

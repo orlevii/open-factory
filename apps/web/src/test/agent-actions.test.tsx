@@ -152,7 +152,7 @@ test("Re-sync 502 shows the plugin line and a collapsed Show output", async () =
   expect(within(details as HTMLElement).getByText("boom output")).toBeInTheDocument();
 });
 
-test("Archive is an ink ghost button and lands on the list with the Undo line", async () => {
+test("Archive is an outline button and lands on the list with the Undo line", async () => {
   const api = world({
     extra: {
       "POST /api/agents/lead/archive": () => {
@@ -170,7 +170,7 @@ test("Archive is an ink ghost button and lands on the list with the Undo line", 
   renderApp("/agents/lead/edit", alice);
   const section = await screen.findByRole("region", { name: "Agent actions" });
   const button = within(section).getByRole("button", { name: "Archive @lead" });
-  expect(button).toHaveAttribute("data-variant", "ghost");
+  expect(button).toHaveAttribute("data-variant", "outline");
   expect(button).not.toHaveClass("text-destructive");
   await userEvent.click(button);
   expect(await screen.findByText("Archived @lead.")).toBeInTheDocument();

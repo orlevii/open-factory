@@ -32,7 +32,7 @@ export function AssigneeMenu({
   const current = value && !ended ? value.slug : value ? NONE : UNASSIGNED;
   const text = ended ? "Choose an agent…" : value ? `@${value.slug}` : "Unassigned";
   return (
-    <div className="grid gap-1">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
       {value && ended && (
         <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
           <span className="font-mono">@{value.slug}</span> · {ended}
@@ -44,9 +44,9 @@ export function AssigneeMenu({
             variant="outline"
             disabled={disabled}
             aria-label={`Assignee: ${text}`}
-            className="w-full justify-between"
+            className="w-full min-w-0 justify-between"
           >
-            <span className={value && !ended ? "font-mono" : undefined}>{text}</span>
+            <span className={`min-w-0 truncate ${value && !ended ? "font-mono" : ""}`}>{text}</span>
             <ChevronDown aria-hidden="true" data-icon="inline-end" />
           </Button>
         </DropdownMenuTrigger>
@@ -60,7 +60,8 @@ export function AssigneeMenu({
           >
             <DropdownMenuRadioItem value={UNASSIGNED}>Unassigned</DropdownMenuRadioItem>
             {agents.map((a) => (
-              <DropdownMenuRadioItem key={a.slug} value={a.slug}>
+              // Typeahead matches the slug as typed ("dev-042"), as the Selects do, not "@dev-042".
+              <DropdownMenuRadioItem key={a.slug} value={a.slug} textValue={a.slug}>
                 {agentOptionLabel(a)}
               </DropdownMenuRadioItem>
             ))}

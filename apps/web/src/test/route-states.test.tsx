@@ -1,6 +1,10 @@
-import { act, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { AppPending } from "@/components/route-states";
+import { ShellContext } from "@/components/shell-context";
+import { CompactionMarker } from "@/features/session/compaction-marker";
+import { QuietLine } from "@/features/session/quiet-line";
 import { alice, renderApp } from "@/test/render-app";
 
 const auth = vi.hoisted(() => ({ getSession: vi.fn() }));
@@ -85,4 +89,46 @@ test("ResourceNotFound shows a given detail instead of the default line", async 
   expect(screen.queryByText("It may have been renamed or deleted.")).toBeNull();
   expect(screen.getByRole("link", { name: "Back to tasks" })).toHaveAttribute("href", "/tasks");
   view.unmount();
+});
+
+test("AppPending inside the shell stays in the content area; at the root it covers the page", () => {
+  const inShell = render(
+    <ShellContext.Provider value={{ connectionLost: false }}>
+      <AppPending />
+    </ShellContext.Provider>,
+  );
+  const shellStatus = screen.getByRole("status");
+  expect(shellStatus).toHaveClass("absolute", "inset-0");
+  expect(shellStatus).not.toHaveClass("fixed");
+  expect(shellStatus).toHaveClass("animate-in", "fade-in-0", "duration-150");
+  inShell.unmount();
+  render(<AppPending />);
+  expect(screen.getByRole("status")).toHaveClass("fixed", "inset-0");
+});
+
+test("the expandable quiet line and compaction marker render a rotating chevron", () => {
+  const { container } = render(
+    <>
+      <QuietLine detail="more">Thinking</QuietLine>
+      <CompactionMarker
+        rowProps={{}}
+        event={
+          {
+            type: "compacted",
+            trigger: "auto",
+            preTokens: 10,
+            postTokens: 5,
+            summary: "s",
+          } as never
+        }
+      />
+    </>,
+  );
+  const summaries = container.querySelectorAll("details > summary");
+  expect(summaries).toHaveLength(2);
+  for (const s of summaries) {
+    const chevron = s.querySelector("svg.lucide-chevron-right");
+    expect(chevron).not.toBeNull();
+    expect(chevron).toHaveClass("group-open:rotate-90");
+  }
 });

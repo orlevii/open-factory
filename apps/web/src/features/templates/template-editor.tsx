@@ -8,24 +8,16 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, UserPlus } from "lucide-react";
-import {
-  memo,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { PageBody, PageHeader } from "@/components/page-header";
+import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
 import {
   buildImage,
@@ -271,7 +263,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   if (gone) {
     return (
       <>
-        <PageHeader title={template.config?.displayName ?? name} meta={<Mono>{name}</Mono>} />
+        <PageHeader
+          title={template.config?.displayName ?? name}
+          titleFromData
+          meta={<HeaderSlug value={name} />}
+        />
         <PageBody>
           <div className="grid max-w-xl gap-3">
             <p role="alert" className="text-sm">
@@ -437,7 +433,6 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                         <Button
                           variant="ghost"
                           aria-disabled={!isDirty(s) || undefined}
-                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => {
                             if (!isDirty(s)) return;
                             setOutcome(f, undefined);
@@ -462,7 +457,6 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                         </Button>
                         <Button
                           aria-disabled={!canSave || undefined}
-                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                           onClick={() => canSave && save$()}
                         >
                           {outcome?.tone === "pending" && outcome.kind === "saving" && <Spinner />}
@@ -525,33 +519,51 @@ const TemplateHeader = memo(function TemplateHeader({
     <>
       <PageHeader
         title={template.config?.displayName ?? name}
-        meta={<Mono>{name}</Mono>}
+        titleFromData
+        meta={<HeaderSlug value={name} />}
         actions={
           <>
             {errorCount > 0 ? (
-              <Button
-                variant="ghost"
-                aria-disabled="true"
-                aria-describedby={headingId}
-                title="Fix the errors first"
-                onClick={(e) => e.preventDefault()}
-                className="cursor-not-allowed opacity-50"
-              >
-                <UserPlus aria-hidden="true" data-icon="inline-start" />
-                <span className="max-md:sr-only">Create agent</span>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    aria-disabled="true"
+                    aria-describedby={headingId}
+                    onClick={(e) => e.preventDefault()}
+                  >
+                    <UserPlus aria-hidden="true" data-icon="inline-start" />
+                    <span className="max-md:sr-only">Create agent</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Fix the errors first</TooltipContent>
+              </Tooltip>
             ) : (
-              <Button variant="ghost" asChild>
-                <Link to="/agents/new" search={{ template: name }} title="Create agent">
-                  <UserPlus aria-hidden="true" data-icon="inline-start" />
-                  <span className="max-md:sr-only">Create agent</span>
-                </Link>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" asChild>
+                    <Link to="/agents/new" search={{ template: name }}>
+                      <UserPlus aria-hidden="true" data-icon="inline-start" />
+                      <span className="max-md:sr-only">Create agent</span>
+                    </Link>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Create agent</TooltipContent>
+              </Tooltip>
             )}
-            <Button variant="ghost" title="Delete template" onClick={() => onDelete(true)}>
-              <Trash2 aria-hidden="true" data-icon="inline-start" className="text-destructive" />
-              <span className="max-md:sr-only">Delete…</span>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" onClick={() => onDelete(true)}>
+                  <Trash2
+                    aria-hidden="true"
+                    data-icon="inline-start"
+                    className="text-destructive"
+                  />
+                  <span className="max-md:sr-only">Delete…</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete template</TooltipContent>
+            </Tooltip>
           </>
         }
       />
@@ -618,10 +630,6 @@ const IssuesBlock = memo(function IssuesBlock({
   );
 });
 
-const Mono = ({ children }: { children: ReactNode }) => (
-  <span className="font-mono text-[0.8125rem] text-muted-foreground">{children}</span>
-);
-
 /** One live region that is always mounted, so changes are announced. */
 function Status({ outcome }: { outcome?: Outcome }) {
   return (
@@ -674,7 +682,6 @@ function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]
           variant="ghost"
           size="xs"
           aria-disabled={disabled || undefined}
-          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
           onClick={() => !disabled && void build()}
         >
           Build

@@ -1,7 +1,8 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -163,6 +164,20 @@ test("Assignee: Enter on an item assigns it and says so; a failed commit reverts
   await waitFor(() => expect(patches(api).at(-1)?.body).toEqual({ assignee: null }));
 });
 
+test("Assignee menu typeahead matches the slug without a leading @, and never assigns by itself", async () => {
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const trigger = await screen.findByRole("button", { name: "Assignee: @dev" });
+  trigger.focus();
+  await userEvent.keyboard("{Enter}");
+  await screen.findByRole("menuitemradio", { name: "@qa · QA" });
+  await userEvent.keyboard("qa");
+  await waitFor(() =>
+    expect(screen.getByRole("menuitemradio", { name: "@qa · QA" })).toHaveFocus(),
+  );
+  expect(patches(api)).toHaveLength(0);
+});
+
 test("an ended assignee shows muted above a 'Choose an agent…' trigger", async () => {
   world(() => detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }));
   renderApp("/tasks/T-42", alice);
@@ -172,6 +187,22 @@ test("an ended assignee shows muted above a 'Choose an agent…' trigger", async
   expect(
     screen.getByText((_, el) => el?.tagName === "P" && el.textContent === "@dev · terminated"),
   ).toBeInTheDocument();
+});
+
+test("Edit beside the title is an outline button (§6.3)", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  expect(await screen.findByRole("button", { name: "Edit title" })).toHaveAttribute(
+    "data-variant",
+    "outline",
+  );
+});
+
+test("an inline editor's Cancel is ghost: it acts inside the section (decision 20)", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveAttribute("data-variant", "ghost");
 });
 
 test("title edit: focus goes into the input, Enter saves, Escape cancels, focus returns to Edit title", async () => {
@@ -293,7 +324,7 @@ test("composer: disabled while empty, Ctrl-Enter posts, Posting…, the draft st
   const send = await screen.findByRole("button", { name: "Comment" });
   expect(send).toBeDisabled();
   const box = screen.getByRole("textbox", { name: "Comment" });
-  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
+  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention. Enter to post.");
   await userEvent.type(box, "hello @nobody");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
@@ -386,8 +417,68 @@ test("no assignee: the helper says only mentions are notified", async () => {
   world(() => detail({ assignee: null }));
   renderApp("/tasks/T-42", alice);
   expect(
-    await screen.findByText("No assignee: only the people and agents you @mention are notified."),
+    await screen.findByText(
+      "No assignee: only the people and agents you @mention are notified. Enter to post.",
+    ),
   ).toBeInTheDocument();
+});
+
+test("comment composer: Enter posts once, Shift+Enter adds a line", async () => {
+  fakeMatchMedia.install(false);
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a{Shift>}{Enter}{/Shift}b");
+  expect(box).toHaveValue("a\nb");
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(box).toHaveValue(""));
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+});
+
+test("comment composer: on a coarse pointer the helper drops 'Enter to post.' and Enter adds a line", async () => {
+  fakeMatchMedia.install(false, { coarse: true });
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
+  await userEvent.type(box, "a{Enter}b");
+  expect(box).toHaveValue("a\nb");
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("comment composer: Enter during IME composition does not post", async () => {
+  fakeMatchMedia.install(false);
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "draft");
+  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+  expect(box).toHaveValue("draft");
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("comment composer: Ctrl+Enter still posts on a coarse pointer", async () => {
+  fakeMatchMedia.install(false, { coarse: true });
+  const api = world();
+  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
+  renderApp("/tasks/T-42", alice);
+  const box = await screen.findByRole("textbox", { name: "Comment" });
+  await userEvent.type(box, "a");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await waitFor(() => expect(box).toHaveValue(""));
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+});
+
+test("the task body editor's preview uses the detail look of the saved body", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: /Edit description/ }));
+  const editor = screen.getByRole("textbox", { name: "Description" });
+  const frame = editor.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(frame.querySelector(".prose-of-detail")).not.toBeNull();
 });
 
 test("?comment=<id> of an agent's comment: highlighted, focused, composer prefilled; of a human's: no prefill; unknown: a muted line", async () => {
@@ -567,4 +658,40 @@ test("no usage line when the task has no attributed usage", async () => {
   renderApp("/tasks/T-42", alice);
   await screen.findByText("Plan the billing migration");
   expect(screen.queryByText(/^Usage:/)).toBeNull();
+});
+
+test("layout: the grid cannot be widened by long content; every grid and aside child can shrink", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await screen.findByRole("heading", { level: 1 });
+  const grid = document.querySelector("aside")?.parentElement;
+  expect(grid).toHaveClass(
+    "grid-cols-[minmax(0,1fr)]",
+    "lg:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)]",
+  );
+  const aside = grid?.querySelector(":scope > aside") as HTMLElement;
+  expect(aside).toBeTruthy();
+  const kids = [...(grid?.children ?? []), ...aside.children];
+  expect(kids.length).toBeGreaterThan(4);
+  for (const k of kids) expect(k).toHaveClass("min-w-0");
+  // A grid inside a column with an implicit (auto) track sizes it to its widest child's min-content (a
+  // 4-column table, a 40-char assignee), so every grid on the way down declares a shrinkable track.
+  const isGrid = (el: Element) => el.classList.contains("grid");
+  const inner = [...kids, ...kids.flatMap((k) => [...k.children])].filter(isGrid);
+  inner.push(...document.querySelectorAll("section"));
+  inner.push(screen.getByRole("list", { name: "Activity" }));
+  expect(inner.length).toBeGreaterThan(8);
+  for (const g of inner) expect(g).toHaveClass("grid-cols-[minmax(0,1fr)]");
+});
+
+test("layout: the Status and Assignee triggers truncate instead of widening the rail", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  const status = await screen.findByRole("button", { name: /^Status:/ });
+  const assignee = screen.getByRole("button", { name: /^Assignee:/ });
+  for (const b of [status, assignee]) {
+    expect(b).toHaveClass("w-full", "min-w-0");
+    expect(b.querySelector(".truncate")).not.toBeNull();
+  }
+  expect(within(assignee).getByText("@dev")).toHaveClass("min-w-0", "truncate");
 });

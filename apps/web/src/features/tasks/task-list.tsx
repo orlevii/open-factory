@@ -138,7 +138,7 @@ export function TaskList({
   };
   const now = new Date();
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <ul
         ref={list}
         aria-label="Tasks"
@@ -154,7 +154,7 @@ export function TaskList({
       ) : (
         q.hasNextPage && (
           <Button
-            variant="ghost"
+            variant="outline"
             className="w-full"
             onClick={loadMore}
             disabled={q.isFetchingNextPage}

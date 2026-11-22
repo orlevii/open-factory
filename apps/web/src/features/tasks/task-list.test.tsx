@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { optionNames, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -85,18 +86,24 @@ test("the filters live in the URL: changing Status refetches with that status", 
   const { router } = renderApp("/tasks", alice);
   await screen.findByRole("link", { name: /^T-1,/ });
   expect(tasksUrls(api)[0]).toBe("/api/tasks?limit=50");
-  await userEvent.selectOptions(screen.getByLabelText("Status"), "done");
+  // Three 13rem filters don't fit a 768px window with the sidebar open: the row wraps, and the page
+  // grid's one track can shrink below its content.
+  const bar = screen.getByLabelText("Status").closest(".md\\:w-52")?.parentElement as HTMLElement;
+  expect(bar).toHaveClass("md:flex-row", "md:flex-wrap");
+  expect(bar.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
+  await pickOption(screen.getByLabelText("Status"), "Done");
   await waitFor(() => expect(router.state.location.search).toMatchObject({ status: "done" }));
   await waitFor(() => expect(tasksUrls(api).at(-1)).toBe("/api/tasks?limit=50&status=done"));
-  await userEvent.selectOptions(screen.getByLabelText("Assignee"), "Unassigned");
+  await pickOption(screen.getByLabelText("Assignee"), "Unassigned");
   await waitFor(() => expect(tasksUrls(api).at(-1)).toContain("unassigned=true"));
-  await userEvent.selectOptions(screen.getByLabelText("Created by"), "Me");
+  await pickOption(screen.getByLabelText("Created by"), "Me");
   await waitFor(() => expect(tasksUrls(api).at(-1)).toContain("creator=me"));
-  expect(
-    within(screen.getByLabelText("Created by"))
-      .getAllByRole("option")
-      .map((o) => o.textContent),
-  ).toEqual(["Anyone", "Me", "@dev", "@lead"]);
+  expect(await optionNames(screen.getByLabelText("Created by"))).toEqual([
+    "Anyone",
+    "Me",
+    "Dev agent @dev",
+    "Lead @lead",
+  ]);
 });
 
 test("filters from the URL are applied and an ended assignee shows while selected", async () => {
@@ -107,8 +114,8 @@ test("filters from the URL are applied and an ended assignee shows while selecte
   renderApp("/tasks?status=all&assignee=ghost&creator=@sam", alice);
   await screen.findByRole("link", { name: /^T-1,/ });
   expect(tasksUrls(api)[0]).toBe("/api/tasks?limit=50&status=all&assignee=ghost&creator=%40sam");
-  expect(screen.getByLabelText("Assignee")).toHaveValue("ghost");
-  expect(screen.getByLabelText("Created by")).toHaveValue("@sam");
+  expect(screen.getByLabelText("Assignee")).toHaveTextContent("@ghost");
+  expect(screen.getByLabelText("Created by")).toHaveTextContent("@sam");
 });
 
 test("empty on the default filter offers all tasks; then 'No tasks yet.'", async () => {

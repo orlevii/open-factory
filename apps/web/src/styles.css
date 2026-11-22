@@ -330,12 +330,26 @@
 }
 .prose-of :where(h1) {
   font-size: 1.25rem;
+  letter-spacing: -0.015em;
 }
 .prose-of :where(h2) {
   font-size: 1.0625rem;
 }
 .prose-of :where(h3) {
   font-size: 0.9375rem;
+}
+/* Inside a task body, comment or message the headings step down one size: 17 / 15 / 14. */
+.prose-of-detail :where(h1) {
+  font-size: 1.0625rem;
+  letter-spacing: -0.01em;
+}
+.prose-of-detail :where(h2) {
+  font-size: 0.9375rem;
+  letter-spacing: -0.01em;
+}
+.prose-of-detail :where(h3, h4) {
+  font-size: 0.875rem;
+  letter-spacing: 0;
 }
 .prose-of :where(a) {
   text-decoration-color: color-mix(in oklch, var(--signal) 60%, transparent);

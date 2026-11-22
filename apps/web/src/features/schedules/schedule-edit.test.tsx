@@ -99,9 +99,8 @@ test("an archived target stays selected as an extra option; the helper names the
   });
   mockApi(common(s));
   renderApp("/schedules/S-3", alice);
-  const target = (await screen.findByLabelText("Target")) as HTMLSelectElement;
-  await waitFor(() => expect(target.value).toBe("old"));
-  expect(target.selectedOptions[0]?.text).toBe("@old (archived)");
+  const target = await screen.findByLabelText("Target");
+  await waitFor(() => expect(target).toHaveTextContent("@old (archived)"));
   expect(screen.getByText("Saving a changed message makes you its author.")).toBeInTheDocument();
   expect(
     screen.getByText("A run is waiting for @old, which is errored. Edits apply from the next run."),

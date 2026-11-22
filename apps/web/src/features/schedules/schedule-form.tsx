@@ -364,7 +364,7 @@ export function ScheduleForm({
                   ? "Saving…"
                   : "Save changes"}
             </Button>
-            <Button type="button" variant="ghost" asChild>
+            <Button type="button" variant="outline" asChild>
               <Link to={cancelTo ?? "/schedules"} search={{}}>
                 Cancel
               </Link>

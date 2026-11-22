@@ -2,7 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { memo, useId, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { CodeBlock } from "./code-block";
+import { CodeBlock, PlainCode } from "./code-block";
 import { MermaidBlock } from "./mermaid-block";
 
 function makeComponents(newTabNoteId: string): Components {
@@ -40,11 +40,7 @@ function makeComponents(newTabNoteId: string): Components {
           : "";
       if (lang === "mermaid") return <MermaidBlock source={text} />;
       if (lang) return <CodeBlock code={text} lang={lang} />;
-      return (
-        <pre>
-          <code>{text}</code>
-        </pre>
-      );
+      return <PlainCode code={text} />;
     },
     code: ({ className, children }) => <code className={className}>{children}</code>,
     // Bidi (U3 §7.2): each block takes the direction of its own first strong character.

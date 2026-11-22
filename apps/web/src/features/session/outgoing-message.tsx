@@ -1,9 +1,8 @@
-import { Link } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { formatTime } from "./format";
-import { ClampedMarkdown, LINK_CLASS } from "./message-block";
+import { ClampedMarkdown } from "./message-block";
 import type { Row } from "./rows";
 import { SpeakerLine, useSpeakers } from "./speaker-line";
 import { denialText, ToolCallRow } from "./tool-call-row";
@@ -46,7 +45,8 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 /** The agent's own `send_message` call as a message block (UI design §2.5): direction in the sender
- *  line, the body as written, and a past-tense footer. */
+ *  line, the body as written, and a status line only when there is something to say. The call, the
+ *  inbox and the links live in the row menu (U3 §7.5). */
 export function OutgoingMessage({
   slug,
   row,
@@ -86,26 +86,7 @@ export function OutgoingMessage({
           )}
         </SpeakerLine>
       }
-      footer={
-        <>
-          {failed || row.denial ? (
-            <FailedNote row={row} />
-          ) : (
-            <Footer row={row} sent={sent} toAgent={toAgent} bare={bare} />
-          )}
-          {toAgent && sent && (
-            <Link
-              to="/agents/$slug"
-              params={{ slug: sent.to }}
-              search={{ message: sent.id }}
-              aria-label={`View this message in @${sent.to}'s session`}
-              className={`text-foreground ${LINK_CLASS}`}
-            >
-              View in session
-            </Link>
-          )}
-        </>
-      }
+      footer={failed || row.denial ? <FailedNote row={row} /> : sendNote(row, sent, toAgent, bare)}
     >
       <div dir="auto">
         <ClampedMarkdown source={input.body} />
@@ -130,8 +111,8 @@ export function FailedNote({ row }: { row: BlockRow }) {
 }
 
 /** The outgoing-block shell shared by a send and a spawn (S6 UI design §2.5, S7 §4.1): a 1px rule
- *  edge and 6px radius, the sender line and its time, the body, a muted footer, and the "Show tool
- *  call" toggle that reveals the raw call as S3's tool row. */
+ *  edge and 6px radius, the sender line and its time, the body, a muted status line when there is
+ *  one, and the raw call as S3's tool row while the row menu's "View tool call" shows it. */
 export function CallBlock({
   row,
   label,
@@ -148,6 +129,7 @@ export function CallBlock({
   sender?: ReactNode;
   /** A whole sender line (a speaker line) in place of `sender` and the time. */
   header?: ReactNode;
+  /** Null when there is nothing to say. */
   footer: ReactNode;
   children: ReactNode;
   showCall: boolean;
@@ -185,17 +167,11 @@ export function CallBlock({
         </div>
       )}
       {children}
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        {footer}
-        <button
-          type="button"
-          aria-expanded={showCall}
-          onClick={onToggleCall}
-          className="underline-offset-4 hover:underline"
-        >
-          {showCall ? "Hide tool call" : "Show tool call"}
-        </button>
-      </div>
+      {footer != null && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+          {footer}
+        </div>
+      )}
       {showCall && (
         <div className="mt-2">
           <ToolCallRow row={toolRow} expanded onToggle={onToggleCall} rowProps={{}} />
@@ -205,33 +181,25 @@ export function CallBlock({
   );
 }
 
-function Footer({
-  row,
-  sent,
-  toAgent,
-  bare,
-}: {
-  row: OutgoingRow;
-  sent: ReturnType<typeof parseSendResult>;
-  toAgent: boolean;
-  bare: string;
-}) {
+/** The status line's content, or null when a plain delivery leaves nothing to say. */
+function sendNote(
+  row: OutgoingRow,
+  sent: ReturnType<typeof parseSendResult>,
+  toAgent: boolean,
+  bare: string,
+): ReactNode {
   if (!row.result) return <span>{row.turnOpen ? "Sending…" : "Not sent"}</span>;
-  if (!sent) return <span>Sent</span>;
-  if (!toAgent) return <span>Sent to the inbox</span>;
-  const state = STATUS_TEXT[sent.status];
+  // Delivered plainly: the card says nothing more (U3 §7.5); a state or a note still shows.
+  const state = sent && toAgent ? STATUS_TEXT[sent.status] : undefined;
+  if (!state && !sent?.note) return null;
   return (
     <>
-      <span>
-        {state ? (
-          <>
-            Sent · <span className="font-mono">@{bare}</span> was {state}
-          </>
-        ) : (
-          "Sent"
-        )}
-      </span>
-      {sent.note && <span>{sent.note}</span>}
+      {state && (
+        <span>
+          Sent · <span className="font-mono">@{bare}</span> was {state}
+        </span>
+      )}
+      {sent?.note && <span>{sent.note}</span>}
     </>
   );
 }

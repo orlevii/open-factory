@@ -1,5 +1,5 @@
 import type { AnyEvent, ServerMessage } from "@open-factory/shared";
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -103,7 +103,11 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   // Never an id.
   expect(block.textContent).not.toContain("0f9e-secret-id");
   expect(screen.queryByText("mcp__factory__spawn_agent")).toBeNull();
-  await userEvent.click(within(block).getByRole("button", { name: "Show tool call" }));
+  // The raw call is in the row menu (U3 §7.5), not a footer button.
+  expect(within(block).queryByRole("button", { name: "Show tool call" })).toBeNull();
+  const wrap = block.closest("[data-row-wrap]") as HTMLElement;
+  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), { button: 0 });
+  await userEvent.click(await screen.findByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByText("mcp__factory__spawn_agent")).toBeInTheDocument();
 });
 

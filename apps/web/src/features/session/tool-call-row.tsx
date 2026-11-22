@@ -67,7 +67,8 @@ export function ToolCallRow({
           else onToggle();
         }}
         {...rowProps}
-        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm hover:bg-accent"
+        // `.of-row`: the hover fill and the instant pressed fill; a full-width row never scales.
+        className="of-row flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm"
       >
         <ChevronRight
           aria-hidden="true"

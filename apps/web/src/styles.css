@@ -324,6 +324,38 @@
   opacity: 0;
 }
 
+/* Copy feedback (U3 §7.5, DESIGN.md → Motion): the icon crossfades to a check, 150ms in with scale
+   0.8→1 and a 1px blur, 100ms out. A keyboard copy stamps `data-instant` (no transition); reduced
+   motion keeps the opacity only. */
+.copy-feedback-idle,
+.copy-feedback-check {
+  transition:
+    opacity 100ms var(--ease-out),
+    scale 100ms var(--ease-out),
+    filter 100ms var(--ease-out);
+}
+.copy-feedback-check {
+  opacity: 0;
+  scale: 0.8;
+  filter: blur(1px);
+}
+[data-copy-feedback="copied"] .copy-feedback-check {
+  opacity: 1;
+  scale: 1;
+  filter: none;
+  transition-duration: 150ms;
+}
+[data-copy-feedback="copied"] .copy-feedback-idle {
+  opacity: 0;
+  transition-duration: 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-feedback-check {
+    scale: 1;
+    filter: none;
+  }
+}
+
 /* Jump to latest (U3 §8.2): transitions, so a show interrupted by a hide reverses from where it is.
    Enter 150ms with a 4px rise, exit 100ms with the drop; reduced motion keeps the fade only (the
    global block only zeroes tw-animate's variables). A key that shows or hides it stamps

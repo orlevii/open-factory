@@ -403,7 +403,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
   expect(scroller.scrollTop).toBe(900);
 });
 
-test("Tab leaves the timeline: only the active row, its controls and its Copy link are tabbable; Enter enters a row", async () => {
+test("Tab leaves the timeline: only the active row, its controls and its row menu are tabbable; Enter enters a row", async () => {
   routes["/api/agents/dev/events?"] = () => {
     const c = conversation();
     resetSeq();
@@ -440,7 +440,7 @@ test("Tab leaves the timeline: only the active row, its controls and its Copy li
     );
   const first = log.querySelector<HTMLElement>("[data-row]") as HTMLElement;
   first.focus(); // the click made the Bash row active; the first row is active from here
-  // The active row, its own controls (UI design §5) and its Copy link; every other row's controls
+  // The active row, its own controls (UI design §5) and its row menu; every other row's controls
   // (the expanded code plates, the later link) stay out of the tab order.
   await vi.waitFor(() => expect(tabbable().length).toBeLessThanOrEqual(3));
   expect(within(log).getByRole("link", { name: "site" })).toHaveAttribute("tabindex", "-1");
@@ -467,7 +467,8 @@ test("Copy link says so inline when the clipboard refuses", async () => {
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const row = document.getElementById("event-7") as HTMLElement;
-  fireEvent.click(within(row).getByRole("button", { name: "Copy link" }));
+  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(await within(row).findByText("Couldn't copy")).toBeInTheDocument();
 });
 

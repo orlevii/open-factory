@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { CopyButton } from "@/components/copy-feedback";
 import { highlight, resolveLang } from "./highlight";
 
 export function CodeBlock({ code, lang }: { code: string; lang: string }) {
@@ -19,11 +20,32 @@ export function CodeBlock({ code, lang }: { code: string; lang: string }) {
     };
   }, [code, lang, supported]);
   if (supported && stored?.lang === lang)
-    // biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki output is generated from escaped code tokens, not user HTML.
-    return <div dangerouslySetInnerHTML={{ __html: stored.html }} />;
+    return (
+      <CopyFrame code={code}>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki output is generated from escaped code tokens, not user HTML. */}
+        <div dangerouslySetInnerHTML={{ __html: stored.html }} />
+      </CopyFrame>
+    );
+  return <PlainCode code={code} />;
+}
+
+/** A fenced block with no language: the plain `pre`, with the same Copy button. */
+export function PlainCode({ code }: { code: string }) {
   return (
-    <pre>
-      <code>{code}</code>
-    </pre>
+    <CopyFrame code={code}>
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </CopyFrame>
+  );
+}
+
+/** Code with a Copy button at its top-right, on hover or focus within (U3 §7.5). */
+function CopyFrame({ code, children }: { code: string; children: ReactNode }) {
+  return (
+    <div className="group/code relative">
+      {children}
+      <CopyButton text={code} />
+    </div>
   );
 }

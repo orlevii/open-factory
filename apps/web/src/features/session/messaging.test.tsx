@@ -1,5 +1,5 @@
 import type { AnyEvent, ServerMessage } from "@open-factory/shared";
-import { act, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -305,7 +305,14 @@ const result = (content: string, isError = false, toolUseId = "toolu_1"): AnyEve
   isError,
 });
 
-test("send_message renders as an outgoing message: '@dev → @b', past-tense status, a real View in session link", async () => {
+/** Opens the row menu beside `block` (U3 §7.5). */
+async function rowMenu(block: HTMLElement) {
+  const wrap = block.closest("[data-row-wrap]") as HTMLElement;
+  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), { button: 0 });
+  return screen.findByRole("menu");
+}
+
+test("send_message renders as an outgoing message: '@dev → @b', past-tense status, no footer links; the call is in the row menu", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -319,15 +326,19 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
     (_, el) => el?.tagName === "SPAN" && el.textContent === "Sent · @b was hibernated",
   );
   expect(within(sentLine).getByText("@b")).toHaveClass("font-mono");
-  expect(
-    within(block).getByRole("link", { name: "View this message in @b's session" }),
-  ).toHaveAttribute("href", "/agents/b?message=m9");
+  // Outgoing cards have no footer links (U3 §7.5).
+  expect(within(block).queryByRole("link", { name: /View this message/ })).toBeNull();
+  expect(within(block).queryByRole("button", { name: "Show tool call" })).toBeNull();
   expect(screen.queryByText("mcp__factory__send_message")).toBeNull();
-  await userEvent.click(within(block).getByRole("button", { name: "Show tool call" }));
+  const menu = await rowMenu(block);
+  expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
+  await userEvent.click(within(menu).getByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByText("mcp__factory__send_message")).toBeInTheDocument();
+  const again = await rowMenu(block);
+  expect(within(again).getByRole("menuitem", { name: "Hide tool call" })).toBeInTheDocument();
 });
 
-test("a send to humans says it went to the inbox, with no session link", async () => {
+test("a send to humans has no footer; Open in inbox is in the row menu", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -336,8 +347,14 @@ test("a send to humans says it went to the inbox, with no session link", async (
     ],
     "need a human",
   );
-  expect(screen.getByText("Sent to the inbox")).toBeInTheDocument();
+  expect(screen.queryByText("Sent to the inbox")).toBeNull();
   expect(screen.queryByRole("link", { name: /View this message/ })).toBeNull();
+  const block = screen.getByRole("article", { name: /Message from @dev/ });
+  const menu = await rowMenu(block);
+  expect(within(menu).getByRole("menuitem", { name: "Open in inbox" })).toHaveAttribute(
+    "href",
+    "/inbox",
+  );
 });
 
 test("no result after the turn ended says 'Not sent'", async () => {
@@ -526,7 +543,7 @@ test("the announcer says '<name> messaged you' for a send to this human or @huma
   expect(await within(status()).findByText("@dev messaged you")).toBeInTheDocument();
 });
 
-test("Tab walks the focused row's controls: recipient link, View in session, Show tool call", async () => {
+test("Tab walks the focused row's controls: the recipient link, then the row menu", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -540,11 +557,9 @@ test("Tab walks the focused row's controls: recipient link, View in session, Sho
   await vi.waitFor(() => expect(sender).toHaveAttribute("tabindex", "0"));
   sender.focus();
   await user.tab();
-  expect(screen.getByRole("link", { name: "View this message in @b's session" })).toHaveFocus();
-  await user.tab();
-  expect(screen.getByRole("button", { name: "Show tool call" })).toHaveFocus();
-  await user.click(screen.getByRole("button", { name: "Show tool call" }));
-  expect(screen.getByRole("button", { name: "Hide tool call" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Row actions" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
 });
 
 test("two facts with one code in one envelope each render their own line", async () => {

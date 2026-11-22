@@ -1,0 +1,242 @@
+import { Link } from "@tanstack/react-router";
+import { Ellipsis } from "lucide-react";
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+  type Ref,
+  useRef,
+  useState,
+} from "react";
+import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useMedia } from "@/lib/breakpoints";
+import { parseSendResult } from "./outgoing-message";
+import type { Row } from "./rows";
+
+/** One row-menu entry (U3 §7.5). Plain data, so a row's list is memoized per row object. */
+export type RowMenuItem =
+  | { kind: "copy"; label: string; text: string }
+  /** Shows or hides the raw call (outgoing, spawn). */
+  | { kind: "call"; label: string }
+  | { kind: "inbox"; label: string }
+  /** The row's time, as a label: touch only, where the gutter time never shows. */
+  | { kind: "time"; label: string };
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const clock = (iso: string) => {
+  const d = new Date(iso);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+
+/** The items that apply to `row`, and only those: Copy link (all), Copy text (agent text, message
+ *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), Open in inbox
+ *  (outgoing to a human), and the time on touch. */
+export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
+  const items: RowMenuItem[] = [
+    {
+      kind: "copy",
+      label: "Copy link",
+      text: `${location.origin}/agents/${encodeURIComponent(slug)}?event=${row.seq}`,
+    },
+  ];
+  if (row.kind === "text") items.push({ kind: "copy", label: "Copy text", text: row.text });
+  if (row.kind === "message")
+    items.push({ kind: "copy", label: "Copy text", text: row.message.body });
+  if (row.kind === "peer")
+    items.push({ kind: "copy", label: "Copy text", text: row.envelope.body });
+  if (row.kind === "tool" && row.call.name === "Bash") {
+    const command = (row.call.input as { command?: unknown } | undefined)?.command;
+    if (typeof command === "string")
+      items.push({ kind: "copy", label: "Copy command", text: command });
+  }
+  if (row.kind === "outgoing") {
+    const body = (row.call.input as { body?: unknown }).body;
+    if (typeof body === "string") items.push({ kind: "copy", label: "Copy text", text: body });
+  }
+  if (row.kind === "outgoing" || row.kind === "spawn")
+    items.push({ kind: "call", label: "View tool call" });
+  // A human's copy lands in the inbox; an agent's in its session (the speaker line links it).
+  if (row.kind === "outgoing" && parseSendResult(row.result)?.to.startsWith("@"))
+    items.push({ kind: "inbox", label: "Open in inbox" });
+  if ("at" in row && row.at) {
+    const speech = row.kind === "message" || row.kind === "outgoing" || row.kind === "text";
+    items.push({ kind: "time", label: speech ? `Sent ${clock(row.at)}` : clock(row.at) });
+  }
+  return items;
+}
+
+// Shown instantly on hover or focus within the row (fine pointers), always on touch. The 0.98 press
+// is explicit: Button leaves it off popup triggers.
+const TRIGGER =
+  "absolute top-1 right-0 text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
+
+/**
+ * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots;
+ * the first pointer down, Enter or Space mounts the Radix menu already open, and it stays mounted.
+ * It keeps `data-copy-link` (the roving tabindex leaves it alone) and its own `tabIndex`. A copy turns
+ * the icon into a check for 1.5s; "Couldn't copy" shows inline.
+ */
+export function RowMenu({
+  items,
+  focusable,
+  label = "Row actions",
+  callShown = false,
+  onToggleCall,
+}: {
+  items: readonly RowMenuItem[];
+  /** The row is the timeline's tab stop. */
+  focusable: boolean;
+  label?: string;
+  /** The raw call is showing: its item reads "Hide tool call". */
+  callShown?: boolean;
+  onToggleCall?(): void;
+}) {
+  const { state, instant, copy } = useCopy();
+  const [mounted, setMounted] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const activate = (e: PointerEvent | KeyboardEvent) => {
+    if ("key" in e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault(); // the keypress opens the menu; it never also clicks
+    } else if (e.button !== 0 || e.ctrlKey) return;
+    else e.preventDefault(); // as Radix's trigger: focus stays where the menu will put it
+    setMounted(true);
+  };
+  const button = (
+    <TriggerButton
+      ref={trigger}
+      label={state === "copied" ? "Copied" : label}
+      focusable={focusable}
+      shown={state !== "idle"}
+      {...(mounted ? {} : { onPointerDown: activate, onKeyDown: activate })}
+    >
+      <CopyIcon
+        state={state}
+        instant={instant}
+        idle={<Ellipsis aria-hidden="true" className="size-3.5" />}
+      />
+    </TriggerButton>
+  );
+  return (
+    <>
+      {mounted ? (
+        <DropdownMenu defaultOpen>
+          <DropdownMenuTrigger asChild>{button}</DropdownMenuTrigger>
+          <RowMenuContent
+            items={items}
+            callShown={callShown}
+            onToggleCall={onToggleCall}
+            onCopy={copy}
+          />
+        </DropdownMenu>
+      ) : (
+        button
+      )}
+      {state === "failed" && <CopyFailed className="absolute top-1 right-8" />}
+    </>
+  );
+}
+
+function TriggerButton({
+  ref,
+  label,
+  focusable,
+  shown,
+  children,
+  ...rest
+}: {
+  ref: Ref<HTMLButtonElement>;
+  label: string;
+  focusable: boolean;
+  shown: boolean;
+  children: ReactNode;
+  onPointerDown?(e: PointerEvent): void;
+  onKeyDown?(e: KeyboardEvent): void;
+}) {
+  return (
+    <Button
+      ref={ref}
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      data-copy-link
+      aria-haspopup="menu"
+      aria-label={label}
+      tabIndex={focusable ? 0 : -1}
+      // Feedback stays visible after the pointer leaves.
+      className={`${shown ? "inline-flex" : "hidden"} ${TRIGGER}`}
+      {...rest}
+    >
+      {children}
+    </Button>
+  );
+}
+
+/** Mounted only while open, so the pointer query and the item list cost nothing at rest. */
+function RowMenuContent({
+  items,
+  callShown,
+  onToggleCall,
+  onCopy,
+}: {
+  items: readonly RowMenuItem[];
+  callShown: boolean;
+  onToggleCall?(): void;
+  onCopy(text: string, viaKeyboard: boolean): void;
+}) {
+  const touch = useMedia("(pointer: coarse)");
+  // An item chosen with Enter or Space arrives as a click with detail 0: its feedback is instant.
+  const viaKeyboard = useRef(false);
+  const onClick = (e: MouseEvent) => {
+    viaKeyboard.current = e.detail === 0;
+  };
+  return (
+    <DropdownMenuContent align="end">
+      {items.map((item) => {
+        switch (item.kind) {
+          case "copy":
+            return (
+              <DropdownMenuItem
+                key={item.label}
+                onClick={onClick}
+                onSelect={() => onCopy(item.text, viaKeyboard.current)}
+              >
+                {item.label}
+              </DropdownMenuItem>
+            );
+          case "call":
+            return (
+              <DropdownMenuItem key={item.label} onSelect={() => onToggleCall?.()}>
+                {callShown ? "Hide tool call" : item.label}
+              </DropdownMenuItem>
+            );
+          case "inbox":
+            return (
+              <DropdownMenuItem key={item.label} asChild>
+                <Link to="/inbox">{item.label}</Link>
+              </DropdownMenuItem>
+            );
+          default:
+            // The time: touch only, where the gutter time never shows.
+            return touch ? (
+              <DropdownMenuLabel
+                key={item.label}
+                className="text-[0.8125rem] font-normal text-muted-foreground tabular-nums"
+              >
+                {item.label}
+              </DropdownMenuLabel>
+            ) : null;
+        }
+      })}
+    </DropdownMenuContent>
+  );
+}

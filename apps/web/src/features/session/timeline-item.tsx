@@ -1,6 +1,7 @@
-import { memo, type TransitionEvent } from "react";
-import { CopyLink } from "./copy-link";
+import { memo, type TransitionEvent, useCallback, useMemo } from "react";
 import { childrenOf } from "./display-passes";
+import { formatTime } from "./format";
+import { RowMenu, rowMenuItems } from "./row-menu";
 import type { Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
@@ -88,11 +89,11 @@ export function rowGap(row: Row, prev: Row | undefined): string {
   return speaks || prev.kind === "turn_footer" ? "mt-6" : "mt-2";
 }
 
-/** The rows' right gutter (room for Copy link): everything under the rows that should line up with them
+/** The rows' right gutter, a fixed 2rem column for the row menu (U3 §7.5): everything under the rows that should line up with them
  *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
 export const ROW_GUTTER = "pr-8";
 
-/** One timeline entry: the wrap (deep-link id, tint, live fade), the row and its Copy link. */
+/** One timeline entry: the wrap (deep-link id, live fade), the row, its gutter time and its menu. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   const { row } = p;
   return (
@@ -108,10 +109,21 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   );
 }, itemPropsEqual);
 
-/** The row and its Copy link, memoized apart from the wrap so the tab coming back (every live row's
- *  `live` turning false at once) re-renders only the wrap divs. */
+/** Agent text and tool rows show their time in the gutter on hover or focus (U3 §7.5); a head text
+ *  row's speaker line already shows it, and messages keep their visible time. */
+function gutterTime(row: Row): string | undefined {
+  if (row.kind === "tool" || (row.kind === "text" && !row.head)) return row.at;
+  return undefined;
+}
+
+/** The row, its gutter time and its menu, memoized apart from the wrap so the tab coming back (every
+ *  live row's `live` turning false at once) re-renders only the wrap divs. */
 const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
-  const { row } = p;
+  const { row, slug, toggle } = p;
+  // Plain data per row object: a re-render for any other reason reuses the list.
+  const items = useMemo(() => rowMenuItems(row, slug), [row, slug]);
+  const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
+  const time = gutterTime(row);
   return (
     <>
       <TimelineRow
@@ -140,9 +152,22 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}
       />
-      <CopyLink
-        url={`${location.origin}/agents/${encodeURIComponent(p.slug)}?event=${row.seq}`}
+      {time !== undefined && (
+        // Content | chip | time | ⋯: the time sits just left of the menu, over the row's end.
+        <time
+          data-gutter-time
+          dateTime={time}
+          title={new Date(time).toLocaleString()}
+          className="absolute top-1 right-8 hidden h-6 items-center bg-background px-1 text-[0.8125rem] text-muted-foreground tabular-nums group-focus-within:flex group-hover:flex pointer-coarse:hidden!"
+        >
+          {formatTime(time)}
+        </time>
+      )}
+      <RowMenu
+        items={items}
         focusable={row.key === p.tabKey}
+        callShown={p.expanded.has(row.key)}
+        onToggleCall={onToggleCall}
       />
     </>
   );

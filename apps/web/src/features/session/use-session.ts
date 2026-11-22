@@ -303,6 +303,21 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     [qc, dispatch],
   );
 
+  // Edit agent saves over this session and writes the saved summary into the detail cache: the view takes it, so the
+  // header shows the new name at once. Only explicit writes (`setQueryData`); a fetch's result is applied by whoever
+  // fetched it (the load, `refreshAgent`), so a slow one never overwrites newer status frames.
+  useEffect(
+    () =>
+      qc.getQueryCache().subscribe((e) => {
+        if (e.type !== "updated" || e.action.type !== "success" || !e.action.manual) return;
+        const [kind, key] = e.query.queryKey;
+        if (kind !== "agent" || key !== slug || e.query.queryKey.length !== 2) return;
+        const agent = (e.query.state.data as AgentDetail | undefined)?.agent;
+        if (agent) dispatch({ type: "agent", agent });
+      }),
+    [qc, slug, dispatch],
+  );
+
   /** Refetches the summary only (not the events): after a send raced a termination. */
   const refreshAgent = useCallback(
     () =>

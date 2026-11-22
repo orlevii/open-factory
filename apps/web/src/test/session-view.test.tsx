@@ -1,4 +1,4 @@
-import type { ServerMessage } from "@open-factory/shared";
+import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -1110,4 +1110,16 @@ test("?event= asks for its window only after the detail", async () => {
   gate.release(json(detail()));
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
   expect(requested("/api/agents/dev/events?")).toBe(1);
+});
+
+test("a saved summary written to the agent's detail cache (Edit agent over the session) renames the header at once", async () => {
+  const { queryClient } = renderApp("/agents/dev", alice);
+  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
+  await screen.findByText("Two entries.");
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
+    ),
+  );
+  expect(await screen.findByRole("heading", { level: 1, name: "Renamed" })).toBeInTheDocument();
 });

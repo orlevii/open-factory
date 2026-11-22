@@ -338,7 +338,7 @@ export function TimelineRow(props: TimelineRowProps) {
     case "text":
       return (
         <div {...rp}>
-          <Markdown source={row.text} />
+          <Markdown source={row.text} variant="detail" />
         </div>
       );
     case "tool":

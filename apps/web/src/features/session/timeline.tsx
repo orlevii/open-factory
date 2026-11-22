@@ -250,7 +250,9 @@ export function Timeline(props: {
           aria-label="Session"
           aria-live="off"
           onKeyDown={onKeyDown}
-          className="max-w-[52rem] min-w-0 space-y-3"
+          // clip, not hidden: a leak can never scroll the conversation sideways, and the log
+          // doesn't become a scroll container (the scroller around it is overflow-y-auto).
+          className="max-w-[52rem] min-w-0 space-y-3 overflow-x-clip"
         >
           {props.hasMoreBefore && (
             <div className="flex items-center gap-2">

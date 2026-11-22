@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
 import { buildRows } from "./rows";
+import { Timeline } from "./timeline";
 import { TimelineRow } from "./timeline-row";
 
 const NOW = new Date(2026, 10, 19, 10, 0);
@@ -280,4 +281,29 @@ test("self-started turns say what woke the agent", () => {
     "Woke for a background task · 12s",
   );
   expect(footerLine({ durationMs: 12_000, origin: "cron" })).toBe("Woke for a cron · 12s");
+});
+
+// Reading sizes (U3 §7.3): nothing in a session outranks the page title.
+test("the agent's own text uses the demoted heading scale", () => {
+  const { els } = lines([{ type: "assistant_text", text: "# Plan\n\nBody" }]);
+  const prose = els[0]?.querySelector(".prose-of");
+  expect(prose).toHaveClass("prose-of-detail");
+});
+
+test("the log clips sideways overflow; the scroller around it does not", () => {
+  render(
+    <Timeline
+      slug="dev"
+      rows={[]}
+      failedIds={new Set()}
+      interruptedEnds={new Set()}
+      hasMoreBefore={false}
+      onLoadEarlier={async () => false}
+      earlierError={false}
+      footer={null}
+    />,
+  );
+  const log = screen.getByRole("log");
+  expect(log).toHaveClass("overflow-x-clip");
+  expect(log.parentElement).not.toHaveClass("overflow-x-clip");
 });

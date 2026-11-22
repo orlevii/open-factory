@@ -51,6 +51,7 @@ function makeComponents(newTabNoteId: string): Components {
 }
 
 const REMARK_PLUGINS = [remarkGfm];
+const VARIANT_CLASS = { default: "", detail: " prose-of-detail", work: " prose-of-work" } as const;
 
 /** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. Callers constrain the width.
  *  Memoized on `source` and `variant`: a parent re-render with the same props doesn't parse again. */
@@ -59,15 +60,14 @@ export const Markdown = memo(function Markdown({
   variant = "default",
 }: {
   source: string;
-  /** "detail": inside a task body, comment or message, headings step down one size (a document never outranks its title). */
-  variant?: "default" | "detail";
+  /** "detail": a task body, comment or any speaker's markdown in a session; headings step down one
+   *  size (a document never outranks its title). "work": tool output, 13/20 (U3 §7.3). */
+  variant?: "default" | "detail" | "work";
 }) {
   const newTabNoteId = useId();
   const components = useMemo(() => makeComponents(newTabNoteId), [newTabNoteId]);
   return (
-    <div
-      className={`prose prose-sm prose-of max-w-none${variant === "detail" ? " prose-of-detail" : ""}`}
-    >
+    <div className={`prose prose-sm prose-of max-w-none${VARIANT_CLASS[variant]}`}>
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
         {source}
       </ReactMarkdown>

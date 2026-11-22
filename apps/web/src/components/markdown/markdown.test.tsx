@@ -143,6 +143,13 @@ test("variant detail wraps in .prose-of-detail, the default does not", () => {
   expect(container.querySelector(".prose-of-detail")).toBeNull();
 });
 
+test("variant work is a modifier on .prose-of (tool output), never the detail scale", () => {
+  const { container } = render(<Markdown source="# A" variant="work" />);
+  const root = container.firstElementChild;
+  expect(root).toHaveClass("prose-of", "prose-of-work");
+  expect(root).not.toHaveClass("prose-of-detail");
+});
+
 test("re-rendering the parent with the same source does not parse again", () => {
   const { rerender } = render(<Markdown source="**same**" variant="detail" />);
   const after = markdownCalls.n;

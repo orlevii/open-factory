@@ -363,9 +363,13 @@
   --tw-prose-pre-bg: var(--code-bg);
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border);
-  font-size: 0.875rem; /* rem, never px: type follows the reader's browser font-size setting */
-  line-height: 1.375rem;
+  /* Reading prose for speech, task bodies and comments: 15/24. rem, never px: type follows the
+     reader's browser font-size setting. Geist body text is never tracked; only Archivo headings are. */
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  letter-spacing: 0;
 }
+/* Archivo headings: tracking −0.015em at 20px and above, −0.01em at 15–17px, 0 at 14px and below. */
 .prose-of :where(h1, h2, h3, h4) {
   font-family: var(--font-heading);
   letter-spacing: -0.01em;
@@ -373,25 +377,48 @@
 }
 .prose-of :where(h1) {
   font-size: 1.25rem;
+  line-height: 1.75rem;
   letter-spacing: -0.015em;
 }
 .prose-of :where(h2) {
   font-size: 1.0625rem;
+  line-height: 1.5rem;
 }
-.prose-of :where(h3) {
+.prose-of :where(h3, h4) {
   font-size: 0.9375rem;
+  line-height: 1.5rem;
 }
-/* Inside a task body, comment or message the headings step down one size: 17 / 15 / 14. */
+/* Demoted: a task body, comment, or any speaker's markdown in a session: 17 / 16 / 15, so nothing
+   in it outranks the page title. */
 .prose-of-detail :where(h1) {
   font-size: 1.0625rem;
+  line-height: 1.5rem;
   letter-spacing: -0.01em;
 }
 .prose-of-detail :where(h2) {
-  font-size: 0.9375rem;
+  font-size: 1rem;
+  line-height: 1.5rem;
   letter-spacing: -0.01em;
 }
 .prose-of-detail :where(h3, h4) {
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  letter-spacing: -0.01em;
+}
+/* Work tier (tool output rendered as markdown): 13/20, headings 14 / 13 / 13. A modifier on .prose-of,
+   so every overflow rule above and below still applies. */
+.prose-of.prose-of-work {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.prose-of.prose-of-work :where(h1) {
   font-size: 0.875rem;
+  line-height: 1.25rem;
+  letter-spacing: 0;
+}
+.prose-of.prose-of-work :where(h2, h3, h4) {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
   letter-spacing: 0;
 }
 .prose-of :where(a) {
@@ -405,7 +432,7 @@
 }
 
 /* long words, URLs and paths wrap instead of widening the page; table cells break only when they must */
-.prose-of :is(p, li, blockquote) {
+.prose-of :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, dt, dd) {
   overflow-wrap: anywhere;
 }
 .prose-of :is(a, :not(pre) > code):not(td *, th *) {

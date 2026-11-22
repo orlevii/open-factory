@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { Button } from "@/components/ui/button";
 import { SheetClose, SheetFooter, useSheetMobile } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -13,6 +13,8 @@ export function SheetFormFooter({
   onDiscard,
   left,
   note,
+  submitClassName,
+  above,
 }: {
   submitLabel: string;
   pendingLabel: string;
@@ -21,7 +23,13 @@ export function SheetFormFooter({
   onDiscard(): void;
   left?: ReactNode;
   note?: ReactNode;
+  /** e.g. a min width that fits the pending label, so the button doesn't change width while pending. */
+  submitClassName?: string;
+  /** A muted line on its own row above the buttons (Edit agent's restart notice). It describes the submit button, so
+   *  it is heard there. */
+  above?: ReactNode;
 }) {
+  const aboveId = useId();
   const mobile = useSheetMobile();
   const aside = (left || note || restored) && (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground sm:mr-auto">
@@ -43,6 +51,11 @@ export function SheetFormFooter({
       )}
     </div>
   );
+  const aboveLine = above && (
+    <p id={aboveId} className="w-full text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+      {above}
+    </p>
+  );
   const close = (
     <SheetClose asChild>
       <Button type="button" variant="ghost">
@@ -51,7 +64,12 @@ export function SheetFormFooter({
     </SheetClose>
   );
   const submit = (
-    <Button type="submit" aria-disabled={pending || undefined}>
+    <Button
+      type="submit"
+      aria-disabled={pending || undefined}
+      aria-describedby={above ? aboveId : undefined}
+      className={submitClassName}
+    >
       {pending && <Spinner />}
       {pending ? pendingLabel : submitLabel}
     </Button>
@@ -60,12 +78,14 @@ export function SheetFormFooter({
   // follows, so Tab order matches what is seen.
   return mobile ? (
     <SheetFooter>
+      {aboveLine}
       {submit}
       {aside}
       {close}
     </SheetFooter>
   ) : (
     <SheetFooter>
+      {aboveLine}
       {aside}
       {close}
       {submit}

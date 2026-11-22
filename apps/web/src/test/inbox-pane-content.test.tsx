@@ -260,6 +260,56 @@ test("a terminated sender shows the read-only line; an archived one the archived
   expect(within(pane()).queryByRole("textbox")).toBeNull();
 });
 
+test("an archived sender restores in place from the notice: Restore, then the reply composer", async () => {
+  setup([
+    item(1, {
+      from: { kind: "agent", name: "old" },
+      link: { kind: "session", agentSlug: "old", seq: 42 },
+    }),
+  ]);
+  let archived = true;
+  api.on("GET /api/agents/old", () =>
+    json(agentDetail({ slug: "old", displayName: "Old", archivedAt: archived ? at(0) : null })),
+  );
+  api.on("GET /api/agents/old/events?", validQuery(eventsQuerySchema, eventsRoute("old")));
+  api.on("POST /api/agents/old/unarchive", () => {
+    archived = false;
+    return json({ agent: agentDetail({ slug: "old", displayName: "Old" }).agent });
+  });
+  await visit("/inbox?item=i1");
+  const restore = await within(pane()).findByRole("button", { name: "Restore" });
+  expect(within(pane()).queryByRole("link", { name: "Restore it" })).toBeNull();
+  await userEvent.click(restore);
+  await waitFor(() => expect(within(pane()).queryByText(/This agent is archived\./)).toBeNull());
+  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(
+    true,
+  );
+  const box = await within(pane()).findByRole("combobox", { name: "Message to Old" });
+  // The focused Restore button went away with the notice: focus follows to the composer.
+  await waitFor(() => expect(box).toHaveFocus());
+});
+
+test("an archived sender's refused Restore says why in the pane", async () => {
+  setup([
+    item(1, {
+      from: { kind: "agent", name: "old" },
+      link: { kind: "session", agentSlug: "old", seq: 42 },
+    }),
+  ]);
+  api.on("GET /api/agents/old", () =>
+    json(agentDetail({ slug: "old", displayName: "Old", archivedAt: at(0) })),
+  );
+  api.on("GET /api/agents/old/events?", validQuery(eventsQuerySchema, eventsRoute("old")));
+  api.on("POST /api/agents/old/unarchive", () =>
+    json({ error: { code: "manager_archived", message: "Its manager @boss is archived." } }, 409),
+  );
+  await visit("/inbox?item=i1");
+  await userEvent.click(await within(pane()).findByRole("button", { name: "Restore" }));
+  expect(
+    await within(pane()).findByText("Couldn't restore @old: Its manager @boss is archived."),
+  ).toBeInTheDocument();
+});
+
 const mention = (n: number, commentId: string, from: Over) =>
   item(n, {
     kind: "mention",

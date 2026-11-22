@@ -160,6 +160,9 @@ export type SessionAction =
   | { type: "send_failed"; clientMessageId: string; unconfirmed?: boolean | undefined }
   /** A fresh summary from a response or a refetch (S7: terminate, pin, the termination fields). */
   | { type: "agent"; agent: AgentSummary }
+  /** What an Edit agent save changes, merged onto the live summary (the rest, a turn's start or a
+   *  compaction, stays as the frames left it). The same values change nothing. */
+  | { type: "agent_edited"; fields: EditedFields }
   /** Everything held so far is caught up (after a load; PR4 adds the subscribe's `reset` frame). */
   | { type: "caught_up" }
   /** The tab became visible: rows committed while hidden never got a style pass, so none fades. */
@@ -587,6 +590,38 @@ const addKeys = (set: ReadonlySet<string>, keys: readonly string[]): ReadonlySet
   return next;
 };
 
+/** The summary fields an Edit agent save changes (the session takes these from the detail cache). */
+const EDITED_KEYS = [
+  "displayName",
+  "description",
+  "reportsTo",
+  "credential",
+  "projects",
+  "grantsOverridden",
+  "restartPending",
+] as const;
+export type EditedFields = Pick<AgentSummary, (typeof EDITED_KEYS)[number]>;
+export function editedFields(a: AgentSummary): EditedFields {
+  const { displayName, description, reportsTo, credential, projects, grantsOverridden } = a;
+  const { restartPending } = a;
+  return {
+    displayName,
+    description,
+    reportsTo,
+    credential,
+    projects,
+    grantsOverridden,
+    restartPending,
+  };
+}
+export function sameEdited(a: EditedFields, b: EditedFields): boolean {
+  return EDITED_KEYS.every((k) =>
+    k === "projects"
+      ? a.projects.length === b.projects.length && a.projects.every((p, i) => p === b.projects[i])
+      : a[k] === b[k],
+  );
+}
+
 /** The state with `agent` replaced, counting a `turnOpen` change in `turnEpoch`. */
 const withAgent = (s: SessionState, agent: AgentSummary | undefined): SessionState => {
   const edge = s.agent?.turnOpen === agent?.turnOpen ? 0 : 1;
@@ -699,6 +734,10 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     }
     case "agent":
       return s.agent && a.agent.slug === s.slug ? withAgent(s, a.agent) : s;
+    case "agent_edited":
+      return s.agent && !sameEdited(editedFields(s.agent), a.fields)
+        ? withAgent(s, { ...s.agent, ...a.fields })
+        : s;
     case "caught_up":
     case "visible": {
       const top = topSeq(s);

@@ -1,9 +1,10 @@
-import { Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { SegmentedLinks } from "@/components/ui/segmented-links";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { preloadSheet } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 
 const VIEWS = [
   { to: "/templates", label: "Templates" },
@@ -22,11 +23,16 @@ export function TemplatesHeader({ documentTitle }: { documentTitle?: string }) {
       actions={
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" asChild>
-              <Link to="/templates/new" aria-label="New template">
-                <Plus aria-hidden="true" data-icon="inline-start" />
-                <span className="max-sm:sr-only">New template</span>
-              </Link>
+            <Button
+              variant="ghost"
+              aria-label="New template"
+              // biome-ignore lint/suspicious/noThenProperty: SheetSpec's field, not a thenable
+              onClick={() => openSheet({ kind: "new-template", then: "open-editor" })}
+              onPointerEnter={() => preloadSheet("new-template")}
+              onFocus={() => preloadSheet("new-template")}
+            >
+              <Plus aria-hidden="true" data-icon="inline-start" />
+              <span className="max-sm:sr-only">New template</span>
             </Button>
           </TooltipTrigger>
           {/* Only needed while the label is hidden. */}

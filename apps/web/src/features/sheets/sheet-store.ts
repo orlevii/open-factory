@@ -25,6 +25,8 @@ let nextId = 1;
 let pathnameSource: () => string = () => window.location.pathname;
 const listeners = new Set<() => void>();
 const pending = new Map<number, { parentId: number; onDone: (name: string) => void }>();
+// Where focus lands when a child that served its parent closes (set by the parent's `onDone`).
+let childReturnFocus: (() => HTMLElement | null) | undefined;
 
 function set(next: SheetState) {
   state = next;
@@ -56,6 +58,7 @@ export function openChildSheet(spec: ChildSpec, onDone: (name: string) => void) 
     return;
   }
   if (state.child) pending.delete(state.child.id);
+  childReturnFocus = undefined;
   const id = nextId++;
   pending.set(id, { parentId: parent.id, onDone });
   set({ parent, child: { ...spec, id, parentId: parent.id } });
@@ -70,6 +73,18 @@ export function completeChild(childId: number, name: string) {
   if (entry && state.parent?.id === entry.parentId) entry.onDone(name);
 }
 
+/** Called from a parent's `onDone`: the child's close focuses this (looked up on close, after the value rendered)
+ *  instead of the button that opened it. */
+export function returnFocusAfterChild(target: () => HTMLElement | null) {
+  childReturnFocus = target;
+}
+/** The child layer's close: the target the parent named, once. */
+export function takeChildReturnFocus(): HTMLElement | null {
+  const t = childReturnFocus;
+  childReturnFocus = undefined;
+  return t?.() ?? null;
+}
+
 export function closeChildSheet() {
   if (!state.child) return;
   pending.delete(state.child.id);
@@ -78,6 +93,7 @@ export function closeChildSheet() {
 
 export function closeSheet() {
   pending.clear();
+  childReturnFocus = undefined;
   if (!state.parent && !state.child) return;
   set({});
 }
@@ -85,6 +101,7 @@ export function closeSheet() {
 /** Sign-out: drop everything, including pending callbacks. */
 export function resetSheets() {
   pending.clear();
+  childReturnFocus = undefined;
   if (state.parent || state.child) set({});
 }
 

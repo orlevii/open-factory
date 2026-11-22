@@ -150,7 +150,7 @@ export interface ActionItem {
 
 /** §10.2 "Actions". There is deliberately no "Mark all read" (Q28). */
 export const ACTIONS: readonly ActionItem[] = [
-  { id: "new-agent", label: "New agent", kind: "navigate", to: "/agents/new" },
+  { id: "new-agent", label: "New agent", kind: "open-sheet", sheet: "new-agent" },
   { id: "new-task", label: "New task", kind: "open-sheet", sheet: "new-task" },
   { id: "new-schedule", label: "New schedule", kind: "open-sheet", sheet: "new-schedule" },
   { id: "agent-details", label: "Agent details", kind: "agent-details", sessionOnly: true },

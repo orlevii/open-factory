@@ -108,7 +108,6 @@ function setup(props: Props = {}) {
       stub("/templates/$name"),
       stub("/agents/"),
       stub("/agents/$slug"),
-      stub("/agents/$slug/edit"),
       stub("/agents/$slug/usage"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
@@ -474,17 +473,18 @@ test("Org: a spawned agent says 'Spawned by'; a root has No manager", async () =
   expect(within(await section("Org")).getByText("No manager")).toBeInTheDocument();
 });
 
-test("Edit agent is an outline button for a persistent, unarchived agent only", async () => {
+test("Edit agent is an outline button for a persistent, unarchived agent only, and opens the sheet", async () => {
   const first = setup();
-  const edit = await screen.findByRole("link", { name: "Edit agent" });
-  expect(edit).toHaveAttribute("href", "/agents/dev/edit");
+  const edit = await screen.findByRole("button", { name: "Edit agent" });
   expect(edit).toHaveAttribute("data-variant", "outline");
+  await userEvent.click(edit);
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
   first.unmount();
   const second = setup({ agent: agentSummary({ kind: "ephemeral" }) });
   await screen.findByRole("heading", { name: "Agent details" });
-  expect(screen.queryByRole("link", { name: "Edit agent" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit agent" })).toBeNull();
   second.unmount();
   setup({ agent: agentSummary({ archivedAt: "2026-11-01T00:00:00.000Z" }) });
   await screen.findByRole("heading", { name: "Agent details" });
-  expect(screen.queryByRole("link", { name: "Edit agent" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit agent" })).toBeNull();
 });

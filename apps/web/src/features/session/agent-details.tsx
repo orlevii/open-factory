@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
-import { preloadSheet } from "@/features/sheets/sheet-bodies";
+import { preloadSheet, sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { agentTasksOptions } from "@/features/tasks/api";
 import { STATUS } from "@/features/tasks/status-label";
@@ -517,10 +517,13 @@ export function AgentDetails({
       </div>
       {canEdit && (
         <div className="flex shrink-0 justify-end border-t border-border px-4 py-3">
-          <Button asChild variant="outline">
-            <Link to="/agents/$slug/edit" params={{ slug: agent.slug }}>
-              Edit agent
-            </Link>
+          <Button
+            type="button"
+            variant="outline"
+            {...sheetIntent("edit-agent", { kind: "edit-agent", slug: agent.slug })}
+            onClick={() => openSheet({ kind: "edit-agent", slug: agent.slug })}
+          >
+            Edit agent
           </Button>
         </div>
       )}

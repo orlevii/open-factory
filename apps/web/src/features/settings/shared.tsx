@@ -11,6 +11,8 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
@@ -82,7 +84,7 @@ export function CodeText({ text }: { text: string }) {
   );
 }
 
-/** Agent handles as links, joined "@a, @b". `edit` links to the edit page (where a fix is made). */
+/** Agent handles as links, joined "@a, @b". `edit` makes each a button opening Edit agent (where a fix is made). */
 export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean }) {
   return (
     <>
@@ -90,13 +92,14 @@ export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean })
         <span key={s}>
           {i > 0 && ", "}
           {edit ? (
-            <Link
-              to="/agents/$slug/edit"
-              params={{ slug: s }}
+            <button
+              type="button"
               className={`${monoClass} ${linkClass}`}
+              {...sheetIntent("edit-agent", { kind: "edit-agent", slug: s })}
+              onClick={() => openSheet({ kind: "edit-agent", slug: s })}
             >
               @{s}
-            </Link>
+            </button>
           ) : (
             <Link to="/agents/$slug" params={{ slug: s }} className={`${monoClass} ${linkClass}`}>
               @{s}

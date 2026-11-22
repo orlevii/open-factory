@@ -1,8 +1,10 @@
 import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { RotateCw } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { MoreHorizontal, RotateCw } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentChip } from "@/components/agent-chip";
+import { Button } from "@/components/ui/button";
+import { AgentMenu } from "@/features/agents/agent-menu";
 import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
@@ -102,8 +104,174 @@ function usageCell(row: AgentUsageRow | undefined, own: boolean) {
   return { text, sr };
 }
 
+/** One row of the tree. Memoized: a status frame replaces one agent object, so only its row renders
+ *  again; every other prop is a primitive or kept stable by the tree. */
+const AgentTreeRow = memo(function AgentTreeRow({
+  agent: a,
+  level,
+  cap,
+  continues,
+  managerName,
+  usageRow,
+  usageLoaded,
+  flat,
+  focused,
+  now,
+  menuOpen,
+  onMenu,
+}: {
+  agent: AgentSummary;
+  level: number;
+  cap: number;
+  continues: boolean[];
+  managerName: string | undefined;
+  usageRow: AgentUsageRow | undefined;
+  usageLoaded: boolean;
+  flat: boolean;
+  focused: boolean;
+  now: Date;
+  menuOpen: boolean;
+  onMenu: (slug: string, anchor?: HTMLElement) => void;
+}) {
+  const depth = Math.min(level, cap);
+  const beyond = level > cap;
+  const ended = a.archivedAt !== null || a.status === "terminated";
+  // Empty while usage is loading or failed; a dash once loaded without a row for this agent.
+  const cost = usageLoaded ? usageCell(usageRow, flat) : null;
+  const note = ended ? endedNote(a, now) : agentNote(a);
+  return (
+    <li className="flex items-center">
+      <Link
+        to="/agents/$slug"
+        params={{ slug: a.slug }}
+        data-agent-link={a.slug}
+        data-focused={focused || undefined}
+        data-menu-open={menuOpen || undefined}
+        className={cn(
+          "of-row flex min-w-0 flex-1 data-focused:bg-accent data-menu-open:bg-accent min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
+          // md: two lines (status, name, cost; then slug, template, runtime under the name), so the
+          // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
+          // window with the sidebar open doesn't give, so they key on the tree's width, not the window.
+          "md:grid md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]",
+          "@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem] @min-[54rem]:py-0",
+        )}
+      >
+        <span className="flex w-28 shrink-0 items-center gap-1.5">
+          {a.archivedAt && a.status !== "terminated" ? (
+            <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
+              {/* The empty dot slot keeps the label aligned with the live statuses. */}
+              <span aria-hidden="true" className="size-3" />
+              Archived
+            </span>
+          ) : (
+            <StatusBadge status={a.status} size="short" />
+          )}
+          {a.restartPending && !ended && (
+            <>
+              <RotateCw aria-hidden="true" className="size-3 text-muted-foreground" />
+              <span className="sr-only">restart pending</span>
+            </>
+          )}
+        </span>
+        <span
+          data-depth={level}
+          className="relative min-w-0 flex-1"
+          style={{ paddingLeft: `${depth * INDENT}px` }}
+        >
+          {/* Ancestor lines, one per level whose subtree continues past this row; they run
+                through the row's padding so they read as one rule down the list. */}
+          {continues.map(
+            (more, k) =>
+              more &&
+              k + 1 <= cap && (
+                <span
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the level is the identity
+                  key={k}
+                  data-tree-line
+                  aria-hidden="true"
+                  className="absolute -top-2 -bottom-2 w-px bg-border"
+                  style={{ left: `${(k + 1) * INDENT + 2}px` }}
+                />
+              ),
+          )}
+          <span
+            className={cn(
+              "relative flex min-w-0 items-baseline gap-2",
+              // The └ elbow: a 1px rule corner drawn just before a nested name.
+              level > 0 &&
+                !beyond &&
+                "pl-3.5 before:absolute before:top-0 before:left-0.5 before:h-[0.6875rem] before:w-2 before:border-b before:border-l before:border-border",
+            )}
+          >
+            {beyond && (
+              // A no-break space and no shrinking: the marker never wraps under the elbow.
+              <span
+                aria-hidden="true"
+                className="shrink-0 whitespace-nowrap text-[0.8125rem] text-muted-foreground tabular-nums"
+              >
+                {`└\u00a0${level}`}
+              </span>
+            )}
+            <AgentChip agent={a} showSlug />
+            {/* Inline, not a second line, so live updates never change the row height. It
+                  gives way (truncates) before the name does. */}
+            {note && (
+              <span
+                data-agent-note
+                className="min-w-0 shrink-[1000] truncate text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+              >
+                {note}
+              </span>
+            )}
+          </span>
+          {a.reportsTo && (
+            <span className="sr-only">
+              {" "}
+              {managerName
+                ? `reports to ${managerName} (@${a.reportsTo})`
+                : `reports to @${a.reportsTo}`}
+            </span>
+          )}
+        </span>
+        {/* A second line below md and in the two-line grid; grid cells in the full one. */}
+        <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
+          <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
+            {a.template !== slugStem(a.slug) ? a.template : null}
+          </span>
+          <span className="md:justify-self-end">
+            {a.runtime === "local" ? <UnsandboxedBadge /> : null}
+          </span>
+        </span>
+        {cost && (
+          <span className="hidden text-right text-[0.8125rem] text-muted-foreground tabular-nums md:col-start-3 md:row-start-1 md:block @min-[54rem]:col-start-6">
+            <span aria-hidden="true">{cost.text}</span>
+            <span className="sr-only">{cost.sr}</span>
+          </span>
+        )}
+      </Link>
+      {/* A sibling of the link, never inside it: one shared menu opens on it (U4 §6.5). */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Actions for ${a.displayName}`}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        data-row-more={a.slug}
+        className="mx-1 shrink-0 text-muted-foreground"
+        onClick={(e) => onMenu(a.slug, e.currentTarget)}
+      >
+        <MoreHorizontal aria-hidden="true" />
+      </Button>
+    </li>
+  );
+});
+
+const NO_CONTINUES: boolean[] = [];
+
 /** The org tree: depth-first in server order, one link per agent. Only the name cell indents, so
- *  the other columns stay aligned. `flat` (the Ended view) keeps server order with no nesting. */
+ *  the other columns stay aligned. `flat` (the Ended view) keeps server order with no nesting. Each
+ *  row has a ⋯ that opens the tree's one `AgentMenu`. */
 export function AgentTree({
   agents,
   flat = false,
@@ -126,144 +294,91 @@ export function AgentTree({
       ?.scrollIntoView({ block: "center" });
   }, [focus, focusPresent]);
   const isMobile = useIsMobile();
-  const now = new Date();
-  const bySlug = new Map(agents.map((a) => [a.slug, a]));
-  // Depth as drawn: a row whose manager isn't in this list starts a new root rather than hanging
-  // under nothing. Server order is depth-first, so managers come first.
-  const shown = new Map<string, number>();
-  for (const a of agents) {
-    const m = !flat && a.reportsTo ? shown.get(a.reportsTo) : undefined;
-    shown.set(a.slug, m === undefined ? 0 : m + 1);
-  }
+  // One clock per list: the ended notes' days are relative to it.
+  const now = useMemo(() => new Date(), []);
+  const bySlug = useMemo(() => new Map(agents.map((a) => [a.slug, a])), [agents]);
+  // The shape (who is under whom) changes rarely; status frames don't touch it, so the depths and
+  // tree lines stay the same arrays and the memoized rows skip.
+  const shape = agents.map((a) => `${a.slug}>${flat ? "" : (a.reportsTo ?? "")}`).join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `shape` is the key; `agents` is read for it
+  const { levels, continues } = useMemo(() => {
+    // Depth as drawn: a row whose manager isn't in this list starts a new root rather than hanging
+    // under nothing. Server order is depth-first, so managers come first.
+    const shown = new Map<string, number>();
+    for (const a of agents) {
+      const m = !flat && a.reportsTo ? shown.get(a.reportsTo) : undefined;
+      shown.set(a.slug, m === undefined ? 0 : m + 1);
+    }
+    const levels = agents.map((a) => shown.get(a.slug) ?? 0);
+    return { levels, continues: continuations(levels) };
+  }, [shape]);
   const cap = isMobile ? MOBILE_DEPTH_CAP : DESKTOP_DEPTH_CAP;
-  const continues = continuations(agents.map((a) => shown.get(a.slug) ?? 0));
+
+  // One AgentMenu for the list, opened on the row named here. The slug outlives the close so the
+  // menu keeps its content for the exit animation.
+  const [menu, setMenu] = useState<{
+    slug: string | null;
+    open: boolean;
+    anchor: HTMLElement | null;
+  }>({ slug: null, open: false, anchor: null });
+  const menuSlug = menu.open ? menu.slug : null;
+  const openMenu = useCallback(
+    (slug: string, anchor?: HTMLElement) =>
+      setMenu({
+        slug,
+        open: true,
+        anchor:
+          anchor ??
+          listRef.current?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(slug)}"]`) ??
+          null,
+      }),
+    [],
+  );
+  const onMenuOpenChange = useCallback((open: boolean) => setMenu((m) => ({ ...m, open })), []);
+  const onMenuClose = useCallback((slug: string) => {
+    listRef.current?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(slug)}"]`)?.focus();
+  }, []);
+  const menuAgent = menu.slug ? bySlug.get(menu.slug) : undefined;
   return (
-    <ul
-      ref={listRef}
-      aria-label="Agents"
-      className="@container divide-y divide-border border-y border-border"
-    >
-      {agents.map((a, i) => {
-        const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
-        const level = shown.get(a.slug) ?? 0;
-        const depth = Math.min(level, cap);
-        const beyond = level > cap;
-        const ended = a.archivedAt !== null || a.status === "terminated";
-        // Empty while usage is loading or failed; a dash once loaded without a row for this agent.
-        const cost = usage ? usageCell(usage.get(a.slug), flat) : null;
-        const note = ended ? endedNote(a, now) : agentNote(a);
-        return (
-          <li key={a.slug}>
-            <Link
-              to="/agents/$slug"
-              params={{ slug: a.slug }}
-              data-agent-link={a.slug}
-              data-focused={a.slug === focus || undefined}
-              className={cn(
-                "of-row flex data-focused:bg-accent min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
-                // md: two lines (status, name, cost; then slug, template, runtime under the name), so the
-                // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
-                // window with the sidebar open doesn't give, so they key on the tree's width, not the window.
-                "md:grid md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]",
-                "@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem] @min-[54rem]:py-0",
-              )}
-            >
-              <span className="flex w-28 shrink-0 items-center gap-1.5">
-                {a.archivedAt && a.status !== "terminated" ? (
-                  <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
-                    {/* The empty dot slot keeps the label aligned with the live statuses. */}
-                    <span aria-hidden="true" className="size-3" />
-                    Archived
-                  </span>
-                ) : (
-                  <StatusBadge status={a.status} size="short" />
-                )}
-                {a.restartPending && !ended && (
-                  <>
-                    <RotateCw aria-hidden="true" className="size-3 text-muted-foreground" />
-                    <span className="sr-only">restart pending</span>
-                  </>
-                )}
-              </span>
-              <span
-                data-depth={level}
-                className="relative min-w-0 flex-1"
-                style={{ paddingLeft: `${depth * INDENT}px` }}
-              >
-                {/* Ancestor lines, one per level whose subtree continues past this row; they run
-                    through the row's padding so they read as one rule down the list. */}
-                {(continues[i] ?? []).map(
-                  (more, k) =>
-                    more &&
-                    k + 1 <= cap && (
-                      <span
-                        // biome-ignore lint/suspicious/noArrayIndexKey: the level is the identity
-                        key={k}
-                        data-tree-line
-                        aria-hidden="true"
-                        className="absolute -top-2 -bottom-2 w-px bg-border"
-                        style={{ left: `${(k + 1) * INDENT + 2}px` }}
-                      />
-                    ),
-                )}
-                <span
-                  className={cn(
-                    "relative flex min-w-0 items-baseline gap-2",
-                    // The └ elbow: a 1px rule corner drawn just before a nested name.
-                    level > 0 &&
-                      !beyond &&
-                      "pl-3.5 before:absolute before:top-0 before:left-0.5 before:h-[0.6875rem] before:w-2 before:border-b before:border-l before:border-border",
-                  )}
-                >
-                  {beyond && (
-                    // A no-break space and no shrinking: the marker never wraps under the elbow.
-                    <span
-                      aria-hidden="true"
-                      className="shrink-0 whitespace-nowrap text-[0.8125rem] text-muted-foreground tabular-nums"
-                    >
-                      {`└\u00a0${level}`}
-                    </span>
-                  )}
-                  <AgentChip agent={a} showSlug />
-                  {/* Inline, not a second line, so live updates never change the row height. It
-                      gives way (truncates) before the name does. */}
-                  {note && (
-                    <span
-                      data-agent-note
-                      className="min-w-0 shrink-[1000] truncate text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-                    >
-                      {note}
-                    </span>
-                  )}
-                </span>
-                {a.reportsTo && (
-                  <span className="sr-only">
-                    {" "}
-                    {manager
-                      ? `reports to ${manager.displayName} (@${manager.slug})`
-                      : `reports to @${a.reportsTo}`}
-                  </span>
-                )}
-              </span>
-              {/* A second line below md and in the two-line grid; grid cells in the full one. */}
-              <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
-                <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
-                  {a.template !== slugStem(a.slug) ? a.template : null}
-                </span>
-                <span className="md:justify-self-end">
-                  {a.runtime === "local" ? <UnsandboxedBadge /> : null}
-                </span>
-              </span>
-              {cost && (
-                <span className="hidden text-right text-[0.8125rem] text-muted-foreground tabular-nums md:col-start-3 md:row-start-1 md:block @min-[54rem]:col-start-6">
-                  <span aria-hidden="true">{cost.text}</span>
-                  <span className="sr-only">{cost.sr}</span>
-                </span>
-              )}
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      <ul
+        ref={listRef}
+        aria-label="Agents"
+        className="@container divide-y divide-border border-y border-border"
+      >
+        {agents.map((a, i) => {
+          const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
+          return (
+            <AgentTreeRow
+              key={a.slug}
+              agent={a}
+              level={levels[i] ?? 0}
+              cap={cap}
+              continues={continues[i] ?? NO_CONTINUES}
+              managerName={manager?.displayName}
+              usageRow={usage?.get(a.slug)}
+              usageLoaded={usage !== undefined}
+              flat={flat}
+              focused={a.slug === focus}
+              now={now}
+              menuOpen={a.slug === menuSlug}
+              onMenu={openMenu}
+            />
+          );
+        })}
+      </ul>
+      {menuAgent ? (
+        <AgentMenu
+          agent={menuAgent}
+          context="list"
+          anchored={{
+            open: menu.open,
+            onOpenChange: onMenuOpenChange,
+            anchor: menu.anchor,
+            onClose: () => onMenuClose(menuAgent.slug),
+          }}
+        />
+      ) : null}
+    </>
   );
 }

@@ -25,6 +25,7 @@ import { HeaderSlotContext } from "./header-slot";
 import {
   type BodyProps,
   bindSheetQueryClient,
+  childDescription,
   loadBody,
   preloadSheet,
   resetBodyLoad,
@@ -41,6 +42,7 @@ import {
   type OpenChild,
   type OpenParent,
   setPathnameSource,
+  takeChildReturnFocus,
   useSheet,
 } from "./sheet-store";
 
@@ -100,22 +102,29 @@ function SheetLayer({
   open,
   onClose,
   stacked,
-  description,
+  parentTitle,
+  returnFocus,
 }: {
   spec: (OpenParent | OpenChild) | undefined;
   open: boolean;
   onClose(): void;
   stacked?: boolean;
-  description?: string;
+  /** A stacked child names the parent it serves in its description. */
+  parentTitle?: string;
+  /** Where focus goes on close; null keeps Radix's return to the trigger. */
+  returnFocus?: () => HTMLElement | null;
 }) {
   // Kept after close so the exit animation still has its content.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const content = useRef<HTMLDivElement | null>(null);
+  /** What had focus when the sheet opened (a row's menu button, a header button): Close returns there. */
+  const opener = useRef<HTMLElement | null>(null);
   const last = useRef(spec);
   if (spec) last.current = spec;
   const shown = last.current;
   if (!shown) return null;
   const title = sheetTitle(shown.kind, shown);
+  const description = parentTitle ? childDescription(shown.kind, parentTitle) : undefined;
   // A body's own close (after a submit): from the keyboard it is instant, on this layer only (§5.3).
   const close = () => {
     if (lastInputModality() === "keyboard") closeSheetInstantly(content.current);
@@ -135,8 +144,15 @@ function SheetLayer({
         onOpenAutoFocus={(e) => {
           e.preventDefault();
           const el = e.currentTarget as HTMLElement;
-          if (!el.contains(document.activeElement)) el.focus({ preventScroll: true });
+          const at = document.activeElement;
+          // Each open has its own opener: one that starts with focus on the page body has none (the layer stays
+          // mounted across opens, so the last open's opener would otherwise linger).
+          opener.current = null;
+          if (at instanceof HTMLElement && at !== document.body && !el.contains(at))
+            opener.current = at;
+          if (!el.contains(at)) el.focus({ preventScroll: true });
         }}
+        returnFocus={() => returnFocus?.() ?? (opener.current?.isConnected ? opener.current : null)}
         data-instant={"instant" in shown && shown.instant ? "" : undefined}
       >
         <SheetHeader>
@@ -207,7 +223,9 @@ export function SheetHost() {
         open={!!child}
         onClose={closeChildSheet}
         stacked
-        description={parentTitle ? `For ${parentTitle}` : undefined}
+        parentTitle={parentTitle}
+        // A child that served its parent hands focus to the field it filled (§7).
+        returnFocus={takeChildReturnFocus}
       />
     </>
   );

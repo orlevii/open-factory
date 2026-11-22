@@ -1,8 +1,10 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { resetSeq, se } from "@/test/session-fixtures";
+import { json, mockApi } from "@/test/mock-api";
+import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
 import { groupWork, mergeFailures } from "./display-passes";
 import { rowMenuItems } from "./row-menu";
 import { buildRows, type Row } from "./rows";
@@ -11,6 +13,9 @@ import { Timeline } from "./timeline";
 import { TimelineRow } from "./timeline-row";
 import { workGroupText } from "./work-group";
 
+const notify = vi.hoisted(() => vi.fn());
+vi.mock("@/components/ui/toaster", () => ({ notify }));
+
 const NOW = new Date(2026, 10, 19, 10, 0);
 const todayAt = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 beforeEach(() => {
@@ -18,7 +23,11 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   resetSeq();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  notify.mockReset();
+});
 
 /** Renders the rows the events produce; returns each top-level row's text. */
 function lines(events: AnyEvent[], spawned = false) {
@@ -172,6 +181,36 @@ test("timeline: a spawned agent's error never links to the edit page (it can't b
   const { els } = lines([err("edit_agent"), err("resync")], true);
   expect(els).toHaveLength(2);
   for (const el of els) expect(el.querySelector("a")).toBeNull();
+});
+
+test("timeline: the resync fix runs the agent's Re-sync in place and toasts its outcome", async () => {
+  const api = mockApi({
+    "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), applied: "on_restart" }),
+  });
+  const { rows } = buildRows([
+    se({ type: "error", source: "spawn", message: "Re-sync @dev.", fix: "resync" }, null),
+  ]);
+  const row = rows[0] as Row;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <TimelineRow
+        slug="dev"
+        row={row}
+        expanded={new Set()}
+        toggle={() => {}}
+        rowProps={() => ({})}
+        failedIds={new Set()}
+        interruptedEnds={new Set()}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Re-sync the agent" }));
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Re-synced. The changes apply when @dev restarts (when idle).",
+    }),
+  );
+  expect(api.calls.map((c) => `${c.method} ${c.url}`)).toEqual(["POST /api/agents/dev/resync"]);
 });
 
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {

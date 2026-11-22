@@ -1,0 +1,168 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { fakeMatchMedia } from "@/test/fake-match-media";
+import { json, mockApi } from "@/test/mock-api";
+import { AddCredentialForm } from "./add-credential-form";
+import { AddProjectForm } from "./add-project-form";
+import { AddSecretForm } from "./add-secret-form";
+
+beforeEach(() => fakeMatchMedia.install(false));
+afterEach(() => vi.unstubAllGlobals());
+
+/** A stub Sheet around a form in its `sheet` frame. */
+function inSheet(title: string, form: ReactNode) {
+  return render(
+    <Sheet open onOpenChange={() => {}}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{title}</SheetTitle>
+        </SheetHeader>
+        {form}
+      </SheetContent>
+    </Sheet>,
+  );
+}
+const describedText = (el: HTMLElement) =>
+  (el.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .map((id) => document.getElementById(id)?.textContent ?? "")
+    .join(" ")
+    .trim();
+
+test("credential: validates, submits once on Enter, maps a rejection under the token", async () => {
+  let posts = 0;
+  let release: (r: Response) => void = () => {};
+  const api = mockApi({
+    "POST /api/credentials": () => {
+      posts++;
+      return new Promise<Response>((r) => {
+        release = r;
+      });
+    },
+  });
+  const onDone = vi.fn();
+  const onCancel = vi.fn();
+  inSheet(
+    "Add credential",
+    <AddCredentialForm frame="sheet" existing={["taken"]} onDone={onDone} onCancel={onCancel} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add credential" });
+  // The sheet header has its own Close; the form's is the footer one.
+  const close = within(dialog).getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement;
+  expect(close).toHaveAttribute("type", "button");
+  await userEvent.type(within(dialog).getByLabelText("Name"), "taken{Enter}");
+  expect(describedText(within(dialog).getByLabelText("Name"))).toBe(
+    "A credential named taken already exists.",
+  );
+  expect(api.calls).toHaveLength(0);
+  const name = within(dialog).getByLabelText("Name");
+  await userEvent.clear(name);
+  await userEvent.type(name, "work");
+  const token = within(dialog).getByLabelText("Token");
+  await userEvent.type(token, "sk-bad{Enter}");
+  await userEvent.type(token, "{Enter}");
+  expect(await within(dialog).findByRole("button", { name: /Verifying…/ })).toBeInTheDocument();
+  expect(posts).toBe(1);
+  release(
+    json({ error: { code: "credential_rejected", message: "Claude rejected this token." } }, 422),
+  );
+  await waitFor(() => expect(token).toHaveAttribute("aria-invalid", "true"));
+  expect(describedText(token)).toBe("Claude rejected this token.");
+  expect(token).toHaveFocus();
+  expect(onDone).not.toHaveBeenCalled();
+  await userEvent.click(close);
+  expect(onCancel).toHaveBeenCalledTimes(1);
+});
+
+test("secret: uppercases, validates, submits once on Enter, maps a reserved name under Name", async () => {
+  let puts = 0;
+  let release: (r: Response) => void = () => {};
+  const api = mockApi({
+    "PUT /api/secrets/MY_VAR": () => {
+      puts++;
+      return new Promise<Response>((r) => {
+        release = r;
+      });
+    },
+  });
+  inSheet(
+    "Add secret",
+    <AddSecretForm
+      frame="sheet"
+      initialName=""
+      existing={[]}
+      onDone={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add secret" });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "my_var{Enter}");
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("MY_VAR");
+  expect(describedText(within(dialog).getByLabelText("Value"))).toBe("Enter a value.");
+  expect(api.calls).toHaveLength(0);
+  await userEvent.type(within(dialog).getByLabelText("Value"), "v{Enter}");
+  await userEvent.type(within(dialog).getByLabelText("Value"), "{Enter}");
+  expect(await within(dialog).findByRole("button", { name: /Adding…/ })).toBeInTheDocument();
+  expect(puts).toBe(1);
+  release(
+    json({ error: { code: "secret_name_reserved", message: "That name is reserved." } }, 409),
+  );
+  const name = within(dialog).getByLabelText("Name");
+  await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
+  expect(describedText(name)).toBe("That name is reserved.");
+  expect(name).toHaveFocus();
+  expect(puts).toBe(1);
+});
+
+test("secret: a prefilled name focuses Value in the sheet frame", async () => {
+  inSheet(
+    "Add secret",
+    <AddSecretForm
+      frame="sheet"
+      initialName="GH_TOKEN"
+      existing={[]}
+      onDone={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add secret" });
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("GH_TOKEN");
+  await waitFor(() => expect(within(dialog).getByLabelText("Value")).toHaveFocus());
+});
+
+test("project: validates, submits once on Enter, maps a duplicate under Name", async () => {
+  let posts = 0;
+  let release: (r: Response) => void = () => {};
+  const api = mockApi({
+    "POST /api/projects": () => {
+      posts++;
+      return new Promise<Response>((r) => {
+        release = r;
+      });
+    },
+  });
+  inSheet(
+    "Add project",
+    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "app");
+  await userEvent.type(within(dialog).getByLabelText("Path"), "rel{Enter}");
+  expect(describedText(within(dialog).getByLabelText("Path"))).toContain("Enter an absolute path.");
+  expect(api.calls).toHaveLength(0);
+  const path = within(dialog).getByLabelText("Path");
+  await userEvent.clear(path);
+  await userEvent.type(path, "/code/app{Enter}");
+  await userEvent.type(path, "{Enter}");
+  expect(await within(dialog).findByRole("button", { name: /Adding…/ })).toBeInTheDocument();
+  expect(posts).toBe(1);
+  release(json({ error: { code: "project_exists", message: "A project named app exists." } }, 409));
+  const name = within(dialog).getByLabelText("Name");
+  await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
+  expect(describedText(name)).toBe("A project named app exists.");
+  expect(posts).toBe(1);
+  expect(api.calls[0]?.body).toEqual({ name: "app", hostPath: "/code/app" });
+});

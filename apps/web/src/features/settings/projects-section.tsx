@@ -1,4 +1,4 @@
-import { type AgentSummary, ApiError, nameSchema, type ProjectSummary } from "@open-factory/shared";
+import { type AgentSummary, ApiError, type ProjectSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
@@ -32,6 +32,8 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
+import { AddProjectForm } from "./forms/add-project-form";
+import { checkPath, fieldsOf, PATH_HELP } from "./forms/shared";
 
 type Outcome = {
   tone: "success" | "error" | "pending";
@@ -48,14 +50,6 @@ const toSpawners = (agents: AgentSummary[]) =>
       a.kind === "ephemeral" && a.reportsTo ? [[a.slug, a.reportsTo]] : [],
     ) as [string, string][],
   );
-
-const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
-const checkPath = (p: string) =>
-  p.trim() === ""
-    ? "Enter a path."
-    : p.trim().startsWith("/")
-      ? undefined
-      : "Enter an absolute path.";
 
 /** Why Remove is disabled. A live spawned grantee is named through its spawner (S7 UI design §7):
  *  "granted to @tech-lead-ab12, spawned by @lead". `spawners` maps a spawned agent to its spawner. */
@@ -98,107 +92,6 @@ function InUseMessage({ grantedTo, archived }: { grantedTo: string[]; archived: 
         </>
       )}
     </>
-  );
-}
-
-/** Server field errors (`400 validation_error` with `fields`) for this form's fields. */
-const fieldsOf = (err: unknown): Record<string, string> | undefined =>
-  err instanceof ApiError && err.code === "validation_error"
-    ? ((err.body.fields ?? {}) as Record<string, string>)
-    : undefined;
-
-function AddProjectForm({
-  existing,
-  onDone,
-  onCancel,
-}: {
-  existing: string[];
-  onDone(p: ProjectSummary): void;
-  onCancel(): void;
-}) {
-  const [name, setName] = useState("");
-  const [hostPath, setHostPath] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; hostPath?: string }>({});
-  const [formError, setFormError] = useState<string>();
-  const [pending, setPending] = useState(false);
-
-  const checkName = (n: string) => {
-    if (!nameSchema.safeParse(n).success) {
-      return "Use 2–40 lowercase letters, numbers and inner hyphens, starting with a letter.";
-    }
-    return existing.includes(n) ? `A project named ${n} already exists.` : undefined;
-  };
-  const focus = (f: "name" | "hostPath") =>
-    document.getElementById(f === "name" ? "field-project-name" : "field-project-path")?.focus();
-
-  async function submit() {
-    const found = { name: checkName(name), hostPath: checkPath(hostPath) };
-    setErrors(found);
-    setFormError(undefined);
-    if (found.name || found.hostPath) return focus(found.name ? "name" : "hostPath");
-    setPending(true);
-    try {
-      onDone(await createProject({ name, hostPath: hostPath.trim() }));
-    } catch (err) {
-      const fields = fieldsOf(err);
-      if (err instanceof ApiError && err.code === "project_exists") {
-        setErrors({ name: err.message });
-        focus("name");
-      } else if (fields && (fields.name || fields.hostPath)) {
-        setErrors({ name: fields.name, hostPath: fields.hostPath });
-        focus(fields.name ? "name" : "hostPath");
-      } else {
-        setFormError(
-          err instanceof ApiError ? err.message : "Couldn't add the project. Try again.",
-        );
-      }
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <InlineForm
-      label="Add project"
-      onSubmit={() => void submit()}
-      onCancel={onCancel}
-      submitLabel="Add project"
-      pendingLabel="Adding…"
-      pending={pending}
-      formError={formError}
-    >
-      <FormField
-        name="project-name"
-        label="Name"
-        error={errors.name}
-        value={name}
-        onChange={(e) => {
-          setName(e.target.value);
-          setErrors((x) => ({ ...x, name: undefined }));
-        }}
-        onBlur={() => setErrors((x) => ({ ...x, name: checkName(name) }))}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        className="font-mono"
-      />
-      <FormField
-        name="project-path"
-        label="Path"
-        help={PATH_HELP}
-        error={errors.hostPath}
-        value={hostPath}
-        onChange={(e) => {
-          setHostPath(e.target.value);
-          setErrors((x) => ({ ...x, hostPath: undefined }));
-        }}
-        onBlur={() => setErrors((x) => ({ ...x, hostPath: checkPath(hostPath) }))}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        className="font-mono"
-      />
-    </InlineForm>
   );
 }
 
@@ -480,6 +373,7 @@ export function ProjectsSection() {
       </div>
       {adding ? (
         <AddProjectForm
+          frame="inline"
           existing={projects.map((p) => p.name)}
           onCancel={() => {
             setAdding(false);

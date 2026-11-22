@@ -38,7 +38,7 @@ test.each([
 
 test("in-app links point at the new routes", async () => {
   mockWorld({ credentials: [] });
-  renderApp("/agents/new", alice);
-  const link = await screen.findByRole("link", { name: "Add a Claude credential in Settings" });
+  renderApp("/settings/projects", alice);
+  const link = await screen.findByRole("link", { name: "Credentials" });
   expect(link).toHaveAttribute("href", "/settings/credentials");
 });

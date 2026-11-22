@@ -1,6 +1,6 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert, PanelRight } from "lucide-react";
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
+import { ArchivedNotice } from "@/features/agents/archived-notice";
 import { sessionQueryOptions } from "@/lib/session";
 import { TurnActivity } from "./activity-line";
 import {
@@ -304,6 +305,7 @@ export function SessionView({
           onAgent={setAgent}
           onTerminateStart={onTerminateStart}
           onTerminated={onTerminated}
+          onLifecycle={refreshAgent}
         />
         {errored && restartError && (
           <p
@@ -403,17 +405,7 @@ export function SessionView({
           {announce}
         </div>
         {archived ? (
-          <p className="shrink-0 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-6">
-            This agent is archived.{" "}
-            <Link
-              to="/agents/$slug/edit"
-              params={{ slug }}
-              className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
-            >
-              Restore it
-            </Link>{" "}
-            to send messages.
-          </p>
+          <ArchivedNotice slug={slug} onRestored={refreshAgent} />
         ) : terminated ? (
           <TerminatedComposer slug={slug} notice={raceNotice} />
         ) : (
@@ -448,6 +440,7 @@ const SessionHeader = memo(function SessionHeader({
   onAgent,
   onTerminateStart,
   onTerminated,
+  onLifecycle,
 }: {
   agent: AgentSummary;
   archived: boolean;
@@ -459,6 +452,8 @@ const SessionHeader = memo(function SessionHeader({
   onAgent(a: AgentSummary): void;
   onTerminateStart(): void;
   onTerminated(a: AgentSummary, ok: boolean): void;
+  /** Archive, its Undo, or Restore from the menu: the session refetches its agent. */
+  onLifecycle(): void;
 }) {
   return (
     <PageHeader
@@ -508,6 +503,7 @@ const SessionHeader = memo(function SessionHeader({
               detailsTakeFocus={panel.mode !== "inflow"}
               onTerminateStart={onTerminateStart}
               onTerminated={onTerminated}
+              onLifecycle={onLifecycle}
             />
           }
         />

@@ -273,6 +273,8 @@ test("a row caps the blockers at three with a count and keeps the full list in t
   });
   renderApp("/tasks", alice);
   const many = await screen.findByRole("link", { name: /^T-90,/ });
+  expect(many).toHaveAccessibleName(/blocked by T-15, T-16, T-17 and 22 more,/);
+  expect(many.getAttribute("aria-label")).not.toContain("T-18");
   const marker = within(many).getByText("Blocked by T-15, T-16, T-17 +22 more");
   expect(marker).toHaveAttribute("title", keys.join(", "));
   // The separator is drawn by the marker, never a standalone sibling that could orphan on a wrap.

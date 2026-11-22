@@ -32,11 +32,19 @@ function Assignee({ t }: { t: TaskSummary }) {
   );
 }
 
+const BLOCKERS_SHOWN = 3;
+
 function label(t: TaskSummary) {
   const assignee = t.assignee
     ? `assigned to @${t.assignee.slug}${t.assignee.ended ? ` (${t.assignee.ended})` : ""}`
     : "unassigned";
-  const blocked = t.blockedBy.length ? `, blocked by ${t.blockedBy.join(", ")}` : "";
+  const blocked = t.blockedBy.length
+    ? `, blocked by ${t.blockedBy.slice(0, BLOCKERS_SHOWN).join(", ")}${
+        t.blockedBy.length > BLOCKERS_SHOWN
+          ? ` and ${t.blockedBy.length - BLOCKERS_SHOWN} more`
+          : ""
+      }`
+    : "";
   return `${t.key}, ${t.title}, ${STATUS[t.status].label}${blocked}, ${assignee}`;
 }
 
@@ -108,8 +116,8 @@ const Row = memo(function Row({
             {t.blockedBy.length > 0 && (
               <BlockedMarker
                 keys={t.blockedBy}
-                max={3}
-                className="after:mx-1.5 after:content-['·']"
+                max={BLOCKERS_SHOWN}
+                className="after:text-muted-foreground after:content-['·']"
               />
             )}
             <span className="max-md:hidden">

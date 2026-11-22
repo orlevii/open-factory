@@ -48,7 +48,7 @@ test("live inputs outrank rows (PR4 shape); thinking, then live text, then worki
   const open = { openSubagents: [agentRow("Draft")], newestOpenTool: bash("ls") };
   expect(
     deriveActivity(open, { toolInput: { name: "Write", target: "src/app.ts" }, texts: [] }),
-  ).toEqual({ kind: "tool_input", tool: "Write", target: "src/app.ts" });
+  ).toEqual({ kind: "tool_input", tool: "Write", target: "app.ts" });
   expect(deriveActivity(undefined, { thinking: { tokens: 10 }, texts: ["x"] })).toEqual({
     kind: "thinking",
   });
@@ -84,4 +84,31 @@ test("mcpParts: server and tool, shared by the activity line and the tool row", 
   expect(mcpParts("mcp__srv__a__b")).toEqual({ server: "srv", tool: "a__b" });
   expect(mcpParts("mcp__solo")).toEqual({ server: "solo" });
   expect(mcpParts("Bash")).toBeUndefined();
+});
+
+test("live tool input reads through the open tool's formatter, so the label doesn't change when the call lands", () => {
+  const cases: [string, string, Record<string, string>][] = [
+    ["Write", "/w/src/app.ts", { file_path: "/w/src/app.ts" }],
+    ["Bash", "pnpm test\n--watch", { command: "pnpm test\n--watch" }],
+    ["Grep", "TODO", { pattern: "TODO" }],
+  ];
+  for (const [name, target, input] of cases) {
+    const live = deriveActivity(undefined, { toolInput: { name, target }, texts: [] });
+    const landed = deriveActivity(
+      { openSubagents: [], newestOpenTool: tool(name, input) },
+      undefined,
+    );
+    expect(live.target).toBe(landed.target);
+    expect(live.kind).toBe("tool_input");
+  }
+  // No target parsed yet: the tool's name alone.
+  expect(deriveActivity(undefined, { toolInput: { name: "Write" }, texts: [] })).toEqual({
+    kind: "tool_input",
+    tool: "Write",
+  });
+});
+
+test("thinking counts only while a thinking block is open", () => {
+  expect(deriveActivity(undefined, { thinking: { tokens: 0 }, texts: [] }).kind).toBe("thinking");
+  expect(deriveActivity(undefined, { texts: [] }).kind).toBe("working");
 });

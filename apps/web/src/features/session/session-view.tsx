@@ -349,6 +349,7 @@ export function SessionView({
                   {agent.turnOpen && !s.state.windowed && (
                     <TurnActivity
                       open={s.open}
+                      live={s.state.live}
                       startedAt={agent.turnStartedAt}
                       turnKey={String(s.state.turnEpoch)}
                       compacting={agent.compacting === true}

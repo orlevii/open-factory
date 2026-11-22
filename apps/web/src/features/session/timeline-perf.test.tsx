@@ -751,3 +751,32 @@ test("SessionView: the persisted block retires the live one in one commit on the
   expect(rerendered(["t:m1:1"])).toEqual({});
   expect(Object.fromEntries(count.profiled)).toEqual({});
 });
+
+test("SessionView: the activity line reads live frames (text, then tool input), still rendering no other row", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  const label = () => document.querySelector("[data-activity-label]")?.getAttribute("title");
+  // The fixture's running call ends first: an open tool outranks live text (U3 §5.1).
+  push(
+    sessionEvent(
+      ev(201, { type: "tool_result", toolUseId: "tu-run", content: "ok", isError: false }),
+    ),
+  );
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  expect(label()).toBe("Writing a reply");
+  reset();
+  push({
+    type: "live",
+    agent: "dev",
+    toolInput: { toolUseId: "tu9", name: "Write", bytes: 3000, target: "/w/src/app.ts" },
+  });
+  frame();
+  expect(label()).toBe("Writing app.ts");
+  expect(Object.fromEntries(count.rows)).toEqual({});
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+});

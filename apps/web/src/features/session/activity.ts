@@ -21,7 +21,8 @@ export type Activity = {
 
 /** The live state's parts the activity reads (PR4's `LiveState` satisfies it; PR1 passes nothing). */
 export type ActivityLive = {
-  toolInput?: { name: string; target?: string };
+  /** `target` is the raw file path, command or pattern the harness parsed early (U3 §11.1). */
+  toolInput?: { toolUseId?: string; name: string; target?: string; bytes?: number };
   thinking?: { tokens: number };
   texts: readonly unknown[];
 };
@@ -82,7 +83,12 @@ export function deriveActivity(
   live: ActivityLive | undefined,
 ): Activity {
   if (live?.toolInput) {
-    const { name, target } = live.toolInput;
+    const { name, target: raw } = live.toolInput;
+    // The raw target through the open tool's formatter: the label stays put when the call lands.
+    const target =
+      raw === undefined
+        ? undefined
+        : formatTarget(name, { file_path: raw, command: raw, pattern: raw });
     return target === undefined
       ? { kind: "tool_input", tool: name }
       : { kind: "tool_input", tool: name, target };

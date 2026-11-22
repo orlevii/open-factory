@@ -685,21 +685,88 @@ test("restart pending arrives by frame; a frame clears it", async () => {
   await vi.waitFor(() => expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument());
 });
 
-test("archived: the composer is replaced by a line linking the edit page; no Compact or Stop", async () => {
+test("archived: the composer is replaced by a notice with a Restore button; no Compact or Stop", async () => {
   routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   expect(screen.getByText(/This agent is archived\./).textContent).toBe(
     "This agent is archived. Restore it to send messages.",
   );
-  expect(screen.getByRole("link", { name: "Restore it" })).toHaveAttribute(
-    "href",
-    "/agents/dev/edit",
-  );
+  expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Restore it" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /Message to/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
+});
+
+test("archived: Restore restores in place and the composer comes back", async () => {
+  let archived = true;
+  routes["/api/agents/dev"] = () =>
+    json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
+  routes["/api/agents/dev/unarchive"] = () => {
+    archived = false;
+    return json({ agent: agentSummary() });
+  };
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  await vi.waitFor(() =>
+    expect(screen.queryByText(/This agent is archived\./)).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("combobox", { name: /Message to/ })).toBeInTheDocument();
+});
+
+test("archived: a refused Restore says why inline, and the button stays", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  routes["/api/agents/dev/unarchive"] = () =>
+    json(
+      {
+        error: {
+          code: "manager_archived",
+          message: "Its manager @boss is archived. Change its manager first.",
+        },
+      },
+      409,
+    );
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  const line = await screen.findByText(
+    "Couldn't restore @dev: Its manager @boss is archived. Change its manager first.",
+  );
+  expect(line.closest("[role=alert]")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+});
+
+test("archived: Restore from the session's menu restores, toasts, and brings the composer back", async () => {
+  let archived = true;
+  routes["/api/agents/dev"] = () =>
+    json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
+  routes["/api/agents/dev/unarchive"] = () => {
+    archived = false;
+    return json({ agent: agentSummary() });
+  };
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Actions for Dev agent" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Restore" }));
+  expect(await screen.findByText("Restored @dev.")).toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(screen.queryByText(/This agent is archived\./)).not.toBeInTheDocument(),
+  );
+});
+
+test("Archive from the session's menu swaps the composer for the archived notice", async () => {
+  let archived = false;
+  routes["/api/agents/dev"] = () =>
+    json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
+  routes["/api/agents/dev/archive"] = () => {
+    archived = true;
+    return json({ agent: agentSummary({ archivedAt: "2026-11-19T10:00:00.000Z" }) });
+  };
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Actions for Dev agent" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Archive…" }));
+  expect(await screen.findByText("Archived @dev.")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Restore" })).toBeInTheDocument();
 });
 
 test("archived with no events: the empty line doesn't point at a composer", async () => {
@@ -818,18 +885,24 @@ test("an error with fix edit_agent links to the edit page", async () => {
   );
 });
 
-test("an error with fix resync links to the agent's Re-sync", async () => {
+test("an error with fix resync runs the agent's Re-sync in place", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
     message: "Re-sync @dev to reinstall its plugins into the factory-managed location.",
     fix: "resync",
   });
+  let resynced = 0;
+  routes["/api/agents/dev/resync"] = () => {
+    resynced++;
+    return json({ agent: agentSummary(), applied: "now" });
+  };
   renderApp("/agents/dev", alice);
-  expect(await screen.findByRole("link", { name: "Re-sync the agent" })).toHaveAttribute(
-    "href",
-    "/agents/dev/edit",
-  );
+  const fix = await screen.findByRole("button", { name: "Re-sync the agent" });
+  expect(screen.queryByRole("link", { name: "Re-sync the agent" })).not.toBeInTheDocument();
+  await userEvent.click(fix);
+  expect(await screen.findByText("Re-synced. Nothing differed.")).toBeInTheDocument();
+  expect(resynced).toBe(1);
 });
 
 test("a resume error no longer names the interim reset script", async () => {

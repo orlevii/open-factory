@@ -1,8 +1,32 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import type { AgentSummary } from "@open-factory/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
+import { AgentTree } from "@/features/agents/agent-tree";
 import { mockWorld } from "@/test/agent-screens-fixtures";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
+
+/** Which agents' chips rendered: one per AgentTreeRow render. */
+const chipRenders = vi.hoisted(() => [] as string[]);
+vi.mock("@/components/agent-chip", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/components/agent-chip")>();
+  return {
+    ...mod,
+    AgentChip: (p: Parameters<typeof mod.AgentChip>[0]) => {
+      chipRenders.push("agent" in p ? p.agent.slug : p.slug);
+      return mod.AgentChip(p);
+    },
+  };
+});
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 let pushFrame: (m: unknown) => void = () => {};
@@ -225,4 +249,147 @@ test("?focus scrolls that agent's row into view and marks it for the visit", asy
   expect(within(main).getByRole("link", { name: /Other agent/ })).not.toHaveAttribute(
     "data-focused",
   );
+});
+
+const menuLayout = (menu: HTMLElement) =>
+  [...menu.querySelectorAll('[role="menuitem"], [role="separator"]')].map((el) =>
+    el.getAttribute("role") === "separator" ? "—" : el.textContent?.trim(),
+  );
+
+test("each Agents row has a ⋯ beside its link that opens the agent's menu", async () => {
+  mockWorld({ agents: [agentSummary()] });
+  renderApp("/agents", alice);
+  const main = await screen.findByRole("main");
+  const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
+  // A sibling of the row's link, never inside it.
+  expect(more.closest("a")).toBeNull();
+  expect(more.closest("li")?.querySelector('a[href="/agents/dev"]')).not.toBeNull();
+  await userEvent.click(more);
+  const menu = await screen.findByRole("menu");
+  expect(menuLayout(menu)).toEqual([
+    "New task",
+    "New schedule",
+    "—",
+    "Edit",
+    "Usage",
+    "Open tasks",
+    "—",
+    "Re-sync from template…",
+    "Archive…",
+  ]);
+});
+
+test("Ended view: an archived row's menu restores it and toasts; a terminated row offers only Usage and Open tasks", async () => {
+  const api = mockWorld({
+    agents: [],
+    archived: [
+      agentSummary({ slug: "old", displayName: "Old one", archivedAt: "2026-11-01T10:00:00Z" }),
+      agentSummary({
+        slug: "gone",
+        displayName: "Gone one",
+        status: "terminated",
+        terminatedAt: "2026-11-02T10:00:00Z",
+      }),
+    ],
+    extra: {
+      "POST /api/agents/old/unarchive": () =>
+        new Response(JSON.stringify({ agent: agentSummary({ slug: "old" }) }), {
+          headers: { "content-type": "application/json" },
+        }),
+    },
+  });
+  renderApp("/agents?ended=only", alice);
+  const main = await screen.findByRole("main");
+  const u = userEvent.setup();
+  await u.click(await within(main).findByRole("button", { name: "Actions for Gone one" }));
+  expect(menuLayout(await screen.findByRole("menu"))).toEqual(["Usage", "Open tasks"]);
+  await u.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await u.click(within(main).getByRole("button", { name: "Actions for Old one" }));
+  const menu = await screen.findByRole("menu");
+  expect(menuLayout(menu)).toEqual(["Usage", "Open tasks", "—", "Restore"]);
+  await u.click(within(menu).getByRole("menuitem", { name: "Restore" }));
+  expect(await screen.findByText("Restored @old.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(
+    true,
+  );
+});
+
+test("an old /agents?archived=only&justArchived=x URL lands on the Ended view with no error", async () => {
+  mockWorld({
+    agents: [],
+    archived: [agentSummary({ slug: "x", displayName: "Old x", archivedAt: "2026-11-01" })],
+  });
+  const { router } = renderApp("/agents?archived=only&justArchived=x", alice);
+  const main = await screen.findByRole("main");
+  expect(await within(main).findByRole("link", { name: /Old x/ })).toBeInTheDocument();
+  await waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
+  expect(screen.getByRole("radio", { name: "Ended" })).toBeChecked();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+test("/agents?unknownKey=1 loads the page normally", async () => {
+  mockWorld({ agents: [agentSummary()] });
+  renderApp("/agents?unknownKey=1", alice);
+  const main = await screen.findByRole("main");
+  expect(await within(main).findByRole("link", { name: /Dev agent/ })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Agents" })).toBeInTheDocument();
+});
+
+/** The tree alone, its agents held in state so a test can swap one as a status frame does. */
+let setTreeAgents: (f: (a: AgentSummary[]) => AgentSummary[]) => void = () => {};
+function TreeHarness({ initial }: { initial: AgentSummary[] }) {
+  const [agents, setAgents] = useState(initial);
+  setTreeAgents = setAgents;
+  return <AgentTree agents={agents} />;
+}
+function renderTree(initial: AgentSummary[]) {
+  const root = createRootRoute({ component: () => <TreeHarness initial={initial} /> });
+  const router = createRouter({
+    routeTree: root,
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return { update: (f: (a: AgentSummary[]) => AgentSummary[]) => act(() => setTreeAgents(f)) };
+}
+
+/** 214 agents in a 14-level chain with wide fan-out below it. */
+const many = () =>
+  Array.from({ length: 214 }, (_, i) =>
+    agentSummary({
+      slug: `a${i}`,
+      displayName: `Agent ${i}`,
+      reportsTo: i === 0 ? null : i < 14 ? `a${i - 1}` : `a${i % 14}`,
+    }),
+  );
+
+test("214 rows mount no menu at rest: one shared menu opens on demand", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({})),
+  );
+  renderTree(many());
+  const list = await screen.findByRole("list", { name: "Agents" });
+  expect(within(list).getAllByRole("button", { name: /^Actions for / })).toHaveLength(214);
+  expect(document.querySelectorAll("[data-menu-stand-in]")).toHaveLength(0);
+  expect(document.querySelectorAll('[aria-haspopup="menu"][data-state]')).toHaveLength(0);
+  await userEvent.click(within(list).getByRole("button", { name: "Actions for Agent 7" }));
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+  expect(document.querySelectorAll("[data-menu-stand-in]")).toHaveLength(1);
+});
+
+test("one agent's status frame re-renders exactly one row", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({})),
+  );
+  const { update } = renderTree(many());
+  await screen.findByRole("list", { name: "Agents" });
+  chipRenders.length = 0;
+  update((list) => list.map((a) => (a.slug === "a20" ? { ...a, status: "working" } : a)));
+  await waitFor(() => expect(chipRenders).toEqual(["a20"]));
 });

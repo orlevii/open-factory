@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
-import { AgentActions } from "@/features/agents/agent-actions";
 import { AgentForm } from "@/features/agents/agent-form";
 import { updateAgent } from "@/features/agents/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
@@ -79,7 +78,6 @@ function EditAgent() {
                 return saved;
               }}
             />
-            <AgentActions agent={agent} />
           </div>
         )}
       </PageBody>

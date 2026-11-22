@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -11,10 +12,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
+import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
 
+const notify = vi.hoisted(() => vi.fn());
+vi.mock("@/components/ui/toaster", () => ({ notify }));
+
 afterEach(() => {
+  notify.mockReset();
+  resetSheets();
   // Radix can leave its modal marks on <body> when a test ends with a dialog closing.
   document.body.style.pointerEvents = "";
   document.body.removeAttribute("data-scroll-locked");
@@ -37,7 +44,7 @@ function Harness({
   onTerminated = () => {},
 }: {
   agent: AgentSummary;
-  context: "session" | "sidebar";
+  context: "session" | "sidebar" | "list";
   onOpenDetails?: () => void;
   onTerminateStart?: () => void;
   onTerminated?: (a: AgentSummary, ok: boolean) => void;
@@ -71,7 +78,12 @@ function setup(props: Parameters<typeof Harness>[0]) {
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
-  return render(<RouterProvider router={router} />);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
 }
 
 const openMenu = async (u: ReturnType<typeof userEvent.setup>, name = "Dev agent") => {
@@ -83,13 +95,66 @@ const itemNames = (menu: HTMLElement) =>
     .getAllByRole("menuitem")
     .map((i) => i.textContent?.replace(/\]$/, "").trim());
 
+/** The menu's items and separators in order ("—" for a separator). */
+const layout = (menu: HTMLElement) =>
+  [...menu.querySelectorAll('[role="menuitem"], [role="separator"]')].map((el) =>
+    el.getAttribute("role") === "separator" ? "—" : el.textContent?.replace(/\]$/, "").trim(),
+  );
+
 test.each([
-  ["session", ["Agent details", "Compact…", "Edit", "Usage", "Open tasks"]],
-  ["sidebar", ["Open session", "Edit", "Usage", "Open tasks"]],
-] as const)("%s items for a live persistent agent", async (context, items) => {
+  [
+    "session",
+    [
+      "New task",
+      "New schedule",
+      "—",
+      "Edit",
+      "Usage",
+      "Open tasks",
+      "Agent details",
+      "Compact…",
+      "—",
+      "Re-sync from template…",
+      "Archive…",
+    ],
+  ],
+  [
+    "sidebar",
+    [
+      "New task",
+      "New schedule",
+      "—",
+      "Open session",
+      "Edit",
+      "Usage",
+      "Open tasks",
+      "—",
+      "Re-sync from template…",
+      "Archive…",
+    ],
+  ],
+  [
+    "list",
+    [
+      "New task",
+      "New schedule",
+      "—",
+      "Edit",
+      "Usage",
+      "Open tasks",
+      "—",
+      "Re-sync from template…",
+      "Archive…",
+    ],
+  ],
+] as const)("%s: groups and separators for a live persistent agent", async (context, items) => {
   setup({ agent: agentSummary(), context });
   const menu = await openMenu(userEvent.setup());
-  expect(itemNames(menu)).toEqual(items);
+  expect(layout(menu)).toEqual(items);
+  expect(within(menu).getByRole("menuitem", { name: "Archive…" })).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
 });
 
 test("Edit and Compact are left out for a spawned agent; Stop crons… only with live crons", async () => {
@@ -223,5 +288,214 @@ test("cancelling Stop crons… opened from the menu returns focus to the ⋯ but
   await u.click(within(dlg).getByRole("button", { name: "Cancel" }));
   await vi.waitFor(() =>
     expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
+  );
+});
+
+const archived = (over: Partial<AgentSummary> = {}) =>
+  agentSummary({ archivedAt: "2026-11-19T10:00:00.000Z", status: "hibernated", ...over });
+
+test.each([
+  ["an archived persistent agent", archived(), ["Usage", "Open tasks", "—", "Restore"]],
+  [
+    "a terminated persistent agent",
+    agentSummary({ status: "terminated", terminatedAt: "2026-11-19T10:00:00.000Z" }),
+    ["Usage", "Open tasks"],
+  ],
+  [
+    "an ended spawned agent",
+    agentSummary({ kind: "ephemeral", status: "terminated" }),
+    ["Usage", "Open tasks"],
+  ],
+] as const)("list: %s", async (_n, agent, items) => {
+  setup({ agent, context: "list" });
+  expect(layout(await openMenu(userEvent.setup()))).toEqual(items);
+});
+
+test("session: an archived agent's menu offers Restore", async () => {
+  setup({ agent: archived(), context: "session" });
+  const names = itemNames(await openMenu(userEvent.setup()));
+  expect(names).toContain("Restore");
+  expect(names).not.toContain("Archive…");
+  expect(names).not.toContain("Re-sync from template…");
+  expect(names).not.toContain("New task");
+});
+
+test("New task and New schedule open their sheets prefilled with the agent", async () => {
+  setup({ agent: agentSummary(), context: "list" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "New task" }));
+  await vi.waitFor(() =>
+    expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: "dev" }),
+  );
+  resetSheets();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "New schedule" }));
+  await vi.waitFor(() =>
+    expect(getSheetState().parent).toMatchObject({ kind: "new-schedule", target: "dev" }),
+  );
+});
+
+test("Archive… archives at once (no confirmation, as before) and toasts with an Undo that restores", async () => {
+  const api = mockApi({
+    "POST /api/agents/dev/archive": () => json({ agent: archived() }),
+    "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
+  });
+  setup({ agent: agentSummary(), context: "sidebar" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  const n = notify.mock.calls[0]?.[0];
+  expect(n.text).toBe("Archived @dev.");
+  expect(api.calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual([
+    "/api/agents/dev/archive",
+  ]);
+  await n.undo();
+  expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
+});
+
+test("a failed archive toasts the server's message, naming the agent", async () => {
+  mockApi({
+    "POST /api/agents/dev/archive": () =>
+      json(
+        {
+          error: {
+            code: "has_reports",
+            message: "@a and @b report to this agent. Change their manager first.",
+            reports: ["a", "b"],
+          },
+        },
+        409,
+      ),
+  });
+  setup({ agent: agentSummary(), context: "list" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Couldn't archive @dev: @a and @b report to this agent. Change their manager first.",
+    }),
+  );
+});
+
+test("a network failure on archive says the server can't be reached", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }),
+  );
+  setup({ agent: agentSummary(), context: "list" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({ text: "Couldn't archive @dev: can't reach the server." }),
+  );
+});
+
+test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
+  const api = mockApi({
+    "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
+    "GET /api/agents/dev": () => json({ agent: agentSummary(), queue: [], lastSeq: 0 }),
+  });
+  setup({ agent: archived(), context: "list" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Restore" }));
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Restored @dev." }));
+  expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
+});
+
+test.each([
+  [{ applied: "now" }, "Re-synced. Nothing differed."],
+  [
+    { applied: "now", backupDir: "state/agents/dev/resync/x" },
+    "Re-synced. Previous files saved in state/agents/dev/resync/x.",
+  ],
+  [{ applied: "on_restart" }, "Re-synced. The changes apply when @dev restarts (when idle)."],
+])(
+  "Re-sync from template… runs at once (no confirmation, as before) and toasts %o",
+  async (r, text) => {
+    mockApi({ "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), ...r }) });
+    setup({ agent: agentSummary(), context: "session" });
+    const u = userEvent.setup();
+    await openMenu(u);
+    await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
+  },
+);
+
+test.each([
+  ["template_invalid", "Couldn't re-sync @dev: Template developer has errors."],
+  ["template_missing", "Couldn't re-sync @dev: Template developer no longer exists."],
+])("a re-sync refused with %s toasts the template problem", async (code, text) => {
+  mockApi({
+    "POST /api/agents/dev/resync": () => json({ error: { code, message: "x" } }, 409),
+  });
+  setup({ agent: agentSummary({ template: "developer" }), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
+});
+
+test("a failed plugin install on re-sync names the backup folder", async () => {
+  mockApi({
+    "POST /api/agents/dev/resync": () =>
+      json({ error: { code: "plugin_install_failed", message: "x", output: "boom" } }, 502),
+  });
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Couldn't re-sync @dev: Plugin install failed. Some files were already copied (previous versions in state/agents/dev/resync/). Fix the template and re-sync again.",
+    }),
+  );
+});
+
+test("a second Archive while the first is in flight sends one request", async () => {
+  let release: () => void = () => {};
+  const api = mockApi({
+    "POST /api/agents/dev/archive": () =>
+      new Promise<Response>((r) => {
+        release = () => r(json({ agent: archived() }));
+      }),
+  });
+  setup({ agent: agentSummary(), context: "list" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+  release();
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(api.calls.filter((c) => c.url === "/api/agents/dev/archive")).toHaveLength(1);
+});
+
+test("Restore mentions pending messages when the agent has some", async () => {
+  mockApi({
+    "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
+    "GET /api/agents/dev": () =>
+      json({
+        agent: agentSummary(),
+        queue: [{ id: "q1", kind: "message", body: "hi", from: "@alice", createdAt: "x" }],
+        lastSeq: 0,
+      }),
+  });
+  setup({ agent: archived(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Restore" }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Restored @dev. Pending messages are sent with the next message.",
+    }),
   );
 });

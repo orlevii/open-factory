@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { UndoArchiveLine } from "@/features/agents/agent-actions";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { endedMoreQueryOptions, runningQueryOptions } from "@/features/session/api";
@@ -17,12 +16,12 @@ import { agentsUsageQuery } from "@/features/usage/api";
 const newAgentIntent = sheetIntent("new-agent");
 
 export const Route = createFileRoute("/_app/agents/")({
-  // Unknown values fall back to the default view rather than an error page.
+  // Unknown values fall back to the default view rather than an error page, and unknown keys (an
+  // old bookmark's `justArchived`) are dropped: `z.object` strips them (never `.strict()`).
   validateSearch: z.object({
     ended: z.literal("only").optional().catch(undefined),
     /** S4's bookmark: redirected to `ended=only` (S7 UI design §3). */
     archived: z.literal("only").optional().catch(undefined),
-    justArchived: z.string().min(1).optional().catch(undefined),
     /** Agent details' "All N reports": the row to scroll to and mark (the page acts on it, U2 §8.3). */
     focus: z.string().min(1).optional().catch(undefined),
   }),
@@ -30,7 +29,7 @@ export const Route = createFileRoute("/_app/agents/")({
     if (search.archived)
       throw redirect({
         to: "/agents",
-        search: { ended: "only", justArchived: search.justArchived },
+        search: { ended: "only" },
         replace: true,
       });
   },
@@ -38,7 +37,7 @@ export const Route = createFileRoute("/_app/agents/")({
 });
 
 function AgentsPage() {
-  const { ended, justArchived, focus } = Route.useSearch();
+  const { ended, focus } = Route.useSearch();
   const filter = ended ?? "exclude";
   const { data: agents, isError } = useQuery(agentsListQueryOptions(filter));
   // The tree's 7-day cost column; a failure just leaves the cells empty.
@@ -47,15 +46,6 @@ function AgentsPage() {
     () => (usageData ? new Map(usageData.agents.map((r) => [r.slug, r])) : undefined),
     [usageData],
   );
-  const navigate = useNavigate();
-  // The Undo line is for an agent that is archived right now: a reload or a revisited URL after
-  // an Undo must not offer to restore an active agent.
-  const archivedList = useQuery({ ...agentsListQueryOptions("only"), enabled: !!justArchived });
-  const stillArchived =
-    justArchived !== undefined && !!archivedList.data?.some((a) => a.slug === justArchived);
-  // Restored from the line on this visit: the line stays to say so after the URL is cleared.
-  const [restored, setRestored] = useState<string>();
-  const lineSlug = stillArchived ? justArchived : restored;
   return (
     <>
       <PageHeader
@@ -81,23 +71,6 @@ function AgentsPage() {
       />
       <PageBody>
         <div className="grid gap-4">
-          {lineSlug && (
-            // One grid item: the line's two live regions shouldn't each take a gap.
-            <div>
-              <UndoArchiveLine
-                key={lineSlug}
-                slug={lineSlug}
-                onRestored={() => {
-                  setRestored(lineSlug);
-                  void navigate({
-                    to: "/agents",
-                    search: (s) => ({ ...s, justArchived: undefined }),
-                    replace: true,
-                  });
-                }}
-              />
-            </div>
-          )}
           {isError && !agents && (
             <p role="alert" className="text-sm text-muted-foreground">
               Couldn't load agents.

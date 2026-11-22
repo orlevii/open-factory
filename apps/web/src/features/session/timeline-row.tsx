@@ -1,7 +1,9 @@
 import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { resyncAgent } from "@/features/agents/lifecycle";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
@@ -207,6 +209,15 @@ function quietIcon(e: AnyEvent): ReactNode {
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
+function ResyncFix({ slug, className }: { slug: string; className: string }) {
+  const qc = useQueryClient();
+  return (
+    <button type="button" className={className} onClick={() => void resyncAgent(slug, qc)}>
+      Re-sync the agent
+    </button>
+  );
+}
+
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
   fix,
@@ -238,13 +249,8 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // Re-sync lives on the agent's edit page.
-  if (fix === "resync")
-    return (
-      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
-        Re-sync the agent
-      </Link>
-    );
+  // Runs the Re-sync action in place; its outcome toasts (U4 §6.5).
+  if (fix === "resync") return <ResyncFix slug={slug} className={cls} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },

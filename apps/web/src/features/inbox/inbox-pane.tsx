@@ -12,6 +12,7 @@ import {
 } from "react";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
+import { ArchivedNotice } from "@/features/agents/archived-notice";
 import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
 import { Composer, TerminatedComposer } from "@/features/session/composer";
 import { formatInboxTime } from "@/features/session/format";
@@ -183,17 +184,7 @@ function MessageContent({
         </SpeakerProvider>
       </Body>
       {!agent ? null : agent.archivedAt !== null ? (
-        <p className="shrink-0 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-6">
-          This agent is archived.{" "}
-          <Link
-            to="/agents/$slug/edit"
-            params={{ slug }}
-            className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
-          >
-            Restore it
-          </Link>{" "}
-          to send messages.
-        </p>
+        <ArchivedNotice slug={slug} />
       ) : agent.status === "terminated" ? (
         <TerminatedComposer key={slug} slug={slug} notice={raceNotice} />
       ) : (

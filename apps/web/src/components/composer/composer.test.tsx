@@ -88,7 +88,7 @@ test("one frame holds the textarea and a 32px toolbar", () => {
   expect(frame).not.toBeNull();
   const toolbar = frame?.querySelector("[data-composer-toolbar]");
   expect(toolbar).not.toBeNull();
-  expect(toolbar).toHaveClass("h-8");
+  expect(toolbar).toHaveClass("min-h-8"); // one 32px line, a second only when it must wrap
   expect(toolbar?.contains(screen.getByRole("button", { name: "Send" }))).toBe(true);
 });
 
@@ -129,8 +129,9 @@ test("Stop's slot keeps its width with no turn open (an invisible stand-in), so 
   expect(document.querySelector("[data-stop-slot]")).toBe(slot);
   expect(slot?.querySelector("[data-stop-stand-in]")).toBe(standIn);
   expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
-  // The toolbar never wraps: the hint is what shrinks.
-  expect(document.querySelector("[data-composer-toolbar]")).toHaveClass("flex-nowrap");
+  // The hint is what shrinks; Stop and Send wrap only together, as one group whose width the
+  // stand-in fixes, so a turn edge never changes whether they wrap.
+  expect(slot?.closest("[data-composer-actions]")).not.toBeNull();
 });
 
 test("no Stop slot where there is nothing to stop", () => {

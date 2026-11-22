@@ -289,12 +289,28 @@ test("a failed Stop says why and allows a retry", async () => {
   expect(screen.getByRole("button", { name: "Stop" })).toHaveAttribute("aria-disabled", "false");
 });
 
-test("Stop's label hides below a narrow composer, keeping its name", () => {
+test("Stop's label hides below a ~24rem composer (its stand-in too), keeping its name", () => {
   setup(working());
   const label = screen.getByText("Stop");
-  // 20rem: a 390px phone's ~358px composer at 100% text keeps the label; 200% text drops it.
-  expect(label).toHaveClass("@max-[20rem]:sr-only");
+  // §13.1: below ~24rem only the icon (a 390px phone's ~358px composer included), so the hint keeps room.
+  expect(label).toHaveClass("@max-[24rem]:sr-only");
   expect(label.closest(".\\@container")).not.toBeNull();
+  const standIn = document.querySelector("[data-stop-stand-in] [data-stop-label]")?.parentElement;
+  expect(standIn).toHaveClass("@max-[24rem]:hidden");
+});
+
+test("the toolbar wraps Stop and Send together onto a line of their own when they don't fit (200% text)", () => {
+  setup(working());
+  const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
+  expect(toolbar).toHaveClass("flex-wrap", "min-h-8");
+  expect(toolbar).not.toHaveClass("flex-nowrap", "h-8");
+  const actions = toolbar.lastElementChild as HTMLElement;
+  expect(actions).toHaveAttribute("data-composer-actions");
+  expect(actions.querySelector("[data-stop-slot]")).not.toBeNull();
+  expect(within(actions).getByRole("button", { name: "Send" })).toBeInTheDocument();
+  expect(actions).toHaveClass("ml-auto", "shrink-0");
+  // The hint takes only what is left: it never pushes anything to another line.
+  expect(document.querySelector("[data-composer-hint]")).toHaveClass("basis-0", "flex-1");
 });
 
 test("focus moves to the textarea when Stop unmounts while focused", async () => {

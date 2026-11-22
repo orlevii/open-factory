@@ -89,9 +89,9 @@ export function StopButton({
       onClick={stop}
     >
       {pending ? <Spinner /> : <CircleStop aria-hidden="true" />}
-      {/* Below 20rem of composer (200% text) only the icon shows; the label stays the name. A phone at
-          100% text (a ~22rem composer) keeps "Stop". */}
-      <span className="@max-[20rem]:sr-only">
+      {/* Below ~24rem of composer only the icon shows (U3 §13.1; a phone's ~22rem composer too), so the
+          hint keeps readable room; the label stays the name. */}
+      <span className="@max-[24rem]:sr-only">
         {pending ? "Stopping…" : compacting ? "Compacting…" : "Stop"}
       </span>
     </Button>

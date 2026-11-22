@@ -884,7 +884,10 @@ export const Composer = memo(function Composer({
           ) : null}
           <div
             data-composer-toolbar
-            className="mx-1 mb-1 flex h-8 flex-nowrap items-center gap-2 pointer-coarse:h-9"
+            // One 32px line; when the controls don't fit (200% text in a narrow column) Stop and Send
+            // wrap together to a line of their own, inside the frame (evidence D1). Stop's slot keeps
+            // its width across turn edges, so where it wraps never changes with a turn.
+            className="mx-1 mb-1 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 pointer-coarse:min-h-9"
           >
             {slash?.label ? (
               // Starts a command in an empty box (the `/` menu opens only for a whole-box token).
@@ -962,69 +965,71 @@ export const Composer = memo(function Composer({
               </div>
             )}
             {hintMode === undefined ? (
-              <span className="min-w-0 flex-1" />
+              <span className="min-w-0 flex-1 basis-0" />
             ) : (
               // A fixed height whether or not it has text (a minimum would let the key caps grow it).
               <p
                 id={hintId}
                 data-composer-hint
-                className="h-5 min-w-0 flex-1 truncate px-1.5 text-[0.8125rem] leading-5 text-muted-foreground"
+                className="h-5 min-w-0 flex-1 basis-0 truncate px-1.5 text-[0.8125rem] leading-5 text-muted-foreground"
               >
                 {hintShown ? <Hint mode={hintMode} compacting={compacting} /> : null}
               </p>
             )}
-            {onStop && (
-              // Stop's slot keeps its width with no turn open, so a turn edge never re-wraps the toolbar.
-              <div data-stop-slot className="grid shrink-0">
-                <span
-                  data-stop-stand-in
-                  aria-hidden="true"
-                  className={cn(
-                    buttonVariants({ variant: "outline" }),
-                    "invisible [grid-area:1/1]",
-                  )}
-                >
-                  <CircleStop />
-                  {/* As wide as the widest label Stop shows, so the slot never grows within a turn. */}
-                  <span className="grid @max-[20rem]:hidden">
-                    <span
-                      data-stop-label="Stop"
-                      className="[grid-area:1/1] before:content-['Stop']"
-                    />
-                    <span
-                      data-stop-label="Stopping…"
-                      className="[grid-area:1/1] before:content-['Stopping…']"
-                    />
-                    <span
-                      data-stop-label="Compacting…"
-                      className="[grid-area:1/1] before:content-['Compacting…']"
-                    />
+            <div data-composer-actions className="ml-auto flex shrink-0 items-center gap-2">
+              {onStop && (
+                // Stop's slot keeps its width with no turn open, so a turn edge never re-wraps the toolbar.
+                <div data-stop-slot className="grid shrink-0">
+                  <span
+                    data-stop-stand-in
+                    aria-hidden="true"
+                    className={cn(
+                      buttonVariants({ variant: "outline" }),
+                      "invisible [grid-area:1/1]",
+                    )}
+                  >
+                    <CircleStop />
+                    {/* As wide as the widest label Stop shows, so the slot never grows within a turn. */}
+                    <span className="grid @max-[24rem]:hidden">
+                      <span
+                        data-stop-label="Stop"
+                        className="[grid-area:1/1] before:content-['Stop']"
+                      />
+                      <span
+                        data-stop-label="Stopping…"
+                        className="[grid-area:1/1] before:content-['Stopping…']"
+                      />
+                      <span
+                        data-stop-label="Compacting…"
+                        className="[grid-area:1/1] before:content-['Compacting…']"
+                      />
+                    </span>
                   </span>
-                </span>
-                {turnOpen && stopEpoch !== undefined && (
-                  <StopButton
-                    ref={stopRef}
-                    onStop={onStop}
-                    turnOpen={turnOpen}
-                    turnEpoch={stopEpoch}
-                    compacting={compacting}
-                    onError={onStopError}
-                    className="[grid-area:1/1]"
-                  />
-                )}
-              </div>
-            )}
-            {/* Primary at once when there is text: a keyboard action, so no transition. */}
-            {/* Held by its files: aria-disabled (focusable; `send` refuses), its reason the line below. */}
-            <Button
-              type="submit"
-              disabled={held === undefined && ((empty && !command) || waiting)}
-              aria-disabled={held !== undefined || undefined}
-              aria-describedby={held ? sendReasonId : undefined}
-              className="transition-none"
-            >
-              Send
-            </Button>
+                  {turnOpen && stopEpoch !== undefined && (
+                    <StopButton
+                      ref={stopRef}
+                      onStop={onStop}
+                      turnOpen={turnOpen}
+                      turnEpoch={stopEpoch}
+                      compacting={compacting}
+                      onError={onStopError}
+                      className="[grid-area:1/1]"
+                    />
+                  )}
+                </div>
+              )}
+              {/* Primary at once when there is text: a keyboard action, so no transition. */}
+              {/* Held by its files: aria-disabled (focusable; `send` refuses), its reason the line below. */}
+              <Button
+                type="submit"
+                disabled={held === undefined && ((empty && !command) || waiting)}
+                aria-disabled={held !== undefined || undefined}
+                aria-describedby={held ? sendReasonId : undefined}
+                className="transition-none"
+              >
+                Send
+              </Button>
+            </div>
           </div>
         </div>
         {note && (

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-19
 - **Status:** approved by owner-proxy (owner-s6), revised after the spec self-review and the impeccable UI review (round 1); pending Or's review of the low-certainty items (§21)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s06-messaging-reporting.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s06-messaging-reporting.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s6-messaging-ui-design.md`](../designs/2026-11-19-s6-messaging-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/message.md`, `reporting-line.md`, `agent.md`, `session.md`, `user.md`; `docs/product/architecture/factory-mcp.md`, `context-assembly.md`, `agent-runtime.md`, `harness-driver.md`, `permissions.md`, `workspace.md`, `data-model.md`, `system-overview.md`; `docs/product/behavior/inbox.md`, `agents-and-sessions.md`; ADRs 0002, 0003, 0004, 0005, 0012, 0013; `docs/product/open-questions.md` (S0, S4 and S5 findings).
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md): harness driver, `AgentRuntime`, delivery queue, urgent hold, event store), S4 ([spec](2026-11-19-s4-templates-workspace-design.md): agents, `prepareStart`, `requestRestart`, `.mcp.json`, generated CLAUDE.md, `buildAgentEnv`) and S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): Supervisor, wake reasons, `@factory` system messages, crash and recovery, Docker runtime, `FACTORY_AGENT_URL`).
@@ -436,7 +436,7 @@ Not verifiable on this machine: plain-Linux reachability (§17.4).
 
 ## 19. Accepted risks
 
-- **Ping-pong:** two agents can message each other indefinitely; no loop guard in v0.1 (usage is visible per agent, ADR 0019 has no budgets). Follow-up issue (decision Q9, certainty 3).
+- **Ping-pong:** two agents can message each other indefinitely; no loop guard in v0.0.1 (usage is visible per agent, ADR 0019 has no budgets). Follow-up issue (decision Q9, certainty 3).
 - **Bridge neighbours:** other containers on the default bridge can reach the agent listener; the token protects it (§5.3).
 - **Name race:** a simultaneous sign-up and agent create with the same name can both succeed; sends to that name then fail clearly (§7.1).
 - **Local runtime:** local agents run as the host user and can read each other's environment, including tokens (S5's local trust decision).
@@ -445,7 +445,7 @@ Not verifiable on this machine: plain-Linux reachability (§17.4).
 
 ## 20. Product doc wording (for the lead; not edited here)
 
-- `roadmap/v0.1/s06-messaging-reporting.md`, `architecture/data-model.md`, `system-overview.md`: the member-update debounce is an in-memory timer rebuilt from pending rows at boot, not a pg-boss job (pg-boss waits for S9).
+- `roadmap/v0.0.1/s06-messaging-reporting.md`, `architecture/data-model.md`, `system-overview.md`: the member-update debounce is an in-memory timer rebuilt from pending rows at boot, not a pg-boss job (pg-boss waits for S9).
 - `architecture/factory-mcp.md`, `system-overview.md`: the MCP is served by a separate agent listener (`FACTORY_AGENT_PORT`; loopback plus, on Linux, the Docker bridge gateway when it is a host address; source addresses checked); the per-agent token is per process, passed as `OPEN_FACTORY_AGENT_TOKEN` and referenced by `.mcp.json`; agent tokens never authenticate the REST API; `list_peers` returns `{agents, humans}` and always lists the humans; Claude Code's built-in `SendMessage`/`ListAgents` are denied.
 - `architecture/agent-runtime.md` → Runtimes: containers reach the factory MCP via `host.docker.internal`, on Linux through the bridge-gateway bind, never `0.0.0.0` by default.
 - `architecture/context-assembly.md` → Your org: stable fields only (slug, display name, description), no status or current task, capped at 25 per list; live status from `list_peers`.
@@ -461,7 +461,7 @@ Not verifiable on this machine: plain-Linux reachability (§17.4).
 - **Q4** resolution ignores `@` entirely, and there is no boot check for pre-existing collisions.
 - **Name enforcement** one `isNameTaken` rule on every write path, no triggers; the simultaneous-create race is accepted.
 - **Q6 mechanism** factory facts about a report are `member_update` rows from `@factory` with `subject_agent_id` and a fact code.
-- **Q9 loop guard** none in v0.1.
+- **Q9 loop guard** none in v0.0.1.
 - **Q11** `list_peers` always returns the humans.
 - **Q13** no cancellation of a join followed by a leave; the moved agent relies on S4's restart.
 - **Q17 CLI** `open-factory send` deferred.

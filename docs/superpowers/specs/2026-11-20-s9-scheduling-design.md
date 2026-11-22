@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-20
 - **Status:** approved by owner-proxy (owner-s9), revised after the spec self-review and the impeccable UI review (round 1, R1–R5 in the decision log); pending Or's review of the low-certainty items (§22)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s09-scheduling.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s09-scheduling.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-20-s9-scheduling-ui-design.md`](../designs/2026-11-20-s9-scheduling-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/schedule.md`, `message.md`, `agent.md`; `docs/product/behavior/administration.md`, `agents-and-sessions.md`; `docs/product/architecture/agent-runtime.md`, `harness-driver.md`, `factory-mcp.md`, `data-model.md`, `context-assembly.md`, `system-overview.md`, `tech-stack.md`; ADRs 0008, 0016, 0019; `docs/product/open-questions.md` (S0 cron findings, S4–S8 corrections).
 - **Builds on:** S3 (cron events in the mapper, `originKind: "cron"`), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): the in-memory cron pin set, one hibernate path, wake reasons, `ERRORED_WAKES`, notices, boot reconciliation, rate-limit pauses), S6 ([spec](2026-11-19-s6-messaging-reporting-design.md): agent listener, tokens, router, truthful senders, `groupEnvelopes` escaping, commit-then-hand-off), S7 ([spec](2026-11-19-s7-spawning-design.md): per-caller tool lists, termination transaction, lock order, the Reaper), S8 ([spec](2026-11-20-s8-tasks-inbox-design.md): direct-message kinds, `T-<n>` keys, lock-order header, race tests on `pg_stat_activity`).
@@ -411,7 +411,7 @@ The early slice (§18) runs first; the whole script at the end; both outputs go 
 - `architecture/context-assembly.md` item 3: the Scheduling section of §10.5.
 - `behavior/administration.md` → Schedules: zone shown, next 3 runs preview, derived states, delete with Undo, done one-shots under "Show done".
 - `behavior/agents-and-sessions.md`: the cron popover and Stop crons; the schedules link.
-- `roadmap/v0.1/s09-scheduling.md`: no pg-boss; no `harness_crons` table; the kill action stops the process.
+- `roadmap/v0.0.1/s09-scheduling.md`: no pg-boss; no `harness_crons` table; the kill action stops the process.
 - `open-questions.md` → Verified in S9: V1, V2 results.
 
 ## 21. Issues consumed and follow-ups

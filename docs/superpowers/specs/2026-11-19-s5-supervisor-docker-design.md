@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-19
 - **Status:** approved by owner-proxy (owner-s5), revised after the spec self-review and the impeccable UI review; pending Or's review on the low-certainty items (§21)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s05-supervisor-docker.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s05-supervisor-docker.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s5-supervisor-ui-design.md`](../designs/2026-11-19-s5-supervisor-ui-design.md)
 - **Product sources of truth:** `docs/product/architecture/agent-runtime.md`, `harness-driver.md`, `base-image.md`, `workspace.md`, `permissions.md`, `system-overview.md`, `data-model.md`; `docs/product/concepts/agent.md`, `session.md`, `message.md`, `schedule.md`, `credential.md`; `docs/product/behavior/agents-and-sessions.md`; ADRs 0008, 0009, 0010, 0011, 0013, 0018; `docs/product/open-questions.md` ("Verified during design", the S0 findings).
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md): harness driver, `AgentRuntime`, event store), S4 ([spec](2026-11-19-s4-templates-workspace-design.md): templates, workspace, `prepareStart`, `requestRestart`, credentials, `buildMounts`) and S2 ([spec](2026-11-18-s2-base-image-design.md) §5.1: the base image runtime contract).
@@ -538,7 +538,7 @@ Deviations from the roadmap or product wording, each with its reason:
 - `architecture/agent-runtime.md` → Rate limits, and ADR 0008: the pause is **per credential**, not global, because limits belong to the account behind a credential and a global pause would stop agents on unrelated accounts. A `rejected` event without a usable `resetsAt` uses a 30-minute fallback; the cut-off agent gets one continue notice at reset; a paused idle agent may hibernate.
 - `architecture/agent-runtime.md` → Concurrency: when every slot is held and some holder is idle (not busy or pinned), the least recently active idle agent hibernates early to free a slot, because the warm window is an optimisation and a real wake shouldn't wait up to 70 minutes.
 - `architecture/agent-runtime.md` → Crash handling: an idle crash with no live work hibernates without a resume (nothing was lost, so no tokens are spent); the automatic resume writes a factory notice and succeeds when that turn ends; a server stop during a turn is treated like a crash at the next boot; unrecoverable resumes go to "Start a new session".
-- `roadmap/v0.1/s05-supervisor-docker.md`, `architecture/system-overview.md` and `data-model.md`: the wake queue is in memory, rebuilt from pending messages at boot, not a pg-boss queue (a slot is a live process, not a job); `agents.container_id` isn't a column (containers are found by label).
+- `roadmap/v0.0.1/s05-supervisor-docker.md`, `architecture/system-overview.md` and `data-model.md`: the wake queue is in memory, rebuilt from pending messages at boot, not a pg-boss queue (a slot is a live process, not a job); `agents.container_id` isn't a column (containers are found by label).
 - `architecture/workspace.md`: the template copy, re-sync backups and installed plugins live in `FACTORY_HOME/state/agents/<slug>/`, outside the workdir; `.claude-config/plugins` is a factory-made symlink; Docker mounts come only from factory-owned inputs; re-sync of a running agent applies at its next restart.
 - `architecture/harness-driver.md`: `system/session_state_changed` is a turn signal, not a busy signal.
 - `concepts/message.md`: a `system` kind from `@factory` (crash, restart, apply-change, factory-restart and rate-limit notices).

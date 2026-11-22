@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-19
 - **Status:** approved by owner-proxy (owner-s7), revised after the spec self-review and the impeccable UI review (round 1); pending Or's review of the low-certainty items (§20)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s07-spawning.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s07-spawning.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s7-spawning-ui-design.md`](../designs/2026-11-19-s7-spawning-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/spawning.md`, `agent.md`, `reporting-line.md`, `message.md`, `credential.md`, `project.md`; `docs/product/architecture/factory-mcp.md`, `agent-runtime.md`, `workspace.md`, `permissions.md`, `context-assembly.md`, `data-model.md`; `docs/product/behavior/agents-and-sessions.md`; ADRs 0004, 0006, 0008, 0019; `docs/product/open-questions.md` (S0, S4, S5 and S6 findings).
 - **Builds on:** S4 ([spec](2026-11-19-s4-templates-workspace-design.md): agents, templates, `materialize`, `prepareStart`, `requestRestart`, credentials, grants, `buildSettings`, `buildClaudeMd`), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): Supervisor, wake queue, cap, hibernate path, crash and recovery, `ContainerManager`, boot reconciliation, closing latch) and S6 ([spec](2026-11-19-s6-messaging-reporting-design.md): agent listener, per-process tokens, factory MCP, router, held deliveries, forwarding, neighborhood, peer events, `isNameTaken`).
@@ -437,14 +437,14 @@ The UI doc's states.
 - `PRODUCT.md` (repo, the lead's): "In UI and agent-facing copy, an ephemeral agent is called a 'spawned agent'." (decision R8); concept docs keep "ephemeral".
 - `concepts/agent.md` → Ephemeral lifecycle: the TTL counts wall-clock time (downtime included) but skips agents waiting on a rate limit; a TTL termination is recorded as by `@factory`.
 - `architecture/agent-runtime.md` → Ephemeral agents: the sweep is an in-memory interval reading durable columns until S9; the TTL and grace are fixed constants.
-- `roadmap/v0.1/s07-spawning.md`: "TTL job" is the sweep (§10).
+- `roadmap/v0.0.1/s07-spawning.md`: "TTL job" is the sweep (§10).
 
 ## 20. Decisions needing Or's call (owner-proxy certainty 3/5)
 
 - **Q1** no `spawned_by` column (an ephemeral agent's `reports_to` is its spawner).
 - **Q3** inheritance derived at every child start from the spawner's current state, rather than snapshotted at spawn.
 - **Q14** TTL and grace as constants, not environment variables.
-- **Q16** a per-spawner spawn rate cap in v0.1 at all (ADR 0019 has no budgets), and its default of 20 per hour.
+- **Q16** a per-spawner spawn rate cap in v0.0.1 at all (ADR 0019 has no budgets), and its default of 20 per hour.
 - **R7** Terminate as a ghost button with a crimson `CircleX` icon in the header actions (placement and icon).
 - **R8** one term, "spawned agent", in the UI and in agent-facing copy; "ephemeral" only in the data model and product concepts.
 

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-18
 - **Status:** approved by owner-proxy (owner-s3), pending Or's review on the low-certainty items (see §17)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s03-walking-skeleton.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s03-walking-skeleton.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-18-s3-session-ui-design.md`](../designs/2026-11-18-s3-session-ui-design.md)
 - **Product sources of truth:** `docs/product/architecture/harness-driver.md`, `agent-runtime.md`, `workspace.md`, `permissions.md`, `data-model.md`; `docs/product/concepts/message.md`, `session.md`; `docs/product/behavior/agents-and-sessions.md`; `docs/product/open-questions.md` ("Verified during design", the S0 findings).
 - **Evidence:** the stream-json traces in `packages/harness/fixtures/` (Claude Code 2.1.327), indexed in `packages/harness/fixtures/README.md`. S0 recorded most of them; this design added `manual-compact` and `interrupt-while-idle` (§6.7).

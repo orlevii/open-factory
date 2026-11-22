@@ -10,6 +10,14 @@ Principles: talk directly, one agent one session, structure is the reporting lin
 
 Stack: a TypeScript pnpm monorepo with Fastify, Postgres (Drizzle, pg-boss), React + Vite, and a bundled CLI, with Zod schemas shared across packages.
 
+## Pre-release: break freely
+
+Open Factory is pre-release (roadmap v0.0.x; see `docs/product/decisions/0028-pre-release-no-compatibility.md`). Code, REST APIs, MCP tools, the CLI, files on disk, env vars and the database schema may all break.
+
+- No backward compatibility: no shims, aliases, deprecated paths, fallbacks for old shapes or flags for the old behaviour. Replace the old thing and delete it.
+- No data migration: a schema change ships as the generated schema migration only, without backfilling or converting existing rows. Resetting local data is fine.
+- Prefer clean, maintainable code over branchy code. If keeping old data or callers working would add a branch, break them instead.
+
 ## Git worktrees
 
 Create git worktrees under `.worktrees/` at the repo root (for example `git worktree add .worktrees/<branch> -b <branch>`). The directory is gitignored.

@@ -933,7 +933,7 @@ Run: `pnpm db:generate`.
 Open the new `packages/db/migrations/0002_*.sql` and put this at the very top, before the first `ALTER TABLE "agents" ADD COLUMN … NOT NULL`:
 
 ```sql
--- S4 clean cutover: pre-S4 agents (the S3 dev seed) have no template or credential, and v0.1 is unreleased.
+-- S4 clean cutover: pre-S4 agents (the S3 dev seed) have no template or credential, and v0.0.1 is unreleased.
 -- Their session_events, turns and messages cascade. FACTORY_HOME/agents/<slug>/ folders stay on disk.
 DELETE FROM "agents";--> statement-breakpoint
 ```
@@ -3776,7 +3776,7 @@ Persistent agents created from templates on disk, each with its own working dir,
 Spec: docs/superpowers/specs/2026-11-19-s4-templates-workspace-design.md · UI design: docs/superpowers/designs/2026-11-19-s4-templates-agents-settings-ui-design.md · Decisions: #28
 
 ## Why
-S4 of v0.1: humans create real agents instead of the S3 dev seed, with isolation from the host's Claude setup and one honest way to authenticate.
+S4 of v0.0.1: humans create real agents instead of the S3 dev seed, with isolation from the host's Claude setup and one honest way to authenticate.
 
 ## Approach
 - Snapshot template.yaml onto the agent row, rather than reading the template live, because the agent owns its copy and survives template edits and deletes.
@@ -3786,7 +3786,7 @@ S4 of v0.1: humans create real agents instead of the S3 dev seed, with isolation
 - Keep .mcp.json without --strict-mcp-config, rather than passing an explicit MCP config, because strict mode drops plugin MCP servers (#25).
 - Apply edits through one requestRestart seam that restarts when idle and resumes the session, rather than waiting for a next start that S4 never reaches, because revoked grants and credentials must stop applying; S5 replaces its body.
 - Verify a credential with a one-shot haiku turn before saving it, rather than storing unverified tokens, because a credential that never worked has no reason to exist.
-- Delete pre-S4 agents in the migration, rather than archiving them, because v0.1 is unreleased and template-less agents would need compatibility code forever.
+- Delete pre-S4 agents in the migration, rather than archiving them, because v0.0.1 is unreleased and template-less agents would need compatibility code forever.
 
 ## Changes
 - **Shared:** template, settings and name schemas; tree order; error code/fix and apiErrorStatus.

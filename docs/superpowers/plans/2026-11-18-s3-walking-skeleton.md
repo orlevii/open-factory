@@ -6246,7 +6246,7 @@ with per-agent sequence ids, streamed to a session view over WebSocket, and mess
 Interrupt are sent from the UI. After a server restart the agent resumes the same session.
 
 ## Why
-S3 of v0.1 (docs/product/roadmap/v0.1/s03-walking-skeleton.md): prove the hardest path end to end
+S3 of v0.0.1 (docs/product/roadmap/v0.0.1/s03-walking-skeleton.md): prove the hardest path end to end
 before templates, Docker and the supervisor build on it.
 
 ## Approach

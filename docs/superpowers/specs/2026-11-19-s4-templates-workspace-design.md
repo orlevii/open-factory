@@ -3,7 +3,7 @@
 - **Date:** 2026-11-19
 - **Status:** approved by owner-proxy (owner-s4), spec and plan; pending Or's review on the low-certainty items (§22)
 - **Plan:** [`docs/superpowers/plans/2026-11-19-s4-templates-workspace.md`](../plans/2026-11-19-s4-templates-workspace.md)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s04-templates-workspace-context.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s04-templates-workspace-context.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-19-s4-templates-agents-settings-ui-design.md`](../designs/2026-11-19-s4-templates-agents-settings-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/agent-template.md`, `agent.md`, `credential.md`, `project.md`; `docs/product/architecture/workspace.md`, `context-assembly.md`, `permissions.md`, `agent-runtime.md`, `harness-driver.md`, `data-model.md`; `docs/product/behavior/administration.md`, `agents-and-sessions.md`; ADRs 0009, 0010, 0011, 0012, 0017; `docs/product/open-questions.md` ("Verified during design").
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md)): the harness driver, `AgentRuntime`, the event store, the session view and the agents API.
@@ -50,7 +50,7 @@ From the roadmap, made testable:
 - The factory MCP server and its `.mcp.json` entry (S6).
 - The org block, peers and messaging tools in CLAUDE.md (S6).
 - Spawning and ephemeral agents (S7).
-- Starter templates (none ship in v0.1).
+- Starter templates (none ship in v0.0.1).
 - Editing `skills/` and `files/` in the UI (edit on disk).
 - A manual Restart button (S5).
 - An editable git identity.
@@ -259,7 +259,7 @@ agent_project_grants
 
 - `agents.template` is the template name as text, not a foreign key: templates can be deleted, and the agent keeps its snapshot.
 - `runtime` is copied out of `config` because S5 and the UI filter on it.
-- **Clean cutover for S3 data** (v0.1 is unreleased; the only rows are seeded dev agents): the migration **deletes every existing `agents` row** before adding the NOT NULL columns. `drizzle-kit generate` emits `ADD COLUMN … NOT NULL` without a default, so the generated SQL is hand-edited to start with `DELETE FROM agents;` (a comment says why), and a migration test runs it against a DB holding an S3 agent with events. Their `session_events`, `turns` and `messages` cascade. The PR's rollout notes say so and mention that `FACTORY_HOME/agents/dev/` stays on disk until removed by hand. There's no code path for template-less agents.
+- **Clean cutover for S3 data** (v0.0.1 is unreleased; the only rows are seeded dev agents): the migration **deletes every existing `agents` row** before adding the NOT NULL columns. `drizzle-kit generate` emits `ADD COLUMN … NOT NULL` without a default, so the generated SQL is hand-edited to start with `DELETE FROM agents;` (a comment says why), and a migration test runs it against a DB holding an S3 agent with events. Their `session_events`, `turns` and `messages` cascade. The PR's rollout notes say so and mention that `FACTORY_HOME/agents/dev/` stays on disk until removed by hand. There's no code path for template-less agents.
 
 ## 8. Workspace (`apps/server/src/workspace/`)
 

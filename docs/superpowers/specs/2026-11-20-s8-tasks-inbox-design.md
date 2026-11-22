@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-20
 - **Status:** approved by owner-proxy (owner-s8), revised after the spec self-review and the impeccable UI review (round 1); pending Or's review of the low-certainty items (§22)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s08-tasks-inbox.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s08-tasks-inbox.md`
 - **UI design:** [`docs/superpowers/designs/2026-11-20-s8-tasks-inbox-ui-design.md`](../designs/2026-11-20-s8-tasks-inbox-ui-design.md)
 - **Product sources of truth:** `docs/product/concepts/task.md`, `message.md`, `user.md`, `agent.md`, `reporting-line.md`; `docs/product/behavior/tasks.md`, `inbox.md`, `agents-and-sessions.md`; `docs/product/architecture/factory-mcp.md`, `data-model.md`, `context-assembly.md`, `usage-tracking.md`; ADRs 0002, 0004, 0012, 0015, 0019; `docs/product/open-questions.md` (S0 and S4–S7 findings).
 - **Builds on:** S3 ([spec](2026-11-18-s3-walking-skeleton-design.md): delivery queue, event store, deep links and the highlight), S4 ([spec](2026-11-19-s4-templates-workspace-design.md): `buildClaudeMd`, `MarkdownEditor`), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): wake reasons, `ERRORED_WAKES`, boot reconciliation, rate-limit pauses), S6 ([spec](2026-11-19-s6-messaging-reporting-design.md): agent listener, tokens, factory MCP, router, one namespace, truthful senders, envelopes, `inbox_items`, `GET /api/messages/:id`) and S7 ([spec](2026-11-19-s7-spawning-design.md): terminated agents, the live predicate, lock order, per-caller tool lists).
@@ -431,7 +431,7 @@ Before that, **plan task 1** checks V1 alone, as S7 did: a probe registration of
 
 ## 19. Accepted risks and non-goals
 
-- **Ping-pong through comments:** two agents can comment on each other's tasks indefinitely, like messages (#47 stays open, with a note). No task or comment cap in v0.1 (ADR 0019; usage is visible per agent; per-call bounds exist).
+- **Ping-pong through comments:** two agents can comment on each other's tasks indefinitely, like messages (#47 stays open, with a note). No task or comment cap in v0.0.1 (ADR 0019; usage is visible per agent; per-call bounds exist).
 - **`@humans` spam:** an agent can mention `@humans` in every comment, as it can `send_message` them (same fan-out, #47 note).
 - **Activity unpaged** on the task detail page (tasks are expected to hold tens of comments); revisit only if measured slow (like #22).
 - **Lost lists under concurrent edits:** replacing `depends_on`/`links` is last write wins; history shows both writes.
@@ -447,7 +447,7 @@ Before that, **plan task 1** checks V1 alone, as S7 did: a probe registration of
 - `architecture/data-model.md`: `tasks.number` (sequence) instead of a `key` column; `task_events`; `task_links.agent_id`; `messages.task_id`, `comment_id`; `inbox_items.kind` values; `turns.task_id` not written in S8 (S10 decides).
 - `architecture/context-assembly.md` → Protocol: the Tasks section; `@factory` notes include task changes.
 - `DESIGN.md` (repo, the lead's): Colors → Semantic gains "Task status: Done uses `success`, the Blocked marker uses `warning`; both always with a label."
-- `roadmap/v0.1/s08-tasks-inbox.md`: "link the task to its turns" is met by `messages.task_id` + `delivered_turn_id`.
+- `roadmap/v0.0.1/s08-tasks-inbox.md`: "link the task to its turns" is met by `messages.task_id` + `delivered_turn_id`.
 
 ## 21. Issues consumed and follow-ups
 

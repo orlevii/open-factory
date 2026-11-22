@@ -3164,4 +3164,4 @@ Use the latest major tags of the actions (check each action's README). `pnpm/act
   4. CI on the PR is green (link the run).
   5. `node apps/cli/dist/open-factory.js status` shows the server version and "Not logged in". `login` as alice, then `status` shows "Logged in as @alice". `logout`, then `status` shows "Not logged in".
   6. Every nav item shows its empty-state line. Sign out returns to `/sign-in`. Visiting `/agents` while signed out redirects to `/sign-in`.
-- [ ] **Step 3:** Paste the checklist with ✅/❌ and any notes into the PR description under "Manual acceptance check". Mention that roadmap AC1 wording differs (install + build + `.env` step, decision Q5 in #3) and that the local `docs/product/roadmap/v0.1/s01-foundation.md` should be updated to match (the product docs are not tracked in git).
+- [ ] **Step 3:** Paste the checklist with ✅/❌ and any notes into the PR description under "Manual acceptance check". Mention that roadmap AC1 wording differs (install + build + `.env` step, decision Q5 in #3) and that the local `docs/product/roadmap/v0.0.1/s01-foundation.md` should be updated to match (the product docs are not tracked in git).

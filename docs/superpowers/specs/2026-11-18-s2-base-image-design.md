@@ -2,8 +2,8 @@
 
 - **Date:** 2026-11-18
 - **Status:** approved by owner-proxy (s2-owner), reviewed by an independent reviewer (findings applied), pending Or's review on the low-confidence items (see §14)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s02-base-image.md`
-- **Product sources of truth:** `docs/product/architecture/base-image.md`, `docs/product/decisions/0018-base-image.md`, `docs/product/architecture/workspace.md`, `docs/product/decisions/0009-runtimes-and-workspace.md`, `docs/product/architecture/agent-runtime.md`, `docs/product/roadmap/v0.1/s05-supervisor-docker.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s02-base-image.md`
+- **Product sources of truth:** `docs/product/architecture/base-image.md`, `docs/product/decisions/0018-base-image.md`, `docs/product/architecture/workspace.md`, `docs/product/decisions/0009-runtimes-and-workspace.md`, `docs/product/architecture/agent-runtime.md`, `docs/product/roadmap/v0.0.1/s05-supervisor-docker.md`
 - **Decision log:** GitHub issue #5 "S2 Base image: design decisions" (orlevii/open-factory)
 
 > Note: `docs/product/` is ignored by git, so the product docs exist only in local checkouts. Paths above are relative to the repo root.
@@ -237,8 +237,8 @@ The CLI is named `open-factory`, not `of`. These product-doc lines still say `of
 - `architecture/workspace.md`: "user images (FROM of-base)"; "The `of` CLI bundle is bind-mounted read-only at `/opt/factory/bin/of`". This spec uses `/opt/factory/bin/open-factory`.
 - `architecture/base-image.md`: heading/text "of-base"; "the mounted `of`"; "`of images build`".
 - `decisions/0018-base-image.md`: "of-base" in the description.
-- `roadmap/v0.1/scope.md`: "`of` CLI"; "`of-base` multi-arch image".
-- `roadmap/v0.1/s02-base-image.md` and `roadmap/v0.1/index.md`: "of-base".
+- `roadmap/v0.0.1/scope.md`: "`of` CLI"; "`of-base` multi-arch image".
+- `roadmap/v0.0.1/s02-base-image.md` and `roadmap/v0.0.1/index.md`: "of-base".
 
 The image name stays `ghcr.io/orlevii/open-factory/base`; "of-base" only appears as a nickname in prose.
 
@@ -246,7 +246,7 @@ Other roadmap drift: `s02-base-image.md`'s AC "`claude --dangerously-skip-permis
 
 ## 13. Follow-up issues (not S2 work)
 
-1. Image provenance, SBOM and signing (cosign/attestations) are off in v0.1; also verify the Claude release manifest's signature if Anthropic publishes one. (#6)
+1. Image provenance, SBOM and signing (cosign/attestations) are off in v0.0.1; also verify the Claude release manifest's signature if Anthropic publishes one. (#6)
 2. Product doc and roadmap drift (§12). (#7)
 3. S1's `ci.yml` pins actions by tag; align it with the SHA-pinning used here. (#8)
 4. GHCR untagged digests accumulate from weekly builds and failed smoke runs; consider a retention policy later. (#9)

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-20
 - **Status:** approved by owner-proxy (owner-s10), revised after the spec self-review and the impeccable UI review (F1–F6 and U1–U22 in the decision log); pending Or's review of the low-certainty items (§21)
-- **Roadmap spec:** `docs/product/roadmap/v0.1/s10-usage-admin.md`
+- **Roadmap spec:** `docs/product/roadmap/v0.0.1/s10-usage-admin.md`
 - **Product sources of truth:** `docs/product/architecture/usage-tracking.md`, `base-image.md`, `data-model.md`, `agent-runtime.md`; `docs/product/behavior/administration.md`; `docs/product/concepts/credential.md`, `user.md`, `agent-template.md`; ADRs 0013 (one server process), 0019 (usage, no budgets).
 - **Builds on:** S1 (better-auth, `requireUser`, sign-up), S3 (`turns`, mapper usage deltas), S4 (templates, credentials, Settings sections), S5 ([spec](2026-11-19-s5-supervisor-docker-design.md): supervisor slot pool, credential rate-limit pauses, image pull on start, container spec hash, the local-runtime gate), S6 (member-update debounce), S7 (spawned agents: `kind = 'ephemeral'`, `reports_to` = spawner, the spawner's credential), S8 ([spec](2026-11-20-s8-tasks-inbox-design.md) §6.7: `messages.task_id`, `delivered_turn_id`), S9 (`FACTORY_TIMEZONE`).
 - **Decision log:** #68 ("S10 Usage and administration: design decisions"); question numbers below (Q1–Q20, R1–R10) refer to it.
@@ -416,7 +416,7 @@ The output goes in the PR.
 - `architecture/base-image.md` → User images: a bare `image:` name means `images/<name>/`, tagged `open-factory-user/<name>:latest`, never pulled, built manually (UI or CLI) with `pull: true`; status derived from Docker labels; agents use a rebuild from their next start.
 - `concepts/user.md`: invite-only after the first user; disable; no deletion.
 - `concepts/agent-template.md`: `warm_window_minutes` optional, default from Settings.
-- `roadmap/v0.1/s10-usage-admin.md`: "Rollup queries" (no materialized views).
+- `roadmap/v0.0.1/s10-usage-admin.md`: "Rollup queries" (no materialized views).
 
 ## 19. Issues consumed and follow-ups
 

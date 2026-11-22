@@ -297,6 +297,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 - **Rows:** Linked rows take the `steel-hover` fill on hover (fine pointers only, 150ms colour) and a 6% deeper fill the instant they are pressed (on touch after 80ms, so a scroll doesn't flash them). Full-width rows never scale. Rows, sidebar items and timeline rows take the focus ring inset (offset −2px), so it never spills over a divider. Menu and select items show focus as the `steel-hover` fill instead of a ring.
 - **Inputs:** a plate fill with a `field-edge` boundary, a signal focus ring (2px, offset 2px) and a signal caret. Errors appear inline below the field in crimson with an icon.
 - **Validation:** the two short auth forms validate on submit and then move focus to the first invalid field. Editing a field clears its error. Longer forms (templates, schedules) validate each field when you leave it, never while you type, and still check everything on submit.
+- **Template editor:** template files are edited in CodeMirror with line numbers, syntax colours from the same tokens as code blocks (never orange), and validator markers on their lines.
 - **Destructive actions: forgiveness over confirmation.**
   - Prefer undo. When an action can be reversed, do it immediately and offer an inline undo.
   - Ask for confirmation only when the action is both destructive and irreversible, such as terminating an agent and discarding its session, or deleting a template.

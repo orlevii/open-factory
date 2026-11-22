@@ -266,3 +266,107 @@ test("Docker: the stored file is under the workdir mount the container sees and 
   for (const dir of [path.join(wd, ".factory"), uploadsOf(wd)])
     expect(statSync(dir).mode & 0o005).toBe(0o005);
 });
+
+// Review I1: Node has no openat, so a swap between the lstat walk and the open must be caught after the open.
+test("a .factory swapped for a link between the walk and the open is refused before any byte, nothing outside", async () => {
+  const wd = tmp("wd-");
+  const outside = tmp("outside-");
+  mkdirSync(path.join(outside, "uploads"));
+  const { renameSync } = await import("node:fs");
+  const store = await UploadStore.open(wd, {
+    beforeOpen: async () => {
+      renameSync(path.join(wd, ".factory"), path.join(wd, ".factory-real"));
+      symlinkSync(outside, path.join(wd, ".factory"));
+    },
+  });
+  await expect(
+    store.write(chunks(Buffer.from("secret bytes")), { storedName: "a.txt", name: "a.txt" }),
+  ).rejects.toBeInstanceOf(UnsafePathError);
+  expect(readdirSync(path.join(outside, "uploads"))).toEqual([]);
+  expect(readdirSync(path.join(wd, ".factory-real/uploads"))).toEqual([]);
+});
+
+test("a folder moved out between the write and the link is refused, and our files there are removed", async () => {
+  const wd = tmp("wd-");
+  const outside = tmp("outside-");
+  const { renameSync } = await import("node:fs");
+  const store = await UploadStore.open(wd, {
+    beforeLink: async () => {
+      renameSync(path.join(wd, ".factory"), path.join(outside, "fac"));
+      symlinkSync(path.join(outside, "fac"), path.join(wd, ".factory"));
+    },
+  });
+  await expect(
+    store.write(chunks(Buffer.from("secret bytes")), { storedName: "a.txt", name: "a.txt" }),
+  ).rejects.toBeInstanceOf(UnsafePathError);
+  expect(readdirSync(path.join(outside, "fac/uploads"))).toEqual([]);
+});
+
+test("ensureDir refuses a .factory/uploads swapped for a link after its mkdir", async () => {
+  const wd = tmp("wd-");
+  const outside = tmp("outside-");
+  mkdirSync(path.join(wd, ".factory"));
+  const store = await UploadStore.open(wd);
+  // An existing link is caught by the walk; the post-open fstat/realpath check is the second line.
+  symlinkSync(outside, uploadsOf(wd));
+  await expect(store.ensureDir()).rejects.toBeInstanceOf(UnsafePathError);
+  expect(readdirSync(outside)).toEqual([]);
+});
+
+// Review I3: the spec resolves the workdir with realpath; a symlinked FACTORY_HOME must work.
+test("a workdir reached through a symlinked parent is resolved and used at its real path", async () => {
+  const home = tmp("home-");
+  mkdirSync(path.join(home, "agents/dev"), { recursive: true });
+  const alias = path.join(tmp("alias-"), "home");
+  symlinkSync(home, alias);
+  const store = await UploadStore.open(path.join(alias, "agents/dev"));
+  expect(store.root).toBe(path.join(home, "agents/dev"));
+  const r = await store.write(chunks(Buffer.from("hi\n")), { storedName: "a.txt", name: "a.txt" });
+  expect(r).toMatchObject({ rel: ".factory/uploads/a.txt" });
+  expect(readFileSync(path.join(home, "agents/dev/.factory/uploads/a.txt"), "utf8")).toBe("hi\n");
+});
+
+// Review M3.
+test("read never reads past the row's size", async () => {
+  const wd = tmp("wd-");
+  const store = await UploadStore.open(wd);
+  const r = await store.write(chunks(Buffer.from("abc\n")), { storedName: "a.txt", name: "a.txt" });
+  if ("status" in r) throw new Error("refused");
+  expect(await store.read(r.rel, { bytes: r.bytes, sha256: r.sha256 })).toEqual(
+    Buffer.from("abc\n"),
+  );
+  expect(await store.read(r.rel, { bytes: r.bytes - 1, sha256: r.sha256 })).toBeUndefined();
+});
+
+// Review M2.
+test("sweepFiles deletes unreferenced old upload files and stale temp files, regular files only", async () => {
+  const wd = tmp("wd-");
+  const store = await UploadStore.open(wd);
+  await store.ensureDir();
+  const { utimesSync } = await import("node:fs");
+  const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+  const old = new Date(Date.now() - 48 * 3_600_000);
+  const files = {
+    orphan: `20261120-${id(1)}-a.txt`,
+    known: `20261120-${id(2)}-b.txt`,
+    fresh: `20261122-${id(3)}-c.txt`,
+    tmpOld: `.tmp-${id(4)}`,
+    foreign: "notes.txt",
+  };
+  for (const f of Object.values(files)) writeFileSync(path.join(uploadsOf(wd), f), "x");
+  for (const f of [files.orphan, files.known, files.tmpOld, files.foreign])
+    utimesSync(path.join(uploadsOf(wd), f), old, old);
+  const secret = path.join(tmp("secret-"), "key");
+  writeFileSync(secret, "secret");
+  symlinkSync(secret, path.join(uploadsOf(wd), `20261120-${id(5)}-link.txt`));
+  const n = await store.sweepFiles({
+    known: new Set([id(2)]),
+    orphanBefore: new Date(Date.now() - 24 * 3_600_000),
+    tmpBefore: new Date(Date.now() - 3_600_000),
+  });
+  expect(n).toBe(2);
+  expect(readdirSync(uploadsOf(wd)).sort()).toEqual(
+    [files.known, files.fresh, files.foreign, `20261120-${id(5)}-link.txt`].sort(),
+  );
+  expect(readFileSync(secret, "utf8")).toBe("secret");
+});

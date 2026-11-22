@@ -1,18 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema, type UploadRow } from "@open-factory/db";
-import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 import { excludeFactoryDir } from "./git-exclude.ts";
 import { storedUploadName } from "./names.ts";
 import { type ImageMime, type Refusal, sniffType, type TEXT_MIME } from "./sniff.ts";
-import { UploadStore } from "./store.ts";
+import { type StoreHooks, UploadStore } from "./store.ts";
 
 const { uploads, agentProjectGrants, projects } = schema;
 
 /** U3 §13.5 (Q42): an upload never attached to a sent message is deleted after this long. */
 export const UNSENT_TTL_MS = 24 * 3_600_000;
+/** A temp name older than this belongs to no stream in progress. */
+const TMP_TTL_MS = 3_600_000;
 
 export type UploadInfo = {
   uploadId: string;
@@ -30,6 +32,19 @@ export const uploadInfo = (r: UploadRow): UploadInfo => ({
   ...(r.height !== null ? { height: r.height } : {}),
   name: r.originalName,
 });
+
+/** Review M1: per (agent, uploader) unsent caps, and concurrent streams per agent. */
+export const MAX_UNSENT_FILES = 20;
+export const MAX_UNSENT_BYTES = 200 * 1024 * 1024;
+export const MAX_IN_FLIGHT_PER_AGENT = 3;
+
+/** Too many unsent uploads, or too many streaming at once (429 `too_many_uploads`). */
+export class UploadLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UploadLimitError";
+  }
+}
 
 /** The agent ended while the upload streamed: its partial file was deleted. */
 export class UploadAgentEndedError extends Error {
@@ -54,6 +69,10 @@ export interface UploadServiceDeps {
 /** Upload rows plus their files in each agent's workdir (U3 §13.5). */
 export class UploadService {
   constructor(private readonly d: UploadServiceDeps) {}
+  /** Streams under way per agent id. */
+  private readonly inFlight = new Map<string, number>();
+  /** Test seam (review I1): hooks every store this service opens gets. */
+  storeHooks: StoreHooks = {};
 
   private now(): Date {
     return this.d.now?.() ?? new Date();
@@ -73,56 +92,94 @@ export class UploadService {
     name: string,
     source: AsyncIterable<Buffer | Uint8Array>,
   ): Promise<UploadInfo | Refusal> {
+    const [unsent] = await this.d.db
+      .select({ n: count(), bytes: sql<string>`coalesce(sum(${uploads.bytes}), 0)` })
+      .from(uploads)
+      .where(
+        and(
+          eq(uploads.agentId, agent.id),
+          eq(uploads.uploaderId, uploaderId),
+          isNull(uploads.messageId),
+        ),
+      );
+    if ((unsent?.n ?? 0) >= MAX_UNSENT_FILES || Number(unsent?.bytes ?? 0) >= MAX_UNSENT_BYTES)
+      throw new UploadLimitError(
+        "Too many files are waiting to be sent; send or remove some first.",
+      );
+    const busy = this.inFlight.get(agent.id) ?? 0;
+    if (busy >= MAX_IN_FLIGHT_PER_AGENT)
+      throw new UploadLimitError("Too many uploads at once; wait for one to finish.");
+    this.inFlight.set(agent.id, busy + 1);
+    try {
+      return await this.createLocked(agent, uploaderId, name, source);
+    } finally {
+      const left = (this.inFlight.get(agent.id) ?? 1) - 1;
+      if (left > 0) this.inFlight.set(agent.id, left);
+      else this.inFlight.delete(agent.id);
+    }
+  }
+
+  private async createLocked(
+    agent: AgentRow,
+    uploaderId: string,
+    name: string,
+    source: AsyncIterable<Buffer | Uint8Array>,
+  ): Promise<UploadInfo | Refusal> {
     const id = randomUUID();
     const at = this.now();
-    const store = await UploadStore.open(this.workdir(agent.slug));
+    const store = await UploadStore.open(this.workdir(agent.slug), this.storeHooks);
     const written = await store.write(source, { storedName: storedUploadName(at, id, name), name });
     if ("status" in written) return written;
-    const row = await this.d.lock.run(agent.slug, async () => {
-      const [now] = await this.d.db
-        .select()
-        .from(schema.agents)
-        .where(eq(schema.agents.id, agent.id));
-      if (!now || now.archivedAt || now.terminatedAt || now.workspaceDeletedAt) {
-        await store.remove(written.rel).catch(() => {});
-        throw now?.archivedAt && !now.terminatedAt
-          ? new UploadAgentEndedError("agent_archived", `@${agent.slug} is archived.`)
-          : new UploadAgentEndedError("agent_terminated", `@${agent.slug} was terminated.`);
-      }
-      const s = written.sniffed;
-      const [r] = await this.d.db
-        .insert(uploads)
-        .values({
-          id,
-          agentId: agent.id,
-          uploaderId,
-          storedPath: written.rel,
-          originalName: name,
-          kind: s.kind,
-          bytes: written.bytes,
-          sha256: written.sha256,
-          width: s.kind === "image" ? s.width : null,
-          height: s.kind === "image" ? s.height : null,
-          createdAt: at,
-        })
-        .returning();
-      if (!r) throw new Error("the upload insert returned no row");
-      return r;
-    });
-    await this.exclude(agent).catch((err: unknown) =>
+    let row: UploadRow;
+    try {
+      row = await this.d.lock.run(agent.slug, async () => {
+        const [now] = await this.d.db
+          .select()
+          .from(schema.agents)
+          .where(eq(schema.agents.id, agent.id));
+        if (!now || now.archivedAt || now.terminatedAt || now.workspaceDeletedAt)
+          throw now?.archivedAt && !now.terminatedAt
+            ? new UploadAgentEndedError("agent_archived", `@${agent.slug} is archived.`)
+            : new UploadAgentEndedError("agent_terminated", `@${agent.slug} was terminated.`);
+        const s = written.sniffed;
+        const [r] = await this.d.db
+          .insert(uploads)
+          .values({
+            id,
+            agentId: agent.id,
+            uploaderId,
+            storedPath: written.rel,
+            originalName: name,
+            kind: s.kind,
+            bytes: written.bytes,
+            sha256: written.sha256,
+            width: s.kind === "image" ? s.width : null,
+            height: s.kind === "image" ? s.height : null,
+            createdAt: at,
+          })
+          .returning();
+        if (!r) throw new Error("the upload insert returned no row");
+        return r;
+      });
+    } catch (err) {
+      // Review I2: no file without a row (the row sweep would never find it).
+      await store.remove(written.rel).catch(() => {});
+      throw err;
+    }
+    await this.exclude(agent, store.root).catch((err: unknown) =>
       this.d.log.warn({ err, agent: agent.slug }, "adding .factory/ to info/exclude failed"),
     );
     return uploadInfo(row);
   }
 
-  private async exclude(agent: AgentRow) {
+  /** `workdir` is the store's real path (review I3), so it compares with the realpath'd roots. */
+  private async exclude(agent: AgentRow, workdir: string) {
     const grants = await this.d.db
       .select({ hostPath: projects.hostPath })
       .from(agentProjectGrants)
       .innerJoin(projects, eq(projects.id, agentProjectGrants.projectId))
       .where(eq(agentProjectGrants.agentId, agent.id));
-    const wd = this.workdir(agent.slug);
-    const outcome = await excludeFactoryDir(wd, [wd, ...grants.map((g) => g.hostPath)]);
+    const outcome = await excludeFactoryDir(workdir, [workdir, ...grants.map((g) => g.hostPath)]);
     if (outcome === "refused")
       this.d.log.warn(
         { agent: agent.slug },
@@ -145,17 +202,28 @@ export class UploadService {
     return this.d.db.select().from(uploads).where(inArray(uploads.id, ids));
   }
 
-  /** The stored bytes and their sniffed type, or undefined when the file is gone or changed on disk. */
+  /**
+   * The stored bytes and their sniffed type; `gone` when the workspace no longer exists (review M5), `changed` when the
+   * file is missing or isn't what was uploaded.
+   */
   async read(
-    slug: string,
+    agent: AgentRow,
     r: UploadRow,
-  ): Promise<{ data: Buffer; mime: ImageMime | typeof TEXT_MIME } | undefined> {
-    const store = await UploadStore.open(this.workdir(slug)).catch(() => undefined);
-    if (!store) return undefined;
-    const data = await store.read(r.storedPath, { bytes: r.bytes, sha256: r.sha256 });
-    if (!data) return undefined;
+  ): Promise<{ data: Buffer; mime: ImageMime | typeof TEXT_MIME } | "gone" | "changed"> {
+    if (agent.workspaceDeletedAt) return "gone";
+    let store: UploadStore;
+    try {
+      store = await UploadStore.open(this.workdir(agent.slug));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "gone";
+      return "changed";
+    }
+    const data = await store
+      .read(r.storedPath, { bytes: r.bytes, sha256: r.sha256 })
+      .catch(() => undefined);
+    if (!data) return "changed";
     const s = sniffType(data);
-    if ("status" in s || s.kind !== r.kind) return undefined;
+    if ("status" in s || s.kind !== r.kind) return "changed";
     return { data, mime: s.mime };
   }
 
@@ -205,6 +273,28 @@ export class UploadService {
       if (!gone.length) continue; // sent meanwhile
       await this.removeFile(r.slug, r.storedPath);
       n++;
+    }
+    // Review M2: files no row references (a crash before the insert, a failed delete, a leftover temp name).
+    const live = await this.d.db
+      .select({ id: schema.agents.id, slug: schema.agents.slug })
+      .from(schema.agents)
+      .where(isNull(schema.agents.workspaceDeletedAt));
+    for (const a of live) {
+      try {
+        const store = await UploadStore.open(this.workdir(a.slug));
+        const rows = await this.d.db
+          .select({ id: uploads.id })
+          .from(uploads)
+          .where(eq(uploads.agentId, a.id));
+        n += await store.sweepFiles({
+          known: new Set(rows.map((r) => r.id)),
+          orphanBefore: cutoff,
+          tmpBefore: new Date(now.getTime() - TMP_TTL_MS),
+        });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        this.d.log.warn({ err, agent: a.slug }, "sweeping an agent's upload files failed");
+      }
     }
     return n;
   }

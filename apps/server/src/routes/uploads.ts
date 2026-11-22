@@ -3,7 +3,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
-import { UploadAgentEndedError } from "../uploads/service.ts";
+import { UploadAgentEndedError, UploadLimitError } from "../uploads/service.ts";
 import { IMAGE_TOO_LARGE, type Refusal } from "../uploads/sniff.ts";
 import { MAX_UPLOAD_BYTES, UploadExistsError, UploadTooLargeError } from "../uploads/store.ts";
 import { WorkspaceError } from "../workspace/safe-fs.ts";
@@ -13,6 +13,9 @@ const uploadParams = z.object({ slug: slugSchema, id: z.string().min(1).max(64) 
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
 const TOO_LARGE = "The file is larger than 20 MB.";
+const WORKSPACE_GONE = "This agent's workspace no longer exists.";
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The longest original name kept for the chip (characters, after decoding). */
 const MAX_NAME_CHARS = 255;
 
@@ -42,7 +45,12 @@ function disposition(type: "inline" | "attachment", storedPath: string, original
   const safe = storedPath
     .slice(storedPath.lastIndexOf("/") + 1)
     .replace(/^\d{8}-[0-9a-f-]{36}-/, "");
-  return `${type}; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(original)}`;
+  // RFC 5987 attr-char: encodeURIComponent leaves ' ( ) * ! unescaped, and ' delimits the ext-value.
+  const ext = encodeURIComponent(original).replace(
+    /['()*!]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${type}; filename="${safe}"; filename*=UTF-8''${ext}`;
 }
 
 /**
@@ -64,6 +72,14 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
   };
 
   app.post("/api/agents/:slug/uploads", { schema: { params: slugParams } }, async (req, reply) => {
+    // Review M7: another type was already consumed by Fastify's own parsers; say so instead of "empty".
+    if (!String(req.headers["content-type"] ?? "").startsWith("application/octet-stream"))
+      return err(
+        reply,
+        415,
+        "unsupported_media_type",
+        "Send the file as application/octet-stream.",
+      );
     const declared = Number(req.headers["content-length"]);
     if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES)
       return err(reply, 413, "too_large", TOO_LARGE);
@@ -75,6 +91,9 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
       return err(reply, 400, "validation_error", "X-Upload-Name isn't valid percent-encoding.");
     }
     if (!name.trim()) return err(reply, 400, "validation_error", "X-Upload-Name is required.");
+    // Review I2: C0/C1 controls (a NUL can't even be stored) are refused, not sanitized.
+    if (CONTROL.test(name))
+      return err(reply, 400, "validation_error", "The file name contains control characters.");
     if (name.length > MAX_NAME_CHARS)
       return err(reply, 400, "validation_error", "The file name is too long.");
 
@@ -92,6 +111,9 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
       // The rest of the body may be unread: close the connection after answering.
       reply.header("connection", "close");
       if (e instanceof UploadTooLargeError) return err(reply, 413, "too_large", TOO_LARGE);
+      if (e instanceof UploadLimitError) return err(reply, 429, "too_many_uploads", e.message);
+      if ((e as NodeJS.ErrnoException).code === "ENOENT")
+        return err(reply, 410, "workspace_gone", WORKSPACE_GONE);
       if (e instanceof UploadAgentEndedError) return err(reply, 409, e.code, e.message);
       if (e instanceof UploadExistsError) return err(reply, 409, "upload_exists", e.message);
       if (e instanceof WorkspaceError) return err(reply, 409, "unsafe_workspace", e.message);
@@ -108,11 +130,9 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
       const row = await app.uploads.get(agent.id, req.params.id);
       if (!row || (row.messageId === null && row.uploaderId !== user(req).id))
         return err(reply, 404, "upload_not_found", "No such upload.");
-      const file = await app.uploads.read(agent.slug, row).catch((e: unknown) => {
-        if (e instanceof WorkspaceError) return undefined;
-        throw e;
-      });
-      if (!file)
+      const file = await app.uploads.read(agent, row);
+      if (file === "gone") return err(reply, 410, "workspace_gone", WORKSPACE_GONE);
+      if (file === "changed")
         return err(reply, 409, "upload_changed", "The file changed on disk since it was uploaded.");
       return reply
         .header("content-type", file.mime)

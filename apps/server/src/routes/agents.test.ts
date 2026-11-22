@@ -991,6 +991,20 @@ describe("U3 §13.5: attachments on POST /messages", () => {
     expect((await uploadRow(samUpload))?.messageId).toBeNull();
   });
 
+  test("two concurrent sends with the same upload: one 202, one 422, one message row", async () => {
+    const a = await upload("dev", Buffer.from("race\n"), "race.txt");
+    const before = await s.sql`select count(*)::int as n from messages`;
+    const [x, y] = await Promise.all([
+      post({ body: "first", attachments: [a] }),
+      post({ body: "second", attachments: [a] }),
+    ]);
+    expect([x.statusCode, y.statusCode].sort()).toEqual([202, 422]);
+    const after = await s.sql`select count(*)::int as n from messages`;
+    expect((after[0]?.n ?? 0) - (before[0]?.n ?? 0)).toBe(1);
+    const winner = x.statusCode === 202 ? x : y;
+    expect((await uploadRow(a))?.messageId).toBe(winner.json().item.id);
+  });
+
   test("the attached lines count in the 64 KB limit", async () => {
     const a = await upload("dev", Buffer.from("q\n"), "q.txt");
     const res = await post({ body: "x".repeat(64 * 1024 - 20), attachments: [a] });

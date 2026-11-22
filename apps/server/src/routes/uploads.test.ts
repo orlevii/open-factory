@@ -16,10 +16,11 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { gif, heic, jpeg, png, webp } from "../uploads/fixtures.ts";
+import { UploadService } from "../uploads/service.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -385,4 +386,167 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
   // The temp file is deleted once the handler has unwound.
   await new Promise((r) => setTimeout(r, 50));
   expect(listUploads("ops")).toEqual(before);
+});
+
+describe("security review fixes", () => {
+  test("I2: a control character in X-Upload-Name is 400 and nothing is kept", async () => {
+    await t.seedAgent({ slug: "ctl" });
+    const res = await upload("ctl", Buffer.from("x\n"), "a.txt", {
+      headers: { "x-upload-name": "a%00.txt" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("validation_error");
+    expect((await upload("ctl", Buffer.from("x\n"), "a\u0085b.txt")).statusCode).toBe(400);
+    expect(listUploads("ctl")).toEqual([]);
+  });
+
+  test("I2: a failure after the file is written (the insert) removes the file", async () => {
+    const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "ctl"));
+    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    if (!agent || !me) throw new Error("seed");
+    async function* one() {
+      yield Buffer.from("x\n");
+    }
+    // Postgres can't store a NUL in text: the insert throws after the bytes landed.
+    await expect(t.app.uploads.create(agent, me.id, "a\u0000.txt", one())).rejects.toThrow();
+    expect(listUploads("ctl")).toEqual([]);
+  });
+
+  test("I1: a .factory swapped for a link between the walk and the open is 409 and nothing appears outside", async () => {
+    await t.seedAgent({ slug: "race" });
+    expect((await upload("race", Buffer.from("first\n"), "first.txt")).statusCode).toBe(201);
+    const outside = realpathSync(mkdtempSync(path.join(tmpdir(), "outside-")));
+    mkdirSync(path.join(outside, "uploads"));
+    const { renameSync } = await import("node:fs");
+    t.app.uploads.storeHooks = {
+      beforeOpen: async () => {
+        renameSync(path.join(wd("race"), ".factory"), path.join(wd("race"), ".factory-moved"));
+        symlinkSync(outside, path.join(wd("race"), ".factory"));
+      },
+    };
+    try {
+      const res = await upload("race", Buffer.from("secret\n"), "raced.txt");
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe("unsafe_workspace");
+    } finally {
+      t.app.uploads.storeHooks = {};
+    }
+    expect(readdirSync(path.join(outside, "uploads"))).toEqual([]);
+    expect(
+      await t.db.select().from(schema.uploads).where(eq(schema.uploads.originalName, "raced.txt")),
+    ).toEqual([]);
+  });
+
+  test("I3: a FACTORY_HOME reached through a symlink works, and info/exclude is written", async () => {
+    await t.seedAgent({ slug: "aliased" });
+    execFileSync("git", ["init", "-q"], { cwd: wd("aliased") });
+    const alias = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), "alias-"))), "home");
+    symlinkSync(t.factoryHome, alias);
+    const svc = new UploadService({
+      db: t.db,
+      factoryHome: alias,
+      lock: t.app.workspaceLock,
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+    });
+    const [agent] = await t.db
+      .select()
+      .from(schema.agents)
+      .where(eq(schema.agents.slug, "aliased"));
+    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    if (!agent || !me) throw new Error("seed");
+    async function* one() {
+      yield Buffer.from("hello\n");
+    }
+    const r = await svc.create(agent, me.id, "a.txt", one());
+    expect(r).toMatchObject({ kind: "text" });
+    expect(listUploads("aliased")).toHaveLength(1);
+    expect(readFileSync(path.join(wd("aliased"), ".git/info/exclude"), "utf8")).toContain(
+      ".factory/\n",
+    );
+  });
+
+  test("M1: at most 20 unsent uploads per agent and uploader; at most 3 streaming per agent", async () => {
+    await t.seedAgent({ slug: "quota" });
+    const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "quota"));
+    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    if (!agent || !me) throw new Error("seed");
+    await t.db.insert(schema.uploads).values(
+      Array.from({ length: 20 }, (_, i) => ({
+        id: `fake-${i}`,
+        agentId: agent.id,
+        uploaderId: me.id,
+        storedPath: `.factory/uploads/20261122-fake-${i}.txt`,
+        originalName: `${i}.txt`,
+        kind: "text" as const,
+        bytes: 1,
+        sha256: "0",
+      })),
+    );
+    const res = await upload("quota", Buffer.from("x\n"), "21.txt");
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error.code).toBe("too_many_uploads");
+    // Another human's quota is separate.
+    expect((await upload("quota", Buffer.from("x\n"), "kim.txt", { cookie: kim })).statusCode).toBe(
+      201,
+    );
+    await t.db.delete(schema.uploads).where(eq(schema.uploads.agentId, agent.id));
+
+    const releases: (() => void)[] = [];
+    const stalled = () =>
+      (async function* () {
+        yield Buffer.from("x");
+        await new Promise<void>((r) => releases.push(r));
+      })();
+    const running = [1, 2, 3].map((i) => t.app.uploads.create(agent, me.id, `${i}.txt`, stalled()));
+    await new Promise((r) => setTimeout(r, 50));
+    const fourth = await upload("quota", Buffer.from("x\n"), "4.txt");
+    expect(fourth.statusCode).toBe(429);
+    for (const r of releases) r();
+    await Promise.all(running);
+    expect((await upload("quota", Buffer.from("x\n"), "5.txt")).statusCode).toBe(201);
+  });
+
+  test("M2: the sweep also deletes an old upload file no row references", async () => {
+    await t.seedAgent({ slug: "orphans" });
+    expect((await upload("orphans", Buffer.from("x\n"), "a.txt")).statusCode).toBe(201);
+    const { utimesSync } = await import("node:fs");
+    const stray = path.join(
+      uploadsDir("orphans"),
+      "20261101-00000000-0000-4000-8000-000000000009-x.txt",
+    );
+    writeFileSync(stray, "x");
+    const old = new Date(Date.now() - 30 * 3_600_000);
+    utimesSync(stray, old, old);
+    await t.app.uploads.sweepUnsent();
+    expect(existsSync(stray)).toBe(false);
+    expect(listUploads("orphans")).toHaveLength(1);
+  });
+
+  test("M4: filename* escapes ' ( ) * ! (RFC 5987)", async () => {
+    const r = (await upload("dev", Buffer.from("x\n"), "it's (1)*!.txt")).json();
+    const res = await get("dev", r.uploadId);
+    expect(String(res.headers["content-disposition"])).toContain(
+      "filename*=UTF-8''it%27s%20%281%29%2A%21.txt",
+    );
+  });
+
+  test("M5: GET for a deleted workspace is 410 workspace_gone", async () => {
+    await t.seedAgent({ slug: "wiped" });
+    const r = (await upload("wiped", Buffer.from("x\n"), "a.txt")).json();
+    rmSync(wd("wiped"), { recursive: true, force: true });
+    const res = await get("wiped", r.uploadId);
+    expect(res.statusCode).toBe(410);
+    expect(res.json().error.code).toBe("workspace_gone");
+  });
+
+  test("M7: a body that isn't application/octet-stream is 415", async () => {
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/agents/dev/uploads",
+      headers: { cookie: or, "content-type": "text/plain", "x-upload-name": "a.txt" },
+      payload: "hello",
+    });
+    expect(res.statusCode).toBe(415);
+    expect(res.json().error.code).toBe("unsupported_media_type");
+  });
 });

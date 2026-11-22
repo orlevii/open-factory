@@ -73,7 +73,7 @@ class BodyBoundary extends Component<
     return (
       <div role="alert" className="grid flex-1 content-start justify-items-start gap-3 p-4 text-sm">
         <p>This form didn't load.</p>
-        <Button type="button" variant="outline" onClick={this.retry}>
+        <Button type="button" variant="ghost" onClick={this.retry}>
           Retry
         </Button>
       </div>
@@ -131,6 +131,7 @@ function SheetLayer({
           {description ? <SheetDescription>{description}</SheetDescription> : null}
         </SheetHeader>
         <BodyBoundary
+          key={shown.kind}
           onRetry={() => {
             const entry = sheetBodies[shown.kind];
             if (!entry) return;

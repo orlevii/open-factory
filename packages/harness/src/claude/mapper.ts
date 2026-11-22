@@ -350,7 +350,9 @@ export function toolMetaOf(name: string, r: unknown): ToolMeta | undefined {
         });
       break;
     }
-    case "Agent": {
+    // `Task` is the subagent tool's older name: the same result shape.
+    case "Agent":
+    case "Task": {
       const agent = defined({
         tool: "Agent" as const,
         async: j.isAsync === true || j.status === "async_launched" ? true : undefined,

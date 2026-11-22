@@ -869,6 +869,16 @@ describe("tool_result.meta", () => {
     });
   });
 
+  test("Agent meta under the older Task name", () => {
+    expect(
+      toolMetaOf("Task", { totalToolUseCount: 3, totalTokens: 900, totalDurationMs: 42 }),
+    ).toEqual({ tool: "Agent", toolUses: 3, tokens: 900, durationMs: 42 });
+    expect(toolMetaOf("Task", { status: "async_launched" })).toEqual({
+      tool: "Agent",
+      async: true,
+    });
+  });
+
   test("a tool with no meta shape (CronCreate) carries none", () => {
     const out = mapFixtureLine("cron-create-fire-delete", (l) => l.tool_use_result?.humanSchedule);
     expect(toolResult(out)).not.toHaveProperty("meta");

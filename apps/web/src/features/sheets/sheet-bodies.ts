@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { ComponentType } from "react";
 import { scheduleDetailOptions } from "@/features/schedules/api";
 import { agentsListQueryOptions } from "@/features/session/api";
+import { templatesQueryOptions } from "@/features/templates/api";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
 
 export type BodyProps<S> = { spec: S; sheetId: number; close(): void };
@@ -34,6 +35,14 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
       void qc.prefetchQuery(agentsListQueryOptions("only"));
     },
     title: "New schedule",
+  },
+  // Both the top-level sheet and the one stacked over New agent (same kind, told apart by `then`).
+  "new-template": {
+    load: () => import("@/features/templates/new-template-form"),
+    prefetch(qc) {
+      void qc.prefetchQuery(templatesQueryOptions);
+    },
+    title: "New template",
   },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),

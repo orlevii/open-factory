@@ -22,6 +22,7 @@ export function FormFrame({
   formError,
   autoFocusId,
   reveal,
+  left,
   children,
 }: {
   frame: FormFrameKind;
@@ -34,6 +35,8 @@ export function FormFrame({
   formError?: string;
   autoFocusId?: string;
   reveal?: boolean;
+  /** Sheet frame only: a quiet note at the footer's left ("Draft restored · Discard"). */
+  left?: ReactNode;
   children: ReactNode;
 }) {
   if (frame === "inline") {
@@ -73,6 +76,11 @@ export function FormFrame({
         </span>
       </SheetBody>
       <SheetFooter>
+        {left && (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground @sm:mr-auto">
+            {left}
+          </div>
+        )}
         <Button type="button" variant="ghost" onClick={onCancel}>
           Close
         </Button>

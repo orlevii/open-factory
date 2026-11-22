@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
 import { type Handler, json, mockApi } from "@/test/mock-api";
@@ -443,6 +444,82 @@ test("projects: a middle-truncated path, grant wording, and Remove disabled with
     "data-variant",
     "destructive",
   );
+});
+
+test.each([false, true])(
+  "credentials: a Delete blocked by many agents names three and counts the rest (drawer %s)",
+  async (phone) => {
+    const original = window.matchMedia;
+    if (phone) fakeMatchMedia.install(true, { coarse: true });
+    try {
+      const many = ["ada", "bob", "ceo", ...Array.from({ length: 211 }, (_, i) => `agent-${i}`)];
+      world({
+        credentials: [
+          cred({ name: "work", usedBy: many }),
+          cred({ name: "old", archivedUsedBy: many.slice(0, 5) }),
+          cred({ name: "few", usedBy: ["ada", "bob", "ceo"] }),
+        ],
+      });
+      renderApp("/settings/credentials", alice);
+      const region = await section("Credentials");
+      await waitFor(() => expect(row(region, "work")).toBeDefined());
+      const item = phone ? "button" : "menuitem";
+      const open = async (name: string) => {
+        const t = within(row(region, name)).getByRole("button", { name: `Actions for ${name}` });
+        if (phone) {
+          fireEvent.pointerDown(t, { button: 0, pointerType: "touch" });
+          fireEvent.click(t);
+          return screen.findByRole("dialog", { name });
+        }
+        await userEvent.click(t);
+        return screen.findByRole("menu");
+      };
+      const close = async (surface: HTMLElement) => {
+        if (phone) {
+          fireEvent.click(within(surface).getByRole("button", { name: "Cancel" }));
+          endAnimation(surface);
+          await waitFor(() =>
+            expect(document.querySelector("[data-slot=drawer-content]")).toBeNull(),
+          );
+        } else await userEvent.keyboard("{Escape}");
+      };
+      let surface = await open("work");
+      expect(
+        within(surface).getByRole(item, { name: "Delete (used by @ada, @bob, @ceo +211 more)" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await close(surface);
+      surface = await open("old");
+      expect(
+        within(surface).getByRole(item, {
+          name: "Delete (archived @ada, @bob, @ceo +2 more still use it)",
+        }),
+      ).toBeInTheDocument();
+      await close(surface);
+      surface = await open("few");
+      expect(
+        within(surface).getByRole(item, { name: "Delete (used by @ada, @bob, @ceo)" }),
+      ).toBeInTheDocument();
+      // The row's own Usage line still names everyone.
+      expect(row(region, "work")).toHaveTextContent("@agent-210");
+    } finally {
+      window.matchMedia = original;
+    }
+  },
+);
+
+test("projects: a Remove blocked by many grantees names three and counts the rest", async () => {
+  world({
+    projects: [project({ name: "app", grantedTo: ["a", "b", "c", "d", "e"] })],
+  });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  await userEvent.click(
+    within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+  );
+  expect(
+    screen.getByRole("menuitem", { name: "Remove (granted to @a, @b, @c +2 more)" }),
+  ).toHaveAttribute("aria-disabled", "true");
 });
 
 test("projects: a live spawned grantee is named through its spawner in Remove's reason", async () => {
@@ -919,6 +996,43 @@ test.each([
     await userEvent.click(within(li).getByRole("button", { name: `Actions for ${item}` }));
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     expect(document.querySelector("[data-menu-stand-in].size-0")).toBeNull();
+  },
+);
+
+test.each([
+  ["credentials", "Credentials", "work", false],
+  ["projects", "Projects", "app", false],
+  ["credentials", "Credentials", "work", true],
+  ["projects", "Projects", "app", true],
+] as const)(
+  "touch: closing a long-pressed %s row's menu returns focus to its ⋯, not <body> (%s %s, drawer %s)",
+  async (path, name, item, phone) => {
+    const original = window.matchMedia;
+    if (phone) fakeMatchMedia.install(true, { coarse: true });
+    try {
+      world({ credentials: [cred({ name: "work" })], projects: [project({ name: "app" })] });
+      renderApp(`/settings/${path}`, alice);
+      const region = await section(name);
+      await waitFor(() => expect(row(region, item)).toBeDefined());
+      const li = row(region, item);
+      longPress(within(li).getByText(item), { x: 15, y: 35 });
+      if (phone) {
+        const drawer = await screen.findByRole("dialog", { name: item });
+        fireEvent.click(within(drawer).getByRole("button", { name: "Cancel" }));
+        endAnimation(drawer);
+        await waitFor(() =>
+          expect(document.querySelector("[data-slot=drawer-content]")).toBeNull(),
+        );
+      } else {
+        fireEvent.keyDown(await screen.findByRole("menu", { name: item }), { key: "Escape" });
+        await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      }
+      await waitFor(() =>
+        expect(within(li).getByRole("button", { name: `Actions for ${item}` })).toHaveFocus(),
+      );
+    } finally {
+      window.matchMedia = original;
+    }
   },
 );
 

@@ -22,6 +22,7 @@ import {
 } from "@/features/settings/api";
 import {
   AgentLinks,
+  cappedList,
   InlineForm,
   MoreButton,
   RowLine,
@@ -55,12 +56,12 @@ const toSpawners = (agents: AgentSummary[]) =>
 /** Why Remove is disabled. A live spawned grantee is named through its spawner (S7 UI design §7):
  *  "granted to @tech-lead-ab12, spawned by @lead". `spawners` maps a spawned agent to its spawner. */
 function removeBlocker(p: ProjectSummary, spawners: Map<string, string>): string | undefined {
-  const list = (s: string[]) => s.map((x) => `@${x}`).join(", ");
+  const list = (s: string[]) => cappedList(s.map((x) => `@${x}`));
   const grantee = (x: string) => {
     const by = spawners.get(x);
     return by ? `@${x}, spawned by @${by}` : `@${x}`;
   };
-  if (p.grantedTo.length) return `granted to ${p.grantedTo.map(grantee).join(", ")}`;
+  if (p.grantedTo.length) return `granted to ${cappedList(p.grantedTo.map(grantee))}`;
   if (p.archivedGrantedTo.length) {
     const many = p.archivedGrantedTo.length > 1;
     return `archived ${list(p.archivedGrantedTo)} still ${many ? "hold grants" : "holds a grant"}`;

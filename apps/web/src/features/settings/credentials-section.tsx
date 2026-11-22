@@ -22,6 +22,7 @@ import {
 import {
   AgentLinks,
   CodeText,
+  cappedList,
   focusOutcome,
   InlineForm,
   KIND_LABEL,
@@ -44,12 +45,15 @@ import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
-/** Why Delete is disabled, shown inside the menu item; undefined when it can be deleted. */
+const handles = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+
+/** Why Delete is disabled, shown inside the menu item; undefined when it can be deleted. At most three
+ *  agents are named (the row's Usage line lists them all). */
 function deleteBlocker(c: CredentialSummary): string | undefined {
-  if (c.usedBy.length) return `used by ${c.usedBy.map((s) => `@${s}`).join(", ")}`;
+  if (c.usedBy.length) return `used by ${handles(c.usedBy)}`;
   if (c.archivedUsedBy.length) {
     const many = c.archivedUsedBy.length > 1;
-    return `archived ${c.archivedUsedBy.map((s) => `@${s}`).join(", ")} still ${many ? "use" : "uses"} it`;
+    return `archived ${handles(c.archivedUsedBy)} still ${many ? "use" : "uses"} it`;
   }
   return undefined;
 }

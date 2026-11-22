@@ -34,6 +34,13 @@ export const tags = (slugs: string[]) => {
   return t.length <= 1 ? (t[0] ?? "") : `${t.slice(0, -1).join(", ")} and ${t.at(-1)}`;
 };
 
+/** "@ada, @bob, @ceo +211 more": the first `max` items and a count of the rest, for a menu item that
+ *  names who blocks it and must stay a few lines tall however many agents there are. */
+export const cappedList = (items: string[], max = 3) => {
+  const rest = items.length - max;
+  return `${items.slice(0, max).join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
+};
+
 /** "@lead restarts when idle to use it. Its crons from this session stop." */
 export const restartNote = (slugs: string[]) =>
   slugs.length === 0

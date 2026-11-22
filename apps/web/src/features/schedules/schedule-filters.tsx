@@ -34,14 +34,19 @@ export function ScheduleFiltersBar({
           onValueChange={(v) => onChange({ ...value, target: v || undefined })}
         />
       </div>
-      <div className="flex items-center gap-2 md:pb-2">
+      {/* The label wraps the box, so on touch the whole 40px-tall "☐ Show done" is the hit area, not a 16px box. */}
+      <Label
+        htmlFor="schedule-done"
+        data-show-done
+        className="w-fit md:pb-2 pointer-coarse:min-h-10 pointer-coarse:pr-2"
+      >
         <Checkbox
           id="schedule-done"
           checked={Boolean(value.done)}
           onCheckedChange={(c) => onChange({ ...value, done: c === true ? true : undefined })}
         />
-        <Label htmlFor="schedule-done">Show done</Label>
-      </div>
+        Show done
+      </Label>
     </div>
   );
 }

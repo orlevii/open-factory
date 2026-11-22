@@ -1427,7 +1427,9 @@ test("on a phone Send is a 40px primary icon button named Send", async () => {
     const { box } = setup();
     const send = screen.getByRole("button", { name: "Send" });
     expect(send).toHaveAttribute("data-variant", "default");
-    expect(send).toHaveClass("size-10", "transition-none");
+    expect(send).toHaveClass("size-10", "pointer-coarse:size-10", "transition-none");
+    // `size="icon"` brings `pointer-coarse:size-9`, which would win on a touch screen (evidence D1).
+    expect(send).not.toHaveClass("pointer-coarse:size-9");
     expect(send).toHaveTextContent(/^$/); // the arrow only, the name from aria-label
     expect(send.querySelector("svg")).not.toBeNull();
     expect(send).toBeDisabled();
@@ -1451,7 +1453,8 @@ test("on a phone attach, / and @ are 40px ghost icons and there is no Write/Prev
     for (const name of ["Attach files", "Run a command", "Insert an agent's handle"]) {
       const b = screen.getByRole("button", { name });
       expect(b).toHaveAttribute("data-variant", "ghost");
-      expect(b).toHaveClass("size-10");
+      expect(b).toHaveClass("size-10", "pointer-coarse:size-10");
+      expect(b).not.toHaveClass("pointer-coarse:size-9");
     }
     expect(screen.queryByRole("button", { name: "Write" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
@@ -1484,14 +1487,16 @@ test("on a phone Stop is a 40px outline icon left of Send, in a slot kept with n
     const slotClass = slot.className;
     expect(slot).toHaveClass("size-10");
     const standIn = slot.querySelector("[data-stop-stand-in]");
-    expect(standIn).toHaveClass("invisible", "size-10");
+    expect(standIn).toHaveClass("invisible", "size-10", "pointer-coarse:size-10");
+    expect(standIn).not.toHaveClass("pointer-coarse:size-9");
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
 
     rerender({ onStop, stopEpoch: 2, turnOpen: true });
     const stop = screen.getByRole("button", { name: "Stop" });
     const send = screen.getByRole("button", { name: "Send" });
     expect(stop).toHaveAttribute("data-variant", "outline");
-    expect(stop).toHaveClass("size-10");
+    expect(stop).toHaveClass("size-10", "pointer-coarse:size-10");
+    expect(stop).not.toHaveClass("pointer-coarse:size-9");
     expect(stop).toHaveTextContent(/^$/);
     expect(slot.contains(stop)).toBe(true);
     expect(stop.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

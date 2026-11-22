@@ -16,6 +16,7 @@ import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
 import { ArchivedNotice } from "@/features/agents/archived-notice";
 import { sessionQueryOptions } from "@/lib/session";
+import { cn } from "@/lib/utils";
 import { TurnActivity } from "./activity-line";
 import {
   AGENT_DETAILS_ID,
@@ -455,17 +456,23 @@ const SessionHeader = memo(function SessionHeader({
   /** Archive, its Undo, or Restore from the menu: the session refetches its agent. */
   onLifecycle(): void;
 }) {
+  // A third header action (Restart / Start a new session, or Pin) beside Agent details and ⋯, each a 40px box on
+  // touch: below a 22rem header (320px) the avatar gives way so the row stays one line (break H3, evidence D2).
+  const crowded =
+    (!archived && agent.status === "errored") || (agent.status === "terminated" && canPin(agent));
   return (
     <PageHeader
       title={agent.displayName}
       titleFromData
       leading={
-        <AgentAvatar
-          slug={agent.slug}
-          template={agent.template}
-          avatarVersion={agent.avatarVersion}
-          size={24}
-        />
+        <span data-header-avatar className={cn("contents", crowded && "@max-[22rem]:hidden")}>
+          <AgentAvatar
+            slug={agent.slug}
+            template={agent.template}
+            avatarVersion={agent.avatarVersion}
+            size={24}
+          />
+        </span>
       }
       heading={<AgentName agent={agent} />}
       titleClassName="max-w-[45%]"

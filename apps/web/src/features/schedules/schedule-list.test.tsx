@@ -232,6 +232,21 @@ test("filters live in the URL; empty states, the cap line and the load error", a
   api.on("GET /api/schedules?", () => json({ error: { code: "x", message: "x" } }, 500));
 });
 
+test("Show done: on touch the label around the box is the 40px hit area, and a tap on its text toggles", async () => {
+  const api = mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([]) });
+  renderApp("/schedules", alice);
+  await screen.findByText("No schedules yet.");
+  const box = screen.getByRole("checkbox", { name: "Show done" });
+  const label = box.closest("label");
+  expect(label).not.toBeNull();
+  expect(label).toHaveClass("pointer-coarse:min-h-10", "w-fit");
+  await userEvent.click(within(label as HTMLElement).getByText("Show done"));
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/schedules?done=true")).toBe(true),
+  );
+  expect(box).toBeChecked();
+});
+
 test("schedules_changed refetches and keeps focus on the same row's link", async () => {
   const api = mockApi({
     "GET /api/agents?": agents,

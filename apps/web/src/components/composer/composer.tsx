@@ -47,6 +47,10 @@ export const UNCONFIRMED_EDITED =
 export const FILES_NOTE = "Files can be sent in an agent's session";
 /** Send's reason while a restored command waits for the commands list. */
 export const LOADING_COMMANDS = "Loading this agent's commands…";
+/** A phone's composer controls are 40px (U4 §11.4). The coarse-pointer form too: `size="icon"` sets
+ *  `pointer-coarse:size-9`, which would otherwise beat a bare `size-10` on a touch screen (evidence D1). */
+const PHONE_ICON = "size-10 pointer-coarse:size-10";
+
 const NO_LANDED: ReadonlySet<string> = new Set();
 const NO_UPLOADS: UploadSummary = { count: 0, pending: 0, failed: 0 };
 const noUploads = () => NO_UPLOADS;
@@ -953,7 +957,7 @@ export const Composer = memo(function Composer({
                 size="icon"
                 aria-label={slash.label}
                 disabled={!empty || command !== undefined || view !== "write"}
-                className={cn("shrink-0 text-muted-foreground", phone && "size-10")}
+                className={cn("shrink-0 text-muted-foreground", phone && PHONE_ICON)}
                 onClick={() => insertTrigger("/")}
               >
                 <Slash aria-hidden="true" />
@@ -965,7 +969,7 @@ export const Composer = memo(function Composer({
                 variant="ghost"
                 size="icon"
                 aria-label={at.label}
-                className={cn("shrink-0 text-muted-foreground", phone && "size-10")}
+                className={cn("shrink-0 text-muted-foreground", phone && PHONE_ICON)}
                 onClick={() => insertTrigger("@")}
               >
                 <AtSign aria-hidden="true" />
@@ -978,7 +982,7 @@ export const Composer = memo(function Composer({
                   variant="ghost"
                   size="icon"
                   aria-label="Attach files"
-                  className={cn("shrink-0 text-muted-foreground", phone && "size-10")}
+                  className={cn("shrink-0 text-muted-foreground", phone && PHONE_ICON)}
                   onClick={() => fileInput.current?.click()}
                 >
                   <Paperclip aria-hidden="true" />
@@ -1043,14 +1047,15 @@ export const Composer = memo(function Composer({
             <div data-composer-actions className="ml-auto flex shrink-0 items-center gap-2">
               {onStop && (
                 // Stop's slot keeps its width with no turn open, so a turn edge never re-wraps the toolbar.
-                <div data-stop-slot className={cn("grid shrink-0", phone && "size-10")}>
+                <div data-stop-slot className={cn("grid shrink-0", phone && PHONE_ICON)}>
                   {phone ? (
                     <span
                       data-stop-stand-in
                       aria-hidden="true"
                       className={cn(
                         buttonVariants({ variant: "outline", size: "icon" }),
-                        "invisible size-10 [grid-area:1/1]",
+                        "invisible [grid-area:1/1]",
+                        PHONE_ICON,
                       )}
                     />
                   ) : (
@@ -1089,7 +1094,7 @@ export const Composer = memo(function Composer({
                       compacting={compacting}
                       onError={onStopError}
                       icon={phone}
-                      className={cn("[grid-area:1/1]", phone && "size-10")}
+                      className={cn("[grid-area:1/1]", phone && PHONE_ICON)}
                     />
                   )}
                 </div>
@@ -1103,7 +1108,7 @@ export const Composer = memo(function Composer({
                 disabled={held === undefined && ((empty && !command) || waiting)}
                 aria-disabled={held !== undefined || undefined}
                 aria-describedby={held ? sendReasonId : undefined}
-                className={cn("transition-none", phone && "size-10")}
+                className={cn("transition-none", phone && PHONE_ICON)}
               >
                 {phone ? <ArrowUp aria-hidden="true" /> : "Send"}
               </Button>

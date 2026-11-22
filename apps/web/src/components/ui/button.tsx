@@ -48,9 +48,10 @@ const EXPANDED = new Set(["icon", "icon-xs", "icon-sm", "icon-lg", "xs", "sm"])
 const IN_FORM = "pointer-coarse:min-h-10 pointer-coarse:px-3"
 
 /** A toolbar or header group on coarse pointers: its icon buttons are visible 40px boxes 4px apart, so neighbouring
- *  expanders never overlap (U4 §11.3). */
-const COARSE_ICON_GROUP =
-  "pointer-coarse:gap-1 pointer-coarse:[&_[data-slot=button][data-size^=icon]]:size-10"
+ *  expanders never overlap (U4 §11.3). Matched by `data-size` alone: a Button inside a `TooltipTrigger` or menu
+ *  trigger (`asChild`) takes the trigger's `data-slot`, and the session header's Agent details and ⋯ stayed 36px and
+ *  28px with overlapping expanders (evidence D2). Only Button sets an `icon…` data-size. */
+const COARSE_ICON_GROUP = "pointer-coarse:gap-1 pointer-coarse:[&_[data-size^=icon]]:size-10"
 
 function Button({
   className,

@@ -229,7 +229,7 @@ function SheetHeader({ className, children, ...props }: React.ComponentProps<"di
       className={cn(
         "flex min-h-12 items-start gap-2 border-b px-4 py-3",
         COARSE_ICON_GROUP,
-        "pointer-coarse:[&_[data-slot=button][data-size^=icon]]:-my-1.5",
+        "pointer-coarse:[&_[data-size^=icon]]:-my-1.5",
         className
       )}
       {...props}

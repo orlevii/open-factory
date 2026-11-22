@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
 import { clearDraft, hasDraft } from "@/features/sheets/drafts";
-import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
+import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
+import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -29,6 +30,9 @@ const agents =
       more: false,
       running: { count: 0, max: 8 },
     });
+/** Live agents, and the ended list (`?ended=only`) apart. */
+const liveEnded = (live: string[], ended: string[]) => (_b: unknown, url?: string) =>
+  (url?.includes("ended=only") ? agents(...ended) : agents(...live))();
 const detail = (n: number) => ({
   key: `T-${n}`,
   title: "Plan",
@@ -116,7 +120,7 @@ test("a non-empty draft keeps its own assignee over the context prefill", async 
 
 test("a draft whose assignee has ended clears it and says so", async () => {
   mockApi({ ...base, "GET /api/agents?": agents("ada") });
-  renderApp("/inbox", alice);
+  const first = renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   press("c");
   await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
@@ -124,8 +128,9 @@ test("a draft whose assignee has ended clears it and says so", async () => {
   await userEvent.click(await screen.findByRole("option", { name: /Ada\s*@ada/ }));
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
-  // Ada ends meanwhile: the lists no longer hold her.
-  mockApi({ ...base, "GET /api/agents?": agents("bo") });
+  // Ada ends meanwhile: the live list no longer holds her; the ended list does.
+  first.unmount();
+  mockApi({ ...base, "GET /api/agents?": liveEnded(["bo"], ["ada"]) });
   const { queryClient } = renderApp("/inbox", alice);
   await screen.findAllByRole("heading", { level: 1 });
   await queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -214,4 +219,95 @@ test("a late success does not wipe a draft restored by reopening New task", asyn
   await waitFor(() => expect(notify).toHaveBeenCalled());
   expect(hasDraft("new-task")).toBe(true);
   expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("PlanAnother");
+});
+
+test("a stale prefill that gets cleared leaves no draft, so the next prefill still applies", async () => {
+  mockApi({ ...base, "GET /api/agents?": liveEnded(["bo"], ["ada"]) });
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  expect(await screen.findByText("@ada has ended; pick another.")).toBeInTheDocument();
+  expect(screen.queryByText("For Ada")).toBeNull();
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  expect(hasDraft("new-task")).toBe(false);
+  act(() => openSheet({ kind: "new-task", assignee: "bo" }));
+  expect(await assignee()).toHaveTextContent("Bo");
+  expect(screen.queryByText(/Draft restored/)).toBeNull();
+});
+
+test("a prefill naming no agent at all says so", async () => {
+  mockApi({ ...base, "GET /api/agents?": liveEnded(["bo"], []) });
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "new-task", assignee: "typo" }));
+  expect(await screen.findByText("There is no agent @typo.")).toBeInTheDocument();
+  expect(screen.queryByText(/For /)).toBeNull();
+});
+
+test("a restored draft hides For X: the prefill did not apply", async () => {
+  mockApi(base);
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  expect(screen.queryByText("For Ada")).toBeNull();
+});
+
+test("desktop: Title takes focus when the body mounts; the panel shows no ring", async () => {
+  mockApi(base);
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  const title = await within(await sheet()).findByLabelText("Title");
+  await waitFor(() => expect(title).toHaveFocus());
+  expect(document.querySelector("[data-slot=sheet-content]")).toHaveClass("outline-none");
+});
+
+test("phones: the drawer content holds focus (the keyboard doesn't rise mid-slide)", async () => {
+  fakeMatchMedia.install(true);
+  mockApi(base);
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  await within(await sheet()).findByLabelText("Title");
+  await waitFor(() =>
+    expect(document.activeElement).toBe(document.querySelector("[data-slot=drawer-content]")),
+  );
+});
+
+test("phones: the footer stacks Create task first and Close last", async () => {
+  fakeMatchMedia.install(true);
+  mockApi(base);
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  const footer = (await sheet()).querySelector("[data-slot=drawer-footer]") as HTMLElement;
+  const names = within(footer)
+    .getAllByRole("button")
+    .map((b) => b.textContent);
+  expect(names).toEqual(["Create task", "Close"]);
+});
+
+test("a submit from the keyboard closes the sheet and its scrim instantly", async () => {
+  const off = installInputModality();
+  mockApi({ ...base, "POST /api/tasks": () => json({ task: detail(7) }, 201) });
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  // Opened by pointer, so the opening itself is not stamped.
+  fireEvent.pointerDown(document.body);
+  act(() => openSheet({ kind: "new-task" }));
+  const title = await within(await sheet()).findByLabelText("Title");
+  const content = document.querySelector("[data-slot=sheet-content]") as HTMLElement;
+  const overlay = document.querySelector("[data-slot=sheet-overlay]") as HTMLElement;
+  expect(content).not.toHaveAttribute("data-instant");
+  await userEvent.type(title, "Plan{Enter}");
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(content).toHaveAttribute("data-instant");
+  expect(overlay).toHaveAttribute("data-instant");
+  off();
 });

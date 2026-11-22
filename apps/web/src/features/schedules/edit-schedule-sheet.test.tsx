@@ -10,6 +10,7 @@ import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
+import { scheduleDetailOptions } from "./api";
 import { ScheduleBadge } from "./schedule-badge";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -95,6 +96,56 @@ test("the footer has Save changes, Close and a ghost crimson Delete schedule on 
   expect(del).toHaveClass("text-destructive");
   const footer = del.closest("[data-slot=sheet-footer]") as HTMLElement;
   expect(footer.firstElementChild?.contains(del)).toBe(true);
+  // A viewport breakpoint: the footer is not inside the body's @container, so a container query never matched.
+  expect(footer.firstElementChild).toHaveClass("sm:mr-auto");
+});
+
+test("phones: the footer stacks Save changes first and Close last, Delete between", async () => {
+  fakeMatchMedia.install(true);
+  mockApi(common(sched()));
+  await openOver();
+  await message();
+  const footer = (await sheet()).querySelector("[data-slot=drawer-footer]") as HTMLElement;
+  const names = within(footer)
+    .getAllByRole("button")
+    .map((b) => b.textContent);
+  expect(names).toEqual(["Save changes", "Delete schedule", "Close"]);
+});
+
+test("desktop: the first field takes focus when the form mounts", async () => {
+  mockApi(common(sched()));
+  await openOver();
+  await message();
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole("dialog", { name: "S-3" })).getByLabelText("Target"),
+    ).toHaveFocus(),
+  );
+});
+
+test("deleted: Restore takes focus on open", async () => {
+  mockApi(common(sched({ deleted: true })));
+  await openOver();
+  const dialog = await sheet();
+  const restore = await within(dialog).findByRole("button", { name: "Restore" });
+  await waitFor(() => expect(restore).toHaveFocus());
+});
+
+test("swapping to another schedule in place shows that schedule's values, not the first one's edits", async () => {
+  clearDraft("edit-schedule:S-4");
+  mockApi({
+    ...common(sched()),
+    "GET /api/schedules/S-4": detail(sched({ key: "S-4", body: "Evening wrap" })),
+  });
+  const { queryClient } = await openOver();
+  await userEvent.type(await message(), " edited");
+  // S-4 already cached, so the body swaps without a skeleton in between (the case a key on the body guards).
+  await queryClient.fetchQuery(scheduleDetailOptions("S-4"));
+  act(() => openSheet({ kind: "edit-schedule", key: "S-4" }));
+  const s4 = await screen.findByRole("dialog", { name: "S-4" });
+  expect(await within(s4).findByLabelText("Message")).toHaveValue("Evening wrap");
+  expect(within(s4).queryByText(/Draft restored/)).toBeNull();
+  clearDraft("edit-schedule:S-4");
 });
 
 test("Pause and Resume are the header action; a state line sits above the form", async () => {

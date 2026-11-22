@@ -31,7 +31,7 @@ function isUntouched(key: DraftKey, v: unknown, initial: unknown) {
 export function useSheetDraft<T>(
   key: DraftKey,
   initial: () => T,
-): { start: T; restored: boolean; save(v: T): void; clear(): void } {
+): { start: T; restored: boolean; save(v: T): void; clear(): void; rebase(v: T): void } {
   // Start values are read once per key: a new key (a different entity in the same host) starts over.
   const ref = useRef<{ key: DraftKey; start: T; restored: boolean; initial: T } | null>(null);
   if (ref.current === null || ref.current.key !== key) {
@@ -52,7 +52,15 @@ export function useSheetDraft<T>(
     [key],
   );
   const clear = useCallback(() => void drafts.delete(key), [key]);
-  return { start: ref.current.start, restored: ref.current.restored, save, clear };
+  /** Replaces the untouched baseline: a prefill that turned out stale and was cleared is not an edit, so the
+   *  cleared values must not count as a draft (else every later prefill would be ignored). */
+  const rebase = useCallback(
+    (v: T) => {
+      if (ref.current?.key === key) ref.current.initial = v;
+    },
+    [key],
+  );
+  return { start: ref.current.start, restored: ref.current.restored, save, clear, rebase };
 }
 
 export const hasDraft = (key: DraftKey) => drafts.has(key);

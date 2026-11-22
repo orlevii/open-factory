@@ -45,6 +45,15 @@ test("saving a value equal to initial deletes the draft", () => {
   expect(renderHook(() => useSheetDraft("new-agent", initial)).result.current.restored).toBe(false);
 });
 
+test("rebase makes the given values the untouched baseline", () => {
+  const a = renderHook(() => useSheetDraft("new-task", () => ({ name: "stale" })));
+  act(() => a.result.current.rebase({ name: "" }));
+  act(() => a.result.current.save({ name: "" }));
+  expect(hasDraft("new-task")).toBe(false);
+  act(() => a.result.current.save({ name: "x" }));
+  expect(hasDraft("new-task")).toBe(true);
+});
+
 test("clearDraft removes one key", () => {
   const a = renderHook(() => useSheetDraft("new-agent", initial));
   act(() => a.result.current.save({ name: "x" }));

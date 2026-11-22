@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft } from "@/features/sheets/drafts";
+import { clearDraft, hasDraft } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -120,6 +120,20 @@ test("an unknown target stays empty and says so", async () => {
   act(() => openSheet({ kind: "new-schedule", target: "nobody" }));
   expect(await screen.findByText("There is no agent @nobody.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
+});
+
+test("a stale target cleared from the spec leaves no draft, so the next target still applies", async () => {
+  mockApi(base());
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
+  expect(hasDraft("new-schedule")).toBe(false);
+  act(() => openSheet({ kind: "new-schedule", target: "dev" }));
+  await waitFor(async () => expect(await target()).toHaveTextContent("Dev"));
+  expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
 
 test("success closes, clears the draft and toasts Created with Open for the Edit sheet", async () => {

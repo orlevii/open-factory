@@ -10,6 +10,7 @@ import { notify } from "@/components/ui/toaster";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { BodySkeleton } from "@/features/sheets/body-skeleton";
 import { clearDraft } from "@/features/sheets/drafts";
+import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetHeaderActions } from "@/features/sheets/header-slot";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import { getSheetState, openSheet } from "@/features/sheets/sheet-store";
@@ -35,7 +36,7 @@ const who = (a: ScheduleItem["createdBy"]) => (a.kind === "user" ? `@${a.handle}
 
 function Description({ s }: { s: ScheduleItem }) {
   return (
-    <SheetDescription className="truncate px-4 pt-3" title={firstLine(s.body)}>
+    <SheetDescription className="shrink-0 truncate px-4 pt-3" title={firstLine(s.body)}>
       {firstLine(s.body)}
     </SheetDescription>
   );
@@ -148,6 +149,8 @@ function StateLine({ s, actionFailed }: { s: ScheduleItem; actionFailed: string 
 function Deleted({ s }: { s: ScheduleItem }) {
   const qc = useQueryClient();
   const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
+  const body = useRef<HTMLDivElement>(null);
+  useFocusOnOpen(body, "button");
   const restore = async () => {
     setState("pending");
     try {
@@ -162,7 +165,7 @@ function Deleted({ s }: { s: ScheduleItem }) {
   return (
     <>
       <Description s={s} />
-      <SheetBody className="grid content-start gap-4">
+      <SheetBody ref={body} className="grid content-start gap-4">
         <div className="grid justify-items-start gap-2">
           <p className="text-sm">{s.key} was deleted.</p>
           {!s.target.terminated && (

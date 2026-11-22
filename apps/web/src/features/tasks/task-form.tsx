@@ -10,6 +10,7 @@ import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
+import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { MoreOptions } from "@/features/sheets/more-options";
 import type { CreateTaskBody } from "./api";
@@ -60,6 +61,7 @@ export function TaskForm({
   const [failed, setFailed] = useState(false);
   const inFlight = useRef(false);
   const form = useRef<HTMLFormElement>(null);
+  useFocusOnOpen(form);
   const active = useQuery(agentsListQueryOptions("exclude"));
   const ended = useQuery(agentsListQueryOptions("only"));
   const known =
@@ -80,16 +82,27 @@ export function TaskForm({
   const stale = Boolean(
     v.assignee &&
       active.data &&
+      ended.data &&
       !active.data.some((a) => a.slug === v.assignee && !a.archivedAt && !a.terminatedAt),
   );
   const assignee = stale ? "" : v.assignee;
   const staleSlug = v.assignee;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `update` only writes the ref, the draft and state
+  const staleEnded =
+    stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.slug === staleSlug);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `update` and `draft.rebase` only write refs, the draft and state
   useEffect(() => {
     if (!stale) return;
+    // A stale prefill cleared is not an edit: the cleared form is the new baseline, so it leaves no draft.
+    if (!draft.restored && staleSlug === prefill?.assignee)
+      draft.rebase({ ...blank(prefill), assignee: "" });
     update({ assignee: "" });
-    setErrors((e) => ({ ...e, assignee: `@${staleSlug} has ended; pick another.` }));
-  }, [stale, staleSlug]);
+    setErrors((e) => ({
+      ...e,
+      assignee: staleEnded
+        ? `@${staleSlug} has ended; pick another.`
+        : `There is no agent @${staleSlug}.`,
+    }));
+  }, [stale, staleSlug, staleEnded]);
 
   const hasValues = deps.trim() !== "" || rows.length > 0;
   const hasError = Boolean(errors.dependsOn || errors.links);

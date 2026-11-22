@@ -15,12 +15,13 @@ import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { useSheetDraft } from "@/features/sheets/drafts";
+import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { mergeServer } from "@/features/sheets/merge-server";
-import { agentOptionLabel, useAssignableAgents } from "@/features/tasks/agent-picker";
+import { useAssignableAgents } from "@/features/tasks/agent-picker";
 import type { CreateScheduleBody, PatchScheduleBody } from "./api";
 import { browserZone } from "./format";
-import { previewText, RunPreview } from "./run-preview";
+import { type Preview, previewOf, RunPreview } from "./run-preview";
 import { TimezoneSelect } from "./timezone-select";
 import { WhenField, type WhenMode } from "./when-field";
 
@@ -29,7 +30,7 @@ type Field = (typeof FIELDS)[number];
 type Errors = Partial<Record<Field, string>>;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
-export type FormValues = {
+type FormValues = {
   target: string;
   mode: WhenMode;
   cron: string;
@@ -42,7 +43,7 @@ export type FormValues = {
 type EditDraft = { values: FormValues; base: FormValues };
 
 /** The edit sheet's start values: the stored instant read in the schedule's zone for the date input. */
-export function valuesOf(s: ScheduleItem): FormValues {
+function valuesOf(s: ScheduleItem): FormValues {
   return {
     target: s.target.slug,
     mode: s.cron ? "repeats" : "once",
@@ -105,9 +106,9 @@ export function ScheduleForm({
   /** The server copy the values were edited against; a field equal to it is untouched. */
   const [base, setBase] = useState<FormValues>(start.base);
   const [errors, setErrors] = useState<Errors>({});
-  const [preview, setPreview] = useState<string | undefined>(() =>
+  const [preview, setPreview] = useState<Preview | undefined>(() =>
     initial
-      ? previewText({
+      ? previewOf({
           mode: start.values.mode,
           cron: start.values.cron,
           local: start.values.local,
@@ -122,7 +123,7 @@ export function ScheduleForm({
     setV(merged);
     setBase(server);
     setPreview(
-      previewText({ mode: merged.mode, cron: merged.cron, local: merged.local, zone: merged.zone }),
+      previewOf({ mode: merged.mode, cron: merged.cron, local: merged.local, zone: merged.zone }),
     );
   }
 
@@ -130,6 +131,7 @@ export function ScheduleForm({
   const [failed, setFailed] = useState(false);
   const [toFocus, setToFocus] = useState<Field | null>(null);
   const form = useRef<HTMLFormElement>(null);
+  useFocusOnOpen(form);
   const { agents } = useAssignableAgents();
   // An archived or terminated target isn't a live option: while it is the value, the trigger names it.
   const endedTarget =
@@ -168,6 +170,10 @@ export function ScheduleForm({
   ) {
     const gone = v.target;
     const hasEnded = [...live.data, ...endedList.data].some((a) => a.slug === gone);
+    // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline (a ref write, idempotent),
+    // so closing leaves no draft and the next preset still applies.
+    if (!draft.restored && gone === presetTarget)
+      draft.rebase({ ...(draft.start as FormValues), target: "" });
     setV((x) => ({ ...x, target: "" }));
     setErrors((e) => ({
       ...e,
@@ -182,7 +188,7 @@ export function ScheduleForm({
   const setError = (f: Field, m: string | undefined) => setErrors((e) => ({ ...e, [f]: m }));
   const refresh = (o: Partial<FormValues> = {}) => {
     const x = { ...v, ...o };
-    setPreview(previewText({ mode: x.mode, cron: x.cron, local: x.local, zone: x.zone }));
+    setPreview(previewOf({ mode: x.mode, cron: x.cron, local: x.local, zone: x.zone }));
   };
 
   const check = {
@@ -329,7 +335,7 @@ export function ScheduleForm({
           refresh({ cron });
         }}
         zone={v.zone}
-        preview={<RunPreview text={preview} />}
+        preview={<RunPreview preview={preview} />}
       />
       <FieldShell
         name="timezone"
@@ -352,7 +358,7 @@ export function ScheduleForm({
           />
         )}
       </FieldShell>
-      {v.mode === "once" && <RunPreview text={preview} />}
+      {v.mode === "once" && <RunPreview preview={preview} />}
       <FieldShell
         name="body"
         label="Message"
@@ -406,7 +412,7 @@ export function ScheduleForm({
           setErrors({});
           setPreview(
             initial
-              ? previewText({
+              ? previewOf({
                   mode: fresh.mode,
                   cron: fresh.cron,
                   local: fresh.local,
@@ -420,4 +426,3 @@ export function ScheduleForm({
     </form>
   );
 }
-export { agentOptionLabel };

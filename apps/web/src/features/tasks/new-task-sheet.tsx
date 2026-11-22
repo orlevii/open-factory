@@ -1,10 +1,11 @@
 import { ApiError } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
+import { useState } from "react";
 import { SheetDescription } from "@/components/ui/sheet";
 import { notify } from "@/components/ui/toaster";
-import { useAgent } from "@/features/agents/use-agent-index";
-import { clearDraft } from "@/features/sheets/drafts";
+import { useAgent, useIsLiveAgent } from "@/features/agents/use-agent-index";
+import { clearDraft, hasDraft } from "@/features/sheets/drafts";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import { getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { createTask, tasksQueryKey } from "./api";
@@ -12,9 +13,11 @@ import { TaskForm } from "./task-form";
 
 type Spec = { kind: "new-task"; assignee?: string };
 
-/** "For Ada" under the title when the sheet was opened for an agent. */
+/** "For Ada" under the title when the sheet was opened for an agent; not once the prefill proves stale. */
 function ForAgent({ slug }: { slug: string }) {
   const agent = useAgent(slug);
+  const live = useIsLiveAgent(slug);
+  if (live === false) return null;
   return (
     <SheetDescription className="px-4 pt-3">
       For {agent?.displayName || `@${slug}`}
@@ -27,9 +30,11 @@ export default function NewTaskSheet({ spec, sheetId, close }: BodyProps<Spec>) 
   const qc = useQueryClient();
   const router = useRouter();
   const stillOpen = () => getSheetState().parent?.id === sheetId;
+  // The prefill applies only to an empty draft, so "For X" describes only an open that started empty.
+  const [fresh] = useState(() => !hasDraft("new-task"));
   return (
     <>
-      {spec.assignee && <ForAgent slug={spec.assignee} />}
+      {spec.assignee && fresh && <ForAgent slug={spec.assignee} />}
       <TaskForm
         draftKey="new-task"
         prefill={spec.assignee ? { assignee: spec.assignee } : undefined}

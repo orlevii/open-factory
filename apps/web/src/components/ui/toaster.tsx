@@ -1,4 +1,5 @@
 import { ApiError } from "@open-factory/shared";
+import type { CSSProperties } from "react";
 import { Toaster as Sonner, toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MODAL_SELECTOR } from "@/lib/shortcuts";
@@ -14,13 +15,14 @@ const PER_CHAR_MS = 60;
 /** Touch has no hover-pause, so a longer text stays longer. */
 export const toastDuration = (text: string) => Math.max(MIN_MS, text.length * PER_CHAR_MS);
 
+// rem, so toasts follow the text size like the rest of the UI (WCAG 1.4.4).
 const BUTTON =
-  "ml-auto inline-flex h-7 shrink-0 items-center rounded-md px-2 text-[13px] font-medium text-foreground transition-colors duration-150 hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50";
+  "ml-auto inline-flex h-7 shrink-0 items-center rounded-md px-2 text-[0.8125rem] font-medium text-foreground transition-colors duration-150 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50";
 const CLASS_NAMES = {
   toast:
-    "flex w-full items-center gap-2 rounded-md border border-float-edge bg-popover px-3 py-2 text-[13px] leading-[18px] text-popover-foreground",
+    "flex w-full items-center gap-2 rounded-md border border-float-edge bg-popover px-3 py-2 text-[0.8125rem] leading-[1.125rem] text-popover-foreground",
   content: "min-w-0 flex-1",
-  title: "text-[13px] leading-[18px]",
+  title: "text-[0.8125rem] leading-[1.125rem]",
   actionButton: BUTTON,
 };
 const TOAST_OPTIONS = { unstyled: true, classNames: CLASS_NAMES };
@@ -28,6 +30,12 @@ const DESKTOP_OFFSET = {
   bottom: "calc(16px + var(--composer-h, 0px))",
   left: "calc(var(--sidebar-current-width) + 16px)",
 };
+/** Sonner's 356px, but never past the content column: 16px gutters each side of the area right of the sidebar, less
+ *  what sits right of a docked composer (Agent details beside the session). Phones: Sonner's own full-width rule. */
+const DESKTOP_STYLE = {
+  "--width":
+    "min(356px, calc(100vw - var(--sidebar-current-width, 0px) - 32px - var(--composer-inset-right, 0px)))",
+} as CSSProperties;
 const PHONE_OFFSET = {
   bottom: "calc(16px + var(--composer-h, 0px) + env(safe-area-inset-bottom))",
 };
@@ -41,7 +49,9 @@ export function Toaster() {
       offset={mobile ? PHONE_OFFSET : DESKTOP_OFFSET}
       mobileOffset={mobile ? PHONE_OFFSET : DESKTOP_OFFSET}
       visibleToasts={3}
+      gap={8}
       expand
+      style={mobile ? undefined : DESKTOP_STYLE}
       toastOptions={TOAST_OPTIONS}
     />
   );

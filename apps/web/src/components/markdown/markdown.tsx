@@ -44,19 +44,16 @@ function makeComponents(newTabNoteId: string): Components {
     },
     code: ({ className, children }) => <code className={className}>{children}</code>,
     // Bidi (U3 §7.2): each block takes the direction of its own first strong character.
-    p: ({ children }) => <p dir="auto">{children}</p>,
-    li: ({ className, children }) => (
-      <li dir="auto" className={className}>
-        {children}
-      </li>
-    ),
-    blockquote: ({ children }) => <blockquote dir="auto">{children}</blockquote>,
-    h1: ({ children }) => <h1 dir="auto">{children}</h1>,
-    h2: ({ children }) => <h2 dir="auto">{children}</h2>,
-    h3: ({ children }) => <h3 dir="auto">{children}</h3>,
-    h4: ({ children }) => <h4 dir="auto">{children}</h4>,
-    h5: ({ children }) => <h5 dir="auto">{children}</h5>,
-    h6: ({ children }) => <h6 dir="auto">{children}</h6>,
+    // The hast props are spread through: GFM footnotes carry an id and the label's sr-only class.
+    p: ({ node: _n, ...props }) => <p dir="auto" {...props} />,
+    li: ({ node: _n, ...props }) => <li dir="auto" {...props} />,
+    blockquote: ({ node: _n, ...props }) => <blockquote dir="auto" {...props} />,
+    h1: ({ node: _n, ...props }) => <h1 dir="auto" {...props} />,
+    h2: ({ node: _n, ...props }) => <h2 dir="auto" {...props} />,
+    h3: ({ node: _n, ...props }) => <h3 dir="auto" {...props} />,
+    h4: ({ node: _n, ...props }) => <h4 dir="auto" {...props} />,
+    h5: ({ node: _n, ...props }) => <h5 dir="auto" {...props} />,
+    h6: ({ node: _n, ...props }) => <h6 dir="auto" {...props} />,
   };
 }
 
@@ -76,14 +73,18 @@ export const Markdown = memo(function Markdown({
 }) {
   const newTabNoteId = useId();
   const components = useMemo(() => makeComponents(newTabNoteId), [newTabNoteId]);
+  // The link note sits after the prose, never in it: as its last child it would keep the last block's
+  // bottom margin (typography zeroes only the last child's), and rows inside a turn would drift apart.
   return (
-    <div className={`prose prose-sm prose-of max-w-none${VARIANT_CLASS[variant]}`}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
-        {source}
-      </ReactMarkdown>
+    <>
+      <div className={`prose prose-sm prose-of max-w-none${VARIANT_CLASS[variant]}`}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+          {source}
+        </ReactMarkdown>
+      </div>
       <span id={newTabNoteId} hidden>
         Opens in a new tab
       </span>
-    </div>
+    </>
   );
 });

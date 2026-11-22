@@ -529,6 +529,11 @@
   background: var(--code-bg) !important;
   overflow-x: auto;
 }
+/* prose-sm sizes every code at 0.857em, the fenced code included: inside a pre it takes the pre's 13/1.55. */
+.prose-of :where(pre code) {
+  font-size: inherit;
+  line-height: inherit;
+}
 
 /* tables */
 .prose-of .md-table {

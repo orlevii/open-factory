@@ -19,10 +19,10 @@ const buttonVariants = cva(
       },
       size: {
         default:
-          "h-8 pointer-coarse:h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+          "h-8 pointer-coarse:h-10 pointer-coarse:min-w-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        lg: "h-9 pointer-coarse:h-10 pointer-coarse:min-w-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         icon: "size-8 pointer-coarse:size-9",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
@@ -38,15 +38,33 @@ const buttonVariants = cva(
   }
 )
 
+/** Sizes under 40px that take the coarse-pointer `::after` expander (`hit-40` in styles.css, U4 §11.3): the glyph
+ *  keeps its size and the hit box grows to 40×40. `default` and `lg` grow for real instead (`min-w-10` for a header
+ *  action whose label goes sr-only on phones, leaving only its icon). */
+const EXPANDED = new Set(["icon", "icon-xs", "icon-sm", "icon-lg", "xs", "sm"])
+
+/** A button inside a form: no expander (it would overlap a field or prose); on coarse pointers it grows to 40px
+ *  with real padding instead, and the form's gaps make room. */
+const IN_FORM = "pointer-coarse:min-h-10 pointer-coarse:px-3"
+
+/** A toolbar or header group on coarse pointers: its icon buttons are visible 40px boxes 4px apart, so neighbouring
+ *  expanders never overlap (U4 §11.3). Matched by `data-size` alone: a Button inside a `TooltipTrigger` or menu
+ *  trigger (`asChild`) takes the trigger's `data-slot`, and the session header's Agent details and ⋯ stayed 36px and
+ *  28px with overlapping expanders (evidence D2). Only Button sets an `icon…` data-size. */
+const COARSE_ICON_GROUP = "pointer-coarse:gap-1 pointer-coarse:[&_[data-size^=icon]]:size-10"
+
 function Button({
   className,
   variant = "default",
   size = "default",
   asChild = false,
+  inForm = false,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
+    /** Sits among form fields (U4 §11.3): grows on coarse pointers instead of taking an expander. */
+    inForm?: boolean
   }) {
   const Comp = asChild ? Slot.Root : "button"
 
@@ -55,10 +73,14 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size }),
+        inForm ? IN_FORM : EXPANDED.has(size ?? "default") && "relative hit-40",
+        className
+      )}
       {...props}
     />
   )
 }
 
-export { Button, buttonVariants }
+export { Button, buttonVariants, COARSE_ICON_GROUP, IN_FORM }

@@ -9,21 +9,23 @@ import {
   type Ref,
   type RefObject,
   useCallback,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenu,
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuLabel,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { inboxQueryOptions } from "@/features/inbox/api";
 import { useMedia } from "@/lib/breakpoints";
+import { formatTime } from "./format";
 import { parseSendResult } from "./outgoing-message";
 import type { Row } from "./rows";
 
@@ -98,6 +100,54 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
   return items;
 }
 
+const at = (name: string, iso: string | undefined) => (iso ? `${name} · ${formatTime(iso)}` : name);
+const handle = (who: string) => (who.startsWith("@") ? who : `@${who}`);
+
+/** The row's name on the phone drawer's title line (U4 §11.1): "Message from @or · 17:55",
+ *  "Bash · 17:55", the agent for its own text. */
+export function rowMenuTitle(row: Row, slug: string): string {
+  switch (row.kind) {
+    case "message":
+      return at(`Message from ${handle(row.message.from)}`, row.at);
+    case "peer": {
+      // A neighborhood notice (peer_joined / peer_left), not a message.
+      const who = row.envelope.subject?.slug;
+      if (!who) return "Neighborhood change";
+      return `@${who} ${row.envelope.subject?.left ? "left" : "joined"}`;
+    }
+    case "update_group":
+      return at(`Updates about ${row.about}`, row.at);
+    case "outgoing": {
+      const to = (row.call.input as { to?: unknown }).to;
+      return at(typeof to === "string" ? `Message to ${handle(to)}` : "Message", row.at);
+    }
+    case "spawn":
+      return at("Spawn", row.at);
+    case "terminate":
+      return at("Terminate", row.at);
+    case "tool":
+      return at(row.call.name, row.at);
+    case "text":
+      return at(handle(slug), row.at);
+    case "command":
+      return at("Command", row.at);
+    case "command_output":
+      return at(row.command, row.at);
+    case "turn_footer":
+      return "Turn summary";
+    default:
+      return at(OTHER[row.kind] ?? "Event", "at" in row ? row.at : undefined);
+  }
+}
+const OTHER: Partial<Record<Row["kind"], string>> = {
+  subagent: "Subagent",
+  work_group: "Tool calls",
+  error: "Error",
+  compaction: "Compaction",
+  denied: "Permission denied",
+  orphan_result: "Tool result",
+};
+
 /** Where the trigger sits (U3 §7.5): in an unboxed row's 2rem right column, or inside a card's own
  *  right padding (`pr-9`), off its border. "Couldn't copy" sits just left of it. */
 const PLACE = {
@@ -105,6 +155,10 @@ const PLACE = {
   card: { trigger: "top-1.5 right-1.5", failed: "top-1.5 right-9" },
 } as const;
 
+// On coarse pointers the trigger is a visible box 32px wide in its gutter (U4 §11.3), with no expander over the
+// row's text. It is 40px tall at most, capped at the row plus its 8px gap less its 4px top offset, so on a one-line
+// row (24px, the next 32px on) it is 32×28 and never reaches the next row's ⋯.
+const COARSE = "pointer-coarse:h-[min(2.5rem,calc(100%+0.25rem))] pointer-coarse:w-8 after:hidden";
 // Shown instantly on hover or focus within the row (fine pointers), always on touch, and always while
 // its menu is open: the modal menu takes the row's hover and focus, and Radix anchors the menu to
 // this element's box, so a hidden trigger would send it to the viewport's corner. The 0.98 press is
@@ -115,14 +169,24 @@ const TRIGGER =
 const TRIGGER_NESTED =
   "absolute text-muted-foreground group-focus-within/call:inline-flex group-hover/call:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
 
+type Point = { x: number; y: number };
+/** Opens a row's menu from outside it (a long-press on the row), without lifting its state. */
+export type RowMenuHandle = { openAt(p: Point): void };
+type MenuState = { mounted: boolean; open: boolean; anchor?: Point };
+const AT_REST: MenuState = { mounted: false, open: false };
+
 /**
- * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots;
- * the first pointer down, Enter or Space mounts the Radix menu already open, and it stays mounted.
+ * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots
+ * and reads no media query; the first intent mounts the menu already open, and it stays mounted: a
+ * mouse pointer down, Enter or Space, a touch or pen tap's click (never its pointer down, so starting
+ * a scroll on ⋯ opens nothing, U4 §11.1), or `openAt` through the ref. On a phone it is a drawer.
  * It keeps `data-copy-link` (the roving tabindex leaves it alone) and its own `tabIndex`. A copy turns
  * the icon into a check for 1.5s; "Couldn't copy" shows inline.
  */
 export function RowMenu({
+  ref,
   items,
+  title,
   focusable,
   label = "Row actions",
   callShown = false,
@@ -130,9 +194,12 @@ export function RowMenu({
   nested = false,
   inCard = false,
 }: {
+  ref?: Ref<RowMenuHandle>;
   /** The list, or a stable function that builds it: called only once the menu is first opened, so a
    *  long timeline does none of that work at mount. */
   items: readonly RowMenuItem[] | (() => readonly RowMenuItem[]);
+  /** Names the row on the phone drawer; a function is called only once the menu is mounted. */
+  title: string | (() => string);
   /** The row is the timeline's tab stop. */
   focusable: boolean;
   label?: string;
@@ -146,20 +213,43 @@ export function RowMenu({
 }) {
   const { state, instant, copy } = useCopy();
   const place = PLACE[inCard ? "card" : "gutter"];
-  const [mounted, setMounted] = useState(false);
-  // The first opening mounts the Radix root after the key that asked for it, so Radix's own
+  const [menu, setMenu] = useState<MenuState>(AT_REST);
+  // The first opening mounts the menu after the key that asked for it, so Radix's own
   // keyboard-modality listener never saw that key: the content then moves focus to the first item
-  // itself (WAI-ARIA menu button). Later openings are Radix's.
+  // itself (WAI-ARIA menu button). Later openings are the menu's own.
   const openedByKey = useRef(false);
+  // Set by a touch or pen pointer down at rest, read by the click it produces. Handlers only.
+  const tapping = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const activate = (e: PointerEvent | KeyboardEvent) => {
-    if ("key" in e) {
+  useImperativeHandle(
+    ref,
+    () => ({ openAt: (anchor) => setMenu({ mounted: true, open: true, anchor }) }),
+    [],
+  );
+  // An opening by the trigger hangs from it; a close keeps the point so the exit fades in place.
+  const onOpenChange = useCallback(
+    (open: boolean) => setMenu((m) => (open ? { mounted: true, open } : { ...m, open })),
+    [],
+  );
+  const mount = () => setMenu({ mounted: true, open: true });
+  const atRest = {
+    onPointerDown(e: PointerEvent) {
+      tapping.current = e.pointerType !== "mouse";
+      if (tapping.current || e.button !== 0 || e.ctrlKey) return;
+      e.preventDefault(); // as Radix's trigger: focus stays where the menu will put it
+      mount();
+    },
+    onClick() {
+      if (!tapping.current) return;
+      tapping.current = false;
+      mount();
+    },
+    onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault(); // the keypress opens the menu; it never also clicks
       openedByKey.current = true;
-    } else if (e.button !== 0 || e.ctrlKey) return;
-    else e.preventDefault(); // as Radix's trigger: focus stays where the menu will put it
-    setMounted(true);
+      mount();
+    },
   };
   const button = (
     <TriggerButton
@@ -169,7 +259,7 @@ export function RowMenu({
       shown={state !== "idle"}
       nested={nested}
       position={place.trigger}
-      {...(mounted ? {} : { onPointerDown: activate, onKeyDown: activate })}
+      {...(menu.mounted ? {} : atRest)}
     >
       <CopyIcon
         state={state}
@@ -180,9 +270,14 @@ export function RowMenu({
   );
   return (
     <>
-      {mounted ? (
-        <DropdownMenu defaultOpen>
-          <DropdownMenuTrigger asChild>{button}</DropdownMenuTrigger>
+      {menu.mounted ? (
+        <AdaptiveMenu
+          open={menu.open}
+          onOpenChange={onOpenChange}
+          title={typeof title === "function" ? title() : title}
+          anchor={menu.anchor}
+        >
+          <AdaptiveMenuTrigger asChild>{button}</AdaptiveMenuTrigger>
           <RowMenuContent
             items={items}
             callShown={callShown}
@@ -191,7 +286,7 @@ export function RowMenu({
             openedByKey={openedByKey}
             trigger={trigger}
           />
-        </DropdownMenu>
+        </AdaptiveMenu>
       ) : (
         button
       )}
@@ -218,6 +313,7 @@ function TriggerButton({
   position: string;
   children: ReactNode;
   onPointerDown?(e: PointerEvent): void;
+  onClick?(e: MouseEvent): void;
   onKeyDown?(e: KeyboardEvent): void;
 }) {
   return (
@@ -232,7 +328,7 @@ function TriggerButton({
       aria-label={label}
       tabIndex={focusable ? 0 : -1}
       // Feedback stays visible after the pointer leaves.
-      className={`${shown ? "inline-flex" : "hidden"} ${position} ${nested ? TRIGGER_NESTED : TRIGGER}`}
+      className={`${shown ? "inline-flex" : "hidden"} ${position} ${nested ? TRIGGER_NESTED : TRIGGER} ${COARSE}`}
       {...rest}
     >
       {children}
@@ -241,7 +337,7 @@ function TriggerButton({
 }
 
 /** Mounted from the first activation on, so the pointer query and the item list cost nothing at
- *  rest. */
+ *  rest. Content props reach the desktop dropdown; the drawer takes the focus handlers. */
 function RowMenuContent({
   items: source,
   callShown,
@@ -266,7 +362,7 @@ function RowMenuContent({
     viaKeyboard.current = e.detail === 0;
   };
   return (
-    <DropdownMenuContent
+    <AdaptiveMenuContent
       align="end"
       // Radix focuses the content itself when it opens; on a keyboard first opening that focus moves
       // on to the first item.
@@ -298,25 +394,25 @@ function RowMenuContent({
         switch (item.kind) {
           case "copy":
             return (
-              <DropdownMenuItem
+              <AdaptiveMenuItem
                 key={item.label}
                 onClick={onClick}
                 onSelect={() => onCopy(item.text, viaKeyboard.current)}
               >
                 {item.label}
-              </DropdownMenuItem>
+              </AdaptiveMenuItem>
             );
           case "call":
             return (
-              <DropdownMenuItem key={item.label} onSelect={() => onToggleCall?.()}>
+              <AdaptiveMenuItem key={item.label} onSelect={() => onToggleCall?.()}>
                 {callShown ? "Hide tool call" : item.label}
-              </DropdownMenuItem>
+              </AdaptiveMenuItem>
             );
           case "inbox":
             return <InboxItem key={item.label} messageId={item.messageId} label={item.label} />;
           case "session":
             return (
-              <DropdownMenuItem key={item.label} asChild>
+              <AdaptiveMenuItem key={item.label} asChild>
                 <Link
                   to="/agents/$slug"
                   params={{ slug: item.to }}
@@ -325,21 +421,21 @@ function RowMenuContent({
                 >
                   {item.label}
                 </Link>
-              </DropdownMenuItem>
+              </AdaptiveMenuItem>
             );
           default:
             // The time: touch only, where the gutter time never shows.
             return touch ? (
-              <DropdownMenuLabel
+              <AdaptiveMenuLabel
                 key={item.label}
                 className="text-[0.8125rem] font-normal text-muted-foreground tabular-nums"
               >
                 {item.label}
-              </DropdownMenuLabel>
+              </AdaptiveMenuLabel>
             ) : null;
         }
       })}
-    </DropdownMenuContent>
+    </AdaptiveMenuContent>
   );
 }
 
@@ -357,10 +453,10 @@ function InboxItem({ messageId, label }: { messageId: string; label: string }) {
   const id = useInfiniteQuery({ ...inboxQueryOptions, select }).data;
   if (id === undefined) return null;
   return (
-    <DropdownMenuItem asChild>
+    <AdaptiveMenuItem asChild>
       <Link to="/inbox" search={{ item: id }}>
         {label}
       </Link>
-    </DropdownMenuItem>
+    </AdaptiveMenuItem>
   );
 }

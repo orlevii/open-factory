@@ -169,6 +169,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       type="button"
       variant="ghost"
       size="sm"
+      inForm
       data-add-for="credential"
       onClick={onAddCredential}
     >

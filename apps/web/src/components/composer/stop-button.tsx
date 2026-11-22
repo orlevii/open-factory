@@ -1,5 +1,5 @@
 import { ApiError } from "@open-factory/shared";
-import { CircleStop } from "lucide-react";
+import { CircleStop, Square } from "lucide-react";
 import { type Ref, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -24,6 +24,7 @@ export function StopButton({
   turnEpoch,
   compacting = false,
   onError,
+  icon = false,
   className,
   ref,
 }: {
@@ -36,6 +37,9 @@ export function StopButton({
   compacting?: boolean;
   /** Called with a failure, and with `undefined` when a new attempt starts. */
   onError(error: unknown): void;
+  /** The phone's 40px icon button (U4 §11.4): a filled square, its label the accessible name, and an
+   *  sr-only status while it stops. */
+  icon?: boolean;
   className?: string;
   ref?: Ref<StopHandle>;
 }) {
@@ -78,22 +82,38 @@ export function StopButton({
     };
   }, []);
 
+  const label = pending ? "Stopping…" : compacting ? "Compacting…" : "Stop";
   return (
-    <Button
-      ref={button}
-      type="button"
-      variant="outline"
-      aria-disabled={!enabled}
-      className={className}
-      aria-busy={pending || undefined}
-      onClick={stop}
-    >
-      {pending ? <Spinner /> : <CircleStop aria-hidden="true" />}
-      {/* Below ~24rem of composer only the icon shows (U3 §13.1; a phone's ~22rem composer too), so the
-          hint keeps readable room; the label stays the name. */}
-      <span className="@max-[24rem]:sr-only">
-        {pending ? "Stopping…" : compacting ? "Compacting…" : "Stop"}
-      </span>
-    </Button>
+    <>
+      <Button
+        ref={button}
+        type="button"
+        variant="outline"
+        size={icon ? "icon" : "default"}
+        aria-label={icon ? label : undefined}
+        aria-disabled={!enabled}
+        className={className}
+        aria-busy={pending || undefined}
+        onClick={stop}
+      >
+        {pending ? (
+          <Spinner />
+        ) : icon ? (
+          // A filled square against Send's arrow: told apart by shape, never only by colour (U4 §11.4).
+          <Square aria-hidden="true" className="fill-current" />
+        ) : (
+          <CircleStop aria-hidden="true" />
+        )}
+        {/* Below ~24rem of composer only the icon shows (U3 §13.1), so the hint keeps readable room;
+            the label stays the name. The phone's icon variant is named by aria-label instead. */}
+        {icon ? null : <span className="@max-[24rem]:sr-only">{label}</span>}
+      </Button>
+      {icon ? (
+        // Mounted with Stop (empty), so "Stopping…" is announced when it appears.
+        <span role="status" className="sr-only">
+          {pending ? "Stopping…" : ""}
+        </span>
+      ) : null}
+    </>
   );
 }

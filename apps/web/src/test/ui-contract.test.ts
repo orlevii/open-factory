@@ -216,3 +216,114 @@ describe("native tooltips", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("row menus", () => {
+  // U4 §11.1: every row and header menu is an AdaptiveMenu (a drawer on phones). A bare DropdownMenu
+  // in features is a picker, not a row menu: name it here.
+  const PICKERS = ["features/tasks/status-menu.tsx"];
+  test("no feature keeps a bare DropdownMenu except the pickers", () => {
+    const users = sourceFiles()
+      .filter((f) => f.includes("/features/") && !/\.test\.tsx?$/.test(f))
+      .filter((f) => /\bDropdownMenu/.test(readFileSync(f, "utf8")))
+      .map((f) => f.replace(`${SRC}/`, ""));
+    expect(users).toEqual(PICKERS);
+  });
+});
+
+describe("hit areas (U4 §11.3)", () => {
+  const read = (f: string) => readFileSync(join(SRC, f), "utf8");
+  // The element that holds `label`: the source from the last opening control tag before it to the label.
+  const controlBefore = (src: string, label: string) => {
+    const at =
+      src.indexOf(`>${label}<`) >= 0
+        ? src.indexOf(`>${label}<`)
+        : src.search(new RegExp(`>\\s*${label}\\s*<`));
+    if (at < 0) return undefined;
+    const head = src.slice(0, at + 1);
+    const open = Math.max(
+      head.lastIndexOf("<Button"),
+      head.lastIndexOf("<button"),
+      head.lastIndexOf("<summary"),
+    );
+    return head.slice(open);
+  };
+  // Buttons among form fields grow for real instead of taking an expander over a field or prose.
+  const FORM: [string, string][] = [
+    ["features/agents/address-line.tsx", "Change"],
+    ["features/agents/template-field.tsx", "New template"],
+    ["features/agents/template-field.tsx", "Add secret"],
+    ["features/agents/new-agent-sheet.tsx", "Add credential"],
+    ["features/agents/edit-agent-sheet.tsx", "Add credential"],
+    ["features/agents/project-grant-picker.tsx", "Add project"],
+    ["features/schedules/repeats-field.tsx", "Cron help"],
+    ["features/sheets/more-options.tsx", "More options"],
+    ["features/sheets/form-footer.tsx", "Discard"],
+    ["features/templates/new-template-form.tsx", "Change"],
+  ];
+  for (const [f, label] of FORM)
+    test(`${f}: "${label}" is a form button (inForm), not an expander`, () => {
+      const tag = controlBefore(read(f), label);
+      expect(tag, label).toBeDefined();
+      expect(tag).toMatch(/\binForm\b|\bIN_FORM\b|pointer-coarse:min-h-10/);
+      expect(tag).not.toMatch(/\bhit-40\b/);
+    });
+
+  // An expander is clipped by an overflow-hidden ancestor: the known wrappers of header and toolbar icon
+  // buttons never clip.
+  const CLIP =
+    /(?<![\w-])(?:overflow-hidden|overflow-clip|overflow-x-hidden|overflow-y-hidden|truncate)(?![\w-])/;
+  const classOf = (src: string, marker: string, end: string) => {
+    const from = src.indexOf(marker);
+    expect(from, marker).toBeGreaterThanOrEqual(0);
+    return src.slice(from, src.indexOf(end, from));
+  };
+  test("the expander is a 40px ::after on coarse pointers only", () => {
+    const coarse = css.match(/@media \(pointer: coarse\)\s*{\s*\.hit-40::after\s*{([^}]*)}/);
+    expect(coarse).not.toBeNull();
+    const body = coarse?.[1] ?? "";
+    expect(body).toMatch(/content:\s*""/);
+    expect(body).toMatch(/position:\s*absolute/);
+    for (const axis of ["inset-block", "inset-inline"])
+      expect(body).toMatch(
+        new RegExp(`${axis}:\\s*min\\(0px,\\s*calc\\(\\(100% - 2\\.5rem\\) / 2\\)\\)`),
+      );
+    // Nowhere else: a fine pointer never gets the box.
+    expect(css.match(/\.hit-40/g)).toHaveLength(1);
+  });
+  test("PageHeader actions and SheetHeader are coarse icon groups (40px boxes, 4px apart)", () => {
+    const header = read("components/page-header.tsx");
+    expect(classOf(header, "{actions && (", "{actions}")).toContain("COARSE_ICON_GROUP");
+    expect(
+      classOf(read("components/ui/sheet.tsx"), 'data-slot="sheet-header"', "{...props}"),
+    ).toContain("COARSE_ICON_GROUP");
+  });
+  test("an attachment chip's Retry and Remove are 36px on coarse pointers, 4px apart, so the chip clips neither", () => {
+    const src = read("components/composer/attachments.tsx");
+    expect(src).toMatch(/const CHIP_ACTION = "pointer-coarse:size-9"/);
+    expect(src.match(/className=\{CHIP_ACTION\}/g)).toHaveLength(2);
+    expect(classOf(src, "data-upload-chip", "`}")).toMatch(/pointer-coarse:gap-1(?![\w-])/);
+  });
+  // A 28px icon-sm's expander reaches 6px: next to a 4px gap it would cover its neighbour. At 32px it reaches 4px.
+  test("the settings row ⋯ and the Agents-page ⋯ are 32px on coarse pointers, so their expanders stop at the gap", () => {
+    const shared = read("features/settings/shared.tsx");
+    expect(classOf(shared, "export function MoreButton", "</Button>")).toMatch(
+      /size="icon-sm"[\s\S]*className=\{cn\("pointer-coarse:size-8", className\)\}/,
+    );
+    expect(classOf(shared, "export function RowLine", "{actions}")).toMatch(
+      /ml-auto flex shrink-0 items-center gap-1"/,
+    );
+    const more = classOf(read("features/agents/agent-tree.tsx"), "data-row-more", "onClick");
+    expect(more).toMatch(/className="mx-1 [^"]*pointer-coarse:size-8[^"]*"/);
+  });
+  test("no clipping wrapper around PageHeader, SheetHeader or composer toolbar icon buttons", () => {
+    const header = read("components/page-header.tsx");
+    expect(classOf(header, "<header", ">")).not.toMatch(CLIP);
+    expect(classOf(header, "{actions && (", "{actions}")).not.toMatch(CLIP);
+    expect(
+      classOf(read("components/ui/sheet.tsx"), 'data-slot="sheet-header"', "{...props}"),
+    ).not.toMatch(CLIP);
+    expect(
+      classOf(read("components/composer/composer.tsx"), "data-composer-toolbar", ">\n"),
+    ).not.toMatch(CLIP);
+  });
+});

@@ -1,8 +1,9 @@
 import type { InviteItem, UserAdminItem } from "@open-factory/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Session } from "@/lib/auth-client";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { renderApp } from "@/test/render-app";
 
@@ -347,4 +348,20 @@ test("a failed users load shows its line with Retry", async () => {
   const region = await usersSection();
   expect(await within(region).findByText("Couldn't load users.")).toBeInTheDocument();
   expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+test("phone: a user's menu is a drawer titled with their handle", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    world({ users: [ME, ALICE] });
+    renderApp("/settings/users", me);
+    const trigger = await screen.findByRole("button", { name: "Actions for @alice" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "touch" });
+    fireEvent.click(trigger);
+    const drawer = await screen.findByRole("dialog", { name: "@alice" });
+    expect(within(drawer).getByRole("button", { name: "Disable…" })).toBeInTheDocument();
+  } finally {
+    window.matchMedia = original;
+  }
 });

@@ -1,16 +1,17 @@
 import type { ScheduleAuthor, ScheduleItem } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenu,
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuSeparator,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { preloadSheet } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { useLongPressMenu } from "@/hooks/use-long-press-menu";
 import { firstLine } from "./first-line";
 import { formatScheduleTime } from "./format";
 import { ScheduleState, STATE_VIEW } from "./schedule-state";
@@ -68,8 +69,15 @@ export function ScheduleRow({
   const same = whoPlain(s.createdBy) === whoPlain(s.bodyAuthor);
   const line = firstLine(s.body);
   const spec = { kind: "edit-schedule", key: s.key } as const;
+  // A long-press anywhere on the row opens its menu at the point (U4 §11.2); the ⋯ stays.
+  const { press, menu } = useLongPressMenu();
   return (
-    <li className="relative border-b border-border last:border-b-0 hover:bg-sidebar-accent">
+    <li
+      {...press}
+      data-longpress-region=""
+      data-row-box=""
+      className="relative border-b border-border last:border-b-0 hover:bg-sidebar-accent"
+    >
       <div className="grid min-h-[4.5rem] gap-y-0.5 px-2 py-2 text-sm">
         <div className="flex min-w-0 items-center gap-x-3">
           <button
@@ -102,8 +110,8 @@ export function ScheduleRow({
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1">
             <ScheduleState state={s.state} className="text-[0.8125rem] leading-5" />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+            <AdaptiveMenu title={s.key} {...menu}>
+              <AdaptiveMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -113,21 +121,23 @@ export function ScheduleRow({
                 >
                   <MoreHorizontal aria-hidden="true" />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => openSheet(spec)}>Edit</DropdownMenuItem>
+              </AdaptiveMenuTrigger>
+              <AdaptiveMenuContent align="end">
+                <AdaptiveMenuItem opensOverlay onSelect={() => openSheet(spec)}>
+                  Edit
+                </AdaptiveMenuItem>
                 {!s.done &&
                   (s.paused ? (
-                    <DropdownMenuItem onSelect={onResume}>Resume</DropdownMenuItem>
+                    <AdaptiveMenuItem onSelect={onResume}>Resume</AdaptiveMenuItem>
                   ) : (
-                    <DropdownMenuItem onSelect={onPause}>Pause</DropdownMenuItem>
+                    <AdaptiveMenuItem onSelect={onPause}>Pause</AdaptiveMenuItem>
                   ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                <AdaptiveMenuSeparator />
+                <AdaptiveMenuItem variant="destructive" onSelect={onDelete}>
                   Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </AdaptiveMenuItem>
+              </AdaptiveMenuContent>
+            </AdaptiveMenu>
           </span>
         </div>
         <div className="truncate pl-[4.25rem] text-[0.8125rem] leading-[1.125rem] text-foreground">

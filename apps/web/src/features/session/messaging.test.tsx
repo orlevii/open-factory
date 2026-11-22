@@ -316,7 +316,10 @@ const result = (content: string, isError = false, toolUseId = "toolu_1"): AnyEve
 /** Opens the row menu beside `block` (U3 §7.5). */
 async function rowMenu(block: HTMLElement) {
   const wrap = block.closest("[data-row-wrap]") as HTMLElement;
-  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), {
+    button: 0,
+    pointerType: "mouse",
+  });
   return screen.findByRole("menu");
 }
 

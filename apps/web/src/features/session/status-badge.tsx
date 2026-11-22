@@ -65,7 +65,14 @@ export function StatusBadge({
   rateLimitedUntil,
   rateLimitExact,
   size,
-}: ResetInput & { status: AgentStatus; size: "long" | "short" }) {
+  labelClassName,
+}: ResetInput & {
+  status: AgentStatus;
+  size: "long" | "short";
+  /** Classes for the label alone (the Agents tree hides it below md, keeping the shape). */
+  labelClassName?: string;
+}) {
+  const label = statusLabel(status, size, { rateLimitedUntil, rateLimitExact });
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] whitespace-nowrap">
       <span aria-hidden="true" className="inline-flex size-3 items-center justify-center">
@@ -79,7 +86,7 @@ export function StatusBadge({
           <StatusMark status={status} size={6} />
         )}
       </span>
-      {statusLabel(status, size, { rateLimitedUntil, rateLimitExact })}
+      {labelClassName ? <span className={labelClassName}>{label}</span> : label}
     </span>
   );
 }

@@ -218,6 +218,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       type="button"
       variant="ghost"
       size="sm"
+      inForm
       data-add-for="credential"
       onClick={onAddCredential}
     >

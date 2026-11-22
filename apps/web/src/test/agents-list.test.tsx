@@ -12,6 +12,7 @@ import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { mockWorld } from "@/test/agent-screens-fixtures";
+import { longPress } from "@/test/long-press";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -184,6 +185,19 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   vi.useRealTimers();
 });
 
+test("header at 200% text on a phone (class contract): Active/Ended never shrink, and below an 18rem header they take a line of their own (evidence D3)", async () => {
+  listWith([agentSummary({ slug: "a", displayName: "Ada" })]);
+  renderApp("/agents", alice);
+  const radios = await screen.findByRole("group", { name: "Show" });
+  // Squeezed, the nowrap labels printed over each other and over New agent.
+  expect(radios).toHaveClass("shrink-0", "@max-[18rem]:order-last", "@max-[18rem]:basis-full");
+  const header = radios.closest("header");
+  expect(header).toHaveClass("flex-wrap", "min-h-12");
+  expect(header).not.toHaveClass("h-12");
+  const action = within(header as HTMLElement).getByRole("button", { name: "New agent" });
+  expect(action.parentElement).toHaveClass("ml-auto");
+});
+
 test("a terminated frame shows Terminated (no dot) at once, then the list refetches without it", async () => {
   // The refetch waits until released, so the patched row can be seen first.
   let release: () => void = () => {};
@@ -354,7 +368,10 @@ function renderTree(initial: AgentSummary[]) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { update: (f: (a: AgentSummary[]) => AgentSummary[]) => act(() => setTreeAgents(f)) };
+  return {
+    router,
+    update: (f: (a: AgentSummary[]) => AgentSummary[]) => act(() => setTreeAgents(f)),
+  };
 }
 
 /** 214 agents in a 14-level chain with wide fan-out below it. */
@@ -414,3 +431,35 @@ test.each([
     await waitFor(() => expect(more).toHaveFocus());
   },
 );
+
+test("touch: a 500ms press on an Agents row opens its menu at the point and doesn't navigate", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({})),
+  );
+  const { router } = renderTree(many());
+  const list = await screen.findByRole("list", { name: "Agents" });
+  const link = list.querySelector('[data-agent-link="a7"]') as HTMLElement;
+  expect(link).toHaveAttribute("data-longpress-region");
+  chipRenders.length = 0;
+  longPress(link, { x: 30, y: 70 });
+  expect(await screen.findByRole("menu", { name: "Agent 7" })).toBeInTheDocument();
+  const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");
+  expect(point?.style.left).toBe("30px");
+  // Only the pressed row re-renders (its menu-open flag), never the others.
+  expect(chipRenders).toEqual(["a7"]);
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("a mouse press on an Agents row opens nothing", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({})),
+  );
+  renderTree(many());
+  const list = await screen.findByRole("list", { name: "Agents" });
+  const link = list.querySelector('[data-agent-link="a7"]') as HTMLElement;
+  longPress(link, { pointerType: "mouse", hold: 700, release: false });
+  expect(link).not.toHaveAttribute("data-pressed");
+  expect(screen.queryByRole("menu")).toBeNull();
+});

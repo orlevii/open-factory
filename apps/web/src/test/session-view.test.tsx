@@ -2,6 +2,7 @@ import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { COARSE_ICON_GROUP } from "@/components/ui/button";
 import { flushStatusFrames } from "@/features/agents/status-frames";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
@@ -473,7 +474,10 @@ test("Copy link says so inline when the clipboard refuses", async () => {
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const row = document.getElementById("event-7") as HTMLElement;
-  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), {
+    button: 0,
+    pointerType: "mouse",
+  });
   fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(await within(row).findByText("Couldn't copy")).toBeInTheDocument();
 });
@@ -604,6 +608,26 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
   expect(within(header).queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
 });
 
+test("header on touch: Agent details and ⋯ are both the coarse group's 40px boxes, though each is a trigger's child (evidence D2)", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const header = screen.getByRole("banner");
+  const details = within(header).getByRole("button", { name: "Agent details" });
+  const menu = within(header).getByRole("button", { name: "Actions for Dev agent" });
+  // Each takes its trigger's data-slot (asChild), which is why a `[data-slot=button]` selector missed them.
+  expect(details).not.toHaveAttribute("data-slot", "button");
+  const group = details.parentElement;
+  expect(group?.className).toContain(COARSE_ICON_GROUP);
+  expect(group?.contains(menu)).toBe(true);
+  const selector = COARSE_ICON_GROUP.match(/\[&_(.+)\]:size-10/)?.[1]?.replaceAll("_", " ");
+  expect(selector).toBeDefined();
+  const sized = Array.from(group?.querySelectorAll(selector ?? "") ?? []);
+  expect(sized).toContain(details);
+  expect(sized).toContain(menu);
+  // A working agent has no third action: the avatar stays at every width.
+  expect(header.querySelector("[data-header-avatar]")).not.toHaveClass("@max-[22rem]:hidden");
+});
+
 test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
   routes["/api/agents/dev"] = () =>
     json(detail({ status: "errored", lastError: "Boom\nmore", errorKind: "crash" }));
@@ -614,6 +638,8 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   const header = screen.getByRole("banner");
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
+  // Restart is a third 40px action: below a 22rem header the avatar gives way (break H3).
+  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
   expect(header.contains(alert)).toBe(false);

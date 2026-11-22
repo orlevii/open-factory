@@ -368,6 +368,27 @@ test("mobile drawer: tapping an agent closes the drawer", async () => {
   }
 });
 
+test("large text on a short phone: the tree keeps 12rem and the sidebar content scrolls, so an agent row stays reachable", async () => {
+  // jsdom has no layout: the classes are the contract. At 200% text on 390x844 the nav filled the drawer and
+  // the tree shrank to a sliver under its sticky Agents row, so a press on an agent row landed on that row.
+  liveAgents();
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true);
+  try {
+    renderApp("/inbox", alice);
+    await screen.findByRole("heading", { level: 1, name: "Inbox" });
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    const tree = await screen.findByRole("tree", { name: "Agents" });
+    const group = tree.closest<HTMLElement>("[data-sidebar=group]");
+    const content = tree.closest<HTMLElement>("[data-sidebar=content]");
+    expect(group).toHaveClass("min-h-48", "overflow-y-auto");
+    expect(group).not.toHaveClass("min-h-0");
+    expect(content).toHaveClass("overflow-y-auto");
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
 test("footer name and handle get a tooltip when truncated", async () => {
   liveAgents();
   renderApp("/inbox", alice);

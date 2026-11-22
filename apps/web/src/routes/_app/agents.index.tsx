@@ -50,6 +50,7 @@ function AgentsPage() {
     <>
       <PageHeader
         title="Agents"
+        wrap
         meta={
           <>
             {filter === "exclude" && <RunningCount />}
@@ -148,7 +149,9 @@ function EndedFilter({ value }: { value: "exclude" | "only" }) {
       legend="Show"
       name="ended-filter"
       size="sm"
-      className="ml-2"
+      // Never squeezed (its labels would print over each other): on a header too narrow for the row (390px at
+      // 200% text, 320px) it takes a line of its own under the title (evidence D3).
+      className="ml-2 shrink-0 @max-[18rem]:order-last @max-[18rem]:ml-0 @max-[18rem]:basis-full"
       value={value}
       options={options}
       onChange={(v) =>

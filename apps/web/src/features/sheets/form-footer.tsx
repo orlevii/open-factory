@@ -42,6 +42,7 @@ export function SheetFormFooter({
             type="button"
             variant="ghost"
             size="sm"
+            inForm
             className="-ml-1 px-1"
             onClick={onDiscard}
           >

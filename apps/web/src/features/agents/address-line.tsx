@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { FormField } from "@/components/form-field";
+import { IN_FORM } from "@/components/ui/button";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
 
 const EMPTY: ReadonlySet<string> = new Set();
@@ -94,7 +95,7 @@ export function AddressLine({
       <span aria-hidden="true">·</span>{" "}
       <button
         type="button"
-        className="shrink-0 whitespace-nowrap underline underline-offset-2 hover:text-foreground"
+        className={`shrink-0 whitespace-nowrap underline underline-offset-2 hover:text-foreground ${IN_FORM}`}
         onClick={() => setOpen(true)}
       >
         Change

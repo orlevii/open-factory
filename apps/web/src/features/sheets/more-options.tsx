@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
+import { IN_FORM } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,7 +32,10 @@ export function MoreOptions({
             setClicked(true);
             onOpenChange(!open);
           }}
-          className="inline-flex h-7 items-center gap-1 rounded-md px-1 font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+          className={cn(
+            "inline-flex h-7 items-center gap-1 rounded-md px-1 font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring",
+            IN_FORM,
+          )}
         >
           <ChevronRight
             aria-hidden="true"

@@ -99,13 +99,13 @@ export function ProjectGrantPicker({
       {(onAddProject || custom) && (
         <div className="flex flex-wrap gap-2">
           {onAddProject && (
-            <Button type="button" variant="ghost" size="sm" onClick={onAddProject}>
+            <Button type="button" variant="ghost" size="sm" inForm onClick={onAddProject}>
               <Plus aria-hidden="true" data-icon="inline-start" />
               Add project
             </Button>
           )}
           {custom && (
-            <Button type="button" variant="ghost" size="sm" onClick={onUseDefault}>
+            <Button type="button" variant="ghost" size="sm" inForm onClick={onUseDefault}>
               Use template default
             </Button>
           )}

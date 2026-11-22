@@ -2,6 +2,7 @@ import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { formatTime } from "./format";
+import { useLongPressRegion } from "./long-press-region";
 import { ClampedMarkdown } from "./message-block";
 import type { Row } from "./rows";
 import { SpeakerLine, useSpeakers } from "./speaker-line";
@@ -136,6 +137,7 @@ export function CallBlock({
   onToggleCall(): void;
   rowProps: Record<string, unknown>;
 }) {
+  const region = useLongPressRegion();
   const failed = row.result?.isError === true;
   const toolRow: Extract<Row, { kind: "tool" }> = {
     kind: "tool",
@@ -156,7 +158,11 @@ export function CallBlock({
       className="rounded-lg border border-border bg-card py-2 pr-9 pl-3"
     >
       {header ?? (
-        <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
+        // The sender line: a long-press region, as a speaker line is (U4 §11.2).
+        <div
+          {...region}
+          className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
+        >
           {sender}
           <time
             dateTime={row.at}

@@ -94,10 +94,12 @@ export function RepeatsField({
                 {summary ? `${summary} (${zone})` : null}
               </p>
               <details className="group text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+                {/* 40px tall on touch; no side padding, so it stays aligned with the field's text (it is wider
+                    than 40px). */}
                 {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is the native disclosure button. */}
                 <summary
                   onClick={instantOnKeyboard}
-                  className="inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded-md [&::-webkit-details-marker]:hidden"
+                  className="inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded-md pointer-coarse:min-h-10 [&::-webkit-details-marker]:hidden"
                 >
                   <ChevronRight
                     aria-hidden="true"

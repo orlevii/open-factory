@@ -39,6 +39,7 @@ import { agentsListQueryOptions } from "@/features/session/api";
 import { statusLabel } from "@/features/session/status-badge";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { useLongPress } from "@/hooks/use-long-press";
 import { usePref } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
 
@@ -120,6 +121,7 @@ const ROW =
   "relative flex h-8 w-full items-center gap-2 overflow-hidden rounded-md pr-2 text-left text-sm transition-colors duration-150 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-offset-[-2px] active:bg-sidebar-accent active:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground pointer-coarse:h-9";
 
 type Via = "pointer" | "keyboard";
+type Point = { x: number; y: number };
 
 export const SidebarAgentRow = memo(function SidebarAgentRow({
   slug,
@@ -152,10 +154,13 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   /** Set past the indent cap, where the tooltip names the manager. */
   managerName: string | null;
   onToggle: (slug: string, via: Via) => void;
-  /** Opens the tree's one AgentMenu on this row. */
-  onMenu: (slug: string) => void;
+  /** Opens the tree's one AgentMenu on this row; a long-press names the point it hangs from. */
+  onMenu: (slug: string, at?: Point) => void;
 }) {
   const agent = useAgent(slug);
+  // On touch the row's only menu path (its ⋯ shows on fine pointers only, U4 §11.2).
+  const onLongPress = useCallback((at: Point) => onMenu(slug, at), [onMenu, slug]);
+  const press = useLongPress(onLongPress);
   const unread = useUnreadByAgent(slug);
   if (!agent) return null;
   const name = agent.displayName;
@@ -165,7 +170,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         to="/agents/$slug"
         params={{ slug }}
         role="treeitem"
+        {...press}
         data-agent-row={slug}
+        data-longpress-region=""
         data-menu-anchor=""
         data-menu-open={menuOpen || undefined}
         data-active={active || undefined}
@@ -431,12 +438,12 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
   const [pointerToggled, setPointerToggled] = useState<string | null>(null);
   // One AgentMenu for the tree, opened on the row named here. The slug outlives the close so the
   // menu keeps its content for the exit animation.
-  const [menu, setMenu] = useState<{ slug: string | null; open: boolean }>({
+  const [menu, setMenu] = useState<{ slug: string | null; open: boolean; at?: Point }>({
     slug: null,
     open: false,
   });
   const menuSlug = menu.open ? menu.slug : null;
-  const openMenu = useCallback((slug: string) => setMenu({ slug, open: true }), []);
+  const openMenu = useCallback((slug: string, at?: Point) => setMenu({ slug, open: true, at }), []);
 
   // Read by the stable toggle, so rows never see a new callback.
   const latest = useRef({ nodes, bySlug, stored, revealed, setStored });
@@ -455,6 +462,10 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 
   const ulRef = useRef<HTMLUListElement>(null);
   const loaded = shapeKey !== undefined;
+  // The menu's agent left the list: the tree's own state closes (state only, no effect), so the row
+  // drops its selected look and the agent coming back never reopens the menu by itself.
+  if (menu.open && menu.slug && loaded && !bySlug.has(menu.slug))
+    setMenu((m) => ({ ...m, open: false }));
   useEffect(() => {
     if (!activeSlug || !loaded) return;
     const id = requestAnimationFrame(() =>
@@ -498,9 +509,12 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
         ? activeSlug
         : visible[0]?.slug;
 
+  // A row that has gone (its agent left the list with the menu open) hands focus to the tab stop.
   const focusRow = (slug: string) => {
-    setFocusSlug(slug);
-    rowOf(ulRef.current, slug)?.focus();
+    const el = rowOf(ulRef.current, slug) ?? (tabStop ? rowOf(ulRef.current, tabStop) : undefined);
+    if (!el) return;
+    setFocusSlug(el.dataset.agentRow ?? slug);
+    el.focus();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
@@ -599,6 +613,7 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
           open={menu.open}
           onOpenChange={(open) => setMenu((m) => ({ ...m, open }))}
           anchor={rowOf(ulRef.current, menu.slug) ?? null}
+          point={menu.at}
           onClose={focusRow}
         />
       ) : null}
@@ -607,27 +622,42 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 });
 
 /** The tree's one AgentMenu. It subscribes to its agent itself, so that agent's status frames
- *  re-render the menu only, not the tree (the slug outlives the close for the exit animation). */
+ *  re-render the menu only, not the tree (the slug outlives the close for the exit animation).
+ *  When the agent leaves the list (terminated, archived, deleted) the menu closes: its open state is
+ *  derived here, and the last copy of the agent keeps its content through the exit. */
 function TreeAgentMenu({
   slug,
   open,
   onOpenChange,
   anchor,
+  point,
   onClose,
 }: {
   slug: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   anchor: HTMLElement | null;
+  /** A long-press's point: the dropdown hangs from it. */
+  point?: Point;
   onClose: (slug: string) => void;
 }) {
   const agent = useAgent(slug);
-  if (!agent) return null;
+  const [last, setLast] = useState(agent);
+  if (agent && agent !== last) setLast(agent);
+  const shown = agent ?? (last?.slug === slug ? last : undefined);
+  if (!shown) return null;
+  const present = agent !== undefined && agent.status !== "terminated";
   return (
     <AgentMenu
-      agent={agent}
+      agent={shown}
       context="sidebar"
-      anchored={{ open, onOpenChange, anchor, onClose: () => onClose(slug) }}
+      anchored={{
+        open: open && present,
+        onOpenChange,
+        anchor,
+        point,
+        onClose: () => onClose(slug),
+      }}
     />
   );
 }

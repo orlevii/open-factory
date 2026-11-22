@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
@@ -15,13 +15,16 @@ import { restoreAgent } from "@/features/agents/lifecycle";
 import { OutputDialogHost } from "@/features/agents/show-output";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
 
 const notify = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toaster", () => ({ notify }));
 
+const originalMatchMedia = window.matchMedia;
 afterEach(() => {
+  window.matchMedia = originalMatchMedia;
   notify.mockReset();
   resetSheets();
   // Radix can leave its modal marks on <body> when a test ends with a dialog closing.
@@ -584,3 +587,125 @@ test("Restore mentions pending messages when the agent has some", async () => {
     }),
   );
 });
+
+// Phones (below 48rem): the same menu as a bottom drawer titled with the agent's name (U4 §11.1).
+const tap = (el: Element) => {
+  fireEvent.pointerDown(el, { button: 0, pointerType: "touch" });
+  fireEvent.click(el);
+};
+/** Vaul animates the drawer out with a keyframe jsdom never runs: end it, so the content unmounts. */
+const endExit = (content: Element) => {
+  const end = new Event("animationend", { bubbles: true });
+  Object.defineProperty(end, "animationName", { value: getComputedStyle(content).animationName });
+  act(() => {
+    content.dispatchEvent(end);
+  });
+};
+const openDrawer = async (name = "Dev agent") => {
+  tap(await screen.findByRole("button", { name: `Actions for ${name}` }));
+  return screen.findByRole("dialog", { name });
+};
+
+test("phone: the menu is a drawer titled with the agent's name, its groups split by rules", async () => {
+  fakeMatchMedia.install(true, { coarse: true });
+  setup({ agent: agentSummary(), context: "session" });
+  const drawer = await openDrawer();
+  expect(screen.queryByRole("menu")).toBeNull();
+  for (const name of ["New task", "Edit", "Compact…", "Archive…"])
+    expect(within(drawer).getByRole("button", { name })).toBeInTheDocument();
+  expect(within(drawer).getByRole("link", { name: "Usage" })).toBeInTheDocument();
+  expect(within(drawer).getAllByRole("separator").length).toBeGreaterThanOrEqual(2);
+  // The ] shortcut means nothing on a phone.
+  expect(within(drawer).getByRole("button", { name: "Agent details" })).toHaveTextContent(
+    /^Agent details$/,
+  );
+});
+
+test("phone: New task closes the drawer instantly, then opens its sheet prefilled", async () => {
+  fakeMatchMedia.install(true, { coarse: true });
+  setup({ agent: agentSummary(), context: "list" });
+  const drawer = await openDrawer();
+  const content = drawer.closest("[data-slot=drawer-content]") ?? drawer;
+  fireEvent.click(within(drawer).getByRole("button", { name: "New task" }));
+  expect(content).toHaveAttribute("data-instant");
+  endExit(content);
+  await vi.waitFor(() =>
+    expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: "dev" }),
+  );
+});
+
+test("phone: Restore opens no overlay, so the drawer closes normally", async () => {
+  mockApi({ "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }) });
+  fakeMatchMedia.install(true, { coarse: true });
+  setup({ agent: archived(), context: "session" });
+  const drawer = await openDrawer();
+  const content = drawer.closest("[data-slot=drawer-content]") ?? drawer;
+  fireEvent.click(within(drawer).getByRole("button", { name: "Restore" }));
+  expect(content).not.toHaveAttribute("data-instant");
+});
+
+test("phone: Compact… hands focus to the compact popover once the drawer has gone", async () => {
+  fakeMatchMedia.install(true, { coarse: true });
+  setup({ agent: agentSummary(), context: "session" });
+  const drawer = await openDrawer();
+  const content = drawer.closest("[data-slot=drawer-content]") ?? drawer;
+  fireEvent.click(within(drawer).getByRole("button", { name: "Compact…" }));
+  expect(content).toHaveAttribute("data-instant");
+  endExit(content);
+  const input = await screen.findByRole("textbox", { name: "Focus (optional)" });
+  await vi.waitFor(() => expect(input).toHaveFocus());
+});
+
+test("phone: closing the drawer with Cancel returns focus to the ⋯", async () => {
+  fakeMatchMedia.install(true, { coarse: true });
+  setup({ agent: agentSummary(), context: "session" });
+  const trigger = await screen.findByRole("button", { name: "Actions for Dev agent" });
+  trigger.focus();
+  const drawer = await openDrawer();
+  const content = drawer.closest("[data-slot=drawer-content]") ?? drawer;
+  fireEvent.click(within(drawer).getByRole("button", { name: "Cancel" }));
+  endExit(content);
+  await vi.waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
+  await vi.waitFor(() => expect(trigger).toHaveFocus());
+});
+
+test("desktop: an item that opens an overlay closes the dropdown instantly; a link doesn't", async () => {
+  setup({ agent: agentSummary(), context: "list" });
+  const u = userEvent.setup();
+  let menu = await openMenu(u);
+  await u.click(within(menu).getByRole("menuitem", { name: "Edit" }));
+  expect(menu).toHaveAttribute("data-instant");
+  resetSheets();
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  menu = await openMenu(u);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open tasks" }));
+  expect(menu).not.toHaveAttribute("data-instant");
+});
+
+test.each([
+  ["Terminate…", agentSummary({ kind: "ephemeral" }), "Terminate @dev?"],
+  ["Stop crons…", agentSummary({ crons: [cron] }), "Stop @dev's crons?"],
+] as const)(
+  "phone: %s leaves focus in its confirmation once the drawer has gone",
+  async (item, agent, name) => {
+    fakeMatchMedia.install(true, { coarse: true });
+    setup({ agent, context: "session" });
+    const trigger = await screen.findByRole("button", { name: "Actions for Dev agent" });
+    trigger.focus();
+    const drawer = await openDrawer();
+    const content = drawer.closest("[data-slot=drawer-content]") ?? drawer;
+    fireEvent.click(within(drawer).getByRole("button", { name: item }));
+    const dlg = await screen.findByRole("alertdialog", { name });
+    // The drawer's close must not pull focus back to ⋯ under the confirmation (it would flicker on a
+    // device; jsdom's focus trap hides it, so watch the call).
+    const refocus = vi.spyOn(trigger, "focus");
+    await vi.waitFor(() => expect(dlg.contains(document.activeElement)).toBe(true));
+    endExit(content);
+    await vi.waitFor(() => expect(content.isConnected).toBe(false));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(dlg.contains(document.activeElement)).toBe(true);
+    expect(refocus).not.toHaveBeenCalled();
+  },
+);

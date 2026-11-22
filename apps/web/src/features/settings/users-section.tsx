@@ -5,13 +5,12 @@ import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { InlineOutcome } from "@/components/inline-outcome";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { formatDay } from "@/features/session/format";
 import {
@@ -30,6 +29,8 @@ import {
   monoClass,
   RowLine,
   SettingsList,
+  SettingsRow,
+  SettingsRowMenu,
   SettingsSection,
   smallClass,
   useFocusLater,
@@ -290,18 +291,18 @@ export function UsersSection() {
             const blocker = disableBlocker(u, meId, users);
             const o = rowOutcome[u.id];
             return (
-              <li
+              <SettingsRow
                 key={u.id}
                 data-name={u.handle}
                 className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
               >
                 <RowLine
                   actions={
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+                    <SettingsRowMenu title={`@${u.handle}`}>
+                      <AdaptiveMenuTrigger asChild>
                         <MoreButton id={`user-menu-${u.id}`} label={`Actions for @${u.handle}`} />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
+                      </AdaptiveMenuTrigger>
+                      <AdaptiveMenuContent
                         align="end"
                         onCloseAutoFocus={(e) => {
                           if (!menuHandsOff.current) return;
@@ -310,12 +311,13 @@ export function UsersSection() {
                         }}
                       >
                         {u.disabledAt ? (
-                          <DropdownMenuItem onSelect={() => void enable(u)}>
+                          <AdaptiveMenuItem onSelect={() => void enable(u)}>
                             Enable
-                          </DropdownMenuItem>
+                          </AdaptiveMenuItem>
                         ) : (
-                          <DropdownMenuItem
+                          <AdaptiveMenuItem
                             variant="destructive"
+                            opensOverlay
                             disabled={Boolean(blocker)}
                             onSelect={() => {
                               menuHandsOff.current = true; // the dialog places focus
@@ -326,10 +328,10 @@ export function UsersSection() {
                             }}
                           >
                             {blocker ? `Disable (${blocker})` : "Disable…"}
-                          </DropdownMenuItem>
+                          </AdaptiveMenuItem>
                         )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      </AdaptiveMenuContent>
+                    </SettingsRowMenu>
                   }
                 >
                   <span className="min-w-0 text-[0.8125rem] md:w-36 md:shrink-0">
@@ -358,7 +360,7 @@ export function UsersSection() {
                     {o?.content}
                   </InlineOutcome>
                 </div>
-              </li>
+              </SettingsRow>
             );
           })}
         </SettingsList>

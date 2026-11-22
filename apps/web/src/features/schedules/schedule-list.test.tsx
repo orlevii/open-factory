@@ -1,8 +1,11 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
+import { endAnimation } from "@/test/end-animation";
+import { fakeMatchMedia } from "@/test/fake-match-media";
+import { longPress } from "@/test/long-press";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption } from "@/test/select-helpers";
@@ -229,6 +232,21 @@ test("filters live in the URL; empty states, the cap line and the load error", a
   api.on("GET /api/schedules?", () => json({ error: { code: "x", message: "x" } }, 500));
 });
 
+test("Show done: on touch the label around the box is the 40px hit area, and a tap on its text toggles", async () => {
+  const api = mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([]) });
+  renderApp("/schedules", alice);
+  await screen.findByText("No schedules yet.");
+  const box = screen.getByRole("checkbox", { name: "Show done" });
+  const label = box.closest("label");
+  expect(label).not.toBeNull();
+  expect(label).toHaveClass("pointer-coarse:min-h-10", "w-fit");
+  await userEvent.click(within(label as HTMLElement).getByText("Show done"));
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/schedules?done=true")).toBe(true),
+  );
+  expect(box).toBeChecked();
+});
+
 test("schedules_changed refetches and keeps focus on the same row's link", async () => {
   const api = mockApi({
     "GET /api/agents?": agents,
@@ -315,4 +333,92 @@ test("a row opens the Edit schedule sheet over the list, from its key and from t
   await userEvent.click(screen.getByRole("button", { name: "Actions for S-3" }));
   await userEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
+});
+
+test("a row's menu closes when a refetch drops its schedule", async () => {
+  const api = mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/schedules?": () => list([sched(1), sched(3)]),
+  });
+  const u = userEvent.setup();
+  renderApp("/schedules", alice);
+  await u.click(await screen.findByRole("button", { name: "Actions for S-3" }));
+  expect(await screen.findByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+  api.on("GET /api/schedules?", () => list([sched(1)])); // deleted elsewhere
+  act(() => ws.push({ type: "schedules_changed" }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // Nothing modal is left behind: the page takes pointers again.
+  expect(document.body.style.pointerEvents).not.toBe("none");
+  expect(screen.getByRole("button", { name: "Actions for S-1" })).toBeInTheDocument();
+});
+
+test("phone: a row's menu is a drawer titled with the schedule's key", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    mockApi({
+      "GET /api/agents?": agents,
+      "GET /api/schedules?": () => list([sched(3)]),
+    });
+    renderApp("/schedules", alice);
+    const trigger = await screen.findByRole("button", { name: "Actions for S-3" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "touch" });
+    fireEvent.click(trigger);
+    const drawer = await screen.findByRole("dialog", { name: "S-3" });
+    expect(within(drawer).getByRole("button", { name: "Delete" })).toHaveAttribute(
+      "data-variant",
+      "destructive",
+    );
+    fireEvent.click(within(drawer).getByRole("button", { name: "Edit" }));
+    expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+test("touch: a 500ms press on a schedule row opens its menu at the point, not the Edit sheet", async () => {
+  mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([sched(3)]) });
+  renderApp("/schedules", alice);
+  const key = await screen.findByRole("button", { name: /^S-3,/ });
+  const li = key.closest("li") as HTMLElement;
+  expect(li).toHaveAttribute("data-longpress-region");
+  longPress(key, { x: 25, y: 45 });
+  expect(await screen.findByRole("menu", { name: "S-3" })).toBeInTheDocument();
+  expect(document.querySelector<HTMLElement>("[data-menu-stand-in].size-0")?.style.left).toBe(
+    "25px",
+  );
+  expect(getSheetState().parent).toBeUndefined();
+});
+
+test("touch: closing a long-pressed row's dropdown returns focus to the row's ⋯, not <body>", async () => {
+  mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([sched(3)]) });
+  renderApp("/schedules", alice);
+  const key = await screen.findByRole("button", { name: /^S-3,/ });
+  longPress(key, { x: 25, y: 45 });
+  const menu = await screen.findByRole("menu", { name: "S-3" });
+  fireEvent.keyDown(menu, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Actions for S-3" })).toHaveFocus(),
+  );
+});
+
+test("phone: closing a long-pressed row's drawer returns focus to the row's ⋯, not <body>", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([sched(3)]) });
+    renderApp("/schedules", alice);
+    const key = await screen.findByRole("button", { name: /^S-3,/ });
+    longPress(key, { x: 25, y: 45 });
+    const drawer = await screen.findByRole("dialog", { name: "S-3" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "Cancel" }));
+    endAnimation(drawer);
+    await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Actions for S-3" })).toHaveFocus(),
+    );
+  } finally {
+    window.matchMedia = original;
+  }
 });

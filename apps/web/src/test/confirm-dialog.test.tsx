@@ -175,6 +175,36 @@ test("desktop: a centered alert dialog that fits the viewport; a long name wraps
   expect(action).toHaveClass("shrink", "min-w-0", "max-w-full");
 });
 
+test.each([
+  ["desktop", false],
+  ["mobile", true],
+])(
+  "%s: an unbroken name wraps anywhere in the title and description; the action wraps rather than truncating (class contract)",
+  (_, mobile) => {
+    fakeMatchMedia.install(mobile);
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title={`Delete secret ${SECRET}?`}
+        body={`Agents using ${SECRET} lose it.`}
+        confirmLabel={`Delete ${SECRET}`}
+        pendingLabel="Deleting…"
+        onConfirm={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: `Delete secret ${SECRET}?` });
+    expect(screen.getByText(`Delete secret ${SECRET}?`)).toHaveClass("[overflow-wrap:anywhere]");
+    expect(screen.getByText(`Agents using ${SECRET} lose it.`)).toHaveClass(
+      "[overflow-wrap:anywhere]",
+    );
+    expect(dialog).toHaveAccessibleDescription(`Agents using ${SECRET} lose it.`);
+    const action = screen.getByRole("button", { name: `Delete ${SECRET}` });
+    expect(action).toHaveClass("whitespace-normal");
+    expect(action).not.toHaveClass("truncate");
+  },
+);
+
 test("desktop: while pending the action shows the pending label and a spinner, and Esc does nothing", async () => {
   const onOpenChange = vi.fn();
   render(<Confirm onConfirm={held()} onOpenChange={onOpenChange} />);

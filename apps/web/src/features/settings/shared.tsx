@@ -3,16 +3,21 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { Ellipsis } from "lucide-react";
 import {
   type ComponentProps,
+  createContext,
   type FormEvent,
   type ReactNode,
+  use,
   useCallback,
   useEffect,
   useRef,
 } from "react";
+import { AdaptiveMenu } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { pickRowOutsideFields, useLongPressMenu } from "@/hooks/use-long-press-menu";
+import { cn } from "@/lib/utils";
 
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
@@ -27,6 +32,13 @@ export const KIND_LABEL: Record<CredentialKind, string> = {
 export const tags = (slugs: string[]) => {
   const t = slugs.map((s) => `@${s}`);
   return t.length <= 1 ? (t[0] ?? "") : `${t.slice(0, -1).join(", ")} and ${t.at(-1)}`;
+};
+
+/** "@ada, @bob, @ceo +211 more": the first `max` items and a count of the rest, for a menu item that
+ *  names who blocks it and must stay a few lines tall however many agents there are. */
+export const cappedList = (items: string[], max = 3) => {
+  const rest = items.length - max;
+  return `${items.slice(0, max).join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
 };
 
 /** "@lead restarts when idle to use it. Its crons from this session stop." */
@@ -189,18 +201,54 @@ export function RowLine({ children, actions }: { children: ReactNode; actions: R
   );
 }
 
+type RowMenuState = ReturnType<typeof useLongPressMenu>["menu"];
+const RowMenuCtx = createContext<RowMenuState | null>(null);
+
+/** A list row whose menu a long-press anywhere on it opens at the point (U4 §11.2); a press that starts
+ *  in one of its inline fields selects text instead. Its menu is a `SettingsRowMenu` inside it. */
+export function SettingsRow({ children, ...props }: ComponentProps<"li">) {
+  const { press, menu } = useLongPressMenu({ pick: pickRowOutsideFields });
+  return (
+    <RowMenuCtx value={menu}>
+      <li {...props} {...press} data-longpress-region="" data-row-box="">
+        {children}
+      </li>
+    </RowMenuCtx>
+  );
+}
+
+/** The row's `AdaptiveMenu`, opened by its ⋯ or by a long-press on its `SettingsRow`. */
+export function SettingsRowMenu({ title, children }: { title: string; children: ReactNode }) {
+  const menu = use(RowMenuCtx);
+  return (
+    <AdaptiveMenu title={title} {...menu}>
+      {children}
+    </AdaptiveMenu>
+  );
+}
+
 export function RowName({ children }: { children: ReactNode }) {
   return <span className={`${monoClass} min-w-0 break-all md:w-36 md:shrink-0`}>{children}</span>;
 }
 
-/** The `⋯` button that opens a row's menu (rendered as the Radix trigger's child). */
+/** The `⋯` button that opens a row's menu (rendered as the Radix trigger's child). 32px on coarse pointers, so its
+ *  expander reaches 4px, no further than `RowLine`'s gap: it never covers a neighbouring action (U4 §11.3). */
 export function MoreButton({
   label,
   id,
+  className,
   ...props
 }: { label: string; id: string } & ComponentProps<typeof Button>) {
   return (
-    <Button type="button" variant="ghost" size="icon-sm" id={id} aria-label={label} {...props}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      id={id}
+      aria-label={label}
+      className={cn("pointer-coarse:size-8", className)}
+      {...props}
+    >
       <Ellipsis aria-hidden="true" />
     </Button>
   );

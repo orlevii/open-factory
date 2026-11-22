@@ -9,11 +9,14 @@ import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
 import { UnsandboxedBadge } from "@/features/session/unsandboxed-badge";
 import { formatCost } from "@/features/usage/format";
+import { useLongPress } from "@/hooks/use-long-press";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 /** Indentation per tree level inside the name cell; capped below `md` so names keep room. */
 const INDENT = 20;
+
+type Point = { x: number; y: number };
 const DESKTOP_DEPTH_CAP = 8;
 const MOBILE_DEPTH_CAP = 3;
 
@@ -131,8 +134,11 @@ const AgentTreeRow = memo(function AgentTreeRow({
   focused: boolean;
   now: Date;
   menuOpen: boolean;
-  onMenu: (slug: string, anchor?: HTMLElement) => void;
+  onMenu: (slug: string, anchor?: HTMLElement, at?: Point) => void;
 }) {
+  // A long-press on the row opens the list's one menu at the press point (U4 §11.2).
+  const onLongPress = useCallback((at: Point) => onMenu(a.slug, undefined, at), [onMenu, a.slug]);
+  const press = useLongPress(onLongPress);
   const depth = Math.min(level, cap);
   const beyond = level > cap;
   const ended = a.archivedAt !== null || a.status === "terminated";
@@ -144,6 +150,8 @@ const AgentTreeRow = memo(function AgentTreeRow({
       <Link
         to="/agents/$slug"
         params={{ slug: a.slug }}
+        {...press}
+        data-longpress-region=""
         data-agent-link={a.slug}
         data-focused={focused || undefined}
         data-menu-open={menuOpen || undefined}
@@ -156,15 +164,17 @@ const AgentTreeRow = memo(function AgentTreeRow({
           "@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem] @min-[54rem]:py-0",
         )}
       >
-        <span className="flex w-28 shrink-0 items-center gap-1.5">
+        {/* Below md the column is the status shape alone, its label sr-only (U4 §11.6, #102): a 7rem
+            column left a deep row's name cell about 8px at 320, so its avatar ran under the ⋯. */}
+        <span data-status-cell className="flex shrink-0 items-center gap-1.5 md:w-28">
           {a.archivedAt && a.status !== "terminated" ? (
             <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
               {/* The empty dot slot keeps the label aligned with the live statuses. */}
               <span aria-hidden="true" className="size-3" />
-              Archived
+              <span className="max-md:sr-only">Archived</span>
             </span>
           ) : (
-            <StatusBadge status={a.status} size="short" />
+            <StatusBadge status={a.status} size="short" labelClassName="max-md:sr-only" />
           )}
           {a.restartPending && !ended && (
             <>
@@ -212,7 +222,10 @@ const AgentTreeRow = memo(function AgentTreeRow({
                 {`└\u00a0${level}`}
               </span>
             )}
-            <AgentChip agent={a} showSlug />
+            {/* The full name for a name cut to a few characters on a phone (U4 §11.6). */}
+            <span title={a.displayName} className="flex min-w-0">
+              <AgentChip agent={a} showSlug />
+            </span>
             {/* Inline, not a second line, so live updates never change the row height. It
                   gives way (truncates) before the name does. */}
             {note && (
@@ -234,7 +247,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
           )}
         </span>
         {/* A second line below md and in the two-line grid; grid cells in the full one. */}
-        <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
+        <span className="flex min-w-0 max-w-full basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
           <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
             {a.template !== slugStem(a.slug) ? a.template : null}
           </span>
@@ -249,7 +262,8 @@ const AgentTreeRow = memo(function AgentTreeRow({
           </span>
         )}
       </Link>
-      {/* A sibling of the link, never inside it: one shared menu opens on it (U4 §6.5). */}
+      {/* A sibling of the link, never inside it: one shared menu opens on it (U4 §6.5). 32px on coarse pointers, so
+          its expander reaches 4px, no further than its margin: it never covers the link (U4 §11.3). */}
       <Button
         type="button"
         variant="ghost"
@@ -258,7 +272,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         data-row-more={a.slug}
-        className="mx-1 shrink-0 text-muted-foreground"
+        className="mx-1 shrink-0 text-muted-foreground pointer-coarse:size-8"
         onClick={(e) => onMenu(a.slug, e.currentTarget)}
       >
         <MoreHorizontal aria-hidden="true" />
@@ -320,13 +334,15 @@ export function AgentTree({
     slug: string | null;
     open: boolean;
     anchor: HTMLElement | null;
+    at?: Point;
   }>({ slug: null, open: false, anchor: null });
   const menuSlug = menu.open ? menu.slug : null;
   const openMenu = useCallback(
-    (slug: string, anchor?: HTMLElement) =>
+    (slug: string, anchor?: HTMLElement, at?: Point) =>
       setMenu({
         slug,
         open: true,
+        at,
         anchor:
           anchor ??
           listRef.current?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(slug)}"]`) ??
@@ -375,6 +391,7 @@ export function AgentTree({
             open: menu.open,
             onOpenChange: onMenuOpenChange,
             anchor: menu.anchor,
+            point: menu.at,
             onClose: () => onMenuClose(menuAgent.slug),
           }}
         />

@@ -5,14 +5,13 @@ import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { InlineOutcome } from "@/components/inline-outcome";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuSeparator,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
   credentialsQueryOptions,
@@ -23,6 +22,7 @@ import {
 import {
   AgentLinks,
   CodeText,
+  cappedList,
   focusOutcome,
   InlineForm,
   KIND_LABEL,
@@ -31,6 +31,8 @@ import {
   RowName,
   restartNote,
   SettingsList,
+  SettingsRow,
+  SettingsRowMenu,
   SettingsSection,
   smallClass,
   TimeAgo,
@@ -43,12 +45,15 @@ import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
-/** Why Delete is disabled, shown inside the menu item; undefined when it can be deleted. */
+const handles = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+
+/** Why Delete is disabled, shown inside the menu item; undefined when it can be deleted. At most three
+ *  agents are named (the row's Usage line lists them all). */
 function deleteBlocker(c: CredentialSummary): string | undefined {
-  if (c.usedBy.length) return `used by ${c.usedBy.map((s) => `@${s}`).join(", ")}`;
+  if (c.usedBy.length) return `used by ${handles(c.usedBy)}`;
   if (c.archivedUsedBy.length) {
     const many = c.archivedUsedBy.length > 1;
-    return `archived ${c.archivedUsedBy.map((s) => `@${s}`).join(", ")} still ${many ? "use" : "uses"} it`;
+    return `archived ${handles(c.archivedUsedBy)} still ${many ? "use" : "uses"} it`;
   }
   return undefined;
 }
@@ -270,7 +275,7 @@ export function CredentialsSection() {
               const noun = valueNoun(c.kind);
               const busy = verifying.has(c.name);
               return (
-                <li
+                <SettingsRow
                   key={c.name}
                   data-name={c.name}
                   className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
@@ -288,14 +293,14 @@ export function CredentialsSection() {
                           {busy && <Spinner />}
                           {busy ? "Verifying…" : "Verify"}
                         </Button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                        <SettingsRowMenu title={c.name}>
+                          <AdaptiveMenuTrigger asChild>
                             <MoreButton
                               id={`credential-menu-${c.name}`}
                               label={`Actions for ${c.name}`}
                             />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
+                          </AdaptiveMenuTrigger>
+                          <AdaptiveMenuContent
                             align="end"
                             onCloseAutoFocus={(e) => {
                               const target = menuHandsOff.current;
@@ -305,7 +310,7 @@ export function CredentialsSection() {
                               if (target) document.getElementById(target)?.focus();
                             }}
                           >
-                            <DropdownMenuItem
+                            <AdaptiveMenuItem
                               onSelect={() => {
                                 menuHandsOff.current = `field-credential-replace-${c.name}`;
                                 setRow(c.name, undefined);
@@ -313,10 +318,11 @@ export function CredentialsSection() {
                               }}
                             >
                               {`Replace ${noun}`}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
+                            </AdaptiveMenuItem>
+                            <AdaptiveMenuSeparator />
+                            <AdaptiveMenuItem
                               variant="destructive"
+                              opensOverlay
                               disabled={Boolean(blocker)}
                               onSelect={() => {
                                 menuHandsOff.current = ""; // the dialog places focus
@@ -326,9 +332,9 @@ export function CredentialsSection() {
                               }}
                             >
                               {blocker ? `Delete (${blocker})` : "Delete…"}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                            </AdaptiveMenuItem>
+                          </AdaptiveMenuContent>
+                        </SettingsRowMenu>
                       </>
                     }
                   >
@@ -379,7 +385,7 @@ export function CredentialsSection() {
                       }}
                     />
                   )}
-                </li>
+                </SettingsRow>
               );
             })}
           </SettingsList>

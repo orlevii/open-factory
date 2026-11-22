@@ -715,6 +715,18 @@
   .of-row:focus-visible {
     outline-offset: -2px;
   }
+  /* Only the chrome a long-press opens a menu from: no callout, no selection. Prose stays selectable,
+     and so do a row's own fields. */
+  @media (pointer: coarse) {
+    [data-longpress-region] {
+      -webkit-touch-callout: none;
+      user-select: none;
+    }
+    [data-longpress-region] :is(input, textarea, [contenteditable]) {
+      -webkit-touch-callout: default;
+      user-select: text;
+    }
+  }
   [data-status-dot] {
     transition: background-color 150ms var(--ease-out);
   }
@@ -733,6 +745,35 @@
       display: none;
     }
   }
+}
+
+/* A 40×40 hit box on coarse pointers (U4 §11.3): a positioned control's ::after grows to 40px on each axis it
+   is short of, so the glyph keeps its size. Never on a control among form fields or over prose. */
+@layer components {
+  @media (pointer: coarse) {
+    .hit-40::after {
+      content: "";
+      position: absolute;
+      inset-block: min(0px, calc((100% - 2.5rem) / 2));
+      inset-inline: min(0px, calc((100% - 2.5rem) / 2));
+    }
+  }
+}
+
+/* A touch long-press (U4 §11.2): the row's own box takes the pressed fill. `useLongPress` sets
+   `data-pressed` 80ms into the press, so a scroll never flashes it; a timeline row's box is its card
+   or block, never the gutter. Outside any @layer, so it wins over a row's own background utility
+   (a selected or menu-open fill). */
+.of-row[data-pressed],
+[data-row-box][data-pressed],
+[data-row-wrap] [data-row][data-pressed],
+[data-row-wrap] [data-message-block][data-pressed] {
+  background: color-mix(in oklch, var(--accent), var(--foreground) 6%);
+  transition-duration: 0ms;
+}
+[data-agent-row][data-pressed] {
+  background: color-mix(in oklch, var(--sidebar-accent), var(--foreground) 6%);
+  transition-duration: 0ms;
 }
 
 /* Vaul drawer timing. At the end of the file, OUTSIDE any @layer.

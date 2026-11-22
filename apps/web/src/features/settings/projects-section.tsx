@@ -6,14 +6,13 @@ import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuSeparator,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { agentsQueryOptions } from "@/features/session/api";
 import {
   createProject,
@@ -23,11 +22,14 @@ import {
 } from "@/features/settings/api";
 import {
   AgentLinks,
+  cappedList,
   InlineForm,
   MoreButton,
   RowLine,
   RowName,
   SettingsList,
+  SettingsRow,
+  SettingsRowMenu,
   SettingsSection,
   Usage,
   useFocusLater,
@@ -54,12 +56,12 @@ const toSpawners = (agents: AgentSummary[]) =>
 /** Why Remove is disabled. A live spawned grantee is named through its spawner (S7 UI design §7):
  *  "granted to @tech-lead-ab12, spawned by @lead". `spawners` maps a spawned agent to its spawner. */
 function removeBlocker(p: ProjectSummary, spawners: Map<string, string>): string | undefined {
-  const list = (s: string[]) => s.map((x) => `@${x}`).join(", ");
+  const list = (s: string[]) => cappedList(s.map((x) => `@${x}`));
   const grantee = (x: string) => {
     const by = spawners.get(x);
     return by ? `@${x}, spawned by @${by}` : `@${x}`;
   };
-  if (p.grantedTo.length) return `granted to ${p.grantedTo.map(grantee).join(", ")}`;
+  if (p.grantedTo.length) return `granted to ${cappedList(p.grantedTo.map(grantee))}`;
   if (p.archivedGrantedTo.length) {
     const many = p.archivedGrantedTo.length > 1;
     return `archived ${list(p.archivedGrantedTo)} still ${many ? "hold grants" : "holds a grant"}`;
@@ -275,21 +277,21 @@ export function ProjectsSection() {
             {projects.map((p) => {
               const blocker = removeBlocker(p, spawners ?? NO_SPAWNERS);
               return (
-                <li
+                <SettingsRow
                   key={p.name}
                   data-name={p.name}
                   className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
                 >
                   <RowLine
                     actions={
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                      <SettingsRowMenu title={p.name}>
+                        <AdaptiveMenuTrigger asChild>
                           <MoreButton
                             id={`project-menu-${p.name}`}
                             label={`Actions for ${p.name}`}
                           />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
+                        </AdaptiveMenuTrigger>
+                        <AdaptiveMenuContent
                           align="end"
                           onCloseAutoFocus={(e) => {
                             const target = menuHandsOff.current;
@@ -299,7 +301,7 @@ export function ProjectsSection() {
                             if (target) document.getElementById(target)?.focus();
                           }}
                         >
-                          <DropdownMenuItem
+                          <AdaptiveMenuItem
                             onSelect={() => {
                               menuHandsOff.current = `field-project-path-${p.name}`;
                               setRow(p.name, undefined);
@@ -307,18 +309,18 @@ export function ProjectsSection() {
                             }}
                           >
                             Change path
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
+                          </AdaptiveMenuItem>
+                          <AdaptiveMenuSeparator />
+                          <AdaptiveMenuItem
                             variant="destructive"
                             disabled={Boolean(blocker) || removing === p.name}
                             // Focus goes back to ⋯ while it runs, then to the outcome's Undo.
                             onSelect={() => void remove(p)}
                           >
                             {blocker ? `Remove (${blocker})` : "Remove"}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                          </AdaptiveMenuItem>
+                        </AdaptiveMenuContent>
+                      </SettingsRowMenu>
                     }
                   >
                     <RowName>{p.name}</RowName>
@@ -360,7 +362,7 @@ export function ProjectsSection() {
                       }}
                     />
                   )}
-                </li>
+                </SettingsRow>
               );
             })}
           </SettingsList>

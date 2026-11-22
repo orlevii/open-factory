@@ -75,7 +75,14 @@ export function TemplateField({
       ) : (
         <p className="text-[0.8125rem] font-medium">Template</p>
       )}
-      <Button ref={newTemplate} type="button" variant="ghost" size="sm" onClick={onNewTemplate}>
+      <Button
+        ref={newTemplate}
+        type="button"
+        variant="ghost"
+        size="sm"
+        inForm
+        onClick={onNewTemplate}
+      >
         <Plus aria-hidden="true" data-icon="inline-start" />
         New template
       </Button>
@@ -194,7 +201,7 @@ export function TemplateSummary({
           key={s}
           action={
             onAddSecret && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => onAddSecret(s)}>
+              <Button type="button" variant="ghost" size="sm" inForm onClick={() => onAddSecret(s)}>
                 Add secret
               </Button>
             )

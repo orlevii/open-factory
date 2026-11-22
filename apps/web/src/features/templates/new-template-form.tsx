@@ -225,6 +225,7 @@ export function NewTemplateForm({
               type="button"
               variant="ghost"
               size="sm"
+              inForm
               onClick={() => {
                 draft.clear();
                 latest.current = blank();
@@ -276,6 +277,7 @@ export function NewTemplateForm({
               type="button"
               variant="ghost"
               size="sm"
+              inForm
               onClick={() => update({ revealed: true, name })}
             >
               Change

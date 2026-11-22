@@ -156,6 +156,8 @@ type SessionComposerProps = {
    *  elsewhere (the inbox pane's reply) a pasted or dropped file gets the "Files can be sent in an
    *  agent's session" note and there is no attach or `/` button. */
   context?: "session" | "inbox";
+  /** Bottom-docked: its height lifts the toasts above it. */
+  docked?: boolean;
 };
 
 /** The props compared by identity: every prop but `agent` (keep this list in step with the type). */
@@ -172,6 +174,7 @@ const IDENTITY_KEYS = [
   "onTerminated",
   "recall",
   "context",
+  "docked",
 ] as const satisfies readonly Exclude<keyof SessionComposerProps, "agent">[];
 
 /** Only the agent fields the composer reads: a status frame that changes nothing here (a new
@@ -208,6 +211,7 @@ export const Composer = memo(function SessionComposer({
   landed = NO_LANDED,
   recall,
   context = "inbox",
+  docked = false,
 }: SessionComposerProps) {
   const inSession = context === "session";
   // Uploads are the signed-in user's (U3 §13.5): a user change gives this composer that user's store.
@@ -332,6 +336,7 @@ export const Composer = memo(function SessionComposer({
   const hintMode: HintMode = !agent.turnOpen ? "none" : isCoarsePointer() ? "coarse" : "working";
   return (
     <ComposerPrimitive
+      docked={docked}
       ref={inner}
       id="composer"
       className="shrink-0 border-t border-border px-4 py-3 md:px-6"

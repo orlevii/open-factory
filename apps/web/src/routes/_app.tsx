@@ -5,6 +5,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/toaster";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
@@ -199,6 +200,7 @@ function AppLayout() {
           >
             <Outlet />
           </SidebarInset>
+          <Toaster />
           <CommandPalette />
           <GlobalShortcuts />
         </SidebarProvider>

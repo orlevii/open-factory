@@ -236,6 +236,7 @@ export function SessionView({
       agent ? (
         <Composer
           ref={composerRef}
+          docked
           slug={slug}
           agent={agent}
           stopEpoch={stopEpoch}

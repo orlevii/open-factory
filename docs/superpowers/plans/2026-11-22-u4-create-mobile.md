@@ -88,6 +88,9 @@ Implements §5.2. A: 2.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (m3) `getSnapshot` returns the module `state` object itself (replaced only on change, never rebuilt per read); `openChildSheet` keeps the same `parent` reference; the host passes `closeSheet` itself as the body's `close` (no wrapper per render).
+
 **Files:**
 - Create: `apps/web/src/features/sheets/sheet-store.ts`
 - Test: `apps/web/src/features/sheets/sheet-store.test.ts`
@@ -164,6 +167,10 @@ Implements §5.5. A: 2.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M1) `edit-*` drafts store `{ values, base }` (`base` = the server copy the user edited against). On restore, before first render, start from `mergeServer(draft.values, draft.base, serverNow)`. Live server changes merge **in render**: keep the previous server values in state and, when the query's data identity differs, set `values = mergeServer(values, prevServer, serverNow)` and `prevServer = serverNow` during render (the React "adjusting state on prop change" pattern), never `useEffect` + `setV` as `schedule-form.tsx:144-153` does today (Task 11 moves the schedule form onto this). Test: save a draft, change an untouched field on the server, reopen → the field shows the server value; a touched field keeps the draft.
+- (m2) `initial()` runs once (a lazy ref); `save` and `clear` have stable identities (test: same function across renders); forms call `save` from their field setters, never from an effect.
+
 **Files:**
 - Create: `apps/web/src/features/sheets/drafts.ts`, `apps/web/src/features/sheets/merge-server.ts`
 - Modify: `apps/web/src/features/schedules/schedule-form.tsx` (import `mergeServer` from the new module; delete the local copy at :57-67), `apps/web/src/components/app-sidebar.tsx:112-118` (`signOut` calls `resetSheets()` and `resetDrafts()` beside `resetUploads()`)
@@ -210,6 +217,11 @@ Implements §5.3, §5.5 (Close, "Draft restored · Discard"). A: 2.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M2) Each `sheetBodies` entry also has `prefetch(qc: QueryClient, spec): void` that starts the body's queries (`qc.prefetchQuery`/`ensureQueryData` for each list or detail it reads). `openSheet` (via the host) and `preloadSheet(kind, spec?)` on intent call `load()` and `prefetch()` together, so data and chunk load in parallel. Bodies read with `useSuspenseQueries` (one call, parallel) or `useQuery` + the skeleton, never sequential `useSuspenseQuery` calls. Test: with a deferred chunk, the body's queries are requested before the chunk resolves.
+- (M3) The `React.lazy` components are created once at module scope (a `Map<kind, LazyExoticComponent>` filled on first use); `preloadSheet` calls the same `load` the lazy component uses. The idle-preload effect in `_app.tsx` returns a cleanup (`cancelIdleCallback` / `clearTimeout`); the `router.subscribe("onResolved", …)` effect returns its unsubscribe; `setPathnameSource` is called in an effect, not during render.
+- (m9) Render-count test (React `Profiler` around `SheetHost` and the `_app` shell): typing in a body's field re-renders neither.
+
 **Files:**
 - Create: `apps/web/src/features/sheets/sheet-host.tsx`, `apps/web/src/features/sheets/sheet-bodies.ts`, `apps/web/src/features/sheets/body-skeleton.tsx`, `apps/web/src/features/sheets/form-footer.tsx`
 - Modify: `apps/web/src/routes/_app.tsx:200-203` (mount `<SheetHost />` beside `<GlobalShortcuts />`; on mount, call `requestIdleCallback(() => preloadAllSheets())` with a `setTimeout` fallback)
@@ -221,8 +233,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   ```ts
   // sheet-bodies.ts: kind → lazy body. PR1 registers new-task, new-schedule, edit-schedule; PR2 the rest.
   export type BodyProps<S> = { spec: S; sheetId: number; close(): void };
-  export const sheetBodies: { [K in SheetSpec["kind"] | ChildSpec["kind"]]?: { load: () => Promise<{ default: ComponentType<BodyProps<any>> }>; title: string } };
-  export function preloadSheet(kind: SheetSpec["kind"] | ChildSpec["kind"]): void;
+  export const sheetBodies: { [K in SheetSpec["kind"] | ChildSpec["kind"]]?: { load: () => Promise<{ default: ComponentType<BodyProps<any>> }>; prefetch(qc: QueryClient, spec: any): void; title: string } };
+  export function preloadSheet(kind: SheetSpec["kind"] | ChildSpec["kind"], spec?: SheetSpec | ChildSpec): void; // load() + prefetch(qc, spec)
   export function preloadAllSheets(): void;
   // form-footer.tsx
   export function SheetFormFooter(props: { submitLabel: string; pendingLabel: string; pending: boolean; restored: boolean; onDiscard(): void; left?: ReactNode; note?: ReactNode }): JSX.Element;
@@ -249,6 +261,11 @@ Implements §10.1. A: 5.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M4) The held-toast `MutationObserver` connects only while at least one toast is held, observing `document.body` with `{ subtree: true, childList: true, attributes: true, attributeFilter: ["data-state", "aria-modal"] }`, and disconnects after the flush (test: after flush no observer stays connected — spy on `MutationObserver.prototype.disconnect`). `--composer-h`: the API is `registerDockedComposer(id: string, el: HTMLElement): () => void` (id from `useId`); one `ResizeObserver` per element, registered in a layout effect with cleanup; writes are batched in one `requestAnimationFrame`, and `document.documentElement.style.setProperty` runs only when the maximum changes (test: a resize that doesn't change the max writes nothing).
+- (m7) `Toaster`'s `toastOptions`, `classNames` and `offset` objects are module constants (two offset constants, desktop and phone), not literals per render.
+- (§10.1) `notify()` holds toasts while a modal layer is open and shows them when the last one closes (spec §10.1); this is the Step 3 "held" test.
+
 **Files:**
 - Modify: `apps/web/package.json` (via `pnpm --filter @open-factory/web add --save-exact sonner@2.0.8`), `pnpm-lock.yaml`, `apps/web/src/routes/_app.tsx` (mount `<Toaster />`), `apps/web/src/styles.css` (unlayered `!important` block after the Vaul block), `apps/web/src/components/composer/composer.tsx` (accept `docked?: boolean`; when docked, register its height)
 - Modify: `apps/web/src/features/session/session-view.tsx:237`, `apps/web/src/features/inbox/inbox-pane.tsx:200` (`<Composer docked …>`)
@@ -260,7 +277,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   ```ts
   export function notify(t: { text: string; action?: { label: string; run(): void }; undo?: () => Promise<void> }): void;
   export function Toaster(): JSX.Element; // mounted once in _app
-  export function registerDockedComposer(id: string, height: number): () => void; // sets --composer-h on <html> to the max
+  export function registerDockedComposer(id: string, el: HTMLElement): () => void; // one ResizeObserver per element; --composer-h on <html> = the max, rAF-batched
   ```
 - Rules (spec §10.1): `toastOptions={{ unstyled: true, classNames: {...}, duration }}`, `visibleToasts={3}`, `expand`, `position` from `useIsMobile()` (`bottom-left` / `bottom-center`), `offset={{ bottom: "calc(16px + var(--composer-h, 0px))", left: "calc(var(--sidebar-current-width) + 16px)" }}` on desktop; the left offset reads a `--sidebar-current-width` variable the sidebar wrapper sets from its state (expanded `--sidebar-width`, collapsed `--sidebar-width-icon`, `components/ui/sidebar.tsx:133-134`) and transitions as `transform` 200ms `--ease-in-out` (none under `[data-instant]`). Duration `Math.max(5000, text.length * 60)`. **Modal hold:** `notify` checks `document.querySelector(MODAL)` with the selector exported from `lib/shortcuts.ts` (export it as `MODAL_SELECTOR`); if a modal is open, queue the toast and flush it from a `MutationObserver` on `document.body` when none remains. **Undo:** the action button disables after the first click, calls `undo()`, dismisses; on failure `notify({ text: err instanceof ApiError ? err.message : "Couldn't undo: can't reach the server." })`.
 - CSS block (pin to 2.0.8; selectors from `node_modules/sonner/dist/styles.css` / the injected string in `dist/index.mjs`; verify each one exists before writing it):
@@ -276,7 +293,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 - [ ] **Step 1: Record the policy:** `pnpm --version` (expect 12.21.0), `pnpm config get minimumReleaseAge`, `npm view sonner@2.0.8 time --json | grep '"2.0.8"'`. Save the three lines for the PR body.
 - [ ] **Step 2: Install:** `pnpm --filter @open-factory/web add --save-exact sonner@2.0.8`. If blocked: stop and report to `main`. Check `apps/web/package.json` shows `"sonner": "2.0.8"` (no caret).
-- [ ] **Step 3: Failing tests:** `notify` shows text and an Undo that runs once (second click ignored); a failing undo shows the server message; with an open modal (`<div role="dialog" data-state="open">`) a toast is held and appears after the modal is removed; duration for a 120-char text is 7200ms; `registerDockedComposer("a", 80)` + `("b", 120)` → `--composer-h: 120px`, unregister b → 80px, unregister a → 0px; **guard:** the injected Sonner CSS (read `node_modules/sonner/dist/index.mjs` as text) still contains `data-sonner-toaster` and `data-removed` (fails on an upgrade that renames them); `notify-callers.test.ts` greps `apps/web/src` (tests excluded) and allows `import … from "sonner"` only in `components/ui/toaster.tsx`, and `notify(` only in the modules listed in spec §10.2 (start with an empty allow-list plus `toaster.tsx`; each later task adds its module).
+- [ ] **Step 3: Failing tests:** `notify` shows text and an Undo that runs once (second click ignored); a failing undo shows the server message; with an open modal (`<div role="dialog" data-state="open">`) a toast is held and appears after the modal is removed; duration for a 120-char text is 7200ms; two registered elements of 80 and 120px (stubbed `ResizeObserver`) → `--composer-h: 120px`, unregister b → 80px, unregister a → 0px, and a resize that keeps the max writes nothing; **guard:** the injected Sonner CSS (read `node_modules/sonner/dist/index.mjs` as text) still contains `data-sonner-toaster` and `data-removed` (fails on an upgrade that renames them); `notify-callers.test.ts` greps `apps/web/src` (tests excluded) and allows `import … from "sonner"` only in `components/ui/toaster.tsx`, and `notify(` only in the modules listed in spec §10.2 (start with an empty allow-list plus `toaster.tsx`; each later task adds its module).
 - [ ] **Step 4–5:** Implement; PASS.
 - [ ] **Step 6:** Commit `feat(web): toasts through Sonner, held under modals and above composers`.
 
@@ -311,6 +328,10 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 Implements §8, §5.6 (task rows), §10.2 (task created). A: 1, 2, 5.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**React review notes (apply in this task):**
+- (m4) `MoreOptions` open state is derived in render: `open = userOpen ?? (hasValues || hasError)`, where `userOpen` is `undefined` until the user clicks the disclosure; no effect sets it.
+- (m5) `newTask()` reads `router.state.location` at call time to find the session slug or the `assignee` filter; it subscribes to nothing.
 
 **Files:**
 - Create: `apps/web/src/features/tasks/new-task-sheet.tsx`
@@ -398,6 +419,9 @@ Implements §9.2, §5.6 (schedule rows, `ScheduleBadge`, Agent details keys). A:
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M1) Move the Edit schedule form's live merge onto Task 2's in-render rule (delete the `useEffect` + `setV` at `schedule-form.tsx:144-153`); the draft for `edit-schedule:<key>` stores `{ values, base }`.
+
 **Files:**
 - Create: `apps/web/src/features/schedules/edit-schedule-sheet.tsx` (from `schedule-edit.tsx`: state line, Pause/Resume in the header, form, deleted state as text, not-found)
 - Delete: `apps/web/src/features/schedules/schedule-edit.tsx` (and its test → port the cases)
@@ -455,7 +479,7 @@ The full suite uses the same lock: `until mkdir /tmp/of-u4-evidence.lock …; tr
 
 ### Task 15: PR1 review, verify and open
 
-- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u3/5-shared-composer...HEAD -- apps/web` against it (skip server-component rules): no new object/function props per render into memoized children, `useSyncExternalStore` selectors return stable values, lazy bodies and preloads (bundle rules), no effect-derived state, no waterfall in sheet bodies (parallel queries), `notify` doesn't re-render the shell. Fix findings in one commit.
+- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u3/5-shared-composer...HEAD -- apps/web` against it (skip server-component rules): no new object/function props per render into memoized children, `useSyncExternalStore` selectors return stable values, lazy bodies and preloads (bundle rules), no effect-derived state, no waterfall in sheet bodies (parallel queries), `notify` doesn't re-render the shell; and the plan's review items M1 (edit drafts merge in render from `{ values, base }`), M2 (entry points prefetch body queries with the chunk; no sequential suspense), M8 (child list writes: cancel → set → invalidate active). Fix findings in one commit.
 - [ ] **Step 2: Verify** (take the lock): `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build`. All green.
 - [ ] **Step 3:** `git push -u origin u4/1-sheets && gh pr create --base u3/5-shared-composer --title "feat(web): create and edit tasks and schedules in sheets, toasts" --body-file <body>`: template sections; link the spec and #118; the policy lines and sonner's publish date (Task 5 Step 1); the DESIGN.md edits; the evidence summary; "Stacked on #117"; a **For Or** section with Q1 (in-memory sheets, 3), Q7 toast position (2), Q9 (drafts, 3), each with its one-line why from #118; #83 per Task 12.
 - [ ] **Step 4:** `gh pr checks --watch`; fix until green.
@@ -549,6 +573,9 @@ Implements §6.1. Refactor; no visible change.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M1) Edit mode stores `{ values, base }` and merges in render exactly as Task 2 describes; test: a draft saved, the server changes an untouched field (description), reopen → it shows the server's value.
+
 **Files:**
 - Create: `apps/web/src/features/agents/agent-form-state.ts`
 - Modify: `apps/web/src/features/agents/agent-form.tsx` (uses the hook; keeps rendering as today until Tasks 21/23 replace it)
@@ -579,6 +606,9 @@ Implements §6.3 (line, Change, self-opening, server slug error), §6.2 item 3 (
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (m4) The shown slug is derived in render: `slug = slugTouched ? slug : deriveSlug(name, taken)`; no effect writes it.
+
 **Files:**
 - Create: `apps/web/src/features/agents/address-line.tsx`
 - Test: `apps/web/src/features/agents/address-line.test.tsx`
@@ -596,6 +626,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 Implements §6.2, §6.5 (empty state), §5.4 (`/agents/new`), §5.6 (agent create entry points). A: 1, 3, 4.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**React review notes (apply in this task):**
+- (M2) The `new-agent` entry's `prefetch` starts templates, credentials, projects, secrets, both agent lists and the people list together; the body reads them with one `useSuspenseQueries` call (or `useQuery` + skeleton), never sequential suspense.
 
 **Files:**
 - Create: `apps/web/src/features/agents/new-agent-sheet.tsx`, `apps/web/src/features/agents/template-field.tsx`
@@ -618,6 +651,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 Implements §7.1–§7.4 (stacked use), §5.3 (stacking). A: 3.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**React review notes (apply in this task):**
+- (M8) A child's success writes its list as: `await qc.cancelQueries({ queryKey })`, then `qc.setQueryData(queryKey, (old) => old && [...old, item])`, then `void qc.invalidateQueries({ queryKey, refetchType: "active" })`. Test: a list fetch already pending when the item is added resolves afterwards without dropping it.
 
 **Files:**
 - Modify: `apps/web/src/features/agents/new-agent-sheet.tsx`, `apps/web/src/features/agents/project-grant-picker.tsx:43-49` ("Add project" ghost button), `apps/web/src/features/agents/agent-form.tsx` → `TemplateSummary` moved into `template-field.tsx` (missing-secret warnings with "Add secret"), `apps/web/src/features/sheets/sheet-bodies.ts` (child bodies `add-credential`, `add-project`, `add-secret` wrapping Task 17's forms with `frame="sheet"`, titles "Add credential", "Add project", "Add secret", description "For New agent." plus, for credentials, "Saved to Settings → Credentials; other agents can use it.")
@@ -657,6 +693,9 @@ Implements §6.5, §10.2 (archive, restore, re-sync, failures). A: 5, 12.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M6) The Agents page uses **one** shared, anchored `AgentMenu` instance (the pattern of `TreeAgentMenu`, `sidebar-tree.tsx:601`), opened by a stable `openMenu(slug, anchor?)`. Extract `const AgentTreeRow = memo(…)` from `agent-tree.tsx`: it calls `useLongPress` (Task 31) and renders a plain ⋯ `button` as a **sibling** of the row's `Link` (never a button inside an anchor). Memoize `bySlug` and `now` in the page. Tests: no Radix menu root is mounted at rest across 214 rows; one agent's status frame re-renders exactly one `AgentTreeRow` (Profiler).
+
 **Files:**
 - Create: `apps/web/src/features/agents/lifecycle.ts` (move `resync`, `archive`, `restore` logic and their copy from `agent-actions.tsx:118-316`, incl. `TemplateProblem` and `ReportsMessage`)
 - Delete: `apps/web/src/features/agents/agent-actions.tsx` (and `UndoArchiveLine`), `apps/web/src/test/agent-actions.test.tsx` (port cases)
@@ -684,7 +723,7 @@ Implements §16. A: 3, 4, 9, 12.
 
 ### Task 27: PR2 review, verify and open
 
-- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u4/1-sheets...HEAD -- apps/web`: the agent form hook doesn't recreate callbacks per keystroke into memoized children (`AgentCombobox` filter stays stable — keep `excludedKey`/`canManage` from `agent-form.tsx:376-394`), taken-name set memoized, child sheets' cache writes don't trigger list refetch storms, lazy bodies, no waterfall (parallel queries in the New agent body). Fix in one commit.
+- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u4/1-sheets...HEAD -- apps/web`: the agent form hook doesn't recreate callbacks per keystroke into memoized children (`AgentCombobox` filter stays stable — keep `excludedKey`/`canManage` from `agent-form.tsx:376-394`), taken-name set memoized, child sheets' cache writes don't trigger list refetch storms, lazy bodies, no waterfall (parallel queries in the New agent body); M1 (edit-agent drafts merge in render), M2 (prefetch with the chunk), M8 (cancel → set → invalidate in child sheets), M6 (one shared AgentMenu on the Agents page, memoized rows). Fix in one commit.
 - [ ] **Step 2: Verify** (take the lock): `pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build`.
 - [ ] **Step 3:** `git push -u origin u4/2-agent-sheets && gh pr create --base u4/1-sheets --title "feat(web): new and edit agent in sheets with inline setup" --body-file <body>`: template sections; spec and #118; DESIGN.md edit; evidence; **For Or**: Q4 (inline template, 3), Q24 (stacked geometry, 3), with their why from #118. Note that behaviour docs need #122.
 - [ ] **Step 4:** `gh pr checks --watch`; fix until green.
@@ -700,6 +739,9 @@ Implements §16. A: 3, 4, 9, 12.
 Implements §11.2 (mechanics). A: 7.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**React review notes (apply in this task):**
+- (m1) Unmount clears both timers and removes `data-pressed`; test: unmounting mid-press never fires `onLongPress`.
 
 **Files:**
 - Create: `apps/web/src/hooks/use-long-press.ts`
@@ -745,6 +787,11 @@ Implements §11.1 (consumers, vanishing targets). A: 7.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M7) `RowMenu` exposes a ref handle `{ openAt(p: { x: number; y: number }): void }` (`useImperativeHandle`); rows pass a stable `onLongPress` (a `useCallback` over the ref) that calls it, so no menu state is lifted into memoized rows. `AdaptiveMenu` keeps `RowMenu`'s lazy mount, so `useIsMobile`/`useLatchedMobile` are read only once a menu is mounted. Add `timeline-perf.test.tsx` cases: 200 rows mount no menu root and read no media query at rest; a long-press re-renders only that row's menu.
+- (M6) The sidebar and Agents page each keep one shared `AgentMenu`; the long-press path calls the same stable `openMenu(slug, anchor)`.
+- (m4) The sidebar menu's effective open state is derived in render: `open && agentPresent` (the target still in the list); no effect closes it.
+
 **Files:**
 - Modify: `apps/web/src/features/session/row-menu.tsx` (the lazy trigger at :124-200 mounts on intent but opens per Task 29's rule; title per row kind: "Message from <name> · <time>", "<tool> · <time>"), `apps/web/src/features/agents/agent-menu.tsx` (title = display name; items that open a sheet or confirmation get `opensOverlay`), `apps/web/src/features/schedules/schedule-row.tsx` (title = key), Settings sections using `MoreButton` + `DropdownMenu` (`credentials-section.tsx`, `secrets-section.tsx`, `projects-section.tsx`, `users-section.tsx`; title = the item's name), `apps/web/src/features/agents/sidebar-tree.tsx` (its single shared `AgentMenu` instance: when the target slug leaves the agents list, close it)
 - Test: `apps/web/src/features/session/row-menu.test.tsx`, `apps/web/src/test/agent-menu.test.tsx`, `apps/web/src/features/schedules/schedule-list.test.tsx`, `apps/web/src/test/settings.test.tsx`, `apps/web/src/test/sidebar-tree.test.tsx`
@@ -758,6 +805,10 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 Implements §11.2 (where, feedback, callout). A: 7.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**React review notes (apply in this task):**
+- (M7) Every row's `onLongPress` is stable (calls the row menu's `openAt` handle or the page's `openMenu`); `timeline-perf.test.tsx` stays green with the long-press props in place.
+- (M6) Agents-page rows get long-press inside the memoized `AgentTreeRow` (Task 24).
 
 **Files:**
 - Modify: `apps/web/src/features/agents/sidebar-tree.tsx` (row handlers; open the shared menu for that row with `anchor`), `apps/web/src/features/agents/agent-tree.tsx`, `apps/web/src/features/schedules/schedule-row.tsx`, the Settings row components, `apps/web/src/features/session/speaker-line.tsx`, `apps/web/src/features/session/tool-call-row.tsx` (summary line), `apps/web/src/features/session/row-chrome.tsx` (gutter), `apps/web/src/styles.css` (`[data-longpress-region] { -webkit-touch-callout: none; user-select: none }` under `@media (pointer: coarse)`; `[data-pressed]` → the 6% deeper fill on the row's own box: `.of-row[data-pressed]` and the timeline row's card/block `[data-row-box][data-pressed]`)
@@ -807,6 +858,9 @@ Implements §11.5, §11.6, #102. A: 9.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (m6) The status label uses `max-md:sr-only` (CSS) instead of a `useIsMobile()` branch.
+
 **Files:**
 - Modify: `apps/web/src/features/agents/agent-tree.tsx` (below 48rem the status column shows the status shape with the label `sr-only`; `title={displayName}` on the name; second-line wrapper `min-w-0 max-w-full`), `apps/web/src/routes/_app/templates.index.tsx:29-41`, `apps/web/src/features/templates/templates-header.tsx` (icon-only actions below `sm`), `apps/web/src/features/templates/template-list.tsx` (meta `flex-wrap min-w-0`), `apps/web/src/components/confirm-dialog.tsx` (title and description `[overflow-wrap:anywhere]` in both branches; the confirm button `whitespace-normal`), any `PageHeader` caller found overflowing at 320 in Step 1
 - Test: `apps/web/src/test/agents-tree.test.tsx`, `apps/web/src/test/templates.test.tsx`, `apps/web/src/test/confirm-dialog.test.tsx`
@@ -830,7 +884,7 @@ Implements §16. A: 7, 8, 9.
 
 ### Task 37: PR3 review, verify and open
 
-- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u4/2-agent-sheets...HEAD -- apps/web`: long-press handlers stable and not re-created per row render (timeline rows stay memoized: `timeline-perf.test.tsx` green), `AdaptiveMenu` mounts no Radix root per row at rest (keep `RowMenu`'s lazy mount), `useIsMobile` reads don't re-render lists, no layout thrash in the composer. Fix in one commit.
+- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u4/2-agent-sheets...HEAD -- apps/web`: long-press handlers stable and not re-created per row render (timeline rows stay memoized: `timeline-perf.test.tsx` green), `AdaptiveMenu` mounts no Radix root per row at rest (keep `RowMenu`'s lazy mount), `useIsMobile` reads don't re-render lists, no layout thrash in the composer; M6/M7 (one shared menu per list, `openAt` handle, no menu state in memoized rows, no media-query reads at rest). Fix in one commit.
 - [ ] **Step 2: Verify** (take the lock): `pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build`.
 - [ ] **Step 3:** `git push -u origin u4/3-mobile && gh pr create --base u4/2-agent-sheets --title "feat(web): mobile pass: drawer menus, long-press, touch targets, phone composer" --body-file <body>`: template sections; spec and #118; closes #107 and the #102 line; **narrowings**: emil M4 (long-press is an accelerator; the ⋯ stays, reason: text selection on prose, discoverability) and chat M5's ⋯ gutter; the sidebar's touch menu path is long-press only (Q23, for Or to revisit); **For Or**: Q13 (3), Q23 (3).
 - [ ] **Step 4:** `gh pr checks --watch`; fix until green.
@@ -871,6 +925,9 @@ Implements §12.2, §12.3, §12.4. A: 10.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+**React review notes (apply in this task):**
+- (M5) `onChange`, `onSave` and `onBlur` are read through a latest-ref (`useRef`, updated in `useLayoutEffect`), so extensions never capture a stale handler and the view is never recreated for a new callback; `mobile` and `language` live in `Compartment`s reconfigured on change; when `fileKey` changes, `view.setState(states.get(fileKey) ?? EditorState.create({ doc: value, extensions }))`. Test: replacing `onChange` after mount → the next edit calls the new handler.
+
 **Files:**
 - Create: `apps/web/src/features/templates/code-editor-setup.ts`, `apps/web/src/features/templates/code-editor.tsx`
 - Test: `apps/web/src/features/templates/code-editor-setup.test.ts`, `apps/web/src/features/templates/code-editor.test.tsx`
@@ -899,6 +956,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 Implements §12.2 (integration, loading swap, writeSurface, loader preload), §12.5. A: 10.
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**React review notes (apply in this task):**
+- (m8) The state map is `useState(() => new Map<string, EditorState>())[0]`, not `useRef(new Map())` (no Map built per render); `writeSurface` is a `useCallback` when `MarkdownEditor` is memoized.
 
 **Files:**
 - Modify: `apps/web/src/features/templates/template-editor.tsx` (a `useRef(new Map<string, EditorState>())` keyed `${name}:${file}`, dropped on unmount; a reload or "Use theirs" deletes that key before setting the value; `CodeEditor` via `React.lazy` with the existing `CodeTextarea` as the `Suspense` fallback, padded left by the gutter width; on swap carry `selectionStart/End`, `scrollTop`, focus; `jumpTo` → `editorRef.current?.focusLine(line)` when the editor is mounted, else today's `serveJump`), `apps/web/src/components/markdown/markdown-editor.tsx` (optional `writeSurface?: (p: { value; onChange; id; describedBy }) => ReactNode`; when absent, today's textarea), `apps/web/src/routes/_app/templates.$name.tsx` (loader: `if (!preload) void import("@/features/templates/code-editor")`)
@@ -929,7 +989,7 @@ Implements §12.6, decision 23. A: 10.
 ### Task 43: PR4 DESIGN.md, review, verify and open
 
 - [ ] **Step 1 (only if the gate passed):** apply spec §14's Template editor line to DESIGN.md. Commit `docs: DESIGN.md template editor`.
-- [ ] **Step 2: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff <base>...HEAD -- apps/web`: the lazy boundary (bundle-dynamic-imports), the editor never re-created per keystroke, no effect syncing state that could be derived, stable callbacks into the editor (held in refs), the state map not a React state. Fix in one commit.
+- [ ] **Step 2: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff <base>...HEAD -- apps/web`: the lazy boundary (bundle-dynamic-imports), the editor never re-created per keystroke, no effect syncing state that could be derived, stable callbacks into the editor (held in refs), the state map not a React state; M5 (latest-ref handlers, Compartments, `setState` on fileKey change). Fix in one commit.
 - [ ] **Step 3: Verify** (take the lock): `pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build && node apps/web/scripts/check-editor-chunk.mjs`.
 - [ ] **Step 4:** Rebase onto `u4/3-mobile` if not done; `git push -u origin u4/4-template-editor && gh pr create --base u4/3-mobile --title "<per the gate>" --body-file <body>`: template sections; spec and #118; policy and the nine publish dates; the chunk size; the five-check table (Task 42); "droppable as a unit: nothing else depends on it".
 - [ ] **Step 5:** `gh pr checks --watch`; fix until green.
@@ -988,14 +1048,14 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 ### Task 48: PR5 review, verify and open
 
-- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u4/4-template-editor...HEAD -- apps/web` (confirm no import from PR4's modules: `grep -rn "code-editor" ` in the diff finds nothing). Fix in one commit.
+- [ ] **Step 1: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff u4/4-template-editor...HEAD -- apps/web` (confirm no import from PR4's modules: `grep -rn "code-editor"` in the diff finds nothing); re-check M1, M2, M5, M8 still hold after the rebase. Fix in one commit.
 - [ ] **Step 2: Verify** (take the lock): `pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build`.
 - [ ] **Step 3:** `git push -u origin u4/5-leftovers && gh pr create --base u4/4-template-editor --title "fix: break-ui leftovers: blockers in lists, name and email limits, scroll restoration" --body-file <body>`: template sections; spec and #118; "independent of #<PR4>; if PR4 is dropped, rebase onto u4/3-mobile"; M5 outcome or its follow-up issue.
 - [ ] **Step 4:** `gh pr checks --watch`; fix until green.
 
 ### Task 49: Whole-U4 review
 
-- [ ] **Step 1** (fresh reviewer subagent, on `u4/5-leftovers` with all five PRs stacked): invoke `vercel-react-best-practices` and review `git diff u3/5-shared-composer...u4/5-leftovers -- apps/web` against it as a whole (skip server-component rules): bundle (sheet bodies and the editor lazy; the shell chunk's size vs `u3/5-shared-composer`, from `pnpm build` output), re-render hot spots (the sheet store, `notify`, `--composer-h`, long-press handlers, `AdaptiveMenu`), data fetching (no waterfalls in sheet bodies, cache writes from child sheets), and the spec coverage table below. Report findings to the PR owners; fixes land in the PR they belong to, one commit each.
+- [ ] **Step 1** (fresh reviewer subagent, on `u4/5-leftovers` with all five PRs stacked): invoke `vercel-react-best-practices` and review `git diff u3/5-shared-composer...u4/5-leftovers -- apps/web` against it as a whole (skip server-component rules): bundle (sheet bodies and the editor lazy; the shell chunk's size vs `u3/5-shared-composer`, from `pnpm build` output), re-render hot spots (the sheet store, `notify`, `--composer-h`, long-press handlers, `AdaptiveMenu`), data fetching (no waterfalls in sheet bodies, cache writes from child sheets), the review items M1, M2, M5, M6, M7, M8, and the spec coverage table below. Report findings to the PR owners; fixes land in the PR they belong to, one commit each.
 - [ ] **Step 2:** Post the review summary as a comment on #118.
 
 ---

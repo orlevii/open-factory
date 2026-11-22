@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { ToolRow } from "../rows";
 import { bashRenderer } from "./bash";
+import { diffRenderer } from "./diff";
 import { genericRenderer } from "./generic";
 
 /** How one tool renders inside `ToolCallRow` (spec §9.2): `Summary` fills the collapsed line after
@@ -13,6 +14,9 @@ export type ToolRenderer = {
 /** Renderers by tool name; a module constant, so a row's renderer never changes identity. */
 export const toolRenderers: Record<string, ToolRenderer> = {
   Bash: bashRenderer,
+  Edit: diffRenderer,
+  MultiEdit: diffRenderer,
+  Write: diffRenderer,
 };
 
 /** The renderer for a tool name; unknown names keep today's row. */

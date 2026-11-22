@@ -12,7 +12,7 @@ import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
 import { NestedRow } from "./row-chrome";
-import type { Row } from "./rows";
+import { isNoticeKind, type Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
 import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
@@ -267,6 +267,11 @@ export interface TimelineRowProps {
   rowProps(row: Row): Record<string, unknown>;
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
+  /** A tool row's time, in its own line on hover or focus (U3 §7.5): a top-level row's or a folded
+   *  run's call's, never a tool's nested children's. */
+  toolTime?: string;
+  /** The row is a folded run's call (`NestedRow`): its time follows its own box's hover and focus. */
+  nested?: boolean;
 }
 
 export function TimelineRow(props: TimelineRowProps) {
@@ -279,11 +284,7 @@ export function TimelineRow(props: TimelineRowProps) {
           <MessageBlock
             from={row.message.from}
             // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
-            system={
-              row.message.kind === "system" ||
-              row.message.kind === "task_assigned" ||
-              row.message.kind === "task_update"
-            }
+            system={isNoticeKind(row.message.kind)}
             body={row.message.body}
             urgent={row.message.urgent}
             at={row.at}
@@ -357,9 +358,11 @@ export function TimelineRow(props: TimelineRowProps) {
           expanded={expanded.has(row.key)}
           onToggle={() => toggle(row.key)}
           rowProps={rp}
+          time={props.toolTime}
+          nested={props.nested}
         >
           {row.children.map((c) => (
-            <TimelineRow key={c.key} {...props} row={c} />
+            <TimelineRow key={c.key} {...props} toolTime={undefined} nested={false} row={c} />
           ))}
         </ToolCallRow>
       );
@@ -379,7 +382,8 @@ export function TimelineRow(props: TimelineRowProps) {
         >
           {open &&
             row.children.map((c) => (
-              // Each call keeps its own ⋯ and gutter time (U3 §7.5); its tab stop is rowProps'.
+              // Each call keeps its own ⋯ (U3 §7.5) and, like a top-level tool row, its time in its
+              // own line; its tab stop is rowProps'.
               <NestedRow
                 key={c.key}
                 row={c}
@@ -388,7 +392,7 @@ export function TimelineRow(props: TimelineRowProps) {
                 callShown={expanded.has(c.key)}
                 onToggleCall={() => toggle(c.key)}
               >
-                <TimelineRow {...props} row={c} />
+                <TimelineRow {...props} row={c} toolTime={c.at} nested />
               </NestedRow>
             ))}
         </WorkGroup>

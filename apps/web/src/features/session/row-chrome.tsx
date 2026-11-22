@@ -3,10 +3,11 @@ import { formatTime } from "./format";
 import { RowMenu, rowMenuItems } from "./row-menu";
 import type { Row } from "./rows";
 
-/** Agent text and tool rows show their time in the gutter on hover or focus (U3 §7.5); a head text
- *  row's speaker line already shows it, and messages keep their visible time. */
+/** Agent text shows its time in the gutter on hover or focus (U3 §7.5); a head text row's speaker
+ *  line already shows it, messages keep their visible time, and a tool row, top-level or a folded
+ *  run's call, puts it in its own line (`ToolCallRow`'s `time`), so it never covers the state. */
 export function gutterTime(row: Row): string | undefined {
-  if (row.kind === "tool" || (row.kind === "text" && !row.head)) return row.at;
+  if (row.kind === "text" && !row.head) return row.at;
   return undefined;
 }
 
@@ -26,6 +27,7 @@ export function RowChrome({
   callShown,
   onToggleCall,
   nested = false,
+  inCard = false,
 }: {
   row: Row;
   slug: string;
@@ -35,13 +37,16 @@ export function RowChrome({
   onToggleCall(): void;
   /** Inside another row (a folded run's call): hover and focus are its own box's. */
   nested?: boolean;
+  /** The row is a card: the ⋯ sits inside its padding (U3 §7.1). */
+  inCard?: boolean;
 }) {
   const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
   const time = gutterTime(row);
   return (
     <>
       {time !== undefined && (
-        // Content | chip | time | ⋯: the time sits just left of the menu, over the row's end.
+        // Content | time | ⋯: the time sits just left of the menu, over the text row's end (agent text
+        // has nothing there).
         <time
           data-gutter-time
           dateTime={time}
@@ -57,6 +62,7 @@ export function RowChrome({
         callShown={callShown}
         onToggleCall={onToggleCall}
         nested={nested}
+        inCard={inCard}
       />
     </>
   );

@@ -54,7 +54,9 @@ export function PlainCode({ code }: { code: string }) {
 /** Code with a Copy button at its top-right, on hover or focus within (U3 §7.5). */
 function CopyFrame({ code, children }: { code: string; children: ReactNode }) {
   return (
-    <div className="group/code relative">
+    // The wrapper is the prose's child now, so typography's first/last-child margin reset is passed
+    // on to the pre inside it.
+    <div className="group/code relative first:[&_pre]:mt-0 last:[&_pre]:mb-0">
       {children}
       <CopyButton text={code} />
     </div>

@@ -152,7 +152,8 @@ export function CallBlock({
     <article
       {...rowProps}
       aria-label={label}
-      className="rounded-lg border border-border bg-card px-3 py-2"
+      // pr-9: the row menu's ⋯ sits inside the card (U3 §7.5).
+      className="rounded-lg border border-border bg-card py-2 pr-9 pl-3"
     >
       {header ?? (
         <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">

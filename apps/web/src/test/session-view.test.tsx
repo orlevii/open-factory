@@ -64,7 +64,8 @@ test("renders the conversation: sender badge, collapsed tool call, text, compact
   renderApp("/agents/dev", alice);
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   const log = screen.getByRole("log", { name: "Session" });
-  expect(within(log).getByText("@or")).toBeInTheDocument();
+  // the heading comes from the agent detail; the events are a second request, so wait for the first row
+  expect(await within(log).findByText("@or")).toBeInTheDocument();
   expect(within(log).getByText("Urgent")).toBeInTheDocument();
   expect(within(log).getByText("list")).toBeInTheDocument(); // markdown rendered
   expect(log.textContent).not.toMatch(/factory-message/);

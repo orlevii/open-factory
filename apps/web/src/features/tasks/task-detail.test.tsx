@@ -631,6 +631,11 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
   const article = await screen.findByRole("article", { name: "Comment from @dev" });
   await waitFor(() => expect(article).toHaveFocus());
   expect(article).toHaveAttribute("data-highlighted", "true");
+  // The comment's ⋯ sits inside the card's padding, off its border.
+  expect(within(article).getByRole("button", { name: "Comment actions" })).toHaveClass(
+    "top-1.5",
+    "right-1.5",
+  );
   expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("@dev ");
   first.unmount();
   const second = renderApp("/tasks/T-42?comment=c2", alice);

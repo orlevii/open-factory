@@ -5,6 +5,7 @@ import {
   buildRows,
   deliveryFailedIds,
   interruptedTurnEnds,
+  isNoticeKind,
   type Row,
   stabilizeRows,
   stableSet,
@@ -718,4 +719,9 @@ test("a later exit with no finish stops the task; a finish before the exit stays
   seq = 0;
   const kept = rowsOf([...bgCall(), started("tu-bg"), finished("completed"), exit()]);
   expect(toolOf(kept).backgroundTask).toMatchObject({ state: "finished" });
+});
+
+test("isNoticeKind: factory notices (system, task assigned, task update), never a message or comment", () => {
+  expect(["system", "task_assigned", "task_update"].every(isNoticeKind)).toBe(true);
+  expect(["message", "task_comment", "scheduled"].some(isNoticeKind)).toBe(false);
 });

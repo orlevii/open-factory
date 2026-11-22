@@ -1,7 +1,7 @@
 import { memo, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
 import { RowChrome } from "./row-chrome";
-import type { Row } from "./rows";
+import { isNoticeKind, type Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
 /** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
@@ -88,9 +88,16 @@ export function rowGap(row: Row, prev: Row | undefined): string {
   return speaks || prev.kind === "turn_footer" ? "mt-6" : "mt-2";
 }
 
-/** The rows' right gutter, a fixed 2rem column for the row menu (U3 §7.5): everything under the rows that should line up with them
- *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
+/** The rows' right gutter, a fixed 2rem column for the row menu (U3 §7.5): everything unboxed under
+ *  the rows that should line up with them (the activity line, cancelled lines) uses it too. Cards
+ *  span the full column instead, with the ⋯ inside their own padding. */
 export const ROW_GUTTER = "pr-8";
+
+/** A card (U3 §7.1): an envelope that crossed a session boundary. A factory notice is a quiet line. */
+export function isCard(row: Row): boolean {
+  if (row.kind === "outgoing" || row.kind === "spawn") return true;
+  return row.kind === "message" && !isNoticeKind(row.message.kind);
+}
 
 /** One timeline entry: the wrap (deep-link id, live fade), the row, its gutter time and its menu. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
@@ -103,7 +110,7 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       // `data-arrived` on the row's own box (U3 §7.4).
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${p.gap}`}
+      className={`group relative min-w-0 rounded-md ${isCard(row) ? "" : ROW_GUTTER} ${p.gap}`}
     >
       <ItemContent {...p} />
     </div>
@@ -142,6 +149,7 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         })}
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}
+        toolTime={row.kind === "tool" ? row.at : undefined}
       />
       <RowChrome
         row={row}
@@ -149,6 +157,7 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         focusable={row.key === p.tabKey}
         callShown={p.expanded.has(row.key)}
         onToggleCall={onToggleCall}
+        inCard={isCard(row)}
       />
     </>
   );

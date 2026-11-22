@@ -1,6 +1,7 @@
 import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { runInstant } from "@/lib/run-instant";
+import { formatTime } from "./format";
 import type { ToolRow } from "./rows";
 import { rendererFor } from "./tools";
 import { firstLine } from "./tools/output";
@@ -69,6 +70,13 @@ function Detail({ row, chip }: { row: ToolRow; chip: string | null }) {
   );
 }
 
+// Shown on hover or focus within the row's own box: the timeline item's `group`, or a folded run's
+// call's `group/call` (so hovering one call never shows its siblings' time).
+const TIME_SHOWN = {
+  top: "group-focus-within:inline group-hover:inline",
+  nested: "group-focus-within/call:inline group-hover/call:inline",
+} as const;
+
 /** A tool call (spec §9.2): one `min-h-8` line (chevron, the tool's summary, a state chip), a detail
  *  line, and while expanded the tool's body, then its nested rows. */
 export function ToolCallRow({
@@ -77,12 +85,19 @@ export function ToolCallRow({
   onToggle,
   rowProps,
   children,
+  time,
+  nested = false,
 }: {
   row: ToolRow;
   expanded: boolean;
   onToggle(): void;
   rowProps: Record<string, unknown>;
   children?: ReactNode;
+  /** The row's time, shown at the line's end on hover or focus (U3 §7.5): content | time | ⋯,
+   *  in the line itself, so it never covers the state. */
+  time?: string;
+  /** A folded run's call (`NestedRow`): its time shows on its own box's hover and focus only. */
+  nested?: boolean;
 }) {
   const R = rendererFor(row.call.name);
   const chip = chipOf(row);
@@ -109,6 +124,18 @@ export function ToolCallRow({
           <R.Summary row={row} />
         </span>
         {chip && <span className="shrink-0 text-[0.8125rem] text-muted-foreground">{chip}</span>}
+        {time !== undefined && (
+          <time
+            data-gutter-time
+            // Not part of the row's name: the title carries it, and on touch the row menu.
+            aria-hidden="true"
+            dateTime={time}
+            title={new Date(time).toLocaleString()}
+            className={`hidden shrink-0 text-[0.8125rem] text-muted-foreground tabular-nums ${nested ? TIME_SHOWN.nested : TIME_SHOWN.top} pointer-coarse:hidden!`}
+          >
+            {formatTime(time)}
+          </time>
+        )}
       </button>
       <Detail row={row} chip={chip} />
       {expanded && (

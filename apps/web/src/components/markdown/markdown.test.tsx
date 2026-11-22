@@ -279,3 +279,27 @@ test("data: and protocol-relative image sources are plain text, never links or i
   expect(container.querySelector("a")).toBeNull();
   expect(container).toHaveTextContent("Image: d Image: p");
 });
+
+test("the bidi overrides keep hast props: GFM footnotes keep their sr-only label and item ids", () => {
+  const { container } = render(<Markdown source={"A claim.[^1]\n\n[^1]: The source."} />);
+  expect(container.querySelector("h2#footnote-label")).toHaveClass("sr-only");
+  const item = container.querySelector("li#user-content-fn-1");
+  expect(item).not.toBeNull();
+  expect(item).toHaveAttribute("dir", "auto");
+});
+
+test("the prose's last child is the content, so typography's last-child margin reset reaches it", () => {
+  const { container } = render(<Markdown source={"One.\n\nTwo, see [x](https://example.com)."} />);
+  const prose = container.querySelector(".prose-of") as HTMLElement;
+  expect(prose.lastElementChild?.tagName).toBe("P");
+  expect(prose.lastElementChild).toHaveTextContent("Two");
+  // The link's shared description still exists, outside the prose.
+  expect(screen.getByRole("link")).toHaveAccessibleDescription("Opens in a new tab");
+});
+
+test("a code block's Copy wrapper passes the prose's first and last child margins to its pre", () => {
+  const { container } = render(<Markdown source={"```\ncode\n```"} />);
+  const frame = container.querySelector(".prose-of > div") as HTMLElement;
+  expect(frame.querySelector("pre")).not.toBeNull();
+  expect(frame).toHaveClass("first:[&_pre]:mt-0", "last:[&_pre]:mb-0");
+});

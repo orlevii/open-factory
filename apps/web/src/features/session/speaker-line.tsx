@@ -195,7 +195,7 @@ export function SpeakerProvider({
   return <SpeakerContext value={value}>{children}</SpeakerContext>;
 }
 
-/** Below a 20rem container the handle hides (kept in the tooltip). */
+/** Below a 20rem container the handle hides (the name's tooltip keeps it). */
 const SLUG_CLASS = "@max-[20rem]:hidden";
 const NAME_CLASS = "font-medium text-foreground";
 
@@ -218,6 +218,7 @@ function Speaker({ id, self }: { id: string; self: boolean }) {
         size={20}
         showSlug
         link={resolved.link && !self}
+        inline
         className={NAME_CLASS}
         slugClassName={`font-normal ${SLUG_CLASS}`}
       />
@@ -243,7 +244,7 @@ function Speaker({ id, self }: { id: string; self: boolean }) {
     );
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span dir="auto" className={`min-w-0 truncate ${NAME_CLASS}`}>
+      <span dir="auto" title={`${name} ${id}`} className={`min-w-0 truncate ${NAME_CLASS}`}>
         {name}
       </span>
       <span title={id} className={`min-w-0 font-mono text-muted-foreground ${SLUG_CLASS}`}>
@@ -284,18 +285,20 @@ export const SpeakerLine = memo(function SpeakerLine({
       data-speaker-line
       className="@container mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <Speaker id={from} self={self} />
-        {to !== undefined && (
-          <>
-            <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-            <Speaker id={to} self={false} />
-          </>
-        )}
-      </span>
-      {children}
-      {status ??
-        (at ? (
+      {/* The names and the time never wrap apart: alone on its line the group shrinks, and the names
+          truncate before the time (which never does). Badges, a status or an action may wrap below,
+          so a long badge never squeezes the names away. */}
+      <span className="flex min-w-0 flex-nowrap items-center gap-x-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Speaker id={from} self={self} />
+          {to !== undefined && (
+            <>
+              <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+              <Speaker id={to} self={false} />
+            </>
+          )}
+        </span>
+        {status == null && at ? (
           <time
             dateTime={at}
             title={new Date(at).toLocaleString()}
@@ -303,7 +306,10 @@ export const SpeakerLine = memo(function SpeakerLine({
           >
             {formatTime(at)}
           </time>
-        ) : null)}
+        ) : null}
+      </span>
+      {children}
+      {status}
       {action && <span className="ml-auto">{action}</span>}
     </div>
   );

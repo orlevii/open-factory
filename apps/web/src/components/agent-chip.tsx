@@ -28,18 +28,22 @@ export function TruncTooltip({
   text,
   className,
   dir,
+  alsoWhen,
   children,
 }: {
   text: string;
   className?: string;
   /** "auto" for names: a right-to-left name sets its own direction (bidi). */
   dir?: "auto";
+  /** Another reason to show the tooltip, checked on hover or focus (a chip's hidden handle). */
+  alsoWhen?(el: HTMLElement): boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [armed, setArmed] = useState(false);
   const check = () => {
-    if (ref.current && isTruncated(ref.current)) setArmed(true);
+    const el = ref.current;
+    if (el && (isTruncated(el) || alsoWhen?.(el))) setArmed(true);
   };
   const span = (
     // biome-ignore lint/a11y/noStaticElementInteractions: measures on hover/focus only; it adds no interaction
@@ -78,12 +82,21 @@ export type ChipAgent = {
   stub?: boolean;
 };
 
+/** The chip's handle is hidden (a narrow speaker line hides it below 20rem): the name's tooltip
+ *  carries it instead. */
+const slugHidden = (name: HTMLElement) => {
+  // The chip's second line: the name's line comes first.
+  const slug = name.closest("[data-chip]")?.children[1];
+  return !!slug && slug.getClientRects().length === 0;
+};
+
 function ChipView({
   a,
   size,
   showSlug,
   badge,
   link,
+  inline,
   className,
   slugClassName,
 }: {
@@ -92,14 +105,17 @@ function ChipView({
   showSlug: boolean;
   badge: boolean;
   link: boolean;
+  inline: boolean;
   className?: string;
   slugClassName?: string;
 }) {
   const classes = cn(
-    "inline-flex min-w-0 items-center gap-1.5 @max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
+    "inline-flex min-w-0 items-center gap-1.5",
+    !inline && "@max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
     link && "rounded-sm hover:underline",
     className,
   );
+  const slugShown = showSlug && !a.stub;
   // Each line is capped at the chip's width: stacked (items-start), a line would otherwise size to
   // its content and the name would never truncate.
   const body = (
@@ -112,15 +128,21 @@ function ChipView({
           size={size}
           status={badge ? a.status : undefined}
         />
-        <TruncTooltip text={a.displayName} dir="auto" className="min-w-[min(8rem,45%)]">
+        <TruncTooltip
+          text={slugShown ? `${a.displayName} @${a.slug}` : a.displayName}
+          dir="auto"
+          className="min-w-[min(8rem,45%)]"
+          {...(slugShown ? { alsoWhen: slugHidden } : {})}
+        >
           <AgentName agent={{ displayName: a.displayName, kind: a.kind ?? "persistent" }} />
         </TruncTooltip>
       </span>
-      {showSlug && !a.stub ? (
+      {slugShown ? (
         <TruncTooltip
           text={`@${a.slug}`}
           className={cn(
-            "min-w-24 max-w-full font-mono text-muted-foreground @max-[24rem]:text-xs",
+            "max-w-full font-mono text-muted-foreground",
+            !inline && "@max-[24rem]:text-xs",
             slugClassName,
           )}
         >
@@ -131,11 +153,15 @@ function ChipView({
   );
   if (link)
     return (
-      <Link to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
+      <Link data-chip to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
         {body}
       </Link>
     );
-  return <span className={classes}>{body}</span>;
+  return (
+    <span data-chip className={classes}>
+      {body}
+    </span>
+  );
 }
 
 type ChipProps = {
@@ -147,6 +173,9 @@ type ChipProps = {
   className?: string;
   /** Extra classes for the `@slug` (a speaker line hides it below a 20rem container). */
   slugClassName?: string;
+  /** Name and handle stay on one line at any width, truncating (a speaker line); otherwise the
+   *  chip stacks them below a 24rem container. */
+  inline?: boolean;
 };
 
 function SlugChip({
@@ -156,6 +185,7 @@ function SlugChip({
   showSlug = false,
   badge = false,
   link = false,
+  inline = false,
   className,
   slugClassName,
 }: ChipProps & { slug: string; name?: string }) {
@@ -170,6 +200,7 @@ function SlugChip({
       showSlug={showSlug}
       badge={badge}
       link={link}
+      inline={inline}
       className={className}
       slugClassName={slugClassName}
     />
@@ -188,6 +219,7 @@ export function AgentChip(
       showSlug = false,
       badge = false,
       link = false,
+      inline = false,
       className,
       slugClassName,
     } = props;
@@ -198,6 +230,7 @@ export function AgentChip(
         showSlug={showSlug}
         badge={badge}
         link={link}
+        inline={inline}
         className={className}
         slugClassName={slugClassName}
       />

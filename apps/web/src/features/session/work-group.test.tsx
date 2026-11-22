@@ -79,7 +79,13 @@ test("each call in an open group has its own row menu and gutter time (Copy comm
     expect(within(call).getAllByRole("button", { name: "Row actions", hidden: true })).toHaveLength(
       1,
     );
-    expect(call.querySelector("[data-gutter-time]")).not.toBeNull();
+    // Like a top-level tool row's, the time is in the call's own line (never over its chip), and
+    // shows on that call's hover or focus only.
+    const time = call.querySelector("[data-gutter-time]");
+    expect(time?.closest("[data-row]")).not.toBeNull();
+    expect(time).not.toHaveClass("absolute");
+    expect(time).toHaveClass("group-hover/call:inline");
+    expect(time).not.toHaveClass("group-hover:inline");
   }
   const trigger = within(calls[1] as HTMLElement).getByRole("button", {
     name: "Row actions",

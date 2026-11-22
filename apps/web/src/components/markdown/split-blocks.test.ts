@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { clampSource, plainLength, splitBlocks } from "./split-blocks";
+import { clampSource, longestFence, plainLength, splitBlocks } from "./split-blocks";
 
 test("splits at blank lines before a column-0 line", () => {
   expect(splitBlocks("# Title\n\nOne\ntwo\n\n\nThree").blocks).toEqual([
@@ -80,4 +80,10 @@ test("forty lines is the other limit", () => {
   const out = clampSource(lines) as string;
   expect(out.split("\n").length).toBeLessThanOrEqual(40);
   expect(out.endsWith("p19")).toBe(true);
+});
+
+test("longestFence: the most code lines in one fence; an unclosed fence counts to the end", () => {
+  expect(longestFence("no code")).toBe(0);
+  expect(longestFence("a\n\n```\n1\n2\n```\n\n~~~\n1\n2\n3\n~~~")).toBe(3);
+  expect(longestFence("```\n1\n2\n3\n4")).toBe(4);
 });

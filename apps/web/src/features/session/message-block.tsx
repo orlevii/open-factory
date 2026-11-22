@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
-import { clampSource } from "@/components/markdown/split-blocks";
+import { clampSource, longestFence } from "@/components/markdown/split-blocks";
 import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
@@ -191,7 +191,8 @@ export function MessageBlock(props: {
           dir="auto"
           className="mt-0.5 pl-5 text-muted-foreground [--foreground:var(--muted-foreground)]"
         >
-          <NoticeBody source={body} />
+          {/* A notice's single newlines are its line breaks ("assigned you T-1" / "The task, …"). */}
+          <LinesBody source={body} lines={2} className="[&_p]:whitespace-pre-line" />
         </div>
       </div>
     );
@@ -218,7 +219,9 @@ export function MessageBlock(props: {
     <div
       data-message-block
       {...(sending ? { role: "group", "aria-label": "Sending" } : {})}
-      className={`rounded-lg border bg-card px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
+      // pr-9: the row menu's ⋯ sits inside the card (U3 §7.5); queued and Sending cards keep the same
+      // padding, so a body wraps the same before and after the handoff.
+      className={`rounded-lg border bg-card py-2 pr-9 pl-3 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
       {scheduled || system ? (
         // Scheduler and queued factory notices keep their own sender (S9, S5).
@@ -256,15 +259,10 @@ export function MessageBlock(props: {
         data-message-body
         dir="auto"
         className={
-          [
-            brief && "line-clamp-3",
-            sending && "text-muted-foreground [--foreground:var(--muted-foreground)]",
-          ]
-            .filter(Boolean)
-            .join(" ") || undefined
+          sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
         }
       >
-        {brief ? <Markdown source={body} variant="detail" /> : <ClampedMarkdown source={body} />}
+        {brief ? <LinesBody source={body} lines={3} /> : <ClampedMarkdown source={body} />}
       </div>
     </div>
   );
@@ -282,53 +280,96 @@ function Time({ at }: { at: string }) {
   );
 }
 
-/** Past these a notice surely runs over two lines, so Show all is offered even where nothing can be
- *  measured; below them the measurement decides. */
-const NOTICE_LINES = 2;
-const NOTICE_CHARS = 240;
+/** What a clamped body renders while clamped (`clampSource`), well past its visible lines: a 64 KB
+ *  body never lays out in full, and a code block, which `line-clamp` doesn't stop, stays short. */
+const CUT_LINES = 12;
+const CUT_CHARS = 1200;
+/** Past this many rendered characters per line a body surely runs over its lines, so Show all is
+ *  offered where nothing can be measured; once layout has measured the box, the measurement decides. */
+const CHARS_PER_LINE = 120;
+/** Literal classes per line count (Tailwind reads the source): the clamp, and a code plate capped at
+ *  the box's height. A `pre` is its own formatting context, so `line-clamp` skips its lines and its
+ *  clipped lines never reach the box's `scrollHeight`; inside its 24px of padding the cap shows about
+ *  `lines - 1` code lines (13/1.55, about 20px each). Show all is offered for any fence longer. */
+const CLAMP_CLASS = {
+  2: "line-clamp-2 [&_pre]:max-h-12 [&_pre]:overflow-hidden",
+  3: "line-clamp-3 [&_pre]:max-h-[4.5rem] [&_pre]:overflow-hidden",
+} as const;
 
 /**
- * A factory notice's body (U3 §7.2): always two muted lines (`line-clamp-2`), whatever its length,
- * with Show all when the content runs past them. Overflow is measured after layout and again when
- * the width changes; the block/character rule backs it up where layout is unknown.
+ * A body shown as a few lines with Show all (U3 §7.2, §7.6): a factory notice's two muted lines, a
+ * queued or sending message's three. The source is cut before rendering, and the box clamped; overflow
+ * is measured after layout and again when the width changes. `className` (a notice's soft line
+ * breaks) applies to the clamped box.
  */
-function NoticeBody({ source }: { source: string }) {
+function LinesBody({
+  source,
+  lines,
+  className,
+}: {
+  source: string;
+  lines: 2 | 3;
+  className?: string;
+}) {
   const [all, setAll] = useState(false);
-  const [overflows, setOverflows] = useState(false);
+  /** undefined until layout has measured the box (or where it can't: no layout). */
+  const [overflows, setOverflows] = useState<boolean | undefined>(undefined);
   const box = useRef<HTMLDivElement>(null);
+  const cut = useMemo(() => clampSource(source, CUT_LINES, CUT_CHARS), [source]);
   const long = useMemo(
-    () => clampSource(source, NOTICE_LINES, NOTICE_CHARS) !== undefined,
-    [source],
+    () => cut !== undefined || clampSource(source, lines, lines * CHARS_PER_LINE) !== undefined,
+    [source, cut, lines],
   );
+  // A fence the capped plate can't show whole: offered however the box measures.
+  const longCode = useMemo(() => longestFence(source) >= lines, [source, lines]);
   useLayoutEffect(() => {
     const el = box.current;
     if (all || !el) return;
-    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    // The box, and each capped plate on its own: a plate's hidden lines never reach the box.
+    const over = (n: HTMLElement) => n.scrollHeight > n.clientHeight + 1;
+    const measure = () =>
+      setOverflows(
+        el.clientHeight > 0
+          ? over(el) || [...el.querySelectorAll<HTMLElement>("pre")].some(over)
+          : undefined,
+      );
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [all]);
+  const more = !all && (cut !== undefined || longCode || (overflows ?? long));
   return (
     <>
-      <div ref={box} className={all ? undefined : "line-clamp-2"}>
-        <Markdown source={source} variant="detail" />
+      <div
+        ref={box}
+        className={[all ? undefined : CLAMP_CLASS[lines], className].filter(Boolean).join(" ")}
+      >
+        <Markdown source={all ? source : (cut ?? source)} variant="detail" />
       </div>
-      {!all && (long || overflows) && (
-        <button
-          type="button"
-          data-expands
-          onClick={(e) => {
-            rowOf(e.currentTarget)?.focus(); // this button unmounts
-            setAll(true);
-          }}
-          className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
-        >
-          Show all
-        </button>
-      )}
+      {more && <ShowAll onShow={() => setAll(true)} />}
     </>
+  );
+}
+
+/** "Show all", a `data-expands` toggle: the timeline's click capture anchors its row before the body
+ *  expands. The button unmounts, so focus moves to the row first, without scrolling it into view:
+ *  nothing above moves. */
+function ShowAll({ onShow }: { onShow(): void }) {
+  return (
+    <button
+      type="button"
+      data-expands
+      onClick={(e) => {
+        // `rowOf`: a body control (a tool body's) belongs to the row above it, not an ancestor.
+        rowOf(e.currentTarget)?.focus({ preventScroll: true });
+        onShow();
+      }}
+      className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
+    >
+      Show all
+    </button>
   );
 }
 
@@ -351,17 +392,7 @@ export function ClampedMarkdown({
   return (
     <>
       <Markdown source={clamped} variant="detail" />
-      <button
-        type="button"
-        data-expands
-        onClick={(e) => {
-          rowOf(e.currentTarget)?.focus(); // this button unmounts
-          setAll(true);
-        }}
-        className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
-      >
-        Show all
-      </button>
+      <ShowAll onShow={() => setAll(true)} />
     </>
   );
 }

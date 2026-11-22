@@ -207,3 +207,30 @@ test("the provider reads your handle itself, and asks for the ended list only on
     vi.unstubAllGlobals();
   }
 });
+
+test("a long name never pushes the time onto its own line: names and time share a line that doesn't wrap", async () => {
+  await show(<SpeakerLine from="b" at={AT} />);
+  const time = line().querySelector("time") as HTMLElement;
+  const group = time.parentElement as HTMLElement;
+  expect(group).toHaveClass("flex-nowrap", "min-w-0");
+  expect(group).toContainElement(within(line()).getByText("Builder"));
+  // The agent's chip never stacks name over handle.
+  const chip = within(line()).getByRole("link");
+  expect(chip.className).not.toMatch(/flex-col/);
+});
+
+test("a human's name carries the handle in its title (kept when the handle hides)", async () => {
+  await show(<SpeakerLine from="@or" at={AT} />);
+  expect(within(line()).getByText("Or Levi")).toHaveAttribute("title", "Or Levi @or");
+});
+
+test("badges sit outside the names-and-time group, so a long badge wraps below instead of squeezing the names", async () => {
+  await show(
+    <SpeakerLine from="b" at={AT}>
+      <span data-testid="badge">T-1 a very long task title</span>
+    </SpeakerLine>,
+  );
+  const group = (line().querySelector("time") as HTMLElement).parentElement as HTMLElement;
+  expect(group).not.toContainElement(screen.getByTestId("badge"));
+  expect(screen.getByTestId("badge").parentElement).toBe(line());
+});

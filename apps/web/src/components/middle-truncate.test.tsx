@@ -12,3 +12,13 @@ test("the head shrinks first; the last segment is capped at the line and truncat
   expect(tail).toHaveTextContent("/platform-reliability-incident-commanders");
   expect(tail).toHaveClass("shrink-0", "max-w-full", "truncate");
 });
+
+test("a handle (no '/') truncates in the middle: its head and its tail both stay", () => {
+  const { container } = render(<MiddleTruncate text="@marketing-team" />);
+  const [head, tail] = container.querySelectorAll("[aria-hidden=true]");
+  expect(head).toHaveTextContent("@marketi");
+  expect(head).toHaveClass("truncate");
+  expect(tail).toHaveTextContent("ng-team");
+  expect(tail).toHaveClass("shrink-0");
+  expect(container.querySelector(".sr-only")).toHaveTextContent("@marketing-team");
+});

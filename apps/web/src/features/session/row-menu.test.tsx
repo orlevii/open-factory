@@ -82,7 +82,10 @@ test("outgoing: View tool call, and Open in inbox only when it went to a human",
     "Copy link",
     "Copy text",
     "View tool call",
+    "View in @b's session",
   ]);
+  // Not sent yet: nothing to view in the recipient's session.
+  expect(labels(outgoing("b"))).toEqual(["Copy link", "Copy text", "View tool call"]);
 });
 
 test("the copied text is the markdown source; the link is the row's deep link", () => {
@@ -268,4 +271,52 @@ test("tool rows and agent text show their time in the gutter; the footer has non
 test("tool rows take the .of-row pressed fill", async () => {
   renderInRouter(timeline([tool("Bash", { command: "ls" })]));
   expect(await screen.findByRole("button", { name: /ls/ })).toHaveClass("of-row");
+});
+
+const card = (kind: "system" | "message", seq: number): Row => ({
+  kind: "message",
+  seq,
+  at,
+  message: { id: `m${seq}`, from: "@factory", kind, urgent: false, body: `Body ${seq}` },
+  key: `${seq}:0`,
+});
+
+test("cards span the column with ⋯ inside their padding; unboxed rows keep the 2rem right column", async () => {
+  renderInRouter(
+    timeline([
+      text(1),
+      outgoing("bob", { id: "m1", to: "bob", status: "delivered" }),
+      card("message", 5),
+      card("system", 6),
+    ]),
+  );
+  await screen.findByText("Body 6");
+  const wrapOf = (key: string) =>
+    document.querySelector(`[data-row="${key}"]`)?.closest("[data-row-wrap]") as HTMLElement;
+  const trigger = (key: string) => wrapOf(key).querySelector("[data-copy-link]") as HTMLElement;
+  for (const key of ["3", "5:0"]) {
+    expect(wrapOf(key)).not.toHaveClass("pr-8");
+    expect(trigger(key)).toHaveClass("top-1.5", "right-1.5");
+    // The card leaves room for the trigger inside its own padding.
+    expect(wrapOf(key).querySelector(".rounded-lg")).toHaveClass("pr-9");
+  }
+  // Agent text and a factory notice are unboxed.
+  for (const key of ["1", "6:0"]) {
+    expect(wrapOf(key)).toHaveClass("pr-8");
+    expect(trigger(key)).toHaveClass("top-1", "right-0");
+  }
+});
+
+test("a tool row's gutter time sits in the row's own line after its state, never painted over it", async () => {
+  renderInRouter(timeline([tool("Bash", { command: "ls" })]));
+  // The Bash renderer's summary is the command (`$ ls`), not the tool's name.
+  const row = await screen.findByRole("button", { name: /\$ ls/ });
+  const time = row.querySelector("time[data-gutter-time]") as HTMLElement;
+  expect(time).not.toBeNull();
+  expect(time).not.toHaveClass("bg-background");
+  expect(time).not.toHaveClass("absolute");
+  // Not part of the row's accessible name: the title and, on touch, the menu carry the time.
+  expect(time).toHaveAttribute("aria-hidden", "true");
+  // Content | time | ⋯: the time is the line's last item, after the state when there is one.
+  expect(row.lastElementChild).toBe(time);
 });

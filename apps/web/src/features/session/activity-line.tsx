@@ -48,7 +48,7 @@ export const Elapsed = memo(function Elapsed({ since }: { since: string }) {
   return <span className="shrink-0 tabular-nums">{formatDuration(now - start)}</span>;
 });
 
-const VERB: Record<string, string> = {
+const VERB: Partial<Record<string, string>> = {
   Bash: "Running",
   Read: "Reading",
   Edit: "Editing",
@@ -58,6 +58,16 @@ const VERB: Record<string, string> = {
   Grep: "Searching",
   Glob: "Searching",
 };
+/** "Reading `retry.ts`": a tool's verb and its formatted target, else the target or the tool's name
+ *  (shared with the subagent card's live line, U3 §12). `code` is the part shown as code. */
+export function toolPhrase(
+  tool: string,
+  target: string | undefined,
+): { verb?: string; code: string } {
+  const verb = VERB[tool];
+  return verb && target ? { verb, code: target } : { code: target ?? tool };
+}
+
 const PLAIN: Partial<Record<Activity["kind"], string>> = {
   thinking: "Thinking",
   text: "Writing a reply",

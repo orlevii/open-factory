@@ -8,8 +8,9 @@ import { RowHarness, rowToggle, toolRow } from "./tools/test-row";
 
 beforeEach(() => resetSeq());
 
+// Agent calls are subagent cards now (U3 §12); any other call row still carries its task.
 const agentWith = (task: NonNullable<ToolRow["backgroundTask"]>): ToolRow => ({
-  ...toolRow("Agent", { description: "scan the repo" }, { content: "Async agent launched" }),
+  ...toolRow("Monitor", { description: "watch the build" }, { content: "Watching" }),
   backgroundTask: task,
 });
 

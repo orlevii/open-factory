@@ -780,3 +780,47 @@ test("SessionView: the activity line reads live frames (text, then tool input), 
   expect(Object.fromEntries(count.rows)).toEqual({});
   expect(Object.fromEntries(count.profiled)).toEqual({});
 });
+
+const agentCall = (seq: number) =>
+  sessionEvent(
+    ev(seq, {
+      type: "tool_call",
+      toolUseId: `ag${seq}`,
+      name: "Agent",
+      input: { description: `job ${seq}`, prompt: "go" },
+    }),
+  );
+const prog = (id: string, toolUses: number) => ({
+  toolUseId: id,
+  description: "job",
+  subagentType: "general-purpose",
+  toolUses,
+  tokens: 1000,
+  durationMs: 100,
+});
+
+test("SessionView: a progress frame re-renders only its subagent card; a text-only frame renders no card", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  push(agentCall(201));
+  push(agentCall(202));
+  frame();
+  push({ type: "live", agent: "dev", subagents: [prog("ag201", 1), prog("ag202", 1)] });
+  frame();
+  expect(
+    document.querySelector('[data-row="201"]')?.closest("[data-subagent]")?.textContent,
+  ).toContain("1 tool call");
+  reset();
+  push({ type: "live", agent: "dev", subagents: [prog("ag201", 1), prog("ag202", 2)] });
+  frame();
+  expect(Object.fromEntries(count.rows)).toEqual({ "202": 1 });
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+  reset();
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  expect(Object.fromEntries(count.rows)).toEqual({ "t:m1:1": 1 });
+});

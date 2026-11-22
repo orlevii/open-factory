@@ -1,4 +1,4 @@
-import type { OpenTurnRows, ToolRow } from "./rows";
+import type { OpenTurnRows, SubagentRow, ToolRow } from "./rows";
 
 /** What the agent is doing now (U3 §5.1): data only; `ActivityLine` formats it. */
 export type ActivityKind =
@@ -71,7 +71,7 @@ const described = (r: ToolRow) => {
   return r.call.name === "Bash" && typeof d === "string" && !!d.trim();
 };
 
-const subagentName = (r: ToolRow) => {
+const subagentName = (r: SubagentRow) => {
   const d = (r.call.input as Record<string, unknown> | null)?.description;
   return typeof d === "string" && d.trim() ? firstLine(d) : r.call.name;
 };

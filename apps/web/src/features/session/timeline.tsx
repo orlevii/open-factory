@@ -1,3 +1,4 @@
+import type { SubagentProgress } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -14,17 +15,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
-import { childrenOf, groupOpen, heldSeqs, innerKey } from "./display-passes";
+import { childrenOf, groupOpen, heldSeqs, innerKey, isFold } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import { rowOf } from "./row-of";
 import { type Row, textRowKey } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
 import type { LiveText } from "./session-state";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
+import type { RowProgress } from "./timeline-item";
 import { type Arrival, rowGap, TimelineItem } from "./timeline-item";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_TEXTS: readonly LiveText[] = [];
+const NO_PROGRESS: readonly SubagentProgress[] = [];
 type TextRow = Extract<Row, { kind: "text" }>;
 const NO_LIVE_ROWS: readonly TextRow[] = [];
 
@@ -117,6 +120,8 @@ export function Timeline(props: {
   liveTexts?: readonly LiveText[];
   /** The next top-level text opens a speaker line (`buildRows`' `textHead`). */
   textHead?: boolean;
+  /** `state.live.subagents` (U3 §12): each card's live line, passed only to subagent rows. */
+  subagents?: readonly SubagentProgress[];
 }) {
   const { rows, liveAfter = Number.POSITIVE_INFINITY, handedOff = NO_KEYS } = props;
   const windowed = props.windowed ?? false;
@@ -177,7 +182,7 @@ export function Timeline(props: {
       const holder =
         key === undefined || (active && active !== document.body)
           ? undefined
-          : rows.find((r) => r.kind === "work_group" && (r.key === key || containsKey(r, key)));
+          : rows.find((r) => isFold(r) && (r.key === key || containsKey(r, key)));
       if (holder)
         el.querySelector<HTMLElement>(`[data-row="${CSS.escape(holder.key)}"]`)?.focus({
           preventScroll: true,
@@ -382,6 +387,7 @@ export function Timeline(props: {
   );
 
   const { spawned, slug, failedIds, interruptedEnds } = props;
+  const progressOf = useProgressOf(props.subagents ?? NO_PROGRESS);
   // Memoized on the rows and the per-row props: a live frame reuses these element objects, so React
   // skips every persisted item (U3 §11.4, acceptance 22).
   const rowEls = useMemo(
@@ -405,9 +411,11 @@ export function Timeline(props: {
           interruptedEnds={interruptedEnds}
           toggle={toggle}
           onRowFocus={onRowFocus}
+          progress={progressOf(row)}
         />
       )),
     [
+      progressOf,
       rows,
       slug,
       spawned,
@@ -509,6 +517,41 @@ export function Timeline(props: {
   );
 }
 
+type ProgressList = readonly (SubagentProgress | undefined)[];
+const NO_ROW_PROGRESS = { of: (_row: Row): RowProgress => undefined, lists: new Map() };
+
+/**
+ * The live progress each row receives (U3 §11.4, §12, B1): a subagent card gets its own entry (the
+ * reducer keeps an unchanged entry's identity, so a frame re-renders only the cards that changed);
+ * an overflow row gets its children's entries as one array, reused while every entry is the same;
+ * every other row gets `undefined`. Memoized on `live.subagents`; the arrays given out are kept after
+ * commit for the next frame to compare with.
+ */
+function useProgressOf(subagents: readonly SubagentProgress[]): (row: Row) => RowProgress {
+  const kept = useRef<ReadonlyMap<string, ProgressList>>(new Map());
+  const memo = useMemo(() => {
+    if (subagents.length === 0) return NO_ROW_PROGRESS;
+    const byId = new Map(subagents.map((p) => [p.toolUseId, p]));
+    const lists = new Map<string, ProgressList>();
+    const of = (row: Row): RowProgress => {
+      if (row.kind === "subagent") return byId.get(row.call.toolUseId);
+      if (row.kind !== "subagent_overflow") return undefined;
+      const next = row.children.map((c) => byId.get(c.call.toolUseId));
+      if (next.every((p) => p === undefined)) return undefined;
+      const prev = kept.current.get(row.key);
+      const list =
+        prev && prev.length === next.length && prev.every((p, i) => p === next[i]) ? prev : next;
+      lists.set(row.key, list);
+      return list;
+    };
+    return { of, lists };
+  }, [subagents]);
+  useLayoutEffect(() => {
+    kept.current = memo.lists;
+  }, [memo]);
+  return memo.of;
+}
+
 /** A plain loop: rows are seq-ordered, but a group keeps its first child's seq, and a folded run or a
  *  merged failure its first while holding later ones (the Jump pill compares the last). */
 function maxSeq(rows: Row[]): number {
@@ -523,7 +566,7 @@ const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>
   rows.some(
     (r) =>
       r.key === key ||
-      ((r.kind === "work_group" ? groupOpen(r, expanded) : expanded.has(r.key)) &&
+      ((isFold(r) ? groupOpen(r, expanded) : expanded.has(r.key)) &&
         hasKey(childrenOf(r), key, expanded)),
   );
 
@@ -553,14 +596,15 @@ export function targetPath(rows: Row[], seq: number): string[] | undefined {
   if (top === undefined) return undefined;
   const path = [top];
   let row = rows.find((r) => r.key === top);
-  // A group shares its first call's seq but lands on the call itself (U3 §9.4).
-  while (row && (row.kind === "work_group" || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
+  // A group (or the subagent overflow) shares its first child's seq but lands on the child itself
+  // (U3 §9.4, §12).
+  while (row && (isFold(row) || (row.seq !== seq && !heldSeqs(row)?.includes(seq)))) {
     const kids = childrenOf(row);
     row =
       kids.find((c) => c.seq === seq) ??
       kids.find((c) => containsSeq(childrenOf(c), seq)) ??
       // A hidden event between a group's calls: the next call, as at the top level.
-      (row.kind === "work_group" ? kids.find((c) => c.seq > seq) : undefined);
+      (isFold(row) ? kids.find((c) => c.seq > seq) : undefined);
     if (row) path.push(row.key);
   }
   return path;

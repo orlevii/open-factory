@@ -1,8 +1,13 @@
+import type { SubagentProgress } from "@open-factory/shared";
 import { memo, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
 import { RowChrome } from "./row-chrome";
 import { isNoticeKind, type Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
+
+/** A subagent card's live progress, or an overflow row's children's (U3 §12); `undefined` for every
+ *  other row. Compared by identity. */
+export type RowProgress = SubagentProgress | readonly (SubagentProgress | undefined)[] | undefined;
 
 /** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
 export type Arrival = "on" | "fading";
@@ -31,6 +36,8 @@ export type TimelineItemProps = {
   interruptedEnds: ReadonlySet<number>;
   toggle(key: string, inner?: readonly string[]): void;
   onRowFocus(key: string): void;
+  /** Live progress, passed only to subagent and overflow rows (U3 §11.4, B1). */
+  progress?: RowProgress;
 };
 
 function subtree(row: Row, out: Row[] = []): Row[] {
@@ -57,7 +64,8 @@ function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean 
     a.onArrivedEnd !== b.onArrivedEnd ||
     a.firstOfSeq !== b.firstOfSeq ||
     a.toggle !== b.toggle ||
-    a.onRowFocus !== b.onRowFocus
+    a.onRowFocus !== b.onRowFocus ||
+    a.progress !== b.progress
   )
     return false;
   // Identity fast path: same shared sets and the same tab row, so nothing per-row can differ.
@@ -150,6 +158,7 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}
         toolTime={row.kind === "tool" ? row.at : undefined}
+        progress={p.progress}
       />
       {/* A live block has no seq to link to yet: its time and ⋯ come with the persisted row. */}
       {!(row.kind === "text" && row.live) && (

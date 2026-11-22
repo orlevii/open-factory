@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { activityKey, deriveActivity, formatTarget, mcpParts } from "./activity";
-import type { ToolRow } from "./rows";
+import type { SubagentRow, ToolRow } from "./rows";
 
 let n = 0;
 const tool = (name: string, input: unknown): ToolRow => {
@@ -17,7 +17,10 @@ const tool = (name: string, input: unknown): ToolRow => {
 };
 const bash = (command: string, description?: string) =>
   tool("Bash", description === undefined ? { command } : { command, description });
-const agentRow = (description: string) => tool("Agent", { description, prompt: "…" });
+const agentRow = (description: string): SubagentRow => {
+  const { kind: _, ...rest } = tool("Agent", { description, prompt: "…" });
+  return { ...rest, kind: "subagent", state: "running", async: false };
+};
 
 test("priority: subagents, then the newest open tool, then working", () => {
   expect(

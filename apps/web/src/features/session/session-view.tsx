@@ -332,6 +332,7 @@ export function SessionView({
               newSpeech={s.state.newSpeech}
               onLeaveWindow={leaveWindow}
               liveTexts={s.state.live.texts}
+              subagents={s.state.live.subagents}
               textHead={s.textHead}
               footer={
                 <>

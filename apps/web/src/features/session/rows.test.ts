@@ -76,8 +76,9 @@ test("a tool call pairs with its result; nested work goes under its parent", () 
   ]);
   expect(rows).toHaveLength(1);
   const tool = rows[0];
-  expect(tool).toMatchObject({ kind: "tool", state: "done" });
-  if (tool?.kind !== "tool") throw new Error();
+  // A Task call is a subagent row (U3 §12): its transcript nests under it.
+  expect(tool).toMatchObject({ kind: "subagent", state: "done" });
+  if (tool?.kind !== "subagent") throw new Error();
   expect(tool.children.map((c) => c.kind)).toEqual(["tool", "text"]);
 });
 
@@ -170,7 +171,7 @@ test("an orphan result with a known parent nests under that parent", () => {
     }),
   ]);
   const parent = rows[0];
-  if (parent?.kind !== "tool") throw new Error();
+  if (parent?.kind !== "subagent") throw new Error();
   expect(parent.children.map((c) => c.kind)).toEqual(["orphan_result"]);
 });
 
@@ -230,8 +231,8 @@ test("a denial pairs with a nested call too", () => {
       reason: "",
     }),
   ]);
-  expect(rows.map((r) => r.kind)).toEqual(["tool"]);
-  const child = (rows[0] as Extract<(typeof rows)[number], { kind: "tool" }>).children[0];
+  expect(rows.map((r) => r.kind)).toEqual(["subagent"]);
+  const child = (rows[0] as Extract<(typeof rows)[number], { kind: "subagent" }>).children[0];
   expect(child && "denial" in child && child.denial?.toolUseId).toBe("c");
 });
 
@@ -291,13 +292,13 @@ test("spawn_agent and terminate_agent calls with the right shape pair with their
     "terminate",
     "tool",
     "tool",
-    "tool",
+    "subagent",
   ]);
   expect(rows[0]).toMatchObject({ kind: "spawn", turnOpen: true, result: { toolUseId: "s1" } });
   expect(rows[1]).toMatchObject({ kind: "terminate", turnOpen: true });
   expect(rows[1] && "result" in rows[1] && rows[1].result).toBeFalsy();
   expect(rows[2]).toMatchObject({ kind: "terminate", denial });
-  const task = rows[5] as Extract<(typeof rows)[number], { kind: "tool" }>;
+  const task = rows[5] as Extract<(typeof rows)[number], { kind: "subagent" }>;
   expect(task.children.map((c) => c.kind)).toEqual(["spawn"]);
 });
 
@@ -319,6 +320,10 @@ test("an unanswered spawn after its turn ended is no longer open", () => {
 // Stable rows (spec §9.3).
 const toolRow = (r: Row | undefined) => {
   if (r?.kind !== "tool") throw new Error("not a tool row");
+  return r;
+};
+const subRow = (r: Row | undefined) => {
+  if (r?.kind !== "subagent") throw new Error("not a subagent row");
   return r;
 };
 
@@ -415,13 +420,13 @@ test("a later result, denial or truncated replaces the tool row but keeps its un
   ];
   for (const ev of later) {
     const next = stabilizeRows(prev, rowsOf([...base, ev]));
-    const [was, now] = [toolRow(prev[0]), toolRow(next[0])];
+    const [was, now] = [subRow(prev[0]), subRow(next[0])];
     expect(now).not.toBe(was);
     expect(now.children).toHaveLength(2);
     for (const [i, c] of was.children.entries()) expect(now.children[i]).toBe(c);
   }
   // The replaced rows carry the new fields, not the old ones.
-  const withEv = (ev: SessionEvent) => toolRow(stabilizeRows(prev, rowsOf([...base, ev]))[0]);
+  const withEv = (ev: SessionEvent) => subRow(stabilizeRows(prev, rowsOf([...base, ev]))[0]);
   expect(withEv(later[0] as SessionEvent).result).toBe(later[0]?.event);
   expect(withEv(later[1] as SessionEvent).denial).toBe(later[1]?.event);
   const t = withEv(later[2] as SessionEvent);
@@ -608,13 +613,13 @@ test("head: never on a subagent's children, and they don't consume the turn's he
     e({ type: "assistant_text", text: "outside" }),
   ]);
   const agent = rows[0];
-  if (agent?.kind !== "tool") throw new Error("no agent row");
+  if (agent?.kind !== "subagent") throw new Error("no agent row");
   expect(agent.children.map((c) => c.kind === "text" && c.head)).toEqual([false, false]);
   expect(rows[1]).toMatchObject({ kind: "text", text: "outside", head: true });
 });
 
 // The rows pipeline (U3 §7.7): one helper knows which rows hold children.
-test("childrenOf: a tool row's children; none for any other row", () => {
+test("childrenOf: a subagent row's children; none for a leaf row", () => {
   seq = 0;
   const rows = rowsOf([
     e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
@@ -622,7 +627,7 @@ test("childrenOf: a tool row's children; none for any other row", () => {
     e({ type: "assistant_text", text: "outside" }),
   ]);
   const [tool, text] = rows;
-  if (tool?.kind !== "tool" || !text) throw new Error("rows");
+  if (tool?.kind !== "subagent" || !text) throw new Error("rows");
   expect(childrenOf(tool)).toBe(tool.children);
   expect(childrenOf(text)).toEqual([]);
   expect(childrenOf(text)).toBe(childrenOf(text)); // one shared empty array, never a fresh one
@@ -651,7 +656,7 @@ test("stabilizeRows recurses through childrenOf: an unchanged nested child keeps
     rowsOf([...evs, e({ type: "assistant_text", text: "more", parentToolUseId: "ag" })]),
   );
   const [a, b] = [first[0], grown[0]];
-  if (a?.kind !== "tool" || b?.kind !== "tool") throw new Error("rows");
+  if (a?.kind !== "subagent" || b?.kind !== "subagent") throw new Error("rows");
   expect(b).not.toBe(a);
   expect(b.children[0]).toBe(a.children[0]);
 });

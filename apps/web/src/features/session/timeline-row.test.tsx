@@ -464,14 +464,15 @@ function toolLine(name: string, input: unknown, content?: string, open = false) 
     events.push({ type: "tool_result", toolUseId: "tu1", content, isError: false });
   const row = buildRows(events.map((e) => se(e, null))).rows[0];
   if (!row) throw new Error("no row");
+  // As in the timeline: `data-row` comes from rowProps, on the row's own box.
   return render(
-    <div data-row>
+    <div>
       <TimelineRow
         slug="dev"
         row={row}
         expanded={new Set(open ? [row.key] : [])}
         toggle={() => {}}
-        rowProps={() => ({})}
+        rowProps={(r) => ({ "data-row": r.key })}
         failedIds={new Set()}
         interruptedEnds={new Set()}
       />

@@ -16,6 +16,7 @@ import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
 import { childrenOf, groupOpen, heldSeqs, innerKey } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
+import { rowOf } from "./row-of";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
@@ -207,7 +208,7 @@ export function Timeline(props: {
     const active = document.activeElement as HTMLElement | null;
     if (!active) return;
     if (e.key === "Escape" && !active.hasAttribute("data-row")) {
-      const row = active.closest<HTMLElement>("[data-row]");
+      const row = rowOf(active);
       if (row) {
         e.preventDefault();
         row.focus();
@@ -254,8 +255,8 @@ export function Timeline(props: {
     const sel = `[data-row-wrap] :is(${INTERACTIVE})`;
     const set = (el: HTMLElement) => {
       if (el.hasAttribute("data-row") || el.hasAttribute("data-copy-link")) return;
-      // Only a row's own content counts; the Copy link actions and tool plates stay at -1.
-      const owner = el.closest<HTMLElement>("[data-row]");
+      // A row's content and its tool body count (`rowOf`); plates that never scroll stay at -1.
+      const owner = el.hasAttribute("data-plate") ? null : rowOf(el);
       el.setAttribute("tabindex", owner?.dataset.row === tabKeyRef.current ? "0" : "-1");
     };
     if (root instanceof HTMLElement && root.matches(sel)) set(root);
@@ -281,8 +282,10 @@ export function Timeline(props: {
     if (!content) return;
     for (const key of [prev, tabKey]) {
       if (key === undefined) continue;
-      const row = content.querySelector(`[data-row="${CSS.escape(key)}"]`);
-      if (row) applyTo(row);
+      const k = CSS.escape(key);
+      // The row and, for a tool call, its body (a sibling).
+      for (const el of content.querySelectorAll(`[data-row="${k}"], [data-row-body="${k}"]`))
+        applyTo(el);
     }
   }, [tabKey, applyTo]);
   const onRowFocus = useCallback((k: string) => {

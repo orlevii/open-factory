@@ -140,7 +140,8 @@ function DiffLines({
   return (
     <div>
       {/* A scrolling region: focusable so the keyboard can scroll it (the timeline's roving
-          tabindex keeps it out of the tab order unless its row is active), and labelled. */}
+          tabindex keeps it out of the tab order unless its row, found through the body's
+          `data-row-body`, is the tab stop), and labelled. */}
       {/* biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls, not a code region */}
       <div
         data-diff

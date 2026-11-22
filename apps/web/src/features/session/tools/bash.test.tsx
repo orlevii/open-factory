@@ -32,12 +32,13 @@ function bashRow(
 function Harness({ row, open = false }: { row: ToolRow; open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
   return (
-    <div data-row>
+    // As in the timeline: `data-row` is on the row's own button, the body is its sibling.
+    <div>
       <ToolCallRow
         row={row}
         expanded={expanded}
         onToggle={() => setExpanded((x) => !x)}
-        rowProps={{}}
+        rowProps={{ "data-row": row.key }}
       />
     </div>
   );

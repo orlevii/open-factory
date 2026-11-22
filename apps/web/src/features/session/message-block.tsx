@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
+import { rowOf } from "./row-of";
 import { SpeakerLine } from "./speaker-line";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
@@ -319,7 +320,7 @@ function NoticeBody({ source }: { source: string }) {
           type="button"
           data-expands
           onClick={(e) => {
-            e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
+            rowOf(e.currentTarget)?.focus(); // this button unmounts
             setAll(true);
           }}
           className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
@@ -354,7 +355,7 @@ export function ClampedMarkdown({
         type="button"
         data-expands
         onClick={(e) => {
-          e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
+          rowOf(e.currentTarget)?.focus(); // this button unmounts
           setAll(true);
         }}
         className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"

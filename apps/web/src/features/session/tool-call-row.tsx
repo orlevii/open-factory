@@ -112,7 +112,8 @@ export function ToolCallRow({
       </button>
       <Detail row={row} chip={chip} />
       {expanded && (
-        <div className="mt-1 space-y-2 pl-6">
+        // Its controls belong to the row above (`rowOf`): tab order, Esc, focus and scroll anchor.
+        <div data-row-body={row.key} className="mt-1 space-y-2 pl-6">
           <R.Body row={row} />
           {children && <div className="space-y-3 pl-4">{children}</div>}
         </div>

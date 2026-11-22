@@ -32,12 +32,13 @@ function toolRow(
 function Harness({ row, open = false }: { row: ToolRow; open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
   return (
-    <div data-row="r" tabIndex={-1}>
+    // As in the timeline: `data-row` is on the row's own button, the body is its sibling.
+    <div>
       <ToolCallRow
         row={row}
         expanded={expanded}
         onToggle={() => setExpanded((x) => !x)}
-        rowProps={{}}
+        rowProps={{ "data-row": row.key, tabIndex: -1 }}
       />
     </div>
   );
@@ -158,7 +159,7 @@ test("Show all anchors its row through the timeline's expandAnchor before it exp
       linesWhenAnchored = diffLines().length;
     });
     fireEvent.click(screen.getByRole("button", { name: "Show all 8 lines" }));
-    expect(expandAnchor).toHaveBeenCalledWith(document.querySelector('[data-row="r"]'));
+    expect(expandAnchor).toHaveBeenCalledWith(document.querySelector("button[data-row]"));
     expect(linesWhenAnchored).toBe(6);
     expect(diffLines()).toHaveLength(8);
   } finally {

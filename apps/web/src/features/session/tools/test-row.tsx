@@ -25,16 +25,17 @@ export function toolRow(
   return row;
 }
 
-/** Test helper: the row inside a `[data-row]`, toggling like the timeline does. */
+/** Test helper: the row as the timeline renders it (`data-row` on its own button, the body its
+ *  sibling), toggling like the timeline does. */
 export function RowHarness({ row, open = false }: { row: ToolRow; open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
   return (
-    <div data-row>
+    <div>
       <ToolCallRow
         row={row}
         expanded={expanded}
         onToggle={() => setExpanded((x) => !x)}
-        rowProps={{}}
+        rowProps={{ "data-row": row.key }}
       />
     </div>
   );

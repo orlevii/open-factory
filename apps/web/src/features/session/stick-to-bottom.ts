@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { rowOf } from "./row-of";
 
 /** Within this many px of the bottom counts as at the bottom (U3 §8.1). */
 const SLACK = 8;
@@ -186,7 +187,7 @@ export function useStickToBottom(
     // Focus entering a row entirely above the viewport (Tab into the log, roving focus) is a
     // look-up intent; a tall row that still reaches into the view (the last one) is not.
     const onFocusIn = (e: FocusEvent) => {
-      const row = (e.target as Element | null)?.closest?.("[data-row]");
+      const row = rowOf(e.target instanceof Element ? e.target : null);
       if (row && row.getBoundingClientRect().bottom < sc.getBoundingClientRect().top) unpin();
     };
     // Capture: runs before React's handlers, so the anchor is taken before the state change.
@@ -194,9 +195,7 @@ export function useStickToBottom(
       const toggle = (e.target as Element | null)?.closest?.<HTMLElement>(TOGGLE);
       if (!toggle || !content.contains(toggle)) return;
       // "Show all" unmounts itself: its row's top stands in for it.
-      const el = toggle.matches("[data-expands]")
-        ? (toggle.closest<HTMLElement>("[data-row]") ?? toggle)
-        : toggle;
+      const el = toggle.matches("[data-expands]") ? (rowOf(toggle) ?? toggle) : toggle;
       api.expandAnchor(el);
     };
     const onSelectionChange = () => {

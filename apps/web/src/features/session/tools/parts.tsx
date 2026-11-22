@@ -1,6 +1,7 @@
 import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
 import { formatBytes } from "../format";
 import { CodePlate } from "../quiet-line";
+import { rowOf } from "../row-of";
 import type { ToolRow } from "../rows";
 import { byteSize, isBinary, stripAnsi, tailOutput } from "./output";
 
@@ -8,15 +9,18 @@ import { byteSize, isBinary, stripAnsi, tailOutput } from "./output";
  *  the 24rem-capped `CodePlate` stays for raw fallbacks. Children are text, never HTML. */
 export function OutputPlate({ children }: { children: ReactNode }) {
   return (
-    <pre className="mt-1 rounded-md border border-code-border bg-code p-2 font-mono text-[0.8125rem] leading-[1.125rem] whitespace-pre-wrap [overflow-wrap:anywhere]">
+    // `data-plate`: it never scrolls (it wraps), so the roving tabindex keeps it out of the tab order.
+    <pre
+      data-plate
+      className="mt-1 rounded-md border border-code-border bg-code p-2 font-mono text-[0.8125rem] leading-[1.125rem] whitespace-pre-wrap [overflow-wrap:anywhere]"
+    >
       {children}
     </pre>
   );
 }
 
 /** Focus the row before the clicked control unmounts, so focus never drops to the body. */
-const keepRowFocus = (e: MouseEvent<HTMLElement>) =>
-  e.currentTarget.closest<HTMLElement>("[data-row]")?.focus();
+const keepRowFocus = (e: MouseEvent<HTMLElement>) => rowOf(e.currentTarget)?.focus();
 
 /** "Show all", "show raw": an in-place expansion. `data-expands` makes the timeline anchor the row
  *  before it grows (§8.1), as `ClampedMarkdown`'s "Show all" does. */

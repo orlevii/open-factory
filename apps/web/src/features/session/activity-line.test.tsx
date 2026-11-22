@@ -180,6 +180,9 @@ test("an MCP label truncates its server first, as the tool row does", () => {
     />,
   );
   const label = document.querySelector("[data-activity-label]") as HTMLElement;
-  expect(within(label).getByText("github")).toHaveClass("min-w-0", "truncate");
-  expect(within(label).getByText(/create_pr/)).toHaveClass("shrink-0");
+  const server = label.querySelector("[data-mcp-server]") as HTMLElement;
+  expect(server).toHaveTextContent(/^github$/);
+  expect(server.firstElementChild).toHaveClass("min-w-0", "truncate");
+  expect(label.querySelector("[data-mcp-tool]")).toHaveClass("shrink-0");
+  expect(label.querySelector("[data-mcp-tool]")).toHaveTextContent("create_pr");
 });

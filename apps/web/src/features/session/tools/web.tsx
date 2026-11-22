@@ -23,7 +23,8 @@ function WebSummary({ row }: { row: ToolRow }) {
   const { host, path } = hostPath(url);
   return (
     <span title={url} className="flex min-w-0 flex-1 items-baseline">
-      <span className="min-w-0 shrink-0 truncate">{host}</span>
+      {/* The host shrinks too (at most 60% of the line), so a long one never reaches the chip. */}
+      <span className="min-w-0 max-w-[60%] truncate">{host}</span>
       <span className="min-w-0 truncate text-muted-foreground">{path}</span>
     </span>
   );

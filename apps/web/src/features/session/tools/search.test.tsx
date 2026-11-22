@@ -43,9 +43,75 @@ describe("parseSearch", () => {
       kind: "content",
       count: 3,
       groups: [
-        { file: "/a.ts", hits: ["3:const x = 1", "9:x++"] },
-        { file: "/b.ts", hits: ["1:import x"] },
+        {
+          file: "/a.ts",
+          lines: [
+            { text: "3:const x = 1", match: true },
+            { text: "9:x++", match: true },
+          ],
+        },
+        { file: "/b.ts", lines: [{ text: "1:import x", match: true }] },
       ],
+    });
+  });
+  test("context lines (path-N-text) and -- separators are shown but never counted", () => {
+    const r = parseSearch(
+      [
+        "src/retry-policy.ts-10-// before",
+        "src/retry-policy.ts:11:const retries = 3;",
+        "src/retry-policy.ts-12-// after: with a colon",
+        "--",
+        "src/retry-policy.ts-40-x",
+        "src/retry-policy.ts:41:retries++",
+        "src/b.ts:1:import { retries } from './retry-policy';",
+      ].join("\n"),
+      "content",
+    );
+    expect(r.count).toBe(3);
+    expect(r).toEqual({
+      kind: "content",
+      count: 3,
+      groups: [
+        {
+          file: "src/retry-policy.ts",
+          lines: [
+            { text: "10-// before", match: false },
+            { text: "11:const retries = 3;", match: true },
+            { text: "12-// after: with a colon", match: false },
+            { text: "40-x", match: false },
+            { text: "41:retries++", match: true },
+          ],
+        },
+        {
+          file: "src/b.ts",
+          lines: [{ text: "1:import { retries } from './retry-policy';", match: true }],
+        },
+      ],
+    });
+  });
+  test("count mode: path:N lines, totals from the closing Found line", () => {
+    const r = parseSearch(
+      "src/a.ts:3\nsrc/b-c.ts:8\nsrc/d.ts:1\n\nFound 12 total occurrences across 3 files.",
+      "count",
+    );
+    expect(r).toEqual({
+      kind: "counts",
+      count: 12,
+      fileCount: 3,
+      files: [
+        { file: "src/a.ts", n: 3 },
+        { file: "src/b-c.ts", n: 8 },
+        { file: "src/d.ts", n: 1 },
+      ],
+    });
+  });
+  test("count mode without the Found line sums the lines; odd lines stay plain", () => {
+    const r = parseSearch("src/a.ts:3\nsomething else\nsrc/b.ts:2", "count");
+    expect(r).toEqual({
+      kind: "counts",
+      count: 5,
+      fileCount: 3,
+      files: [{ file: "src/a.ts", n: 3 }, { file: "something else" }, { file: "src/b.ts", n: 2 }],
     });
   });
   test("content hits without a file prefix stay in one unnamed group", () => {
@@ -53,7 +119,15 @@ describe("parseSearch", () => {
     expect(r).toEqual({
       kind: "content",
       count: 2,
-      groups: [{ file: "", hits: ["just a line", "another"] }],
+      groups: [
+        {
+          file: "",
+          lines: [
+            { text: "just a line", match: true },
+            { text: "another", match: true },
+          ],
+        },
+      ],
     });
   });
 });
@@ -119,6 +193,36 @@ test("expanded content search: hits grouped under their file", () => {
   expect(screen.getByText("/b.ts")).toBeInTheDocument();
 });
 
+test("collapsed count search: matches in files; expanded: each file with its count", () => {
+  const content = "src/a.ts:3\nsrc/b.ts:9\nFound 12 total occurrences across 2 files.";
+  render(
+    <RowHarness
+      open
+      row={toolRow("Grep", { pattern: "retry", output_mode: "count" }, { content })}
+    />,
+  );
+  expect(rowToggle()).toHaveTextContent(/^retry · 12 matches in 2 files$/);
+  const items = screen.getAllByRole("listitem");
+  expect(items.map((i) => i.textContent)).toEqual(["src/a.ts · 3", "src/b.ts · 9"]);
+  expect(screen.queryByText(/Found 12/)).not.toBeInTheDocument();
+});
+
+test("expanded content search with context: context lines are marked, matches counted", () => {
+  const content = "/a.ts-2-before\n/a.ts:3:const x = 1\n/a.ts-4-after\n--\n/b.ts:1:import x";
+  const { container } = render(
+    <RowHarness
+      open
+      row={toolRow("Grep", { pattern: "x", output_mode: "content", "-C": 1 }, { content })}
+    />,
+  );
+  expect(rowToggle()).toHaveTextContent("x · 2 matches");
+  expect([...container.querySelectorAll("[data-context]")].map((e) => e.textContent)).toEqual([
+    "2-before",
+    "4-after",
+  ]);
+  expect(screen.getAllByText("/a.ts")).toHaveLength(1);
+});
+
 test("no results read as such", () => {
   render(
     <RowHarness open row={toolRow("Grep", { pattern: "zzz" }, { content: "No files found" })} />,
@@ -138,7 +242,7 @@ test("a failed search shows its error output", () => {
       )}
     />,
   );
-  expect(rowToggle()).toHaveTextContent(/^\( Failed$|^\(Failed$/);
+  expect(rowToggle()).toHaveTextContent(/^\(Failed$/);
   expect(document.querySelector("pre")).toHaveTextContent("regex parse error");
 });
 

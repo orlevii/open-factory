@@ -89,7 +89,14 @@ function ReadSummary({ row }: { row: ToolRow }) {
 function FileLines({ lines, path }: { lines: Line[]; path: string }) {
   const [all, setAll] = useState(false);
   const [tokens, setTokens] = useState<HighlightToken[][] | null>(null);
-  const code = useMemo(() => lines.map((l) => l.text).join("\n"), [lines]);
+  const collapsed = shownCount(lines);
+  const shown = all ? lines : lines.slice(0, collapsed);
+  // Only the lines on screen are highlighted: "Show all" highlights the rest when asked. Until it
+  // lands, the earlier tokens still colour the head (a line's index is the same in both).
+  const code = useMemo(
+    () => (all ? lines : lines.slice(0, collapsed)).map((l) => l.text).join("\n"),
+    [lines, all, collapsed],
+  );
   useEffect(() => {
     let live = true;
     highlightFile(code, path)
@@ -99,8 +106,6 @@ function FileLines({ lines, path }: { lines: Line[]; path: string }) {
       live = false;
     };
   }, [code, path]);
-  const collapsed = shownCount(lines);
-  const shown = all ? lines : lines.slice(0, collapsed);
   const width = { width: `${String(lines.reduce((m, l) => Math.max(m, l.n ?? 0), 0)).length}ch` };
   return (
     <div>

@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
+import * as highlightModule from "@/components/markdown/highlight";
 import { resetSeq } from "@/test/session-fixtures";
 import { RowHarness, rowToggle, toolRow } from "./test-row";
 
@@ -145,4 +146,22 @@ test("a failed read shows its error, not Show content", () => {
   );
   expect(rowToggle()).toHaveTextContent(/^missing\.tsFailed$/);
   expect(screen.queryByRole("button", { name: "Show content" })).not.toBeInTheDocument();
+});
+
+test("Show content highlights only the lines it shows; Show all highlights the rest", async () => {
+  const spy = vi.spyOn(highlightModule, "highlightFile");
+  const lines = Array.from({ length: 40 }, (_, i) => `const a${i} = ${i};`);
+  const row = toolRow("Read", { file_path: PATH }, { content: numbered(lines) });
+  const { container } = render(<RowHarness open row={row} />);
+  await userEvent.click(screen.getByRole("button", { name: "Show content" }));
+  await waitFor(() => expect(spy).toHaveBeenCalled());
+  expect(spy.mock.calls.at(-1)?.[0].split("\n")).toHaveLength(12);
+  await userEvent.click(screen.getByRole("button", { name: "Show all 40 lines" }));
+  await waitFor(() => expect(spy.mock.calls.at(-1)?.[0].split("\n")).toHaveLength(40));
+  await waitFor(() =>
+    expect(
+      container.querySelectorAll("[data-code]")[39]?.querySelector("span[style]"),
+    ).not.toBeNull(),
+  );
+  spy.mockRestore();
 });

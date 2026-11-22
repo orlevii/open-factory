@@ -84,9 +84,15 @@ add("hcl", hcl, ["terraform"]);
 add("proto", proto);
 add("dotenv", dotenv, ["env"]);
 
+/** An own entry of a lookup table: names come from fences and file paths the model wrote, so
+ *  `constructor` or `__proto__` must not reach `Object.prototype`. */
+function own<T>(table: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 /** The grammar id for a fence language, or undefined when we don't highlight it. */
 export function resolveLang(lang: string): string | undefined {
-  return GRAMMARS[lang.toLowerCase()]?.id;
+  return own(GRAMMARS, lang.toLowerCase())?.id;
 }
 
 const THEMES = { light: "github-light", dark: "github-dark" } as const;
@@ -124,7 +130,7 @@ function loadGrammar(h: HighlighterCore, id: string, load: GrammarLoader) {
 
 /** Highlighted HTML for `code`, or null when the language isn't one we highlight. */
 export async function highlight(code: string, lang: string): Promise<string | null> {
-  const grammar = GRAMMARS[lang.toLowerCase()];
+  const grammar = own(GRAMMARS, lang.toLowerCase());
   if (!grammar) return null;
   const h = await getHighlighter();
   await loadGrammar(h, grammar.id, grammar.load);
@@ -152,13 +158,13 @@ const FILE_NAMES: Record<string, string> = {
 export function langForPath(path: string): string | undefined {
   const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
   if (!name) return undefined;
-  const byName = FILE_NAMES[name];
+  const byName = own(FILE_NAMES, name);
   if (byName) return byName;
   if (name === ".env" || name.startsWith(".env.")) return "dotenv";
   const dot = name.lastIndexOf(".");
   if (dot === -1) return undefined;
   const ext = name.slice(dot + 1);
-  return resolveLang(EXTENSIONS[ext] ?? ext);
+  return resolveLang(own(EXTENSIONS, ext) ?? ext);
 }
 
 /** Files longer than this stay plain: highlighting them costs more than it gives (spec §9.2). */
@@ -180,7 +186,8 @@ export async function highlightFile(
   let lines = 1;
   for (let i = body.indexOf("\n"); i !== -1; i = body.indexOf("\n", i + 1))
     if (++lines > MAX_HIGHLIGHT_LINES) return null;
-  const grammar = GRAMMARS[id] as { id: string; load: GrammarLoader };
+  const grammar = own(GRAMMARS, id);
+  if (!grammar) return null;
   const h = await getHighlighter();
   await loadGrammar(h, grammar.id, grammar.load);
   return h

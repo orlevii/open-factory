@@ -59,7 +59,7 @@ function imagesAsLinks() {
 function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
   return {
     a: ({ href, title, children }) => {
-      const external = typeof href === "string" && /^https?:\/\//.test(href);
+      const external = typeof href === "string" && HTTP.test(href);
       return external ? (
         // The accessible name stays the link text; "Opens in a new tab" is a shared description.
         <a

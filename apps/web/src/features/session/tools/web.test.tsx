@@ -83,3 +83,11 @@ test("expanded: the result is outside content: a mermaid fence stays code, an im
   expect(container.querySelector("img")).toBeNull();
   expect(screen.getByRole("link", { name: "Image: diagram" })).toBeInTheDocument();
 });
+
+test("collapsed: a long host can shrink, so it never pushes the state chip out", () => {
+  render(<RowHarness row={fetchRow(`https://${"a".repeat(200)}.example.com/p`)} />);
+  const host = screen.getByText(`${"a".repeat(200)}.example.com`);
+  expect(host).toHaveClass("min-w-0", "truncate");
+  expect(host).not.toHaveClass("shrink-0");
+  expect(host).toHaveClass("max-w-[60%]");
+});

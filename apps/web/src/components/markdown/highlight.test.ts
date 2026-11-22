@@ -98,3 +98,24 @@ describe("highlightFile", () => {
     expect(await highlightFile("x\n".repeat(2001), "/a.ts")).toBeNull();
   });
 });
+
+describe("names that are Object.prototype members", () => {
+  test.each([
+    ["constructor"],
+    ["__proto__"],
+    ["toString"],
+    ["/a/x.valueOf"],
+    ["/a/b.hasOwnProperty"],
+    ["/a/b.__proto__"],
+  ])("%s has no grammar and never throws", async (path) => {
+    expect(langForPath(path)).toBeUndefined();
+    expect(await highlightFile("x", path)).toBeNull();
+  });
+  test.each([["constructor"], ["__proto__"], ["toString"]])(
+    "fence %s is not a language",
+    async (lang) => {
+      expect(resolveLang(lang)).toBeUndefined();
+      expect(await highlight("x", lang)).toBeNull();
+    },
+  );
+});

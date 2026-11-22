@@ -7,20 +7,80 @@ const MAX_FILES = 200;
 /** Shown before "Show all": the first 20 files, or 20 content hits. */
 const SHOW = 20;
 
+/** One line of a content search: a match, or a context line (`-A/-B/-C`) shown but never counted. */
+export type HitLine = { text: string; match: boolean };
+
 export type SearchResult =
   | { kind: "files"; count: number; files: string[] }
-  | { kind: "content"; count: number; groups: { file: string; hits: string[] }[] };
+  | { kind: "content"; count: number; groups: { file: string; lines: HitLine[] }[] }
+  | { kind: "counts"; count: number; fileCount: number; files: { file: string; n?: number }[] };
+
+export type SearchMode = "files" | "content" | "count";
 
 const FOUND = /^Found (\d+) (?:files?|matches|match|lines?)\b/i;
+// Count mode's last line: "Found 12 total occurrences across 3 files."
+const FOUND_TOTAL = /^Found (\d+) total occurrences? across (\d+) files?\.?$/i;
 const NONE = /^No (?:files|matches) found\.?$/i;
 const TRUNCATED_NOTE = /^\(Results are truncated/;
 // A content hit's file prefix: a path-like token (a slash or an extension, no spaces) and a colon.
 const HIT = /^([^\s:]*\/[^\s:]*|[^\s:/]+\.\w+):(.*)$/;
+// A count line: the file, a colon, its number of occurrences.
+const COUNT = /^(.+):(\d+)$/;
+
+/** Content mode: matches read `path:12:text`, context lines `path-12-text` with `--` between
+ *  blocks. A line that starts with a file already seen on a match, then a dash, is context. */
+function parseContent(lines: string[], found: number | undefined): SearchResult {
+  const known = new Set<string>();
+  for (const line of lines) {
+    const m = HIT.exec(line);
+    if (m?.[1]) known.add(m[1]);
+  }
+  const contextOf = (line: string) => {
+    for (const f of known)
+      if (line.startsWith(`${f}-`)) return { file: f, text: line.slice(f.length + 1) };
+    return undefined;
+  };
+  const groups: { file: string; lines: HitLine[] }[] = [];
+  let count = 0;
+  for (const line of lines) {
+    if (line === "--") continue; // the separator between context blocks
+    const ctx = contextOf(line);
+    const m = ctx ? undefined : HIT.exec(line);
+    const file = ctx?.file ?? m?.[1] ?? "";
+    const entry = { text: ctx?.text ?? (m ? (m[2] ?? "") : line), match: !ctx };
+    if (entry.match) count++;
+    const last = groups.at(-1);
+    if (last && last.file === file) last.lines.push(entry);
+    else groups.push({ file, lines: [entry] });
+  }
+  return { kind: "content", count: found ?? count, groups };
+}
+
+/** Count mode: `path:N` lines and a closing "Found N total occurrences across M files." */
+function parseCounts(lines: string[]): SearchResult {
+  let total: number | undefined;
+  let fileCount: number | undefined;
+  const files: { file: string; n?: number }[] = [];
+  let sum = 0;
+  for (const line of lines) {
+    const t = FOUND_TOTAL.exec(line.trim());
+    if (t) {
+      total = Number(t[1]);
+      fileCount = Number(t[2]);
+      continue;
+    }
+    const m = COUNT.exec(line);
+    if (m) sum += Number(m[2]);
+    if (files.length < MAX_FILES)
+      files.push(m ? { file: m[1] ?? "", n: Number(m[2]) } : { file: line });
+  }
+  return { kind: "counts", count: total ?? sum, fileCount: fileCount ?? files.length, files };
+}
 
 /** Grep and Glob results carry no meta: their count and file list come from `content` (spec §9.1).
  *  The count is "Found N files" when the first line says so, else the line count. Any text parses;
  *  unexpected shapes become plain lines. */
-export function parseSearch(content: string, mode: "files" | "content"): SearchResult {
+export function parseSearch(content: string, mode: SearchMode): SearchResult {
   let lines = content
     .replace(/\r\n/g, "\n")
     .split("\n")
@@ -28,28 +88,16 @@ export function parseSearch(content: string, mode: "files" | "content"): SearchR
   let found: number | undefined;
   const first = lines[0]?.trim() ?? "";
   if (NONE.test(first)) lines = [];
-  else {
+  else if (mode !== "count") {
     const m = FOUND.exec(first);
     if (m) {
       found = Number(m[1]);
       lines = lines.slice(1);
     }
   }
-  if (mode === "files")
-    return { kind: "files", count: found ?? lines.length, files: lines.slice(0, MAX_FILES) };
-  const groups: { file: string; hits: string[] }[] = [];
-  let count = 0;
-  for (const line of lines) {
-    if (line === "--") continue; // the separator between context blocks
-    count++;
-    const m = HIT.exec(line);
-    const file = m ? (m[1] ?? "") : "";
-    const hit = m ? (m[2] ?? "") : line;
-    const last = groups.at(-1);
-    if (last && last.file === file) last.hits.push(hit);
-    else groups.push({ file, hits: [hit] });
-  }
-  return { kind: "content", count: found ?? count, groups };
+  if (mode === "count") return parseCounts(lines);
+  if (mode === "content") return parseContent(lines, found);
+  return { kind: "files", count: found ?? lines.length, files: lines.slice(0, MAX_FILES) };
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -58,14 +106,19 @@ function searchInput(row: ToolRow) {
   return {
     pattern: str(i.pattern),
     path: str(i.path),
-    mode: row.call.name === "Grep" && i.output_mode === "content" ? "content" : "files",
-  } as const;
+    mode: (row.call.name === "Grep" && (i.output_mode === "content" || i.output_mode === "count")
+      ? i.output_mode
+      : "files") as SearchMode,
+  };
 }
 
+const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
 function countLabel(r: SearchResult): string {
-  const unit = r.kind === "files" ? ["file", "files"] : ["match", "matches"];
-  if (r.count === 0) return `no ${unit[1]}`;
-  return `${r.count} ${r.count === 1 ? unit[0] : unit[1]}`;
+  if (r.kind === "files") return r.count === 0 ? "no files" : counted(r.count, "file", "files");
+  if (r.count === 0) return "no matches";
+  const matches = counted(r.count, "match", "matches");
+  return r.kind === "counts" ? `${matches} in ${counted(r.fileCount, "file", "files")}` : matches;
 }
 
 function useParsed(row: ToolRow): SearchResult | undefined {
@@ -124,33 +177,65 @@ function FileList({ result }: { result: Extract<SearchResult, { kind: "files" }>
   );
 }
 
+function CountList({ result }: { result: Extract<SearchResult, { kind: "counts" }> }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? result.files : result.files.slice(0, SHOW);
+  return (
+    <div>
+      <ul className="space-y-0.5">
+        {shown.map((f, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: a static list; paths may repeat
+          <li key={i} className={ROW}>
+            {f.file}
+            {f.n !== undefined && <span className="text-muted-foreground"> · {f.n}</span>}
+          </li>
+        ))}
+      </ul>
+      {!all && result.files.length > shown.length && (
+        <ExpandButton onExpand={() => setAll(true)}>
+          Show all {result.files.length} files
+        </ExpandButton>
+      )}
+    </div>
+  );
+}
+
+/** Content hits under their file; context lines dimmer. The first 20 lines, then "Show all". */
 function HitList({ result }: { result: Extract<SearchResult, { kind: "content" }> }) {
   const [all, setAll] = useState(false);
   let budget = all ? Number.POSITIVE_INFINITY : SHOW;
+  let total = 0;
   const groups: typeof result.groups = [];
   for (const g of result.groups) {
-    if (budget <= 0) break;
-    const hits = g.hits.slice(0, budget);
-    budget -= hits.length;
-    groups.push({ file: g.file, hits });
+    total += g.lines.length;
+    if (budget <= 0) continue;
+    const lines = g.lines.slice(0, budget);
+    budget -= lines.length;
+    groups.push({ file: g.file, lines });
   }
-  const shown = groups.reduce((n, g) => n + g.hits.length, 0);
+  const shown = groups.reduce((n, g) => n + g.lines.length, 0);
   return (
     <div className="space-y-1.5">
       {groups.map((g, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: a static list; a file may recur
         <div key={i}>
           {g.file && <p className={`${ROW} text-foreground`}>{g.file}</p>}
-          {g.hits.map((h, j) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: a static list
-            <p key={j} className={`${ROW} ${g.file ? "pl-4" : ""} text-muted-foreground`}>
-              {h}
+          {g.lines.map((l, j) => (
+            <p
+              // biome-ignore lint/suspicious/noArrayIndexKey: a static list
+              key={j}
+              data-context={l.match ? undefined : ""}
+              className={`${ROW} ${g.file ? "pl-4" : ""} text-muted-foreground ${l.match ? "" : "opacity-70"}`}
+            >
+              {l.text}
             </p>
           ))}
         </div>
       ))}
-      {!all && result.count > shown && (
-        <ExpandButton onExpand={() => setAll(true)}>Show all {result.count} matches</ExpandButton>
+      {!all && total > shown && (
+        <ExpandButton onExpand={() => setAll(true)}>
+          Show all {counted(result.count, "match", "matches")}
+        </ExpandButton>
       )}
     </div>
   );
@@ -162,7 +247,9 @@ function SearchBody({ row }: { row: ToolRow }) {
   const parsed = useParsed(row);
   if (row.state === "failed" && row.result) return <OutputTail text={row.result.content} />;
   if (!parsed || parsed.count === 0) return null;
-  return parsed.kind === "files" ? <FileList result={parsed} /> : <HitList result={parsed} />;
+  if (parsed.kind === "files") return <FileList result={parsed} />;
+  if (parsed.kind === "counts") return <CountList result={parsed} />;
+  return <HitList result={parsed} />;
 }
 
 export const searchRenderer = { Summary: SearchSummary, Body: SearchBody };

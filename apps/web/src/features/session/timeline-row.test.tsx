@@ -500,7 +500,8 @@ test("a 55-character MCP tool name truncates, with the full name in its title", 
   expect(label).not.toBeNull();
   expect(label).toHaveClass("max-w-[60%]", "min-w-0");
   expect(label).toHaveTextContent("a_long_server_name_here · create_pull_request_now_x");
-  expect(within(row).getByText("a_long_server_name_here")).toHaveClass("truncate");
+  // The server middle-truncates: its head carries the ellipsis (mcp-name.test.tsx has the detail).
+  expect(label?.querySelector("[data-mcp-server]")?.firstElementChild).toHaveClass("truncate");
   expect(row).toHaveTextContent("Fix");
 });
 

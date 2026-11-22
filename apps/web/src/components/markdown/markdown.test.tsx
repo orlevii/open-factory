@@ -261,3 +261,21 @@ describe("untrusted markdown", () => {
     await waitFor(() => expect(container.querySelector("pre.shiki")).toBeInTheDocument());
   });
 });
+
+test("an upper-case HTTP:// link (or image) still opens safely in a new tab", () => {
+  render(<Markdown source={"[x](HTTP://example.com) ![pic](HTTPS://evil.example/p.png)"} />);
+  for (const name of ["x", "Image: pic"]) {
+    const a = screen.getByRole("link", { name });
+    expect(a).toHaveAttribute("target", "_blank");
+    expect(a).toHaveAttribute("rel", "noopener noreferrer");
+  }
+});
+
+test("data: and protocol-relative image sources are plain text, never links or images", () => {
+  const { container } = render(
+    <Markdown source={"![d](data:image/png;base64,AAAA) ![p](//evil.example/p.png)"} />,
+  );
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("a")).toBeNull();
+  expect(container).toHaveTextContent("Image: d Image: p");
+});

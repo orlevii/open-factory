@@ -1,4 +1,4 @@
-import type { KeyboardEventHandler, Ref } from "react";
+import type { KeyboardEventHandler, ReactNode, Ref } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./markdown";
@@ -25,6 +25,12 @@ export function MarkdownEditor(props: {
   variant?: "default" | "detail";
   /** A shorter starting height (it still resizes), for a composer that shares a pane. */
   compact?: boolean;
+  /** Replaces the Write textarea (the template editor's CodeMirror); without it, the textarea. */
+  writeSurface?: (p: {
+    value: string;
+    onChange(v: string): void;
+    describedBy?: string;
+  }) => ReactNode;
   /** Geist instead of mono in the textarea, for prose a person writes (a message, not code). */
   proportional?: boolean;
 }) {
@@ -52,19 +58,23 @@ export function MarkdownEditor(props: {
         </span>
       </TabsList>
       <TabsContent value="write" className="mt-0">
-        <Textarea
-          id={id}
-          ref={props.textareaRef}
-          onBlur={props.onBlur}
-          onKeyDown={props.onKeyDown}
-          placeholder={placeholder}
-          // Without an id there is no <Label htmlFor>, so fall back to a built-in name.
-          aria-label={props["aria-label"] ?? (id ? undefined : "Markdown")}
-          aria-describedby={props["aria-describedby"]}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className={`field-sizing-fixed ${minH} resize-y rounded-none border-0 bg-transparent p-3 ${props.proportional ? "" : "font-mono "}text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
-        />
+        {props.writeSurface ? (
+          props.writeSurface({ value, onChange, describedBy: props["aria-describedby"] })
+        ) : (
+          <Textarea
+            id={id}
+            ref={props.textareaRef}
+            onBlur={props.onBlur}
+            onKeyDown={props.onKeyDown}
+            placeholder={placeholder}
+            // Without an id there is no <Label htmlFor>, so fall back to a built-in name.
+            aria-label={props["aria-label"] ?? (id ? undefined : "Markdown")}
+            aria-describedby={props["aria-describedby"]}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className={`field-sizing-fixed ${minH} resize-y rounded-none border-0 bg-transparent p-3 ${props.proportional ? "" : "font-mono "}text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
+          />
+        )}
       </TabsContent>
       <TabsContent value="preview" className={`mt-0 ${minH} p-3`}>
         {value.trim() === "" ? (

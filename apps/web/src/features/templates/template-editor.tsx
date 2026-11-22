@@ -1,3 +1,4 @@
+import type { EditorState } from "@codemirror/state";
 import {
   ApiError,
   TEMPLATE_FILES,
@@ -8,7 +9,21 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, TriangleAlert, UserPlus } from "lucide-react";
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type ComponentPropsWithoutRef,
+  type CSSProperties,
+  forwardRef,
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
@@ -29,6 +44,8 @@ import {
   templateQueryOptions,
   validateTemplateFile,
 } from "./api";
+import type { default as CodeEditorComponent, CodeEditorHandle } from "./code-editor";
+import type { Diag, Lang } from "./code-editor-setup";
 import { CodeTextarea } from "./code-textarea";
 import { ImageStatusLabel } from "./image-status";
 import { IssueIcon, IssueList, sortIssues } from "./issue-list";
@@ -82,6 +99,87 @@ const isBusy = (o?: Outcome) => o?.tone === "pending" && o.kind !== "checking";
 
 const goneMessage = "This template no longer exists on disk.";
 
+/** Focus a textarea at a line's start and scroll it to the middle (the jump, without CodeMirror). */
+function focusTextareaLine(el: HTMLTextAreaElement, line: number) {
+  const at = lineOffset(el.value, line);
+  el.focus({ preventScroll: true });
+  el.setSelectionRange(at, at);
+  const lh = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
+  el.scrollTop = Math.max(0, (line - 1) * lh - el.clientHeight / 2);
+  el.scrollIntoView?.({ block: "nearest" });
+}
+
+type EditorProps = ComponentPropsWithoutRef<typeof CodeEditorComponent>;
+
+/** Stands in for the editor when its chunk can't load (offline, a stale deploy's chunk): the file
+ *  stays editable as text, with the same handle. */
+const TextareaEditor = forwardRef<CodeEditorHandle, EditorProps>(function TextareaEditor(p, ref) {
+  const el = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusLine(line) {
+        if (el.current) focusTextareaLine(el.current, line);
+      },
+      restore({ anchor, head, focus }) {
+        const t = el.current;
+        if (!t) return;
+        t.setSelectionRange(
+          Math.min(anchor, head),
+          Math.max(anchor, head),
+          anchor > head ? "backward" : "forward",
+        );
+        if (focus) t.focus();
+      },
+    }),
+    [],
+  );
+  return (
+    <CodeTextarea
+      id={p.id}
+      aria-labelledby={p.labelledBy}
+      describedBy={p.describedBy}
+      value={p.value}
+      onChange={p.onChange}
+      onBlur={p.onBlur}
+      onSave={p.onSave}
+      textareaRef={el}
+    />
+  );
+});
+
+// Set once the chunk has settled: from then on a fallback textarea is only ever detached by the
+// swap itself, so that's the only detach whose selection is carried over.
+let editorSettled = false;
+// Its own chunk (CodeMirror), preloaded by the route's loader on a real visit (spec §12.2). A failed
+// load falls back to the textarea rather than taking the page down.
+const CodeEditor = lazy(() =>
+  import("./code-editor").then(
+    (m) => {
+      editorSettled = true;
+      return m;
+    },
+    () => {
+      editorSettled = true;
+      return { default: TextareaEditor };
+    },
+  ),
+);
+
+const LANGUAGE: Record<TemplateFile, Lang> = {
+  "template.yaml": "yaml",
+  "AGENTS.md": "markdown",
+  "settings.json": "json",
+  "mcp.json": "json",
+};
+
+/** Where the user was in the textarea fallback when the editor replaced it. */
+type Carry = { anchor: number; head: number; scrollTop: number; focus: boolean };
+
+/** The tab's file name alone (without "(unsaved)"): the editor's accessible name. */
+const labelId = (f: TemplateFile) => `tab-label-${f}`;
+const focusEditor = (f: TemplateFile) => document.getElementById(`editor-${f}`)?.focus();
+
 export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const name = template.name;
   const qc = useQueryClient();
@@ -97,6 +195,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   // The live factory default, for the warm_window_minutes hint (Settings → Factory changes it).
   const warmDefault = useQuery(factorySettingsQueryOptions).data?.defaultWarmWindowMinutes;
   const refs = useRef<Partial<Record<TemplateFile, HTMLTextAreaElement | null>>>({});
+  const editors = useRef<Partial<Record<TemplateFile, CodeEditorHandle | null>>>({});
+  // Each file's EditorState (doc, selection, undo history), so a remounted tab gets it back.
+  // Keyed `${name}:${file}`; dropped with this component.
+  const states = useState(() => new Map<string, EditorState>())[0];
+  const carried = useRef<Partial<Record<TemplateFile, Carry>>>({});
   // The last content each file was validated or saved as, so blur only asks when it changed.
   const checked = useRef<Partial<Record<TemplateFile, string>>>({});
   // Responses replace the whole issue list; only the newest request may do so.
@@ -123,34 +226,71 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     setFiles((s) => ({ ...s, [f]: { ...s[f], ...p } }));
   const setOutcome = (f: TemplateFile, o?: Outcome) => setOutcomes((s) => ({ ...s, [f]: o }));
 
-  // A jump to another tab can only land once that tab's textarea has mounted, which is after
-  // this component's own commit. So the request waits in a ref and is served as soon as the
-  // textarea is attached (or immediately, if it already is).
+  // A jump to another tab can only land once that tab's editor (or its textarea fallback) has
+  // mounted, which is after this component's own commit. So the request waits in a ref and is
+  // served as soon as either is attached (or immediately, if it already is).
   const wanted = useRef<{ file: TemplateFile; line: number }>(undefined);
   function serveJump() {
     const j = wanted.current;
-    const el = j && refs.current[j.file];
-    if (!j || !el) return;
+    if (!j) return;
+    const editor = editors.current[j.file];
+    if (editor) {
+      wanted.current = undefined;
+      editor.focusLine(j.line);
+      return;
+    }
+    const el = refs.current[j.file];
+    if (!el) return;
     wanted.current = undefined;
-    const at = lineOffset(el.value, j.line);
-    el.focus({ preventScroll: true });
-    el.setSelectionRange(at, at);
-    const lh = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
-    el.scrollTop = Math.max(0, (j.line - 1) * lh - el.clientHeight / 2);
-    el.scrollIntoView?.({ block: "nearest" });
+    focusTextareaLine(el, j.line);
   }
   // One callback ref per file for the editor's lifetime: a fresh one each render would make React
   // detach and re-attach the textarea (and serve the jump) on every keystroke. serveJump reads
   // only refs, so the first render's copy stays correct.
-  const attachers = useRef(new Map<TemplateFile, (el: HTMLTextAreaElement | null) => void>());
+  const attachers = useState(
+    () => new Map<TemplateFile, (el: HTMLTextAreaElement | null) => void>(),
+  )[0];
   const attach = (f: TemplateFile) => {
-    let cb = attachers.current.get(f);
+    let cb = attachers.get(f);
     if (!cb) {
       cb = (el) => {
+        const prev = refs.current[f];
+        // The swap detaches it while it's still in the DOM: note where the user was, for the editor
+        // replacing it. Any other detach (a tab switch, Discard) leaves nothing to carry.
+        if (!el) carried.current[f] = undefined;
+        if (!el && prev && editorSettled)
+          carried.current[f] = {
+            anchor:
+              prev.selectionDirection === "backward" ? prev.selectionEnd : prev.selectionStart,
+            head: prev.selectionDirection === "backward" ? prev.selectionStart : prev.selectionEnd,
+            scrollTop: prev.scrollTop,
+            focus: document.activeElement === prev,
+          };
         refs.current[f] = el;
         serveJump();
       };
-      attachers.current.set(f, cb);
+      attachers.set(f, cb);
+    }
+    return cb;
+  };
+  // The same for the editor: it serves a waiting jump, else takes over from the fallback.
+  const editorAttachers = useState(
+    () => new Map<TemplateFile, (h: CodeEditorHandle | null) => void>(),
+  )[0];
+  const attachEditor = (f: TemplateFile) => {
+    let cb = editorAttachers.get(f);
+    if (!cb) {
+      cb = (h) => {
+        editors.current[f] = h;
+        if (!h) return;
+        const c = carried.current[f];
+        carried.current[f] = undefined;
+        if (wanted.current?.file === f) return serveJump();
+        if (!c) return;
+        h.restore(c);
+        keepInPlace(document.getElementById(`editor-${f}`), c.scrollTop);
+      };
+      editorAttachers.set(f, cb);
     }
     return cb;
   };
@@ -221,7 +361,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
           : "Saved.",
       });
       // Overwrite removes the conflict block that held focus.
-      if (baseHash !== s.baseHash) refs.current[f]?.focus();
+      if (baseHash !== s.baseHash) focusEditor(f);
       // The header (display name, runtime, description) and the list read the saved config;
       // the editor itself was seeded once and keeps its own state.
       void qc.invalidateQueries({ queryKey: ["templates"] });
@@ -239,25 +379,39 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     try {
       const fresh = await qc.fetchQuery({ ...templateQueryOptions(name), staleTime: 0 });
       const s = initial(fresh)[f];
+      // The disk's version starts the file over: no undo back into the discarded edits.
+      states.delete(`${name}:${f}`);
       patch(f, { ...s, conflict: undefined });
       checked.current[f] = s.content;
       seq.current++;
       setIssues(fresh.issues);
       setOutcome(f, undefined);
-      refs.current[f]?.focus();
+      focusEditor(f);
     } catch (e) {
       failed(f, e, "Couldn't reload this file. Try again.");
     }
   }
 
   // Issues change on a validate or save, not on a keystroke: split them up once per change.
-  const { errorCount, filesWithErrors, issuesByFile } = useMemo(() => {
+  // Each file's editor markers come from here too, so its diagnostics array is stable between issues.
+  const { errorCount, filesWithErrors, issuesByFile, diagsByFile } = useMemo(() => {
     const errors = issues.filter((i) => i.severity === "error");
+    const issuesByFile = new Map(
+      TEMPLATE_FILES.map((f) => [f, sortIssues(issues.filter((i) => i.file === f))]),
+    );
     return {
       errorCount: errors.length,
       filesWithErrors: new Set(errors.map((i) => i.file)),
-      issuesByFile: new Map(
-        TEMPLATE_FILES.map((f) => [f, sortIssues(issues.filter((i) => i.file === f))]),
+      issuesByFile,
+      diagsByFile: new Map(
+        TEMPLATE_FILES.map((f): [TemplateFile, Diag[]] => [
+          f,
+          (issuesByFile.get(f) ?? []).flatMap((i) =>
+            i.line === undefined
+              ? []
+              : [{ line: i.line, column: i.column, message: i.message, severity: i.severity }],
+          ),
+        ]),
       ),
     };
   }, [issues]);
@@ -325,7 +479,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       <span className="sr-only">(has errors)</span>
                     </>
                   )}
-                  {f}
+                  <span id={labelId(f)}>{f}</span>
                   {isDirty(files[f]) && (
                     <>
                       <span aria-hidden="true" className="size-1.5 rounded-full bg-foreground" />
@@ -343,6 +497,17 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               const canSave = isDirty(s) && !busy;
               const save$ = () => void save(f);
               const warmHint = f === "template.yaml" && s.started && warmDefault !== undefined;
+              const surface = {
+                file: f,
+                onBlur: () => void validate(f),
+                onSave: save$,
+                labelledBy: labelId(f),
+                fileKey: `${name}:${f}`,
+                states,
+                diagnostics: diagsByFile.get(f) ?? NO_DIAGS,
+                textareaRef: attach(f),
+                editorRef: attachEditor(f),
+              };
               return (
                 <TabsContent
                   key={f}
@@ -368,28 +533,26 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                       value={s.content}
                       onChange={(v) => edit(f, v)}
                       id={`editor-${f}`}
-                      aria-label={f}
                       view={mdView}
                       onViewChange={setMdView}
-                      textareaRef={attach(f)}
-                      onBlur={() => void validate(f)}
-                      onKeyDown={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-                          e.preventDefault();
-                          save$();
-                        }
-                      }}
+                      // Not a useCallback: MarkdownEditor isn't memoized, so a stable one saves nothing.
+                      writeSurface={(w) => (
+                        <div className={EMBEDDED}>
+                          <FileSurface
+                            {...surface}
+                            value={w.value}
+                            onChange={w.onChange}
+                            describedBy={w.describedBy}
+                          />
+                        </div>
+                      )}
                     />
                   ) : (
-                    <CodeTextarea
-                      id={`editor-${f}`}
-                      aria-label={f}
-                      describedBy={warmHint ? `editor-${f}-warm-hint` : undefined}
+                    <FileSurface
+                      {...surface}
                       value={s.content}
                       onChange={(v) => edit(f, v)}
-                      onBlur={() => void validate(f)}
-                      onSave={save$}
-                      textareaRef={attach(f)}
+                      describedBy={warmHint ? `editor-${f}-warm-hint` : undefined}
                     />
                   )}
                   {warmHint && (
@@ -452,7 +615,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                               return;
                             }
                             patch(f, { content: s.saved, conflict: undefined });
-                            refs.current[f]?.focus();
+                            focusEditor(f);
                           }}
                         >
                           Discard
@@ -500,6 +663,93 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         }}
       />
     </>
+  );
+}
+
+const NO_DIAGS: Diag[] = [];
+
+// The fallback's text starts where the editor's will, so the swap doesn't move it: the line-number
+// gutter (16px padding plus one 14px-mono digit, 8.4px, per digit of the line count, CodeMirror's own
+// sizing), its 1px border, the lint gutter (19.6px, from md) and the line's 8px inset. On touch the
+// editor's lines are 24px, so the fallback's are too. Measured in Chromium and WebKit (Task 42).
+const GUTTER_PAD =
+  "pl-[calc(var(--gutter-digits)_*_8.4px_+_44.6px)] max-md:pl-[calc(var(--gutter-digits)_*_8.4px_+_25px)] pointer-coarse:leading-6";
+
+/** The digits of the line count: CodeMirror's line-number gutter is as wide as the widest number. */
+function gutterDigits(value: string) {
+  let lines = 1;
+  for (let i = value.indexOf("\n"); i !== -1; i = value.indexOf("\n", i + 1)) lines++;
+  return String(lines).length;
+}
+
+// Inside MarkdownEditor's frame the surface drops its own frame (border, radius, focus ring).
+const EMBEDDED =
+  "[&>div>div:first-child]:rounded-none [&>div>div:first-child]:border-0 [&>div>div:first-child]:ring-0! [&>div>p]:px-3 [&>div>p]:pb-2";
+
+/** If the textarea had been scrolled, scroll the editor's container by as much, so the text stays
+ *  where it was on screen (the editor grows to its content; the textarea scrolled inside itself). */
+function keepInPlace(el: HTMLElement | null, by: number) {
+  if (!el || by <= 0) return;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (p.scrollHeight > p.clientHeight && /auto|scroll/.test(getComputedStyle(p).overflowY)) {
+      p.scrollTop += by;
+      return;
+    }
+  }
+  window.scrollBy(0, by);
+}
+
+type SurfaceProps = {
+  file: TemplateFile;
+  value: string;
+  onChange(v: string): void;
+  onBlur(): void;
+  onSave(): void;
+  describedBy?: string;
+  labelledBy: string;
+  fileKey: string;
+  states: Map<string, EditorState>;
+  diagnostics: readonly Diag[];
+  textareaRef(el: HTMLTextAreaElement | null): void;
+  editorRef(h: CodeEditorHandle | null): void;
+};
+
+/** One file in CodeMirror. Until its chunk arrives, the textarea, with its text where the editor's
+ *  will be; on the swap the selection, scroll and focus carry over (the template editor's refs). */
+function FileSurface(p: SurfaceProps) {
+  const id = `editor-${p.file}`;
+  return (
+    <Suspense
+      fallback={
+        <CodeTextarea
+          id={id}
+          aria-label={p.file}
+          describedBy={p.describedBy}
+          value={p.value}
+          onChange={p.onChange}
+          onBlur={p.onBlur}
+          onSave={p.onSave}
+          textareaRef={p.textareaRef}
+          className={GUTTER_PAD}
+          style={{ "--gutter-digits": gutterDigits(p.value) } as CSSProperties}
+        />
+      }
+    >
+      <CodeEditor
+        ref={p.editorRef}
+        id={id}
+        labelledBy={p.labelledBy}
+        describedBy={p.describedBy}
+        value={p.value}
+        onChange={p.onChange}
+        onBlur={p.onBlur}
+        onSave={p.onSave}
+        language={LANGUAGE[p.file]}
+        fileKey={p.fileKey}
+        states={p.states}
+        diagnostics={p.diagnostics}
+      />
+    </Suspense>
   );
 }
 

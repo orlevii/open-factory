@@ -10,6 +10,9 @@ export const Route = createFileRoute("/_app/templates/$name")({
   // Only so the first load shows the pending mark and an unknown name the not-found state.
   loader: async ({ context, params, preload }) => {
     const opts = templateQueryOptions(params.name);
+    // The editor chunk starts loading with the data on a real visit; a hover elsewhere doesn't fetch it.
+    // A failed load is the editor's to handle (it falls back to the textarea), not an unhandled rejection.
+    if (!preload) import("@/features/templates/code-editor").catch(() => {});
     try {
       // A hover warms the cache once (ensureQueryData); a click always refetches, because templates are
       // rescanned from disk (staleTime 0).

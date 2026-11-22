@@ -57,7 +57,7 @@ export function CodeTextarea({
   return (
     <div className="grid gap-1.5">
       <div
-        className="overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
+        className="overflow-hidden rounded-lg border border-code-border bg-code transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
       >
         <Textarea
           {...rest}

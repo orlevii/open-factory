@@ -1,7 +1,10 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { undoDepth } from "@codemirror/commands";
+import { EditorView } from "@codemirror/view";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { clearDraft } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { CodeTextarea } from "@/features/templates/code-textarea";
@@ -85,6 +88,40 @@ const yamlError = {
   column: 1,
 };
 
+// jsdom has no Range geometry; a focused CodeMirror measures its cursor and selection with it.
+Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList;
+Range.prototype.getBoundingClientRect ??= () => new DOMRect();
+
+/** The file's CodeMirror content, once the lazy chunk has replaced the textarea fallback. */
+const editorFor = (name: string) =>
+  waitFor(() => {
+    const el = screen.getByRole("textbox", { name });
+    expect(el).toHaveClass("cm-content");
+    return el;
+  });
+const viewOf = (el: HTMLElement) => EditorView.findFromDOM(el) as EditorView;
+const docOf = (el: HTMLElement) => viewOf(el).state.doc.toString();
+/** Focuses the editor and types at the end of the doc as a user edit would (jsdom has no real
+ *  contenteditable input, nor the Range geometry userEvent.type would make CodeMirror measure). */
+const typeInto = (el: HTMLElement, text: string) => {
+  const v = viewOf(el);
+  act(() => el.focus());
+  act(() =>
+    v.dispatch({ changes: { from: v.state.doc.length, insert: text }, userEvent: "input.type" }),
+  );
+};
+
+/** Esc then Tab out of the focused editor. CodeMirror reads both by keyCode, which userEvent leaves
+ *  at 0, so they're fired directly; Tab must go unhandled, and as jsdom has no default action for
+ *  it, the focus move itself is the test's. */
+const leaveEditor = () => {
+  const el = document.activeElement as HTMLElement;
+  expect(el).toHaveClass("cm-content");
+  fireEvent.keyDown(el, { key: "Escape", code: "Escape", keyCode: 27 });
+  expect(fireEvent.keyDown(el, { key: "Tab", code: "Tab", keyCode: 9 })).toBe(true); // not prevented
+  act(() => el.blur());
+};
+
 test("list: empty state names the folder", async () => {
   mockApi({ "GET /api/templates": () => json({ dir: "/h/of/templates", templates: [] }) });
   renderApp("/templates", alice);
@@ -145,11 +182,11 @@ test("editor: blur validates and replaces both issue lists; save with errors all
       ),
   });
   renderApp("/templates/lead", alice);
-  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
-  await userEvent.type(editor, "modle: x\n");
+  const editor = await editorFor("template.yaml");
+  typeInto(editor, "modle: x\n");
   expect(api.calls.some((c) => c.url.endsWith("/validate"))).toBe(false); // never while typing
   // Tab inserts spaces inside the editor; Escape then Tab is the keyboard way out (blur).
-  await userEvent.keyboard("{Escape}{Tab}");
+  leaveEditor();
   expect(await screen.findAllByText("Unknown field modle.")).toHaveLength(2); // panel + under the editor
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(
@@ -168,12 +205,12 @@ test("editor: blur validates and replaces both issue lists; save with errors all
 test("editor: unsaved edits show a dot with sr-only text; Discard restores", async () => {
   mockApi({ "GET /api/templates/lead": () => json(detail()) });
   renderApp("/templates/lead", alice);
-  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
+  const editor = await editorFor("template.yaml");
   expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
-  await userEvent.type(editor, "x");
+  typeInto(editor, "x");
   expect(screen.getByRole("tab", { name: /template\.yaml.*\(unsaved\)/ })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(editor).toHaveValue("name: lead\ndisplay_name: Lead\n");
+  expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n");
   expect(screen.queryByText("(unsaved)")).not.toBeInTheDocument();
 });
 
@@ -184,7 +221,7 @@ test("editor: a 404 on save says the template is gone", async () => {
       json({ error: { code: "template_not_found", message: "gone" } }, 404),
   });
   renderApp("/templates/lead", alice);
-  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
+  typeInto(await editorFor("template.yaml"), "x");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("This template no longer exists on disk.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Back to templates" })).toBeInTheDocument();
@@ -200,24 +237,6 @@ test("an unknown template shows the not-found state with a way back", async () =
     "href",
     "/templates",
   );
-});
-
-test("issue click jumps to the tab and line", async () => {
-  mockApi({
-    "GET /api/templates/lead": () =>
-      json(
-        detail([
-          { severity: "error", file: "settings.json", message: "JSON: bad", line: 2, column: 3 },
-        ]),
-      ),
-  });
-  renderApp("/templates/lead", alice);
-  await userEvent.click(
-    await screen.findByRole("button", { name: /settings\.json.*2:3.*JSON: bad/ }),
-  );
-  const editor = screen.getByRole("textbox", { name: "settings.json" }) as HTMLTextAreaElement;
-  expect(editor).toHaveFocus();
-  expect(editor.selectionStart).toBe(editor.value.indexOf("\n") + 1);
 });
 
 test("issues in skills or files are plain text", async () => {
@@ -359,7 +378,7 @@ test("template page: an oversize avatar.svg is named as ignored", async () => {
   unmount();
   api.on("GET /api/templates/lead", () => json(detail()));
   renderApp("/templates/lead", alice);
-  await screen.findByRole("textbox", { name: "template.yaml" });
+  await editorFor("template.yaml");
   expect(screen.queryByText(/avatar\.svg ignored/)).toBeNull();
 });
 
@@ -429,7 +448,7 @@ test("Save works while a blur validate is still in flight", async () => {
     "PUT /api/templates/lead/files/template.yaml": () => json({ hash: "h2", issues: [] }),
   });
   renderApp("/templates/lead", alice);
-  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
+  typeInto(await editorFor("template.yaml"), "x");
   // The mouse click blurs the textarea first, which starts a validate that never answers.
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Saved.")).toBeInTheDocument();
@@ -443,12 +462,12 @@ test("a superseded validate does not leave 'Checking…' behind", async () => {
     "POST /api/templates/lead/validate": v.handler,
   });
   renderApp("/templates/lead", alice);
-  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
-  await userEvent.keyboard("{Escape}{Tab}"); // validate template.yaml (A), pending
+  typeInto(await editorFor("template.yaml"), "x");
+  leaveEditor(); // validate template.yaml (A), pending
   expect(await screen.findByText("Checking…")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("tab", { name: /settings\.json/ }));
-  await userEvent.type(screen.getByRole("textbox", { name: "settings.json" }), "y");
-  await userEvent.keyboard("{Escape}{Tab}"); // validate settings.json (B) supersedes A
+  typeInto(await editorFor("settings.json"), "y");
+  leaveEditor(); // validate settings.json (B) supersedes A
   await vi.waitFor(() => expect(v.pending).toHaveLength(2));
   await act(async () => v.pending[1]?.release([]));
   await act(async () => v.pending[0]?.release([])); // A answers late and is stale
@@ -481,8 +500,8 @@ async function conflictPage() {
       json({ error: { code: "changed_on_disk", message: "x", currentHash: "h-new" } }, 409),
   });
   renderApp("/templates/lead", alice);
-  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
-  await userEvent.type(editor, "zz");
+  const editor = await editorFor("template.yaml");
+  typeInto(editor, "zz");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText("This file changed on disk since you opened it.");
   return { api, editor };
@@ -494,7 +513,7 @@ test("Reload says it discards edits and returns focus to the editor", async () =
     /discards your edits/i,
   );
   await userEvent.click(screen.getByRole("button", { name: "Reload" }));
-  await vi.waitFor(() => expect(editor).toHaveValue("name: lead\ndisplay_name: Lead\n"));
+  await vi.waitFor(() => expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n"));
   expect(editor).toHaveFocus();
   expect(api.calls.filter((c) => c.method === "GET").length).toBeGreaterThan(1);
 });
@@ -505,7 +524,7 @@ test("Overwrite and Discard return focus to the editor", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Overwrite" }));
   await screen.findByText("Saved.");
   expect(editor).toHaveFocus();
-  await userEvent.type(editor, "q");
+  typeInto(editor, "q");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   expect(editor).toHaveFocus();
 });
@@ -516,11 +535,11 @@ test("'Saved.' clears once the file is edited again", async () => {
     "PUT /api/templates/lead/files/template.yaml": () => json({ hash: "h2", issues: [] }),
   });
   renderApp("/templates/lead", alice);
-  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
-  await userEvent.type(editor, "x");
+  const editor = await editorFor("template.yaml");
+  typeInto(editor, "x");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText("Saved.");
-  await userEvent.type(editor, "y");
+  typeInto(editor, "y");
   expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
 });
 
@@ -567,7 +586,7 @@ test("saving template.yaml refreshes the header without touching what is being t
   const saved = detail();
   const api = mockApi({ "GET /api/templates/lead": () => json(detail()) });
   renderApp("/templates/lead", alice);
-  const editor = await screen.findByRole("textbox", { name: "template.yaml" });
+  const editor = await editorFor("template.yaml");
   expect(screen.getByText("Local")).toBeInTheDocument();
   api.on("PUT /api/templates/lead/files/template.yaml", () => {
     // The disk now says docker and a new display name; the refetch returns that.
@@ -576,13 +595,13 @@ test("saving template.yaml refreshes the header without touching what is being t
     api.on("GET /api/templates/lead", () => json(saved));
     return json({ hash: "h-saved", issues: [] });
   });
-  await userEvent.type(editor, "runtime: docker\n");
+  typeInto(editor, "runtime: docker\n");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText("Saved.");
   expect(await screen.findByText("Docker")).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 1, name: "Renamed Lead" })).toBeInTheDocument();
   // The editor keeps its own state: the refetch does not reseed it.
-  expect(editor).toHaveValue("name: lead\ndisplay_name: Lead\nruntime: docker\n");
+  expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\nruntime: docker\n");
 });
 
 test("the changed-on-disk block takes focus on its Reload button", async () => {
@@ -916,9 +935,9 @@ test("editor: the warm_window_minutes hint shows the live factory default", asyn
   });
   renderApp("/templates/lead", alice);
   const hint = await screen.findByText("Omit to use the factory default (45 min).");
-  // Tied to the template.yaml textarea, not only placed next to it.
-  const textarea = screen.getByRole("textbox", { name: "template.yaml" });
-  const describedBy = textarea.getAttribute("aria-describedby")?.split(" ") ?? [];
+  // Tied to the template.yaml editor, not only placed next to it.
+  const editor = await editorFor("template.yaml");
+  const describedBy = editor.getAttribute("aria-describedby")?.split(" ") ?? [];
   expect(describedBy).toContain((hint.closest("p") as HTMLElement).id);
 });
 
@@ -933,7 +952,7 @@ test("Save reads 'Saving…' while the PUT is pending", async () => {
       }),
   });
   renderApp("/templates/lead", alice);
-  await userEvent.type(await screen.findByRole("textbox", { name: "template.yaml" }), "x");
+  typeInto(await editorFor("template.yaml"), "x");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("button", { name: "Saving…" })).toBeInTheDocument();
   await act(async () => release());
@@ -958,6 +977,82 @@ test("list header (class contract, jsdom has no layout): the h1 gives way to the
   expect(link.parentElement).toHaveClass("shrink-0");
   await userEvent.hover(link);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("New template");
+});
+
+// U4 §12: template files edit in CodeMirror.
+
+test("CodeMirror: template.yaml renders in the editor once the lazy chunk resolves", async () => {
+  mockApi({ "GET /api/templates/lead": () => json(detail()) });
+  renderApp("/templates/lead", alice);
+  const editor = await editorFor("template.yaml");
+  expect(editor).toHaveAttribute("aria-multiline", "true");
+  expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n");
+});
+
+test("CodeMirror: switching to mcp.json and back keeps template.yaml's undo history", async () => {
+  mockApi({
+    "GET /api/templates/lead": () => json(detail()),
+    "POST /api/templates/lead/validate": () => json({ issues: [] }), // the tab click blurs the editor
+  });
+  renderApp("/templates/lead", alice);
+  const editor = await editorFor("template.yaml");
+  typeInto(editor, "model: x\n");
+  typeInto(editor, "runtime: local\n");
+  const depth = undoDepth(viewOf(editor).state);
+  expect(depth).toBeGreaterThan(0);
+  await userEvent.click(screen.getByRole("tab", { name: /mcp\.json/ }));
+  expect(screen.getByText("Not created")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("tab", { name: /template\.yaml/ }));
+  const again = await editorFor("template.yaml");
+  expect(again).not.toBe(editor); // the tab remounted
+  expect(docOf(again)).toBe("name: lead\ndisplay_name: Lead\nmodel: x\nruntime: local\n");
+  expect(undoDepth(viewOf(again).state)).toBe(depth);
+});
+
+test("CodeMirror: an issue's jump focuses its line in the editor", async () => {
+  mockApi({
+    "GET /api/templates/lead": () =>
+      json(
+        detail([
+          { severity: "error", file: "settings.json", message: "JSON: bad", line: 2, column: 3 },
+        ]),
+      ),
+  });
+  renderApp("/templates/lead", alice);
+  await editorFor("template.yaml");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /settings\.json.*2:3.*JSON: bad/ }),
+  );
+  const editor = await editorFor("settings.json");
+  const state = viewOf(editor).state;
+  expect(state.selection.main.head).toBe(state.doc.line(2).from);
+  expect(editor).toHaveFocus();
+});
+
+test("CodeMirror: a reload replaces the doc without marking the file dirty or leaving undo", async () => {
+  const { editor } = await conflictPage();
+  expect(screen.getByRole("tab", { name: /template\.yaml.*\(unsaved\)/ })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await vi.waitFor(() => expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n"));
+  expect(screen.queryByText("(unsaved)")).not.toBeInTheDocument();
+  expect(undoDepth(viewOf(editor).state)).toBe(0);
+});
+
+test("CodeMirror: AGENTS.md's Write uses the editor; Preview still renders markdown", async () => {
+  mockApi({ "GET /api/templates/lead": () => json(detail()) });
+  renderApp("/templates/lead", alice);
+  await editorFor("template.yaml");
+  await userEvent.click(screen.getByRole("tab", { name: /AGENTS\.md/ }));
+  const editor = await editorFor("AGENTS.md");
+  expect(docOf(editor)).toBe("# Lead\n");
+  await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  const preview = screen.getByRole("tabpanel", { name: "Preview" });
+  expect(within(preview).getByRole("heading", { name: "Lead" })).toBeInTheDocument();
+});
+
+test("MarkdownEditor without a writeSurface (the task and schedule forms) is still a textarea", () => {
+  render(<MarkdownEditor value="" onChange={() => {}} aria-label="Description" />);
+  expect(screen.getByRole("textbox", { name: "Description" }).tagName).toBe("TEXTAREA");
 });
 
 test("list header at 200% text on a phone (class contract): below a 17rem header the switch takes its own line instead of covering New template (evidence D4)", async () => {

@@ -300,6 +300,7 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
 - **Forms:** create forms show the fields that define the thing, name first, and fold the rest under More options, which opens itself, saying why, when something inside needs attention. An identifier derived from a name (an agent's address, a template's folder) is shown as a line with Change, never asked first; Edit has no template or address input, because neither can change. A prerequisite is created in a stacked sheet, as under Overlays.
 - **Schedules:** Repeats offers presets in a select; a cron is the Custom case, with a summary that names its time zone.
 - **Validation:** the two short auth forms validate on submit and then move focus to the first invalid field. Editing a field clears its error. Longer forms (templates, schedules) validate each field when you leave it, never while you type, and still check everything on submit.
+- **Template editor:** template files are edited in CodeMirror with line numbers, syntax colours from the same tokens as code blocks (never orange), and validator markers on their lines.
 - **Destructive actions: forgiveness over confirmation.**
   - Prefer undo. When an action can be reversed, do it immediately and offer an inline undo.
   - Ask for confirmation only when the action is both destructive and irreversible, such as terminating an agent and discarding its session, or deleting a template.

@@ -18,7 +18,12 @@ const ROWS: Partial<Record<SheetKind, number>> = {
 export function BodySkeleton({ kind }: { kind: SheetKind }) {
   const rows = ROWS[kind] ?? 3;
   return (
-    <div data-slot="body-skeleton" aria-hidden="true" className="flex min-h-0 flex-1 flex-col">
+    <div
+      data-slot="body-skeleton"
+      role="status"
+      aria-label="Loading form"
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <SheetBody className="grid content-start gap-4">
         {Array.from({ length: rows }, (_, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: a static list

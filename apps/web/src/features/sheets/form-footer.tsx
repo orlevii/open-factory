@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { SheetClose, SheetFooter } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
-/** Close keeps the draft (never "Cancel"). A restored draft is announced quietly, with Discard beside it. */
+/** Submit only sets `aria-disabled` while pending (it stays focusable), so the body's submit handler must itself
+ *  ignore a second submit while `pending`. Close keeps the draft (never "Cancel"). A restored draft is announced quietly, with Discard beside it. */
 export function SheetFormFooter({
   submitLabel,
   pendingLabel,

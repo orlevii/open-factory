@@ -9,11 +9,22 @@ type Entry = {
   load: () => Promise<{ default: ComponentType<BodyProps<any>> }>;
   /** Starts the body's queries (every list or detail it reads), so data and chunk load in parallel. */
   prefetch(qc: QueryClient, spec: any): void;
-  title: string;
+  /** A string, or a function of the spec (edit-schedule's title is the schedule key). */
+  title: string | ((spec: any) => string);
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
 export const sheetBodies: { [K in SheetKind]?: Entry } = {};
+
+export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string {
+  const t = sheetBodies[kind]?.title;
+  return typeof t === "function" ? t(spec) : (t ?? "");
+}
+
+/** Forget a failed (or any) load so the next render imports again. */
+export function resetBodyLoad(entry: Entry) {
+  loads.delete(entry);
+}
 
 let queryClient: QueryClient | undefined;
 /** Bound by the host, so `preloadSheet` can be called from any entry point. */

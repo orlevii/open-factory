@@ -1,6 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { type ComponentType, lazy, Suspense, useEffect, useRef } from "react";
+import {
+  Component,
+  type ComponentType,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useRef,
+} from "react";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -14,8 +23,10 @@ import {
   bindSheetQueryClient,
   loadBody,
   preloadSheet,
+  resetBodyLoad,
   type SheetKind,
   sheetBodies,
+  sheetTitle,
 } from "./sheet-bodies";
 import {
   type ChildSpec,
@@ -39,6 +50,37 @@ function bodyFor(kind: SheetKind) {
     lazies.set(entry, c);
   }
   return c;
+}
+
+/** A chunk that fails to load (offline, a stale deploy) shows a retry inside the sheet; the page and shell stay up. */
+class BodyBoundary extends Component<
+  { children: ReactNode; onRetry(): void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  retry = () => {
+    this.props.onRetry();
+    this.setState({ failed: false });
+  };
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div role="alert" className="grid flex-1 content-start justify-items-start gap-3 p-4 text-sm">
+        <p>This form didn't load.</p>
+        <Button type="button" variant="outline" onClick={this.retry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+}
+
+function BodyView({ spec, close }: { spec: OpenParent | OpenChild; close(): void }) {
+  const Body = bodyFor(spec.kind);
+  return Body ? <Body spec={spec} sheetId={spec.id} close={close} /> : null;
 }
 
 const stampBoth = () => {
@@ -66,8 +108,7 @@ function SheetLayer({
   if (spec) last.current = spec;
   const shown = last.current;
   if (!shown) return null;
-  const Body = bodyFor(shown.kind);
-  const title = sheetBodies[shown.kind]?.title ?? "";
+  const title = sheetTitle(shown.kind, shown);
   return (
     <Sheet
       open={open}
@@ -84,9 +125,18 @@ function SheetLayer({
           <SheetTitle>{title}</SheetTitle>
           {description ? <SheetDescription>{description}</SheetDescription> : null}
         </SheetHeader>
-        <Suspense fallback={<BodySkeleton kind={shown.kind} />}>
-          {Body && <Body spec={shown} sheetId={shown.id} close={onClose} />}
-        </Suspense>
+        <BodyBoundary
+          onRetry={() => {
+            const entry = sheetBodies[shown.kind];
+            if (!entry) return;
+            lazies.delete(entry);
+            resetBodyLoad(entry);
+          }}
+        >
+          <Suspense fallback={<BodySkeleton kind={shown.kind} />}>
+            <BodyView spec={shown} close={onClose} />
+          </Suspense>
+        </BodyBoundary>
       </SheetContent>
     </Sheet>
   );
@@ -126,7 +176,7 @@ export function SheetHost() {
       preloadSheet(getSheetState().child?.kind as SheetKind, getSheetState().child as ChildSpec);
   }, [childId]);
 
-  const parentTitle = parent ? sheetBodies[parent.kind]?.title : undefined;
+  const parentTitle = parent ? sheetTitle(parent.kind, parent) : undefined;
   return (
     <>
       <SheetLayer spec={parent} open={!!parent} onClose={closeSheet} />

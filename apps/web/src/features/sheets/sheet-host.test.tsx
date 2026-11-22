@@ -1,7 +1,6 @@
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Profiler, useState } from "react";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -9,7 +8,6 @@ import { alice, renderApp } from "@/test/render-app";
 import { useSheetDraft } from "./drafts";
 import { SheetFormFooter } from "./form-footer";
 import { type BodyProps, sheetBodies } from "./sheet-bodies";
-import { SheetHost } from "./sheet-host";
 import { closeSheet, openChildSheet, openSheet } from "./sheet-store";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -17,7 +15,18 @@ vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "connecting", send: () => true }),
 }));
 
-let renders = 0;
+// SheetHost calls useSheet once per render, and re-renders whenever the shell above it does (no props, no memo).
+let hostRenders = 0;
+vi.mock("./sheet-store", async (orig) => {
+  const m = await orig<typeof import("./sheet-store")>();
+  return {
+    ...m,
+    useSheet: () => {
+      hostRenders++;
+      return m.useSheet();
+    },
+  };
+});
 function StubTask({ close }: BodyProps<{ kind: "new-task" }>) {
   const draft = useSheetDraft("new-task", () => ({ title: "" }));
   const [title, setTitle] = useState(draft.start.title);
@@ -172,34 +181,43 @@ test("Close keeps the draft; reopening shows 'Draft restored · Discard'; Discar
   expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
 
-test("typing in a body's field re-renders neither the host nor its parent", async () => {
-  const router = (await shell()).router;
-  void router;
-  // The host is rendered by the shell; count renders of a second host under a Profiler instead.
-  const { queryClient } = await shell();
-  const onRender = vi.fn(() => void renders++);
-  const { RouterProvider, createMemoryHistory, createRootRoute, createRouter } = await import(
-    "@tanstack/react-router"
-  );
-  const root = createRootRoute({
-    component: () => (
-      <Profiler id="host" onRender={onRender}>
-        <SheetHost />
-      </Profiler>
-    ),
-  });
-  const r2 = createRouter({
-    routeTree: root,
-    history: createMemoryHistory({ initialEntries: ["/"] }),
-  });
-  render(
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={r2} />
-    </QueryClientProvider>,
-  );
+test("a chunk that fails to load shows Retry inside the sheet; Retry loads the body; Close still works", async () => {
+  await shell();
+  let calls = 0;
+  sheetBodies["new-task"] = {
+    ...(sheetBodies["new-task"] as NonNullable<(typeof sheetBodies)["new-task"]>),
+    load: async () => {
+      if (++calls === 1) throw new Error("Failed to fetch dynamically imported module");
+      return { default: StubTask as never };
+    },
+  };
+  vi.spyOn(console, "error").mockImplementation(() => {});
   act(() => openSheet({ kind: "new-task" }));
-  const input = (await screen.findAllByLabelText("Title")).at(-1) as HTMLElement;
-  const before = renders;
+  const panel = await screen.findByRole("dialog", { name: "New task" });
+  const retry = await within(panel).findByRole("button", { name: "Retry" });
+  expect(screen.getByRole("heading", { level: 1, hidden: true })).toBeInTheDocument();
+  await userEvent.click(retry);
+  expect(await screen.findByLabelText("Title")).toBeInTheDocument();
+  expect(within(panel).queryByRole("button", { name: "Retry" })).toBeNull();
+  await userEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement);
+  await waitFor(() => expect(dialog()).not.toBeInTheDocument());
+});
+
+test("an entry's title can be a function of the spec", async () => {
+  await shell();
+  sheetBodies["new-task"] = {
+    ...(sheetBodies["new-task"] as NonNullable<(typeof sheetBodies)["new-task"]>),
+    title: (spec: { assignee?: string }) => `Task for ${spec.assignee}`,
+  };
+  act(() => openSheet({ kind: "new-task", assignee: "bob" }));
+  expect(await screen.findByRole("dialog", { name: "Task for bob" })).toBeInTheDocument();
+});
+
+test("typing in a body's field re-renders neither SheetHost nor the shell above it", async () => {
+  await shell();
+  act(() => openSheet({ kind: "new-task" }));
+  const input = await screen.findByLabelText("Title");
+  const before = hostRenders;
   await userEvent.type(input, "abc");
-  expect(renders).toBe(before);
+  expect(hostRenders).toBe(before);
 });

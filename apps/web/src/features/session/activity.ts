@@ -29,14 +29,20 @@ const SEARCH_TOOLS = new Set(["Grep", "Glob"]);
 const firstLine = (s: string) => s.split("\n", 1)[0]?.trim() || undefined;
 const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1) || undefined;
 
+/** An MCP tool's name in parts (`mcp__server__tool`), shared by the activity line and the tool row so
+ *  both read "server · tool" and truncate the server first (`McpName`). Undefined for other tools. */
+export function mcpParts(tool: string): { server: string; tool?: string } | undefined {
+  if (!tool.startsWith("mcp__")) return undefined;
+  const [server = "", ...rest] = tool.slice(5).split("__");
+  return rest.length > 0 ? { server, tool: rest.join("__") } : { server };
+}
+
 /** The short target of a tool call, shared by the open tool and PR4's live tool input: Bash's
  *  `description` else the command's first line, a file tool's file name, a search's pattern, and an
  *  MCP tool's "server · tool". Undefined when the tool has none of these. */
 export function formatTarget(tool: string, input: unknown): string | undefined {
-  if (tool.startsWith("mcp__")) {
-    const [server, ...rest] = tool.slice(5).split("__");
-    return rest.length > 0 ? `${server} · ${rest.join("__")}` : server;
-  }
+  const mcp = mcpParts(tool);
+  if (mcp) return mcp.tool === undefined ? mcp.server : `${mcp.server} · ${mcp.tool}`;
   const i = (input ?? {}) as Record<string, unknown>;
   const str = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : undefined);
   if (tool === "Bash") {

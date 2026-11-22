@@ -455,3 +455,50 @@ test("spacing: 24px before a speaker line or card and after a turn footer, 8px i
   const first = screen.getByText("first").closest("[data-row-wrap]") as HTMLElement;
   expect(first.className).not.toMatch(/\bmt-/);
 });
+
+/** One tool call and its result, rendered expanded or not. */
+function toolLine(name: string, input: unknown, content?: string, open = false) {
+  const events: AnyEvent[] = [{ type: "tool_call", toolUseId: "tu1", name, input }];
+  if (content !== undefined)
+    events.push({ type: "tool_result", toolUseId: "tu1", content, isError: false });
+  const row = buildRows(events.map((e) => se(e, null))).rows[0];
+  if (!row) throw new Error("no row");
+  return render(
+    <div data-row>
+      <TimelineRow
+        slug="dev"
+        row={row}
+        expanded={new Set(open ? [row.key] : [])}
+        toggle={() => {}}
+        rowProps={() => ({})}
+        failedIds={new Set()}
+        interruptedEnds={new Set()}
+      />
+    </div>,
+  );
+}
+
+test("an unknown tool keeps today's row: its name, the first string, and input and result plates", () => {
+  toolLine("NotebookEdit", { notebook_path: "a.ipynb", cell: 3 }, "edited", true);
+  const row = screen.getByRole("button", { expanded: true });
+  expect(within(row).getByText("NotebookEdit")).toHaveClass("font-mono");
+  expect(row).toHaveTextContent("a.ipynb");
+  const plates = [...document.querySelectorAll("pre")].map((p) => p.textContent);
+  expect(plates).toEqual([
+    JSON.stringify({ notebook_path: "a.ipynb", cell: 3 }, null, 2),
+    "edited",
+  ]);
+});
+
+test("a 55-character MCP tool name truncates, with the full name in its title", () => {
+  const name = "mcp__a_long_server_name_here__create_pull_request_now_x";
+  expect(name).toHaveLength(55);
+  toolLine(name, { title: "Fix" });
+  const row = screen.getByRole("button", { expanded: false });
+  const label = row.querySelector(`[title="${name}"]`);
+  expect(label).not.toBeNull();
+  expect(label).toHaveClass("max-w-[60%]", "min-w-0");
+  expect(label).toHaveTextContent("a_long_server_name_here · create_pull_request_now_x");
+  expect(within(row).getByText("a_long_server_name_here")).toHaveClass("truncate");
+  expect(row).toHaveTextContent("Fix");
+});

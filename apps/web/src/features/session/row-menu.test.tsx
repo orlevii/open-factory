@@ -257,7 +257,7 @@ test("applyTo skips the trigger: only the tab row's trigger is tabbable", async 
 
 test("tool rows and agent text show their time in the gutter; the footer has none", async () => {
   renderInRouter(timeline([text(1), tool("Bash", { command: "ls" }), footer]));
-  await screen.findByText("ls");
+  await screen.findByText("$ ls");
   const wrapOf = (key: string) =>
     document.querySelector(`[data-row="${key}"]`)?.closest("[data-row-wrap]") as HTMLElement;
   expect(wrapOf("1").querySelector("time[data-gutter-time]")).toHaveAttribute("datetime", at);
@@ -267,5 +267,5 @@ test("tool rows and agent text show their time in the gutter; the footer has non
 
 test("tool rows take the .of-row pressed fill", async () => {
   renderInRouter(timeline([tool("Bash", { command: "ls" })]));
-  expect(await screen.findByRole("button", { name: /Bash/ })).toHaveClass("of-row");
+  expect(await screen.findByRole("button", { name: /ls/ })).toHaveClass("of-row");
 });

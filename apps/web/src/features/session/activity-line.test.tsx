@@ -172,3 +172,14 @@ test("a file tool's path middle-truncates", () => {
   const lbl = document.querySelector("[data-activity-label]") as HTMLElement;
   expect(within(lbl).getByText("/app.ts")).toBeInTheDocument(); // the tail kept apart from the head
 });
+
+test("an MCP label truncates its server first, as the tool row does", () => {
+  render(
+    <ActivityLine
+      activity={{ kind: "tool", tool: "mcp__github__create_pr", target: "github · create_pr" }}
+    />,
+  );
+  const label = document.querySelector("[data-activity-label]") as HTMLElement;
+  expect(within(label).getByText("github")).toHaveClass("min-w-0", "truncate");
+  expect(within(label).getByText(/create_pr/)).toHaveClass("shrink-0");
+});

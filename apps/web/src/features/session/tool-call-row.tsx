@@ -2,6 +2,7 @@ import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { runInstant } from "@/lib/run-instant";
 import { formatTime } from "./format";
+import { useLongPressRegion } from "./long-press-region";
 import type { ToolRow } from "./rows";
 import { rendererFor } from "./tools";
 import { firstLine } from "./tools/output";
@@ -101,6 +102,8 @@ export function ToolCallRow({
   nested?: boolean;
 }) {
   const R = rendererFor(row.call.name);
+  // The summary line: on a timeline row, a long-press opens the row's menu (U4 §11.2).
+  const region = useLongPressRegion();
   const chip = chipOf(row);
   // Nothing to show (an image read): a plain row, no chevron, no expanded state.
   const expandable = R.hasBody?.(row) !== false || Boolean(children);
@@ -116,8 +119,7 @@ export function ToolCallRow({
           else onToggle();
         }}
         {...rowProps}
-        // The summary line: a long-press opens the row's menu on touch (U4 §11.2).
-        data-longpress-region=""
+        {...region}
         // `.of-row`: the hover fill and the instant pressed fill; a full-width row never scales.
         // min-h-8, not h-8: at large text sizes the line wraps rather than clips (Break M9).
         className="of-row flex min-h-8 w-full min-w-0 items-start gap-2 rounded-md px-1 py-1.5 text-left text-sm leading-5"

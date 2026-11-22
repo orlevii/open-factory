@@ -18,6 +18,7 @@ import type { Session } from "@/lib/auth-client";
 import { sessionQueryOptions } from "@/lib/session";
 import { agentsListQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
+import { useLongPressRegion } from "./long-press-region";
 
 /** How a slug shows on a speaker line: the chip's identity, and whether it links to a session. */
 export type ResolvedAgent = { agent: ChipAgent; link: boolean };
@@ -280,11 +281,12 @@ export const SpeakerLine = memo(function SpeakerLine({
   action?: ReactNode;
   children?: ReactNode;
 }) {
+  // On a timeline row, a long-press here opens the row's menu (U4 §11.2).
+  const region = useLongPressRegion();
   return (
     <div
       data-speaker-line
-      // On a timeline row, a long-press here opens the row's menu (U4 §11.2).
-      data-longpress-region=""
+      {...region}
       className="@container mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
     >
       {/* The names and the time never wrap apart: alone on its line the group shrinks, and the names

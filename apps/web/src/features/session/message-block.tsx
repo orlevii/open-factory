@@ -11,6 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
+import { useLongPressRegion } from "./long-press-region";
 import { rowOf } from "./row-of";
 import { SpeakerLine } from "./speaker-line";
 import { stripAttachedLines } from "./uploads";
@@ -145,6 +146,7 @@ export function MessageBlock(props: {
   attachments?: readonly MessageAttachment[] | undefined;
   slug?: string;
 }) {
+  const region = useLongPressRegion();
   const {
     from,
     system,
@@ -241,7 +243,7 @@ export function MessageBlock(props: {
         // Scheduler and queued factory notices keep their own sender (S9, S5); a long-press region, as a
         // speaker line is (U4 §11.2).
         <div
-          data-longpress-region=""
+          {...region}
           className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
         >
           <span className="flex items-center gap-1 text-foreground">

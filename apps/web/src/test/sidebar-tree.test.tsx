@@ -516,8 +516,11 @@ test("touch: a 500ms press on a row opens its menu at the press point and doesn'
   await screen.findByRole("tree");
   const el = rowEl("b") as HTMLElement;
   expect(el).toHaveAttribute("data-longpress-region");
+  resetProbe();
   longPress(el, { x: 40, y: 60 });
   expect(await screen.findByRole("menu", { name: "Bravo" })).toBeInTheDocument();
+  // Only the pressed row re-renders (its menu-open flag).
+  expect(Object.keys(probe.rows)).toEqual(["b"]);
   expect(rowEl("b")).toHaveAttribute("data-menu-open");
   // The dropdown hangs from the point, not the row's edge.
   const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");

@@ -773,6 +773,7 @@
 }
 [data-agent-row][data-pressed] {
   background: color-mix(in oklch, var(--sidebar-accent), var(--foreground) 6%);
+  transition-duration: 0ms;
 }
 
 /* Vaul drawer timing. At the end of the file, OUTSIDE any @layer.

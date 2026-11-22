@@ -42,6 +42,22 @@ export function useRowLongPress() {
   return { menu, press: useLongPress(onLongPress, { pick: pickRowBox }) };
 }
 
+/**
+ * The gutter column of a row with a menu (a card has none): a long-press region, on touch only. It must
+ * come first in its box: positioned boxes without a z-index paint and hit-test in tree order, so a
+ * nested row's ⋯ and gutter, later in the tree, stay on top of it.
+ */
+export function RowGutter() {
+  return (
+    <div
+      aria-hidden="true"
+      data-row-gutter=""
+      data-longpress-region=""
+      className="absolute inset-y-0 right-0 hidden w-8 pointer-coarse:block"
+    />
+  );
+}
+
 /** A row's gutter time and its one ⋯ (U3 §7.5), at the right of the nearest `relative` box. The menu's
  *  list is built per row object, and only when the menu first opens. */
 export function RowChrome({
@@ -72,15 +88,6 @@ export function RowChrome({
   const time = gutterTime(row);
   return (
     <>
-      {/* The gutter column (a card has none): a long-press region on touch. */}
-      {!inCard && (
-        <div
-          aria-hidden="true"
-          data-row-gutter=""
-          data-longpress-region=""
-          className="absolute inset-y-0 right-0 w-8"
-        />
-      )}
       {time !== undefined && (
         // Content | time | ⋯: the time sits just left of the menu, over the text row's end (agent text
         // has nothing there).
@@ -119,6 +126,7 @@ export function NestedRow({
   const { menu, press } = useRowLongPress();
   return (
     <div data-call className="group/call relative -mr-8 pr-8" {...press}>
+      <RowGutter />
       {children}
       <RowChrome {...chrome} nested menuRef={menu} />
     </div>

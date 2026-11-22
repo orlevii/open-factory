@@ -1,7 +1,8 @@
 import type { SubagentProgress } from "@open-factory/shared";
 import { memo, type RefObject, type TransitionEvent, useCallback } from "react";
 import { childrenOf } from "./display-passes";
-import { RowChrome, useRowLongPress } from "./row-chrome";
+import { InLongPressRow } from "./long-press-region";
+import { RowChrome, RowGutter, useRowLongPress } from "./row-chrome";
 import type { RowMenuHandle } from "./row-menu";
 import { isNoticeKind, type Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
@@ -127,20 +128,27 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       {...(p.live ? { "data-live": "" } : {})}
       className={`group relative min-w-0 rounded-md ${isCard(row) ? "" : ROW_GUTTER} ${p.gap}`}
     >
-      <ItemContent {...p} menuRef={menu} />
+      <InLongPressRow value={true}>
+        <ItemContent {...p} menuRef={menu} />
+      </InLongPressRow>
     </div>
   );
 }, itemPropsEqual);
 
 /** The row, its gutter time and its menu, memoized apart from the wrap so the tab coming back (every
- *  live row's `live` turning false at once) re-renders only the wrap divs. */
+ *  live row's `live` turning false at once) re-renders only the wrap divs. `menuRef` isn't compared
+ *  (`contentPropsEqual`): it is the wrap's `useRef`, one object for the item's life; a ref that could
+ *  change would be ignored here. */
 const ItemContent = memo(function ItemContent(
   p: TimelineItemProps & { menuRef: RefObject<RowMenuHandle | null> },
 ) {
   const { row, slug, toggle } = p;
   const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
+  // A live block has no seq to link to yet: its time and ⋯ come with the persisted row.
+  const chrome = !(row.kind === "text" && row.live);
   return (
     <>
+      {chrome && !isCard(row) && <RowGutter />}
       <TimelineRow
         slug={p.slug}
         spawned={p.spawned}
@@ -169,8 +177,7 @@ const ItemContent = memo(function ItemContent(
         toolTime={row.kind === "tool" ? row.at : undefined}
         progress={p.progress}
       />
-      {/* A live block has no seq to link to yet: its time and ⋯ come with the persisted row. */}
-      {!(row.kind === "text" && row.live) && (
+      {chrome && (
         <RowChrome
           row={row}
           slug={slug}

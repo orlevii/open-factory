@@ -853,3 +853,73 @@ test("a mouse press on a speaker line does nothing", () => {
   expect(card).not.toHaveAttribute("data-pressed");
   expect(screen.queryByRole("menu")).toBeNull();
 });
+
+test("the gutter strip comes first in its box, so a nested row's ⋯ and gutter paint and hit-test over it", async () => {
+  vi.useRealTimers();
+  const user = userEvent.setup();
+  timeline(groupWork([sh(3), sh(5)]));
+  await user.click(rowEl("3") as HTMLElement);
+  const wrap = rowEl("3")?.closest<HTMLElement>("[data-row-wrap]") as HTMLElement;
+  const calls = [...wrap.querySelectorAll<HTMLElement>("[data-call]")];
+  expect(calls.length).toBe(2);
+  // Positioned boxes without a z-index paint in tree order: the strip must precede the nested rows.
+  expect(wrap.firstElementChild).toHaveAttribute("data-row-gutter");
+  for (const c of calls) expect(c.firstElementChild).toHaveAttribute("data-row-gutter");
+  // Touch only: a fine pointer never has it in the way.
+  expect(wrap.firstElementChild).toHaveClass("hidden", "pointer-coarse:block");
+});
+
+test("touch: a press on a nested call's summary or gutter opens that call's menu only, and fills only it", async () => {
+  vi.useRealTimers();
+  const user = userEvent.setup();
+  timeline(groupWork([sh(3), sh(5)]));
+  await user.click(rowEl("3") as HTMLElement);
+  const header = rowEl("3") as HTMLElement;
+  const nested = rowEl("5") as HTMLElement;
+  longPress(nested, { hold: 80, release: false });
+  expect(nested).toHaveAttribute("data-pressed");
+  expect(header).not.toHaveAttribute("data-pressed");
+  fireEvent.pointerCancel(nested, { pointerType: "touch", pointerId: 1 });
+  longPress(nested);
+  await screen.findByRole("menu");
+  expect(screen.getAllByRole("menu")).toHaveLength(1);
+  expect(nested.closest("[data-call]")?.querySelector("[data-row-menu]")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(
+    header.closest("[data-row-wrap]")?.querySelector(":scope > [data-row-menu]"),
+  ).not.toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  const gutter = nested
+    .closest("[data-call]")
+    ?.querySelector<HTMLElement>(":scope > [data-row-gutter]") as HTMLElement;
+  longPress(gutter, { hold: 80, release: false });
+  expect(nested).toHaveAttribute("data-pressed");
+  expect(header).not.toHaveAttribute("data-pressed");
+  fireEvent.pointerCancel(gutter, { pointerType: "touch", pointerId: 1 });
+});
+
+test("chrome outside a timeline row (no menu there) is not a long-press region", () => {
+  vi.useRealTimers();
+  const { rows } = buildRows(pressEvents.map((e) => se(e)));
+  render(
+    <SpeakerContext value={speakers}>
+      {rows.map((row) => (
+        <TimelineRow
+          key={row.key}
+          slug="dev"
+          row={row}
+          expanded={new Set()}
+          toggle={() => {}}
+          rowProps={() => ({})}
+          failedIds={new Set()}
+          interruptedEnds={new Set()}
+        />
+      ))}
+    </SpeakerContext>,
+  );
+  expect(document.querySelector("[data-speaker-line]")).not.toBeNull();
+  expect(document.querySelector("[data-longpress-region]")).toBeNull();
+});

@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { runInstantOn } from "@/lib/run-instant";
+import { childrenOf } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
@@ -310,13 +311,9 @@ function maxSeq(rows: Row[]): number {
   return max;
 }
 
-/** Only rows that are mounted: children of collapsed tools are not. */
-const hasKey = (rows: Row[], key: string, expanded: ReadonlySet<string>): boolean =>
-  rows.some(
-    (r) =>
-      r.key === key ||
-      (r.kind === "tool" && expanded.has(r.key) && hasKey(r.children, key, expanded)),
-  );
+/** Only rows that are mounted: children of collapsed rows are not. */
+const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>): boolean =>
+  rows.some((r) => r.key === key || (expanded.has(r.key) && hasKey(childrenOf(r), key, expanded)));
 
 /** True when the row shows the envelope (or one of its merged ids / parts). */
 function rowHasMessage(row: Row, id: string): boolean {
@@ -328,15 +325,15 @@ function rowHasMessage(row: Row, id: string): boolean {
   return false;
 }
 
-const containsSeq = (rows: Row[], seq: number): boolean =>
-  rows.some((r) => r.seq === seq || (r.kind === "tool" && containsSeq(r.children, seq)));
+const containsSeq = (rows: readonly Row[], seq: number): boolean =>
+  rows.some((r) => r.seq === seq || containsSeq(childrenOf(r), seq));
 
-/** The row a deep link lands on: its own row, else the tool row holding it, else the nearest later
- *  row (hidden events such as `usage` have none), else the last row. */
+/** The row a deep link lands on: its own row, else the row holding it, else the nearest later row
+ *  (hidden events such as `usage` have none), else the last row. */
 export function targetRowKey(rows: Row[], seq: number): string | undefined {
   return (
     rows.find((r) => r.seq === seq)?.key ??
-    rows.find((r) => r.kind === "tool" && containsSeq(r.children, seq))?.key ??
+    rows.find((r) => containsSeq(childrenOf(r), seq))?.key ??
     rows.find((r) => r.seq > seq)?.key ??
     rows.at(-1)?.key
   );

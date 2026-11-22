@@ -28,6 +28,7 @@ import {
   summaryFromAgentsList,
 } from "./api";
 import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
+import { childrenOf } from "./display-passes";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
@@ -93,7 +94,8 @@ export function SessionView({
     qc.getQueryData(agentDetailQueryOptions(slug).queryKey)?.agent;
   // The announcer hears the loaded agent only: a stale summary's status turning into the real one
   // isn't a transition.
-  const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rows, !!loaded);
+  // The unmerged rows: a repeated failure folded into one timeline row is still announced (U3 §7.6).
+  const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rawRows, !!loaded);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
@@ -409,15 +411,15 @@ type RowScan = {
 /** What the announcer needs from the rows, in one walk rather than a scan per question. */
 function scanRows(rows: Row[]): RowScan {
   const scan: RowScan = { outgoing: [], highestSeq: 0, errorCount: 0, lastError: undefined };
-  const walk = (list: Row[], top: boolean) => {
+  const walk = (list: readonly Row[], top: boolean) => {
     for (const r of list) {
       if (r.seq > scan.highestSeq) scan.highestSeq = r.seq;
       if (r.kind === "outgoing") scan.outgoing.push(r);
-      else if (r.kind === "tool") walk(r.children, false);
       else if (top && r.kind === "error") {
         scan.errorCount++;
         scan.lastError = r;
       }
+      walk(childrenOf(r), false);
     }
   };
   walk(rows, true);

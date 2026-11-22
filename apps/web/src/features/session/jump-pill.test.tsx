@@ -50,7 +50,13 @@ const msg = (seq: number, i = 0): Row =>
     at: "2026-11-21T00:00:00.000Z",
     message: { id: `m${seq}`, from: "@or", kind: "message", urgent: false, body: `m${seq}` },
   }) as unknown as Row;
-const text = (seq: number): Row => ({ kind: "text", seq, text: `t${seq}`, key: `${seq}` });
+const text = (seq: number): Row => ({
+  kind: "text",
+  seq,
+  text: `t${seq}`,
+  key: `${seq}`,
+  head: false,
+});
 const quiet = (seq: number): Row =>
   ({
     kind: "error",

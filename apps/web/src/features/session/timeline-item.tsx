@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { CopyLink } from "./copy-link";
+import { childrenOf } from "./display-passes";
 import type { Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
@@ -23,7 +24,7 @@ export type TimelineItemProps = {
 
 function subtree(row: Row, out: Row[] = []): Row[] {
   out.push(row);
-  if (row.kind === "tool") for (const c of row.children) subtree(c, out);
+  for (const c of childrenOf(row)) subtree(c, out);
   return out;
 }
 

@@ -1,4 +1,5 @@
 import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
+import { childrenOf } from "./display-passes";
 
 type Ev<T extends AnyEvent["type"]> = Extract<AnyEvent, { type: T }>;
 export type ToolState = "running" | "done" | "failed" | "no_result";
@@ -36,7 +37,15 @@ export type Row =
   | ({ kind: "spawn" } & FactoryCall)
   /** `terminate_agent` (S7 UI design §4.2). */
   | ({ kind: "terminate" } & FactoryCall)
-  | { kind: "text"; seq: number; text: string; key: string }
+  | {
+      kind: "text";
+      seq: number;
+      text: string;
+      key: string;
+      /** Opens a speaker line (U3 §7.2): the first text of its turn, or the first after a message row
+       *  in the same turn. Never on a subagent's children. */
+      head: boolean;
+    }
   | {
       kind: "tool";
       seq: number;
@@ -213,8 +222,12 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
   let calls = 0;
   let usage: Ev<"usage"> | undefined;
   let hasOpenStart = false;
+  // The next top-level text heads a speaker line; `headTurn` is the turn of the last one placed.
+  let headPending = true;
+  let headTurn: string | null | undefined;
   for (const se of events) {
     const e = se.event;
+    if (e.type === "turn_started" || e.type === "turn_end") headPending = true;
     if (e.type === "turn_started") {
       started = true;
       hasOpenStart = true;
@@ -224,12 +237,25 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
     else if (e.type === "usage") usage = e;
     if (HIDDEN.has(e.type) || silent(e, top.at(-1))) continue;
     switch (e.type) {
-      case "message_in":
-        top.push(...messageRows(se, e.messages));
+      case "message_in": {
+        const rows = messageRows(se, e.messages);
+        if (rows.some((r) => r.kind === "message")) headPending = true;
+        top.push(...rows);
         break;
-      case "assistant_text":
-        place({ kind: "text", seq: se.seq, text: e.text, key: `${se.seq}` }, e.parentToolUseId);
+      }
+      case "assistant_text": {
+        const nested = !!e.parentToolUseId;
+        const head = !nested && (headPending || se.turnId !== headTurn);
+        if (!nested) {
+          headPending = false;
+          headTurn = se.turnId;
+        }
+        place(
+          { kind: "text", seq: se.seq, text: e.text, key: `${se.seq}`, head },
+          e.parentToolUseId,
+        );
         break;
+      }
       case "tool_call": {
         const turnOver =
           (se.turnId !== null && ended.has(se.turnId)) ||
@@ -349,11 +375,10 @@ export function stabilizeOpen(
   if (!open) return undefined;
   const byKey = new Map<string, ToolRow>();
   const walk = (list: readonly Row[]) => {
-    for (const r of list)
-      if (r.kind === "tool") {
-        byKey.set(r.key, r);
-        walk(r.children);
-      }
+    for (const r of list) {
+      if (r.kind === "tool") byKey.set(r.key, r);
+      walk(childrenOf(r));
+    }
   };
   walk(rows);
   const pick = (r: ToolRow) => byKey.get(r.key) ?? r;
@@ -387,16 +412,18 @@ function sameValue(a: unknown, b: unknown): boolean {
   return false;
 }
 
-/** Children first (spec §9.3): a tool row whose result, denial or `truncated` arrives later is a new
- *  object, but it still carries its stabilized children, so unchanged child rows keep their identity.
- *  A seq repeated within one batch is inserted once upstream (Task 29), so keys are unique here. */
+/** Children first (spec §9.3): a row with children (`childrenOf`, U3 §7.7) whose own fields change
+ *  later is a new object, but it still carries its stabilized children, so unchanged child rows keep
+ *  their identity. A seq repeated within one batch is inserted once upstream (Task 29), so keys are
+ *  unique here. */
 function stabilizeRow(old: Row, row: Row): Row {
   if (old === row) return old;
   if (old.kind !== row.kind) return row;
   let base = row;
-  if (row.kind === "tool" && old.kind === "tool") {
-    const children = stabilizeRows(old.children, row.children);
-    if (children !== row.children) base = { ...row, children };
+  if ("children" in row) {
+    const kids = childrenOf(row);
+    const children = stabilizeRows(childrenOf(old), kids);
+    if (children !== kids) base = { ...row, children };
   }
   const o = old as Record<string, unknown>;
   const r = base as Record<string, unknown>;
@@ -407,8 +434,8 @@ function stabilizeRow(old: Row, row: Row): Row {
 }
 
 /** Reuses the previous row object for every unchanged row, so memoized rows skip rendering (spec §9.3). */
-export function stabilizeRows(prev: readonly Row[], next: Row[]): Row[] {
-  if (prev.length === 0) return next.length === 0 ? (prev as Row[]) : next;
+export function stabilizeRows(prev: readonly Row[], next: readonly Row[]): Row[] {
+  if (prev.length === 0) return (next.length === 0 ? prev : next) as Row[];
   const byKey = new Map(prev.map((r) => [r.key, r]));
   let same = prev.length === next.length;
   const out = next.map((row, i) => {

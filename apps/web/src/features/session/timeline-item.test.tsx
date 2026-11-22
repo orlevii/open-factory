@@ -6,7 +6,13 @@ import { Timeline } from "./timeline";
 import { itemPropsEqual, type TimelineItemProps } from "./timeline-item";
 
 const at = "2026-11-21T10:00:00.000Z";
-const text = (seq: number): Row => ({ kind: "text", seq, text: `Text ${seq}`, key: `${seq}` });
+const text = (seq: number): Row => ({
+  kind: "text",
+  seq,
+  text: `Text ${seq}`,
+  key: `${seq}`,
+  head: false,
+});
 const message = (seq: number, id: string): Row => ({
   kind: "message",
   seq,

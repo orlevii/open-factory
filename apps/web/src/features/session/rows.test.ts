@@ -1,5 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { childrenOf, runDisplayPasses } from "./display-passes";
 import {
   buildRows,
   deliveryFailedIds,
@@ -551,4 +552,105 @@ test("open tracks the newest unresolved call of the open turn", () => {
 test("a tool row carries when it was called and when its result arrived", () => {
   const [row] = rowsOf([toolCall("a"), toolResult("a")]);
   expect(row).toMatchObject({ kind: "tool", at, resultAt: at });
+});
+
+// Speaker lines (U3 §7.2): `head` marks the text rows that open a speaker line.
+test("head: a turn's first text, and the first text after a message row in the same turn", () => {
+  seq = 0;
+  const msg = (id: string) =>
+    e(
+      {
+        type: "message_in",
+        messages: [{ id, from: "@or", kind: "message", urgent: false, body: id }],
+      },
+      null,
+    );
+  const rows = rowsOf([
+    e({ type: "turn_started" }),
+    e({ type: "assistant_text", text: "a" }), // first of turn 1
+    e({ type: "assistant_text", text: "b" }),
+    msg("m1"),
+    e({ type: "assistant_text", text: "c" }), // first after a message, same turn
+    e({ type: "assistant_text", text: "d" }),
+    e({ type: "turn_end", isError: false, numTurns: 1 }),
+    e({ type: "turn_started" }, "t2"),
+    e({ type: "assistant_text", text: "e" }, "t2"), // first of turn 2
+  ]);
+  const heads = rows.flatMap((r) => (r.kind === "text" ? [[r.text, r.head]] : []));
+  expect(heads).toEqual([
+    ["a", true],
+    ["b", false],
+    ["c", true],
+    ["d", false],
+    ["e", true],
+  ]);
+});
+
+test("head: a turn whose start isn't loaded still heads its first text; a tool row in between doesn't", () => {
+  seq = 0;
+  const rows = rowsOf([
+    e({ type: "assistant_text", text: "a" }),
+    e({ type: "tool_call", toolUseId: "tu", name: "Bash", input: { command: "ls" } }),
+    e({ type: "tool_result", toolUseId: "tu", content: "x", isError: false }),
+    e({ type: "assistant_text", text: "b" }),
+  ]);
+  expect(rows.flatMap((r) => (r.kind === "text" ? [r.head] : []))).toEqual([true, false]);
+});
+
+test("head: never on a subagent's children, and they don't consume the turn's head", () => {
+  seq = 0;
+  const rows = rowsOf([
+    e({ type: "turn_started" }),
+    e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
+    e({ type: "assistant_text", text: "inside", parentToolUseId: "ag" }),
+    e({ type: "assistant_text", text: "inside 2", parentToolUseId: "ag" }),
+    e({ type: "assistant_text", text: "outside" }),
+  ]);
+  const agent = rows[0];
+  if (agent?.kind !== "tool") throw new Error("no agent row");
+  expect(agent.children.map((c) => c.kind === "text" && c.head)).toEqual([false, false]);
+  expect(rows[1]).toMatchObject({ kind: "text", text: "outside", head: true });
+});
+
+// The rows pipeline (U3 §7.7): one helper knows which rows hold children.
+test("childrenOf: a tool row's children; none for any other row", () => {
+  seq = 0;
+  const rows = rowsOf([
+    e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
+    e({ type: "assistant_text", text: "inside", parentToolUseId: "ag" }),
+    e({ type: "assistant_text", text: "outside" }),
+  ]);
+  const [tool, text] = rows;
+  if (tool?.kind !== "tool" || !text) throw new Error("rows");
+  expect(childrenOf(tool)).toBe(tool.children);
+  expect(childrenOf(text)).toEqual([]);
+  expect(childrenOf(text)).toBe(childrenOf(text)); // one shared empty array, never a fresh one
+});
+
+test("runDisplayPasses keeps every row it doesn't merge (identity in PR2)", () => {
+  seq = 0;
+  const raw = rowsOf([
+    e({ type: "assistant_text", text: "a" }),
+    e({ type: "assistant_text", text: "b" }),
+  ]);
+  const out = runDisplayPasses(raw);
+  expect(out).toHaveLength(2);
+  for (const [i, r] of out.entries()) expect(r).toBe(raw[i]);
+});
+
+test("stabilizeRows recurses through childrenOf: an unchanged nested child keeps its identity", () => {
+  seq = 0;
+  const evs = [
+    e({ type: "tool_call", toolUseId: "ag", name: "Agent", input: {} }),
+    e({ type: "assistant_text", text: "inside", parentToolUseId: "ag" }),
+  ];
+  const first = rowsOf(evs);
+  const grown = stabilizeRows(
+    first,
+    rowsOf([...evs, e({ type: "assistant_text", text: "more", parentToolUseId: "ag" })]),
+  );
+  const [a, b] = [first[0], grown[0]];
+  if (a?.kind !== "tool" || b?.kind !== "tool") throw new Error("rows");
+  expect(b).not.toBe(a);
+  expect(b.children[0]).toBe(a.children[0]);
 });

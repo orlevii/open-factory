@@ -1236,3 +1236,51 @@ test("a row with a heading starts a labelled group in the menu", async () => {
   expect(screen.getByText("Skills")).toBeInTheDocument();
   expect(screen.getByText("Commands")).toBeInTheDocument();
 });
+
+test("chips that wrap after their names lay out still collapse to two rows (each chip is observed)", async () => {
+  const observers: { cb: ResizeObserverCallback; els: Element[] }[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      els: Element[] = [];
+      constructor(cb: ResizeObserverCallback) {
+        observers.push({ cb, els: this.els });
+      }
+      observe(el: Element) {
+        this.els.push(el);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  let wrapped = false; // first layout: one row; after the names widen: one chip a row
+  const spy = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (!this.hasAttribute("data-upload-chip") || !wrapped) return 0;
+    return [...(this.parentElement?.children ?? [])].indexOf(this) * 42;
+  });
+  const { box } = setupFiles();
+  pasteFiles(box, [file("a.txt"), file("b.txt"), file("p.heic", 10, "image/heic")]);
+  expect(screen.queryByRole("button", { name: "+1 file" })).toBeNull();
+  const lis = chips();
+  expect(observers.some((o) => lis.every((li) => o.els.includes(li)))).toBe(true);
+  wrapped = true;
+  act(() => {
+    for (const o of observers) o.cb([], {} as ResizeObserver);
+  });
+  expect(screen.getByRole("button", { name: "+1 file" })).toBeInTheDocument();
+  expect(chips()[2]).toHaveAttribute("inert");
+  expect(chips()[2]).toHaveAttribute("aria-hidden", "true");
+  spy.mockRestore();
+});
+
+test("a failed chip's reason takes up to two lines instead of being cut to a few words", () => {
+  const { box } = setupFiles();
+  pasteFiles(box, [file("p.heic", 10, "image/heic")]);
+  act(() => lastXhr().respond(415, { error: { message: "HEIC isn't supported; export as JPEG" } }));
+  const reason = chips()[0]?.querySelector("[data-upload-error]");
+  expect(reason).toHaveTextContent("HEIC isn't supported; export as JPEG");
+  expect(reason).toHaveClass("line-clamp-2");
+  expect(reason).not.toHaveClass("truncate");
+});

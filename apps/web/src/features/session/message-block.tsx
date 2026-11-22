@@ -340,7 +340,7 @@ function AttachmentChip({ slug, attachment: a }: { slug: string; attachment: Mes
           <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
         )}
         <span dir="auto" className="min-w-0">
-          <MiddleTruncate text={name} keepEnd />
+          <MiddleTruncate text={name} keepEnd headMin />
         </span>
       </a>
       {a.kind === "image" && !preview ? (

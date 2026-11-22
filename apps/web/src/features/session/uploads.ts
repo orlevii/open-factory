@@ -30,6 +30,27 @@ type Entry = {
   file: File;
   xhr?: XMLHttpRequest;
   attachment?: MessageAttachment;
+  /** 429 `too_many_uploads` answers this file has had in a row. */
+  busy?: number;
+};
+
+/** The server streams at most 3 uploads per uploader at once (429 past that): the rest wait their turn. */
+const MAX_IN_FLIGHT = 3;
+/** A 429 "too many at once" waits for one of ours to finish, or this long when none is ours (another tab's). */
+const BUSY_PAUSE_MS = 1000;
+/** After this many 429s in a row the file fails, with Retry. */
+const MAX_BUSY = 3;
+
+const isBusy = (xhr: XMLHttpRequest) => {
+  if (xhr.status !== 429) return false;
+  try {
+    return (
+      (JSON.parse(xhr.responseText) as { error?: { code?: unknown } })?.error?.code ===
+      "too_many_uploads"
+    );
+  } catch {
+    return false;
+  }
 };
 
 // beforeunload while anything is in flight, across every agent's store (U3 §13.5).
@@ -82,6 +103,12 @@ export function createUploadStore(slug: string): UploadStore {
   const dirty = new Set<string>();
   let frame: number | undefined;
   let seq = 0;
+  // Files waiting for a slot, in order, and how many are streaming now.
+  const waiting: string[] = [];
+  let active = 0;
+  // After a 429 for "too many at once": nothing starts until one of ours finishes (or the pause ends).
+  let paused = false;
+  let pauseTimer: ReturnType<typeof setTimeout> | undefined;
 
   const notifyKey = (k: string) => {
     for (const l of keyListeners.get(k) ?? []) l();
@@ -117,9 +144,39 @@ export function createUploadStore(slug: string): UploadStore {
     for (const k of ks) notifyKey(k);
   };
 
-  function start(k: string) {
+  /** Into the line: it starts when a slot is free (the chip shows 0% meanwhile). */
+  function enqueue(k: string, front = false) {
+    if (front) waiting.unshift(k);
+    else waiting.push(k);
+    flight(1);
+    pump();
+  }
+  function unqueue(k: string) {
+    const i = waiting.indexOf(k);
+    if (i < 0) return false;
+    waiting.splice(i, 1);
+    flight(-1);
+    return true;
+  }
+  function pump() {
+    while (!paused && active < MAX_IN_FLIGHT && waiting.length > 0) {
+      const k = waiting.shift() as string;
+      flight(-1); // `send` counts it again while it streams
+      const e = entries.get(k);
+      if (e?.view.status === "uploading" && !e.xhr) send(k);
+    }
+  }
+  function resume() {
+    paused = false;
+    if (pauseTimer !== undefined) clearTimeout(pauseTimer);
+    pauseTimer = undefined;
+    pump();
+  }
+
+  function send(k: string) {
     const e = entries.get(k);
     if (!e) return;
+    active++;
     const xhr = new XMLHttpRequest();
     e.xhr = xhr;
     xhr.open("POST", `/api/agents/${encodeURIComponent(slug)}/uploads`);
@@ -131,6 +188,7 @@ export function createUploadStore(slug: string): UploadStore {
     const settle = () => {
       if (settled) return false;
       settled = true;
+      active--;
       flight(-1);
       if (e.xhr === xhr) e.xhr = undefined;
       dirty.delete(k);
@@ -143,7 +201,20 @@ export function createUploadStore(slug: string): UploadStore {
       if (frame === undefined) frame = requestAnimationFrame(flush);
     };
     xhr.onload = () => {
-      if (!settle()) return;
+      const mine = settle();
+      // The server is streaming too many already: back to the front of the line, without a failure.
+      if (mine && isBusy(xhr) && (e.busy ?? 0) < MAX_BUSY) {
+        e.busy = (e.busy ?? 0) + 1;
+        setView(k, { progress: 0 });
+        notifyKey(k);
+        paused = true;
+        enqueue(k, true);
+        if (active === 0) pauseTimer = setTimeout(resume, BUSY_PAUSE_MS);
+        return;
+      }
+      resume();
+      if (!mine) return;
+      e.busy = 0;
       if (xhr.status >= 200 && xhr.status < 300) {
         const parsed = (() => {
           try {
@@ -169,13 +240,16 @@ export function createUploadStore(slug: string): UploadStore {
       changed();
     };
     xhr.onerror = () => {
-      if (!settle()) return;
+      const mine = settle();
+      resume();
+      if (!mine) return;
       setView(k, { status: "failed", error: NETWORK_ERROR, retryable: true });
       notifyKey(k);
       changed();
     };
     xhr.onabort = () => {
       settle();
+      resume();
     };
     xhr.send(e.file);
   }
@@ -235,7 +309,7 @@ export function createUploadStore(slug: string): UploadStore {
             },
             () => {}, // undecodable here: the icon stays; the server decides what it is
           );
-        if (!refusal) start(key);
+        if (!refusal) enqueue(key);
       }
       if (taken.length) changed();
       return taken.length;
@@ -245,13 +319,15 @@ export function createUploadStore(slug: string): UploadStore {
       if (e?.view.status !== "failed" || !e.view.retryable) return;
       const { error: _error, ...rest } = e.view;
       e.view = { ...rest, status: "uploading", progress: 0 };
-      start(k);
+      e.busy = 0;
+      enqueue(k);
       notifyKey(k);
       changed();
     },
     remove(k) {
       const e = drop(k);
       if (!e) return;
+      unqueue(k);
       // Aborting deletes the server's temp file; a finished upload is deleted at once (Q42).
       e.xhr?.abort();
       const id = e.attachment?.uploadId;
@@ -308,6 +384,10 @@ export function createUploadStore(slug: string): UploadStore {
       if (any) changed();
     },
     abortAll() {
+      for (const k of [...waiting]) unqueue(k);
+      paused = false;
+      if (pauseTimer !== undefined) clearTimeout(pauseTimer);
+      pauseTimer = undefined;
       for (const e of [...entries.values(), ...away.values()]) {
         e.xhr?.abort();
         e.view.thumb?.close();

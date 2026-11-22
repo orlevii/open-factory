@@ -288,3 +288,60 @@ test("recall is the newest message you sent in the loaded timeline, without its 
   expect(recallText(ordered, "carol")).toBeUndefined();
   expect(recallText([], "alice")).toBeUndefined();
 });
+
+test("at most 3 files upload at once; the rest wait at 0% and start as slots free", () => {
+  const s = createUploadStore("dev");
+  s.add(Array.from({ length: 5 }, (_, i) => file(`f${i}.txt`)));
+  expect(FakeXhr.all).toHaveLength(3);
+  const keys = s.keys();
+  expect(keys.map((k) => s.get(k)?.status)).toEqual(Array(5).fill("uploading"));
+  expect(s.get(keys[4] as string)?.progress).toBe(0);
+  expect(s.summary().pending).toBe(5);
+  (FakeXhr.all[0] as FakeXhr).respond(201, ok("u0", "f0.txt"));
+  expect(FakeXhr.all).toHaveLength(4);
+  s.remove(keys[1] as string); // cancelling one in flight frees its slot too
+  expect(FakeXhr.all).toHaveLength(5);
+  expect(lastXhr().headers["x-upload-name"]).toBe("f4.txt");
+});
+
+test("a waiting file removed before its turn never uploads", () => {
+  const s = createUploadStore("dev");
+  s.add(Array.from({ length: 4 }, (_, i) => file(`f${i}.txt`)));
+  s.remove(s.keys()[3] as string);
+  (FakeXhr.all[0] as FakeXhr).respond(201, ok("u0", "f0.txt"));
+  expect(FakeXhr.all).toHaveLength(3);
+});
+
+test("a 429 too_many_uploads waits for a slot and tries again by itself", () => {
+  const s = createUploadStore("dev");
+  s.add([file("a.txt"), file("b.txt")]);
+  const [a, b] = FakeXhr.all as [FakeXhr, FakeXhr];
+  b.respond(429, {
+    error: {
+      code: "too_many_uploads",
+      message: "Too many uploads at once; wait for one to finish.",
+    },
+  });
+  const kb = s.keys()[1] as string;
+  expect(s.get(kb)?.status).toBe("uploading");
+  expect(FakeXhr.all).toHaveLength(2);
+  a.respond(201, ok("u1", "a.txt"));
+  expect(FakeXhr.all).toHaveLength(3);
+  expect(lastXhr().headers["x-upload-name"]).toBe("b.txt");
+});
+
+test("a 429 with nothing of ours in flight retries after a pause, and gives up after a few tries", () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const s = createUploadStore("dev");
+  s.add([file("a.txt")]);
+  const busy = { error: { code: "too_many_uploads", message: "Too many uploads at once." } };
+  for (let i = 0; i < 3; i++) {
+    lastXhr().respond(429, busy);
+    expect(s.get(s.keys()[0] as string)?.status).toBe("uploading");
+    vi.advanceTimersByTime(1000);
+  }
+  expect(FakeXhr.all).toHaveLength(4);
+  lastXhr().respond(429, busy);
+  expect(s.get(s.keys()[0] as string)).toMatchObject({ status: "failed", retryable: true });
+  vi.useRealTimers();
+});

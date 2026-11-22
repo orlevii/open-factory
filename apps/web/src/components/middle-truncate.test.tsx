@@ -33,3 +33,17 @@ test("a file name that must keep its extension cuts its last segment from the st
   expect(tail.firstElementChild).toHaveAttribute("dir", "ltr");
   expect(tail).toHaveTextContent("/a-very-long-component-name.tsx");
 });
+
+test("headMin keeps a few characters of the head: the tail is capped short of the whole line", () => {
+  const { container } = render(
+    <MiddleTruncate
+      keepEnd
+      headMin
+      text="my-very-long-design-review-notes-for-the-chip-final-v2.md"
+    />,
+  );
+  const [head, tail] = container.querySelectorAll("[aria-hidden=true]");
+  expect(head).toHaveClass("min-w-[4ch]");
+  expect(tail).toHaveClass("max-w-[calc(100%-4ch)]");
+  expect(tail).not.toHaveClass("max-w-full");
+});

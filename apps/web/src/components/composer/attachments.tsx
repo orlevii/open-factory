@@ -56,6 +56,8 @@ export interface AttachmentStore {
 }
 
 export const MAX_ATTACHMENTS = 10;
+/** The chip list's row gap (`gap-1.5`). */
+const ROW_GAP_PX = 6;
 export const TOO_MANY = `Up to ${MAX_ATTACHMENTS} files per message.`;
 export const NO_FOLDERS = "Folders can't be attached; attach the files inside.";
 
@@ -118,7 +120,8 @@ const UploadChip = memo(function UploadChip({
       data-status={v.status}
       inert={hidden}
       aria-hidden={hidden || undefined}
-      className={`relative flex h-9 max-w-[12rem] min-w-0 items-center gap-1.5 overflow-hidden rounded-sm border bg-background pr-0.5 pl-1 ${failed ? "border-destructive" : "border-border"}`}
+      // A failed chip grows to show its reason on up to two lines (the evidence pass, D13).
+      className={`relative flex min-h-9 max-w-[12rem] min-w-0 items-center gap-1.5 overflow-hidden rounded-sm border bg-background py-0.5 pr-0.5 pl-1 ${failed ? "border-destructive" : "border-border"}`}
     >
       {v.thumb ? (
         <Thumb bitmap={v.thumb} />
@@ -127,10 +130,13 @@ const UploadChip = memo(function UploadChip({
       )}
       <span className="flex min-w-0 flex-1 flex-col text-[0.8125rem] leading-4">
         <span dir="auto" className="min-w-0">
-          <MiddleTruncate text={name} keepEnd />
+          <MiddleTruncate text={name} keepEnd headMin />
         </span>
         {failed ? (
-          <span title={v.error} className="truncate text-xs leading-4 text-destructive">
+          <span
+            data-upload-error
+            className="line-clamp-2 text-xs leading-4 break-words whitespace-normal text-destructive"
+          >
             {v.error}
           </span>
         ) : v.status === "uploading" ? (
@@ -187,6 +193,8 @@ export const AttachmentChips = memo(function AttachmentChips({
   const listRef = useRef<HTMLUListElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [hidden, setHidden] = useState(0);
+  // Where the third row starts (px): the list is clipped there while collapsed.
+  const [clip, setClip] = useState<number | undefined>(undefined);
   // A new batch after a send starts collapsed again.
   if (keys.length === 0 && expanded) setExpanded(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: keys change which chips there are to measure
@@ -194,6 +202,7 @@ export const AttachmentChips = memo(function AttachmentChips({
     const ul = listRef.current;
     if (!ul || expanded) {
       setHidden(0);
+      setClip(undefined);
       return;
     }
     const measure = () => {
@@ -201,11 +210,16 @@ export const AttachmentChips = memo(function AttachmentChips({
       const tops = [...new Set(items.map((i) => i.offsetTop))].sort((a, b) => a - b);
       const third = tops[2];
       setHidden(third === undefined ? 0 : items.filter((i) => i.offsetTop >= third).length);
+      // Up to the third row's top, less the row gap; rows may differ in height (a failed chip's reason).
+      setClip(third === undefined ? undefined : third - (tops[0] ?? 0) - ROW_GAP_PX);
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
+    // The chips themselves, not only the list: a name laid out wider wraps a chip to another row while
+    // the list's own box stays the same size (the evidence pass, D4).
     const ro = new ResizeObserver(measure);
     ro.observe(ul);
+    for (const li of ul.children) ro.observe(li);
     return () => ro.disconnect();
   }, [keys, expanded]);
   if (keys.length === 0) return null;
@@ -215,8 +229,9 @@ export const AttachmentChips = memo(function AttachmentChips({
       <ul
         ref={listRef}
         aria-label="Attached files"
-        // Two rows of 36px chips and the gap between them.
-        className={`flex min-w-0 flex-1 flex-wrap gap-1.5 ${expanded ? "" : "max-h-[calc(4.5rem_+_0.375rem)] overflow-hidden"}`}
+        // Collapsed: clipped where the third row starts (measured).
+        className={`flex min-w-0 flex-1 flex-wrap gap-1.5 ${expanded ? "" : "overflow-hidden"}`}
+        style={clip === undefined ? undefined : { maxHeight: clip }}
       >
         {keys.map((k, i) => (
           <UploadChip key={k} store={store} id={k} hidden={i >= firstHidden} />

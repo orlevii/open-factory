@@ -8,23 +8,13 @@ import {
   validateCron,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useBlocker } from "@tanstack/react-router";
-import {
-  type FormEvent,
-  type MutableRefObject,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
-import { Button } from "@/components/ui/button";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
 import { agentsListQueryOptions } from "@/features/session/api";
-import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
+import { useSheetDraft } from "@/features/sheets/drafts";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { mergeServer } from "@/features/sheets/merge-server";
 import { agentOptionLabel, useAssignableAgents } from "@/features/tasks/agent-picker";
@@ -39,9 +29,6 @@ type Field = (typeof FIELDS)[number];
 type Errors = Partial<Record<Field, string>>;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
-/** Stand-in start values for forms that keep no draft (edit); never read. */
-const NO_DRAFT = {};
-
 export type FormValues = {
   target: string;
   mode: WhenMode;
@@ -51,7 +38,10 @@ export type FormValues = {
   body: string;
 };
 
-/** The edit page's start values: the stored instant read in the schedule's zone for the date input. */
+/** An edit draft holds the values and the server copy they were edited against (§5.5). */
+type EditDraft = { values: FormValues; base: FormValues };
+
+/** The edit sheet's start values: the stored instant read in the schedule's zone for the date input. */
 export function valuesOf(s: ScheduleItem): FormValues {
   return {
     target: s.target.slug,
@@ -64,40 +54,29 @@ export function valuesOf(s: ScheduleItem): FormValues {
 }
 
 /**
- * Create and edit (UI design §3). Each field validates when you leave it, never while you type; everything changed is
- * checked again on submit, which moves focus to the first invalid field. Edit sends only the fields that changed.
+ * Create and edit, always in a sheet (§9). Each field validates when you leave it, never while you type; everything
+ * changed is checked again on submit, which moves focus to the first invalid field. Edit sends only the fields that
+ * changed. The values live in a draft (`new-schedule`, or `edit-schedule:<key>` holding `{ values, base }`).
  */
 export function ScheduleForm({
   initial,
   presetTarget,
   agentAuthored,
-  readOnly,
   onSubmit,
-  saved,
-  cancelTo,
-  afterMessage,
-  leaving: leavingProp,
-  draftKey,
-  inSheet,
+  lead,
+  footerLeft,
 }: {
   initial?: ScheduleItem | undefined;
   presetTarget?: string | undefined;
   /** Edit: the body's author is an agent, so a changed message makes the editor its author. */
   agentAuthored?: boolean;
-  readOnly?: boolean;
   onSubmit(body: CreateScheduleBody | PatchScheduleBody): Promise<void>;
-  /** Edit: "Saved." after a successful save. */
-  saved?: boolean;
-  cancelTo?: string;
-  afterMessage?: ReactNode;
-  /** Set by the page once it has done something that leaves (a delete): the unsaved-changes guard then stays quiet. */
-  leaving?: MutableRefObject<boolean>;
-  /** Create in a sheet: the values live in this draft, and a restored draft keeps its own target over `presetTarget`. */
-  draftKey?: DraftKey;
-  /** In a sheet: no unsaved-changes guard (dismissing never asks), no Cancel link; the footer is the sheet's. */
-  inSheet?: boolean;
+  /** Above the first field, inside the scrolling body (the edit sheet's state line). */
+  lead?: ReactNode;
+  /** The footer's left side (the edit sheet's Delete). */
+  footerLeft?: ReactNode;
 }) {
-  // Only a create in a sheet keeps a draft; the hook is called always, and its key is unused otherwise.
+  const create = !initial;
   const blank = (): FormValues => ({
     target: presetTarget ?? "",
     mode: "repeats",
@@ -106,27 +85,48 @@ export function ScheduleForm({
     zone: browserZone(),
     body: "",
   });
-  const drafting = Boolean(draftKey) && !initial;
-  const draft = useSheetDraft<FormValues>(draftKey ?? "new-schedule", () =>
-    drafting ? blank() : (NO_DRAFT as FormValues),
+  // The server copy as form values; a new identity only when the schedule itself changed.
+  const server = useMemo(() => (initial ? valuesOf(initial) : undefined), [initial]);
+  const draft = useSheetDraft<FormValues | EditDraft>(
+    initial ? `edit-schedule:${initial.key}` : "new-schedule",
+    () => (server ? { values: server, base: server } : blank()),
   );
-  const [restored, setRestored] = useState(drafting && draft.restored);
-  // The start values are read once: valuesOf formats the instant, and browserZone asks Intl.
-  const [start] = useState<FormValues>(() => (initial ? valuesOf(initial) : draft.start));
-  const [v, setV] = useState<FormValues>(start);
-  const base = useRef(start);
+  const [restored, setRestored] = useState(draft.restored);
+  // The start values are read once. A restored edit draft starts from its values merged onto the server copy as it is now.
+  const [start] = useState<EditDraft>(() => {
+    if (!server) return { values: draft.start as FormValues, base: draft.start as FormValues };
+    const d = draft.start as EditDraft;
+    return { values: mergeServer(d.values, d.base, server), base: server };
+  });
+  const [v, setV] = useState<FormValues>(start.values);
+  /** The server copy the values were edited against; a field equal to it is untouched. */
+  const [base, setBase] = useState<FormValues>(start.base);
   const [errors, setErrors] = useState<Errors>({});
   const [preview, setPreview] = useState<string | undefined>(() =>
     initial
-      ? previewText({ mode: start.mode, cron: start.cron, local: start.local, zone: start.zone })
+      ? previewText({
+          mode: start.values.mode,
+          cron: start.values.cron,
+          local: start.values.local,
+          zone: start.values.zone,
+        })
       : undefined,
   );
+  // Live: a refreshed schedule updates the fields the user hasn't touched; edited fields are kept. Adjusted while
+  // rendering (a new server copy is a new prop), so the form never paints the stale merge.
+  if (server && server !== base) {
+    const merged = mergeServer(v, base, server);
+    setV(merged);
+    setBase(server);
+    setPreview(
+      previewText({ mode: merged.mode, cron: merged.cron, local: merged.local, zone: merged.zone }),
+    );
+  }
+
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const [toFocus, setToFocus] = useState<Field | null>(null);
   const form = useRef<HTMLFormElement>(null);
-  const ownLeaving = useRef(false);
-  const leaving = leavingProp ?? ownLeaving;
   const { agents } = useAssignableAgents();
   // An archived or terminated target isn't a live option: while it is the value, the trigger names it.
   const endedTarget =
@@ -144,32 +144,18 @@ export function ScheduleForm({
   );
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 
-  // Live: a refreshed schedule updates the fields the user hasn't touched; edited fields are kept.
-  const serverValues = useMemo(() => (initial ? JSON.stringify(valuesOf(initial)) : ""), [initial]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a change on the server counts
-  useEffect(() => {
-    if (!initial) return;
-    const server = valuesOf(initial);
-    const prevBase = base.current; // before the reassignment below
-    base.current = server;
-    setV((prev) => mergeServer(prev, prevBase, server));
-    // The preview follows the fields it reads, so a server change to the timing doesn't leave it stale.
-    const out = mergeServer(v, prevBase, server);
-    setPreview(previewText({ mode: out.mode, cron: out.cron, local: out.local, zone: out.zone }));
-  }, [serverValues]);
-
   // An effect, not a write in each setter: the many field handlers all go through `v`, and the draft only has to be
-  // current when the sheet closes. An untouched form (equal to its start values) holds no draft.
+  // current when the sheet closes. An untouched form (equal to its start values, or to its base) holds no draft.
   const { save: saveDraft } = draft;
   useEffect(() => {
-    if (drafting) saveDraft(v);
-  }, [drafting, saveDraft, v]);
+    saveDraft(create ? v : { values: v, base });
+  }, [create, saveDraft, v, base]);
 
   // A draft or link may name an agent that has since ended or never existed: clear it, with the reason under Target.
-  const live = useQuery({ ...agentsListQueryOptions("exclude"), enabled: drafting });
-  const endedList = useQuery({ ...agentsListQueryOptions("only"), enabled: drafting });
+  const live = useQuery({ ...agentsListQueryOptions("exclude"), enabled: create });
+  const endedList = useQuery({ ...agentsListQueryOptions("only"), enabled: create });
   if (
-    drafting &&
+    create &&
     v.target &&
     live.data &&
     endedList.data &&
@@ -184,16 +170,8 @@ export function ScheduleForm({
     }));
   }
 
-  const changed = (f: keyof FormValues) => v[f] !== base.current[f];
+  const changed = (f: keyof FormValues) => v[f] !== base[f];
   const dirty = (Object.keys(v) as (keyof FormValues)[]).some(changed);
-  useBlocker({
-    shouldBlockFn: () => {
-      if (inSheet || leaving.current || !dirty || readOnly) return false;
-      return !window.confirm("You have unsaved changes. Leave this page and discard them?");
-    },
-    enableBeforeUnload: () => !inSheet && dirty && !leaving.current && !readOnly,
-    disabled: inSheet,
-  });
 
   const set = (patch: Partial<FormValues>) => setV((x) => ({ ...x, ...patch }));
   const setError = (f: Field, m: string | undefined) => setErrors((e) => ({ ...e, [f]: m }));
@@ -220,7 +198,6 @@ export function ScheduleForm({
           : undefined,
   };
 
-  const create = !initial;
   /** Fields that count on submit: everything on create; only what changed on edit. */
   const relevant = (f: Field): boolean => {
     if (create) return f === "cron" ? v.mode === "repeats" : f === "at" ? v.mode === "once" : true;
@@ -257,7 +234,7 @@ export function ScheduleForm({
 
   async function submit(ev: FormEvent) {
     ev.preventDefault();
-    if (pending || readOnly) return;
+    if (pending) return;
     setFailed(false);
     const found: Errors = {};
     for (const f of FIELDS) if (relevant(f)) found[f] = check[f]();
@@ -267,11 +244,9 @@ export function ScheduleForm({
     if (!create && !dirty) return;
     setPending(true);
     try {
-      leaving.current = create; // a created schedule navigates away
       await onSubmit(payload());
       if (!create) setPending(false); // `base` follows the saved values through the refreshed `initial`
     } catch (err) {
-      leaving.current = false;
       setPending(false);
       if (err instanceof ApiError) {
         const fields = (err.body.fields ?? {}) as Record<string, string>;
@@ -288,7 +263,7 @@ export function ScheduleForm({
   }
 
   const fields = (
-    <fieldset disabled={pending || readOnly} className="grid min-w-0 gap-5">
+    <fieldset disabled={pending} className="grid min-w-0 gap-5">
       <FieldShell
         name="target"
         label="Target"
@@ -398,60 +373,44 @@ export function ScheduleForm({
           />
         )}
       </FieldShell>
-      {afterMessage}
       {failed && (
         <p role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive">
           Couldn't save the schedule. Try again.
         </p>
       )}
-      {!readOnly && !inSheet && (
-        <div className="flex items-center gap-2">
-          <Button type="submit" disabled={pending}>
-            {create
-              ? pending
-                ? "Creating…"
-                : "Create schedule"
-              : pending
-                ? "Saving…"
-                : "Save changes"}
-          </Button>
-          <Button type="button" variant="outline" asChild>
-            <Link to={cancelTo ?? "/schedules"} search={{}}>
-              Cancel
-            </Link>
-          </Button>
-          {saved && !dirty && !pending && (
-            <span role="status" className="text-[0.8125rem] text-muted-foreground">
-              Saved.
-            </span>
-          )}
-        </div>
-      )}
     </fieldset>
   );
 
-  if (inSheet)
-    return (
-      <form ref={form} onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
-        <SheetBody className="grid content-start gap-5">{fields}</SheetBody>
-        <SheetFormFooter
-          submitLabel="Create schedule"
-          pendingLabel="Creating…"
-          pending={pending}
-          restored={restored}
-          onDiscard={() => {
-            draft.clear();
-            setV(blank());
-            setErrors({});
-            setPreview(undefined);
-            setRestored(false);
-          }}
-        />
-      </form>
-    );
   return (
-    <form ref={form} onSubmit={submit} noValidate className="grid max-w-[720px] gap-5">
-      {fields}
+    <form ref={form} onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
+      <SheetBody className="grid content-start gap-5">
+        {lead}
+        {fields}
+      </SheetBody>
+      <SheetFormFooter
+        submitLabel={create ? "Create schedule" : "Save changes"}
+        pendingLabel={create ? "Creating…" : "Saving…"}
+        pending={pending}
+        restored={restored}
+        left={footerLeft}
+        onDiscard={() => {
+          draft.clear();
+          const fresh = server ?? blank();
+          setV(fresh);
+          setErrors({});
+          setPreview(
+            initial
+              ? previewText({
+                  mode: fresh.mode,
+                  cron: fresh.cron,
+                  local: fresh.local,
+                  zone: fresh.zone,
+                })
+              : undefined,
+          );
+          setRestored(false);
+        }}
+      />
     </form>
   );
 }

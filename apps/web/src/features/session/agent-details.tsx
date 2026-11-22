@@ -9,6 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
+import { preloadSheet } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { agentTasksOptions } from "@/features/tasks/api";
 import { STATUS } from "@/features/tasks/status-label";
 import { agentsUsageQuery } from "@/features/usage/api";
@@ -332,13 +334,19 @@ function Work({ agent }: { agent: AgentSummary }) {
           <ul className="grid gap-1">
             {schedules?.slice(0, MAX_WORK).map((s) => (
               <li key={s.key} className="flex min-w-0 items-baseline justify-between gap-2">
-                <Link
-                  to="/schedules/$key"
-                  params={{ key: s.key }}
+                <button
+                  type="button"
                   className={`font-mono text-foreground ${LINK_CLASS}`}
+                  onPointerEnter={() =>
+                    preloadSheet("edit-schedule", { kind: "edit-schedule", key: s.key })
+                  }
+                  onFocus={() =>
+                    preloadSheet("edit-schedule", { kind: "edit-schedule", key: s.key })
+                  }
+                  onClick={() => openSheet({ kind: "edit-schedule", key: s.key })}
                 >
                   {s.key}
-                </Link>
+                </button>
                 <span className="truncate text-muted-foreground">
                   {s.nextRunAt ? (
                     <>

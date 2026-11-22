@@ -13,6 +13,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AgentDetails } from "@/features/session/agent-details";
 import { type StopCrons, useStopCrons } from "@/features/session/stop-crons";
+import { getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi, validQuery } from "@/test/mock-api";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -340,7 +341,7 @@ test("Work: at most 5 tasks and 5 schedules, with the counts that link to the fu
   const work = within(await section("Work"));
   expect(await work.findByText("Task number 5")).toBeInTheDocument();
   expect(work.getAllByRole("link", { name: /^T-\d/ })).toHaveLength(5);
-  expect(await work.findAllByRole("link", { name: /^S-\d/ })).toHaveLength(5);
+  expect(await work.findAllByRole("button", { name: /^S-\d/ })).toHaveLength(5);
   expect(work.getByRole("link", { name: "All 9 tasks" })).toHaveAttribute(
     "href",
     "/tasks?assignee=dev",
@@ -349,6 +350,8 @@ test("Work: at most 5 tasks and 5 schedules, with the counts that link to the fu
     "href",
     "/schedules?target=dev",
   );
+  await userEvent.click(work.getByRole("button", { name: "S-2" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-2" });
   const taskCall = api.calls.find((c) => c.url.startsWith("/api/tasks"));
   const q = new URL(taskCall?.url ?? "", "http://x").searchParams;
   expect(q.get("assignee")).toBe("dev");

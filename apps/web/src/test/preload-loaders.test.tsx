@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { closeSheet } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -78,7 +79,7 @@ test("hovering a task link then clicking it fetches the detail once", async () =
   expect(api.calls.filter((c) => c.url === "/api/tasks/T-1")).toHaveLength(1);
 });
 
-test("hovering a schedule link then clicking it fetches the detail once", async () => {
+test("hovering a schedule row then clicking it fetches the detail once, for the sheet", async () => {
   const list = () => json({ schedules: [schedule], more: false });
   const api = mockApi({
     "GET /api/agents?": agents,
@@ -86,8 +87,17 @@ test("hovering a schedule link then clicking it fetches the detail once", async 
     "GET /api/schedules": list,
     "GET /api/schedules/S-1": () => json({ schedule }),
   });
-  const { router } = renderApp("/schedules", alice);
-  await hoverThenClick(await screen.findByRole("link", { name: /^S-1,/ }));
-  await settled(router, "/schedules/S-1");
+  renderApp("/schedules", alice);
+  const key = await screen.findByRole("button", { name: /^S-1,/ });
+  fireEvent.pointerEnter(key);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 60));
+  });
+  fireEvent.click(key);
+  expect(await screen.findByRole("dialog", { name: "S-1" })).toBeInTheDocument();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
   expect(api.calls.filter((c) => c.url === "/api/schedules/S-1")).toHaveLength(1);
+  act(() => closeSheet());
 });

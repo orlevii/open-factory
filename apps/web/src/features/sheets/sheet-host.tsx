@@ -8,6 +8,7 @@ import {
   Suspense,
   useEffect,
   useRef,
+  useState,
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { BodySkeleton } from "./body-skeleton";
+import { HeaderSlotContext } from "./header-slot";
 import {
   type BodyProps,
   bindSheetQueryClient,
@@ -27,6 +29,7 @@ import {
   type SheetKind,
   sheetBodies,
   sheetTitle,
+  sheetTitleClass,
 } from "./sheet-bodies";
 import {
   type ChildSpec,
@@ -104,6 +107,7 @@ function SheetLayer({
   description?: string;
 }) {
   // Kept after close so the exit animation still has its content.
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   const last = useRef(spec);
   if (spec) last.current = spec;
   const shown = last.current;
@@ -122,7 +126,8 @@ function SheetLayer({
         data-instant={"instant" in shown && shown.instant ? "" : undefined}
       >
         <SheetHeader>
-          <SheetTitle>{title}</SheetTitle>
+          <SheetTitle className={sheetTitleClass(shown.kind)}>{title}</SheetTitle>
+          <span ref={setSlot} className="contents" />
           {description ? <SheetDescription>{description}</SheetDescription> : null}
         </SheetHeader>
         <BodyBoundary
@@ -134,7 +139,9 @@ function SheetLayer({
           }}
         >
           <Suspense fallback={<BodySkeleton kind={shown.kind} />}>
-            <BodyView spec={shown} close={onClose} />
+            <HeaderSlotContext value={slot}>
+              <BodyView spec={shown} close={onClose} />
+            </HeaderSlotContext>
           </Suspense>
         </BodyBoundary>
       </SheetContent>

@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption } from "@/test/select-helpers";
@@ -21,6 +22,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-11-20T10:00:00Z"));
 });
 afterEach(() => {
+  act(() => closeSheet());
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -65,7 +67,7 @@ const agents = (_body?: unknown, url?: string) =>
     running: { count: 0, max: 8 },
   });
 
-test("a row is one link with a complete name; four lines carry the pattern, next run, first line and authors", async () => {
+test("a row is one button with a complete name; four lines carry the pattern, next run, first line and authors", async () => {
   mockApi({
     "GET /api/agents?": agents,
     "GET /api/schedules?": () =>
@@ -82,17 +84,16 @@ test("a row is one link with a complete name; four lines carry the pattern, next
       ]),
   });
   renderApp("/schedules", alice);
-  const row = await screen.findByRole("link", {
+  const row = await screen.findByRole("button", {
     name: "S-3, to @ceo, repeats 0 9 * * 1-5, next run Mon 23 Nov 09:00 Europe/Berlin, Active, by @or",
   });
-  expect(row).toHaveAttribute("href", "/schedules/S-3");
   const li = row.closest("li") as HTMLElement;
   expect(within(li).getByText("0 9 * * 1-5")).toHaveClass("font-mono");
   expect(within(li).getByText("Mon 23 Nov 09:00")).toBeInTheDocument();
   expect(within(li).getByText("Message 3")).toBeInTheDocument();
   expect(within(li).getByText("@or")).toBeInTheDocument();
   const second = (
-    await screen.findByRole("link", { name: /^S-7, to @dev \(target errored\), once/ })
+    await screen.findByRole("button", { name: /^S-7, to @dev \(target errored\), once/ })
   ).closest("li") as HTMLElement;
   expect(within(second).getByText("Once")).toBeInTheDocument();
   expect(within(second).getByText("· errored")).toBeInTheDocument();
@@ -134,7 +135,9 @@ test("states: paused shows a dash, skipped says (skipped), done says Ran or Didn
   });
   renderApp("/schedules?done=true", alice);
   const item = async (k: string) =>
-    (await screen.findByRole("link", { name: new RegExp(`^${k},`) })).closest("li") as HTMLElement;
+    (await screen.findByRole("button", { name: new RegExp(`^${k},`) })).closest(
+      "li",
+    ) as HTMLElement;
   expect((await item("S-1")).textContent).toContain("· —");
   expect((await item("S-2")).textContent).toContain("(skipped)");
   expect((await item("S-2")).textContent).toContain("· archived");
@@ -174,7 +177,7 @@ test("Pause and Resume apply at once with their outcomes; Delete leaves the row 
   expect(await screen.findByText("Deleted S-3.")).toBeInTheDocument();
   const undo = screen.getByRole("button", { name: "Undo" });
   await waitFor(() => expect(undo).toHaveFocus());
-  expect(screen.queryByRole("link", { name: /^S-3,/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^S-3,/ })).not.toBeInTheDocument();
   api.on("GET /api/schedules?", () => list([sched(3)]));
   await u.click(undo);
   expect(await screen.findByText("Restored S-3.")).toBeInTheDocument();
@@ -232,7 +235,7 @@ test("schedules_changed refetches and keeps focus on the same row's link", async
     "GET /api/schedules?": () => list([sched(1), sched(2)]),
   });
   renderApp("/schedules", alice);
-  const link = await screen.findByRole("link", { name: /^S-2,/ });
+  const link = await screen.findByRole("button", { name: /^S-2,/ });
   link.focus();
   api.on("GET /api/schedules?", () => list([sched(2), sched(1)])); // reordered
   act(() => ws.push({ type: "schedules_changed" }));
@@ -242,7 +245,7 @@ test("schedules_changed refetches and keeps focus on the same row's link", async
         ?.textContent,
     ).toContain("S-2"),
   );
-  expect(screen.getByRole("link", { name: /^S-2,/ })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^S-2,/ })).toHaveFocus();
 });
 
 test("escaping: a hostile body shows as the literal first line, creates no element and runs nothing", async () => {
@@ -255,7 +258,7 @@ test("escaping: a hostile body shows as the literal first line, creates no eleme
     "GET /api/schedules?": () => list([sched(1, { body: hostile })]),
   });
   renderApp("/schedules", alice);
-  const li = (await screen.findByRole("link", { name: /^S-1,/ })).closest("li") as HTMLElement;
+  const li = (await screen.findByRole("button", { name: /^S-1,/ })).closest("li") as HTMLElement;
   expect(li.textContent).toContain(
     "<img src=x onerror=alert(1)> <script>alert(2)</script> **bold** [x](javascript:alert(3))",
   );
@@ -292,4 +295,24 @@ test("the target filter lists Any agent first, live agents, then an Ended group"
   expect(names[2]).toMatch(/Old/);
   await userEvent.click(trigger);
   expect(await screen.findByText("Ended")).toBeInTheDocument();
+});
+
+test("a row opens the Edit schedule sheet over the list, from its key and from the menu", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/schedules?": () => list([sched(3)]),
+    "GET /api/schedules/S-3": () => json({ schedule: sched(3) }),
+  });
+  renderApp("/schedules", alice);
+  await userEvent.click(await screen.findByRole("button", { name: /^S-3,/ }));
+  expect(getSheetState().parent).toMatchObject({
+    kind: "edit-schedule",
+    key: "S-3",
+    at: "/schedules",
+  });
+  expect(await screen.findByRole("dialog", { name: "S-3" })).toBeInTheDocument();
+  act(() => closeSheet());
+  await userEvent.click(screen.getByRole("button", { name: "Actions for S-3" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
 });

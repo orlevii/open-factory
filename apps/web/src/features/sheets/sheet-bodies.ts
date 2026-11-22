@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ComponentType } from "react";
+import { scheduleDetailOptions } from "@/features/schedules/api";
 import { agentsListQueryOptions } from "@/features/session/api";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
 
@@ -12,6 +13,8 @@ type Entry = {
   prefetch(qc: QueryClient, spec: any): void;
   /** A string, or a function of the spec (edit-schedule's title is the schedule key). */
   title: string | ((spec: any) => string);
+  /** Classes for the title (edit-schedule shows its key in mono). */
+  titleClass?: string;
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
@@ -32,12 +35,24 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     },
     title: "New schedule",
   },
+  "edit-schedule": {
+    load: () => import("@/features/schedules/edit-schedule-sheet"),
+    prefetch(qc, spec: { key: string }) {
+      void qc.prefetchQuery(scheduleDetailOptions(spec.key));
+      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+      void qc.prefetchQuery(agentsListQueryOptions("only"));
+    },
+    title: (spec: { key: string }) => spec.key,
+    titleClass: "font-mono",
+  },
 };
 
 export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string {
   const t = sheetBodies[kind]?.title;
   return typeof t === "function" ? t(spec) : (t ?? "");
 }
+
+export const sheetTitleClass = (kind: SheetKind) => sheetBodies[kind]?.titleClass;
 
 /** Forget a failed (or any) load so the next render imports again. */
 export function resetBodyLoad(entry: Entry) {

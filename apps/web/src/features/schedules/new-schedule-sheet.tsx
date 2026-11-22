@@ -15,8 +15,6 @@ export default function NewScheduleSheet({ spec, sheetId, close }: BodyProps<Spe
   const stillOpen = () => getSheetState().parent?.id === sheetId;
   return (
     <ScheduleForm
-      inSheet
-      draftKey="new-schedule"
       presetTarget={spec.target}
       onSubmit={async (body) => {
         let key: string;

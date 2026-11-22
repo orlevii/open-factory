@@ -9,6 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { preloadSheet } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { formatScheduleTime } from "./format";
 import { ScheduleState, STATE_VIEW } from "./schedule-state";
 import { ScheduleTime } from "./schedule-time";
@@ -67,20 +69,23 @@ export function ScheduleRow({
   const { pattern, tail } = when(s, now);
   const same = whoPlain(s.createdBy) === whoPlain(s.bodyAuthor);
   const line = firstLine(s.body);
+  const spec = { kind: "edit-schedule", key: s.key } as const;
   return (
     <li className="relative border-b border-border last:border-b-0 hover:bg-sidebar-accent">
       <div className="grid min-h-[4.5rem] gap-y-0.5 px-2 py-2 text-sm">
         <div className="flex min-w-0 items-center gap-x-3">
-          <Link
-            to="/schedules/$key"
-            params={{ key: s.key }}
+          <button
+            type="button"
             aria-label={accessibleName(s, now)}
             aria-describedby={`first-line-${s.key}`}
             data-schedule-key={s.key}
-            className="w-14 shrink-0 font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-transparent focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+            className="w-14 shrink-0 cursor-pointer text-left font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-transparent focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
+            onPointerEnter={() => preloadSheet("edit-schedule", spec)}
+            onFocus={() => preloadSheet("edit-schedule", spec)}
+            onClick={() => openSheet(spec)}
           >
             {s.key}
-          </Link>
+          </button>
           <span className="relative z-10 min-w-0 truncate leading-5">
             <Link
               to="/agents/$slug"
@@ -112,11 +117,7 @@ export function ScheduleRow({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link to="/schedules/$key" params={{ key: s.key }}>
-                    Edit
-                  </Link>
-                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => openSheet(spec)}>Edit</DropdownMenuItem>
                 {!s.done &&
                   (s.paused ? (
                     <DropdownMenuItem onSelect={onResume}>Resume</DropdownMenuItem>

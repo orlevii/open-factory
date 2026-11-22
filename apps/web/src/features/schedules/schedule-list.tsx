@@ -29,17 +29,12 @@ export type Outcome = {
 
 let outcomeKey = 0;
 
-/** What an earlier page left for this one (create, delete from the edit page): shown once, never from the URL. */
-export type PageOutcome = { text: string; undoKey?: string };
-
 export function ScheduleList({
   filters,
   onChange,
-  initial,
 }: {
   filters: ScheduleFilters;
   onChange(next: ScheduleFilters): void;
-  initial?: PageOutcome | undefined;
 }) {
   const qc = useQueryClient();
   const q = useQuery(schedulesListOptions(filters));
@@ -116,16 +111,6 @@ export function ScheduleList({
     }
   }
 
-  // A page-to-page outcome (Created S-8. / Deleted S-3. + Undo), shown once.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only the first arrival counts
-  useEffect(() => {
-    if (!initial) return;
-    say({
-      tone: "success",
-      text: initial.text,
-      ...(initial.undoKey ? { undo: () => void restore(initial.undoKey as string) } : {}),
-    });
-  }, []);
   // After Undo: focus goes to the restored row's menu button once it is back.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refocus when the row reappears
   useEffect(() => {

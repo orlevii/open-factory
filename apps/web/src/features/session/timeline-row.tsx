@@ -1,7 +1,11 @@
 import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { resyncAgent } from "@/features/agents/lifecycle";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
@@ -207,6 +211,15 @@ function quietIcon(e: AnyEvent): ReactNode {
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
+function ResyncFix({ slug, className }: { slug: string; className: string }) {
+  const qc = useQueryClient();
+  return (
+    <button type="button" className={className} onClick={() => void resyncAgent(slug, qc)}>
+      Re-sync the agent
+    </button>
+  );
+}
+
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
   fix,
@@ -222,11 +235,17 @@ function FixLink({
   if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
   const cls =
     "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+  // Opens Edit agent over the session (U4 §5.6).
   if (fix === "edit_agent")
     return (
-      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
+      <button
+        type="button"
+        className={cls}
+        {...sheetIntent("edit-agent", { kind: "edit-agent", slug })}
+        onClick={() => openSheet({ kind: "edit-agent", slug })}
+      >
         Edit the agent
-      </Link>
+      </button>
     );
   // Nothing to link to: an operator has to allow the local runtime (S5 UI design §3.2). The row
   // explains how, as Agent details' Runtime row does.
@@ -238,13 +257,8 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // Re-sync lives on the agent's edit page.
-  if (fix === "resync")
-    return (
-      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
-        Re-sync the agent
-      </Link>
-    );
+  // Runs the Re-sync action in place; its outcome toasts (U4 §6.5).
+  if (fix === "resync") return <ResyncFix slug={slug} className={cls} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },

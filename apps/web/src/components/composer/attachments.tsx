@@ -96,6 +96,10 @@ function Thumb({ bitmap }: { bitmap: ImageBitmap }) {
   return <canvas ref={ref} data-thumb className="size-7 shrink-0 rounded-[3px] object-cover" />;
 }
 
+/** On coarse pointers a chip's Retry and Remove are 36px with a 4px gap (U4 §11.3): their 2px expanders reach
+ *  40×40, just touch each other, and fit inside the chip's padding, which clips (overflow-hidden). */
+const CHIP_ACTION = "pointer-coarse:size-9";
+
 /** One file's chip: it subscribes to its own view, so its progress renders it alone (m12). */
 const UploadChip = memo(function UploadChip({
   store,
@@ -121,7 +125,7 @@ const UploadChip = memo(function UploadChip({
       inert={hidden}
       aria-hidden={hidden || undefined}
       // A failed chip grows to show its reason on up to two lines (the evidence pass, D13).
-      className={`relative flex min-h-9 max-w-[12rem] min-w-0 items-center gap-1.5 overflow-hidden rounded-sm border bg-background py-0.5 pr-0.5 pl-1 ${failed ? "border-destructive" : "border-border"}`}
+      className={`relative flex min-h-9 max-w-[12rem] min-w-0 items-center gap-1.5 overflow-hidden rounded-sm border pointer-coarse:gap-1 bg-background py-0.5 pr-0.5 pl-1 ${failed ? "border-destructive" : "border-border"}`}
     >
       {v.thumb ? (
         <Thumb bitmap={v.thumb} />
@@ -148,6 +152,7 @@ const UploadChip = memo(function UploadChip({
           type="button"
           variant="ghost"
           size="icon-xs"
+          className={CHIP_ACTION}
           aria-label={`Retry ${name}`}
           onClick={() => store.retry(id)}
         >
@@ -158,6 +163,7 @@ const UploadChip = memo(function UploadChip({
         type="button"
         variant="ghost"
         size="icon-xs"
+        className={CHIP_ACTION}
         aria-label={`${v.status === "uploading" ? "Cancel" : "Remove"} ${name}`}
         onClick={() => store.remove(id)}
       >
@@ -172,7 +178,7 @@ const UploadChip = memo(function UploadChip({
           aria-valuemax={100}
           aria-valuenow={pct}
           data-upload-bar
-          className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-foreground transition-none"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left bg-foreground transition-none"
           style={{ transform: `scaleX(${v.progress})` }}
         />
       ) : null}

@@ -15,7 +15,11 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
 import { applyStatusFrames } from "@/features/agents/status-frames";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { createQueryClient } from "@/lib/query-client";
+import { endAnimation } from "@/test/end-animation";
+import { fakeMatchMedia } from "@/test/fake-match-media";
+import { longPress } from "@/test/long-press";
 import { agentSummary } from "@/test/session-fixtures";
 
 // Render probes: the tree reads `of-tree-expanded` once per render, a row reads its unread count
@@ -91,7 +95,6 @@ function setup({
   const router = createRouter({
     routeTree: root.addChildren([
       stub("/agents/$slug"),
-      stub("/agents/$slug/edit"),
       stub("/agents/$slug/usage"),
       stub("/tasks"),
       stub("/agents/new"),
@@ -285,11 +288,13 @@ test("unread count from byAgent, working count hides first when narrow", async (
   expect(line).not.toContainElement(within(row("Bravo")).getByText("99+"));
 });
 
-test("empty: 'No agents yet.' with New agent link", async () => {
+test("empty: 'No agents yet.' with a New agent button that opens the sheet", async () => {
   setup({ list: [] });
   expect(await screen.findByText("No agents yet.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/agents/new");
   expect(screen.queryByRole("tree")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "New agent" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "new-agent" });
+  act(() => closeSheet());
 });
 
 test("loading: three skeleton rows", async () => {
@@ -434,4 +439,133 @@ test("the menu keeps its place over the row while it closes", async () => {
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(standIn()?.style.top).toBe("34px");
   expect(standIn()?.style.left).toBe("12px");
+});
+
+test("the menu closes when its agent leaves the list (terminated by a status frame)", async () => {
+  // The refetch the terminate triggers never settles: the frame alone must close it.
+  vi.stubGlobal("fetch", () => new Promise(() => {}));
+  const { qc } = setup({ activeSlug: "c" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Charlie" }));
+  await screen.findByRole("menu");
+  await push(qc, frame("c", "terminated"));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // Another agent's menu still opens.
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+});
+
+test("the menu closes when its agent is dropped from the list by a refetch", async () => {
+  const { qc } = setup({ activeSlug: "c" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Charlie" }));
+  await screen.findByRole("menu");
+  act(() => {
+    qc.setQueryData(
+      ["agents", "exclude"],
+      agents().filter((a) => a.slug !== "c"),
+    );
+  });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+});
+
+test("an agent dropped while its menu is open and then back doesn't reopen it; focus stays in the tree", async () => {
+  const { qc } = setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  row("Alpha").focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await screen.findByRole("menu");
+  act(() => {
+    qc.setQueryData(
+      ["agents", "exclude"],
+      agents({ b: { reportsTo: null } }).filter((a) => a.slug !== "a"),
+    );
+  });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // The row is gone: focus falls to the tree's tab stop, not <body>.
+  await waitFor(() => expect(document.activeElement).toHaveAttribute("data-agent-row"));
+  act(() => {
+    qc.setQueryData(["agents", "exclude"], agents());
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(rowEl("a")).not.toHaveAttribute("data-menu-open");
+});
+
+test("phone: a row's menu is a drawer titled with the agent's name", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    setup({ activeSlug: "a" });
+    await screen.findByRole("tree");
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Bravo" }));
+    const drawer = await screen.findByRole("dialog", { name: "Bravo" });
+    expect(within(drawer).getByRole("link", { name: "Open session" })).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).toBeNull();
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+test("touch: a 500ms press on a row opens its menu at the press point and doesn't navigate", async () => {
+  const { router } = setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  const el = rowEl("b") as HTMLElement;
+  expect(el).toHaveAttribute("data-longpress-region");
+  resetProbe();
+  longPress(el, { x: 40, y: 60 });
+  expect(await screen.findByRole("menu", { name: "Bravo" })).toBeInTheDocument();
+  // Only the pressed row re-renders (its menu-open flag).
+  expect(Object.keys(probe.rows)).toEqual(["b"]);
+  expect(rowEl("b")).toHaveAttribute("data-menu-open");
+  // The dropdown hangs from the point, not the row's edge.
+  const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");
+  expect(point?.style.left).toBe("40px");
+  expect(point?.style.top).toBe("60px");
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("touch: a press shows the pressed fill on the row after 80ms; a mouse press does nothing", async () => {
+  const { router } = setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  const el = rowEl("b") as HTMLElement;
+  longPress(el, { hold: 80, release: false });
+  expect(el).toHaveAttribute("data-pressed");
+  fireEvent.pointerCancel(el, { pointerType: "touch", pointerId: 1 });
+  expect(el).not.toHaveAttribute("data-pressed");
+  longPress(el, { pointerType: "mouse", hold: 700, release: false });
+  expect(el).not.toHaveAttribute("data-pressed");
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(router.state.location.pathname).toBe("/");
+});
+
+test("touch: closing a long-pressed row's dropdown returns focus to that row, not <body>", async () => {
+  setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  longPress(rowEl("b") as HTMLElement, { x: 40, y: 60 });
+  fireEvent.keyDown(await screen.findByRole("menu", { name: "Bravo" }), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(rowEl("b")).toHaveFocus());
+});
+
+test("phone: closing a long-pressed row's drawer returns focus to that row, not <body>", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    setup({ activeSlug: "a" });
+    await screen.findByRole("tree");
+    longPress(rowEl("b") as HTMLElement, { x: 40, y: 60 });
+    const drawer = await screen.findByRole("dialog", { name: "Bravo" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "Cancel" }));
+    endAnimation(drawer);
+    await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
+    await waitFor(() => expect(rowEl("b")).toHaveFocus());
+  } finally {
+    window.matchMedia = original;
+  }
 });

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WsContext, type WsHub } from "@/lib/ws-context";
+import { longPress } from "@/test/long-press";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import type { AgentDetailsPanel } from "./agent-details";
@@ -906,4 +907,47 @@ test("SessionView: warms the highlighter once on open, not per frame", async () 
   push(livePatch("m1", 1, 3, "lo"));
   frame();
   expect(warm.count).toBe(1);
+});
+
+test("200 rows at rest mount no menu root and read no phone or pointer query (menus mount on intent)", async () => {
+  const reads = new Map<string, number>();
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) => {
+    const real = original(query);
+    return new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop === "matches" || prop === "addEventListener")
+          reads.set(query, (reads.get(query) ?? 0) + 1);
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+  }) as typeof window.matchMedia;
+  try {
+    await setup();
+    expect(document.querySelectorAll("[data-row-menu]").length).toBeGreaterThan(190);
+    expect(document.querySelector('[data-slot="dropdown-menu-trigger"]')).toBeNull();
+    expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
+    const menuQueries = [...reads.keys()].filter(
+      (q) => q.includes("48rem") || q.includes("pointer"),
+    );
+    expect(menuQueries).toEqual([]);
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+test("a long-press on a tool row opens its menu without re-rendering any row", async () => {
+  await setup();
+  const tool = document.querySelector<HTMLElement>('button[data-row="3"]');
+  if (!tool) throw new Error("no tool row");
+  longPress(tool);
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+  expect(tool).toHaveAttribute("aria-expanded", "false");
+  expect(count.rows.size).toBe(0);
+  // Only that row's menu mounted: its ⋯ and the stand-in at the pressed point; every other ⋯ is still a plain button.
+  expect(
+    document.querySelectorAll('[data-slot="dropdown-menu-trigger"]:not([data-menu-stand-in])'),
+  ).toHaveLength(1);
+  expect(document.querySelectorAll("[data-menu-stand-in]")).toHaveLength(1);
 });

@@ -38,11 +38,13 @@ import {
   stableSet,
 } from "./rows";
 import {
+  editedFields,
   eventsInOrder,
   highestSeq,
   initialSessionState,
   type SendingBlock,
   type SessionAction,
+  sameEdited,
   sessionReducer,
 } from "./session-state";
 
@@ -302,6 +304,28 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     },
     [qc, dispatch],
   );
+
+  // Edit agent saves over this session and writes the saved summary into the detail cache: the view takes what a save
+  // changes (the name, the reporting line, grants...), so the header shows the new name at once. Status frames write the
+  // same cache without a turn's start or a compaction: taking their whole summary would undo the session's live values,
+  // so only the edited fields count, and a write that changes none of them (every status batch) dispatches nothing.
+  // Only explicit writes (`setQueryData`); a fetch's result is applied by whoever fetched it (the load,
+  // `refreshAgent`), so a slow one never overwrites newer status frames.
+  useEffect(() => {
+    const cached = qc.getQueryData<AgentDetail>(["agent", slug])?.agent;
+    let last = cached && editedFields(cached);
+    return qc.getQueryCache().subscribe((e) => {
+      if (e.type !== "updated" || e.action.type !== "success" || !e.action.manual) return;
+      const [kind, key] = e.query.queryKey;
+      if (kind !== "agent" || key !== slug || e.query.queryKey.length !== 2) return;
+      const agent = (e.query.state.data as AgentDetail | undefined)?.agent;
+      if (!agent) return;
+      const fields = editedFields(agent);
+      if (last && sameEdited(last, fields)) return;
+      last = fields;
+      dispatch({ type: "agent_edited", fields });
+    });
+  }, [qc, slug, dispatch]);
 
   /** Refetches the summary only (not the events): after a send raced a termination. */
   const refreshAgent = useCallback(

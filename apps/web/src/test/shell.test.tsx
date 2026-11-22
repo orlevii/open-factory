@@ -300,12 +300,12 @@ test("on a live session the Agents row is active while the tree is collapsed", a
   await vi.waitFor(() => expect(agents).not.toHaveAttribute("aria-current"));
 });
 
-test("Agents row: label links /agents, chevron collapses the whole tree (of-tree-collapsed), + links /agents/new", async () => {
+test("Agents row: label links /agents, chevron collapses the whole tree (of-tree-collapsed), + opens New agent", async () => {
   liveAgents();
   localStorage.clear();
   renderApp("/inbox", alice);
   expect(await screen.findByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
-  expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/agents/new");
+  expect(screen.getByRole("button", { name: "New agent" })).toHaveAttribute("type", "button");
   await screen.findByRole("tree", { name: "Agents" });
   const chevron = screen.getByRole("button", { name: "Collapse agents" });
   expect(chevron).toHaveAttribute("aria-expanded", "true");
@@ -363,6 +363,27 @@ test("mobile drawer: tapping an agent closes the drawer", async () => {
     const node = () => document.querySelector<HTMLElement>("[data-slot=drawer-content]");
     await userEvent.click(await screen.findByRole("treeitem", { name: /^Dev agent/ }));
     await vi.waitFor(() => expect(node()?.getAttribute("data-state")).not.toBe("open"));
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+test("large text on a short phone: the tree keeps 12rem and the sidebar content scrolls, so an agent row stays reachable", async () => {
+  // jsdom has no layout: the classes are the contract. At 200% text on 390x844 the nav filled the drawer and
+  // the tree shrank to a sliver under its sticky Agents row, so a press on an agent row landed on that row.
+  liveAgents();
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true);
+  try {
+    renderApp("/inbox", alice);
+    await screen.findByRole("heading", { level: 1, name: "Inbox" });
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    const tree = await screen.findByRole("tree", { name: "Agents" });
+    const group = tree.closest<HTMLElement>("[data-sidebar=group]");
+    const content = tree.closest<HTMLElement>("[data-sidebar=content]");
+    expect(group).toHaveClass("min-h-48", "overflow-y-auto");
+    expect(group).not.toHaveClass("min-h-0");
+    expect(content).toHaveClass("overflow-y-auto");
   } finally {
     window.matchMedia = original;
   }

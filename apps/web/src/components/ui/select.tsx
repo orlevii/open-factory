@@ -104,8 +104,13 @@ function SelectItem({
   className,
   children,
   textValue,
+  description,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item> & { textValue?: string }) {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  textValue?: string
+  /** A muted line under the item, outside its ItemText, so the closed trigger shows only the item. */
+  description?: React.ReactNode
+}) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -116,7 +121,14 @@ function SelectItem({
       )}
       {...props}
     >
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {description ? (
+        <span className="grid min-w-0">
+          <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+          <span className="truncate text-xs text-muted-foreground">{description}</span>
+        </span>
+      ) : (
+        <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      )}
       <span className="absolute right-2 flex size-4 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
           <CheckIcon className="size-4 text-foreground" />

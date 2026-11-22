@@ -5,11 +5,15 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/toaster";
+import { OutputDialogHost } from "@/features/agents/show-output";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { dropUploadsExcept } from "@/features/session/uploads";
+import { preloadAllSheets } from "@/features/sheets/sheet-bodies";
+import { SheetHost } from "@/features/sheets/sheet-host";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
 import { installFileDropGuard } from "@/lib/file-drop";
@@ -170,6 +174,16 @@ function AppLayout() {
   const shell = useMemo(() => ({ connectionLost }), [connectionLost]);
   const [defaultOpen] = useState(sidebarOpenFromCookie);
 
+  // After first paint, fetch every sheet body's chunk so the skeleton is rare.
+  useEffect(() => {
+    if (typeof requestIdleCallback === "function") {
+      const id = requestIdleCallback(() => preloadAllSheets());
+      return () => cancelIdleCallback(id);
+    }
+    const id = setTimeout(preloadAllSheets, 1000);
+    return () => clearTimeout(id);
+  }, []);
+
   return (
     <WsContext.Provider value={hub}>
       <ShellContext.Provider value={shell}>
@@ -199,8 +213,11 @@ function AppLayout() {
           >
             <Outlet />
           </SidebarInset>
+          <Toaster />
+          <OutputDialogHost />
           <CommandPalette />
           <GlobalShortcuts />
+          <SheetHost />
         </SidebarProvider>
       </ShellContext.Provider>
     </WsContext.Provider>

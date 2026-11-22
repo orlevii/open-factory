@@ -1,6 +1,7 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import {
   agentSummary,
   credential,
@@ -15,7 +16,10 @@ vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  act(() => closeSheet());
+  vi.unstubAllGlobals();
+});
 
 const tree = [
   agentSummary({
@@ -106,116 +110,30 @@ test("the Active / Ended radio pair writes ?ended=only and lists ended agents", 
   expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true);
 });
 
-test("?justArchived shows the Undo line focused; Undo restores", async () => {
-  const api = mockWorld({
-    agents: tree,
-    archived: [agentSummary({ slug: "reviewer", archivedAt: "2026-11-19T10:00:00Z" })],
-    extra: {
-      "POST /api/agents/reviewer/unarchive": () => json({ agent: tree[2] }),
-      "GET /api/agents/reviewer": () => json({ agent: tree[2], queue: [], lastSeq: 0 }),
-    },
-  });
-  renderApp("/agents?justArchived=reviewer", alice);
-  expect(await screen.findByText("Archived @reviewer.")).toBeInTheDocument();
-  const undo = screen.getByRole("button", { name: "Undo" });
-  await vi.waitFor(() => expect(undo).toHaveFocus());
-  await userEvent.click(undo);
-  expect(await screen.findByText("Restored @reviewer.")).toBeInTheDocument();
-  expect(api.calls.some((c) => c.method === "POST" && c.url.endsWith("/reviewer/unarchive"))).toBe(
-    true,
-  );
-  expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
-});
+test.each<[string, World]>([
+  ["no credential and no template", { credentials: [], templates: [] }],
+  ["ready", { credentials: [credential()], templates: [templateSummary("lead")] }],
+])(
+  "empty state (%s): No agents yet. and Create your first agent opens New agent",
+  async (_n, world) => {
+    mockWorld({ agents: [], ...world });
+    renderApp("/agents", alice);
+    const main = await screen.findByRole("main");
+    expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
+    // No gate: whatever is missing is set up inside the sheet.
+    expect(within(main).queryByRole("link", { name: /credential|template/i })).toBeNull();
+    await userEvent.click(within(main).getByRole("button", { name: "Create your first agent" }));
+    expect(getSheetState().parent).toMatchObject({ kind: "new-agent" });
+  },
+);
 
-test("Undo mentions pending messages when the agent has some", async () => {
-  mockWorld({
-    agents: tree,
-    archived: [agentSummary({ slug: "reviewer", archivedAt: "2026-11-19T10:00:00Z" })],
-    extra: {
-      "POST /api/agents/reviewer/unarchive": () => json({ agent: tree[2] }),
-      "GET /api/agents/reviewer": () =>
-        json({
-          agent: tree[2],
-          queue: [{ id: "q1", kind: "message", body: "hi", from: "@alice", createdAt: "x" }],
-          lastSeq: 0,
-        }),
-    },
-  });
-  renderApp("/agents?justArchived=reviewer", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Undo" }));
-  expect(
-    await screen.findByText("Restored @reviewer. Pending messages are sent with the next message."),
-  ).toBeInTheDocument();
-});
-
-test("an Undo failure shows the error with a link to the edit page", async () => {
-  mockWorld({
-    agents: tree,
-    archived: [agentSummary({ slug: "reviewer", archivedAt: "2026-11-19T10:00:00Z" })],
-    extra: {
-      "POST /api/agents/reviewer/unarchive": () =>
-        json(
-          {
-            error: {
-              code: "manager_archived",
-              message: "Its manager @boss is archived. Change its manager first.",
-            },
-          },
-          409,
-        ),
-    },
-  });
-  renderApp("/agents?justArchived=reviewer", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Undo" }));
-  const alert = await screen.findByText(/Its manager @boss is archived/);
-  expect(alert.closest("[role=alert]")).not.toBeNull();
-  expect(screen.getByRole("link", { name: "Edit @reviewer" })).toHaveAttribute(
-    "href",
-    "/agents/reviewer/edit",
-  );
-});
-
-test.each<[string, World, string, string]>([
-  [
-    "no credential wins over everything",
-    { credentials: [], templates: [] },
-    "No agents yet. Add a Claude credential in Settings first.",
-    "/settings/credentials",
-  ],
-  [
-    "no templates",
-    { templates: [] },
-    "No agents yet. Start by creating a template.",
-    "/templates/new",
-  ],
-  [
-    "no valid template",
-    { templates: [templateSummary("tech-lead", 2)] },
-    "No agents yet. No template is ready: fix the errors in tech-lead.",
-    "/templates/tech-lead",
-  ],
-  [
-    "ready",
-    { credentials: [credential()], templates: [templateSummary("lead")] },
-    "No agents yet. Create one from a template.",
-    "/agents/new",
-  ],
-])("empty state: %s", async (_name, world, text, href) => {
-  mockWorld({ agents: [], ...world });
-  renderApp("/agents", alice);
-  const line = await screen.findByText((_c, el) => el?.tagName === "P" && el.textContent === text);
-  expect(within(line).getByRole("link")).toHaveAttribute("href", href);
-});
-
-test("the header links to New agent", async () => {
+test("the header's New agent opens the sheet", async () => {
   mockWorld({ agents: tree });
   renderApp("/agents", alice);
-  // The sidebar's + links there too: the page header is in the main region.
+  // The sidebar's + opens it too: the page header is in the main region.
   const main = await screen.findByRole("main");
-  expect(await within(main).findByRole("link", { name: "New agent" })).toHaveAttribute(
-    "href",
-    "/agents/new",
-  );
+  await userEvent.click(await within(main).findByRole("button", { name: "New agent" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "new-agent" });
 });
 
 test("ended view: a report whose manager isn't listed isn't indented but names it", async () => {
@@ -428,9 +346,12 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(within(dev).getByText("Estimated cost, last 7 days: $0.50")).toHaveClass("sr-only");
     expect(within(idle).getByText("—")).toBeInTheDocument();
     expect(within(idle).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
-    // Hidden below md; no tooltip trigger or title inside a row link.
+    // Hidden below md; no tooltip trigger inside a row link, and the only title is the name's (U4 §11.6).
     expect(within(lead).getByText("$4.60").parentElement).toHaveClass("hidden", "md:block");
-    expect(lead.querySelector("[title], [data-slot=tooltip-trigger]")).toBeNull();
+    expect(lead.querySelector("[data-slot=tooltip-trigger]")).toBeNull();
+    expect([...lead.querySelectorAll("[title]")].map((e) => e.getAttribute("title"))).toEqual([
+      "Team Lead",
+    ]);
   });
 
   test("the name keeps a minimum width: two lines from md, full columns only on a wide tree", async () => {
@@ -443,8 +364,9 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(list).toHaveClass("@container");
     expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
     expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
-    // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320.
-    expect(lead.querySelector(".basis-full")).toHaveClass("min-w-0", "flex-wrap");
+    // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320,
+    // and never grows past the row (U4 §11.6).
+    expect(lead.querySelector(".basis-full")).toHaveClass("min-w-0", "max-w-full", "flex-wrap");
     expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
       "md:col-start-3",
       "md:row-start-1",
@@ -563,6 +485,40 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     const r = await rows();
     // root, a, a1, a2, b, b1: a1 sits under a, which has a later sibling (b); a2 too; b1's parent b is last.
     expect(r.map((l) => lines(l))).toEqual([0, 0, 1, 1, 0, 0]);
+  });
+
+  test("phones (#102, class contract, jsdom has no layout): the status column is the shape alone, its label kept for screen readers; the name carries its full value in title", async () => {
+    mockWorld({
+      agents: [A("lead", { displayName: "A very long team lead display name", status: "working" })],
+    });
+    renderApp("/agents", alice);
+    const [lead] = (await rows()) as [HTMLElement];
+    // The label is still the row's text (the link's accessible name keeps it)...
+    const label = within(lead).getByText("Working");
+    // ...but below md it takes no width, and the column shrinks to the shape: a fixed 7rem column
+    // left a deep row's name cell ~8px at 320, so the avatar ran under the ⋯.
+    expect(label).toHaveClass("max-md:sr-only");
+    const column = label.closest("[data-status-cell]");
+    expect(column).not.toBeNull();
+    expect(column).toHaveClass("md:w-28");
+    expect(column).not.toHaveClass("w-28");
+    expect(lead).toHaveAccessibleName(/Working/);
+    const name = lead.querySelector("[title]");
+    expect(name).toHaveAttribute("title", "A very long team lead display name");
+    expect(name).toHaveTextContent("A very long team lead display name");
+  });
+
+  test("an archived row's label hides below md too", async () => {
+    const old = A("old", { displayName: "Old one", archivedAt: "2026-11-01T10:00:00.000Z" });
+    mockWorld({
+      extra: {
+        "GET /api/agents?ended=only": () =>
+          json({ agents: [old], more: false, running: { count: 0, max: 8 } }),
+      },
+    });
+    renderApp("/agents?ended=only", alice);
+    const [row] = (await rows()) as [HTMLElement];
+    expect(within(row).getByText("Archived")).toHaveClass("max-md:sr-only");
   });
 
   test("rows deeper than the cap show a depth marker", async () => {

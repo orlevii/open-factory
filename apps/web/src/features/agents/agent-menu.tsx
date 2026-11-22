@@ -1,24 +1,33 @@
 import type { AgentSummary } from "@open-factory/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { type ReactElement, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenu,
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuSeparator,
+  AdaptiveMenuShortcut,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { archiveAgent, restoreAgent, resyncAgent } from "@/features/agents/lifecycle";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { cn } from "@/lib/utils";
 import { CompactPopover } from "../session/compact-popover";
 import type { StopCrons } from "../session/stop-crons";
 import { TerminateButton } from "../session/terminate-button";
 
+const newTaskIntent = sheetIntent("new-task");
+const newScheduleIntent = sheetIntent("new-schedule");
+
 /**
- * The one actions menu for an agent (U2 §8.4), in the session header and on a sidebar row.
+ * The one actions menu for an agent (U2 §8.4, U4 §6.5), in the session header, on a sidebar row and
+ * on an Agents page row. Grouped: New task, New schedule · Edit, Usage, Open tasks, Agent details,
+ * Compact…, Stop crons… · Re-sync from template…, Archive…, Restore, Terminate….
  * Compact… and Terminate… open their own overlays from the menu's ⋯ button, so the menu hands
  * focus over instead of returning it. Stop crons state belongs to the session (`stop`), which
  * mounts the confirmation.
@@ -33,9 +42,10 @@ export function AgentMenu({
   onTerminated = () => {},
   triggerClassName,
   anchored,
+  onLifecycle,
 }: {
   agent: AgentSummary;
-  context: "session" | "sidebar";
+  context: "session" | "sidebar" | "list";
   stop?: StopCrons;
   onOpenDetails?: () => void;
   /** Agent details opens as a sheet that takes focus: the menu hands focus over, as for Compact…. */
@@ -43,12 +53,16 @@ export function AgentMenu({
   onTerminateStart?: () => void;
   onTerminated?: (a: AgentSummary, ok: boolean) => void;
   triggerClassName?: string;
+  /** After Archive, its Undo, or Restore: the session holds its own copy of the agent to refresh. */
+  onLifecycle?: () => void;
   /** One shared instance for a list (the sidebar tree): controlled, with no ⋯ of its own. It opens
    *  below the right edge of `anchor` (the row the caller names) and hands focus back with `onClose`. */
   anchored?: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     anchor: HTMLElement | null;
+    /** A long-press's point (U4 §11.2): a dropdown hangs from it rather than the row. */
+    point?: { x: number; y: number };
     onClose: () => void;
   };
 }) {
@@ -61,14 +75,168 @@ export function AgentMenu({
   // menu, which reads as a focus outside and dismisses a popover at once.
   const handoff = useRef<(() => void) | null>(null);
   const [terminateOpen, setTerminateOpen] = useState(false);
+  const qc = useQueryClient();
   const session = context === "session";
   const archived = agent.archivedAt !== null;
-  const live = !archived && agent.status !== "terminated";
+  const terminated = agent.status === "terminated";
+  const live = !archived && !terminated;
   const spawned = agent.kind === "ephemeral";
+  // On the Agents page a terminated agent, or an ended spawned one, has only Usage and Open tasks.
+  const endedInList = context === "list" && (terminated || (spawned && !live));
   const canCompact = session && live && agent.status !== "errored";
-  const canEdit = !spawned && !archived;
+  const canEdit = !spawned && !archived && !endedInList;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
+  const canResync = !spawned && live;
+  const canArchive = !spawned && live;
+  const canRestore = archived && !terminated && !endedInList;
+  const editIntent = useMemo(() => sheetIntent("edit-agent", { kind: "edit-agent", slug }), [slug]);
+
+  // An item that opens a sheet hands over once the menu has gone, as Compact… does. Focus goes back
+  // to the ⋯ (or the row) first, so the sheet returns it there when it closes.
+  const openAfterClose = (open: () => void) => {
+    handoff.current = () => {
+      if (anchored) anchored.onClose();
+      else trigger.current?.focus();
+      open();
+    };
+  };
+
+  const create: ReactElement[] = live
+    ? [
+        <AdaptiveMenuItem
+          key="new-task"
+          opensOverlay
+          {...newTaskIntent}
+          onSelect={() => openAfterClose(() => openSheet({ kind: "new-task", assignee: slug }))}
+        >
+          New task
+        </AdaptiveMenuItem>,
+        <AdaptiveMenuItem
+          key="new-schedule"
+          opensOverlay
+          {...newScheduleIntent}
+          onSelect={() => openAfterClose(() => openSheet({ kind: "new-schedule", target: slug }))}
+        >
+          New schedule
+        </AdaptiveMenuItem>,
+      ]
+    : [];
+  const views: ReactElement[] = [];
+  if (context === "sidebar")
+    views.push(
+      <AdaptiveMenuItem key="open" asChild>
+        <Link to="/agents/$slug" params={{ slug }}>
+          Open session
+        </Link>
+      </AdaptiveMenuItem>,
+    );
+  if (canEdit)
+    views.push(
+      <AdaptiveMenuItem
+        key="edit"
+        opensOverlay
+        {...editIntent}
+        onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", slug }))}
+      >
+        Edit
+      </AdaptiveMenuItem>,
+    );
+  views.push(
+    <AdaptiveMenuItem key="usage" asChild>
+      <Link to="/agents/$slug/usage" params={{ slug }}>
+        Usage
+      </Link>
+    </AdaptiveMenuItem>,
+    <AdaptiveMenuItem key="tasks" asChild>
+      <Link to="/tasks" search={{ assignee: slug }}>
+        Open tasks
+      </Link>
+    </AdaptiveMenuItem>,
+  );
+  if (session)
+    views.push(
+      <AdaptiveMenuItem
+        key="details"
+        opensOverlay={detailsTakeFocus}
+        onSelect={() => {
+          if (!detailsTakeFocus) return onOpenDetails?.();
+          handoff.current = () => onOpenDetails?.();
+        }}
+      >
+        Agent details
+        <AdaptiveMenuShortcut>
+          <Kbd keys={["]"]} />
+        </AdaptiveMenuShortcut>
+      </AdaptiveMenuItem>,
+    );
+  if (canCompact)
+    views.push(
+      <AdaptiveMenuItem
+        key="compact"
+        opensOverlay
+        onSelect={() => {
+          handoff.current = () => setCompactOpen(true);
+        }}
+      >
+        Compact…
+      </AdaptiveMenuItem>,
+    );
+  if (canStopCrons)
+    views.push(
+      <AdaptiveMenuItem
+        key="stop-crons"
+        opensOverlay
+        onSelect={() => {
+          // The confirmation places focus and returns it to ⋯ itself: the menu's close leaves it be.
+          handoff.current = () => {};
+          stop.openConfirm(trigger);
+        }}
+      >
+        Stop crons…
+      </AdaptiveMenuItem>,
+    );
+  const lifecycle: ReactElement[] = [];
+  if (canResync)
+    lifecycle.push(
+      <AdaptiveMenuItem key="resync" onSelect={() => void resyncAgent(slug, qc, agent.template)}>
+        Re-sync from template…
+      </AdaptiveMenuItem>,
+    );
+  if (canArchive)
+    lifecycle.push(
+      <AdaptiveMenuItem
+        key="archive"
+        variant="destructive"
+        onSelect={() => void archiveAgent(agent, qc, { onChanged: onLifecycle })}
+      >
+        Archive…
+      </AdaptiveMenuItem>,
+    );
+  if (canRestore)
+    lifecycle.push(
+      <AdaptiveMenuItem
+        key="restore"
+        onSelect={() => void restoreAgent(slug, qc, { onChanged: onLifecycle })}
+      >
+        Restore
+      </AdaptiveMenuItem>,
+    );
+  if (canTerminate)
+    lifecycle.push(
+      <AdaptiveMenuItem
+        key="terminate"
+        variant="destructive"
+        opensOverlay
+        onSelect={() => {
+          handoff.current = () => {}; // as Stop crons…: the confirmation owns focus
+          setTerminateOpen(true);
+        }}
+      >
+        Terminate…
+      </AdaptiveMenuItem>,
+    );
+  const groups = [create, views, lifecycle].filter((g) => g.length > 0);
 
   // The row's box, measured when the menu opens and kept through the close, so the menu stays
   // over its row while it fades out (the page is scroll-locked while it is open).
@@ -82,8 +250,13 @@ export function AgentMenu({
   }, [open, anchorEl]);
   return (
     <>
-      <DropdownMenu open={anchored?.open} onOpenChange={anchored?.onOpenChange}>
-        <DropdownMenuTrigger asChild>
+      <AdaptiveMenu
+        open={anchored?.open}
+        onOpenChange={anchored?.onOpenChange}
+        title={agent.displayName}
+        anchor={anchored?.point}
+      >
+        <AdaptiveMenuTrigger asChild>
           {anchored ? (
             // A stand-in for the row: fixed over it, invisible and out of the way of pointers.
             <span
@@ -107,86 +280,30 @@ export function AgentMenu({
               <MoreHorizontal aria-hidden="true" />
             </Button>
           )}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
+        </AdaptiveMenuTrigger>
+        <AdaptiveMenuContent
+          align={anchored?.point ? "start" : "end"}
           // Compact… opens a popover anchored on the ⋯ button, and Agent details may open a sheet:
           // focus belongs to them, not back here.
           onCloseAutoFocus={(e) => {
-            if (anchored) {
-              e.preventDefault();
-              anchored.onClose();
-              return;
-            }
             const next = handoff.current;
             if (next) {
               e.preventDefault();
               handoff.current = null;
               next();
+              return;
+            }
+            if (anchored) {
+              e.preventDefault();
+              anchored.onClose();
             }
           }}
         >
-          {!session && (
-            <DropdownMenuItem asChild>
-              <Link to="/agents/$slug" params={{ slug }}>
-                Open session
-              </Link>
-            </DropdownMenuItem>
+          {groups.flatMap((g, i) =>
+            i === 0 ? g : [<AdaptiveMenuSeparator key={`sep-${g[0]?.key}`} />, ...g],
           )}
-          {session && (
-            <DropdownMenuItem
-              onSelect={() => {
-                if (!detailsTakeFocus) return onOpenDetails?.();
-                handoff.current = () => onOpenDetails?.();
-              }}
-            >
-              Agent details
-              <DropdownMenuShortcut>
-                <Kbd keys={["]"]} />
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )}
-          {canCompact && (
-            <DropdownMenuItem
-              onSelect={() => {
-                handoff.current = () => setCompactOpen(true);
-              }}
-            >
-              Compact…
-            </DropdownMenuItem>
-          )}
-          {canEdit && (
-            <DropdownMenuItem asChild>
-              <Link to="/agents/$slug/edit" params={{ slug }}>
-                Edit
-              </Link>
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem asChild>
-            <Link to="/agents/$slug/usage" params={{ slug }}>
-              Usage
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/tasks" search={{ assignee: slug }}>
-              Open tasks
-            </Link>
-          </DropdownMenuItem>
-          {canStopCrons && (
-            <DropdownMenuItem onSelect={() => stop.openConfirm(trigger)}>
-              Stop crons…
-            </DropdownMenuItem>
-          )}
-          {canTerminate && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setTerminateOpen(true)}>
-                Terminate…
-              </DropdownMenuItem>
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </AdaptiveMenuContent>
+      </AdaptiveMenu>
       {canCompact && (
         <CompactPopover
           slug={slug}

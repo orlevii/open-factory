@@ -5,7 +5,8 @@ import { expect, test, vi } from "vitest";
 import { shouldIgnore } from "@/lib/shortcuts";
 import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
-import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle, closeInstantly } from "./sheet";
+import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle, closeSheetInstantly } from "./sheet";
+import { Textarea } from "./textarea";
 
 function Demo({ open = true, onOpenChange = () => {} }: { open?: boolean; onOpenChange?: (o: boolean) => void }) {
   return (
@@ -242,13 +243,6 @@ test("Esc close is instant (data-instant stamped on the content before closing)"
   expect(stampedAtClose).toBe(true);
 });
 
-test("closeInstantly stamps the content, then closes", () => {
-  const el = document.createElement("div");
-  const onOpenChange = vi.fn(() => expect(el).toHaveAttribute("data-instant"));
-  closeInstantly(el, onOpenChange);
-  expect(onOpenChange).toHaveBeenCalledWith(false);
-});
-
 test("keepFocus: opening leaves focus where it was; returnFocus decides where focus goes on close", async () => {
   fakeMatchMedia.install(false);
   render(<Peek keepFocus returnFocus={() => document.getElementById("row")} />);
@@ -307,4 +301,148 @@ test("below md it is still the modal bottom drawer", async () => {
   await vi.waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeInTheDocument());
   expect(document.querySelector("[data-slot=drawer-overlay]")).toBeInTheDocument();
   expect(document.querySelector("[data-slot=sheet-content]")).toBeNull();
+});
+
+test("stacked desktop sheet is 27rem wide and leaves the parent open and mounted", async () => {
+  fakeMatchMedia.install(false);
+  render(
+    <Sheet open onOpenChange={() => {}}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Parent</SheetTitle>
+        </SheetHeader>
+        <Sheet open onOpenChange={() => {}} stacked>
+          <SheetContent>
+            <SheetHeader>
+              <SheetTitle>Child</SheetTitle>
+            </SheetHeader>
+          </SheetContent>
+        </Sheet>
+      </SheetContent>
+    </Sheet>,
+  );
+  const child = await screen.findByRole("dialog", { name: "Child" });
+  expect(child.className.split(/\s+/)).toContain("w-[min(27rem,100%)]");
+  expect(child.className.split(/\s+/)).not.toContain("w-[min(30rem,100%)]");
+  const parent = screen.getAllByRole("dialog", { hidden: true }).find((d) => d !== child);
+  expect(parent).toHaveAttribute("data-state", "open");
+});
+
+test("stacked: clicking the strip (the overlay) calls onStripClick and closes only that sheet", async () => {
+  fakeMatchMedia.install(false);
+  const onStripClick = vi.fn();
+  const onChild = vi.fn();
+  render(
+    <Sheet open onOpenChange={onChild} stacked onStripClick={onStripClick}>
+      <SheetContent>
+        <SheetTitle>Child</SheetTitle>
+      </SheetContent>
+    </Sheet>,
+  );
+  await screen.findByRole("dialog", { name: "Child" });
+  await userEvent.click(document.querySelector("[data-slot=sheet-overlay]") as HTMLElement);
+  expect(onStripClick).toHaveBeenCalled();
+  expect(onChild).toHaveBeenCalledWith(false);
+});
+
+test("Esc stamps both the overlay and the content before closing", async () => {
+  fakeMatchMedia.install(false);
+  let seen: [boolean, boolean] | undefined;
+  render(
+    <Peek
+      modal
+      onOpenChange={(o) => {
+        if (!o)
+          seen = [
+            !!document.querySelector("[data-slot=sheet-overlay]")?.hasAttribute("data-instant"),
+            !!document.querySelector("[data-slot=sheet-content]")?.hasAttribute("data-instant"),
+          ];
+      }}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
+  await screen.findByRole("dialog", { name: "Peek" });
+  await userEvent.keyboard("{Escape}");
+  expect(seen).toEqual([true, true]);
+});
+
+function Stack({ onParent = () => {}, onChild = () => {} }: { onParent?: (o: boolean) => void; onChild?: (o: boolean) => void }) {
+  const [child, setChild] = useState(true);
+  return (
+    <Sheet open onOpenChange={onParent}>
+      <SheetContent>
+        <SheetTitle>Parent</SheetTitle>
+        <Sheet
+          open={child}
+          stacked
+          onOpenChange={(o) => {
+            onChild(o);
+            setChild(o);
+          }}
+        >
+          <SheetContent>
+            <SheetTitle>Child</SheetTitle>
+          </SheetContent>
+        </Sheet>
+      </SheetContent>
+    </Sheet>
+  );
+}
+const parentContent = () => document.querySelector("[data-slot=sheet-content]") as HTMLElement;
+
+test("Esc on a stacked child stamps the child's overlay and content, not the parent's, and closes only the child", async () => {
+  fakeMatchMedia.install(false);
+  const onParent = vi.fn();
+  render(<Stack onParent={onParent} />);
+  await screen.findByRole("dialog", { name: "Child" });
+  const overlays = [...document.querySelectorAll("[data-slot=sheet-overlay]")];
+  expect(overlays).toHaveLength(2);
+  const [parentOverlay, childOverlay] = overlays;
+  const parentEl = parentContent();
+  await userEvent.keyboard("{Escape}");
+  expect(childOverlay).toHaveAttribute("data-instant");
+  expect(parentOverlay).not.toHaveAttribute("data-instant");
+  expect(parentEl).not.toHaveAttribute("data-instant");
+  expect(onParent).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Child", hidden: true })).toBeNull());
+  expect(parentContent()).toHaveAttribute("data-state", "open");
+});
+
+test("a strip click closes only the stacked child; the parent stays open", async () => {
+  fakeMatchMedia.install(false);
+  const onParent = vi.fn();
+  render(<Stack onParent={onParent} />);
+  await screen.findByRole("dialog", { name: "Child" });
+  const overlays = document.querySelectorAll("[data-slot=sheet-overlay]");
+  await userEvent.click(overlays[1] as HTMLElement);
+  await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Child", hidden: true })).toBeNull());
+  expect(onParent).not.toHaveBeenCalled();
+  expect(parentContent()).toHaveAttribute("data-state", "open");
+});
+
+test("closeSheetInstantly stamps the content and its own overlay, then closes", async () => {
+  fakeMatchMedia.install(false);
+  render(<Stack />);
+  const child = await screen.findByRole("dialog", { name: "Child" });
+  const overlays = document.querySelectorAll("[data-slot=sheet-overlay]");
+  const onOpenChange = vi.fn(() => {
+    expect(child).toHaveAttribute("data-instant");
+    expect(overlays[1]).toHaveAttribute("data-instant");
+  });
+  closeSheetInstantly(child, onOpenChange);
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(overlays[0]).not.toHaveAttribute("data-instant");
+});
+
+test("a textarea inside SheetContent opts out of drawer drag", async () => {
+  fakeMatchMedia.install(true);
+  render(
+    <Sheet open onOpenChange={() => {}}>
+      <SheetContent>
+        <SheetTitle>T</SheetTitle>
+        <Textarea aria-label="notes" />
+      </SheetContent>
+    </Sheet>,
+  );
+  expect(screen.getByLabelText("notes")).toHaveAttribute("data-vaul-no-drag");
 });

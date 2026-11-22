@@ -1,7 +1,10 @@
-import type { ServerMessage } from "@open-factory/shared";
+import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { COARSE_ICON_GROUP } from "@/components/ui/button";
+import { flushStatusFrames } from "@/features/agents/status-frames";
+import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
 
@@ -58,7 +61,10 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  resetSheets();
+  vi.unstubAllGlobals();
+});
 
 test("renders the conversation: sender badge, collapsed tool call, text, compaction marker; never raw XML", async () => {
   renderApp("/agents/dev", alice);
@@ -468,7 +474,10 @@ test("Copy link says so inline when the clipboard refuses", async () => {
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const row = document.getElementById("event-7") as HTMLElement;
-  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), {
+    button: 0,
+    pointerType: "mouse",
+  });
   fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(await within(row).findByText("Couldn't copy")).toBeInTheDocument();
 });
@@ -599,6 +608,26 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
   expect(within(header).queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
 });
 
+test("header on touch: Agent details and ⋯ are both the coarse group's 40px boxes, though each is a trigger's child (evidence D2)", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const header = screen.getByRole("banner");
+  const details = within(header).getByRole("button", { name: "Agent details" });
+  const menu = within(header).getByRole("button", { name: "Actions for Dev agent" });
+  // Each takes its trigger's data-slot (asChild), which is why a `[data-slot=button]` selector missed them.
+  expect(details).not.toHaveAttribute("data-slot", "button");
+  const group = details.parentElement;
+  expect(group?.className).toContain(COARSE_ICON_GROUP);
+  expect(group?.contains(menu)).toBe(true);
+  const selector = COARSE_ICON_GROUP.match(/\[&_(.+)\]:size-10/)?.[1]?.replaceAll("_", " ");
+  expect(selector).toBeDefined();
+  const sized = Array.from(group?.querySelectorAll(selector ?? "") ?? []);
+  expect(sized).toContain(details);
+  expect(sized).toContain(menu);
+  // A working agent has no third action: the avatar stays at every width.
+  expect(header.querySelector("[data-header-avatar]")).not.toHaveClass("@max-[22rem]:hidden");
+});
+
 test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
   routes["/api/agents/dev"] = () =>
     json(detail({ status: "errored", lastError: "Boom\nmore", errorKind: "crash" }));
@@ -609,6 +638,8 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   const header = screen.getByRole("banner");
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
+  // Restart is a third 40px action: below a 22rem header the avatar gives way (break H3).
+  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
   expect(header.contains(alert)).toBe(false);
@@ -685,21 +716,91 @@ test("restart pending arrives by frame; a frame clears it", async () => {
   await vi.waitFor(() => expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument());
 });
 
-test("archived: the composer is replaced by a line linking the edit page; no Compact or Stop", async () => {
+test("archived: the composer is replaced by a notice with a Restore button; no Compact or Stop", async () => {
   routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   expect(screen.getByText(/This agent is archived\./).textContent).toBe(
     "This agent is archived. Restore it to send messages.",
   );
-  expect(screen.getByRole("link", { name: "Restore it" })).toHaveAttribute(
-    "href",
-    "/agents/dev/edit",
-  );
+  expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Restore it" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /Message to/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
+});
+
+test("archived: Restore restores in place and the composer comes back", async () => {
+  let archived = true;
+  routes["/api/agents/dev"] = () =>
+    json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
+  routes["/api/agents/dev/unarchive"] = () => {
+    archived = false;
+    return json({ agent: agentSummary() });
+  };
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  await vi.waitFor(() =>
+    expect(screen.queryByText(/This agent is archived\./)).not.toBeInTheDocument(),
+  );
+  const box = screen.getByRole("combobox", { name: /Message to/ });
+  // The focused Restore button went away with the notice: focus follows to the composer.
+  await vi.waitFor(() => expect(box).toHaveFocus());
+  expect(document.activeElement).not.toBe(document.body);
+});
+
+test("archived: a refused Restore says why inline, and the button stays", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  routes["/api/agents/dev/unarchive"] = () =>
+    json(
+      {
+        error: {
+          code: "manager_archived",
+          message: "Its manager @boss is archived. Change its manager first.",
+        },
+      },
+      409,
+    );
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  const line = await screen.findByText(
+    "Couldn't restore @dev: Its manager @boss is archived. Change its manager first.",
+  );
+  expect(line.closest("[role=alert]")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+});
+
+test("archived: Restore from the session's menu restores, toasts, and brings the composer back", async () => {
+  let archived = true;
+  routes["/api/agents/dev"] = () =>
+    json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
+  routes["/api/agents/dev/unarchive"] = () => {
+    archived = false;
+    return json({ agent: agentSummary() });
+  };
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Actions for Dev agent" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Restore" }));
+  expect(await screen.findByText("Restored @dev.")).toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(screen.queryByText(/This agent is archived\./)).not.toBeInTheDocument(),
+  );
+});
+
+test("Archive from the session's menu swaps the composer for the archived notice", async () => {
+  let archived = false;
+  routes["/api/agents/dev"] = () =>
+    json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
+  routes["/api/agents/dev/archive"] = () => {
+    archived = true;
+    return json({ agent: agentSummary({ archivedAt: "2026-11-19T10:00:00.000Z" }) });
+  };
+  renderApp("/agents/dev", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Actions for Dev agent" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Archive…" }));
+  expect(await screen.findByText("Archived @dev.")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Restore" })).toBeInTheDocument();
 });
 
 test("archived with no events: the empty line doesn't point at a composer", async () => {
@@ -804,7 +905,7 @@ test("an error with fix image links to Templates → Images", async () => {
   );
 });
 
-test("an error with fix edit_agent links to the edit page", async () => {
+test("an error with fix edit_agent opens Edit agent", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
@@ -812,24 +913,30 @@ test("an error with fix edit_agent links to the edit page", async () => {
     fix: "edit_agent",
   });
   renderApp("/agents/dev", alice);
-  expect(await screen.findByRole("link", { name: "Edit the agent" })).toHaveAttribute(
-    "href",
-    "/agents/dev/edit",
-  );
+  const fix = await screen.findByRole("button", { name: "Edit the agent" });
+  expect(screen.queryByRole("link", { name: "Edit the agent" })).not.toBeInTheDocument();
+  await userEvent.click(fix);
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
-test("an error with fix resync links to the agent's Re-sync", async () => {
+test("an error with fix resync runs the agent's Re-sync in place", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
     message: "Re-sync @dev to reinstall its plugins into the factory-managed location.",
     fix: "resync",
   });
+  let resynced = 0;
+  routes["/api/agents/dev/resync"] = () => {
+    resynced++;
+    return json({ agent: agentSummary(), applied: "now" });
+  };
   renderApp("/agents/dev", alice);
-  expect(await screen.findByRole("link", { name: "Re-sync the agent" })).toHaveAttribute(
-    "href",
-    "/agents/dev/edit",
-  );
+  const fix = await screen.findByRole("button", { name: "Re-sync the agent" });
+  expect(screen.queryByRole("link", { name: "Re-sync the agent" })).not.toBeInTheDocument();
+  await userEvent.click(fix);
+  expect(await screen.findByText("Re-synced. Nothing differed.")).toBeInTheDocument();
+  expect(resynced).toBe(1);
 });
 
 test("a resume error no longer names the interim reset script", async () => {
@@ -1030,4 +1137,101 @@ test("?event= asks for its window only after the detail", async () => {
   gate.release(json(detail()));
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
   expect(requested("/api/agents/dev/events?")).toBe(1);
+});
+
+test("a saved summary written to the agent's detail cache (Edit agent over the session) renames the header at once", async () => {
+  const { queryClient } = renderApp("/agents/dev", alice);
+  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
+  await screen.findByText("Two entries.");
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
+    ),
+  );
+  expect(await screen.findByRole("heading", { level: 1, name: "Renamed" })).toBeInTheDocument();
+});
+
+test("a status-frame write to the detail cache never overwrites the session's live turn fields", async () => {
+  const { queryClient } = renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  await vi.waitFor(() =>
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 }),
+  );
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      turnStartedAt: new Date(Date.now() - 65_000).toISOString(),
+      compacting: true,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  const line = () => document.querySelector("[data-activity-line]");
+  await vi.waitFor(() => expect(line()).toHaveTextContent("Compacting"));
+  await vi.waitFor(() => expect(line()).toHaveTextContent(/1m/));
+  // The global status-frame writer patches the cached detail without the live turn fields (a manual write).
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, status: "working", turnOpen: true } } : d,
+    ),
+  );
+  // An Edit save afterwards still renames the header, and keeps the turn live too.
+  act(() =>
+    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+      d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
+    ),
+  );
+  expect(await screen.findByRole("heading", { level: 1, name: "Renamed" })).toBeInTheDocument();
+  expect(line()).toHaveTextContent("Compacting");
+  expect(line()).toHaveTextContent(/1m/);
+});
+
+// The global status-frame flush writes the same detail cache, without a turn's start or a compaction: the session must
+// keep its live values whichever of the two rAF flushes lands last.
+const nextFrame = () => act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+test("a status flush into the detail cache keeps the open turn's elapsed timer", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      turnStartedAt: new Date(Date.now() - 5000).toISOString(),
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelector("[data-activity-line] .tabular-nums")).toBeInTheDocument(),
+  );
+  act(() => flushStatusFrames());
+  await nextFrame();
+  expect(document.querySelector("[data-activity-line] .tabular-nums")).toBeInTheDocument();
+});
+
+test("a status flush into the detail cache keeps a running compaction", async () => {
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      compacting: true,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  const line = () => document.querySelector("[data-activity-line]")?.textContent ?? "";
+  await vi.waitFor(() => expect(line()).toContain("Compacting"));
+  act(() => flushStatusFrames());
+  await nextFrame();
+  expect(line()).toContain("Compacting");
 });

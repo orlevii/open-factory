@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect } from "react";
 import { useShell } from "@/components/shell-context";
+import { COARSE_ICON_GROUP } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +14,7 @@ export function PageHeader({
   meta,
   actions,
   titleFromData = false,
+  wrap = false,
 }: {
   title: string;
   /** The h1's content when it needs more than the plain title (a spawned agent's kept " · ab12"). */
@@ -26,6 +28,9 @@ export function PageHeader({
   actions?: ReactNode;
   /** The title is data (an agent or task name): it truncates down to a 4rem floor. A static title never shrinks. */
   titleFromData?: boolean;
+  /** The header may take a second line: an item that can't fit (a view switch at 200% text on a phone) moves
+   *  under the title with an `@max-` container variant (order-last, basis-full) instead of painting over its neighbours. */
+  wrap?: boolean;
 }) {
   const shell = useShell();
   useEffect(() => {
@@ -33,7 +38,12 @@ export function PageHeader({
   }, [title, documentTitle]);
   return (
     <>
-      <header className="@container flex h-12 shrink-0 items-center gap-2 border-b px-4 md:px-6">
+      <header
+        className={cn(
+          "@container flex shrink-0 items-center gap-2 border-b px-4 md:px-6",
+          wrap ? "min-h-12 flex-wrap gap-y-1 py-1" : "h-12",
+        )}
+      >
         <SidebarTrigger className="-ml-1.5" />
         {leading}
         <h1
@@ -58,7 +68,13 @@ export function PageHeader({
         {/* No box of its own: the badge and slug are the header's items, so a truncating title can't
             squeeze a wrapper to 0px under a shrink-0 badge (the actions would paint over it). */}
         {meta && <div className="contents">{meta}</div>}
-        {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
+        {/* On coarse pointers neighbouring icon actions are 40px boxes 4px apart, not overlapping expanders
+            (U4 §11.3). */}
+        {actions && (
+          <div className={`ml-auto flex shrink-0 items-center gap-2 ${COARSE_ICON_GROUP}`}>
+            {actions}
+          </div>
+        )}
       </header>
       {shell && <ReconnectStrip lost={shell.connectionLost} />}
     </>

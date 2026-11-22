@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { closeSheet } from "@/features/sheets/sheet-store";
 import { useShortcut } from "@/lib/shortcuts";
 import type { WsOptions } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -21,7 +22,10 @@ beforeEach(() => {
       json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  act(() => closeSheet());
+});
 
 async function shell() {
   const r = renderApp("/inbox", alice);
@@ -66,18 +70,20 @@ test.each([
   await waitFor(() => expect(router.state.location.pathname).toBe(path));
 });
 
-test("c goes to New task, the same place as the palette's action", async () => {
+test("c opens the New task sheet over the current page", async () => {
   const { router } = await shell();
   press("c");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/tasks/new"));
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/inbox");
 });
 
-test("the palette's New task action and c land on the same page", async () => {
+test("the palette's New task action opens the same sheet as c", async () => {
   const { router } = await shell();
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
   const dialog = await screen.findByRole("dialog", { name: "Search" });
   await userEvent.click(within(dialog).getByRole("option", { name: "New task" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe("/tasks/new"));
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/inbox");
 });
 
 test("? (typed with Shift) opens a non-modal Keyboard shortcuts sheet with Global, Lists and Session groups", async () => {
@@ -136,7 +142,8 @@ test("the Single-key shortcuts switch turns them off, persists, and the sheet st
   await userEvent.click(sw2);
   expect(sw2).toBeChecked();
   press("c");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/tasks/new"));
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/inbox");
 });
 
 test("none of them fire while typing in an input", async () => {

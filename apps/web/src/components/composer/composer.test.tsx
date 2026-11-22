@@ -12,6 +12,7 @@ import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createUploadStore } from "@/features/session/uploads";
 import { readDraft } from "@/lib/drafts";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
 import { NO_FOLDERS, TOO_MANY } from "./attachments";
@@ -1409,4 +1410,161 @@ test("a stored text whose name the loaded list doesn't know sends as text", () =
   expect(document.querySelector("[data-send-reason]")).toBeNull();
   fireEvent.keyDown(box, { key: "Enter" });
   expect(onSubmit).toHaveBeenCalledWith("/nope src/", expect.anything());
+});
+
+// The phone composer (U4 §11.4, #107): below 48rem the toolbar is icons only, Stop and Send at its end.
+function onPhone(): () => void {
+  const real = window.matchMedia;
+  fakeMatchMedia.install(true);
+  return () => {
+    window.matchMedia = real;
+  };
+}
+
+test("on a phone Send is a 40px primary icon button named Send", async () => {
+  const restore = onPhone();
+  try {
+    const { box } = setup();
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toHaveAttribute("data-variant", "default");
+    expect(send).toHaveClass("size-10", "pointer-coarse:size-10", "transition-none");
+    // `size="icon"` brings `pointer-coarse:size-9`, which would win on a touch screen (evidence D1).
+    expect(send).not.toHaveClass("pointer-coarse:size-9");
+    expect(send).toHaveTextContent(/^$/); // the arrow only, the name from aria-label
+    expect(send.querySelector("svg")).not.toBeNull();
+    expect(send).toBeDisabled();
+    await userEvent.type(box, "x");
+    expect(send).toBeEnabled();
+  } finally {
+    restore();
+  }
+});
+
+test("on a phone attach, / and @ are 40px ghost icons and there is no Write/Preview or visible hint", () => {
+  const restore = onPhone();
+  try {
+    setup({
+      preview: true,
+      attachments: createUploadStore("dev"),
+      completions: { slash: SLASH, at: AT },
+      hintMode: "coarse",
+      turnOpen: true,
+    });
+    for (const name of ["Attach files", "Run a command", "Insert an agent's handle"]) {
+      const b = screen.getByRole("button", { name });
+      expect(b).toHaveAttribute("data-variant", "ghost");
+      expect(b).toHaveClass("size-10", "pointer-coarse:size-10");
+      expect(b).not.toHaveClass("pointer-coarse:size-9");
+    }
+    expect(screen.queryByRole("button", { name: "Write" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
+    expect(document.querySelector("[data-composer-hint]")).toHaveClass("sr-only");
+  } finally {
+    restore();
+  }
+});
+
+test("on a phone the hint stays the box's description while it isn't shown", () => {
+  const restore = onPhone();
+  try {
+    const { box } = setup({ hintMode: "coarse", turnOpen: true });
+    expect(box).toHaveAccessibleDescription(
+      "Arrives at the agent's next step. Stop first to interrupt.",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("on a phone Stop is a 40px outline icon left of Send, in a slot kept with no turn open", () => {
+  const restore = onPhone();
+  try {
+    const onStop = vi.fn(async () => {});
+    const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false });
+    const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
+    const toolbarClass = toolbar.className;
+    const slot = document.querySelector("[data-stop-slot]") as HTMLElement;
+    const slotClass = slot.className;
+    expect(slot).toHaveClass("size-10");
+    const standIn = slot.querySelector("[data-stop-stand-in]");
+    expect(standIn).toHaveClass("invisible", "size-10", "pointer-coarse:size-10");
+    expect(standIn).not.toHaveClass("pointer-coarse:size-9");
+    expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
+
+    rerender({ onStop, stopEpoch: 2, turnOpen: true });
+    const stop = screen.getByRole("button", { name: "Stop" });
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(stop).toHaveAttribute("data-variant", "outline");
+    expect(stop).toHaveClass("size-10", "pointer-coarse:size-10");
+    expect(stop).not.toHaveClass("pointer-coarse:size-9");
+    expect(stop).toHaveTextContent(/^$/);
+    expect(slot.contains(stop)).toBe(true);
+    expect(stop.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 8px between Stop and Send.
+    expect(slot.parentElement).toHaveAttribute("data-composer-actions");
+    expect(slot.parentElement).toHaveClass("gap-2");
+    // Nothing reflows on the turn edge: the same toolbar and slot, with the same classes.
+    expect(document.querySelector("[data-composer-toolbar]")).toBe(toolbar);
+    expect(toolbar.className).toBe(toolbarClass);
+    expect(document.querySelector("[data-stop-slot]")).toBe(slot);
+    expect(slot.className).toBe(slotClass);
+  } finally {
+    restore();
+  }
+});
+
+test("on a phone a pending Stop is named Stopping… and says so in a status", async () => {
+  const restore = onPhone();
+  try {
+    let resolve: () => void = () => {};
+    const onStop = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    setup({ onStop, stopEpoch: 1, turnOpen: true });
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    const stop = screen.getByRole("button", { name: "Stopping…" });
+    expect(stop).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Stopping…");
+    resolve();
+  } finally {
+    restore();
+  }
+});
+
+test("on a phone the placeholder carries the queued hint while a turn is open", () => {
+  const restore = onPhone();
+  try {
+    const busy = "Sends after @dev's current step";
+    const { box, rerender } = setup({ turnPlaceholder: busy, turnOpen: false });
+    expect(box).toHaveAttribute("placeholder", "Message Dev");
+    rerender({ turnPlaceholder: busy, turnOpen: true });
+    expect(box).toHaveAttribute("placeholder", busy);
+  } finally {
+    restore();
+  }
+});
+
+test("from 48rem the placeholder, Send and Stop keep U3's layout", () => {
+  const { box } = setup({
+    turnPlaceholder: "Sends after @dev's current step",
+    turnOpen: true,
+    stopEpoch: 1,
+    onStop: async () => {},
+  });
+  expect(box).toHaveAttribute("placeholder", "Message Dev");
+  expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send");
+  expect(screen.getByRole("button", { name: "Stop" })).toHaveTextContent("Stop");
+  expect(document.querySelector("[data-stop-slot]")).not.toHaveClass("size-10");
+});
+
+test("a Preview left open shows Write again on a phone, where there is no toggle", async () => {
+  const real = window.matchMedia;
+  const media = fakeMatchMedia.install(false);
+  try {
+    setup({ preview: true });
+    await userEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    act(() => media.set(true));
+    expect(screen.getByRole("textbox", { name: "Message to Dev" })).toBeInTheDocument();
+  } finally {
+    window.matchMedia = real;
+  }
 });

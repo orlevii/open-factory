@@ -34,6 +34,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import {
   buildImage,
   deletedState,
@@ -765,6 +767,11 @@ const TemplateHeader = memo(function TemplateHeader({
   onDelete: (open: boolean) => void;
 }) {
   const name = template.name;
+  // Preloads New agent (chunk and data, the template detail included) on intent.
+  const createIntent = useMemo(
+    () => sheetIntent("new-agent", { kind: "new-agent", template: name }),
+    [name],
+  );
   return (
     <>
       <PageHeader
@@ -791,11 +798,13 @@ const TemplateHeader = memo(function TemplateHeader({
             ) : (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" asChild>
-                    <Link to="/agents/new" search={{ template: name }}>
-                      <UserPlus aria-hidden="true" data-icon="inline-start" />
-                      <span className="max-md:sr-only">Create agent</span>
-                    </Link>
+                  <Button
+                    variant="ghost"
+                    onClick={() => openSheet({ kind: "new-agent", template: name })}
+                    {...createIntent}
+                  >
+                    <UserPlus aria-hidden="true" data-icon="inline-start" />
+                    <span className="max-md:sr-only">Create agent</span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Create agent</TooltipContent>

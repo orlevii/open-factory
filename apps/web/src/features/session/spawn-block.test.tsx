@@ -106,7 +106,10 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   // The raw call is in the row menu (U3 §7.5), not a footer button.
   expect(within(block).queryByRole("button", { name: "Show tool call" })).toBeNull();
   const wrap = block.closest("[data-row-wrap]") as HTMLElement;
-  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), {
+    button: 0,
+    pointerType: "mouse",
+  });
   await userEvent.click(await screen.findByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByTitle("mcp__factory__spawn_agent")).toBeInTheDocument();
 });

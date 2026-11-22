@@ -1,12 +1,13 @@
 import type { ProjectSummary } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, Plus } from "lucide-react";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 
 /** The projects an agent is granted: a checkbox group (Radix checkboxes). "From the template" until the user
- *  changes the set, then "Custom" with a way back to the template's default. */
+ *  changes the set, then "Custom" with a way back to the template's default. With `onAddProject` (a sheet that can
+ *  stack Add project), a ghost "Add project" sits under the list; without it, the empty state links to Settings. */
 export function ProjectGrantPicker({
   projects,
   value,
@@ -14,6 +15,7 @@ export function ProjectGrantPicker({
   error,
   onChange,
   onUseDefault,
+  onAddProject,
 }: {
   projects: ProjectSummary[] | undefined;
   value: string[];
@@ -22,6 +24,7 @@ export function ProjectGrantPicker({
   error?: string;
   onChange: (next: string[]) => void;
   onUseDefault: () => void;
+  onAddProject?: () => void;
 }) {
   const noteId = "field-projects-note";
   const errorId = "field-projects-error";
@@ -40,14 +43,19 @@ export function ProjectGrantPicker({
       {!projects && <p className="text-[0.8125rem] text-muted-foreground">Loading…</p>}
       {projects && projects.length === 0 && (
         <p className="text-[0.8125rem] text-muted-foreground">
-          No projects yet.{" "}
-          <Link
-            to="/settings/projects"
-            className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
-          >
-            Add one in Settings
-          </Link>
-          .
+          No projects yet.
+          {!onAddProject && (
+            <>
+              {" "}
+              <Link
+                to="/settings/projects"
+                className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
+              >
+                Add one in Settings
+              </Link>
+              .
+            </>
+          )}
         </p>
       )}
       {projects && projects.length > 0 && (
@@ -59,6 +67,7 @@ export function ProjectGrantPicker({
               <li key={p.name} className="flex min-w-0 items-center gap-2">
                 <Checkbox
                   id={id}
+                  data-project={p.name}
                   checked={checked}
                   onCheckedChange={() =>
                     onChange(checked ? value.filter((n) => n !== p.name) : [...value, p.name])
@@ -87,11 +96,19 @@ export function ProjectGrantPicker({
           {error}
         </p>
       )}
-      {custom && (
-        <div>
-          <Button type="button" variant="ghost" size="sm" onClick={onUseDefault}>
-            Use template default
-          </Button>
+      {(onAddProject || custom) && (
+        <div className="flex flex-wrap gap-2">
+          {onAddProject && (
+            <Button type="button" variant="ghost" size="sm" inForm onClick={onAddProject}>
+              <Plus aria-hidden="true" data-icon="inline-start" />
+              Add project
+            </Button>
+          )}
+          {custom && (
+            <Button type="button" variant="ghost" size="sm" inForm onClick={onUseDefault}>
+              Use template default
+            </Button>
+          )}
         </div>
       )}
     </fieldset>

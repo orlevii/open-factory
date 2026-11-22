@@ -43,6 +43,7 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { resetToasts } from "@/components/ui/toaster";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Mark, Wordmark } from "@/components/wordmark";
 import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
@@ -51,11 +52,17 @@ import { useUnreadCount } from "@/features/inbox/api";
 import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
 import { resetUploads } from "@/features/session/uploads";
+import { resetDrafts } from "@/features/sheets/drafts";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
+
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+
+const newAgentIntent = sheetIntent("new-agent");
 
 const themes = [
   { value: "system", label: "System", icon: Monitor },
@@ -112,6 +119,9 @@ export function AppSidebar() {
   async function signOut() {
     // In-flight uploads stop and every file of this user is dropped from memory (U3 §13.5).
     resetUploads();
+    resetSheets();
+    resetDrafts();
+    resetToasts();
     await authClient.signOut();
     await refreshSession(qc);
     await navigate({ to: "/sign-in" });
@@ -135,7 +145,10 @@ export function AppSidebar() {
           <Mark className="hidden size-5 group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
-      <SidebarContent className="min-h-0 flex-col overflow-hidden">
+      {/* Large text on a short screen leaves the tree no room under the nav (200% at 390x844: a sliver
+          under its sticky Agents row, so no agent row can be reached): the tree keeps 12rem, and the
+          content scrolls as a whole when that and the nav don't fit. The rail clips, as before. */}
+      <SidebarContent className="min-h-0 flex-col overflow-hidden overflow-y-auto">
         {/* Opens the palette: a button, never active, with a rule under it (spec §10.2). */}
         <SidebarGroup className="shrink-0 pb-0">
           <SidebarMenu>
@@ -219,7 +232,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         {collapsedRail && <SidebarSeparator decorative={false} className="mx-auto w-6" />}
-        <SidebarGroup className="min-h-0 flex-1 overflow-y-auto pt-0">
+        <SidebarGroup className="min-h-48 flex-1 overflow-y-auto pt-0 group-data-[collapsible=icon]:min-h-0">
           <SidebarGroupContent>
             {/* The nav row for /agents and the head of the tree; it stays put while the tree scrolls. */}
             <SidebarMenu className="sticky top-0 z-10 bg-sidebar">
@@ -254,14 +267,18 @@ export function AppSidebar() {
                   <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center">
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Link
-                          to="/agents/new"
-                          onClick={closeMobile}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            closeMobile();
+                            openSheet({ kind: "new-agent" });
+                          }}
+                          {...newAgentIntent}
                           aria-label="New agent"
                           className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         >
                           <Plus aria-hidden="true" className="size-4" />
-                        </Link>
+                        </button>
                       </TooltipTrigger>
                       <TooltipContent>New agent</TooltipContent>
                     </Tooltip>

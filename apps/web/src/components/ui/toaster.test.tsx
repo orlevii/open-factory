@@ -1,5 +1,5 @@
 import { ApiError } from "@open-factory/shared";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -21,7 +21,9 @@ test("a toast shows its text and Undo runs once", async () => {
   act(() => notify({ text: "Archived @ada.", undo }));
   const button = await screen.findByRole("button", { name: "Undo" });
   await userEvent.click(button);
-  await userEvent.click(button);
+  expect(button).toBeDisabled();
+  button.removeAttribute("disabled");
+  fireEvent.click(button);
   expect(undo).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Archived @ada.")).toBeInTheDocument();
 });
@@ -34,6 +36,16 @@ test("a failing undo shows the server's message", async () => {
   act(() => notify({ text: "Deleted S-1.", undo }));
   await userEvent.click(await screen.findByRole("button", { name: "Undo" }));
   expect(await screen.findByText("Already restored.")).toBeInTheDocument();
+});
+
+test("an undo that throws synchronously shows the fallback", async () => {
+  const undo = (() => {
+    throw new Error("boom");
+  }) as () => Promise<void>;
+  render(<Toaster />);
+  act(() => notify({ text: "Deleted S-2.", undo }));
+  await userEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  expect(await screen.findByText("Couldn't undo: can't reach the server.")).toBeInTheDocument();
 });
 
 test("an action button runs its callback", async () => {
@@ -61,6 +73,31 @@ test("a toast is held while a modal is open, shown when it closes, and the obser
   });
   expect(await screen.findByText("Held toast.")).toBeInTheDocument();
   await waitFor(() => expect(disconnect).toHaveBeenCalled());
+});
+
+test("a held toast waits until the toaster is no longer aria-hidden", async () => {
+  const root = document.createElement("div");
+  document.body.append(root);
+  root.setAttribute("aria-hidden", "true");
+  const modal = document.createElement("div");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("data-state", "open");
+  document.body.append(modal);
+  render(<Toaster />, { container: root });
+  act(() => notify({ text: "Late toast." }));
+  // The modal's state flips to closed while Radix's aria-hidden is still on the toaster's tree.
+  await act(async () => {
+    modal.setAttribute("data-state", "closed");
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(screen.queryByText("Late toast.")).toBeNull();
+  await act(async () => {
+    root.removeAttribute("aria-hidden");
+    modal.remove();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(await screen.findByText("Late toast.")).toBeInTheDocument();
+  root.remove();
 });
 
 test("duration is 60ms per character, at least 5s", () => {

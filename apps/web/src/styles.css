@@ -773,6 +773,18 @@
 /* Sonner 2.0.8 (pinned) injects unlayered rules: 400ms transform/opacity/height, translateY(100%) enter,
    scaled collapsed stack, z-index 999999999, reduced-motion transition:none. Re-check these selectors on any upgrade. */
 /* biome-ignore-start lint/complexity/noImportantStyles: must beat Sonner's injected rules. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-sonner-toast][data-mounted="false"] {
+    transform: translateY(8px) !important;
+    opacity: 0 !important;
+  }
+  /* Only the front toast: a removed toast further back keeps its lifted slot (Sonner's --y). */
+  [data-sonner-toast][data-removed="true"][data-front="true"] {
+    transition-duration: 150ms !important;
+    transform: translateY(8px) !important;
+    opacity: 0 !important;
+  }
+}
 [data-sonner-toaster] {
   z-index: 40 !important;
   /* The left offset follows the sidebar's collapse (the variable is set on the sidebar wrapper). */
@@ -783,19 +795,14 @@
     transform 200ms var(--ease-out),
     opacity 200ms var(--ease-out) !important;
 }
-[data-sonner-toast][data-mounted="false"] {
-  transform: translateY(8px) !important;
-  opacity: 0 !important;
-}
-[data-sonner-toast][data-removed="true"] {
-  transition-duration: 150ms !important;
-  transform: translateY(8px) !important;
-  opacity: 0 !important;
-}
+/* Reduced motion: Sonner positions every toast with transform: var(--y), so transform stays for
+   position and only the transitions go; opacity fades alone, and the toaster does not slide. */
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toast] {
     transition: opacity 150ms var(--ease-out) !important;
-    transform: none !important;
+  }
+  [data-sonner-toaster] {
+    transition: none !important;
   }
 }
 [data-instant] [data-sonner-toaster] {

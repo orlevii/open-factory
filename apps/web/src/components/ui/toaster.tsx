@@ -54,8 +54,14 @@ function modalOpen() {
   return document.querySelector(MODAL_SELECTOR) !== null;
 }
 
+/** Radix's hideOthers marks the toaster's subtree aria-hidden while a modal is open and clears it a
+ *  moment after the modal's state flips to closed; a toast shown before then would not be announced. */
+function hidden() {
+  return document.querySelector('section[aria-label^="Notifications"]')?.closest('[aria-hidden="true"]') != null;
+}
+
 function release() {
-  if (modalOpen()) return;
+  if (modalOpen() || hidden()) return;
   observer?.disconnect();
   observer = undefined;
   for (const n of held.splice(0)) show(n);
@@ -69,12 +75,11 @@ function hold(n: Notification) {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ["data-state", "aria-modal"],
+    attributeFilter: ["data-state", "aria-modal", "aria-hidden"],
   });
 }
 
 function show({ text, action, undo }: Notification) {
-  const run = action?.run;
   let undone = false;
   const label = undo ? "Undo" : action?.label;
   toast(text, {
@@ -85,11 +90,13 @@ function show({ text, action, undo }: Notification) {
         : {
             label,
             onClick: (e) => {
-              if (!undo) return run?.();
+              if (!undo) return action?.run();
               if (undone) return e.preventDefault();
               undone = true;
               (e.currentTarget as HTMLButtonElement).disabled = true;
-              undo().catch((err: unknown) =>
+              Promise.resolve()
+                .then(undo)
+                .catch((err: unknown) =>
                 notify({
                   text:
                     err instanceof ApiError ? err.message : "Couldn't undo: can't reach the server.",

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { registerDockedComposer } from "./composer-height";
 
-type Cb = (r: { contentRect: { height: number } }[]) => void;
+type Cb = (
+  r: { contentRect: { height: number }; borderBoxSize?: { blockSize: number }[] }[],
+) => void;
 const observers = new Map<Element, Cb>();
 const read = () => document.documentElement.style.getPropertyValue("--composer-h");
 
@@ -57,5 +59,15 @@ test("a resize that keeps the maximum writes nothing", () => {
   expect(set).not.toHaveBeenCalled();
   offA();
   offB();
+  vi.advanceTimersToNextFrame();
+});
+
+test("the border-box block size wins over the content rect", () => {
+  const a = document.createElement("div");
+  const off = registerDockedComposer("a", a);
+  observers.get(a)?.([{ contentRect: { height: 60 }, borderBoxSize: [{ blockSize: 100 }] }]);
+  vi.advanceTimersToNextFrame();
+  expect(read()).toBe("100px");
+  off();
   vi.advanceTimersToNextFrame();
 });

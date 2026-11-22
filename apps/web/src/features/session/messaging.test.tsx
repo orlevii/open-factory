@@ -6,6 +6,7 @@ import { FakeXhr, file, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail, resetSeq, se } from "@/test/session-fixtures";
+import { resetUploads } from "./uploads";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  resetUploads(); // uploads live in a module store for the page's life
 });
 
 const env = (o: Record<string, unknown>) => ({ urgent: false, ...o }) as never;
@@ -1160,7 +1162,14 @@ test("a confirmed attachment is a chip and its line is hidden; images preview th
             kind: "message",
             body: `look at these\n\n${attachedLine(UP1, "shot.png")}\n${attachedLine(UP2, "notes.txt")}`,
             attachments: [
-              { uploadId: UP1, name: "shot.png", kind: "image", width: 640, height: 480 },
+              {
+                uploadId: UP1,
+                name: "shot.png",
+                kind: "image",
+                bytes: 40_000,
+                width: 640,
+                height: 480,
+              },
               { uploadId: UP2, name: "notes.txt", kind: "text" },
             ],
           }),
@@ -1274,4 +1283,78 @@ test("leaving the session keeps its uploads; a file dropped outside the composer
     expect(document.querySelector("[data-upload-chip]")).toHaveTextContent("keep.txt"),
   );
   for (const x of FakeXhr.all) x.abort();
+});
+
+test("an image over 1 MB, or of unknown size, previews only when asked", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "m1",
+            from: "@alice",
+            kind: "message",
+            body: `two shots\n\n${attachedLine(UP1, "big.png")}\n${attachedLine(UP2, "old.png")}`,
+            attachments: [
+              { uploadId: UP1, name: "big.png", kind: "image", bytes: 5_000_000 },
+              { uploadId: UP2, name: "old.png", kind: "image" },
+            ],
+          }),
+        ],
+      },
+    ],
+    "two shots",
+  );
+  const block = screen.getByText("two shots").closest("[data-message-block]") as HTMLElement;
+  const list = within(block).getByRole("list", { name: "Attached files" });
+  expect(list.querySelector("img")).toBeNull();
+  await userEvent.click(within(list).getByRole("button", { name: "Show preview of big.png" }));
+  expect(list.querySelectorAll("img")).toHaveLength(1);
+  expect(list.querySelector("img")).toHaveAttribute("src", `/api/agents/dev/uploads/${UP1}`);
+  expect(within(list).getByRole("button", { name: "Show preview of old.png" })).toBeInTheDocument();
+});
+
+test("another user signing in on this tab never sees the previous user's uploads", async () => {
+  installFakeXhr();
+  await open(GREETING, "hello there");
+  fireEvent.paste(screen.getByRole("combobox", { name: /Message to/ }), {
+    clipboardData: { files: [file("mine.txt")], getData: () => "", types: ["Files"] },
+  });
+  const x = lastXhr();
+  expect(document.querySelector("[data-upload-chip]")).toHaveTextContent("mine.txt");
+  const bob = { ...alice, user: { ...alice.user, id: "u2", handle: "bob", name: "Bob" } };
+  act(() => last.qc?.setQueryData(["session"], bob));
+  await vi.waitFor(() => expect(document.querySelector("[data-upload-chip]")).toBeNull());
+  expect(x.aborted).toBe(true);
+});
+
+test("a delivered message of yours takes its uploads' chips out of the composer", async () => {
+  installFakeXhr();
+  await open(GREETING, "hello there");
+  fireEvent.paste(screen.getByRole("combobox", { name: /Message to/ }), {
+    clipboardData: { files: [file("a.txt")], getData: () => "", types: ["Files"] },
+  });
+  act(() => lastXhr().respond(201, { uploadId: UP1, kind: "text", bytes: 5, name: "a.txt" }));
+  expect(document.querySelector("[data-upload-chip]")).not.toBeNull();
+  act(() =>
+    ws.onMessage?.({
+      type: "session_event",
+      agent: "dev",
+      event: se({
+        type: "message_in",
+        messages: [
+          env({
+            id: "m9",
+            from: "@alice",
+            kind: "message",
+            body: `late one\n\n${attachedLine(UP1, "a.txt")}`,
+            attachments: [{ uploadId: UP1, name: "a.txt", kind: "text", bytes: 5 }],
+          }),
+        ],
+      }),
+    }),
+  );
+  await screen.findByText("late one");
+  expect(document.querySelector("[data-composer-frame] [data-upload-chip]")).toBeNull();
 });

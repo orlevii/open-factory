@@ -868,7 +868,7 @@ test("past 10 files the rest are left out with a note; a folder is refused with 
 });
 
 test("an image's thumbnail is a 64px bitmap on a canvas, never a full-size <img>", async () => {
-  const bitmap = { width: 64, height: 40, close: vi.fn() };
+  const bitmap = { width: 128, height: 80, close: vi.fn() };
   const createImageBitmap = vi.fn(async () => bitmap);
   const drawImage = vi.fn();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
@@ -880,7 +880,8 @@ test("an image's thumbnail is a 64px bitmap on a canvas, never a full-size <img>
   pasteFiles(box, [img]);
   expect(createImageBitmap).toHaveBeenCalledWith(img, { resizeWidth: 64 });
   await vi.waitFor(() => expect(document.querySelector("canvas[data-thumb]")).not.toBeNull());
-  expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+  // Fixed at 64px wide, whatever size the bitmap came back.
+  expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 64, 40);
   expect(document.querySelector("[data-composer-frame] img")).toBeNull();
   expect(store.keys()).toHaveLength(1);
 });
@@ -918,20 +919,22 @@ test("a progress tick renders only its own chip, once per frame; not the compose
   expect(boxRenders.n).toBe(box0);
 });
 
-test("a refused file shows its reason with Retry and Remove", async () => {
+test("a refused file shows its reason with Remove only; a failure a retry can fix offers Retry", async () => {
   const { box } = setupFiles();
-  pasteFiles(box, [file("p.heic", 10, "image/heic")]);
-  act(() =>
-    lastXhr().respond(415, {
+  pasteFiles(box, [file("p.heic", 10, "image/heic"), file("a.txt")]);
+  const [heic, txt] = FakeXhr.all as [FakeXhr, FakeXhr];
+  act(() => {
+    heic.respond(415, {
       error: { code: "unsupported_type", message: "HEIC isn't supported; export as JPEG" },
-    }),
-  );
+    });
+    txt.respond(503, { error: { message: "The server is busy." } });
+  });
   expect(chips()[0]).toHaveTextContent("HEIC isn't supported; export as JPEG");
-  await userEvent.click(screen.getByRole("button", { name: "Retry p.heic" }));
-  expect(FakeXhr.all).toHaveLength(2);
-  act(() => lastXhr().respond(415, { error: { message: "HEIC isn't supported; export as JPEG" } }));
+  expect(screen.queryByRole("button", { name: "Retry p.heic" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Retry a.txt" }));
+  expect(FakeXhr.all).toHaveLength(3);
   await userEvent.click(screen.getByRole("button", { name: "Remove p.heic" }));
-  expect(chips()).toHaveLength(0);
+  expect(chips()).toHaveLength(1);
 });
 
 test("a non-JSON 413 says the proxy refused it", () => {
@@ -943,23 +946,84 @@ test("a non-JSON 413 says the proxy refused it", () => {
   );
 });
 
-test("Send waits for uploads, then for a failed file, with the reason as its description", async () => {
+test("Send holds for uploads, then for a failed file: focusable, its reason a visible line", async () => {
   const { box, onSubmit } = setupFiles();
   await userEvent.type(box, "see these");
   pasteFiles(box, [file("a.txt"), file("b.txt")]);
   const send = screen.getByRole("button", { name: "Send" });
-  expect(send).toBeDisabled();
+  const reason = () => document.querySelector("[data-send-reason]");
+  expect(send).toBeEnabled(); // focusable, so the reason is reachable
+  expect(send).toHaveAttribute("aria-disabled", "true");
   expect(send).toHaveAccessibleDescription("Waiting for 2 uploads");
+  expect(reason()).toHaveTextContent("Waiting for 2 uploads");
   fireEvent.keyDown(box, { key: "Enter" });
+  await userEvent.click(send);
   expect(onSubmit).not.toHaveBeenCalled();
   expect(box).toHaveValue("see these");
   act(() => (FakeXhr.all[0] as FakeXhr).respond(201, ok("u1", "a.txt")));
   expect(send).toHaveAccessibleDescription("Waiting for 1 upload");
   act(() => (FakeXhr.all[1] as FakeXhr).fail());
-  expect(send).toBeDisabled();
-  expect(send).toHaveAccessibleDescription("Remove or retry the failed file");
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  expect(reason()).toHaveTextContent("Remove or retry the failed file");
   await userEvent.click(screen.getByRole("button", { name: "Remove b.txt" }));
-  expect(send).toBeEnabled();
+  expect(send).not.toHaveAttribute("aria-disabled");
+  expect(reason()).toBeNull();
+});
+
+test("files with an empty box: Send says to add a message", async () => {
+  const { box, onSubmit } = setupFiles();
+  pasteFiles(box, [file("a.txt")]);
+  act(() => lastXhr().respond(201, ok("u1", "a.txt")));
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  expect(document.querySelector("[data-send-reason]")).toHaveTextContent(
+    "Add a message to send the files",
+  );
+  await userEvent.click(send);
+  expect(onSubmit).not.toHaveBeenCalled();
+  await userEvent.type(box, "x");
+  expect(send).not.toHaveAttribute("aria-disabled");
+});
+
+test("validate hears how many files go with the text", async () => {
+  const validate = vi.fn<(t: string, files: number) => string | undefined>(() => undefined);
+  const { box } = setupFiles({ validate });
+  pasteFiles(box, [file("a.txt")]);
+  act(() => lastXhr().respond(201, ok("u1", "a.txt")));
+  await userEvent.type(box, "hi{Enter}");
+  expect(validate).toHaveBeenCalledWith("hi", 1);
+});
+
+test("after a send empties the chips, the next batch starts collapsed", async () => {
+  const spy = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (!this.hasAttribute("data-upload-chip")) return 0;
+    return Math.floor([...(this.parentElement?.children ?? [])].indexOf(this) / 4) * 40;
+  });
+  const { box } = setupFiles();
+  const ten = () => Array.from({ length: 10 }, (_, i) => file(`f${i}.txt`));
+  pasteFiles(box, ten());
+  await userEvent.click(await screen.findByRole("button", { name: "+2 files" }));
+  act(() => {
+    for (const [i, x] of FakeXhr.all.entries()) x.respond(201, ok(`u${i}`, `f${i}.txt`));
+  });
+  await userEvent.type(box, "go{Enter}");
+  expect(chips()).toHaveLength(0);
+  pasteFiles(box, ten());
+  expect(await screen.findByRole("button", { name: "+2 files" })).toBeInTheDocument();
+  spy.mockRestore();
+});
+
+test("moving between the frame's children keeps the drop edge; leaving the frame drops it", () => {
+  const { frame, box } = setupFiles();
+  const dt = { files: [file("a.txt")], types: ["Files"] };
+  fireEvent.dragEnter(frame, { dataTransfer: dt });
+  fireEvent.dragEnter(box, { dataTransfer: dt }); // into a child: Safari's relatedTarget is null
+  fireEvent.dragLeave(frame, { dataTransfer: dt, relatedTarget: null });
+  expect(frame.querySelector("[data-drop-edge]")).not.toBeNull();
+  fireEvent.dragLeave(box, { dataTransfer: dt, relatedTarget: null });
+  expect(frame.querySelector("[data-drop-edge]")).toBeNull();
 });
 
 test("Send carries the finished uploads; a failed send puts the chips back", async () => {
@@ -1038,7 +1102,7 @@ test("the attach button picks files", async () => {
   expect(chips()).toHaveLength(2);
 });
 
-test("↑ in an empty box recalls your last message's text; not with text or the caret moved", async () => {
+test("↑ in an empty box recalls your last message's text; not once the box has text", async () => {
   const recall = vi.fn(() => "see this");
   const { box } = setupFiles({ recall });
   fireEvent.keyDown(box, { key: "ArrowUp", isComposing: true });

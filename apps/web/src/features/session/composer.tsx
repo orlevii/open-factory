@@ -107,9 +107,14 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
   );
 }
 
-/** The 64 KB body limit, checked before the box empties (a module constant: a stable prop). */
-function checkBody(text: string): string | undefined {
-  const bytes = new TextEncoder().encode(text.trim()).length;
+/** The most one `[attached: …]` line adds (its newline, the prefix, date, id, an 80-byte safe name). */
+const ATTACHED_LINE_BYTES = "\n[attached: .factory/uploads/yyyymmdd-".length + 36 + 1 + 80 + 1;
+
+/** The 64 KB body limit, checked before the box empties (a module constant: a stable prop). The server
+ *  appends a blank line and one line per file to the body, inside the same limit (U3 §13.5). */
+function checkBody(text: string, files: number): string | undefined {
+  const lines = files > 0 ? 1 + files * ATTACHED_LINE_BYTES : 0;
+  const bytes = new TextEncoder().encode(text.trim()).length + lines;
   return bytes > MAX_BODY_BYTES
     ? `This message is ${Math.ceil(bytes / 1024)} KB; the limit is 64 KB. Shorten it to send.`
     : undefined;

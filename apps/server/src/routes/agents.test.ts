@@ -928,8 +928,15 @@ describe("U3 §13.5: attachments on POST /messages", () => {
       `look at these\n\n[attached: ${imgRow?.storedPath}]\n[attached: ${txtRow?.storedPath}]`,
     );
     const attachments = [
-      { uploadId: img, name: "screen shot.png", kind: "image", width: 64, height: 32 },
-      { uploadId: txt, name: "run.log", kind: "text" },
+      {
+        uploadId: img,
+        name: "screen shot.png",
+        kind: "image",
+        bytes: imgRow?.bytes,
+        width: 64,
+        height: 32,
+      },
+      { uploadId: txt, name: "run.log", kind: "text", bytes: txtRow?.bytes },
     ];
     expect(msg?.attachments).toEqual(attachments);
 

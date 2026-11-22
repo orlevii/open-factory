@@ -41,7 +41,7 @@ import { SpeakerProvider } from "./speaker-line";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, type StopCrons, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
-import { recallText } from "./uploads";
+import { recallText, uploadsFor, uploadsUsedSince } from "./uploads";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
 
@@ -217,9 +217,18 @@ export function SessionView({
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
   // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
   const orderedRef = useRef(s.state.ordered);
+  // A delivered message of yours used its uploads: any chip still holding one goes (a send that landed
+  // after its 15s abort and a remount, whose chips came back). Only events past the last look are read.
+  const lookedThrough = useRef({ slug, seq: 0 });
   useEffect(() => {
-    orderedRef.current = s.state.ordered;
-  }, [s.state.ordered]);
+    const ordered = s.state.ordered;
+    orderedRef.current = ordered;
+    if (!self) return; // read again once you are known
+    const from = lookedThrough.current.slug === slug ? lookedThrough.current.seq : 0;
+    const used = uploadsUsedSince(ordered, from, self);
+    lookedThrough.current = { slug, seq: ordered.at(-1)?.seq ?? from };
+    if (used.length) uploadsFor(slug).forgetUploads(used);
+  }, [s.state.ordered, slug, self]);
   const recall = useCallback(() => recallText(orderedRef.current, self), [self]);
   const composer = useMemo(
     () =>

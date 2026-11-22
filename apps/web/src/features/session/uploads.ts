@@ -23,7 +23,7 @@ const EMPTY = "The file is empty.";
 /** The types the server accepts as images; only these get a thumbnail. */
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
-const uploadResponseSchema = messageAttachmentSchema.extend({ bytes: z.number() });
+const uploadResponseSchema = messageAttachmentSchema.required({ bytes: true });
 
 type Entry = {
   view: UploadView;
@@ -45,6 +45,10 @@ function flight(delta: 1 | -1) {
   if (before === 1 && inFlight === 0) window.removeEventListener("beforeunload", onBeforeUnload);
 }
 
+/** A failure a second try can fix: a timeout, a rate limit, the server's own trouble. A refusal of the file
+ *  (415, 422, 413) would fail again, so it offers only Remove. */
+const transient = (status: number) => status === 408 || status === 429 || status >= 500;
+
 function errorOf(xhr: XMLHttpRequest): string {
   try {
     const d = JSON.parse(xhr.responseText) as { error?: { message?: unknown } };
@@ -58,6 +62,10 @@ function errorOf(xhr: XMLHttpRequest): string {
 export type UploadStore = AttachmentStore & {
   /** The attachments of these upload ids (for the optimistic block's chips). */
   describe(ids: readonly string[]): MessageAttachment[];
+  /** Drops the chips of uploads a delivered message used (a send that landed after a remount). */
+  forgetUploads(uploadIds: readonly string[]): void;
+  /** Aborts and forgets everything (sign-out). */
+  abortAll(): void;
 };
 
 /** One agent's uploads (U3 §13.5). Exported for tests; the app uses `uploadsFor`. */
@@ -80,7 +88,9 @@ export function createUploadStore(slug: string): UploadStore {
   };
   /** Keys or a count changed: new snapshots, then the list's listeners. */
   const changed = () => {
-    keys = [...entries.keys()];
+    // The same array while the set of files is the same (a status change renders no list).
+    if (keys.length !== entries.size || keys.some((k) => !entries.has(k)))
+      keys = [...entries.keys()];
     const views = [...entries.values()].map((e) => e.view);
     const next = {
       count: views.length,
@@ -143,7 +153,7 @@ export function createUploadStore(slug: string): UploadStore {
           }
         })();
         if (parsed?.success) {
-          const { bytes: _bytes, ...attachment } = parsed.data;
+          const attachment = parsed.data;
           e.attachment = attachment;
           described.set(attachment.uploadId, attachment);
           setView(k, { status: "done", progress: 1 });
@@ -153,7 +163,8 @@ export function createUploadStore(slug: string): UploadStore {
             error: "The server's answer couldn't be read.",
             retryable: true,
           });
-      } else setView(k, { status: "failed", error: errorOf(xhr), retryable: true });
+      } else
+        setView(k, { status: "failed", error: errorOf(xhr), retryable: transient(xhr.status) });
       notifyKey(k);
       changed();
     };
@@ -284,6 +295,28 @@ export function createUploadStore(slug: string): UploadStore {
         away.delete(v.key);
       }
     },
+    forgetUploads(ids) {
+      const used = new Set(ids);
+      let any = false;
+      for (const [k, e] of entries)
+        if (e.attachment && used.has(e.attachment.uploadId)) {
+          entries.delete(k);
+          e.view.thumb?.close();
+          notifyKey(k);
+          any = true;
+        }
+      if (any) changed();
+    },
+    abortAll() {
+      for (const e of [...entries.values(), ...away.values()]) {
+        e.xhr?.abort();
+        e.view.thumb?.close();
+      }
+      entries.clear();
+      away.clear();
+      described.clear();
+      changed();
+    },
     forget(taken) {
       let any = false;
       for (const v of taken.views) {
@@ -301,11 +334,26 @@ export function createUploadStore(slug: string): UploadStore {
 }
 
 const stores = new Map<string, UploadStore>();
-/** The agent's uploads, kept for the page's life, so leaving the session and coming back keeps them. */
+let owner: string | undefined;
+/** The agent's uploads for the signed-in user, kept for the page's life, so leaving the session and coming back
+ *  keeps them. Keyed by user: another user signing in on this tab never sees them. */
 export function uploadsFor(slug: string): UploadStore {
-  const s = stores.get(slug) ?? createUploadStore(slug);
-  stores.set(slug, s);
+  const key = `${owner ?? ""}:${slug}`;
+  const s = stores.get(key) ?? createUploadStore(slug);
+  stores.set(key, s);
   return s;
+}
+
+/** Whose uploads `uploadsFor` serves (the signed-in user's id). */
+export const uploadsOwner = () => owner;
+
+/** Sign-out or a user change: every upload in flight is aborted (beforeunload disarms), every chip, thumbnail
+ *  and remembered send is dropped. Nothing holds a File or a bitmap of the previous user after this. */
+export function resetUploads(user?: string) {
+  for (const s of stores.values()) s.abortAll();
+  stores.clear();
+  sent.clear();
+  owner = user;
 }
 
 // This tab's sends with files, by `clientMessageId`: their queue items show the chips too.
@@ -339,6 +387,24 @@ export function stripAttachedLines(
   if (end === lines.length) return body;
   if (end > 0 && lines[end - 1] === "") end--;
   return lines.slice(0, end).join("\n");
+}
+
+/** The uploads your messages after `afterSeq` used (newest first; stops at `afterSeq`, so a call per frame is cheap). */
+export function uploadsUsedSince(
+  ordered: readonly SessionEvent[],
+  afterSeq: number,
+  self: string | undefined,
+): string[] {
+  const out: string[] = [];
+  if (!self) return out;
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const se = ordered[i] as SessionEvent;
+    if (se.seq <= afterSeq) break;
+    if (se.event.type !== "message_in") continue;
+    for (const m of se.event.messages)
+      if (m.from === `@${self}`) for (const a of m.attachments ?? []) out.push(a.uploadId);
+  }
+  return out;
 }
 
 /** ↑ in an empty composer (U3 §13.2): your newest message in the loaded timeline, its text only (D6). */

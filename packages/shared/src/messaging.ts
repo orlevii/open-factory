@@ -42,6 +42,8 @@ export const messageAttachmentSchema = z.object({
   uploadId: z.string(),
   name: z.string(),
   kind: z.enum(["image", "text"]),
+  /** The file's size: the UI previews an image automatically only when it is small (absent on older rows). */
+  bytes: z.number().int().nonnegative().optional(),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
 });

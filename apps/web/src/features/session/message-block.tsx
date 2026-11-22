@@ -1,7 +1,7 @@
 import type { MessageAttachment } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CalendarClock, Clock, Factory, FileText } from "lucide-react";
+import { CalendarClock, Clock, Factory, FileText, Image as ImageIcon } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { displayName } from "@/components/composer/attachments";
 import { Markdown } from "@/components/markdown/markdown";
@@ -162,7 +162,9 @@ export function MessageBlock(props: {
     slug,
   } = props;
   // Only the lines of this message's own uploads go; a typed `[attached: …]` stays text.
-  const shown = useMemo(() => stripAttachedLines(body, attachments), [body, attachments]);
+  // The chips render only with a slug: without them the lines stay, so no file ever disappears.
+  const chips = attachments?.length && slug ? attachments : undefined;
+  const shown = useMemo(() => stripAttachedLines(body, chips), [body, chips]);
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -276,9 +278,7 @@ export function MessageBlock(props: {
       >
         {brief ? <LinesBody source={shown} lines={3} /> : <ClampedMarkdown source={shown} />}
       </div>
-      {attachments?.length && slug ? (
-        <AttachmentList slug={slug} attachments={attachments} />
-      ) : null}
+      {chips && slug ? <AttachmentList slug={slug} attachments={chips} /> : null}
     </div>
   );
 }
@@ -287,8 +287,12 @@ export function MessageBlock(props: {
 export const uploadUrl = (slug: string, uploadId: string) =>
   `/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}`;
 
+/** Images up to this size preview automatically; a larger one (or one whose size the envelope doesn't carry)
+ *  waits for "Show preview", so a timeline never downloads and decodes a 20 MB image to show 28px. */
+export const AUTO_PREVIEW_BYTES = 1024 * 1024;
+
 /** A message's files (U3 §13.5): each a chip opening the file; an image previews through the
- *  authenticated GET. The name is a text node, never HTML. */
+ *  authenticated same-origin GET. The name is a text node, never HTML. */
 function AttachmentList({
   slug,
   attachments,
@@ -298,38 +302,58 @@ function AttachmentList({
 }) {
   return (
     <ul aria-label="Attached files" className="mt-2 flex flex-wrap gap-1.5">
-      {attachments.map((a) => {
-        const url = uploadUrl(slug, a.uploadId);
-        return (
-          <li key={a.uploadId} className="min-w-0">
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-attachment
-              className="flex h-9 max-w-[12rem] min-w-0 items-center gap-1.5 rounded-sm border border-border bg-background pr-2 pl-1 text-[0.8125rem] leading-4 text-foreground hover:border-ring"
-            >
-              {a.kind === "image" ? (
-                <img
-                  src={url}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  width={28}
-                  height={28}
-                  className="size-7 shrink-0 rounded-[3px] object-cover"
-                />
-              ) : (
-                <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-              )}
-              <span dir="auto" className="min-w-0">
-                <MiddleTruncate text={displayName(a.name)} keepEnd />
-              </span>
-            </a>
-          </li>
-        );
-      })}
+      {attachments.map((a) => (
+        <AttachmentChip key={a.uploadId} slug={slug} attachment={a} />
+      ))}
     </ul>
+  );
+}
+
+function AttachmentChip({ slug, attachment: a }: { slug: string; attachment: MessageAttachment }) {
+  const url = uploadUrl(slug, a.uploadId);
+  const name = displayName(a.name);
+  const small = a.bytes !== undefined && a.bytes <= AUTO_PREVIEW_BYTES;
+  const [asked, setAsked] = useState(false);
+  const preview = a.kind === "image" && (small || asked);
+  return (
+    <li className="flex min-w-0 items-center gap-1">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-attachment
+        className="flex h-9 max-w-[12rem] min-w-0 items-center gap-1.5 rounded-sm border border-border bg-background pr-2 pl-1 text-[0.8125rem] leading-4 text-foreground hover:border-ring"
+      >
+        {preview ? (
+          <img
+            src={url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            width={28}
+            height={28}
+            className="size-7 shrink-0 rounded-[3px] object-cover"
+          />
+        ) : a.kind === "image" ? (
+          <ImageIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        <span dir="auto" className="min-w-0">
+          <MiddleTruncate text={name} keepEnd />
+        </span>
+      </a>
+      {a.kind === "image" && !preview ? (
+        <button
+          type="button"
+          onClick={() => setAsked(true)}
+          aria-label={`Show preview of ${name}`}
+          className="text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Show preview
+        </button>
+      ) : null}
+    </li>
   );
 }
 

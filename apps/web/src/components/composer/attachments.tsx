@@ -66,6 +66,8 @@ export const displayName = (name: string) => name.replace(FORMAT_CHARS, "");
 
 export const waitingFor = (n: number) => `Waiting for ${n} ${n === 1 ? "upload" : "uploads"}`;
 export const RETRY_OR_REMOVE = "Remove or retry the failed file";
+/** The server needs text with the files: an empty box with files waits for it. */
+export const ADD_A_MESSAGE = "Add a message to send the files";
 /** Why Send waits on the files, if it does. */
 export function sendBlockedBy(s: UploadSummary): string | undefined {
   if (s.pending > 0) return waitingFor(s.pending);
@@ -73,16 +75,18 @@ export function sendBlockedBy(s: UploadSummary): string | undefined {
   return undefined;
 }
 
+const THUMB_WIDTH = 64;
 /** A thumbnail drawn from the stored bitmap (drawImage keeps it, so a remount can draw it again). */
 function Thumb({ bitmap }: { bitmap: ImageBitmap }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
     const c = ref.current;
     if (!c) return;
-    c.width = bitmap.width;
-    c.height = bitmap.height;
+    // 64px wide whatever the bitmap is (a browser that ignored `resizeWidth` still draws a thumbnail).
+    c.width = THUMB_WIDTH;
+    c.height = Math.max(1, Math.round((bitmap.height * THUMB_WIDTH) / Math.max(1, bitmap.width)));
     try {
-      c.getContext("2d")?.drawImage(bitmap, 0, 0);
+      c.getContext("2d")?.drawImage(bitmap, 0, 0, c.width, c.height);
     } catch {
       // A closed bitmap (removed meanwhile) draws nothing.
     }
@@ -183,6 +187,8 @@ export const AttachmentChips = memo(function AttachmentChips({
   const listRef = useRef<HTMLUListElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [hidden, setHidden] = useState(0);
+  // A new batch after a send starts collapsed again.
+  if (keys.length === 0 && expanded) setExpanded(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: keys change which chips there are to measure
   useLayoutEffect(() => {
     const ul = listRef.current;

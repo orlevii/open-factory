@@ -20,6 +20,7 @@ export const attachmentOf = (r: UploadRow): MessageAttachment => ({
   uploadId: r.id,
   name: r.originalName,
   kind: r.kind,
+  bytes: r.bytes,
   ...(r.width !== null ? { width: r.width } : {}),
   ...(r.height !== null ? { height: r.height } : {}),
 });

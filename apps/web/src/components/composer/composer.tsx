@@ -20,11 +20,11 @@ import { Markdown } from "@/components/markdown/markdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
 import { isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
 import {
+  ADD_A_MESSAGE,
   AttachmentChips,
   type AttachmentStore,
   NO_FOLDERS,
@@ -170,7 +170,7 @@ export type ComposerProps = {
    *  optimistic block of their own). */
   pendingLabel?: string;
   /** A message that stops the send before the box empties. */
-  validate?(text: string): string | undefined;
+  validate?(text: string, files: number): string | undefined;
   /** The `clientMessageId`s that showed up: an aborted send among them counts as sent. */
   landed?: ReadonlySet<string>;
   /** The form's id and classes (the session's composer is `#composer`, its own bordered strip). */
@@ -245,7 +245,8 @@ export const Composer = memo(function Composer({
   const [attachNote, setAttachNote] = useState<string | undefined>();
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const [sendTip, setSendTip] = useState(false);
+  // dragenter/dragleave pairs over the frame and its children: the edge goes when the last one leaves.
+  const dragDepth = useRef(0);
   const [view, setView] = useState<"write" | "preview">("write");
   // Submits still waiting on the server (more than one when sends overlap).
   const [pending, setPending] = useState(0);
@@ -466,6 +467,9 @@ export const Composer = memo(function Composer({
   const empty = text.trim() === "";
   // A command carries no files, so they never hold it.
   const blocked = command ? undefined : sendBlockedBy(uploads);
+  // Why Send holds while there are files (U3 §13.5), shown under the box: Send stays focusable
+  // (aria-disabled), so the reason is reachable by keyboard too.
+  const held = blocked ?? (uploads.count > 0 && empty && !command ? ADD_A_MESSAGE : undefined);
   const retryable = unconfirmed !== undefined && text === unconfirmed.sent;
   const shownError =
     error === UNCONFIRMED && !retryable ? UNCONFIRMED_EDITED : (error ?? stopError);
@@ -542,7 +546,7 @@ export const Composer = memo(function Composer({
     if (command) return runCommand();
     if (empty || waiting || blocked) return;
     const sent = text;
-    const invalid = validate?.(sent);
+    const invalid = validate?.(sent, uploads.count);
     if (invalid) {
       setError(invalid);
       return;
@@ -700,15 +704,25 @@ export const Composer = memo(function Composer({
   };
   const hasFiles = (e: DragEvent<HTMLDivElement>) =>
     Array.from(e.dataTransfer.types).includes("Files");
+  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current++;
+    if (attachments && !dragging) setDragging(true);
+  };
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (attachments && !dragging) setDragging(true);
   };
+  // A depth count, not `relatedTarget` (Safari reports it null on dragleave): moving between the
+  // frame's children never drops the edge.
   const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
   };
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    dragDepth.current = 0;
     if (e.dataTransfer.files.length === 0) return;
     e.preventDefault();
     setDragging(false);
@@ -749,6 +763,7 @@ export const Composer = memo(function Composer({
         {/* biome-ignore lint/a11y/noStaticElementInteractions: a file drop target only; the keyboard pastes into the textarea */}
         <div
           data-composer-frame
+          onDragEnter={onDragEnter}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
@@ -974,39 +989,16 @@ export const Composer = memo(function Composer({
               </div>
             )}
             {/* Primary at once when there is text: a keyboard action, so no transition. */}
-            {attachments ? (
-              // While files hold it, the reason is its tooltip and its description (U3 §13.5).
-              <TooltipProvider>
-                <Tooltip open={sendTip && blocked !== undefined} onOpenChange={setSendTip}>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex shrink-0">
-                      <Button
-                        type="submit"
-                        disabled={(empty && !command) || waiting || blocked !== undefined}
-                        aria-describedby={blocked ? sendReasonId : undefined}
-                        className="transition-none"
-                      >
-                        Send
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  {blocked && <TooltipContent>{blocked}</TooltipContent>}
-                </Tooltip>
-              </TooltipProvider>
-            ) : (
-              <Button
-                type="submit"
-                disabled={(empty && !command) || waiting}
-                className="transition-none"
-              >
-                Send
-              </Button>
-            )}
-            {blocked && (
-              <span id={sendReasonId} className="sr-only">
-                {blocked}
-              </span>
-            )}
+            {/* Held by its files: aria-disabled (focusable; `send` refuses), its reason the line below. */}
+            <Button
+              type="submit"
+              disabled={held === undefined && ((empty && !command) || waiting)}
+              aria-disabled={held !== undefined || undefined}
+              aria-describedby={held ? sendReasonId : undefined}
+              className="transition-none"
+            >
+              Send
+            </Button>
           </div>
         </div>
         {note && (
@@ -1033,6 +1025,16 @@ export const Composer = memo(function Composer({
         <p aria-live="polite" className="sr-only">
           {command ? `Command mode: /${command.name}. Esc to leave.` : ""}
         </p>
+        {held && (
+          <p
+            id={sendReasonId}
+            role="status"
+            data-send-reason
+            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+          >
+            {held}
+          </p>
+        )}
         {attachNote && (
           <p
             role="status"

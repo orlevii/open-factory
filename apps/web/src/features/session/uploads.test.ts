@@ -7,6 +7,7 @@ import {
   createUploadStore,
   PROXY_TOO_LARGE,
   recallText,
+  resetUploads,
   stripAttachedLines,
   uploadsFor,
 } from "./uploads";
@@ -77,25 +78,77 @@ test("a 201 makes the upload done; its attachment is described for the send", ()
   expect(s.get(k)).toMatchObject({ status: "done", progress: 1 });
   expect(s.summary()).toEqual({ count: 1, pending: 0, failed: 0 });
   expect(onList).toHaveBeenCalled();
-  expect(s.describe(["u1"])).toEqual([{ uploadId: "u1", name: "a.txt", kind: "text" }]);
+  expect(s.describe(["u1"])).toEqual([{ uploadId: "u1", name: "a.txt", kind: "text", bytes: 5 }]);
 });
 
-test("a refusal shows the server's reason and Retry sends the file again", () => {
+test("a refusal of the file shows the server's reason and offers no Retry", () => {
   const s = createUploadStore("dev");
-  s.add([file("p.heic", 10, "image/heic")]);
-  lastXhr().respond(415, {
+  s.add([file("p.heic", 10, "image/heic"), file("big.png", 10, "image/png")]);
+  const [a, b] = s.keys() as [string, string];
+  (FakeXhr.all[0] as FakeXhr).respond(415, {
     error: { code: "unsupported_type", message: "HEIC isn't supported; export as JPEG" },
   });
-  const k = only(s);
-  expect(s.get(k)).toMatchObject({
+  (FakeXhr.all[1] as FakeXhr).respond(422, {
+    error: { message: "Image is too large (max 8000 px a side)." },
+  });
+  expect(s.get(a)).toMatchObject({
     status: "failed",
     error: "HEIC isn't supported; export as JPEG",
-    retryable: true,
+    retryable: false,
   });
-  expect(s.summary()).toEqual({ count: 1, pending: 0, failed: 1 });
+  expect(s.get(b)?.retryable).toBe(false);
+  expect(s.summary()).toEqual({ count: 2, pending: 0, failed: 2 });
+  s.retry(a);
+  expect(FakeXhr.all).toHaveLength(2);
+});
+
+test.each([408, 429, 500, 503])("a %i can be retried: Retry sends the file again", (status) => {
+  const s = createUploadStore("dev");
+  s.add([file("a.txt")]);
+  lastXhr().respond(status, { error: { message: "Try again." } });
+  const k = only(s);
+  expect(s.get(k)?.retryable).toBe(true);
   s.retry(k);
   expect(FakeXhr.all).toHaveLength(2);
   expect(s.get(k)).toMatchObject({ status: "uploading", progress: 0 });
+});
+
+test("a status change keeps the list's identity; only adding or removing a file changes it", () => {
+  const s = createUploadStore("dev");
+  s.add([file("a.txt")]);
+  const keys = s.keys();
+  lastXhr().respond(201, ok("u1"));
+  expect(s.keys()).toBe(keys);
+  s.add([file("b.txt")]);
+  expect(s.keys()).not.toBe(keys);
+});
+
+test("a delivered message's uploads leave the composer without being deleted", () => {
+  const api = mockApi({});
+  const s = createUploadStore("dev");
+  s.add([file("a.txt"), file("b.txt")]);
+  (FakeXhr.all[0] as FakeXhr).respond(201, ok("u1"));
+  (FakeXhr.all[1] as FakeXhr).respond(201, ok("u2", "b.txt"));
+  s.forgetUploads(["u1", "other"]);
+  expect(s.keys()).toHaveLength(1);
+  expect(s.get(s.keys()[0] as string)?.name).toBe("b.txt");
+  expect(api.calls).toEqual([]);
+});
+
+test("sign-out aborts every upload, disarms beforeunload and forgets the files; the next user starts empty", () => {
+  resetUploads("u-alice");
+  const s = uploadsFor("dev");
+  s.add([file("secret.txt")]);
+  const x = lastXhr();
+  resetUploads("u-bob");
+  expect(x.aborted).toBe(true);
+  expect(s.keys()).toEqual([]);
+  const ev = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(ev);
+  expect(ev.defaultPrevented).toBe(false);
+  expect(uploadsFor("dev")).not.toBe(s);
+  expect(uploadsFor("dev").keys()).toEqual([]);
+  resetUploads();
 });
 
 test("a non-JSON 413 (a proxy's limit) says so; a network error says the server can't be reached", () => {

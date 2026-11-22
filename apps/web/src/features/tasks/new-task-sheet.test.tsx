@@ -75,6 +75,8 @@ test("c in a session prefills that agent, and the description says who it is for
   press("c");
   expect(await assignee()).toHaveTextContent("Ada");
   expect(within(await sheet()).getByText("For Ada")).toBeInTheDocument();
+  // An 80-char unbroken name wraps instead of pushing the sheet wider (AC 9).
+  expect(within(await sheet()).getByText("For Ada")).toHaveClass("[overflow-wrap:anywhere]");
 });
 
 test("c on the Tasks list prefills its assignee filter", async () => {

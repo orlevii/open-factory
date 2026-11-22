@@ -100,7 +100,9 @@ function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
       // Untrusted text (tool output) never drives the diagram renderer: its source shows as code.
       if (lang === "mermaid")
         return untrusted ? <PlainCode code={text} /> : <MermaidBlock source={text} />;
-      if (lang) return <CodeBlock code={text} lang={lang} />;
+      // Every fence this renderer sees is closed (persisted text); the streaming tail renders its
+      // open fence with `closed={false}` (U3 §10).
+      if (lang) return <CodeBlock code={text} lang={lang} closed />;
       return <PlainCode code={text} />;
     },
     code: ({ className, children }) => <code className={className}>{children}</code>,

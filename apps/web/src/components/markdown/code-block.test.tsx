@@ -75,3 +75,18 @@ test("a round trip through a language still in flight shows plain code", async (
   expect(container.querySelector("pre.shiki")).toBeNull();
   expect(container.querySelector("pre")).toHaveTextContent("two");
 });
+
+test("an open fence renders plain <pre><code> and never highlights; closing it highlights once", async () => {
+  pending.length = 0;
+  const { container, rerender } = render(<CodeBlock code="const a" lang="ts" closed={false} />);
+  expect(container.querySelector("pre > code")).toHaveTextContent("const a");
+  rerender(<CodeBlock code="const a = 1" lang="ts" closed={false} />);
+  expect(container.querySelector("pre > code")).toHaveTextContent("const a = 1");
+  expect(pending).toHaveLength(0);
+  rerender(<CodeBlock code="const a = 1" lang="ts" closed />);
+  expect(pending).toHaveLength(1);
+  await finish(0);
+  expect(container.querySelector("pre.shiki")).toHaveTextContent("const a = 1");
+  rerender(<CodeBlock code="const a = 1" lang="ts" closed />);
+  expect(pending).toHaveLength(1);
+});

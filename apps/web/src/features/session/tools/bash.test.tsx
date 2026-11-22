@@ -107,7 +107,8 @@ test("expanded: binary output reads Binary output · 14 KB · show raw", async (
   expect(line).toHaveTextContent(`Binary output · ${formatBytes(14_000)} · show raw`);
   expect(line).toHaveTextContent("Binary output · 14 KB · show raw");
   await userEvent.click(screen.getByRole("button", { name: "show raw" }));
-  expect(document.querySelector("pre")).not.toBeNull();
+  // Raw means unstripped, in the capped plate.
+  expect(document.querySelector("pre")?.textContent).toBe(content);
 });
 
 test("expanded: stderr that ends the content gets its own plate with a label", () => {
@@ -172,4 +173,23 @@ test("expanded: a long or multi-line command is one Show input away", async () =
 test("expanded: a short command adds nothing, so there is no Show input", () => {
   render(<Harness open row={bashRow({ command: "ls" }, { content: "a" })} />);
   expect(screen.queryByRole("button", { name: "Show input" })).not.toBeInTheDocument();
+});
+
+test("a failed call with a 64 KB single-line error renders its detail line without stalling", () => {
+  const row = bashRow(
+    { command: "node x" },
+    { content: `Error: ${"y".repeat(65536)}\r`, isError: true },
+  );
+  const t = performance.now();
+  render(<Harness row={row} />);
+  expect(performance.now() - t).toBeLessThan(500);
+  expect(screen.getByText(/^Error: y+$/)).toBeInTheDocument();
+});
+
+test("Show input anchors itself through the timeline's toggle rule (aria-expanded)", () => {
+  render(<Harness open row={bashRow({ command: "a\nb" }, { content: "x" })} />);
+  expect(screen.getByRole("button", { name: "Show input" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
 });

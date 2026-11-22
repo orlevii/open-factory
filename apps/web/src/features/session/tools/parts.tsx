@@ -1,5 +1,6 @@
 import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
 import { formatBytes } from "../format";
+import { CodePlate } from "../quiet-line";
 import type { ToolRow } from "../rows";
 import { byteSize, isBinary, stripAnsi, tailOutput } from "./output";
 
@@ -36,24 +37,22 @@ export function ExpandButton({ onExpand, children }: { onExpand(): void; childre
 }
 
 type OutputView =
-  | { binary: true; clean: string; bytes: number }
+  | { binary: true; bytes: number }
   | { binary: false; clean: string; tail: string; total: number; cut: boolean };
-
-const trimEnd = (s: string) => s.replace(/\n+$/, "");
 
 /** The end of a tool's output (spec §9.2): the last 12 lines or 2,000 characters with "Show all N
  *  lines" in place, ANSI and control characters stripped, binary output summarized. */
 export function OutputTail({ text }: { text: string }) {
   const [all, setAll] = useState(false);
   const view = useMemo<OutputView>(() => {
-    const clean = stripAnsi(text);
-    return isBinary(text)
-      ? { binary: true, clean, bytes: byteSize(text) }
-      : { binary: false, clean: trimEnd(clean), ...tailOutput(clean) };
+    if (isBinary(text)) return { binary: true, bytes: byteSize(text) };
+    const clean = stripAnsi(text).replace(/\n+$/, "");
+    return { binary: false, clean, ...tailOutput(clean) };
   }, [text]);
   if (view.binary)
+    // "show raw" is the output as it came, unstripped, in the capped plate.
     return all ? (
-      <OutputPlate>{view.clean}</OutputPlate>
+      <CodePlate>{text}</CodePlate>
     ) : (
       <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
         Binary output · {formatBytes(view.bytes)} ·{" "}

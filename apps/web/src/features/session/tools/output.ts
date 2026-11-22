@@ -7,7 +7,11 @@ const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)
 // C0 except tab and newline, DEL and C1.
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 // A line redrawn with carriage returns (a progress bar): everything up to its last `\r` before text.
-const REDRAWN = /[^\n]*\r(?=[^\n])/g;
+// Anchored at a line start, so a long line is scanned once, not once per character.
+const REDRAWN = /^[^\n]*\r(?=[^\n])/gm;
+// Control characters (tab kept) and bidi controls, which could reorder how code reads.
+const CODE_UNSAFE =
+  /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 /* biome-ignore-end lint/suspicious/noControlCharactersInRegex: matching control characters is the point */
 
 /** ANSI escapes and control characters removed; tabs and newlines kept, CRLF read as a newline. */
@@ -70,11 +74,19 @@ export function tailOutput(
   return { tail, total, cut: tail.length < body.length };
 }
 
-/** The first non-empty line, without the CLI's `<tool_use_error>` wrapper: a failure's detail line. */
+/** A line of file content for a diff: no control or bidi characters, so it reads as stored. */
+export const cleanCode = (s: string) => s.replace(CODE_UNSAFE, "");
+
+/** How much of a result a detail line reads: it shows two lines at most. */
+const FIRST_LINE_SCAN = 2000;
+
+/** The first non-empty line, without the CLI's `<tool_use_error>` wrapper: a failure's detail line.
+ *  Reads only the first 2,000 characters, so a huge error costs nothing on render. */
 export function firstLine(s: string): string {
-  for (const line of stripAnsi(s.replace(/<\/?tool_use_error>/g, "")).split("\n")) {
+  const head = s.slice(0, FIRST_LINE_SCAN + "<tool_use_error>".length);
+  for (const line of stripAnsi(head.replace(/<\/?tool_use_error>/g, "")).split("\n")) {
     const t = line.trim();
-    if (t) return t;
+    if (t) return t.slice(0, FIRST_LINE_SCAN);
   }
   return "";
 }

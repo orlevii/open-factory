@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { isBinary, stripAnsi, tailOutput } from "./output";
+import { cleanCode, firstLine, isBinary, stripAnsi, tailOutput } from "./output";
 
 test("tailOutput: a 64 KB single line keeps at most 2,000 characters from its end", () => {
   const text = `${"a".repeat(64 * 1024 - 3)}END`;
@@ -46,4 +46,32 @@ test("isBinary: more than 10% NUL, control or replacement characters", () => {
   expect(isBinary(`${"\u0000".repeat(3)}${"a".repeat(17)}`)).toBe(true);
   expect(isBinary(`PNG${"�".repeat(10)}ab`)).toBe(true);
   expect(isBinary("")).toBe(false);
+});
+
+/** Milliseconds `fn` takes. */
+const timed = (fn: () => unknown) => {
+  const t = performance.now();
+  fn();
+  return performance.now() - t;
+};
+
+test("stripAnsi stays linear on a 64 KB line, with or without a trailing carriage return", () => {
+  const line = "a".repeat(65536);
+  expect(timed(() => stripAnsi(line))).toBeLessThan(50);
+  expect(timed(() => stripAnsi(`${line}\r`))).toBeLessThan(50);
+  expect(timed(() => stripAnsi(`${line}\rb`))).toBeLessThan(50);
+  expect(stripAnsi(`${line}\rb`)).toBe("b");
+});
+
+test("firstLine reads only the start of a long error", () => {
+  const content = `<tool_use_error>Error: boom ${"x".repeat(65536)}</tool_use_error>`;
+  let line = "";
+  expect(timed(() => (line = firstLine(content)))).toBeLessThan(50);
+  expect(line.startsWith("Error: boom x")).toBe(true);
+  expect(line.length).toBeLessThanOrEqual(2000);
+  expect(firstLine("\n\n  \nsecond\nthird")).toBe("second");
+});
+
+test("cleanCode drops control and bidi override characters; tabs stay", () => {
+  expect(cleanCode("a\tb\u001b[31mc\u202ed\u2066e\u0000")).toBe("a\tb[31mcde");
 });

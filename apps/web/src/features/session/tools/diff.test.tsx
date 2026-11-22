@@ -234,3 +234,48 @@ test("no meta (an older row, or no result yet): today's row", () => {
     "done",
   ]);
 });
+
+test("the diff plate is a labelled, focusable group; changed lines say added or removed", () => {
+  render(<Harness open row={edit([HUNK])} />);
+  const plate = screen.getByRole("group", { name: "Changes to retry.ts" });
+  expect(plate).toHaveAttribute("tabindex", "0");
+  expect(plate).toHaveClass("overflow-x-auto");
+  const lines = [...document.querySelectorAll<HTMLElement>("[data-diff-line]")];
+  expect(lines.map((l) => l.querySelector(".sr-only")?.textContent ?? null)).toEqual([
+    null,
+    "removed",
+    "added",
+    "added",
+    null,
+  ]);
+  expect(lines[1]?.querySelector("[data-sign]")).toHaveAttribute("aria-hidden", "true");
+});
+
+test("diff code drops control and bidi override characters", () => {
+  render(<Harness open row={edit([{ ...HUNK, lines: ["+ok\u202e;evil\u001b"] }])} />);
+  expect(document.querySelector("[data-code]")?.textContent).toBe("ok;evil");
+});
+
+test("a create whose content was capped says N+ lines", () => {
+  const events: AnyEvent[] = [
+    {
+      type: "tool_call",
+      toolUseId: "tu1",
+      name: "Write",
+      input: { file_path: "/w/big.txt", content: "a\nb\nc" },
+    },
+    {
+      type: "tool_result",
+      toolUseId: "tu1",
+      content: "ok",
+      isError: false,
+      meta: { tool: "Write", type: "create", hunks: [] },
+    },
+  ];
+  const [call, result] = events.map((e) => se(e));
+  if (!call || !result) throw new Error("no events");
+  const row = buildRows([{ ...call, truncated: { "input.content": 2_000_000 } }, result]).rows[0];
+  if (row?.kind !== "tool") throw new Error("no tool row");
+  render(<Harness row={row} />);
+  expect(screen.getByText("created · 3+ lines")).toBeInTheDocument();
+});

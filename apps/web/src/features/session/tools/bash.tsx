@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import type { ToolRow } from "../rows";
 import { OutputPlate, OutputTail, ShowInput, TruncatedNote } from "./parts";
 
@@ -44,7 +43,7 @@ const commandAdds = (row: ToolRow, command: string, description: string) =>
  *  when it adds something (spec §9.2). Before the result lands, the command itself. */
 function BashBody({ row }: { row: ToolRow }) {
   const { command, description } = bashInput(row.call.input);
-  const { output, stderr } = useMemo(() => splitStderr(row), [row]);
+  const { output, stderr } = splitStderr(row);
   const input = (
     <>
       <OutputPlate>{`$ ${command}`}</OutputPlate>

@@ -4,6 +4,7 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { CodePlate } from "../quiet-line";
 import type { ToolRow } from "../rows";
 import { genericRenderer } from "./generic";
+import { cleanCode } from "./output";
 import { ExpandButton, TruncatedNote } from "./parts";
 
 type DiffMeta = Extract<ToolMeta, { tool: "Edit" | "MultiEdit" | "Write" }>;
@@ -17,6 +18,8 @@ const MAX_LINES = 80;
 const CREATE_LINES = 20;
 
 const SIGN: Record<LineKind, string> = { add: "+", remove: "−", context: " " };
+/** What a screen reader hears for a changed line; the glyph alone is half-announced. */
+const SPOKEN: Record<LineKind, string | null> = { add: "added", remove: "removed", context: null };
 /** Tints, not syntax colour: the code stays in ink (Q18). The sticky gutter repeats its line's fill
  *  so code scrolling under it never shows through. */
 const FILL: Record<LineKind, string> = {
@@ -52,7 +55,7 @@ function hunkLines(hunks: ToolMetaHunk[]): DiffLine[] {
     for (const raw of h.lines) {
       const c = raw[0];
       if (c === "\\") continue; // "\ No newline at end of file"
-      const text = raw.slice(1);
+      const text = cleanCode(raw.slice(1));
       const hunkStart = first && out.length > 0;
       first = false;
       if (c === "-") out.push({ kind: "remove", n: oldN++, text, hunkStart });
@@ -77,16 +80,27 @@ function collapsedCount(lines: DiffLine[]): number {
   return Math.min(lines.length, MAX_LINES);
 }
 
+/** "Changes to retry.ts": the diff plate's accessible name. */
+const changesLabel = (row: ToolRow) => {
+  const path = inputStr(row, "file_path");
+  return `Changes to ${path.slice(path.lastIndexOf("/") + 1) || "the file"}`;
+};
+
 const plural = (n: number) => `${n} ${n === 1 ? "line" : "lines"}`;
 
 /** Collapsed: the path (middle-truncated, the file name kept) · +4 −2, or "created · 120 lines";
  *  the stat never shrinks. Without meta, today's row. */
 function DiffSummary({ row }: { row: ToolRow }) {
   const meta = diffMeta(row);
-  if (!meta) return <genericRenderer.Summary row={row} />;
-  let stat: string;
-  if (isCreate(meta)) stat = `created · ${plural(contentLines(inputStr(row, "content")).length)}`;
-  else {
+  const content = inputStr(row, "content");
+  const capped = row.truncated?.["input.content"] !== undefined;
+  const stat = useMemo(() => {
+    if (!meta) return "";
+    if (isCreate(meta)) {
+      // A capped input holds only the start of the file: its count is a floor.
+      const n = contentLines(content).length;
+      return capped ? `created · ${n}+ lines` : `created · ${plural(n)}`;
+    }
     let add = 0;
     let remove = 0;
     for (const h of meta.hunks)
@@ -94,8 +108,9 @@ function DiffSummary({ row }: { row: ToolRow }) {
         if (l[0] === "+") add++;
         else if (l[0] === "-") remove++;
       }
-    stat = `+${add} −${remove}`;
-  }
+    return `+${add} −${remove}`;
+  }, [meta, content, capped]);
+  if (!meta) return <genericRenderer.Summary row={row} />;
   return (
     <span className="flex min-w-0 flex-1 items-baseline">
       <span className="flex min-w-0 font-mono text-[0.8125rem]">
@@ -109,15 +124,30 @@ function DiffSummary({ row }: { row: ToolRow }) {
 
 /** A unified diff in a horizontally scrolling plate: one sticky gutter column (number and sign),
  *  code in ink on add/remove tints, text only (spec §9.2, Q18). */
-function DiffLines({ lines, collapsed }: { lines: DiffLine[]; collapsed: number }) {
+function DiffLines({
+  lines,
+  collapsed,
+  label,
+}: {
+  lines: DiffLine[];
+  collapsed: number;
+  label: string;
+}) {
   const [all, setAll] = useState(false);
   const shown = all ? lines : lines.slice(0, collapsed);
   // One width for every number, so the code column lines up.
   const gutter = { width: `${String(lines.reduce((m, l) => Math.max(m, l.n), 0)).length}ch` };
   return (
     <div>
+      {/* A scrolling region: focusable so the keyboard can scroll it (the timeline's roving
+          tabindex keeps it out of the tab order unless its row is active), and labelled. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls, not a code region */}
       <div
         data-diff
+        role="group"
+        aria-label={label}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard
+        tabIndex={0}
         className="mt-1 overflow-x-auto rounded-md border border-code-border bg-code font-mono text-[0.8125rem] leading-[1.125rem]"
       >
         <div className="w-max min-w-full py-1">
@@ -140,10 +170,11 @@ function DiffLines({ lines, collapsed }: { lines: DiffLine[]; collapsed: number 
                   >
                     {l.n}
                   </span>
-                  <span data-sign className="w-[3ch] text-center whitespace-pre">
+                  <span data-sign aria-hidden="true" className="w-[3ch] text-center whitespace-pre">
                     {SIGN[l.kind]}
                   </span>
                 </span>
+                {SPOKEN[l.kind] && <span className="sr-only">{SPOKEN[l.kind]}</span>}
                 <span data-code className="pr-3 whitespace-pre text-foreground">
                   {l.text}
                 </span>
@@ -179,13 +210,15 @@ function DiffView({ row, meta }: { row: ToolRow; meta: DiffMeta }) {
       return { lines, collapsed: collapsedCount(lines) };
     }
     const lines = contentLines(content).map(
-      (text, i): DiffLine => ({ kind: "add", n: i + 1, text, hunkStart: false }),
+      (text, i): DiffLine => ({ kind: "add", n: i + 1, text: cleanCode(text), hunkStart: false }),
     );
     return { lines, collapsed: CREATE_LINES };
   }, [create, content, meta]);
   return (
     <>
-      {view.lines.length > 0 && <DiffLines lines={view.lines} collapsed={view.collapsed} />}
+      {view.lines.length > 0 && (
+        <DiffLines lines={view.lines} collapsed={view.collapsed} label={changesLabel(row)} />
+      )}
       {meta.partial && <Truncated raw={row.result?.content ?? ""} />}
       <TruncatedNote row={row} prefix="input." />
       <TruncatedNote row={row} prefix="result." />

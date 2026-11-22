@@ -62,6 +62,9 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
     items.push({ kind: "copy", label: "Copy text", text: row.message.body });
   if (row.kind === "peer")
     items.push({ kind: "copy", label: "Copy text", text: row.envelope.body });
+  if (row.kind === "command") items.push({ kind: "copy", label: "Copy command", text: row.text });
+  if (row.kind === "command_output")
+    items.push({ kind: "copy", label: "Copy text", text: row.text });
   if (row.kind === "tool" && row.call.name === "Bash") {
     const command = (row.call.input as { command?: unknown } | undefined)?.command;
     if (typeof command === "string")
@@ -85,7 +88,11 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
       messageId: sent.id,
     });
   if ("at" in row && row.at) {
-    const speech = row.kind === "message" || row.kind === "outgoing" || row.kind === "text";
+    const speech =
+      row.kind === "message" ||
+      row.kind === "outgoing" ||
+      row.kind === "text" ||
+      row.kind === "command";
     items.push({ kind: "time", label: speech ? `Sent ${clock(row.at)}` : clock(row.at) });
   }
   return items;

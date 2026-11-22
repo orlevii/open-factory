@@ -1,4 +1,10 @@
-import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
+import {
+  type AgentSummary,
+  ApiError,
+  commandText,
+  MAX_BODY_BYTES,
+  type QueueItem,
+} from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
 import {
   memo,
@@ -24,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { agentDraftKey, readDraft, writeDraft } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
 import { postInterrupt, postMessage } from "./api";
+import { postCommand, unescapeSlash, useCommandSource } from "./commands";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
 import type { SendingBlock } from "./session-state";
 
@@ -197,7 +204,8 @@ export const Composer = memo(function SessionComposer({
 
   const onSubmit = useCallback(
     async (text: string, { urgent, clientMessageId }: SubmitOptions) => {
-      const body = text.trim();
+      // `//x` goes as `/x` (U3 §13.3).
+      const body = unescapeSlash(text.trim());
       onSending?.({ clientMessageId, body, urgent });
       repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
       const abort = new AbortController();
@@ -240,10 +248,33 @@ export const Composer = memo(function SessionComposer({
     },
     [slug, onSending, onQueued, onSent, onSendFailed, onTerminated],
   );
+  // Command mode's Enter (U3 §13.3): POST /commands with the chosen entry's name and the args as data.
+  // A refusal (422 unknown_command, 413, an agent that can't run commands) shows inline; nothing is
+  // ever sent as text in its place.
+  const onCommand = useCallback(
+    async (name: string, args: string, { clientMessageId }: { clientMessageId: string }) => {
+      if (new TextEncoder().encode(commandText(name, args)).length > MAX_BODY_BYTES)
+        throw new SubmitError("The command is larger than 64 KB.");
+      repinTimeline(slug);
+      try {
+        // The queue frame shows a held command; the 202's item isn't added here (frames are authoritative).
+        await postCommand(slug, { name, args, clientMessageId });
+        onSent?.();
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "agent_terminated") {
+          onTerminated?.(terminatedNotSent(slug));
+          throw new SubmitError(terminatedNotSent(slug));
+        }
+        throw new SubmitError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      }
+    },
+    [slug, onSent, onTerminated],
+  );
   const onStop = useCallback(() => postInterrupt(slug), [slug]);
   // `@` inserts a handle as plain text; the session never calls it a mention (Q23).
   const at = useMentionSource(SESSION_AT_LABEL);
-  const completions = useMemo(() => ({ at }), [at]);
+  const slash = useCommandSource(slug);
+  const completions = useMemo(() => ({ at, slash }), [at, slash]);
 
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
@@ -256,8 +287,9 @@ export const Composer = memo(function SessionComposer({
       className="shrink-0 border-t border-border px-4 py-3 md:px-6"
       draftKey={agentDraftKey(slug)}
       label={`Message to ${agent.displayName}`}
-      placeholder={`Message ${agent.displayName}`}
+      placeholder={`Message ${agent.displayName} · / for commands`}
       onSubmit={onSubmit}
+      onCommand={onCommand}
       validate={checkBody}
       waiting={waiting}
       landed={landed}

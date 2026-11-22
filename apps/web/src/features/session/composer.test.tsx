@@ -665,3 +665,90 @@ test("`@` inserts an agent's handle as plain text; nothing in the session says m
   ].join(" ");
   expect(copy.toLowerCase()).not.toContain("mention");
 });
+
+// ---- `/` commands (U3 §13.3) ----
+
+const COMMANDS_RESPONSE = {
+  commands: [
+    { name: "context", description: "Show current context usage", argumentHint: "", builtin: true },
+    {
+      name: "code-review",
+      description: "Review the diff",
+      argumentHint: "[target]",
+      builtin: true,
+    },
+  ],
+  source: "session",
+  at: "2026-11-21T10:00:00.000Z",
+  stale: false,
+};
+
+test("the placeholder points at `/`", () => {
+  const { box } = setup(agentSummary());
+  expect(box).toHaveAttribute("placeholder", "Message Dev agent · / for commands");
+});
+
+test("a command dispatches to POST /commands with the chosen name and the args, never as text", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url) =>
+    url.endsWith("/commands")
+      ? json({ item: { id: "c1", kind: "command", from: "@alice", createdAt: "x" } }, 202)
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/code");
+  expect(screen.getByRole("option", { name: /code-review/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  await userEvent.type(box, "src/{Enter}");
+  await tick();
+  const sent = posted.filter((p) => p.url.includes("/api/agents/dev/"));
+  expect(sent.map((p) => p.url)).toContain("/api/agents/dev/commands");
+  const post = sent.find(
+    (p) => p.url === "/api/agents/dev/commands" && "name" in (p.body as object),
+  );
+  expect(post?.body).toMatchObject({ name: "code-review", args: "src/" });
+  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
+});
+
+test("a 422 shows inline and sends no text", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url, init) =>
+    url.endsWith("/commands") && init?.method === "POST"
+      ? json(
+          {
+            error: {
+              code: "unknown_command",
+              message: "/context isn't a command this agent can run.",
+            },
+          },
+          422,
+        )
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/context {Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "/context isn't a command this agent can run.",
+  );
+  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
+});
+
+test("`//x` sends `/x` as a message", async () => {
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "//deploy now");
+  expect(
+    screen.getByText("Sends as text; the agent may still run a skill by that name"),
+  ).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  await tick();
+  const msg = posted.find((p) => p.url.endsWith("/messages"));
+  expect(msg?.body).toMatchObject({ body: "/deploy now" });
+});
+
+test("`/foo` sends as text with the note", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/foo");
+  expect(screen.getByText("Not a command for this agent; sends as text")).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  await tick();
+  expect(posted.find((p) => p.url.endsWith("/messages"))?.body).toMatchObject({ body: "/foo" });
+});

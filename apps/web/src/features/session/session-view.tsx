@@ -28,6 +28,7 @@ import {
   runningQueryOptions,
   summaryFromAgentsList,
 } from "./api";
+import { commandsQueryOptions } from "./commands";
 import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
 import { childrenOf } from "./display-passes";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
@@ -68,7 +69,8 @@ export function SessionView({
   const onCancel = useCallback(
     (item: QueueItem) => {
       const body = item.body ?? "";
-      const inBox = composerRef.current?.putBackIfEmpty(body) ?? false;
+      // A command never comes back as text: Enter would send it as a message (U3 §13.3).
+      const inBox = item.kind !== "command" && (composerRef.current?.putBackIfEmpty(body) ?? false);
       cancelItem(
         item,
         inBox,
@@ -87,6 +89,10 @@ export function SessionView({
   useReadFrom(slug, s.state.ordered.at(-1)?.at);
   const navigate = useNavigate();
   const qc = useQueryClient();
+  // The `/` menu's list loads beside the session, never behind it (m11): an open menu reads the cache.
+  useEffect(() => {
+    void qc.prefetchQuery(commandsQueryOptions(slug));
+  }, [qc, slug]);
   const loaded = s.state.agent;
   // Until the session has loaded, the header and Agent details render from the cached list's
   // summary (spec §11; the route didn't wait for the detail), or on a cold load from the detail the

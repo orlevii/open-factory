@@ -11,8 +11,8 @@ export type CaretAnchor = { x: number; y: number };
 /** What the composer's key handler drives: focus never leaves the textarea (keyboard-opened). */
 export type CaretMenuHandle = {
   move(delta: 1 | -1 | number): void;
-  /** Picks the highlighted item; false when there is none. */
-  accept(): boolean;
+  /** Picks the highlighted item; false when there is none, or with `exactOnly` when it isn't `exact`. */
+  accept(exactOnly?: boolean): boolean;
 };
 
 const COPY_PROPS = [
@@ -102,6 +102,7 @@ const keepFocus = (e: { preventDefault(): void }) => e.preventDefault();
 export function CaretMenu({
   anchor,
   items,
+  note,
   onPick,
   onClose,
   input,
@@ -110,6 +111,8 @@ export function CaretMenu({
 }: {
   anchor: CaretAnchor;
   items: readonly CompletionItem[];
+  /** A muted line under the rows, or alone (an empty state). */
+  note?: string | undefined;
   onPick(item: CompletionItem): void;
   onClose(): void;
   input: RefObject<HTMLTextAreaElement | null>;
@@ -139,8 +142,8 @@ export function CaretMenu({
         const next = (((index + delta) % items.length) + items.length) % items.length;
         setValue(items[next]?.id ?? "");
       },
-      accept() {
-        if (!current) return false;
+      accept(exactOnly = false) {
+        if (!current || (exactOnly && !current.exact)) return false;
         onPick(current);
         return true;
       },
@@ -190,7 +193,7 @@ export function CaretMenu({
           if (e.target === input.current) e.preventDefault();
         }}
         onMouseDown={keepFocus}
-        className="w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 gap-0 p-1"
+        className="@container w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 gap-0 p-1"
       >
         <CommandPrimitive
           label={label}
@@ -208,27 +211,81 @@ export function CaretMenu({
                 onSelect={() => onPick(item)}
                 className={itemClass}
               >
-                {item.avatar ? (
-                  <AgentAvatar
-                    slug={item.avatar.slug}
-                    template={item.avatar.template}
-                    avatarVersion={item.avatar.avatarVersion}
-                    size={16}
-                  />
-                ) : null}
-                <span dir="auto" className="min-w-0 shrink [overflow-wrap:anywhere]">
-                  {item.label}
-                </span>
-                {item.detail ? (
-                  <span className="ml-auto flex min-w-0 max-w-[50%] font-mono text-xs text-muted-foreground">
-                    <MiddleTruncate text={item.detail} />
-                  </span>
-                ) : null}
+                {item.kind === "command" ? <CommandRow item={item} /> : <MentionRow item={item} />}
               </CommandPrimitive.Item>
             ))}
           </CommandPrimitive.List>
+          {note ? (
+            <p className="px-2 py-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+              {note}
+            </p>
+          ) : null}
         </CommandPrimitive>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * A `/` row (U3 §13.3): `/name` in mono, middle-truncated keeping the part after a plugin's `:` (the
+ * prefix muted); the argument hint muted, hidden below a 24rem menu; "alias: cost" when an alias
+ * matched; a one-line description under it.
+ */
+function CommandRow({ item }: { item: CompletionItem }) {
+  const name = item.label;
+  const colon = name.lastIndexOf(":");
+  return (
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="flex min-w-0 items-baseline gap-2">
+        {colon > 0 ? (
+          <span className="flex min-w-0 font-mono text-[0.8125rem]">
+            <span aria-hidden="true" className="truncate text-muted-foreground">
+              {name.slice(0, colon + 1)}
+            </span>
+            <span aria-hidden="true" className="max-w-full shrink-0 truncate">
+              {name.slice(colon + 1)}
+            </span>
+            <span className="sr-only">{name}</span>
+          </span>
+        ) : (
+          <span className="min-w-0 truncate font-mono text-[0.8125rem]">{name}</span>
+        )}
+        {item.hint ? (
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground @max-[24rem]:hidden">
+            {item.hint}
+          </span>
+        ) : null}
+        {item.alias ? (
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">{item.alias}</span>
+        ) : null}
+      </span>
+      {item.detail ? (
+        <span className="truncate text-xs text-muted-foreground">{item.detail}</span>
+      ) : null}
+    </span>
+  );
+}
+
+/** An `@` row (U3 §13.4): the avatar, the name (wrapping) and the muted, middle-truncated handle. */
+function MentionRow({ item }: { item: CompletionItem }) {
+  return (
+    <>
+      {item.avatar ? (
+        <AgentAvatar
+          slug={item.avatar.slug}
+          template={item.avatar.template}
+          avatarVersion={item.avatar.avatarVersion}
+          size={16}
+        />
+      ) : null}
+      <span dir="auto" className="min-w-0 shrink [overflow-wrap:anywhere]">
+        {item.label}
+      </span>
+      {item.detail ? (
+        <span className="ml-auto flex min-w-0 max-w-[50%] font-mono text-xs text-muted-foreground">
+          <MiddleTruncate text={item.detail} />
+        </span>
+      ) : null}
+    </>
   );
 }

@@ -23,10 +23,10 @@ function heldReason(agent: AgentSummary): string | undefined {
 const messageReason = (q: QueueItem, fallback: string | undefined) =>
   q.waitReason === "stopping" ? "stopping the turn" : fallback;
 
-/** Cancel is for a plain message you sent: never another sender's, a task comment or a scheduled
- *  row (U3 §6.4, Q26, D2). */
+/** Cancel is for a plain message or a command you sent: never another sender's, a task comment or a
+ *  scheduled row (U3 §6.4, §13.3, Q26, Q39, D2). */
 const cancellable = (q: QueueItem, self: string | undefined) =>
-  q.kind === "message" &&
+  (q.kind === "message" || q.kind === "command") &&
   self !== undefined &&
   q.from === `@${self}` &&
   q.taskKey === undefined &&
@@ -212,6 +212,15 @@ export const QueueItems = memo(function QueueItems({
           )}
         </OutgoingMessage>
       );
+    if (q.kind === "command")
+      return (
+        <CommandItem
+          key={q.id}
+          item={q}
+          error={v.error}
+          onCancel={onCancel && cancellable(q, self) ? onCancel : undefined}
+        />
+      );
     return (
       <QuietLine key={q.id} icon={<Clock aria-hidden="true" />}>
         Compact queued until the turn ends{q.focus ? `: ${q.focus}` : ""}
@@ -240,6 +249,51 @@ export const QueueItems = memo(function QueueItems({
     );
   return <>{out}</>;
 });
+
+/** A held command (U3 §13.3, Q39): one truncated line, "`/code-review` waits for the turn to end:
+ *  src/", the whole command in its title, and Cancel on your own (no Undo: it lives in memory). */
+function CommandItem({
+  item,
+  error,
+  onCancel,
+}: {
+  item: QueueItem;
+  error?: string;
+  onCancel?: (item: QueueItem) => void;
+}) {
+  const body = item.body ?? "";
+  const space = body.indexOf(" ");
+  const name = space < 0 ? body : body.slice(0, space);
+  const args = space < 0 ? "" : body.slice(space + 1);
+  return (
+    <div data-command-item className={`pt-3 ${ROW_GUTTER}`}>
+      <div className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+        <Clock aria-hidden="true" className="size-3.5 shrink-0" />
+        <span title={body} className="min-w-0 truncate">
+          <span className="font-mono text-foreground">{name}</span> waits for the turn to end
+          {args ? `: ${args}` : ""}
+        </span>
+        {onCancel && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            data-cancel-for={item.id}
+            className="ml-auto shrink-0"
+            onClick={() => onCancel(item)}
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+      {error && (
+        <div className="pt-1">
+          <InlineOutcome tone="error">Couldn't cancel: {error}</InlineOutcome>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * A queued message, or a send in flight (U3 §13.2). The same component under the same key for both,
@@ -299,6 +353,8 @@ function CancelledLine({
   onUndo?: (id: string, entry: CancelledEntry) => void;
 }) {
   const failed = entry.error !== undefined;
+  // A command is cancelled for good: it lived in memory, so there is nothing to restore (Q39).
+  const isCommand = entry.item.kind === "command";
   // The line going under the focus (Undo brought the message back, or a rollback did): focus lands on
   // that message's Cancel, else the composer, never <body>. The cleanup runs before the node is removed.
   const wrap = useRef<HTMLDivElement>(null);
@@ -317,18 +373,22 @@ function CancelledLine({
     <div ref={wrap} className={`pt-3 ${ROW_GUTTER}`}>
       <InlineOutcome
         tone={failed ? "error" : "success"}
-        undo={failed || entry.restored || !onUndo ? undefined : () => onUndo(id, entry)}
+        undo={
+          failed || entry.restored || isCommand || !onUndo ? undefined : () => onUndo(id, entry)
+        }
         focusOnMount
         // Undo unmounts on an error or a restore: focus goes to the line instead of the page.
         focusKey={failed ? `error:${entry.error}` : entry.restored ? "restored" : undefined}
       >
         {entry.rolledBack
           ? `Couldn't cancel: ${entry.error}`
-          : failed
-            ? `Message cancelled. Couldn't undo: ${entry.error}`
-            : entry.inBox
-              ? "Message cancelled · back in the box."
-              : "Message cancelled."}
+          : isCommand
+            ? "Command cancelled."
+            : failed
+              ? `Message cancelled. Couldn't undo: ${entry.error}`
+              : entry.inBox
+                ? "Message cancelled · back in the box."
+                : "Message cancelled."}
       </InlineOutcome>
     </div>
   );

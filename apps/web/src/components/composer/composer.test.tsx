@@ -523,3 +523,240 @@ test("data that arrives while the menu is open shows without a keystroke", async
   await userEvent.keyboard("{Escape}");
   expect(unwatch).toHaveBeenCalledTimes(1);
 });
+
+// ---- `/` commands and command mode (U3 §13.3, Q36, Q43) ----
+
+/** A `/` source over a fixed list: `exact` marks a name-prefix match (the only rows Enter takes). */
+const COMMANDS: CompletionItem[] = [
+  {
+    id: "code-review",
+    label: "/code-review",
+    hint: "[target]",
+    group: "Commands",
+    kind: "command",
+  },
+  { id: "context", label: "/context", group: "Commands", kind: "command" },
+  { id: "deploy", label: "/deploy", detail: "Ship the code", group: "Skills", kind: "command" },
+];
+const slashAsked = vi.hoisted(() => ({ queries: [] as string[] }));
+const SLASH: CompletionSource = {
+  trigger: "/",
+  label: "Run a command",
+  opensAt(text, caret) {
+    const m = /^\/(?!\/)(\S*)$/.exec(text);
+    return m && caret > 0 ? { query: m[1] ?? "", from: 0 } : undefined;
+  },
+  items(query) {
+    slashAsked.queries.push(query);
+    return COMMANDS.flatMap((c) =>
+      c.id.startsWith(query)
+        ? [{ ...c, exact: true }]
+        : c.detail?.toLowerCase().includes(query)
+          ? [c]
+          : [],
+    );
+  },
+  enterNeedsExact: true,
+  accept: (item) => ({
+    text: "",
+    caret: 0,
+    command: { name: item.id, placeholder: item.hint ?? "" },
+  }),
+  commandFor(text) {
+    const m = /^\/(\S+) $/.exec(text);
+    const c = m && COMMANDS.find((x) => x.id === m[1]);
+    return c ? { name: c.id, placeholder: c.hint ?? "" } : undefined;
+  },
+  missNote: () => "Not a command for this agent; sends as text",
+  textNote: (text) =>
+    /^\/\/[^\s/]/.test(text)
+      ? "Sends as text; the agent may still run a skill by that name"
+      : undefined,
+};
+const SLASH_ONLY = { slash: SLASH };
+type OnCommand = (name: string, args: string, o: { clientMessageId: string }) => Promise<void>;
+function setupSlash(over: Partial<Parameters<typeof Composer>[0]> = {}) {
+  const onCommand = vi.fn<OnCommand>(async () => {});
+  const r = setup({ completions: SLASH_ONLY, onCommand, ...over });
+  return { ...r, onCommand };
+}
+const chip = () => document.querySelector("[data-command-chip]");
+
+test("a typed `/` opens the menu; items are asked for only while it is open", async () => {
+  slashAsked.queries = [];
+  const { box } = setupSlash();
+  await userEvent.type(box, "hi /c");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(slashAsked.queries).toEqual([]);
+  await userEvent.clear(box);
+  await userEvent.type(box, "/cod");
+  // A name match, and a description match ("Ship the code").
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  // A space closes it.
+  await userEvent.type(box, " ");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("a paste never opens the menu", async () => {
+  const { box } = setupSlash();
+  box.focus();
+  await userEvent.paste("/co");
+  expect(box).toHaveValue("/co");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("a pasted multi-line text starting with `/` and Enter sends unchanged", async () => {
+  const { box, onSubmit, onCommand } = setupSlash();
+  box.focus();
+  await userEvent.paste("/context\nplease explain");
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("/context\nplease explain", expect.anything());
+  expect(onCommand).not.toHaveBeenCalled();
+});
+
+test("Enter takes a name match into command mode, its hint as the placeholder; Enter then dispatches", async () => {
+  const { box, onSubmit, onCommand } = setupSlash();
+  await userEvent.type(box, "/code");
+  await userEvent.keyboard("{Enter}");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(chip()).toHaveTextContent("Command");
+  expect(chip()).toHaveTextContent("/code-review");
+  expect(box).toHaveValue("");
+  expect(box).toHaveAttribute("placeholder", "[target]");
+  // Send works with no arguments too.
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  await userEvent.type(box, " src/ {Enter}");
+  expect(onCommand).toHaveBeenCalledWith("code-review", "src/", expect.anything());
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(chip()).toBeNull();
+  expect(box).toHaveValue("");
+});
+
+test("Enter on a description-only match sends the text as typed", async () => {
+  const { box, onSubmit, onCommand } = setupSlash();
+  await userEvent.type(box, "/ship");
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("/ship", expect.anything());
+  expect(onCommand).not.toHaveBeenCalled();
+});
+
+test("Tab completes a match into command mode", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "/con");
+  await userEvent.keyboard("{Tab}");
+  expect(chip()).toHaveTextContent("/context");
+  expect(document.activeElement).toBe(box);
+});
+
+test("an exact name and a space enter command mode", async () => {
+  const { box, onCommand } = setupSlash();
+  await userEvent.type(box, "/context ");
+  expect(chip()).toHaveTextContent("/context");
+  expect(box).toHaveValue("");
+  await userEvent.type(box, "{Enter}");
+  expect(onCommand).toHaveBeenCalledWith("context", "", expect.anything());
+});
+
+test("⌥Enter acts as Enter in command mode", async () => {
+  const { box, onSubmit, onCommand } = setupSlash();
+  await userEvent.type(box, "/context ");
+  fireEvent.keyDown(box, { key: "Enter", altKey: true });
+  expect(onCommand).toHaveBeenCalledTimes(1);
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+test("a refused command shows its error inline, comes back in command mode, sends no text", async () => {
+  const onCommand = vi.fn<OnCommand>(async () => {
+    throw new SubmitError("/context isn't a command this agent can run.");
+  });
+  const { box, onSubmit } = setupSlash({ onCommand });
+  await userEvent.type(box, "/context ");
+  await userEvent.type(box, "now{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "/context isn't a command this agent can run.",
+  );
+  expect(chip()).toHaveTextContent("/context");
+  expect(box).toHaveValue("now");
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+test("`/foo` that matches nothing says it sends as text, and Enter sends it", async () => {
+  const { box, onSubmit } = setupSlash();
+  await userEvent.type(box, "/foo");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(screen.getByText("Not a command for this agent; sends as text")).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("/foo", expect.anything());
+});
+
+test("`//x` says it sends as text", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "//deploy");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(
+    screen.getByText("Sends as text; the agent may still run a skill by that name"),
+  ).toBeInTheDocument();
+});
+
+test("an open menu with no rows shows its note (the empty state); Enter sends", async () => {
+  const empty: CompletionSource = {
+    ...SLASH,
+    items: () => [],
+    menuNote: () => "No commands loaded yet. They appear after the agent starts.",
+  };
+  const { box, onSubmit } = setupSlash({ completions: { slash: empty } });
+  await userEvent.type(box, "/x");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  expect(
+    screen.getByText("No commands loaded yet. They appear after the agent starts."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Not a command for this agent; sends as text")).toBeNull();
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("/x", expect.anything());
+});
+
+test("Esc order: the menu, then command mode, then stop", async () => {
+  const onStop = vi.fn(async () => {});
+  const { box } = setupSlash({ onStop, stopEpoch: 1, turnOpen: true });
+  await userEvent.type(box, "/code");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(box).toHaveValue("/code");
+  await userEvent.clear(box);
+  await userEvent.type(box, "/context ");
+  await userEvent.type(box, "x");
+  expect(chip()).not.toBeNull();
+  await userEvent.keyboard("{Escape}");
+  // Leaving command mode keeps what was typed, as text.
+  expect(chip()).toBeNull();
+  expect(box).toHaveValue("/context x");
+  expect(onStop).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Escape}");
+  expect(onStop).toHaveBeenCalledTimes(1);
+});
+
+test("IME composition never dispatches, completes or leaves command mode", async () => {
+  const { box, onCommand } = setupSlash();
+  await userEvent.type(box, "/context ");
+  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(box, { key: "Escape", keyCode: 229 });
+  expect(onCommand).not.toHaveBeenCalled();
+  expect(chip()).not.toBeNull();
+});
+
+test("Backspace in an empty command mode puts the name back as text", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "/context ");
+  await userEvent.keyboard("{Backspace}");
+  expect(chip()).toBeNull();
+  expect(box).toHaveValue("/context");
+});
+
+test("the toolbar's `/` button starts a command in an empty box", async () => {
+  const { box } = setupSlash();
+  await userEvent.click(screen.getByRole("button", { name: "Run a command" }));
+  expect(box).toHaveValue("/");
+  expect(document.activeElement).toBe(box);
+  expect(screen.getAllByRole("option")).toHaveLength(3);
+});

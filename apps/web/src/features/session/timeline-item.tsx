@@ -92,7 +92,10 @@ function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean 
 export function rowGap(row: Row, prev: Row | undefined): string {
   if (!prev) return "";
   const speaks =
-    row.kind === "message" || row.kind === "outgoing" || (row.kind === "text" && row.head);
+    row.kind === "message" ||
+    row.kind === "outgoing" ||
+    row.kind === "command" ||
+    (row.kind === "text" && row.head);
   return speaks || prev.kind === "turn_footer" ? "mt-6" : "mt-2";
 }
 
@@ -103,7 +106,7 @@ export const ROW_GUTTER = "pr-8";
 
 /** A card (U3 §7.1): an envelope that crossed a session boundary. A factory notice is a quiet line. */
 export function isCard(row: Row): boolean {
-  if (row.kind === "outgoing" || row.kind === "spawn") return true;
+  if (row.kind === "outgoing" || row.kind === "spawn" || row.kind === "command") return true;
   return row.kind === "message" && !isNoticeKind(row.message.kind);
 }
 

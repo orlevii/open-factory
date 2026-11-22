@@ -356,7 +356,7 @@ function LinesBody({
 /** "Show all", a `data-expands` toggle: the timeline's click capture anchors its row before the body
  *  expands. The button unmounts, so focus moves to the row first, without scrolling it into view:
  *  nothing above moves. */
-function ShowAll({ onShow }: { onShow(): void }) {
+export function ShowAll({ onShow }: { onShow(): void }) {
   return (
     <button
       type="button"

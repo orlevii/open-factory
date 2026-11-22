@@ -32,11 +32,19 @@ function Assignee({ t }: { t: TaskSummary }) {
   );
 }
 
+const BLOCKERS_SHOWN = 3;
+
 function label(t: TaskSummary) {
   const assignee = t.assignee
     ? `assigned to @${t.assignee.slug}${t.assignee.ended ? ` (${t.assignee.ended})` : ""}`
     : "unassigned";
-  const blocked = t.blockedBy.length ? `, blocked by ${t.blockedBy.join(", ")}` : "";
+  const blocked = t.blockedBy.length
+    ? `, blocked by ${t.blockedBy.slice(0, BLOCKERS_SHOWN).join(", ")}${
+        t.blockedBy.length > BLOCKERS_SHOWN
+          ? ` and ${t.blockedBy.length - BLOCKERS_SHOWN} more`
+          : ""
+      }`
+    : "";
   return `${t.key}, ${t.title}, ${STATUS[t.status].label}${blocked}, ${assignee}`;
 }
 
@@ -106,10 +114,11 @@ const Row = memo(function Row({
           </span>
           <span className="contents md:col-span-3 md:col-start-2 md:row-start-2 md:flex md:flex-wrap md:items-center md:gap-x-1.5">
             {t.blockedBy.length > 0 && (
-              <>
-                <BlockedMarker keys={t.blockedBy} />
-                <span aria-hidden="true">·</span>
-              </>
+              <BlockedMarker
+                keys={t.blockedBy}
+                max={BLOCKERS_SHOWN}
+                labelClassName="after:ml-1.5 after:text-muted-foreground after:content-['·']"
+              />
             )}
             <span className="max-md:hidden">
               <span className="inline-flex items-center gap-1.5 align-middle">

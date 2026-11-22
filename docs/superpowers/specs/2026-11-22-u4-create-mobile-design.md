@@ -446,7 +446,7 @@ If any check is worse than the textarea, the editor ships nowhere: `CodeTextarea
 
 ### 13.1 Blockers in lists (M6)
 
-`BlockedMarker` (`features/tasks/status-label.tsx:63`) takes `max` (default all); task list rows pass 3: "Blocked by T-15, T-16, T-17 +22 more", the full list in `title` and unchanged in the rail. The separator before the marker is drawn by the marker (`before:content-['·']`) so it can't orphan on a wrap.
+`BlockedMarker` (`features/tasks/status-label.tsx:63`) takes `max` (default all); task list rows pass 3: "Blocked by T-15, T-16, T-17 +22 more", the full list in `title` and unchanged in the rail. The separator after the marker is drawn by the marker (`after:content-['·']`) so it can't orphan on a wrap (`before:` would lead the line on desktop and double the phone row's own dot).
 
 ### 13.2 Name and email lengths (L5)
 

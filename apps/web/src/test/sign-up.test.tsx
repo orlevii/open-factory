@@ -249,3 +249,32 @@ test("a 403 invite_required after loading as bootstrap shows the lost-race line"
   await fill(valid);
   expect(await screen.findByRole("alert")).toHaveTextContent(LOST_RACE);
 });
+
+const NAME_TOO_LONG = "Keep your name to 80 characters or fewer.";
+const EMAIL_TOO_LONG = "Keep your email to 254 characters or fewer.";
+
+test("a name over 80 or an email over 254 characters is refused under its field, without the server", async () => {
+  const user = userEvent.setup();
+  renderApp("/sign-up", null);
+  const name = await screen.findByLabelText("Name");
+  await user.click(name);
+  await user.paste("n".repeat(81));
+  await user.click(screen.getByLabelText("Email"));
+  await user.paste(`${"a".repeat(255 - "@example.com".length)}@example.com`);
+  await fill({ handle: valid.handle, password: valid.password });
+  expect(name).toHaveAccessibleDescription(NAME_TOO_LONG);
+  expect(screen.getByLabelText("Email")).toHaveAccessibleDescription(EMAIL_TOO_LONG);
+  expect(auth.signUp.email).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["NAME_TOO_LONG", "Name", NAME_TOO_LONG],
+  ["EMAIL_TOO_LONG", "Email", EMAIL_TOO_LONG],
+])("%s from the server is shown under %s", async (code, label, message) => {
+  auth.signUp.email.mockResolvedValue({ data: null, error: { code, message, status: 400 } });
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  await waitFor(() => expect(screen.getByLabelText(label)).toHaveAccessibleDescription(message));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

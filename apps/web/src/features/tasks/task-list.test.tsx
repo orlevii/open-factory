@@ -8,6 +8,10 @@ import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
+/** The marker's label span, matched on its whole text (the keys are separate spans, so getByText(string) can't). */
+const blockedLabel = (text: string) => (_: string, el: Element | null) =>
+  !!el && el.classList.contains("min-w-0") && el.textContent === text;
+
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({ push: (_m: ServerMessage) => {} }));
 vi.mock("@/lib/ws", () => ({
@@ -72,7 +76,7 @@ test("a row is one link with a complete name; status, assignee, blocked marker a
   });
   expect(row).toHaveAttribute("href", "/tasks/T-42");
   expect(within(row).getByText("In progress")).toBeInTheDocument();
-  expect(within(row).getByText("Blocked by T-41")).toBeInTheDocument();
+  expect(within(row).getByText(blockedLabel("Blocked by T-41"))).toBeInTheDocument();
   expect(within(row).getByText("14:32")).toBeInTheDocument();
   expect(screen.getByRole("list", { name: "Tasks" })).toBeInTheDocument();
   const open = screen.getByRole("link", { name: /^T-41, Add usage export, Open, unassigned/ });
@@ -262,4 +266,33 @@ test("the assignee shows as a chip (avatar and name), a human creator as @handle
   const ended = await screen.findByRole("link", { name: /^T-51/ });
   expect(within(ended).getByText("Gone")).toBeInTheDocument();
   expect(ended).toHaveTextContent("terminated");
+});
+
+test("a row caps the blockers at three with a count and keeps the full list in the title", async () => {
+  const keys = Array.from({ length: 25 }, (_, i) => `T-${i + 15}`);
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks?": () =>
+      json(page([task(90, { blockedBy: keys }), task(91, { blockedBy: ["T-1", "T-2", "T-3"] })])),
+  });
+  renderApp("/tasks", alice);
+  const many = await screen.findByRole("link", { name: /^T-90,/ });
+  expect(many).toHaveAccessibleName(/blocked by T-15, T-16, T-17 and 22 more,/);
+  expect(many.getAttribute("aria-label")).not.toContain("T-18");
+  const marker = within(many).getByText(blockedLabel("Blocked by T-15, T-16, T-17 +22 more"));
+  expect(marker).toHaveAttribute("title", keys.join(", "));
+  // The separator is drawn by the marker, never a standalone sibling that could orphan on a wrap.
+  expect(marker).toHaveClass("after:content-['·']");
+  // Each key is its own nowrap span, so a narrow row never breaks one at its hyphen.
+  const keySpans = Array.from(marker.querySelectorAll("span"));
+  expect(keySpans.map((k) => k.textContent)).toEqual(["T-15", "T-16", "T-17"]);
+  for (const k of keySpans) expect(k).toHaveClass("whitespace-nowrap");
+  expect(marker.nextElementSibling?.textContent ?? "").not.toBe("·");
+  // The dot is inline in the label, so a wrapped label ends with it; the icon sits on the first line.
+  expect(marker.tagName).toBe("SPAN");
+  expect(marker.parentElement).toHaveClass("items-start");
+  const three = screen.getByRole("link", { name: /^T-91,/ });
+  const all = within(three).getByText(blockedLabel("Blocked by T-1, T-2, T-3"));
+  expect(all).not.toHaveAttribute("title");
+  expect(three).not.toHaveTextContent("more");
 });

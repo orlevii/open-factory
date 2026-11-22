@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { resetSeq } from "@/test/session-fixtures";
 import type { Row, ToolRow } from "./rows";
 import { Timeline } from "./timeline";
@@ -96,4 +96,37 @@ test("Esc on a control inside a tool body returns focus to its row; another row'
   act(() => showB?.focus());
   await user.keyboard("{Escape}");
   expect(rowB).toHaveFocus();
+});
+
+test("Show all in a tool body keeps the view still: the row takes focus without scrolling to it", async () => {
+  const user = userEvent.setup();
+  resetSeq();
+  const row = toolRow("Bash", { command: "seq 30" }, { content: longOutput });
+  render(<TimelineOf rows={[row]} />);
+  const rowButton = document.querySelector<HTMLElement>(`[data-row="${row.key}"]`) as HTMLElement;
+  await user.click(rowButton);
+  // The header is above the view: only the end of the output is on screen.
+  const scroller = document.querySelector('[role="log"]')?.parentElement as HTMLElement;
+  scroller.scrollTop = 1744;
+  const focus = vi.spyOn(HTMLElement.prototype, "focus");
+  await user.click(screen.getByRole("button", { name: "Show all 30 lines" }));
+  expect(rowButton).toHaveFocus();
+  const onRow = focus.mock.calls.filter((_, i) => focus.mock.contexts[i] === rowButton);
+  expect(onRow.length).toBeGreaterThan(0);
+  for (const args of onRow) expect(args[0]).toEqual({ preventScroll: true });
+  expect(scroller.scrollTop).toBe(1744);
+  focus.mockRestore();
+});
+
+test("Esc on a row's ⋯ returns focus to its row, a call's in a folded run included", async () => {
+  const user = userEvent.setup();
+  resetSeq();
+  const row = toolRow("Bash", { command: "ls" }, { content: "a" });
+  render(<TimelineOf rows={[row]} />);
+  const rowButton = document.querySelector<HTMLElement>(`[data-row="${row.key}"]`) as HTMLElement;
+  await user.click(rowButton);
+  const menu = screen.getByRole("button", { name: "Row actions", hidden: true });
+  act(() => menu.focus());
+  await user.keyboard("{Escape}");
+  expect(rowButton).toHaveFocus();
 });

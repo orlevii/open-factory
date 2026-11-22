@@ -20,7 +20,10 @@ export function OutputPlate({ children }: { children: ReactNode }) {
 }
 
 /** Focus the row before the clicked control unmounts, so focus never drops to the body. */
-const keepRowFocus = (e: MouseEvent<HTMLElement>) => rowOf(e.currentTarget)?.focus();
+const keepRowFocus = (e: MouseEvent<HTMLElement>) =>
+  // Without scrolling to it: the row's header can be far above the control (a long diff), and the
+  // view must stay where the reader is (U3 §8.1).
+  rowOf(e.currentTarget)?.focus({ preventScroll: true });
 
 /** "Show all", "show raw": an in-place expansion. `data-expands` makes the timeline anchor the row
  *  before it grows (§8.1), as `ClampedMarkdown`'s "Show all" does. */

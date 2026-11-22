@@ -112,3 +112,14 @@ test("after a pointer click, an open that came from elsewhere turns the chevron 
   expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
   expect(chevron()).not.toHaveClass("transition-transform");
 });
+
+test("Esc on a call's ⋯ inside an open group returns focus to that call", async () => {
+  const user = userEvent.setup();
+  timeline(groupWork([sh(3), sh(5)]));
+  await user.click(rowEl("3") as HTMLElement);
+  const call = rowEl("5")?.closest("[data-call]") as HTMLElement;
+  const menu = within(call).getByRole("button", { name: "Row actions", hidden: true });
+  act(() => menu.focus());
+  await user.keyboard("{Escape}");
+  expect(rowEl("5")).toHaveFocus();
+});

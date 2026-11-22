@@ -220,6 +220,7 @@ function TriggerButton({
       variant="ghost"
       size="icon-xs"
       data-copy-link
+      data-row-menu
       aria-haspopup="menu"
       aria-label={label}
       tabIndex={focusable ? 0 : -1}

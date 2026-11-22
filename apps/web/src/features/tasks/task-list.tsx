@@ -117,7 +117,7 @@ const Row = memo(function Row({
               <BlockedMarker
                 keys={t.blockedBy}
                 max={BLOCKERS_SHOWN}
-                className="after:text-muted-foreground after:content-['·']"
+                labelClassName="after:ml-1.5 after:text-muted-foreground after:content-['·']"
               />
             )}
             <span className="max-md:hidden">

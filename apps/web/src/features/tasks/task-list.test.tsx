@@ -280,6 +280,9 @@ test("a row caps the blockers at three with a count and keeps the full list in t
   // The separator is drawn by the marker, never a standalone sibling that could orphan on a wrap.
   expect(marker).toHaveClass("after:content-['·']");
   expect(marker.nextElementSibling?.textContent ?? "").not.toBe("·");
+  // The dot is inline in the label, so a wrapped label ends with it; the icon sits on the first line.
+  expect(marker.tagName).toBe("SPAN");
+  expect(marker.parentElement).toHaveClass("items-start");
   const three = screen.getByRole("link", { name: /^T-91,/ });
   const all = within(three).getByText("Blocked by T-1, T-2, T-3");
   expect(all).not.toHaveAttribute("title");

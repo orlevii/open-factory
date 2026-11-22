@@ -60,27 +60,32 @@ export function StatusLabel({
 }
 
 /** "Blocked by T-41, T-44": the marker (a `warning` icon with an ink label). With `max` and more keys it
- *  shows the first `max` and "+N more", the full list in `title`. */
+ *  shows the first `max` and "+N more", the full list in `title`. `labelClassName` styles the label, where an
+ *  `after:` separator flows inline after its last word even when the label wraps; the icon stays on its first line. */
 export function BlockedMarker({
   keys,
   max,
   className = "",
+  labelClassName = "",
 }: {
   keys: string[];
   max?: number;
   className?: string;
+  labelClassName?: string;
 }) {
   if (!keys.length) return null;
   const capped = max !== undefined && keys.length > max;
   const shown = capped ? keys.slice(0, max) : keys;
   return (
-    <span
-      title={capped ? keys.join(", ") : undefined}
-      className={`inline-flex items-center gap-1.5 text-foreground ${className}`}
-    >
-      <CircleMinus aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-      Blocked by {shown.join(", ")}
-      {capped ? ` +${keys.length - shown.length} more` : ""}
+    <span className={`inline-flex items-start gap-1.5 text-foreground ${className}`}>
+      <CircleMinus
+        aria-hidden="true"
+        className="mt-[calc((1lh-0.875rem)/2)] size-3.5 shrink-0 text-warning"
+      />
+      <span title={capped ? keys.join(", ") : undefined} className={`min-w-0 ${labelClassName}`}>
+        Blocked by {shown.join(", ")}
+        {capped ? ` +${keys.length - shown.length} more` : ""}
+      </span>
     </span>
   );
 }

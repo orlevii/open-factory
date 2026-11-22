@@ -1,5 +1,5 @@
 import type { AnyEvent, ServerMessage } from "@open-factory/shared";
-import { act, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -51,12 +51,13 @@ async function open(
         running: { count: 1, max: 8 },
       }),
   });
-  renderApp("/agents/dev", alice);
+  last.qc = renderApp("/agents/dev", alice).queryClient;
   await screen.findByText(firstText);
   return api;
 }
+const last = { qc: undefined as undefined | import("@tanstack/react-query").QueryClient };
 
-test("an agent sender is a link with @slug and its display name; humans stay plain", async () => {
+test("an agent sender is a chip linking to its session (name and @slug); humans stay plain", async () => {
   await open(
     [
       {
@@ -69,10 +70,9 @@ test("an agent sender is a link with @slug and its display name; humans stay pla
     ],
     "hi from b",
   );
-  const link = await screen.findByRole("link", { name: "Open @b's session" });
+  const link = await screen.findByRole("link", { name: /Builder/ });
   expect(link).toHaveAttribute("href", "/agents/b");
   expect(link).toHaveTextContent("@b");
-  expect(await screen.findByText(/· Builder/)).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
 });
 
@@ -108,11 +108,10 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
         }),
     },
   );
-  const link = await screen.findByRole("link", { name: "Open @tech-lead-ab12's session" });
+  const link = await screen.findByRole("link", { name: /Tech Lead · ab12/ });
   expect(link).toHaveAttribute("href", "/agents/tech-lead-ab12");
-  expect(await screen.findByText("· Tech Lead · ab12")).toBeInTheDocument();
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@old/ })).toBeNull());
-  expect(screen.getByText("@old")).toHaveClass("font-mono");
+  expect(screen.getAllByText("@old").length).toBeGreaterThan(0);
   expect(screen.queryByText(/Old one/)).toBeNull();
 });
 
@@ -131,8 +130,10 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
   await vi.waitFor(() =>
     expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true),
   );
-  const link = await screen.findByRole("link", { name: "Open @gone-ab12's session" });
-  expect(link.parentElement?.textContent).toBe("@gone-ab12");
+  const link = await screen.findByRole("link", { name: "@gone-ab12" });
+  expect(link).toHaveAttribute("href", "/agents/gone-ab12");
+  // No name is known: the slug stands in once, never repeated as the handle.
+  expect(link.textContent).toBe("@gone-ab12");
 });
 
 test("AgentLink: links mounted over time share one ended-list fetch within its stale time", async () => {
@@ -159,7 +160,7 @@ test("AgentLink: links mounted over time share one ended-list fetch within its s
     );
   act(() => window.dispatchEvent(new Event("focus")));
   await screen.findByText("more from gone 4");
-  expect(screen.getAllByRole("link", { name: "Open @gone-ab12's session" })).toHaveLength(4);
+  expect(screen.getAllByRole("link", { name: "@gone-ab12" })).toHaveLength(4);
   expect(endedFetches()).toBe(1);
 });
 
@@ -178,7 +179,7 @@ test("AgentLink: an unknown slug is plain once both lists have loaded and nothin
     },
   );
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@nobody/ })).toBeNull());
-  expect(screen.getByText("@nobody")).toHaveClass("font-mono");
+  expect(screen.getByText("@nobody")).toBeInTheDocument();
 });
 
 test("an update group: heading always shown, the latest part visible, 'Show all (3 updates)' expands", async () => {
@@ -304,7 +305,14 @@ const result = (content: string, isError = false, toolUseId = "toolu_1"): AnyEve
   isError,
 });
 
-test("send_message renders as an outgoing message: '@dev → @b', past-tense status, a real View in session link", async () => {
+/** Opens the row menu beside `block` (U3 §7.5). */
+async function rowMenu(block: HTMLElement) {
+  const wrap = block.closest("[data-row-wrap]") as HTMLElement;
+  fireEvent.pointerDown(within(wrap).getByRole("button", { name: "Row actions" }), { button: 0 });
+  return screen.findByRole("menu");
+}
+
+test("send_message renders as an outgoing message: '@dev → @b', past-tense status, no footer links; the call is in the row menu", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -318,15 +326,36 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
     (_, el) => el?.tagName === "SPAN" && el.textContent === "Sent · @b was hibernated",
   );
   expect(within(sentLine).getByText("@b")).toHaveClass("font-mono");
-  expect(
-    within(block).getByRole("link", { name: "View this message in @b's session" }),
-  ).toHaveAttribute("href", "/agents/b?message=m9");
+  // Outgoing cards have no footer links (U3 §7.5).
+  expect(within(block).queryByRole("link", { name: /View this message/ })).toBeNull();
+  expect(within(block).queryByRole("button", { name: "Show tool call" })).toBeNull();
   expect(screen.queryByText("mcp__factory__send_message")).toBeNull();
-  await userEvent.click(within(block).getByRole("button", { name: "Show tool call" }));
+  const menu = await rowMenu(block);
+  expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
+  // The message in the recipient's session (U3 lead ruling R1).
+  const view = within(menu).getByRole("menuitem", { name: "View this message in @b's session" });
+  expect(view).toHaveAttribute("href", "/agents/b?message=m9");
+  expect(view).toHaveTextContent("View in @b's session");
+  await userEvent.click(within(menu).getByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByText("mcp__factory__send_message")).toBeInTheDocument();
+  const again = await rowMenu(block);
+  expect(within(again).getByRole("menuitem", { name: "Hide tool call" })).toBeInTheDocument();
 });
 
-test("a send to humans says it went to the inbox, with no session link", async () => {
+const inboxItem = (id: string, messageId: string) => ({
+  id,
+  messageId,
+  kind: "message",
+  read: false,
+  from: { kind: "agent", name: "dev" },
+  to: "@humans",
+  preview: "need a human",
+  urgent: false,
+  createdAt: "2026-11-21T10:00:00.000Z",
+  link: { kind: "session", agentSlug: "dev" },
+});
+
+test("a send to humans has no footer; Open in inbox opens its inbox item", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -334,9 +363,37 @@ test("a send to humans says it went to the inbox, with no session link", async (
       result(JSON.stringify({ id: "m10", to: "@humans", status: "inbox" })),
     ],
     "need a human",
+    {
+      "GET /api/inbox?": () =>
+        json({ items: [inboxItem("i1", "m1"), inboxItem("i10", "m10")], nextCursor: null }),
+    },
   );
-  expect(screen.getByText("Sent to the inbox")).toBeInTheDocument();
+  expect(screen.queryByText("Sent to the inbox")).toBeNull();
   expect(screen.queryByRole("link", { name: /View this message/ })).toBeNull();
+  const block = screen.getByRole("article", { name: /Message from @dev/ });
+  const menu = await rowMenu(block);
+  expect(await within(menu).findByRole("menuitem", { name: "Open in inbox" })).toHaveAttribute(
+    "href",
+    "/inbox?item=i10",
+  );
+  expect(within(menu).queryByRole("menuitem", { name: /View this message/ })).toBeNull();
+});
+
+test("a send to humans with no inbox item of yours has no Open in inbox", async () => {
+  const api = await open(
+    [
+      { type: "turn_started" },
+      call({ to: "@humans", body: "need a human" }),
+      result(JSON.stringify({ id: "m10", to: "@humans", status: "inbox" })),
+    ],
+    "need a human",
+    { "GET /api/inbox?": () => json({ items: [inboxItem("i1", "m1")], nextCursor: null }) },
+  );
+  const menu = await rowMenu(screen.getByRole("article", { name: /Message from @dev/ }));
+  await vi.waitFor(() => expect(api.calls.some((c) => c.url.startsWith("/api/inbox?"))).toBe(true));
+  await act(async () => {});
+  expect(within(menu).getByRole("menuitem", { name: "View tool call" })).toBeInTheDocument();
+  expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
 });
 
 test("no result after the turn ended says 'Not sent'", async () => {
@@ -525,7 +582,7 @@ test("the announcer says '<name> messaged you' for a send to this human or @huma
   expect(await within(status()).findByText("@dev messaged you")).toBeInTheDocument();
 });
 
-test("Tab walks the focused row's controls: recipient link, View in session, Show tool call", async () => {
+test("Tab walks the focused row's controls: the recipient link, then the row menu", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -535,15 +592,13 @@ test("Tab walks the focused row's controls: recipient link, View in session, Sho
     "ping b",
   );
   const user = userEvent.setup();
-  const sender = await screen.findByRole("link", { name: "Open @b's session" });
+  const sender = await screen.findByRole("link", { name: /Builder/ });
   await vi.waitFor(() => expect(sender).toHaveAttribute("tabindex", "0"));
   sender.focus();
   await user.tab();
-  expect(screen.getByRole("link", { name: "View this message in @b's session" })).toHaveFocus();
-  await user.tab();
-  expect(screen.getByRole("button", { name: "Show tool call" })).toHaveFocus();
-  await user.click(screen.getByRole("button", { name: "Show tool call" }));
-  expect(screen.getByRole("button", { name: "Hide tool call" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Row actions" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
 });
 
 test("two facts with one code in one envelope each render their own line", async () => {
@@ -789,6 +844,8 @@ test("a task_assigned envelope is a Factory message block with a badge linking t
   expect(within(block).getByText("Factory")).toBeInTheDocument();
   const badge = within(block).getByRole("link", { name: "Task T-1: Plan the migration" });
   expect(badge).toHaveAttribute("href", "/tasks/T-1");
+  // The brief is two clamped lines until Show all (U3 §7.2).
+  await userEvent.click(within(block).getByRole("button", { name: "Show all" }));
   expect(within(block).getByRole("blockquote")).toHaveTextContent("Read this");
 });
 
@@ -900,4 +957,175 @@ test("Agent details' open tasks link goes to that agent's tasks", async () => {
     "href",
     "/tasks?assignee=dev",
   );
+});
+
+// ---- U3 §7.2: speaker lines ----
+test("200 message rows create no per-row query observers (one speaker index for the session)", async () => {
+  const messages = Array.from({ length: 200 }, (_, i) =>
+    env({
+      id: `m${i}`,
+      from: i % 2 ? "b" : "@or",
+      kind: "message",
+      body: `body ${i}`,
+    }),
+  );
+  await open([{ type: "message_in", messages }], "body 199", {
+    "GET /api/users": () =>
+      json({
+        users: [
+          {
+            id: "u2",
+            name: "Or Levi",
+            handle: "or",
+            email: "o@x",
+            createdAt: AT,
+            disabledAt: null,
+          },
+        ],
+      }),
+  });
+  await screen.findAllByText("Or Levi");
+  const observers = (key: readonly unknown[]) =>
+    last.qc?.getQueryCache().find({ queryKey: key, exact: true })?.getObserversCount() ?? 0;
+  // The sidebar, the header and the speaker index read these lists: a fixed few, never one per row.
+  expect(observers(["agents", "exclude"])).toBeLessThan(10);
+  expect(observers(["agents", "only"])).toBeLessThan(10);
+  expect(observers(["users"])).toBeLessThan(10);
+  expect(observers(["ended-more"])).toBeLessThan(10);
+});
+
+test("your own message says 'You'; a known human shows their name", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({ id: "m1", from: "@alice", kind: "message", body: "from me" }),
+          env({ id: "m2", from: "@or", kind: "message", body: "from or" }),
+        ],
+      },
+    ],
+    "from me",
+    {
+      "GET /api/users": () =>
+        json({
+          users: [
+            {
+              id: "u2",
+              name: "Or Levi",
+              handle: "or",
+              email: "o@x",
+              createdAt: AT,
+              disabledAt: null,
+            },
+          ],
+        }),
+    },
+  );
+  const [mine, theirs] = [...document.querySelectorAll<HTMLElement>("[data-message-block]")];
+  expect(within(mine as HTMLElement).getByText("You")).toBeInTheDocument();
+  expect(within(mine as HTMLElement).queryByText("@alice")).toBeNull();
+  expect(await within(theirs as HTMLElement).findByText("Or Levi")).toHaveAttribute("dir", "auto");
+  for (const b of [mine, theirs])
+    expect(b?.querySelector("[data-message-body]")).toHaveAttribute("dir", "auto");
+});
+
+test("an outgoing card reads 'Name → Recipient' with the agent's name", async () => {
+  await open(
+    [
+      { type: "turn_started" },
+      call({ to: "@alice", body: "ping you" }),
+      result(JSON.stringify({ id: "m9", to: "@alice", status: "delivered" })),
+    ],
+    "ping you",
+  );
+  const block = screen.getByRole("article", { name: "Message from @dev to @alice" });
+  const sender = block.querySelector("[data-speaker-line]") as HTMLElement;
+  expect(sender.textContent).toMatch(/^Dev agent@dev.*You\d\d:\d\d$/);
+  // The session's own agent is never a link.
+  expect(within(sender).queryByRole("link")).toBeNull();
+});
+
+test("a task_assigned notice is a quiet line: the factory mark, the badge, two muted clamped lines with Show all", async () => {
+  const body =
+    "@or assigned you T-1\n\nThe task, written by @or:\n\n> Read this\n\nThen this.\n\nAnd this.";
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "t1",
+            from: "@factory",
+            kind: "task_assigned",
+            taskKey: "T-1",
+            taskTitle: "Plan the migration",
+            body,
+          }),
+        ],
+      },
+    ],
+    /assigned you T-1/,
+  );
+  const notice = document.querySelector("[data-notice]") as HTMLElement;
+  expect(notice).not.toHaveClass("border");
+  expect(notice.querySelector("svg")).not.toBeNull();
+  expect(
+    within(notice).getByRole("link", { name: "Task T-1: Plan the migration" }),
+  ).toBeInTheDocument();
+  const shown = notice.querySelector("[data-message-body]") as HTMLElement;
+  expect(shown).toHaveClass("text-muted-foreground");
+  expect(shown.querySelector(".line-clamp-2")).not.toBeNull();
+  await userEvent.click(within(notice).getByRole("button", { name: "Show all" }));
+  expect(within(notice).getByText("And this.")).toBeInTheDocument();
+  expect(shown.querySelector(".line-clamp-2")).toBeNull();
+  expect(within(notice).queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+const notice = (body: string): AnyEvent => ({
+  type: "message_in",
+  messages: [
+    env({
+      id: "t1",
+      from: "@factory",
+      kind: "task_assigned",
+      taskKey: "T-1",
+      taskTitle: "P",
+      body,
+    }),
+  ],
+});
+
+test("a short notice is still two clamped lines; Show all only when it overflows", async () => {
+  await open([notice("@or assigned you T-1: a short brief")], /a short brief/);
+  const shown = document.querySelector("[data-notice] [data-message-body]") as HTMLElement;
+  expect(shown.querySelector(".line-clamp-2")).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+test("a notice whose two lines overflow (measured) offers Show all", async () => {
+  const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(60);
+  const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(36);
+  try {
+    await open(
+      [notice("@or assigned you T-1: one long line that wraps at phone width")],
+      /long line/,
+    );
+    expect(await screen.findByRole("button", { name: "Show all" })).toBeInTheDocument();
+  } finally {
+    sh.mockRestore();
+    ch.mockRestore();
+  }
+});
+
+test("the users list is fetched alongside the events, not after them (no name pops in later)", async () => {
+  const api = mockApi({
+    "GET /api/agents/dev": () => json(detail()),
+    "GET /api/agents/dev/events?": () => new Promise<Response>(() => {}),
+    "GET /api/agents?ended=exclude": () =>
+      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+  });
+  renderApp("/agents/dev", alice);
+  await vi.waitFor(() => expect(api.calls.some((c) => c.url === "/api/users")).toBe(true));
+  expect(document.querySelector("[data-timeline-skeleton]")).not.toBeNull();
 });

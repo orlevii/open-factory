@@ -1,8 +1,11 @@
-/** Long paths: the head shrinks with an ellipsis, then the last segment (only when it alone is too wide). */
+/** Long paths: the head shrinks with an ellipsis, then the last segment (only when it alone is too
+ *  wide). Text with no inner "/" (a handle) splits at its middle, so "@marketing-team" reads
+ *  "@ma…ng-team": its head and tail both stay. */
 export function MiddleTruncate({ text }: { text: string }) {
-  const i = text.lastIndexOf("/");
-  const head = i > 0 ? text.slice(0, i) : text;
-  const tail = i > 0 ? text.slice(i) : "";
+  const slash = text.lastIndexOf("/");
+  const i = slash > 0 ? slash : Math.ceil(text.length / 2);
+  const head = text.slice(0, i);
+  const tail = text.slice(i);
   return (
     <span className="flex min-w-0">
       <span aria-hidden="true" className="truncate">

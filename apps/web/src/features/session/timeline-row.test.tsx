@@ -1,9 +1,12 @@
-import type { AnyEvent } from "@open-factory/shared";
+import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
+import { mergeFailures } from "./display-passes";
 import { buildRows } from "./rows";
+import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
+import { Timeline } from "./timeline";
 import { TimelineRow } from "./timeline-row";
 
 const NOW = new Date(2026, 10, 19, 10, 0);
@@ -280,4 +283,175 @@ test("self-started turns say what woke the agent", () => {
     "Woke for a background task · 12s",
   );
   expect(footerLine({ durationMs: 12_000, origin: "cron" })).toBe("Woke for a cron · 12s");
+});
+
+// Repeated failures (U3 §7.6): one row, the count and the last time.
+test("a merged failure says how many times and when the last one was", () => {
+  const err = (at: string): SessionEvent => ({
+    ...se(
+      { type: "error", source: "spawn", code: "image", message: "Image `playwright` isn't built" },
+      null,
+    ),
+    at,
+  });
+  const today = mergeFailures(
+    buildRows([err(todayAt(9, 0)), err(todayAt(9, 10)), err(todayAt(9, 32))]).rows,
+  );
+  // Monday 16 Nov, three days before NOW (Thursday 19 Nov).
+  const monday = new Date(2026, 10, 16, 19, 32).toISOString();
+  const earlier = mergeFailures(
+    buildRows([err(new Date(2026, 10, 15, 10, 0).toISOString()), err(monday)]).rows,
+  );
+  const { container } = render(
+    <div>
+      {[...today, ...earlier].map((row) => (
+        <div key={row.key} data-row>
+          <TimelineRow
+            slug="dev"
+            row={row}
+            expanded={new Set()}
+            toggle={() => {}}
+            rowProps={() => ({})}
+            failedIds={new Set()}
+            interruptedEnds={new Set()}
+          />
+        </div>
+      ))}
+    </div>,
+  );
+  const texts = [...container.querySelectorAll("[data-row]")].map(
+    (el) => el.querySelector("p")?.textContent,
+  );
+  expect(texts).toEqual([
+    "Image `playwright` isn't built · 3 times · last 09:32",
+    "Image `playwright` isn't built · 2 times · last Mon 19:32",
+  ]);
+});
+
+// Reading sizes (U3 §7.3): nothing in a session outranks the page title.
+test("the agent's own text uses the demoted heading scale", () => {
+  const { els } = lines([{ type: "assistant_text", text: "# Plan\n\nBody" }]);
+  const prose = els[0]?.querySelector(".prose-of");
+  expect(prose).toHaveClass("prose-of-detail");
+});
+
+test("the log clips sideways overflow; the scroller around it does not", () => {
+  render(
+    <Timeline
+      slug="dev"
+      rows={[]}
+      failedIds={new Set()}
+      interruptedEnds={new Set()}
+      hasMoreBefore={false}
+      onLoadEarlier={async () => false}
+      earlierError={false}
+      footer={null}
+    />,
+  );
+  const log = screen.getByRole("log");
+  expect(log).toHaveClass("overflow-x-clip");
+  expect(log.parentElement).not.toHaveClass("overflow-x-clip");
+});
+
+// ---- Speaker lines and spacing (U3 §7.1, §7.2) ----
+const speakers = buildSpeakerIndex({
+  sessionAgent: {
+    slug: "dev",
+    displayName: "Developer",
+    template: "dev",
+    kind: "persistent",
+    avatarVersion: null,
+  },
+  selfHandle: "alice",
+  live: [],
+  ended: [],
+});
+const usage: AnyEvent = {
+  type: "usage",
+  model: "m",
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  costUsd: 0,
+  durationMs: 2000,
+  numTurns: 1,
+};
+const turnEvents: AnyEvent[] = [
+  { type: "turn_started" },
+  { type: "assistant_text", text: "first" },
+  { type: "assistant_text", text: "second" },
+  {
+    type: "message_in",
+    messages: [{ id: "m1", from: "@or", kind: "message", body: "a question", urgent: false }],
+  } as AnyEvent,
+  { type: "assistant_text", text: "third" },
+  usage,
+  { type: "turn_end", isError: false, terminalReason: "completed", numTurns: 1 },
+  { type: "turn_started" },
+  { type: "assistant_text", text: "next turn" },
+];
+
+test("agent text shows the session agent's speaker line only on head rows, its body dir=auto", () => {
+  const { rows } = buildRows(turnEvents.map((e) => se(e)));
+  render(
+    <SpeakerContext value={speakers}>
+      {rows.map((row) => (
+        <div key={row.key} data-test-row={row.key}>
+          <TimelineRow
+            slug="dev"
+            row={row}
+            expanded={new Set()}
+            toggle={() => {}}
+            rowProps={() => ({})}
+            failedIds={new Set()}
+            interruptedEnds={new Set()}
+          />
+        </div>
+      ))}
+    </SpeakerContext>,
+  );
+  const textRow = (t: string) => screen.getByText(t).closest("[data-test-row]") as HTMLElement;
+  const speaks = (t: string) => textRow(t).querySelector("[data-speaker-line]") !== null;
+  expect(speaks("first")).toBe(true);
+  expect(speaks("second")).toBe(false);
+  expect(speaks("third")).toBe(true);
+  expect(speaks("next turn")).toBe(true);
+  expect(within(textRow("first")).getByText("Developer")).toBeInTheDocument();
+  // The session's own agent: never a link.
+  expect(within(textRow("first")).queryByRole("link")).toBeNull();
+  expect(screen.getByText("first").closest("[dir=auto]")).not.toBeNull();
+});
+
+test("spacing: 24px before a speaker line or card and after a turn footer, 8px inside a turn", () => {
+  const { rows } = buildRows(turnEvents.map((e) => se(e)));
+  render(
+    <SpeakerContext value={speakers}>
+      <Timeline
+        slug="dev"
+        rows={rows}
+        failedIds={new Set()}
+        interruptedEnds={new Set()}
+        hasMoreBefore={false}
+        onLoadEarlier={async () => false}
+        earlierError={false}
+        footer={null}
+      />
+    </SpeakerContext>,
+  );
+  const log = screen.getByRole("log");
+  expect(log).not.toHaveClass("space-y-3");
+  const gap = (t: string) => {
+    const wrap = screen.getByText(t).closest("[data-row-wrap]") as HTMLElement;
+    return ["mt-6", "mt-2"].filter((c) => wrap.classList.contains(c));
+  };
+  expect(gap("second")).toEqual(["mt-2"]);
+  expect(gap("a question")).toEqual(["mt-6"]); // a card
+  expect(gap("third")).toEqual(["mt-6"]); // a speaker line after the message
+  expect(gap("next turn")).toEqual(["mt-6"]); // after the footer, and a head
+  const footer = screen.getByText(/^Worked/).closest("[data-row-wrap]") as HTMLElement;
+  expect(footer).toHaveClass("mt-2");
+  // The first row has nothing above it.
+  const first = screen.getByText("first").closest("[data-row-wrap]") as HTMLElement;
+  expect(first.className).not.toMatch(/\bmt-/);
 });

@@ -2,7 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { memo, useId, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { CodeBlock } from "./code-block";
+import { CodeBlock, PlainCode } from "./code-block";
 import { MermaidBlock } from "./mermaid-block";
 
 function makeComponents(newTabNoteId: string): Components {
@@ -40,17 +40,25 @@ function makeComponents(newTabNoteId: string): Components {
           : "";
       if (lang === "mermaid") return <MermaidBlock source={text} />;
       if (lang) return <CodeBlock code={text} lang={lang} />;
-      return (
-        <pre>
-          <code>{text}</code>
-        </pre>
-      );
+      return <PlainCode code={text} />;
     },
     code: ({ className, children }) => <code className={className}>{children}</code>,
+    // Bidi (U3 §7.2): each block takes the direction of its own first strong character.
+    // The hast props are spread through: GFM footnotes carry an id and the label's sr-only class.
+    p: ({ node: _n, ...props }) => <p dir="auto" {...props} />,
+    li: ({ node: _n, ...props }) => <li dir="auto" {...props} />,
+    blockquote: ({ node: _n, ...props }) => <blockquote dir="auto" {...props} />,
+    h1: ({ node: _n, ...props }) => <h1 dir="auto" {...props} />,
+    h2: ({ node: _n, ...props }) => <h2 dir="auto" {...props} />,
+    h3: ({ node: _n, ...props }) => <h3 dir="auto" {...props} />,
+    h4: ({ node: _n, ...props }) => <h4 dir="auto" {...props} />,
+    h5: ({ node: _n, ...props }) => <h5 dir="auto" {...props} />,
+    h6: ({ node: _n, ...props }) => <h6 dir="auto" {...props} />,
   };
 }
 
 const REMARK_PLUGINS = [remarkGfm];
+const VARIANT_CLASS = { default: "", detail: " prose-of-detail", work: " prose-of-work" } as const;
 
 /** GFM markdown, no raw HTML (no rehype-raw), default URL sanitizing. Callers constrain the width.
  *  Memoized on `source` and `variant`: a parent re-render with the same props doesn't parse again. */
@@ -59,21 +67,24 @@ export const Markdown = memo(function Markdown({
   variant = "default",
 }: {
   source: string;
-  /** "detail": inside a task body, comment or message, headings step down one size (a document never outranks its title). */
-  variant?: "default" | "detail";
+  /** "detail": a task body, comment or any speaker's markdown in a session; headings step down one
+   *  size (a document never outranks its title). "work": tool output, 13/20 (U3 §7.3). */
+  variant?: "default" | "detail" | "work";
 }) {
   const newTabNoteId = useId();
   const components = useMemo(() => makeComponents(newTabNoteId), [newTabNoteId]);
+  // The link note sits after the prose, never in it: as its last child it would keep the last block's
+  // bottom margin (typography zeroes only the last child's), and rows inside a turn would drift apart.
   return (
-    <div
-      className={`prose prose-sm prose-of max-w-none${variant === "detail" ? " prose-of-detail" : ""}`}
-    >
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
-        {source}
-      </ReactMarkdown>
+    <>
+      <div className={`prose prose-sm prose-of max-w-none${VARIANT_CLASS[variant]}`}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+          {source}
+        </ReactMarkdown>
+      </div>
       <span id={newTabNoteId} hidden>
         Opens in a new tab
       </span>
-    </div>
+    </>
   );
 });

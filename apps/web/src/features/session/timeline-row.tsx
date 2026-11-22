@@ -6,12 +6,13 @@ import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { CompactionMarker } from "./compaction-marker";
-import { formatDuration } from "./format";
+import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
-import type { Row } from "./rows";
+import { isNoticeKind, type Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
+import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
@@ -262,6 +263,8 @@ export interface TimelineRowProps {
   rowProps(row: Row): Record<string, unknown>;
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
+  /** A top-level tool row's time, in its own line on hover or focus (U3 §7.5); never its children's. */
+  toolTime?: string;
 }
 
 export function TimelineRow(props: TimelineRowProps) {
@@ -274,11 +277,7 @@ export function TimelineRow(props: TimelineRowProps) {
           <MessageBlock
             from={row.message.from}
             // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
-            system={
-              row.message.kind === "system" ||
-              row.message.kind === "task_assigned" ||
-              row.message.kind === "task_update"
-            }
+            system={isNoticeKind(row.message.kind)}
             body={row.message.body}
             urgent={row.message.urgent}
             at={row.at}
@@ -338,7 +337,11 @@ export function TimelineRow(props: TimelineRowProps) {
     case "text":
       return (
         <div {...rp}>
-          <Markdown source={row.text} />
+          {/* The turn's first text, and the first after an incoming message (U3 §7.2). */}
+          {row.head && <SpeakerLine from={props.slug} self at={row.at} />}
+          <div dir="auto">
+            <Markdown source={row.text} variant="detail" />
+          </div>
         </div>
       );
     case "tool":
@@ -348,9 +351,10 @@ export function TimelineRow(props: TimelineRowProps) {
           expanded={expanded.has(row.key)}
           onToggle={() => toggle(row.key)}
           rowProps={rp}
+          time={props.toolTime}
         >
           {row.children.map((c) => (
-            <TimelineRow key={c.key} {...props} row={c} />
+            <TimelineRow key={c.key} {...props} toolTime={undefined} row={c} />
           ))}
         </ToolCallRow>
       );
@@ -363,7 +367,14 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp} className="space-y-1">
           <p className="flex items-center gap-1.5 text-sm">
             <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-            {row.event.message}
+            <span className="min-w-0">
+              {row.event.message}
+              {row.count !== undefined && row.lastAt !== undefined && (
+                <span className="text-muted-foreground tabular-nums">
+                  {` · ${row.count} times · last ${formatLastAt(new Date(row.lastAt), new Date())}`}
+                </span>
+              )}
+            </span>
           </p>
           {row.event.fix && (
             <p>

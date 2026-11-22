@@ -28,12 +28,14 @@ import {
   summaryFromAgentsList,
 } from "./api";
 import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
+import { childrenOf } from "./display-passes";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
 import type { CancelledEntry } from "./session-state";
+import { SpeakerProvider } from "./speaker-line";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
@@ -93,7 +95,8 @@ export function SessionView({
     qc.getQueryData(agentDetailQueryOptions(slug).queryKey)?.agent;
   // The announcer hears the loaded agent only: a stale summary's status turning into the real one
   // isn't a transition.
-  const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rows, !!loaded);
+  // The unmerged rows: a repeated failure folded into one timeline row is still announced (U3 §7.6).
+  const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rawRows, !!loaded);
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
@@ -263,58 +266,71 @@ export function SessionView({
           </p>
         )}
         {s.error && <LoadError message={s.error.message} onRetry={() => void s.retry()} />}
-        {loaded ? (
-          <Timeline
-            ref={panel.timeline}
-            slug={slug}
-            spawned={agent.kind === "ephemeral"}
-            rows={s.rows}
-            failedIds={s.failedIds}
-            interruptedEnds={s.interruptedEnds}
-            liveAfter={s.state.liveAfter}
-            handedOff={s.state.handedOff}
-            highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
-            highlightMessageId={eventSeq === undefined ? messageId : undefined}
-            hasMoreBefore={s.state.hasMoreBefore}
-            onLoadEarlier={s.loadEarlier}
-            earlierError={s.earlierError}
-            windowed={s.state.windowed}
-            newSpeech={s.state.newSpeech}
-            onLeaveWindow={leaveWindow}
-            footer={
-              <>
-                {s.rows.length === 0 &&
-                  s.state.queue.length === 0 &&
-                  s.state.sending.length === 0 &&
-                  s.state.cancelled.size === 0 && (
-                    <p className="text-sm text-muted-foreground">
-                      {archived ? "No messages yet." : "No messages yet. Send the first one below."}
-                    </p>
+        {/* One speaker index for every row (U3 §7.2, m7): the agent as primitives, so a status frame
+            changes nothing in it. Mounted while the events load, so the users and agents lists
+            fetch alongside them and no name pops in after the first paint. */}
+        <SpeakerProvider
+          slug={agent.slug}
+          displayName={agent.displayName}
+          template={agent.template}
+          kind={agent.kind}
+          avatarVersion={agent.avatarVersion}
+        >
+          {loaded ? (
+            <Timeline
+              ref={panel.timeline}
+              slug={slug}
+              spawned={agent.kind === "ephemeral"}
+              rows={s.rows}
+              failedIds={s.failedIds}
+              interruptedEnds={s.interruptedEnds}
+              liveAfter={s.state.liveAfter}
+              handedOff={s.state.handedOff}
+              highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
+              highlightMessageId={eventSeq === undefined ? messageId : undefined}
+              hasMoreBefore={s.state.hasMoreBefore}
+              onLoadEarlier={s.loadEarlier}
+              earlierError={s.earlierError}
+              windowed={s.state.windowed}
+              newSpeech={s.state.newSpeech}
+              onLeaveWindow={leaveWindow}
+              footer={
+                <>
+                  {s.rows.length === 0 &&
+                    s.state.queue.length === 0 &&
+                    s.state.sending.length === 0 &&
+                    s.state.cancelled.size === 0 && (
+                      <p className="text-sm text-muted-foreground">
+                        {archived
+                          ? "No messages yet."
+                          : "No messages yet. Send the first one below."}
+                      </p>
+                    )}
+                  {/* Time order under the last row: now, then next (U3 §5.2). */}
+                  {agent.turnOpen && !s.state.windowed && (
+                    <TurnActivity
+                      open={s.open}
+                      startedAt={agent.turnStartedAt}
+                      turnKey={String(s.state.turnEpoch)}
+                      compacting={agent.compacting === true}
+                    />
                   )}
-                {/* Time order under the last row: now, then next (U3 §5.2). */}
-                {agent.turnOpen && !s.state.windowed && (
-                  <TurnActivity
-                    open={s.open}
-                    startedAt={agent.turnStartedAt}
-                    turnKey={String(s.state.turnEpoch)}
-                    compacting={agent.compacting === true}
+                  <QueueItems
+                    items={s.state.queue}
+                    sending={s.state.sending}
+                    agent={agent}
+                    cancelled={s.state.cancelled}
+                    self={me?.user.handle}
+                    onCancel={onCancel}
+                    onUndo={onUndo}
                   />
-                )}
-                <QueueItems
-                  items={s.state.queue}
-                  sending={s.state.sending}
-                  agent={agent}
-                  cancelled={s.state.cancelled}
-                  self={me?.user.handle}
-                  onCancel={onCancel}
-                  onUndo={onUndo}
-                />
-              </>
-            }
-          />
-        ) : (
-          <TimelineSkeleton />
-        )}
+                </>
+              }
+            />
+          ) : (
+            <TimelineSkeleton />
+          )}
+        </SpeakerProvider>
         <div role="status" aria-live="polite" className="sr-only">
           {announce}
         </div>
@@ -409,15 +425,15 @@ type RowScan = {
 /** What the announcer needs from the rows, in one walk rather than a scan per question. */
 function scanRows(rows: Row[]): RowScan {
   const scan: RowScan = { outgoing: [], highestSeq: 0, errorCount: 0, lastError: undefined };
-  const walk = (list: Row[], top: boolean) => {
+  const walk = (list: readonly Row[], top: boolean) => {
     for (const r of list) {
       if (r.seq > scan.highestSeq) scan.highestSeq = r.seq;
       if (r.kind === "outgoing") scan.outgoing.push(r);
-      else if (r.kind === "tool") walk(r.children, false);
       else if (top && r.kind === "error") {
         scan.errorCount++;
         scan.lastError = r;
       }
+      walk(childrenOf(r), false);
     }
   };
   walk(rows, true);

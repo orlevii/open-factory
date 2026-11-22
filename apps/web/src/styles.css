@@ -294,6 +294,68 @@
   }
 }
 
+/* Timeline rows take the focus ring inset (DESIGN.md → Rows), so it never spills over a neighbour.
+   A deep-linked row focused after a mouse navigation may not match :focus-visible; it carries
+   `data-focus-ring` until blur, drawn the same ("ring = focus", U3 §7.4). */
+[data-row]:focus-visible,
+[data-row][data-focus-ring] {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* Deep-link arrival (U3 §7.4): a 6% signal tint on the row's own box, under its content. After 2s of
+   visible time it fades over 300ms; the attribute stays as "fading" until transitionend, so the fade
+   isn't cut. An opacity fade, so reduced motion keeps it. */
+[data-arrived] {
+  position: relative;
+  isolation: isolate;
+}
+[data-arrived]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--signal) 6%, transparent);
+  transition: opacity 300ms var(--ease-out);
+}
+[data-arrived="fading"]::before {
+  opacity: 0;
+}
+
+/* Copy feedback (U3 §7.5, DESIGN.md → Motion): the icon crossfades to a check, 150ms in with scale
+   0.8→1 and a 1px blur, 100ms out. A keyboard copy stamps `data-instant` (no transition); reduced
+   motion keeps the opacity only. */
+.copy-feedback-idle,
+.copy-feedback-check {
+  transition:
+    opacity 100ms var(--ease-out),
+    scale 100ms var(--ease-out),
+    filter 100ms var(--ease-out);
+}
+.copy-feedback-check {
+  opacity: 0;
+  scale: 0.8;
+  filter: blur(1px);
+}
+[data-copy-feedback="copied"] .copy-feedback-check {
+  opacity: 1;
+  scale: 1;
+  filter: none;
+  transition-duration: 150ms;
+}
+[data-copy-feedback="copied"] .copy-feedback-idle {
+  opacity: 0;
+  transition-duration: 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-feedback-check {
+    scale: 1;
+    filter: none;
+  }
+}
+
 /* Jump to latest (U3 §8.2): transitions, so a show interrupted by a hide reverses from where it is.
    Enter 150ms with a 4px rise, exit 100ms with the drop; reduced motion keeps the fade only (the
    global block only zeroes tw-animate's variables). A key that shows or hides it stamps
@@ -363,9 +425,13 @@
   --tw-prose-pre-bg: var(--code-bg);
   --tw-prose-th-borders: var(--border);
   --tw-prose-td-borders: var(--border);
-  font-size: 0.875rem; /* rem, never px: type follows the reader's browser font-size setting */
-  line-height: 1.375rem;
+  /* Reading prose for speech, task bodies and comments: 15/24. rem, never px: type follows the
+     reader's browser font-size setting. Geist body text is never tracked; only Archivo headings are. */
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  letter-spacing: 0;
 }
+/* Archivo headings: tracking −0.015em at 20px and above, −0.01em at 15–17px, 0 at 14px and below. */
 .prose-of :where(h1, h2, h3, h4) {
   font-family: var(--font-heading);
   letter-spacing: -0.01em;
@@ -373,25 +439,48 @@
 }
 .prose-of :where(h1) {
   font-size: 1.25rem;
+  line-height: 1.75rem;
   letter-spacing: -0.015em;
 }
 .prose-of :where(h2) {
   font-size: 1.0625rem;
+  line-height: 1.5rem;
 }
-.prose-of :where(h3) {
+.prose-of :where(h3, h4) {
   font-size: 0.9375rem;
+  line-height: 1.5rem;
 }
-/* Inside a task body, comment or message the headings step down one size: 17 / 15 / 14. */
+/* Demoted: a task body, comment, or any speaker's markdown in a session: 17 / 16 / 15, so nothing
+   in it outranks the page title. */
 .prose-of-detail :where(h1) {
   font-size: 1.0625rem;
+  line-height: 1.5rem;
   letter-spacing: -0.01em;
 }
 .prose-of-detail :where(h2) {
-  font-size: 0.9375rem;
+  font-size: 1rem;
+  line-height: 1.5rem;
   letter-spacing: -0.01em;
 }
 .prose-of-detail :where(h3, h4) {
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  letter-spacing: -0.01em;
+}
+/* Work tier (tool output rendered as markdown): 13/20, headings 14 / 13 / 13. A modifier on .prose-of,
+   so every overflow rule above and below still applies. */
+.prose-of.prose-of-work {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.prose-of.prose-of-work :where(h1) {
   font-size: 0.875rem;
+  line-height: 1.25rem;
+  letter-spacing: 0;
+}
+.prose-of.prose-of-work :where(h2, h3, h4) {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
   letter-spacing: 0;
 }
 .prose-of :where(a) {
@@ -405,7 +494,7 @@
 }
 
 /* long words, URLs and paths wrap instead of widening the page; table cells break only when they must */
-.prose-of :is(p, li, blockquote) {
+.prose-of :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, dt, dd) {
   overflow-wrap: anywhere;
 }
 .prose-of :is(a, :not(pre) > code):not(td *, th *) {
@@ -439,6 +528,11 @@
   /* biome-ignore lint/complexity/noImportantStyles: beats Shiki's inline background in both themes. */
   background: var(--code-bg) !important;
   overflow-x: auto;
+}
+/* prose-sm sizes every code at 0.857em, the fenced code included: inside a pre it takes the pre's 13/1.55. */
+.prose-of :where(pre code) {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 /* tables */

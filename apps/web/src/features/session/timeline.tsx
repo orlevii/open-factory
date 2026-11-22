@@ -12,16 +12,37 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
+import { childrenOf, heldSeqs } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
-import { TimelineItem } from "./timeline-item";
+import { type Arrival, rowGap, TimelineItem } from "./timeline-item";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 /** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
 export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
+
+/** Visible time the deep-link tint holds before it fades (U3 §7.4, Q28). */
+const ARRIVAL_MS = 2000;
+
+/** Focuses a deep-linked row without scrolling again. A programmatic focus after a mouse navigation
+ *  may not match `:focus-visible`; the row then carries `data-focus-ring`, styled the same, until it
+ *  loses focus ("ring = focus"). */
+function arrive(row: HTMLElement) {
+  row.focus({ preventScroll: true });
+  let visible = false;
+  try {
+    visible = row.matches(":focus-visible");
+  } catch {
+    // An engine without :focus-visible: the stand-in ring.
+  }
+  if (visible) return;
+  row.setAttribute("data-focus-ring", "");
+  row.addEventListener("blur", () => row.removeAttribute("data-focus-ring"), { once: true });
+}
 
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
@@ -72,31 +93,58 @@ export function Timeline(props: {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const [highlight, setHighlight] = useState(props.highlightSeq);
-  const litKey = useMemo(
-    () =>
-      highlight === undefined
-        ? undefined
-        : (props.highlightMessageId !== undefined &&
-            rows.find((r) => rowHasMessage(r, props.highlightMessageId as string))?.key) ||
-          targetRowKey(rows, highlight),
-    [rows, highlight, props.highlightMessageId],
-  );
+  const [highlight] = useState(props.highlightSeq);
+  // The deep link's path: the top-level holder first, the row it lands on last (U3 §7.4).
+  const litPath = useMemo(() => {
+    if (highlight === undefined) return undefined;
+    const id = props.highlightMessageId;
+    const byMessage = id === undefined ? undefined : rows.find((r) => rowHasMessage(r, id))?.key;
+    return byMessage !== undefined ? [byMessage] : targetPath(rows, highlight);
+  }, [rows, highlight, props.highlightMessageId]);
+  const litKey = litPath?.[0];
+  const arrivedKey = litPath?.at(-1);
+  const [arrival, setArrival] = useState<Arrival>();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every rows commit (the height changed).
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    if (litKey !== undefined && !centred.current) {
+    if (litPath !== undefined && !centred.current) {
+      // Inside a group or a call's children: the holders open first, the row is reached next commit.
+      const closed = litPath.slice(0, -1).filter((k) => !expanded.has(k));
+      if (closed.length > 0) {
+        setExpanded((s) => new Set([...s, ...closed]));
+        return;
+      }
       centred.current = true;
       stick.unpin();
-      el.querySelector("[data-highlighted]")?.scrollIntoView?.({ block: "center" });
+      const target = el.querySelector<HTMLElement>(
+        `[data-row="${CSS.escape(litPath.at(-1) ?? "")}"]`,
+      );
+      target?.scrollIntoView?.({ block: "center" });
+      if (target) arrive(target);
+      setArrival("on");
       return;
     }
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-  }, [rows, litKey, stick]);
+  }, [rows, litPath, expanded, stick]);
+
+  // The tint fades after 2s of visible time (U3 §7.4): hidden, the clock stops and keeps what's left.
+  // An effect runs after the row painted, so the 2s start from the first frame that shows it.
+  const visible = useDocumentVisible();
+  const arrivalLeft = useRef(ARRIVAL_MS);
+  useEffect(() => {
+    if (arrival !== "on" || !visible) return;
+    const start = Date.now();
+    const t = setTimeout(() => setArrival("fading"), arrivalLeft.current);
+    return () => {
+      clearTimeout(t);
+      arrivalLeft.current = Math.max(0, arrivalLeft.current - (Date.now() - start));
+    };
+  }, [arrival, visible]);
+  const onArrivedEnd = useCallback(() => setArrival(undefined), []);
 
   const arrived = useMemo(() => arrivedSince(rows, seenSeq, handedOff), [rows, seenSeq, handedOff]);
   const windowed = props.windowed ?? false;
@@ -124,17 +172,6 @@ export function Timeline(props: {
     [stick],
   );
   useEffect(() => registerTimelineRepin(props.slug, stick.repin), [props.slug, stick]);
-
-  // The tint stays until the user clicks somewhere other than the highlighted row.
-  useEffect(() => {
-    if (highlight === undefined) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const lit = scroller.current?.querySelector("[data-highlighted]");
-      if (!lit?.contains(e.target as Node)) setHighlight(undefined);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [highlight]);
 
   const loadEarlier = async () => {
     // The top visible row keeps its place when the earlier rows land above it.
@@ -250,10 +287,12 @@ export function Timeline(props: {
           aria-label="Session"
           aria-live="off"
           onKeyDown={onKeyDown}
-          className="max-w-[52rem] min-w-0 space-y-3"
+          // clip, not hidden: a leak can never scroll the conversation sideways, and the log
+          // doesn't become a scroll container (the scroller around it is overflow-y-auto).
+          className="max-w-[52rem] min-w-0 overflow-x-clip"
         >
           {props.hasMoreBefore && (
-            <div className="flex items-center gap-2">
+            <div className="mb-3 flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={loadEarlier} disabled={loadingEarlier}>
                 {loadingEarlier ? "Loading…" : "Load earlier"}
               </Button>
@@ -272,8 +311,12 @@ export function Timeline(props: {
               slug={props.slug}
               spawned={props.spawned}
               lit={row.key === litKey}
+              arrivedKey={row.key === litKey ? arrivedKey : undefined}
+              arrival={row.key === litKey ? arrival : undefined}
+              onArrivedEnd={onArrivedEnd}
               live={row.seq > liveAfter && row.kind !== "turn_footer" && !handedOff.has(row.key)}
               firstOfSeq={rows[i - 1]?.seq !== row.seq}
+              gap={rowGap(row, rows[i - 1])}
               tabKey={tabKey}
               expanded={expanded}
               failedIds={props.failedIds}
@@ -282,7 +325,12 @@ export function Timeline(props: {
               onRowFocus={onRowFocus}
             />
           ))}
-          {props.footer}
+          {/* Under the rows (activity line, queue): 12px apart as before, 24px after a turn footer. */}
+          <div
+            className={`space-y-3 empty:hidden ${rows.length === 0 ? "" : rows.at(-1)?.kind === "turn_footer" ? "mt-6" : "mt-3"}`}
+          >
+            {props.footer}
+          </div>
         </div>
       </div>
       {/* Centred on the 52rem column, not the scroller. */}
@@ -301,20 +349,17 @@ export function Timeline(props: {
   );
 }
 
-/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq. */
+/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq, and a merged failure
+ *  its first while holding later ones (the Jump pill compares its last). */
 function maxSeq(rows: Row[]): number {
   let max = 0;
-  for (const r of rows) if (r.seq > max) max = r.seq;
+  for (const r of rows) max = Math.max(max, r.seq, heldSeqs(r)?.at(-1) ?? 0);
   return max;
 }
 
-/** Only rows that are mounted: children of collapsed tools are not. */
-const hasKey = (rows: Row[], key: string, expanded: ReadonlySet<string>): boolean =>
-  rows.some(
-    (r) =>
-      r.key === key ||
-      (r.kind === "tool" && expanded.has(r.key) && hasKey(r.children, key, expanded)),
-  );
+/** Only rows that are mounted: children of collapsed rows are not. */
+const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>): boolean =>
+  rows.some((r) => r.key === key || (expanded.has(r.key) && hasKey(childrenOf(r), key, expanded)));
 
 /** True when the row shows the envelope (or one of its merged ids / parts). */
 function rowHasMessage(row: Row, id: string): boolean {
@@ -326,15 +371,34 @@ function rowHasMessage(row: Row, id: string): boolean {
   return false;
 }
 
-const containsSeq = (rows: Row[], seq: number): boolean =>
-  rows.some((r) => r.seq === seq || (r.kind === "tool" && containsSeq(r.children, seq)));
+const containsSeq = (rows: readonly Row[], seq: number): boolean =>
+  rows.some(
+    (r) => r.seq === seq || !!heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq),
+  );
 
-/** The row a deep link lands on: its own row, else the tool row holding it, else the nearest later
- *  row (hidden events such as `usage` have none), else the last row. */
+/** The keys from the top-level holder down to the row a deep link lands on (U3 §7.4): a seq inside a
+ *  call's children descends to its own row, so the holders can be expanded first; a merged failure is
+ *  its own landing row. The top level follows `targetRowKey`. */
+export function targetPath(rows: Row[], seq: number): string[] | undefined {
+  const top = targetRowKey(rows, seq);
+  if (top === undefined) return undefined;
+  const path = [top];
+  let row = rows.find((r) => r.key === top);
+  while (row && row.seq !== seq && !heldSeqs(row)?.includes(seq)) {
+    const kids = childrenOf(row);
+    row = kids.find((c) => c.seq === seq) ?? kids.find((c) => containsSeq(childrenOf(c), seq));
+    if (row) path.push(row.key);
+  }
+  return path;
+}
+
+/** The row a deep link lands on: its own row, else the row holding it (a merged failure's repeat
+ *  included), else the nearest later row
+ *  (hidden events such as `usage` have none), else the last row. */
 export function targetRowKey(rows: Row[], seq: number): string | undefined {
   return (
     rows.find((r) => r.seq === seq)?.key ??
-    rows.find((r) => r.kind === "tool" && containsSeq(r.children, seq))?.key ??
+    rows.find((r) => heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq))?.key ??
     rows.find((r) => r.seq > seq)?.key ??
     rows.at(-1)?.key
   );

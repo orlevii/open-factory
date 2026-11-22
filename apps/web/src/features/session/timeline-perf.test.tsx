@@ -85,6 +85,27 @@ vi.mock("./rows", async (orig) => {
     },
   };
 });
+/** Off: the real display passes. On: a stand-in for `mergeFailures` (Task 19) that folds repeated
+ *  identical errors into the first, so the announcer can be shown to read the unmerged rows. */
+const passes = vi.hoisted(() => ({ mergeErrors: false, rebuild: false }));
+vi.mock("./display-passes", async (orig) => {
+  const m = await orig<typeof import("./display-passes")>();
+  return {
+    ...m,
+    runDisplayPasses: (raw: Row[]) => {
+      // A pass that builds a new object for every row (as a grouping pass does for its groups).
+      if (passes.rebuild) return raw.map((r) => ({ ...r }));
+      if (!passes.mergeErrors) return m.runDisplayPasses(raw);
+      const seen = new Set<string>();
+      return raw.filter((r) => {
+        if (r.kind !== "error") return true;
+        if (seen.has(r.event.message)) return false;
+        seen.add(r.event.message);
+        return true;
+      });
+    },
+  };
+});
 vi.mock("@/components/markdown/markdown", async (orig) => {
   const m = await orig<typeof import("@/components/markdown/markdown")>();
   return {
@@ -203,6 +224,8 @@ const rerendered = (newKeys: string[] = []) =>
   Object.fromEntries([...count.rows].filter(([k]) => !newKeys.includes(k)));
 
 beforeEach(() => {
+  passes.mergeErrors = false;
+  passes.rebuild = false;
   vi.stubGlobal("fetch", () => new Promise(() => {})); // the sender lookups never settle
   detail = { agent: agentSummary(), queue: [], lastSeq: 200 };
 });
@@ -279,6 +302,77 @@ test("one appended assistant text renders exactly one new row and one markdown",
   expect(screen.getByText("Text 201")).toBeInTheDocument();
   expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
   expect(count.markdown).toBe(1);
+});
+
+/** Every row of `before` is the same object in `after`, except the keys named. */
+const keptIdentity = (before: Row[], after: Row[], changed: string[] = []) => {
+  const byKey = new Map(after.map((r) => [r.key, r]));
+  const lost = before.filter((r) => !changed.includes(r.key) && byKey.get(r.key) !== r);
+  expect(lost.map((r) => r.key)).toEqual([]);
+};
+
+test("a frame that appends one row keeps every other row's identity through both stabilizations", async () => {
+  await setup();
+  const raw = seen?.rawRows ?? [];
+  const final = seen?.rows ?? [];
+  expect(final.length).toBeGreaterThan(0);
+  push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
+  frame();
+  expect(seen?.rawRows).toHaveLength(raw.length + 1);
+  expect(seen?.rows).toHaveLength(final.length + 1);
+  keptIdentity(raw, seen?.rawRows ?? []);
+  keptIdentity(final, seen?.rows ?? []);
+});
+
+test("rows a display pass rebuilds keep their identity through the second stabilization", async () => {
+  passes.rebuild = true;
+  await setup();
+  const final = seen?.rows ?? [];
+  push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
+  frame();
+  keptIdentity(final, seen?.rows ?? []);
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+});
+
+test("a repeated failure keeps the first occurrence's row: no new key, no remount, no fade", async () => {
+  await setup();
+  const boom = (seq: number) =>
+    sessionEvent(ev(seq, { type: "error", source: "api", code: "x", message: "boom" }, null));
+  push(boom(201));
+  frame();
+  // The tab coming back spends the first failure's fade.
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const wrap = document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]");
+  expect(wrap).not.toBeNull();
+  expect(wrap).not.toHaveAttribute("data-live");
+  const wraps = document.querySelectorAll("[data-row-wrap]").length;
+  reset();
+  push(boom(202));
+  frame();
+  expect(document.querySelector('[data-row="202"]')).toBeNull();
+  expect(document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]")).toBe(wrap);
+  expect(wrap).not.toHaveAttribute("data-live");
+  expect(document.querySelectorAll("[data-row-wrap]")).toHaveLength(wraps);
+  expect(wrap?.textContent).toContain("2 times");
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+  expect(count.markdown).toBe(0);
+});
+
+test("a tool_result keeps every other row's identity through both stabilizations", async () => {
+  await setup();
+  const raw = seen?.rawRows ?? [];
+  const final = seen?.rows ?? [];
+  push(
+    sessionEvent(
+      ev(201, { type: "tool_result", toolUseId: "tu-run", content: "ok", isError: false }),
+    ),
+  );
+  frame();
+  keptIdentity(raw, seen?.rawRows ?? [], ["5"]);
+  keptIdentity(final, seen?.rows ?? [], ["5"]);
+  expect(seen?.rows.find((r) => r.key === "5")).toBe(seen?.rawRows.find((r) => r.key === "5"));
 });
 
 test("a tool_result for a running tool re-renders exactly that tool row", async () => {
@@ -358,7 +452,7 @@ test("a row added live gets its controls out of the tab order; the tab row's sta
 });
 
 // itemPropsEqual (spec §9.4): a nested child's own state decides whether its parent item re-renders.
-const child: Row = { kind: "text", seq: 4, text: "nested", key: "4" };
+const child: Row = { kind: "text", seq: 4, at, text: "nested", key: "4", head: false };
 const parent: Row = {
   kind: "tool",
   seq: 3,
@@ -372,8 +466,12 @@ const props = (over: Partial<TimelineItemProps> = {}): TimelineItemProps => ({
   row: parent,
   slug: "dev",
   lit: false,
+  arrivedKey: undefined,
+  arrival: undefined,
+  onArrivedEnd: noop,
   live: false,
   firstOfSeq: true,
+  gap: "",
   tabKey: "1",
   expanded: new Set(),
   failedIds: new Set(),
@@ -397,6 +495,14 @@ test("itemPropsEqual: unrelated keys and fresh but equal sets are not a change",
   expect(itemPropsEqual(props(), props({ failedIds: new Set(["x"]) }))).toBe(true);
   expect(itemPropsEqual(props(), props({ row: { ...parent } }))).toBe(false);
   expect(itemPropsEqual(props(), props({ lit: true }))).toBe(false);
+  // The deep-link tint's phase reaches only the item holding it.
+  expect(itemPropsEqual(props(), props({ arrivedKey: "4", arrival: "on" }))).toBe(false);
+  expect(
+    itemPropsEqual(
+      props({ arrivedKey: "4", arrival: "on" }),
+      props({ arrivedKey: "4", arrival: "fading" }),
+    ),
+  ).toBe(false);
 });
 
 test("buildRows runs once per events change, not for status or queue frames; open reuses the rendered row", async () => {
@@ -483,4 +589,19 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   expect(count.timeline).toBe(0);
   expect(count.rows.size).toBe(0);
   expect(count.markdown).toBe(0);
+});
+
+test("SessionView: the announcer reads the unmerged rows, so a repeated failure is announced again", async () => {
+  passes.mergeErrors = true;
+  await renderSessionView();
+  const announced = () =>
+    screen.getAllByRole("status").find((el) => el.textContent?.startsWith("Error:"))?.textContent;
+  push(sessionEvent(ev(201, { type: "error", source: "api", message: "boom" }, null)));
+  frame();
+  expect(announced()).toBe("Error: boom");
+  push(sessionEvent(ev(202, { type: "error", source: "api", message: "boom" }, null)));
+  frame();
+  // The merged timeline shows one row; the second failure is still announced (D3).
+  expect(document.querySelectorAll('[data-row="202"]')).toHaveLength(0);
+  expect(announced()).toBe("Error: boom\u200b");
 });

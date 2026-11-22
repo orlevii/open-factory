@@ -26,7 +26,9 @@ const wrap = (ui: ReactNode, seed?: (qc: QueryClient) => void) => wrapQc(ui, see
 test("agent form shows avatar, name and @slug; no native title", () => {
   const { container } = wrap(<AgentChip agent={lead} showSlug />);
   expect(screen.getAllByText("Team Lead")).toHaveLength(1);
-  expect(screen.getAllByText("@lead")).toHaveLength(2); // visible + sr-only
+  // Visible as a middle-truncatable head and tail, whole for screen readers.
+  expect(screen.getAllByText("@lead")).toHaveLength(1);
+  expect(screen.getByText("@le")).toBeInTheDocument();
   expect(container.querySelector("svg")).not.toBeNull();
   expect(container.querySelector("[title]")).toBeNull();
 });
@@ -126,4 +128,22 @@ test("a click on a truncated name inside a link still follows the link", async (
   // Radix closes on pointer down; the trigger must survive it so the click reaches the link.
   await userEvent.click(screen.getByText("Team Lead", { selector: "span:not([role])" }));
   expect(follow).toHaveBeenCalledTimes(1);
+});
+
+test("the slug reserves no minimum width, so a short handle leaves no gap before the time", () => {
+  wrap(<AgentChip agent={lead} showSlug />);
+  const slug = screen.getAllByText("@lead")[0]?.closest(".font-mono") as HTMLElement;
+  expect(slug.className).not.toMatch(/\bmin-w-24\b/);
+});
+
+test("an inline chip keeps name and handle on one line at any width (it truncates, never stacks)", () => {
+  const { container } = wrap(<AgentChip agent={lead} showSlug inline />);
+  expect((container.firstElementChild as HTMLElement).className).not.toMatch(/flex-col/);
+});
+
+test("with the handle shown, the name's tooltip carries it too (kept when the handle hides)", async () => {
+  wrap(<AgentChip agent={lead} showSlug />);
+  // jsdom lays nothing out, so the handle reads as hidden: the name's tooltip arms.
+  await userEvent.hover(screen.getByText("Team Lead").closest("span.flex") as HTMLElement);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Team Lead @lead");
 });

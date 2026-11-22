@@ -26,6 +26,7 @@ import {
   restoreQueued,
 } from "./api";
 import { NETWORK_ERROR } from "./composer";
+import { runDisplayPasses } from "./display-passes";
 import {
   buildRows,
   deliveryFailedIds,
@@ -73,14 +74,20 @@ function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) 
   }, [value]);
   return value;
 }
-type RowsView = { rows: Row[]; open: OpenTurnRows | undefined };
-/** One `buildRows` pass per events change: rows stabilized, `open` mapped onto the stabilized rows. */
-const stableRows = (ev: SessionEvent[], prev: RowsView | undefined): RowsView => {
+type RawView = { rawRows: Row[]; open: OpenTurnRows | undefined };
+/** Steps 1-2 of the rows pipeline (U3 §7.7), once per events change: `buildRows`, then the raw rows
+ *  stabilized against the previous raw rows (`prevRaw`), and `open` mapped onto them. */
+const stableRaw = (ev: SessionEvent[], prev: RawView | undefined): RawView => {
   const built = buildRows(ev);
-  const rows = stabilizeRows(prev?.rows ?? [], built.rows);
-  const open = stabilizeOpen(prev?.open, built.open, rows);
-  return prev && prev.rows === rows && prev.open === open ? prev : { rows, open };
+  const rawRows = stabilizeRows(prev?.rawRows ?? [], built.rows);
+  const open = stabilizeOpen(prev?.open, built.open, rawRows);
+  return prev && prev.rawRows === rawRows && prev.open === open ? prev : { rawRows, open };
 };
+/** Steps 3-4: the display passes over the raw rows, then stabilized against the previous final rows
+ *  (`prevFinal`, kept apart from `prevRaw`), so a grown group is a new object holding the same
+ *  children and every row a pass leaves alone keeps its identity. */
+const stableFinal = (raw: Row[], prev: Row[] | undefined): Row[] =>
+  stabilizeRows(prev ?? [], runDisplayPasses(raw));
 const stableFailedIds = (ev: SessionEvent[], prev: ReadonlySet<string> | undefined) =>
   stableSet(prev, deliveryFailedIds(ev));
 const stableInterruptedEnds = (ev: SessionEvent[], prev: ReadonlySet<number> | undefined) =>
@@ -249,7 +256,10 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   // Already stable: only an event change produces a new array (status and queue frames keep it).
   const events = eventsInOrder(state);
   // Unchanged rows and equal sets keep their identity, so memoized timeline items skip (spec §9.3).
-  const { rows, open } = useStabilized(events, stableRows);
+  // `rawRows` are what the events say (the announcer counts each failure there); `rows` are what the
+  // timeline shows.
+  const { rawRows, open } = useStabilized(events, stableRaw);
+  const rows = useStabilized(rawRows, stableFinal);
   const failedIds = useStabilized(events, stableFailedIds);
   const interruptedEnds = useStabilized(events, stableInterruptedEnds);
 
@@ -343,6 +353,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   return {
     state,
     rows,
+    rawRows,
     open,
     failedIds,
     interruptedEnds,

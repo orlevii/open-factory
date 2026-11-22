@@ -27,16 +27,23 @@ function isTruncated(root: HTMLElement): boolean {
 export function TruncTooltip({
   text,
   className,
+  dir,
+  alsoWhen,
   children,
 }: {
   text: string;
   className?: string;
+  /** "auto" for names: a right-to-left name sets its own direction (bidi). */
+  dir?: "auto";
+  /** Another reason to show the tooltip, checked on hover or focus (a chip's hidden handle). */
+  alsoWhen?(el: HTMLElement): boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [armed, setArmed] = useState(false);
   const check = () => {
-    if (ref.current && isTruncated(ref.current)) setArmed(true);
+    const el = ref.current;
+    if (el && (isTruncated(el) || alsoWhen?.(el))) setArmed(true);
   };
   const span = (
     // biome-ignore lint/a11y/noStaticElementInteractions: measures on hover/focus only; it adds no interaction
@@ -46,6 +53,7 @@ export function TruncTooltip({
       onFocus={check}
       onPointerLeave={() => setArmed(false)}
       onBlur={() => setArmed(false)}
+      dir={dir}
       className={cn("flex min-w-0", className)}
     >
       {children}
@@ -62,7 +70,8 @@ export function TruncTooltip({
   );
 }
 
-type Shown = {
+/** What a chip shows: a full summary, or a projection of one (a speaker index, U3 §7.2). */
+export type ChipAgent = {
   slug: string;
   displayName: string;
   kind?: AgentSummary["kind"];
@@ -73,26 +82,40 @@ type Shown = {
   stub?: boolean;
 };
 
+/** The chip's handle is hidden (a narrow speaker line hides it below 20rem): the name's tooltip
+ *  carries it instead. */
+const slugHidden = (name: HTMLElement) => {
+  // The chip's second line: the name's line comes first.
+  const slug = name.closest("[data-chip]")?.children[1];
+  return !!slug && slug.getClientRects().length === 0;
+};
+
 function ChipView({
   a,
   size,
   showSlug,
   badge,
   link,
+  inline,
   className,
+  slugClassName,
 }: {
-  a: Shown;
+  a: ChipAgent;
   size: Size;
   showSlug: boolean;
   badge: boolean;
   link: boolean;
+  inline: boolean;
   className?: string;
+  slugClassName?: string;
 }) {
   const classes = cn(
-    "inline-flex min-w-0 items-center gap-1.5 @max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
+    "inline-flex min-w-0 items-center gap-1.5",
+    !inline && "@max-[24rem]:flex-col @max-[24rem]:items-start @max-[24rem]:gap-0",
     link && "rounded-sm hover:underline",
     className,
   );
+  const slugShown = showSlug && !a.stub;
   // Each line is capped at the chip's width: stacked (items-start), a line would otherwise size to
   // its content and the name would never truncate.
   const body = (
@@ -105,14 +128,23 @@ function ChipView({
           size={size}
           status={badge ? a.status : undefined}
         />
-        <TruncTooltip text={a.displayName} className="min-w-[min(8rem,45%)]">
+        <TruncTooltip
+          text={slugShown ? `${a.displayName} @${a.slug}` : a.displayName}
+          dir="auto"
+          className="min-w-[min(8rem,45%)]"
+          {...(slugShown ? { alsoWhen: slugHidden } : {})}
+        >
           <AgentName agent={{ displayName: a.displayName, kind: a.kind ?? "persistent" }} />
         </TruncTooltip>
       </span>
-      {showSlug && !a.stub ? (
+      {slugShown ? (
         <TruncTooltip
           text={`@${a.slug}`}
-          className="min-w-24 max-w-full font-mono text-muted-foreground @max-[24rem]:text-xs"
+          className={cn(
+            "max-w-full font-mono text-muted-foreground",
+            !inline && "@max-[24rem]:text-xs",
+            slugClassName,
+          )}
         >
           <MiddleTruncate text={`@${a.slug}`} />
         </TruncTooltip>
@@ -121,11 +153,15 @@ function ChipView({
   );
   if (link)
     return (
-      <Link to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
+      <Link data-chip to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
         {body}
       </Link>
     );
-  return <span className={classes}>{body}</span>;
+  return (
+    <span data-chip className={classes}>
+      {body}
+    </span>
+  );
 }
 
 type ChipProps = {
@@ -135,6 +171,11 @@ type ChipProps = {
   /** Wrap the chip in a link to the agent's page. Never inside another link (a task-list row). */
   link?: boolean;
   className?: string;
+  /** Extra classes for the `@slug` (a speaker line hides it below a 20rem container). */
+  slugClassName?: string;
+  /** Name and handle stay on one line at any width, truncating (a speaker line); otherwise the
+   *  chip stacks them below a 24rem container. */
+  inline?: boolean;
 };
 
 function SlugChip({
@@ -144,12 +185,14 @@ function SlugChip({
   showSlug = false,
   badge = false,
   link = false,
+  inline = false,
   className,
+  slugClassName,
 }: ChipProps & { slug: string; name?: string }) {
   const live = useAgent(slug);
   const ended = useEndedAgent(slug);
   const found = live ?? ended;
-  const a: Shown = found ?? { slug, displayName: name ?? `@${slug}`, stub: !name };
+  const a: ChipAgent = found ?? { slug, displayName: name ?? `@${slug}`, stub: !name };
   return (
     <ChipView
       a={a}
@@ -157,7 +200,9 @@ function SlugChip({
       showSlug={showSlug}
       badge={badge}
       link={link}
+      inline={inline}
       className={className}
+      slugClassName={slugClassName}
     />
   );
 }
@@ -165,10 +210,19 @@ function SlugChip({
 /** Avatar, display name and optionally the muted `@slug`. Pass the agent when you have it; pass
  *  `slug` to resolve it from the cached lists (live, then ended), else the slug stands in. */
 export function AgentChip(
-  props: ({ agent: AgentChipAgent } | { slug: string; name?: string }) & ChipProps,
+  props: ({ agent: AgentChipAgent | ChipAgent } | { slug: string; name?: string }) & ChipProps,
 ) {
   if ("agent" in props) {
-    const { agent, size = 20, showSlug = false, badge = false, link = false, className } = props;
+    const {
+      agent,
+      size = 20,
+      showSlug = false,
+      badge = false,
+      link = false,
+      inline = false,
+      className,
+      slugClassName,
+    } = props;
     return (
       <ChipView
         a={agent}
@@ -176,7 +230,9 @@ export function AgentChip(
         showSlug={showSlug}
         badge={badge}
         link={link}
+        inline={inline}
         className={className}
+        slugClassName={slugClassName}
       />
     );
   }

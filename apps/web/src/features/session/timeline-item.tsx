@@ -1,18 +1,31 @@
-import { memo } from "react";
-import { CopyLink } from "./copy-link";
-import type { Row } from "./rows";
+import { memo, type TransitionEvent, useCallback } from "react";
+import { childrenOf } from "./display-passes";
+import { formatTime } from "./format";
+import { RowMenu, rowMenuItems } from "./row-menu";
+import { isNoticeKind, type Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
+
+/** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
+export type Arrival = "on" | "fading";
 
 export type TimelineItemProps = {
   row: Row;
   slug: string;
   spawned?: boolean;
-  /** The deep-link tint is on this row. */
+  /** This item holds the deep-link target (the row itself, or one of its children). */
   lit: boolean;
+  /** The row the deep link landed on, when this item holds it: it carries the tint (U3 §7.4). */
+  arrivedKey: string | undefined;
+  /** The tint's phase on `arrivedKey`; undefined once it has faded. */
+  arrival: Arrival | undefined;
+  /** The tint's fade finished. Stable. */
+  onArrivedEnd(): void;
   /** Arrived by a live frame and replaces nothing on screen: it fades in once (U3 §8.3). */
   live: boolean;
   /** The first row of its seq carries `id="event-<seq>"` (a message_in can render several rows). */
   firstOfSeq: boolean;
+  /** The space above this row (U3 §7.1), from `rowGap`: a class name, so a primitive. */
+  gap: string;
   tabKey: string | undefined;
   expanded: ReadonlySet<string>;
   failedIds: ReadonlySet<string>;
@@ -23,23 +36,26 @@ export type TimelineItemProps = {
 
 function subtree(row: Row, out: Row[] = []): Row[] {
   out.push(row);
-  if (row.kind === "tool") for (const c of row.children) subtree(c, out);
+  for (const c of childrenOf(row)) subtree(c, out);
   return out;
 }
 
 /** Re-render only when this row, or something that decides how it or a descendant looks, changed
  *  (spec §9.4). */
 export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
-  return a.live === b.live && contentPropsEqual(a, b);
+  return a.live === b.live && a.gap === b.gap && contentPropsEqual(a, b);
 }
 
-/** Everything but `live`: a `live` flip re-renders only the wrap, never the row inside (U3 §8.3). */
+/** Everything but `live` and `gap`: a flip re-renders only the wrap, never the row inside (U3 §8.3). */
 function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
   if (
     a.row !== b.row ||
     a.slug !== b.slug ||
     a.spawned !== b.spawned ||
     a.lit !== b.lit ||
+    a.arrivedKey !== b.arrivedKey ||
+    a.arrival !== b.arrival ||
+    a.onArrivedEnd !== b.onArrivedEnd ||
     a.firstOfSeq !== b.firstOfSeq ||
     a.toggle !== b.toggle ||
     a.onRowFocus !== b.onRowFocus
@@ -63,30 +79,61 @@ function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean 
   return true;
 }
 
-/** The rows' right gutter (room for Copy link): everything under the rows that should line up with them
- *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
+/** Spacing replaces boxes for grouping (U3 §7.1): 24px before a speaker line or a card and after a
+ *  turn footer, 8px between rows inside a turn; nothing above the first row. From the two rows' kinds
+ *  and `head` only, so the class is a primitive and stays put while neither row changes kind. */
+export function rowGap(row: Row, prev: Row | undefined): string {
+  if (!prev) return "";
+  const speaks =
+    row.kind === "message" || row.kind === "outgoing" || (row.kind === "text" && row.head);
+  return speaks || prev.kind === "turn_footer" ? "mt-6" : "mt-2";
+}
+
+/** The rows' right gutter, a fixed 2rem column for the row menu (U3 §7.5): everything unboxed under
+ *  the rows that should line up with them (the activity line, cancelled lines) uses it too. Cards
+ *  span the full column instead, with the ⋯ inside their own padding. */
 export const ROW_GUTTER = "pr-8";
 
-/** One timeline entry: the wrap (deep-link id, tint, live fade), the row and its Copy link. */
+/** A card (U3 §7.1): an envelope that crossed a session boundary. A factory notice is a quiet line. */
+export function isCard(row: Row): boolean {
+  if (row.kind === "outgoing" || row.kind === "spawn") return true;
+  return row.kind === "message" && !isNoticeKind(row.message.kind);
+}
+
+/** One timeline entry: the wrap (deep-link id, live fade), the row, its gutter time and its menu. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   const { row } = p;
   return (
     <div
       data-row-wrap
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
+      // A marker only (no style): the deep link's holder, kept for the page's life; the tint is
+      // `data-arrived` on the row's own box (U3 §7.4).
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+      className={`group relative min-w-0 rounded-md ${isCard(row) ? "" : ROW_GUTTER} ${p.gap}`}
     >
       <ItemContent {...p} />
     </div>
   );
 }, itemPropsEqual);
 
-/** The row and its Copy link, memoized apart from the wrap so the tab coming back (every live row's
- *  `live` turning false at once) re-renders only the wrap divs. */
+/** Agent text shows its time in the gutter on hover or focus (U3 §7.5); a head text row's speaker
+ *  line already shows it, messages keep their visible time, and a tool row puts it in its own line. */
+function gutterTime(row: Row): string | undefined {
+  if (row.kind === "text" && !row.head) return row.at;
+  return undefined;
+}
+
+/** The row, its gutter time and its menu, memoized apart from the wrap so the tab coming back (every
+ *  live row's `live` turning false at once) re-renders only the wrap divs. */
 const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
-  const { row } = p;
+  const { row, slug, toggle } = p;
+  // Per row object, and built only when the menu first opens: a re-render for any other reason
+  // reuses the builder, and a long timeline builds no lists at mount.
+  const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
+  const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
+  const time = gutterTime(row);
   return (
     <>
       <TimelineRow
@@ -99,13 +146,41 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
           "data-row": r.key,
           tabIndex: r.key === p.tabKey ? 0 : -1,
           onFocus: () => p.onRowFocus(r.key),
+          // The tint sits on the row's own box (the card or the row), never the wrap (U3 §7.4).
+          ...(r.key === p.arrivedKey && p.arrival
+            ? {
+                "data-arrived": p.arrival === "fading" ? "fading" : "",
+                onTransitionEnd: (e: TransitionEvent) => {
+                  // Only the tint's own fade: a child's transition bubbles here too.
+                  if (e.target !== e.currentTarget || p.arrival !== "fading") return;
+                  if (e.propertyName && e.propertyName !== "opacity") return;
+                  p.onArrivedEnd();
+                },
+              }
+            : {}),
         })}
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}
+        toolTime={row.kind === "tool" ? row.at : undefined}
       />
-      <CopyLink
-        url={`${location.origin}/agents/${encodeURIComponent(p.slug)}?event=${row.seq}`}
+      {time !== undefined && (
+        // Content | chip | time | ⋯: the time sits just left of the menu, over the text row's end
+        // (agent text has nothing there; a tool row shows its time in its own line).
+        <time
+          data-gutter-time
+          dateTime={time}
+          title={new Date(time).toLocaleString()}
+          className="absolute top-1 right-8 hidden h-6 items-center bg-background px-1 text-[0.8125rem] text-muted-foreground tabular-nums group-focus-within:flex group-hover:flex pointer-coarse:hidden!"
+        >
+          {formatTime(time)}
+        </time>
+      )}
+      <RowMenu
+        items={items}
         focusable={row.key === p.tabKey}
+        callShown={p.expanded.has(row.key)}
+        onToggleCall={onToggleCall}
+        inCard={isCard(row)}
       />
     </>
   );

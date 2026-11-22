@@ -1,7 +1,7 @@
 import { ChevronRight, CircleAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { runInstant } from "@/lib/run-instant";
-import { formatBytes } from "./format";
+import { formatBytes, formatTime } from "./format";
 import { CodePlate } from "./quiet-line";
 import type { Row } from "./rows";
 
@@ -38,12 +38,16 @@ export function ToolCallRow({
   onToggle,
   rowProps,
   children,
+  time,
 }: {
   row: Extract<Row, { kind: "tool" }>;
   expanded: boolean;
   onToggle(): void;
   rowProps: Record<string, unknown>;
   children?: ReactNode;
+  /** A top-level row's time, shown at the line's end on hover or focus (U3 §7.5): content | time | ⋯,
+   *  in the line itself, so it never covers the state. */
+  time?: string;
 }) {
   const summary = toolSummary(row.call.name, row.call.input);
   const state = row.denial ? "Denied" : STATE_LABEL[row.state];
@@ -67,7 +71,8 @@ export function ToolCallRow({
           else onToggle();
         }}
         {...rowProps}
-        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm hover:bg-accent"
+        // `.of-row`: the hover fill and the instant pressed fill; a full-width row never scales.
+        className="of-row flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm"
       >
         <ChevronRight
           aria-hidden="true"
@@ -88,6 +93,18 @@ export function ToolCallRow({
             )}
             {state}
           </span>
+        )}
+        {time !== undefined && (
+          <time
+            data-gutter-time
+            // Not part of the row's name: the title carries it, and on touch the row menu.
+            aria-hidden="true"
+            dateTime={time}
+            title={new Date(time).toLocaleString()}
+            className="hidden shrink-0 text-[0.8125rem] text-muted-foreground tabular-nums group-focus-within:inline group-hover:inline pointer-coarse:hidden!"
+          >
+            {formatTime(time)}
+          </time>
         )}
       </button>
       {row.denial && (

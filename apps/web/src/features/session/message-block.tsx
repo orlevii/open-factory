@@ -1,12 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
+import { clampSource, longestFence } from "@/components/markdown/split-blocks";
 import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
+import { SpeakerLine } from "./speaker-line";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
 export const LINK_CLASS =
@@ -126,14 +128,28 @@ export function MessageBlock(props: {
     late?: boolean | undefined;
     firings?: number | undefined;
   };
+  /** U3 §7.6: a queued (or sending) block, its body clamped at three lines. */
+  brief?: boolean;
   /** U3 §6.4: Cancel on a held message you sent, at the end of the sender line. */
   action?: ReactNode;
   /** U3 §13.2: an optimistic send, in the delivered card's shape with its body muted and named
    *  "Sending"; `label` ("Sending…") takes the time's place once the POST is slow. */
   sending?: { label?: ReactNode };
 }) {
-  const { from, system, body, urgent, at, queued, failed, badge, scheduled, action, sending } =
-    props;
+  const {
+    from,
+    system,
+    body,
+    urgent,
+    at,
+    queued,
+    failed,
+    badge,
+    scheduled,
+    action,
+    sending,
+    brief,
+  } = props;
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -143,68 +159,89 @@ export function MessageBlock(props: {
         ...((scheduled.firings ?? 1) > 1 ? [`covers ${scheduled.firings} runs`] : []),
       ]
     : [];
+  const status = sending ? (
+    sending.label ? (
+      <span className="flex items-center gap-1 text-muted-foreground">
+        <Spinner size="text" />
+        {sending.label}
+      </span>
+    ) : null
+  ) : queued ? (
+    <span className="flex items-center gap-1 text-muted-foreground">
+      <Clock aria-hidden="true" className="size-3.5" />
+      {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
+    </span>
+  ) : null;
+  // A delivered factory notice is no card: a quiet line with the factory mark and its badge, the
+  // body two muted lines clamped with Show all (U3 §7.2), so an assignment's brief isn't swallowed.
+  if (system && !queued && !sending)
+    return (
+      <div data-message-block data-notice className="text-[0.8125rem] leading-[1.125rem]">
+        <div className="flex flex-wrap items-center gap-x-2 text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Factory aria-hidden="true" className="size-3.5 shrink-0" />
+            Factory
+          </span>
+          {badge}
+          {at && <Time at={at} />}
+        </div>
+        <div
+          data-message-body
+          dir="auto"
+          className="mt-0.5 pl-5 text-muted-foreground [--foreground:var(--muted-foreground)]"
+        >
+          {/* A notice's single newlines are its line breaks ("assigned you T-1" / "The task, …"). */}
+          <LinesBody source={body} lines={2} className="[&_p]:whitespace-pre-line" />
+        </div>
+      </div>
+    );
+  const extras = (
+    <>
+      {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
+      {scheduled?.by && (
+        <span className="text-muted-foreground">
+          by{" "}
+          {isAgentSender(scheduled.by) ? (
+            <AgentLink slug={scheduled.by} />
+          ) : (
+            <span className="font-mono text-foreground">{scheduled.by}</span>
+          )}
+        </span>
+      )}
+      {badge}
+      {urgent && !system && (
+        <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
+      )}
+    </>
+  );
   return (
     <div
       data-message-block
       {...(sending ? { role: "group", "aria-label": "Sending" } : {})}
-      className={`rounded-lg border px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
+      // pr-9: the row menu's ⋯ sits inside the card (U3 §7.5); queued and Sending cards keep the same
+      // padding, so a body wraps the same before and after the handoff.
+      className={`rounded-lg border bg-card py-2 pr-9 pl-3 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
-      <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
-        {scheduled ? (
+      {scheduled || system ? (
+        // Scheduler and queued factory notices keep their own sender (S9, S5).
+        <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
           <span className="flex items-center gap-1 text-foreground">
-            <CalendarClock aria-hidden="true" className="size-3.5" />
-            Scheduler
-          </span>
-        ) : system ? (
-          <span className="flex items-center gap-1 text-foreground">
-            <Factory aria-hidden="true" className="size-3.5" />
-            Factory
-          </span>
-        ) : isAgentSender(from) ? (
-          <span>
-            <AgentLink slug={from} name />
-          </span>
-        ) : (
-          <span className="font-mono text-foreground">{from}</span>
-        )}
-        {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
-        {scheduled?.by && (
-          <span className="text-muted-foreground">
-            by{" "}
-            {isAgentSender(scheduled.by) ? (
-              <AgentLink slug={scheduled.by} />
+            {scheduled ? (
+              <CalendarClock aria-hidden="true" className="size-3.5" />
             ) : (
-              <span className="font-mono text-foreground">{scheduled.by}</span>
+              <Factory aria-hidden="true" className="size-3.5" />
             )}
+            {scheduled ? "Scheduler" : "Factory"}
           </span>
-        )}
-        {badge}
-        {urgent && !system && (
-          <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
-        )}
-        {sending ? (
-          sending.label ? (
-            <span className="flex items-center gap-1 text-muted-foreground">
-              <Spinner size="text" />
-              {sending.label}
-            </span>
-          ) : null
-        ) : queued ? (
-          <span className="flex items-center gap-1 text-muted-foreground">
-            <Clock aria-hidden="true" className="size-3.5" />
-            {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
-          </span>
-        ) : at ? (
-          <time
-            dateTime={at}
-            title={new Date(at).toLocaleString()}
-            className="text-muted-foreground"
-          >
-            {formatTime(at)}
-          </time>
-        ) : null}
-        {action && <span className="ml-auto">{action}</span>}
-      </div>
+          {extras}
+          {status ?? (at ? <Time at={at} /> : null)}
+          {action && <span className="ml-auto">{action}</span>}
+        </div>
+      ) : (
+        <SpeakerLine from={from} at={at} status={status} action={action}>
+          {extras}
+        </SpeakerLine>
+      )}
       {notes.length > 0 && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
           {notes.join(" · ")}
@@ -219,19 +256,127 @@ export function MessageBlock(props: {
           reads --foreground, so muting it means pointing that at the muted token. */}
       <div
         data-message-body
+        dir="auto"
         className={
           sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
         }
       >
-        <ClampedMarkdown source={body} />
+        {brief ? <LinesBody source={body} lines={3} /> : <ClampedMarkdown source={body} />}
       </div>
     </div>
   );
 }
 
+function Time({ at }: { at: string }) {
+  return (
+    <time
+      dateTime={at}
+      title={new Date(at).toLocaleString()}
+      className="shrink-0 text-muted-foreground tabular-nums"
+    >
+      {formatTime(at)}
+    </time>
+  );
+}
+
+/** What a clamped body renders while clamped (`clampSource`), well past its visible lines: a 64 KB
+ *  body never lays out in full, and a code block, which `line-clamp` doesn't stop, stays short. */
+const CUT_LINES = 12;
+const CUT_CHARS = 1200;
+/** Past this many rendered characters per line a body surely runs over its lines, so Show all is
+ *  offered where nothing can be measured; once layout has measured the box, the measurement decides. */
+const CHARS_PER_LINE = 120;
+/** Literal classes per line count (Tailwind reads the source): the clamp, and a code plate capped at
+ *  the box's height. A `pre` is its own formatting context, so `line-clamp` skips its lines and its
+ *  clipped lines never reach the box's `scrollHeight`; inside its 24px of padding the cap shows about
+ *  `lines - 1` code lines (13/1.55, about 20px each). Show all is offered for any fence longer. */
+const CLAMP_CLASS = {
+  2: "line-clamp-2 [&_pre]:max-h-12 [&_pre]:overflow-hidden",
+  3: "line-clamp-3 [&_pre]:max-h-[4.5rem] [&_pre]:overflow-hidden",
+} as const;
+
+/**
+ * A body shown as a few lines with Show all (U3 §7.2, §7.6): a factory notice's two muted lines, a
+ * queued or sending message's three. The source is cut before rendering, and the box clamped; overflow
+ * is measured after layout and again when the width changes. `className` (a notice's soft line
+ * breaks) applies to the clamped box.
+ */
+function LinesBody({
+  source,
+  lines,
+  className,
+}: {
+  source: string;
+  lines: 2 | 3;
+  className?: string;
+}) {
+  const [all, setAll] = useState(false);
+  /** undefined until layout has measured the box (or where it can't: no layout). */
+  const [overflows, setOverflows] = useState<boolean | undefined>(undefined);
+  const box = useRef<HTMLDivElement>(null);
+  const cut = useMemo(() => clampSource(source, CUT_LINES, CUT_CHARS), [source]);
+  const long = useMemo(
+    () => cut !== undefined || clampSource(source, lines, lines * CHARS_PER_LINE) !== undefined,
+    [source, cut, lines],
+  );
+  // A fence the capped plate can't show whole: offered however the box measures.
+  const longCode = useMemo(() => longestFence(source) >= lines, [source, lines]);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (all || !el) return;
+    // The box, and each capped plate on its own: a plate's hidden lines never reach the box.
+    const over = (n: HTMLElement) => n.scrollHeight > n.clientHeight + 1;
+    const measure = () =>
+      setOverflows(
+        el.clientHeight > 0
+          ? over(el) || [...el.querySelectorAll<HTMLElement>("pre")].some(over)
+          : undefined,
+      );
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [all]);
+  const more = !all && (cut !== undefined || longCode || (overflows ?? long));
+  return (
+    <>
+      <div
+        ref={box}
+        className={[all ? undefined : CLAMP_CLASS[lines], className].filter(Boolean).join(" ")}
+      >
+        <Markdown source={all ? source : (cut ?? source)} variant="detail" />
+      </div>
+      {more && <ShowAll onShow={() => setAll(true)} />}
+    </>
+  );
+}
+
+/** "Show all", a `data-expands` toggle: the timeline's click capture anchors its row before the body
+ *  expands. The button unmounts, so focus moves to the row first, without scrolling it into view:
+ *  nothing above moves. */
+function ShowAll({ onShow }: { onShow(): void }) {
+  return (
+    <button
+      type="button"
+      data-expands
+      onClick={(e) => {
+        e.currentTarget.closest<HTMLElement>("[data-row]")?.focus({ preventScroll: true });
+        onShow();
+      }}
+      className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
+    >
+      Show all
+    </button>
+  );
+}
+
 const CLAMP_LINES = 40;
 
-/** Bodies over 40 lines clamp with "Show all" (bodies may be up to 64 KB); update parts clamp at 8. */
+/** Message, outgoing and spawn bodies (U3 §7.6; agent text stays unclamped) clamp at 40 lines or 4,000
+ *  rendered characters, whichever comes first, cut at a block boundary with "Show all" (bodies may be
+ *  up to 64 KB); update parts clamp at 8 lines. "Show all" is a `data-expands` toggle: the timeline's
+ *  click capture calls `expandAnchor` on its row before this expands, so nothing above moves. */
 export function ClampedMarkdown({
   source,
   limit = CLAMP_LINES,
@@ -240,22 +385,12 @@ export function ClampedMarkdown({
   limit?: number;
 }) {
   const [all, setAll] = useState(false);
-  const lines = source.split("\n");
-  if (lines.length <= limit || all) return <Markdown source={source} variant="detail" />;
+  const clamped = useMemo(() => clampSource(source, limit), [source, limit]);
+  if (all || clamped === undefined) return <Markdown source={source} variant="detail" />;
   return (
     <>
-      <Markdown source={lines.slice(0, limit).join("\n")} variant="detail" />
-      <button
-        type="button"
-        data-expands
-        onClick={(e) => {
-          e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
-          setAll(true);
-        }}
-        className="mt-1 text-[0.8125rem] text-muted-foreground underline-offset-4 hover:underline"
-      >
-        Show all
-      </button>
+      <Markdown source={clamped} variant="detail" />
+      <ShowAll onShow={() => setAll(true)} />
     </>
   );
 }

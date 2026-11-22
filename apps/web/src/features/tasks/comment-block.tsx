@@ -1,14 +1,23 @@
 import type { TaskActivity } from "@open-factory/shared";
 import { PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
-import { CopyLink } from "@/features/session/copy-link";
 import { formatInboxTime } from "@/features/session/format";
 import { ClampedMarkdown } from "@/features/session/message-block";
+import { RowMenu, type RowMenuItem } from "@/features/session/row-menu";
 
 type Comment = Extract<TaskActivity, { type: "comment" }>;
 
 export const authorName = (c: Comment["author"]) => (c.kind === "agent" ? c.slug : c.handle);
 export const authorMention = (c: Comment["author"]) => `@${authorName(c)}`;
+
+/** A comment's menu: its deep link and its markdown source (U3 §7.5's row menu). */
+function commentMenu(taskKey: string, comment: Comment): RowMenuItem[] {
+  const url = `${location.origin}/tasks/${encodeURIComponent(taskKey)}?comment=${encodeURIComponent(comment.id)}`;
+  return [
+    { kind: "copy", label: "Copy link", text: url },
+    { kind: "copy", label: "Copy text", text: comment.body },
+  ];
+}
 
 /** One comment (UI design §7): S3's message block, with Reply and a link to this comment. */
 export function CommentBlock({
@@ -52,11 +61,7 @@ export function CommentBlock({
         </Button>
       </div>
       <ClampedMarkdown source={comment.body} />
-      <CopyLink
-        url={`${location.origin}/tasks/${encodeURIComponent(taskKey)}?comment=${encodeURIComponent(comment.id)}`}
-        label="Copy link to this comment"
-        focusable
-      />
+      <RowMenu items={commentMenu(taskKey, comment)} label="Comment actions" focusable inCard />
     </article>
   );
 }

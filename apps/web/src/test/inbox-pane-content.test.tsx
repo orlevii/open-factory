@@ -532,3 +532,27 @@ test("moving on cancels the request for the item passed over", async () => {
   await waitFor(() => expect(within(pane()).getByText("dev event 60")).toBeInTheDocument());
   await waitFor(() => expect(signalOf("around=42")?.aborted).toBe(true));
 });
+
+test("the excerpt's speaker lines know the agent and you: its name on head text, 'You' on your message", async () => {
+  setup([item(1, { link: { kind: "session", agentSlug: "dev" } })]);
+  const ev = (seq: number, event: unknown): SessionEvent =>
+    ({ seq, agentSlug: "dev", turnId: "t1", at: at(seq), event }) as SessionEvent;
+  api.on("GET /api/agents/dev/events?", () =>
+    json(
+      page([
+        ev(1, { type: "assistant_text", text: "agent says" }),
+        ev(2, {
+          type: "message_in",
+          messages: [{ id: "x1", from: "@alice", kind: "message", body: "I reply", urgent: false }],
+        }),
+      ]),
+    ),
+  );
+  await visit("/inbox?item=i1");
+  const p = pane();
+  const text = await within(p).findByText("agent says");
+  const head = text.closest("div:has(> [data-speaker-line])") as HTMLElement;
+  expect(within(head).getByText("Dev agent")).toBeInTheDocument();
+  const mine = within(p).getByText("I reply").closest("[data-message-block]") as HTMLElement;
+  expect(await within(mine).findByText("You")).toBeInTheDocument();
+});

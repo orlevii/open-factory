@@ -64,7 +64,8 @@ test("renders the conversation: sender badge, collapsed tool call, text, compact
   renderApp("/agents/dev", alice);
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   const log = screen.getByRole("log", { name: "Session" });
-  expect(within(log).getByText("@or")).toBeInTheDocument();
+  // the heading comes from the agent detail; the events are a second request, so wait for the first row
+  expect(await within(log).findByText("@or")).toBeInTheDocument();
   expect(within(log).getByText("Urgent")).toBeInTheDocument();
   expect(within(log).getByText("list")).toBeInTheDocument(); // markdown rendered
   expect(log.textContent).not.toMatch(/factory-message/);
@@ -185,16 +186,17 @@ test("a windowed view subscribes from the agent's lastSeq, not the highest seq o
   expect(ws.sent).not.toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 });
 });
 
-test("the deep-link tint stays until a click elsewhere", async () => {
+test("a deep link focuses its row, and a click elsewhere doesn't take the target away", async () => {
   routes["/api/agents/dev/events?around=5"] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
   renderApp("/agents/dev?event=5", alice);
   await screen.findByText("Two entries.");
-  const row = document.getElementById("event-5");
-  await userEvent.click(within(row as HTMLElement).getByRole("button", { name: /Bash/ }));
-  expect(row).toHaveAttribute("data-highlighted", "true");
+  const wrap = document.getElementById("event-5") as HTMLElement;
+  const row = wrap.querySelector("[data-row]") as HTMLElement;
+  await vi.waitFor(() => expect(row).toHaveFocus());
+  expect(row).toHaveAttribute("data-arrived");
   await userEvent.click(screen.getByText("Two entries."));
-  expect(row).not.toHaveAttribute("data-highlighted");
+  expect(wrap).toHaveAttribute("data-highlighted", "true");
 });
 
 test("Jump to latest leaves the window and loads the newest page", async () => {
@@ -402,7 +404,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
   expect(scroller.scrollTop).toBe(900);
 });
 
-test("Tab leaves the timeline: only the active row, its controls and its Copy link are tabbable; Enter enters a row", async () => {
+test("Tab leaves the timeline: only the active row, its controls and its row menu are tabbable; Enter enters a row", async () => {
   routes["/api/agents/dev/events?"] = () => {
     const c = conversation();
     resetSeq();
@@ -439,7 +441,7 @@ test("Tab leaves the timeline: only the active row, its controls and its Copy li
     );
   const first = log.querySelector<HTMLElement>("[data-row]") as HTMLElement;
   first.focus(); // the click made the Bash row active; the first row is active from here
-  // The active row, its own controls (UI design §5) and its Copy link; every other row's controls
+  // The active row, its own controls (UI design §5) and its row menu; every other row's controls
   // (the expanded code plates, the later link) stay out of the tab order.
   await vi.waitFor(() => expect(tabbable().length).toBeLessThanOrEqual(3));
   expect(within(log).getByRole("link", { name: "site" })).toHaveAttribute("tabindex", "-1");
@@ -466,7 +468,8 @@ test("Copy link says so inline when the clipboard refuses", async () => {
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const row = document.getElementById("event-7") as HTMLElement;
-  fireEvent.click(within(row).getByRole("button", { name: "Copy link" }));
+  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(await within(row).findByText("Couldn't copy")).toBeInTheDocument();
 });
 

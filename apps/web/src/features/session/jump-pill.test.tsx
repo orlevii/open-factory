@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
-import { JumpPill } from "./jump-pill";
+import { arrivedSince, JumpPill } from "./jump-pill";
 import { isSpeechRow, type Row } from "./rows";
 import { Timeline } from "./timeline";
 
@@ -50,7 +50,14 @@ const msg = (seq: number, i = 0): Row =>
     at: "2026-11-21T00:00:00.000Z",
     message: { id: `m${seq}`, from: "@or", kind: "message", urgent: false, body: `m${seq}` },
   }) as unknown as Row;
-const text = (seq: number): Row => ({ kind: "text", seq, text: `t${seq}`, key: `${seq}` });
+const text = (seq: number): Row => ({
+  kind: "text",
+  seq,
+  at: "2026-11-21T00:00:00.000Z",
+  text: `t${seq}`,
+  key: `${seq}`,
+  head: false,
+});
 const quiet = (seq: number): Row =>
   ({
     kind: "error",
@@ -108,6 +115,16 @@ test("scrolled up, speech rows count as messages; other rows alone say New outpu
   expect(pill()).toHaveAccessibleName("3 new messages");
 });
 
+test("a merged failure as the last row: scrolling up shows no false New output", () => {
+  const merged = { ...quiet(3), count: 3, seqs: [3, 4, 5] } as Row;
+  const t = setup({ rows: [msg(1), text(2), merged] });
+  t.scrollUp();
+  expect(pill()).not.toHaveAttribute("data-shown");
+  // A real repeat folded into it is still new.
+  t.rerender([msg(1), text(2), { ...merged, count: 4, seqs: [3, 4, 5, 6] } as Row]);
+  expect(pill()).toHaveAccessibleName("New output");
+});
+
 test("a handed-off row doesn't count again", () => {
   const t = setup();
   t.scrollUp();
@@ -159,4 +176,10 @@ test("End in the log focuses the last loaded row and re-pins; it never leaves th
   expect(document.activeElement).toBe(document.querySelector('[data-row="2"]'));
   expect(t.scroller.scrollTop).toBe(2000);
   expect(onLeaveWindow).not.toHaveBeenCalled();
+});
+
+test("a repeat folded into a failure above what was seen still counts as new output", () => {
+  const merged = { ...quiet(5), count: 2, seqs: [5, 9] } as unknown as Row;
+  expect(arrivedSince([text(1), merged], 6, new Set())).toEqual({ speech: 0, other: true });
+  expect(arrivedSince([text(1), merged], 9, new Set())).toEqual({ speech: 0, other: false });
 });

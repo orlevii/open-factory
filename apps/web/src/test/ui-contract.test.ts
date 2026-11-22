@@ -33,6 +33,25 @@ describe("styles.css", () => {
     );
     expect(descendantFreeze).toEqual([]);
   });
+  const rules = () => [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{};]+){([^{}]*)}/g)];
+  test("markdown headings and definition lists wrap long words like paragraphs do (#82)", () => {
+    const anywhere = rules()
+      .filter(([, , body]) => /overflow-wrap:\s*anywhere/.test(body ?? ""))
+      .map(([, sel]) => (sel ?? "").trim());
+    for (const el of ["h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd"])
+      expect(
+        anywhere.some((s) => s.startsWith(".prose-of") && new RegExp(`\\b${el}\\b`).test(s)),
+        el,
+      ).toBe(true);
+  });
+  test(".prose-of-work is a modifier on .prose-of, so it keeps every .prose-of rule", () => {
+    const work = rules()
+      .flatMap(([, sel]) => (sel ?? "").split(","))
+      .map((s) => s.trim())
+      .filter((s) => s.includes("prose-of-work"));
+    expect(work.length).toBeGreaterThan(0);
+    for (const s of work) expect(s.startsWith(".prose-of.prose-of-work")).toBe(true);
+  });
 });
 
 describe("overlay surfaces", () => {

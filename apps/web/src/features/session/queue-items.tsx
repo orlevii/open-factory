@@ -38,6 +38,10 @@ const SLOW_SEND_MS = 400;
 /** A queue item younger than this (since its send) doesn't say "Not delivered yet". */
 const YOUNG_ITEM_MS = 300;
 
+/** More queued messages than this fold: the first `FOLD_SHOWN` show, then "+N more queued" (U3 §7.6). */
+const FOLD_OVER = 3;
+const FOLD_SHOWN = 2;
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** One quiet line per held group (S6 UI design §2.6): fixed text, nothing ticks, outside any live
@@ -102,17 +106,43 @@ export function QueueItems({
 }) {
   const reason = heldReason(agent);
   const view = queueView(items, cancelled);
+  // Once unfolded, a long queue stays unfolded; `revealFrom` is the first block the disclosure
+  // revealed, which takes the focus from it.
+  const [unfolded, setUnfolded] = useState(false);
+  const [revealFrom, setRevealFrom] = useState<string>();
   let peerChanges = 0;
   let firstPeer: QueueItem | undefined;
+  let blocks = 0;
   for (const v of view) {
-    if (v.kind !== "item" || v.item.kind !== "held" || v.item.waitReason !== "ride_along") continue;
+    if (v.kind !== "item") continue;
+    if (v.item.kind === "message" || v.item.kind === "notice") blocks++;
+    if (v.item.kind !== "held" || v.item.waitReason !== "ride_along") continue;
     peerChanges += v.item.count ?? 1;
     firstPeer ??= v.item;
   }
+  const folded = !unfolded && blocks > FOLD_OVER;
+  let block = 0;
   // One array: a send and the queue item that replaces it share a key, so the node stays (§8.3).
   const out: ReactNode[] = view.map((v) => {
     if (v.kind === "cancelled") return <CancelledLine key={v.id} {...v} onUndo={onUndo} />;
     const q = v.item;
+    const index = q.kind === "message" || q.kind === "notice" ? block++ : -1;
+    if (folded && index >= FOLD_SHOWN)
+      return index === FOLD_SHOWN ? (
+        <div key="fold" className={`pt-3 ${ROW_GUTTER}`}>
+          <button
+            type="button"
+            data-expands
+            onClick={() => {
+              setRevealFrom(q.clientMessageId ?? q.id);
+              setUnfolded(true);
+            }}
+            className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground underline-offset-4 hover:underline"
+          >
+            +{blocks - FOLD_SHOWN} more queued
+          </button>
+        </div>
+      ) : null;
     if (q.kind === "held")
       return q.waitReason === "ride_along" ? (
         q === firstPeer && (
@@ -125,7 +155,10 @@ export function QueueItems({
       );
     if (q.kind === "message" || q.kind === "notice")
       return (
-        <OutgoingMessage key={q.clientMessageId ?? q.id}>
+        <OutgoingMessage
+          key={q.clientMessageId ?? q.id}
+          focusOnMount={(q.clientMessageId ?? q.id) === revealFrom}
+        >
           {(young) => (
             <>
               <MessageBlock
@@ -133,7 +166,11 @@ export function QueueItems({
                 system={q.kind === "notice" || (q.taskKey !== undefined && q.from === "@factory")}
                 body={q.body ?? ""}
                 urgent={q.urgent}
-                {...(young ? {} : { queued: { reason: messageReason(q, reason) } })}
+                brief
+                // The reason once, on the first held block; the rest only say they wait (U3 §7.6).
+                {...(young
+                  ? {}
+                  : { queued: { reason: index === 0 ? messageReason(q, reason) : undefined } })}
                 {...(q.scheduleKey
                   ? {
                       scheduled: {
@@ -191,6 +228,7 @@ export function QueueItems({
               from={`@${self ?? "you"}`}
               body={b.body}
               urgent={b.urgent}
+              brief
               sending={
                 slow ? { label: b.urgent ? "Sending · will interrupt the turn" : "Sending…" } : {}
               }
@@ -211,11 +249,21 @@ export function QueueItems({
  */
 function OutgoingMessage({
   sending = false,
+  focusOnMount = false,
   children,
 }: {
   sending?: boolean;
+  /** Revealed by "+N more queued" from under the focus: takes it (its Cancel, else itself). */
+  focusOnMount?: boolean;
   children: (young: boolean, slow: boolean) => ReactNode;
 }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const [focusFirst] = useState(focusOnMount);
+  useLayoutEffect(() => {
+    if (!focusFirst) return;
+    const el = wrap.current;
+    (el?.querySelector<HTMLElement>("[data-cancel-for]") ?? el)?.focus({ preventScroll: true });
+  }, [focusFirst]);
   const [sentAt] = useState(() => (sending ? Date.now() : undefined));
   const [slow, setSlow] = useState(false);
   const [grown, setGrown] = useState(sentAt === undefined);
@@ -229,7 +277,12 @@ function OutgoingMessage({
     const t = setTimeout(() => setGrown(true), Math.max(0, sentAt + YOUNG_ITEM_MS - Date.now()));
     return () => clearTimeout(t);
   }, [sending, grown, sentAt]);
-  return <div className={`pt-3 ${ROW_GUTTER}`}>{children(!grown, sending && slow)}</div>;
+  return (
+    // A card spans the column like the delivered card that replaces it (U3 §7.5): no right gutter.
+    <div ref={wrap} {...(focusFirst ? { tabIndex: -1 } : {})} className="pt-3">
+      {children(!grown, sending && slow)}
+    </div>
+  );
 }
 
 /** "Message cancelled. Undo" in the message's place; after a failed Undo it says why, without Undo

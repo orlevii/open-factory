@@ -18,7 +18,7 @@
 - **Resource rules (the machine was overloaded during U3):**
   1. Only one headless-browser evidence pass runs at a time across all devs: every pass takes the lock `/tmp/of-u4-evidence.lock` (`mkdir`, released in a `trap`), see Task 14.
   2. Evidence passes and full-suite runs never overlap: the full suite also takes the lock. Locally Vitest runs with `--maxWorkers=50%`.
-  3. Every evidence pass kills its browser, server, Vite and throwaway DB when it ends (`trap … EXIT`/`finally`) and leaves no headless Chrome behind (`pgrep -fl 'chrom(e|ium).*--headless'` prints nothing).
+  3. Every evidence pass kills its browser, server, Vite and throwaway DB when it ends (`trap … EXIT`/`finally`) and leaves no headless browser of its own behind: it kills only its own process group (never a global `pkill`, which would kill other teams' passes), and its leak check looks at that group (`pgrep -g $PGID` prints nothing).
   4. Tasks run targeted tests (`pnpm vitest run --maxWorkers=50% <paths>`); the full suite (`pnpm test -- --maxWorkers=50%`) runs only at PR end.
 - **Evidence passes** use a throwaway database and `FACTORY_HOME`, the fake Claude from the U3 harness (`FACTORY_CLAUDE_BIN` → `fake.mjs`), **never real Claude credentials** and never `~/.open-factory-spike`. Each is budgeted (stated per PR) with **one** fix round; anything left goes to the PR body as a finding or a follow-up issue.
 - TDD where logic is pure or hook-shaped: write the failing test, run it, implement, run it, commit. Tests check behaviour, not DESIGN.md prose or token values.
@@ -270,7 +270,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Modify: `apps/web/package.json` (via `pnpm --filter @open-factory/web add --save-exact sonner@2.0.8`), `pnpm-lock.yaml`, `apps/web/src/routes/_app.tsx` (mount `<Toaster />`), `apps/web/src/styles.css` (unlayered `!important` block after the Vaul block), `apps/web/src/components/composer/composer.tsx` (accept `docked?: boolean`; when docked, register its height)
 - Modify: `apps/web/src/features/session/session-view.tsx:237`, `apps/web/src/features/inbox/inbox-pane.tsx:200` (`<Composer docked …>`)
 - Create: `apps/web/src/components/ui/toaster.tsx`, `apps/web/src/lib/composer-height.ts`
-- Test: `apps/web/src/components/ui/toaster.test.tsx`, `apps/web/src/lib/composer-height.test.ts`, `apps/web/src/test/notify-callers.test.ts`
+- Test: `apps/web/src/components/ui/toaster.test.tsx`, `apps/web/src/lib/composer-height.test.ts`
 
 **Interfaces:**
 - Produces:
@@ -283,7 +283,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - CSS block (pin to 2.0.8; selectors from `node_modules/sonner/dist/styles.css` / the injected string in `dist/index.mjs`; verify each one exists before writing it):
   ```css
   /* Sonner 2.0.8 (pinned) injects unlayered rules: 400ms transform/opacity/height, translateY(100%) enter,
-     scaled collapsed stack, z-index 999999999, reduced-motion transition:none. Re-check on upgrade; toaster.test.tsx guards it. */
+     scaled collapsed stack, z-index 999999999, reduced-motion transition:none. Re-check these selectors on any upgrade. */
   [data-sonner-toaster] { z-index: 40 !important; }
   [data-sonner-toast] { transition: transform 200ms var(--ease-out), opacity 200ms var(--ease-out) !important; }
   [data-sonner-toast][data-mounted="false"] { transform: translateY(8px) !important; opacity: 0 !important; }
@@ -293,7 +293,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 - [ ] **Step 1: Record the policy:** `pnpm --version` (expect 12.21.0), `pnpm config get minimumReleaseAge`, `npm view sonner@2.0.8 time --json | grep '"2.0.8"'`. Save the three lines for the PR body.
 - [ ] **Step 2: Install:** `pnpm --filter @open-factory/web add --save-exact sonner@2.0.8`. If blocked: stop and report to `main`. Check `apps/web/package.json` shows `"sonner": "2.0.8"` (no caret).
-- [ ] **Step 3: Failing tests:** `notify` shows text and an Undo that runs once (second click ignored); a failing undo shows the server message; with an open modal (`<div role="dialog" data-state="open">`) a toast is held and appears after the modal is removed; duration for a 120-char text is 7200ms; two registered elements of 80 and 120px (stubbed `ResizeObserver`) → `--composer-h: 120px`, unregister b → 80px, unregister a → 0px, and a resize that keeps the max writes nothing; **guard:** the injected Sonner CSS (read `node_modules/sonner/dist/index.mjs` as text) still contains `data-sonner-toaster` and `data-removed` (fails on an upgrade that renames them); `notify-callers.test.ts` greps `apps/web/src` (tests excluded) and allows `import … from "sonner"` only in `components/ui/toaster.tsx`, and `notify(` only in the modules listed in spec §10.2 (start with an empty allow-list plus `toaster.tsx`; each later task adds its module).
+- [ ] **Step 3: Failing tests:** `notify` shows text and an Undo that runs once (second click ignored); a failing undo shows the server message; with an open modal (`<div role="dialog" data-state="open">`) a toast is held and appears after the modal is removed; duration for a 120-char text is 7200ms; two registered elements of 80 and 120px (stubbed `ResizeObserver`) → `--composer-h: 120px`, unregister b → 80px, unregister a → 0px, and a resize that keeps the max writes nothing. (No grep or guard test: the version is exact-pinned and the CSS block's comment says to re-check on upgrade; which outcomes toast is enforced in review against spec §10.2.)
 - [ ] **Step 4–5:** Implement; PASS.
 - [ ] **Step 6:** Commit `feat(web): toasts through Sonner, held under modals and above composers`.
 
@@ -344,7 +344,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Produces: `NewTaskSheet` body (default export, `BodyProps<{ kind: "new-task"; assignee?: string }>`); `MoreOptions`.
 
 - [ ] **Step 1: Failing tests:** `c` in `/agents/ada` opens New task with Assignee `@ada`; `c` on `/tasks?assignee=bo` prefills `@bo`; a non-empty draft keeps its own assignee; the sheet description reads "For Ada" when prefilled; fields in order Title, Assignee, Description; More options closed, opens itself with a dependency error after submit; success closes, clears the draft and calls `notify({ text: "Created T-42.", action: { label: "Open" } })`; **late result:** close the sheet while `createTask` is pending → on success `notify("Created T-42." · Open)` and no navigation; on failure `notify({ text: <message>, action: { label: "Open form" } })` reopening with the kept draft; **stale reference:** a draft whose assignee has ended shows "@x has ended; pick another." and clears it; Enter in a field while pending posts once.
-- [ ] **Step 2–4:** FAIL → implement → PASS. Add `features/tasks/new-task-sheet.tsx` to the `notify` allow-list.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(web): New task in a sheet, prefilled from where you are`.
 
 ### Task 8: `describeCron`
@@ -410,7 +410,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/schedules/new-schedule-sheet.test.tsx`, `apps/web/src/features/schedules/schedule-list.test.tsx`
 
 - [ ] **Step 1: Failing tests:** the Schedules header button opens New schedule; target prefilled from `spec.target` only into an empty draft; an ended or unknown `target` leaves Target empty with "@x has ended; pick another." / "There is no agent @x."; success closes, clears the draft, `notify({ text: "Created S-8.", action: { label: "Open" } })` and Open calls `openSheet({ kind: "edit-schedule", key: "S-8" })`; no inline "Created S-8." line on the list anymore; dismiss never asks (no `window.confirm`); late result rule as Task 7.
-- [ ] **Step 2–4:** FAIL → implement → PASS. Add the module to the `notify` allow-list.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(web): New schedule in a sheet`.
 
 ### Task 11: Edit schedule sheet
@@ -429,7 +429,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/schedules/edit-schedule-sheet.test.tsx`, `apps/web/src/features/schedules/schedule-list.test.tsx`, `apps/web/src/test/agent-details.test.tsx`
 
 - [ ] **Step 1: Failing tests:** header shows the key in mono, description the body's first line, a "Pause S-12" icon button; footer has "Save changes", Close, and a ghost crimson "Delete schedule" on the left; Delete closes, clears the draft and `notify({ text: "Deleted S-12.", undo })`; Undo calls `restoreSchedule`; an undo refused with `target_ended` toasts the server message; opened on a deleted schedule: "S-12 was deleted.", Restore (absent when the target ended), the schedule as text (target, `describeCron` or cron, zone, the message as markdown), no Save; Restore flips to the live form keeping the draft's edits, no toast; deleted by an agent while open (a refetch returns `deleted`) flips live and keeps the draft; unknown key → "There is no schedule S-12." with Close; Save closes and toasts "Saved S-12." only when the sheet's `at` isn't `/schedules`; `ScheduleBadge` and Agent details keys open the sheet over the session.
-- [ ] **Step 2–4:** FAIL → implement → PASS. Add the module to the `notify` allow-list.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(web): Edit schedule in a sheet with its deleted state`.
 
 ### Task 12: Close #83 or narrow it
@@ -456,21 +456,33 @@ Implements §16 (evidence rules). A: 1, 2, 5, 6, 9.
 
 ```bash
 #!/usr/bin/env bash
-# run.sh <check.py> … : one evidence pass at a time, everything torn down on exit.
+# run.sh <check.py> … : one evidence pass at a time; tears down only what this pass started.
 set -euo pipefail
 LOCK=/tmp/of-u4-evidence.lock
-until mkdir "$LOCK" 2>/dev/null; do echo "waiting for $LOCK ($(cat "$LOCK/owner" 2>/dev/null))"; sleep 30; done
-echo "$USER $$ $(date +%T) $PWD" > "$LOCK/owner"
+while ! mkdir "$LOCK" 2>/dev/null; do
+  owner=$(cat "$LOCK/pid" 2>/dev/null || true)
+  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+    echo "clearing stale lock left by dead pid $owner"; rm -rf "$LOCK"; continue
+  fi
+  echo "waiting for $LOCK (pid ${owner:-?}: $(cat "$LOCK/owner" 2>/dev/null))"; sleep 30
+done
+echo $$ > "$LOCK/pid"; echo "$USER $(date +%T) $PWD" > "$LOCK/owner"
+# Everything this pass starts runs in its own process group, so teardown never touches other teams' browsers.
+set -m
 cleanup() {
-  ./down.sh drop || true                       # server, Vite, fake claude, throwaway DB and $WORK
-  pkill -f 'chrom(e|ium).*--headless' || true  # no headless browser left behind
-  pkill -f 'webkit.*--headless|WebKitWebProcess' || true
+  ./down.sh drop || true                                   # server, Vite, fake claude, throwaway DB, $WORK
+  [ -n "${PGID:-}" ] && kill -- -"$PGID" 2>/dev/null || true # this pass's browsers and helpers only
+  sleep 1
+  if [ -n "${PGID:-}" ] && pgrep -g "$PGID" >/dev/null; then  # leak check scoped to this pass
+    echo "LEAK: processes left in group $PGID:" >&2; pgrep -lg "$PGID" >&2; kill -9 -- -"$PGID" 2>/dev/null || true
+  fi
   rm -rf "$LOCK"
-  pgrep -fl 'chrom(e|ium).*--headless' && echo "LEAK: headless chrome still running" >&2 || true
 }
 trap cleanup EXIT INT TERM
 ./up.sh
-for c in "$@"; do ./py "$c"; done
+( for c in "$@"; do ./py "$c"; done ) &   # a new process group under job control (set -m)
+PGID=$!
+wait "$PGID"
 ```
 
 The full suite uses the same lock: `until mkdir /tmp/of-u4-evidence.lock …; trap 'rm -rf /tmp/of-u4-evidence.lock' EXIT; pnpm test -- --maxWorkers=50%`.
@@ -643,7 +655,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Focus: desktop Template when empty else Display name; phone the content.
 
 - [ ] **Step 1: Failing tests:** the sheet opens with no credentials and no templates (no gate page); one credential preselected and More options closed; no credential → More options open with "No Claude credential yet."; several credentials with the selected one gone → "Choose a credential."; missing secret reason; picking a template prefills Display name and Description until touched; submit with an invalid derived slug opens the address input; server `fields.slug` opens it with the error; success navigates to `/agents/<slug>`; late success toasts and doesn't navigate; sidebar `+`, Agents header, palette, empty state and template editor's "Create agent" (with template) open it; `/agents/new?template=x` redirects to `/agents` with it open; a draft with an archived manager clears it with "@x has ended; pick another."; Enter while pending submits once.
-- [ ] **Step 2–4:** FAIL → implement → PASS. Add the module to the `notify` allow-list.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(web): New agent in a sheet, name first, no gate page`.
 
 ### Task 22: Stacked setup sheets in New agent
@@ -684,7 +696,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Save: `closeSheet()`, clear draft, then `notify` per §10.2: none when `parent.at === "/agents/<slug>"` and only `displayName` changed; "Saved @slug." otherwise; with `restartPending` "Saved @slug. Restarts when idle." always.
 
 - [ ] **Step 1: Failing tests:** header "Edit agent" and the wrapping description "@slug · Template `name`"; all fields visible, no template or slug input; the restart notice appears when the credential is dirty on a running agent and names it; save toasts per the rule; "Nothing to save: no field changed." inline; archived agent → "This agent is archived." with a Restore button (wired in Task 24) and no form; spawned → "Spawned agents can't be edited."; unknown → "There is no agent @x."; archived by another tab while open → flips, draft kept; `/agents/ada/edit` lands on `/agents/ada` with the sheet; AgentMenu Edit, Agent details Edit and the timeline `edit_agent` link open it.
-- [ ] **Step 2–4:** FAIL → implement → PASS. Add the module to the `notify` allow-list.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(web): Edit agent in a sheet`.
 
 ### Task 24: Agent lifecycle in `AgentMenu`, Restore everywhere it's needed
@@ -699,14 +711,14 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 **Files:**
 - Create: `apps/web/src/features/agents/lifecycle.ts` (move `resync`, `archive`, `restore` logic and their copy from `agent-actions.tsx:118-316`, incl. `TemplateProblem` and `ReportsMessage`)
 - Delete: `apps/web/src/features/agents/agent-actions.tsx` (and `UndoArchiveLine`), `apps/web/src/test/agent-actions.test.tsx` (port cases)
-- Modify: `apps/web/src/features/agents/agent-menu.tsx` (context `"session" | "sidebar" | "list"`; groups: New task, New schedule · Edit, Usage, Open tasks, Agent details, Compact…, Stop crons… · Re-sync from template…, Archive…, Restore, Terminate…; destructive crimson; for terminated or ended spawned agents in the list only Usage and Open tasks), `apps/web/src/features/agents/agent-tree.tsx` (each row gets the `AgentMenu` ⋯ with `context="list"`), `apps/web/src/routes/_app/agents.index.tsx` (drop `justArchived` handling and `UndoArchiveLine`; keep `justArchived` in `validateSearch` as ignored), `apps/web/src/features/session/session-view.tsx:404-412` and `apps/web/src/features/inbox/inbox-pane.tsx:185-193` (Restore button running `restoreAgent` with an inline outcome), `apps/web/src/features/session/timeline-row.tsx:241-246` (runs `resyncAgent`)
+- Modify: `apps/web/src/features/agents/agent-menu.tsx` (context `"session" | "sidebar" | "list"`; groups: New task, New schedule · Edit, Usage, Open tasks, Agent details, Compact…, Stop crons… · Re-sync from template…, Archive…, Restore, Terminate…; destructive crimson; for terminated or ended spawned agents in the list only Usage and Open tasks), `apps/web/src/features/agents/agent-tree.tsx` (each row gets the `AgentMenu` ⋯ with `context="list"`), `apps/web/src/routes/_app/agents.index.tsx` (delete `justArchived` everywhere: the `validateSearch` field, the S4 bookmark redirect's `justArchived` pass-through at :27-31, and `UndoArchiveLine`; make the search schema ignore unknown keys generally — Zod `z.object` strips unknown keys by default, so check `.strict()`/`.passthrough()` isn't used and add a test), `apps/web/src/features/session/session-view.tsx:404-412` and `apps/web/src/features/inbox/inbox-pane.tsx:185-193` (Restore button running `restoreAgent` with an inline outcome), `apps/web/src/features/session/timeline-row.tsx:241-246` (runs `resyncAgent`)
 - Test: `apps/web/src/test/agent-menu.test.tsx`, `apps/web/src/test/agents-list.test.tsx`, `apps/web/src/test/session-view.test.tsx`, `apps/web/src/test/inbox-pane.test.tsx`, `apps/web/src/features/session/timeline-row.test.tsx`
 
 **Interfaces:**
 - Produces: `resyncAgent(slug, qc): Promise<void>`, `archiveAgent(agent, qc, { confirm }): Promise<void>`, `restoreAgent(slug, qc, { inline?: boolean }): Promise<string | undefined>` — each toasts its outcome or failure ("Couldn't archive @slug: <message>") unless `inline`.
 
-- [ ] **Step 1: Failing tests:** menu order and separators for a persistent live agent; Archive (with today's confirmation behaviour, unchanged) toasts "Archived @slug." with Undo calling unarchive; Restore in the menu of an archived agent toasts "Restored @slug."; Re-sync keeps today's confirmation (none or same) and toasts its outcome; a failed archive toasts the message; the session's and inbox's archived notices show a Restore button with an inline outcome; Agents-page rows have the ⋯ menu, Ended view archived rows offer Restore, terminated rows only Usage and Open tasks; `/agents?archived=only&justArchived=x` still lands on the Ended view with no error; the timeline resync link runs the action; New task / New schedule items open their sheets prefilled.
-- [ ] **Step 2–4:** FAIL → implement → PASS. Add `lifecycle.ts` to the `notify` allow-list.
+- [ ] **Step 1: Failing tests:** menu order and separators for a persistent live agent; Archive (with today's confirmation behaviour, unchanged) toasts "Archived @slug." with Undo calling unarchive; Restore in the menu of an archived agent toasts "Restored @slug."; Re-sync keeps today's confirmation (none or same) and toasts its outcome; a failed archive toasts the message; the session's and inbox's archived notices show a Restore button with an inline outcome; Agents-page rows have the ⋯ menu, Ended view archived rows offer Restore, terminated rows only Usage and Open tasks; `/agents?archived=only&justArchived=x` (an old URL) still lands on the Ended view with no error, and `/agents?unknownKey=1` loads normally; the timeline resync link runs the action; New task / New schedule items open their sheets prefilled.
+- [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(web): agent lifecycle in the agent menu, Restore where it's needed`.
 
 ### Task 25: PR2 DESIGN.md amendment
@@ -901,7 +913,7 @@ Implements §12.1. A: 10.
 
 **Files:** `apps/web/package.json`, `pnpm-lock.yaml`
 
-- [ ] **Step 1: Record the policy and versions:** `pnpm --version`; `pnpm config get minimumReleaseAge`; for each of `@codemirror/state@6.7.6 @codemirror/view@6.43.15 @codemirror/language@6.13.1 @codemirror/commands@6.11.1 @codemirror/lang-yaml@6.1.3 @codemirror/lang-json@6.0.2 @codemirror/lang-markdown@6.5.2 @codemirror/lint@6.9.8 @lezer/highlight@1.2.5`, `npm view <pkg> time --json` → its publish date. If a newer release is older than 1440 minutes at install time, take the newest allowed instead and record it.
+- [ ] **Step 1: Record the policy, then pin the listed versions:** `pnpm --version`; `pnpm config get minimumReleaseAge` (`undefined` → pnpm 12.21.0's default of 1440 minutes). The listed versions: `@codemirror/state@6.7.6 @codemirror/view@6.43.15 @codemirror/language@6.13.1 @codemirror/commands@6.11.1 @codemirror/lang-yaml@6.1.3 @codemirror/lang-json@6.0.2 @codemirror/lang-markdown@6.5.2 @codemirror/lint@6.9.8 @lezer/highlight@1.2.5`; record each one's publish date (`npm view <pkg> time --json`). Pin the listed versions. If one is younger than the policy's 1440 minutes at install time, use the newest version that satisfies the policy, record it, and never bypass the policy.
 - [ ] **Step 2:** `pnpm --filter @open-factory/web add --save-exact <the nine>`. If blocked by the policy: stop and report to `main`. Check every entry in `apps/web/package.json` has no caret.
 - [ ] **Step 3:** Commit `chore(web): add the official CodeMirror 6 packages, exact-pinned`.
 
@@ -961,12 +973,11 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - (m8) The state map is `useState(() => new Map<string, EditorState>())[0]`, not `useRef(new Map())` (no Map built per render); `writeSurface` is a `useCallback` when `MarkdownEditor` is memoized.
 
 **Files:**
-- Modify: `apps/web/src/features/templates/template-editor.tsx` (a `useRef(new Map<string, EditorState>())` keyed `${name}:${file}`, dropped on unmount; a reload or "Use theirs" deletes that key before setting the value; `CodeEditor` via `React.lazy` with the existing `CodeTextarea` as the `Suspense` fallback, padded left by the gutter width; on swap carry `selectionStart/End`, `scrollTop`, focus; `jumpTo` → `editorRef.current?.focusLine(line)` when the editor is mounted, else today's `serveJump`), `apps/web/src/components/markdown/markdown-editor.tsx` (optional `writeSurface?: (p: { value; onChange; id; describedBy }) => ReactNode`; when absent, today's textarea), `apps/web/src/routes/_app/templates.$name.tsx` (loader: `if (!preload) void import("@/features/templates/code-editor")`)
-- Create: `apps/web/scripts/check-editor-chunk.mjs` (after `pnpm build`: read `apps/web/dist/.vite/manifest.json`, find the chunk whose `src` is `src/features/templates/code-editor.tsx`, gzip its file(s) with `zlib.gzipSync`, fail above 135 kB; fail if any entry other than the template route's chunk lists it in `imports` (only `dynamicImports` from the template editor are allowed). Enable `build.manifest: true` in `apps/web/vite.config.ts` if it isn't.)
+- Modify: `apps/web/src/features/templates/template-editor.tsx` (a `useState(() => new Map<string, EditorState>())[0]` keyed `${name}:${file}`, dropped on unmount; a reload or "Use theirs" deletes that key before setting the value; `CodeEditor` via `React.lazy` with the existing `CodeTextarea` as the `Suspense` fallback, padded left by the gutter width; on swap carry `selectionStart/End`, `scrollTop`, focus; `jumpTo` → `editorRef.current?.focusLine(line)` when the editor is mounted, else today's `serveJump`), `apps/web/src/components/markdown/markdown-editor.tsx` (optional `writeSurface?: (p: { value; onChange; id; describedBy }) => ReactNode`; when absent, today's textarea), `apps/web/src/routes/_app/templates.$name.tsx` (loader: `if (!preload) void import("@/features/templates/code-editor")`)
 - Test: `apps/web/src/test/templates.test.tsx`
 
 - [ ] **Step 1: Failing tests:** the template page renders the CodeMirror content for `template.yaml` after the lazy import resolves (await `findByRole("textbox", { name: "template.yaml" })`); switching to `mcp.json` and back keeps `template.yaml`'s undo depth; an issue's jump focuses its line; a reload of a file doesn't mark it dirty; AGENTS.md Write uses the editor and Preview still renders markdown; the task form's `MarkdownEditor` still renders a textarea.
-- [ ] **Step 2–4:** FAIL → implement → PASS. `pnpm build && node apps/web/scripts/check-editor-chunk.mjs` → prints the gzip size, exit 0.
+- [ ] **Step 2–4:** FAIL → implement → PASS. Then `pnpm build` once and note the editor chunk from its output: its gzip size (≤135 kB) and that only the template route's chunk imports it (dynamically); both go in the PR body.
 - [ ] **Step 5:** Commit `feat(web): template files edit in CodeMirror`.
 
 ### Task 42: Decision 23's real-browser checks, and the fallback gate (budget: 120 minutes including one fix round)
@@ -975,7 +986,7 @@ Implements §12.6, decision 23. A: 10.
 
 **Files (outside the repo):** `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/pr4/{checks.py,shots,results,findings.md}`.
 
-- [ ] **Step 1:** `run.sh checks.py` against `.worktrees/u4-b` (the lock serializes it with dev A's passes). Seed one template with a 200-line `template.yaml`. Each check runs twice: once on this branch's build and once on the textarea baseline, built from the base branch (`git worktree add /tmp/u4-baseline <base>` → `pnpm install --frozen-lockfile && pnpm build`, served by a second server on another port; the baseline worktree and its server are removed by the same `trap`). No runtime switch between editors is added to the app.
+- [ ] **Step 1:** `run.sh checks.py` against `.worktrees/u4-b` (the lock serializes it with dev A's passes). Seed one template with a 200-line `template.yaml`. Each check runs twice: once on this branch's build and once on the textarea baseline, built from the base branch (`git worktree add .worktrees/u4-baseline <base>` from the repo root, per AGENTS.md → `pnpm install --frozen-lockfile && pnpm build`, served by a second server on another port; the baseline worktree (`git worktree remove --force .worktrees/u4-baseline`) and its server are removed by the same `trap`). No runtime switch between editors is added to the app.
   1. **Typing:** type the 200-line YAML at one key per frame (`page.keyboard.type(text, { delay: 16 })`) in Chromium and WebKit; record dropped characters (final doc vs input) and key-to-paint latency (`performance.now()` in a `keydown` listener → next `requestAnimationFrame` after the DOM mutation, p95). Pass: 0 dropped; p95 within 16.7ms of the textarea's.
   2. **IME:** Chromium CDP session: `Input.imeSetComposition({ text: "にほ", selectionStart: 2, selectionEnd: 2 })`, then `Input.insertText({ text: "日本" })`; press Enter during a composition; WebKit: dispatch `compositionstart/update/end` with `insertText`. Pass: "日本" lands once; Enter during composition inserts no newline and doesn't save (no PUT in the network log).
   3. **Undo:** type in `template.yaml`, switch to `mcp.json`, type, switch back, ⌘Z/Ctrl+Z repeatedly: only `template.yaml`'s edits revert; trigger a conflict "Use theirs" / reload: ⌘Z doesn't bring the old text back.
@@ -990,8 +1001,8 @@ Implements §12.6, decision 23. A: 10.
 
 - [ ] **Step 1 (only if the gate passed):** apply spec §14's Template editor line to DESIGN.md. Commit `docs: DESIGN.md template editor`.
 - [ ] **Step 2: Review** (fresh reviewer subagent): invoke `vercel-react-best-practices` and review `git diff <base>...HEAD -- apps/web`: the lazy boundary (bundle-dynamic-imports), the editor never re-created per keystroke, no effect syncing state that could be derived, stable callbacks into the editor (held in refs), the state map not a React state; M5 (latest-ref handlers, Compartments, `setState` on fileKey change). Fix in one commit.
-- [ ] **Step 3: Verify** (take the lock): `pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build && node apps/web/scripts/check-editor-chunk.mjs`.
-- [ ] **Step 4:** Rebase onto `u4/3-mobile` if not done; `git push -u origin u4/4-template-editor && gh pr create --base u4/3-mobile --title "<per the gate>" --body-file <body>`: template sections; spec and #118; policy and the nine publish dates; the chunk size; the five-check table (Task 42); "droppable as a unit: nothing else depends on it".
+- [ ] **Step 3: Verify** (take the lock): `pnpm typecheck && pnpm lint && pnpm test -- --maxWorkers=50% && pnpm build`; from the build output, record the editor chunk's gzip size and that the template route is its only importer.
+- [ ] **Step 4:** Rebase onto `u4/3-mobile` if not done; `git push -u origin u4/4-template-editor && gh pr create --base u4/3-mobile --title "<per the gate>" --body-file <body>`: template sections; spec and #118; policy and the nine publish dates; the editor chunk's gzip size and its only importer (measured from the build output); a line stating that `@lezer/highlight` is the same project's official package (Lezer is CodeMirror's parser system, same author and repository family), needed for the highlight `tags`: a deliberate reading of decision 23's "official `@codemirror/*` packages only", not drift; the five-check table (Task 42); "droppable as a unit: nothing else depends on it".
 - [ ] **Step 5:** `gh pr checks --watch`; fix until green.
 
 ---
@@ -1074,7 +1085,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 | §7 stacked setup | 17, 18, 22 |
 | §8 New task | 7 |
 | §9 schedules | 8, 9, 10, 11 |
-| §10 toasts | 5 (+ allow-list in 7, 10, 11, 21, 23, 24) |
+| §10 toasts | 5, 7, 10, 11, 21, 23, 24 |
 | §11.1 AdaptiveMenu | 29, 30 |
 | §11.2 long-press | 28, 31 |
 | §11.3 hit areas | 32 |

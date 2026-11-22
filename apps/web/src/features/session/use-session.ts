@@ -18,12 +18,21 @@ import {
   useState,
 } from "react";
 import { useWs } from "@/lib/ws-context";
-import { agentDetailQueryOptions, fetchEvents, fetchMessage } from "./api";
+import {
+  agentDetailQueryOptions,
+  cancelQueued,
+  fetchEvents,
+  fetchMessage,
+  restoreQueued,
+} from "./api";
+import { NETWORK_ERROR } from "./composer";
 import {
   buildRows,
   deliveryFailedIds,
   interruptedTurnEnds,
+  type OpenTurnRows,
   type Row,
+  stabilizeOpen,
   stabilizeRows,
   stableSet,
 } from "./rows";
@@ -31,6 +40,7 @@ import {
   eventsInOrder,
   highestSeq,
   initialSessionState,
+  type SendingBlock,
   type SessionAction,
   sessionReducer,
 } from "./session-state";
@@ -40,10 +50,15 @@ const asApiError = (e: unknown) =>
     ? e
     : new ApiError(0, "network_error", e instanceof Error ? e.message : String(e));
 
+const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
+
 /** HTTP pages + WS subscription + dedup by seq + queue + status + the deep-link window. */
 /** Why `?message=` couldn't jump to the message (UI design §2.5); rendered by the session view so the
  *  recipient's `@slug` can be mono. */
-export type MessageNotice = { kind: "rejected"; to: string } | { kind: "not_found" };
+export type MessageNotice =
+  | { kind: "rejected"; to: string }
+  | { kind: "cancelled" }
+  | { kind: "not_found" };
 
 /** Derives a value from `input`, letting `compute` reuse the previous committed result (spec §9.3);
  *  recomputed only when `input` changes. The ref is written after commit, never during render, and no
@@ -58,8 +73,14 @@ function useStabilized<I, V>(input: I, compute: (input: I, prev: V | undefined) 
   }, [value]);
   return value;
 }
-const stableRows = (ev: SessionEvent[], prev: Row[] | undefined) =>
-  stabilizeRows(prev ?? [], buildRows(ev));
+type RowsView = { rows: Row[]; open: OpenTurnRows | undefined };
+/** One `buildRows` pass per events change: rows stabilized, `open` mapped onto the stabilized rows. */
+const stableRows = (ev: SessionEvent[], prev: RowsView | undefined): RowsView => {
+  const built = buildRows(ev);
+  const rows = stabilizeRows(prev?.rows ?? [], built.rows);
+  const open = stabilizeOpen(prev?.open, built.open, rows);
+  return prev && prev.rows === rows && prev.open === open ? prev : { rows, open };
+};
 const stableFailedIds = (ev: SessionEvent[], prev: ReadonlySet<string> | undefined) =>
   stableSet(prev, deliveryFailedIds(ev));
 const stableInterruptedEnds = (ev: SessionEvent[], prev: ReadonlySet<number> | undefined) =>
@@ -122,6 +143,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
               setMessageSeq(around);
             } else if (m.state === "rejected") {
               setMessageNotice({ kind: "rejected", to: m.to });
+            } else if (m.state === "cancelled") {
+              setMessageNotice({ kind: "cancelled" }); // U3 §6.4
             }
           } catch (e) {
             if (e instanceof ApiError && e.code === "message_not_found")
@@ -143,6 +166,9 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         }
         page ??= await fetchEvents(slug);
         dispatch({ type: "loaded", page, detail, mode });
+        // A no-op today (`loaded` already sets liveAfter): the placeholder for PR4's subscribe `reset`
+        // frame, which must dispatch `caught_up` so a reconnect's replay never fades (U3 §8.3).
+        dispatch({ type: "caught_up" });
         setError(undefined);
         setLoadedAt(Date.now());
       } catch (e) {
@@ -183,10 +209,12 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   );
   // The timer kind is picked when the first frame arrives: a tab hidden before its rAF fires would
   // hold the frames until it is shown again, and one shown again need not wait out the 100ms. Either
-  // way, a visibility change commits what is pending.
+  // way, a visibility change commits what is pending. Coming back also moves `liveAfter` in the
+  // same commit: rows committed while hidden never got a style pass and must not all fade (U3 §8.3).
   useEffect(() => {
     const onVisibility = () => {
       if (scheduled.current) flush();
+      if (!document.hidden) dispatchRaw({ type: "visible" });
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
@@ -221,7 +249,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   // Already stable: only an event change produces a new array (status and queue frames keep it).
   const events = eventsInOrder(state);
   // Unchanged rows and equal sets keep their identity, so memoized timeline items skip (spec §9.3).
-  const rows = useStabilized(events, stableRows);
+  const { rows, open } = useStabilized(events, stableRows);
   const failedIds = useStabilized(events, stableFailedIds);
   const interruptedEnds = useStabilized(events, stableInterruptedEnds);
 
@@ -269,24 +297,64 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     if (needsTermination) void refreshAgent();
   }, [needsTermination, refreshAgent]);
 
-  /** While the socket is down no `queue` frame will come, so show the accepted item at once
-   *  (UI design §4.4); when connected the frame is authoritative. */
+  /** The 202's item replaces its "Sending" block (U3 §13.2). Otherwise, while the socket is down no
+   *  `queue` frame will come, so the accepted item shows at once (UI design §4.4); when connected the
+   *  frame is authoritative. */
   const onQueued = useCallback(
-    (item: QueueItem) => {
-      if (wsRef.current.status !== "open") dispatch({ type: "queued", item });
-    },
+    (item: QueueItem) => dispatch({ type: "queued", item, live: wsRef.current.status === "open" }),
     [dispatch],
   );
+  const onSending = useCallback(
+    (block: SendingBlock) => dispatch({ type: "sending", block }),
+    [dispatch],
+  );
+  const onSendFailed = useCallback(
+    (clientMessageId: string, unconfirmed?: boolean) =>
+      dispatch({ type: "send_failed", clientMessageId, unconfirmed }),
+    [dispatch],
+  );
+
+  // U3 §6.4: Cancel and Undo. `onFailed`/`onRestored` run in the same step as the state change, so
+  // the composer's box and the queue change in one commit.
+  const cancelItem = useCallback(
+    (item: QueueItem, inBox: boolean, onFailed?: () => void) => {
+      dispatch({ type: "cancel", id: item.id, inBox });
+      cancelQueued(slug, item.id).catch((e: unknown) => {
+        onFailed?.();
+        dispatch({ type: "cancel_failed", id: item.id, error: failureText(e) });
+      });
+    },
+    [slug, dispatch],
+  );
+  const undoCancel = useCallback(
+    (id: string, onRestored?: () => void) => {
+      restoreQueued(slug, id).then(
+        () => {
+          onRestored?.();
+          dispatch({ type: "restored", id });
+        },
+        (e: unknown) => dispatch({ type: "restore_failed", id, error: failureText(e) }),
+      );
+    },
+    [slug, dispatch],
+  );
+  const clearCancelled = useCallback(() => dispatch({ type: "clear_cancelled" }), [dispatch]);
 
   return {
     state,
     rows,
+    open,
     failedIds,
     interruptedEnds,
     loadEarlier,
     earlierError,
     retry,
     onQueued,
+    onSending,
+    onSendFailed,
+    cancelItem,
+    undoCancel,
+    clearCancelled,
     setAgent,
     refreshAgent,
     missingEvent,

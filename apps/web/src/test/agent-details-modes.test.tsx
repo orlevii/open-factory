@@ -156,7 +156,7 @@ test("the overlay sits below the header: Stop and the toggle stay clickable", as
   expect(sheet).toHaveClass("top-12");
   expect(sheet).not.toHaveAttribute("aria-modal");
   // Still in the accessibility tree (a modal would hide the page behind).
-  expect(screen.getByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
   await userEvent.click(toggle());
   await waitFor(() => expect(container()).toBeNull());
 });
@@ -191,6 +191,33 @@ test("at 900px, Agent details from the ⋯ menu moves focus into the opened shee
   // And it stays there once the menu has finished closing.
   await new Promise((r) => setTimeout(r, 50));
   expect(container()?.contains(document.activeElement)).toBe(true);
+});
+
+test("at 900px, Esc in the composer closes the peek and leaves focus in the composer", async () => {
+  await visit(900);
+  const user = userEvent.setup();
+  await user.click(toggle());
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  await user.click(box);
+  expect(box).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(container()).toBeNull());
+  await new Promise((r) => setTimeout(r, 50));
+  expect(box).toHaveFocus();
+});
+
+test("at 900px, closing the peek from inside it returns focus to the toggle", async () => {
+  await visit(900);
+  const user = userEvent.setup();
+  await user.click(toggle());
+  await waitFor(() => expect(modeOf(container())).toBe("overlay"));
+  const inside = container()?.querySelector<HTMLElement>("button, [tabindex]");
+  if (!inside) throw new Error("nothing focusable in the peek");
+  inside.focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(container()).toBeNull());
+  await waitFor(() => expect(toggle()).toHaveFocus());
 });
 
 test("closing a sheet that stayed open across 1280px doesn't remember 'closed' for the column", async () => {

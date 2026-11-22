@@ -450,6 +450,15 @@ test("?message= for a rejected message names who it wasn't delivered to", async 
   expect(within(notice).getByText("@b")).toHaveClass("font-mono");
 });
 
+test("?message= for a message you cancelled says so (U3 §6.4)", async () => {
+  lookupWorld(() =>
+    json({ id: "mid", kind: "message", from: "@alice", to: "dev", state: "cancelled" }),
+  );
+  renderApp("/agents/dev?message=mid", alice);
+  expect(await screen.findByText("You cancelled this message.")).toBeInTheDocument();
+  expect(screen.getByText("latest")).toBeInTheDocument();
+});
+
 test("?message= for a message rejected by a terminated recipient says it was terminated", async () => {
   const api = lookupWorld(() =>
     json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),

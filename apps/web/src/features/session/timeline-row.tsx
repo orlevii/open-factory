@@ -6,6 +6,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { CompactionMarker } from "./compaction-marker";
+import { formatDuration } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
@@ -58,6 +59,18 @@ function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): strin
   if (e.reason === "crons_stopped") return `Stopped by ${e.by ?? "a human"}: ${items.join(" · ")}`;
   const when = e.reason === "terminated" ? "it was terminated" : "the process stopped";
   return `Lost when ${when}: ${items.join(" · ")}`;
+}
+
+/** "Worked 2m 13s · 14 tool calls · $0.42 est." (U3 §5.3); zero counts and sub-cent costs are left out. */
+export function footerText(row: Extract<Row, { kind: "turn_footer" }>): string {
+  const parts: string[] = [];
+  if (row.toolCalls) parts.push(`${row.toolCalls} tool call${row.toolCalls === 1 ? "" : "s"}`);
+  if (row.costUsd >= 0.01) parts.push(`$${row.costUsd.toFixed(2)} est.`);
+  const time = formatDuration(row.durationMs);
+  const head = row.origin
+    ? `Woke for ${row.origin === "cron" ? "a cron" : "a background task"} · ${time}`
+    : `Worked ${time}`;
+  return [head, ...parts].join(" · ");
 }
 
 /** Quiet-line copy, S3 UI design §4.1 and S5 UI design §3.3. Never pids, container ids, exit codes or
@@ -150,6 +163,8 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
       );
     case "mcp_unavailable":
       return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
+    case "interrupt_unconfirmed":
+      return "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.";
     default:
       return e.type;
   }
@@ -174,6 +189,7 @@ const WARN = new Set([
   "background_work_lost",
   "rate_limit_paused",
   "mcp_unavailable",
+  "interrupt_unconfirmed",
 ]);
 
 function quietIcon(e: AnyEvent): ReactNode {
@@ -374,6 +390,8 @@ export function TimelineRow(props: TimelineRowProps) {
           </span>
         </QuietLine>
       );
+    case "turn_footer":
+      return <QuietLine rowProps={rp}>{footerText(row)}</QuietLine>;
     case "quiet":
       return (
         <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>

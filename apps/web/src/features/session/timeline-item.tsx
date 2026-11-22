@@ -9,6 +9,8 @@ export type TimelineItemProps = {
   spawned?: boolean;
   /** The deep-link tint is on this row. */
   lit: boolean;
+  /** Arrived by a live frame and replaces nothing on screen: it fades in once (U3 §8.3). */
+  live: boolean;
   /** The first row of its seq carries `id="event-<seq>"` (a message_in can render several rows). */
   firstOfSeq: boolean;
   tabKey: string | undefined;
@@ -28,6 +30,11 @@ function subtree(row: Row, out: Row[] = []): Row[] {
 /** Re-render only when this row, or something that decides how it or a descendant looks, changed
  *  (spec §9.4). */
 export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
+  return a.live === b.live && contentPropsEqual(a, b);
+}
+
+/** Everything but `live`: a `live` flip re-renders only the wrap, never the row inside (U3 §8.3). */
+function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
   if (
     a.row !== b.row ||
     a.slug !== b.slug ||
@@ -56,7 +63,11 @@ export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): bool
   return true;
 }
 
-/** One timeline entry: the wrap (deep-link id and tint), the row and its Copy link. */
+/** The rows' right gutter (room for Copy link): everything under the rows that should line up with them
+ *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
+export const ROW_GUTTER = "pr-8";
+
+/** One timeline entry: the wrap (deep-link id, tint, live fade), the row and its Copy link. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
   const { row } = p;
   return (
@@ -64,8 +75,20 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       data-row-wrap
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
       {...(p.lit ? { "data-highlighted": "true" } : {})}
-      className={`group relative min-w-0 rounded-md pr-8 ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+      {...(p.live ? { "data-live": "" } : {})}
+      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${row.kind === "message" || row.kind === "outgoing" ? "pt-3" : ""} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
     >
+      <ItemContent {...p} />
+    </div>
+  );
+}, itemPropsEqual);
+
+/** The row and its Copy link, memoized apart from the wrap so the tab coming back (every live row's
+ *  `live` turning false at once) re-renders only the wrap divs. */
+const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
+  const { row } = p;
+  return (
+    <>
       <TimelineRow
         slug={p.slug}
         spawned={p.spawned}
@@ -84,6 +107,6 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
         url={`${location.origin}/agents/${encodeURIComponent(p.slug)}?event=${row.seq}`}
         focusable={row.key === p.tabKey}
       />
-    </div>
+    </>
   );
-}, itemPropsEqual);
+}, contentPropsEqual);

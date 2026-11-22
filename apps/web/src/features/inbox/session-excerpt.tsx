@@ -44,7 +44,7 @@ export function SessionExcerpt({
   const events = q.data?.events;
   const view = useMemo(() => {
     if (!events) return undefined;
-    const rows = buildRows(events);
+    const { rows } = buildRows(events);
     return {
       rows,
       failedIds: deliveryFailedIds(events),

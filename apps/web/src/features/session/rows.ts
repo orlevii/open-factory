@@ -40,6 +40,9 @@ export type Row =
   | {
       kind: "tool";
       seq: number;
+      /** When the call was made, and when its result arrived. */
+      at: string;
+      resultAt?: string;
       call: Ev<"tool_call">;
       result?: Ev<"tool_result">;
       truncated?: Record<string, number>;
@@ -53,7 +56,22 @@ export type Row =
   | { kind: "compaction"; seq: number; event: Ev<"compacted">; key: string }
   | { kind: "error"; seq: number; event: Ev<"error">; key: string }
   | { kind: "denied"; seq: number; event: Ev<"permission_denied">; key: string }
-  | { kind: "quiet"; seq: number; event: AnyEvent; key: string };
+  | { kind: "quiet"; seq: number; event: AnyEvent; key: string }
+  /** "Worked 2m 13s · 14 tool calls · $0.42 est." after a finished turn (U3 §5.3). */
+  | {
+      kind: "turn_footer";
+      seq: number;
+      key: string;
+      durationMs: number;
+      /** Omitted when the turn's start isn't loaded (the count would understate). */
+      toolCalls?: number;
+      costUsd: number;
+      /** A self-started turn: a background task finished, or a cron fired. */
+      origin?: "task" | "cron";
+    };
+
+/** The open turn's rows, from the events after the newest `turn_started` (U3 §5.1). */
+export type OpenTurnRows = { newestOpenTool?: ToolRow; openSubagents: ToolRow[] };
 
 // `rate_limited` renders nothing from S5 on: `rate_limit_paused` is the one line for that moment.
 const HIDDEN = new Set([
@@ -125,6 +143,22 @@ export function isSendMessageCall(e: Ev<"tool_call">): boolean {
   return !!i && typeof i.to === "string" && typeof i.body === "string";
 }
 
+/** Speech: what a reader scrolled away from is waiting for (U3 §8.2): a message, an outgoing
+ *  message, or the agent's text. */
+export function isSpeechRow(row: Row): boolean {
+  return row.kind === "message" || row.kind === "outgoing" || row.kind === "text";
+}
+
+const NOT_SPEECH = new Set(["member_update", "peer_joined", "peer_left"]);
+
+/** The top-level speech rows one event becomes: a windowed view counts events, not rows. */
+export function speechCount(e: AnyEvent): number {
+  if (e.type === "message_in") return e.messages.filter((m) => !NOT_SPEECH.has(m.kind)).length;
+  if (e.type === "assistant_text") return e.parentToolUseId ? 0 : 1;
+  if (e.type === "tool_call") return !e.parentToolUseId && isSendMessageCall(e) ? 1 : 0;
+  return 0;
+}
+
 export const SPAWN_AGENT_TOOL = "mcp__factory__spawn_agent";
 export const TERMINATE_AGENT_TOOL = "mcp__factory__terminate_agent";
 
@@ -142,7 +176,7 @@ function factoryKind(e: Ev<"tool_call">): "outgoing" | "spawn" | "terminate" | u
   return undefined;
 }
 
-type ToolRow = Extract<Row, { kind: "tool" }>;
+export type ToolRow = Extract<Row, { kind: "tool" }>;
 type FactoryRow = Extract<Row, { kind: "outgoing" | "spawn" | "terminate" }>;
 
 /** Consecutive `member_update` envelopes about one agent become one group; peer events and
@@ -163,7 +197,9 @@ function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
   return out;
 }
 
-export function buildRows(events: SessionEvent[]): Row[] {
+const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
+
+export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurnRows | undefined } {
   const { ended, lastExitSeq, lastTurnStartSeq } = endedTurns(events);
   const tools = new Map<string, ToolRow>();
   const outgoing = new Map<string, FactoryRow>();
@@ -172,8 +208,20 @@ export function buildRows(events: SessionEvent[]): Row[] {
     const p = parent ? tools.get(parent) : undefined;
     (p ? p.children : top).push(row);
   };
+  // The current turn's facts for its footer; `started` is false until its `turn_started` is loaded.
+  let started = false;
+  let calls = 0;
+  let usage: Ev<"usage"> | undefined;
+  let hasOpenStart = false;
   for (const se of events) {
     const e = se.event;
+    if (e.type === "turn_started") {
+      started = true;
+      hasOpenStart = true;
+      calls = 0;
+      usage = undefined;
+    } else if (e.type === "tool_call") calls++;
+    else if (e.type === "usage") usage = e;
     if (HIDDEN.has(e.type) || silent(e, top.at(-1))) continue;
     switch (e.type) {
       case "message_in":
@@ -204,6 +252,7 @@ export function buildRows(events: SessionEvent[]): Row[] {
         const row: ToolRow = {
           kind: "tool",
           seq: se.seq,
+          at: se.at,
           call: e,
           state: turnOver ? "no_result" : "running",
           children: [],
@@ -229,6 +278,7 @@ export function buildRows(events: SessionEvent[]): Row[] {
           break;
         }
         call.result = e;
+        call.resultAt = se.at;
         call.state = e.isError ? "failed" : "done";
         if (se.truncated)
           call.truncated = {
@@ -256,12 +306,69 @@ export function buildRows(events: SessionEvent[]): Row[] {
       }
       case "turn_end":
         if (e.isError) top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
+        else if (!e.command && usage) {
+          top.push({
+            kind: "turn_footer",
+            seq: se.seq,
+            key: `${se.seq}`,
+            durationMs: usage.durationMs,
+            ...(started ? { toolCalls: calls } : {}),
+            costUsd: usage.costUsd,
+            ...(e.originKind === "task-notification"
+              ? { origin: "task" as const }
+              : e.originKind === "cron"
+                ? { origin: "cron" as const }
+                : {}),
+          });
+        }
+        started = false;
+        calls = 0;
+        usage = undefined;
         break;
       default:
         top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
     }
   }
-  return top;
+  if (!hasOpenStart) return { rows: top, open: undefined };
+  const open: OpenTurnRows = { openSubagents: [] };
+  for (const row of tools.values()) {
+    if (row.seq <= lastTurnStartSeq || row.state !== "running") continue;
+    if (SUBAGENT_TOOLS.has(row.call.name)) open.openSubagents.push(row);
+    else if (!open.newestOpenTool || row.seq > open.newestOpenTool.seq) open.newestOpenTool = row;
+  }
+  return { rows: top, open };
+}
+
+/** `open` rebuilt over the stabilized rows (by key), and the previous object when nothing changed, so
+ *  the activity line sees the same `ToolRow`s the timeline renders (U3 §5.1). */
+export function stabilizeOpen(
+  prev: OpenTurnRows | undefined,
+  open: OpenTurnRows | undefined,
+  rows: readonly Row[],
+): OpenTurnRows | undefined {
+  if (!open) return undefined;
+  const byKey = new Map<string, ToolRow>();
+  const walk = (list: readonly Row[]) => {
+    for (const r of list)
+      if (r.kind === "tool") {
+        byKey.set(r.key, r);
+        walk(r.children);
+      }
+  };
+  walk(rows);
+  const pick = (r: ToolRow) => byKey.get(r.key) ?? r;
+  const next: OpenTurnRows = {
+    ...(open.newestOpenTool ? { newestOpenTool: pick(open.newestOpenTool) } : {}),
+    openSubagents: open.openSubagents.map(pick),
+  };
+  if (
+    prev &&
+    prev.newestOpenTool === next.newestOpenTool &&
+    prev.openSubagents.length === next.openSubagents.length &&
+    prev.openSubagents.every((r, i) => r === next.openSubagents[i])
+  )
+    return prev;
+  return next;
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>

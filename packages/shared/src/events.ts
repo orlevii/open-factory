@@ -229,6 +229,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("rate_limit_reset"), credential: z.string() }),
   z.object({ type: z.literal("mcp_unavailable"), status: z.string() }),
+  z.object({ type: z.literal("interrupt_unconfirmed") }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;
 

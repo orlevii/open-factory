@@ -43,3 +43,18 @@ export function registerAgentDetailsOpener(open: () => void): () => void {
     if (detailsOpener === open) detailsOpener = null;
   };
 }
+
+/** Each mounted timeline's re-pin, by slug: sending from the composer follows the bottom again. */
+const timelineRepin = new Map<string, () => void>();
+
+/** Scrolls the agent's timeline to the bottom and pins it (U3 §8.1); a no-op if none is mounted. */
+export function repinTimeline(slug: string) {
+  timelineRepin.get(slug)?.();
+}
+
+export function registerTimelineRepin(slug: string, repin: () => void): () => void {
+  timelineRepin.set(slug, repin);
+  return () => {
+    if (timelineRepin.get(slug) === repin) timelineRepin.delete(slug);
+  };
+}

@@ -42,6 +42,10 @@ export const agentLiveShape = {
   errorKind: errorKindSchema.optional(),
   image: z.string().optional(),
   pulling: z.boolean().optional(),
+  /** U3: when the open turn started (ISO), so the UI can time it. */
+  turnStartedAt: z.string().optional(),
+  /** U3: a compaction is running. */
+  compacting: z.boolean().optional(),
 };
 
 export const agentSummarySchema = z.object({
@@ -92,8 +96,9 @@ export const queueItemSchema = z.object({
   about: z.string().optional(),
   dueAt: z.string().optional(),
   waitReason: z
-    .enum(["turn", "window", "starting", "errored", "rate_limited", "ride_along"])
+    .enum(["turn", "window", "starting", "errored", "rate_limited", "ride_along", "stopping"])
     .optional(),
+  clientMessageId: z.string().uuid().optional(),
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
@@ -138,6 +143,7 @@ export const sendMessageBodySchema = z.object({
     .min(1, "Message is empty")
     .refine((s) => utf8.encode(s).length <= MAX_BODY_BYTES, "Message is larger than 64 KB"),
   urgent: z.boolean().default(false),
+  clientMessageId: z.string().uuid().optional(),
 });
 export const sendMessageToolSchema = z.object({
   to: z.string().min(1).max(64),

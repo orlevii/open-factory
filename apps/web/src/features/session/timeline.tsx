@@ -1,4 +1,4 @@
-import { ArrowDown, CircleAlert } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -12,16 +12,20 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { runInstantOn } from "@/lib/run-instant";
+import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
+import { registerTimelineRepin } from "./session-commands";
+import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
 import { TimelineItem } from "./timeline-item";
 
-const NEAR_BOTTOM = 64;
-/** What a toggle that resizes the timeline calls first (spec §8.1). */
-export type TimelineHandle = { captureAnchor(): void };
+const NO_KEYS: ReadonlySet<string> = new Set();
+/** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
+export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
 
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
-/** The only scrolling region: stick-to-bottom, "N new events", Load earlier with a scroll anchor,
+/** The only scrolling region: stick-to-bottom, Jump to latest, Load earlier with a scroll anchor,
  *  deep-link centring and tint, and one tab stop with roving focus (UI design §4.3, §7). */
 export function Timeline(props: {
   ref?: Ref<TimelineHandle>;
@@ -30,6 +34,10 @@ export function Timeline(props: {
   rows: Row[];
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
+  /** Rows above this seq arrived live (U3 §8.3); omitted, nothing is live. */
+  liveAfter?: number;
+  /** Row keys that replace something on screen: never live. */
+  handedOff?: ReadonlySet<string>;
   highlightSeq?: number;
   /** A `?message=` target: lights the row that holds this envelope rather than the event's first. */
   highlightMessageId?: string;
@@ -38,19 +46,29 @@ export function Timeline(props: {
   onLoadEarlier(): Promise<boolean>;
   earlierError: boolean;
   footer: ReactNode;
+  /** An older window (deep link): the Jump pill always shows and leaves it (U3 §8.2). */
+  windowed?: boolean;
+  /** The speech that arrived while windowed (the reducer counts it: those rows aren't appended). */
+  newSpeech?: number;
+  /** Navigates to the newest page. Stable: the pill is memoized. */
+  onLeaveWindow?(): void;
 }) {
-  const { rows } = props;
+  const { rows, liveAfter = Number.POSITIVE_INFINITY, handedOff = NO_KEYS } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
-  const prevLastKey = useRef<string | undefined>(undefined);
-  const anchor = useRef<{ height: number; top: number; firstKey?: string } | null>(null);
+  const pillLayer = useRef<HTMLDivElement>(null);
   const centred = useRef(false);
-  // The row at the top of the viewport and its offset, kept for width changes (spec §8.1).
-  const widthAnchor = useRef<{ el: HTMLElement; top: number } | null>(null);
-  const lastWidth = useRef<number | undefined>(undefined);
-  const scrollFrame = useRef(0);
-  const [unseen, setUnseen] = useState(0);
+  // The highest seq on screen when the view unpinned; undefined while pinned. A primitive, so the
+  // pill's counts derive from rows (U3 §8.2) and the rows layout effect sets no state.
+  const [seenSeq, setSeenSeq] = useState<number>();
+  const latestRows = useRef(rows);
+  // Before the rows layout effect below, which may unpin (deep-link centring).
+  useLayoutEffect(() => {
+    latestRows.current = rows;
+  }, [rows]);
+  const stick = useStickToBottom(scroller, log, (pinned) =>
+    setSeenSeq(pinned ? undefined : maxSeq(latestRows.current)),
+  );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -65,82 +83,47 @@ export function Timeline(props: {
     [rows, highlight, props.highlightMessageId],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every rows commit (the height changed).
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const prevIndex = rows.findIndex((r) => r.key === prevLastKey.current);
-    const appended = prevIndex < 0 ? 0 : rows.length - 1 - prevIndex;
-    prevLastKey.current = rows.at(-1)?.key;
-    const a = anchor.current;
-    if (a && rows[0]?.key !== a.firstKey) {
-      // Load earlier prepended: keep the first visible row where it was.
-      el.scrollTop = a.top + (el.scrollHeight - a.height);
-      anchor.current = null;
-      return;
-    }
     if (litKey !== undefined && !centred.current) {
       centred.current = true;
-      atBottom.current = false;
+      stick.unpin();
       el.querySelector("[data-highlighted]")?.scrollIntoView?.({ block: "center" });
       return;
     }
-    if (atBottom.current)
-      el.scrollTop = el.scrollHeight; // instant: events arrive tens of times a minute
-    else if (appended > 0) setUnseen((n) => n + appended);
-  }, [rows, litKey]);
+    // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
+    // row keeps its place, a Load earlier prepend included.
+    stick.settle();
+  }, [rows, litKey, stick]);
 
-  const captureAnchor = useCallback(() => {
-    const el = scroller.current;
-    if (!el) return;
-    const box = el.getBoundingClientRect();
-    const hit = document
-      .elementFromPoint(box.left + 32, box.top + 1)
-      ?.closest<HTMLElement>("[data-row]");
-    // The point can land in the space between rows: take the first row that reaches the viewport top.
-    const row =
-      hit && el.contains(hit)
-        ? hit
-        : [...el.querySelectorAll<HTMLElement>("[data-row]")].find(
-            (r) => r.getBoundingClientRect().bottom > box.top,
-          );
-    // A probe that finds nothing keeps the last good anchor rather than clearing it.
-    if (row) widthAnchor.current = { el: row, top: row.getBoundingClientRect().top };
-  }, []);
-  useImperativeHandle(props.ref, () => ({ captureAnchor }), [captureAnchor]);
+  const arrived = useMemo(() => arrivedSince(rows, seenSeq, handedOff), [rows, seenSeq, handedOff]);
+  const windowed = props.windowed ?? false;
+  const speech = windowed ? (props.newSpeech ?? 0) : arrived.speech;
+  const other = !windowed && arrived.other;
+  const onLeaveWindow = props.onLeaveWindow;
+  const onJump = useCallback(() => {
+    if (windowed) {
+      onLeaveWindow?.();
+      return;
+    }
+    stick.repin();
+    // The pill goes inert as it hides: focus lands on the last row rather than dropping to body.
+    const rowEls = log.current?.querySelectorAll<HTMLElement>("[data-row]");
+    rowEls?.[rowEls.length - 1]?.focus({ preventScroll: true });
+  }, [windowed, onLeaveWindow, stick]);
 
-  // Footer and async content (queued blocks, the Working line, highlighting, "Show all") change the
-  // height without changing rows: stay pinned while at the bottom.
-  useEffect(() => {
-    const el = scroller.current;
-    const content = log.current;
-    if (!el || !content || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      // A width change (sidebar, Agent details, window) reflows every row: pinned stays pinned,
-      // otherwise the top row goes back to where it was. Synchronous: after layout, before paint.
-      // atBottom is the last scroll's answer; the reflow itself must not change it.
-      const w = entries.find((e) => e.target === el)?.contentRect.width;
-      const widthChanged =
-        w !== undefined && lastWidth.current !== undefined && w !== lastWidth.current;
-      if (w !== undefined) lastWidth.current = w;
-      if (widthChanged && !anchor.current) {
-        const a = widthAnchor.current;
-        if (atBottom.current) el.scrollTop = el.scrollHeight;
-        else if (a?.el.isConnected) el.scrollTop += a.el.getBoundingClientRect().top - a.top;
-        return;
-      }
-      if (atBottom.current && !anchor.current) el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(content);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  useEffect(
-    () => () => {
-      cancelAnimationFrame(scrollFrame.current);
-      scrollFrame.current = 0;
-    },
-    [],
+  useImperativeHandle(
+    props.ref,
+    () => ({
+      captureAnchor: stick.captureAnchor,
+      expandAnchor: stick.expandAnchor,
+      repin: stick.repin,
+    }),
+    [stick],
   );
+  useEffect(() => registerTimelineRepin(props.slug, stick.repin), [props.slug, stick]);
 
   // The tint stays until the user clicks somewhere other than the highlighted row.
   useEffect(() => {
@@ -153,24 +136,12 @@ export function Timeline(props: {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [highlight]);
 
-  const onScroll = () => {
-    const el = scroller.current;
-    if (!el) return;
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
-    if (atBottom.current) setUnseen(0);
-    if (!scrollFrame.current)
-      scrollFrame.current = requestAnimationFrame(() => {
-        scrollFrame.current = 0;
-        captureAnchor();
-      });
-  };
-
   const loadEarlier = async () => {
-    const el = scroller.current;
-    if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop, firstKey: rows[0]?.key };
+    // The top visible row keeps its place when the earlier rows land above it.
+    stick.expandAnchor();
     setLoadingEarlier(true);
     try {
-      if (!(await props.onLoadEarlier())) anchor.current = null; // nothing prepended
+      await props.onLoadEarlier();
     } finally {
       setLoadingEarlier(false);
     }
@@ -205,7 +176,13 @@ export function Timeline(props: {
     if (e.key === "ArrowDown") go(i + 1);
     else if (e.key === "ArrowUp") go(i - 1);
     else if (e.key === "Home") go(0);
-    else if (e.key === "End") go(list.length - 1);
+    else if (e.key === "End") {
+      // The last loaded row, and follow again; it never leaves a window (the pill alone does).
+      go(list.length - 1);
+      const layer = pillLayer.current;
+      if (layer) runInstantOn(layer, stick.repin);
+      else stick.repin();
+    }
   };
 
   // Roving tabindex: exactly one row is in the tab order; the first row until one is focused.
@@ -266,7 +243,7 @@ export function Timeline(props: {
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto px-4 py-4 md:px-6">
+      <div ref={scroller} className="h-full overflow-y-auto px-4 py-4 md:px-6">
         <div
           ref={log}
           role="log"
@@ -295,6 +272,7 @@ export function Timeline(props: {
               slug={props.slug}
               spawned={props.spawned}
               lit={row.key === litKey}
+              live={row.seq > liveAfter && row.kind !== "turn_footer" && !handedOff.has(row.key)}
               firstOfSeq={rows[i - 1]?.seq !== row.seq}
               tabKey={tabKey}
               expanded={expanded}
@@ -307,23 +285,27 @@ export function Timeline(props: {
           {props.footer}
         </div>
       </div>
-      {unseen > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute right-4 bottom-3 border border-border bg-card md:right-6"
-          onClick={() => {
-            const el = scroller.current;
-            if (el) el.scrollTop = el.scrollHeight;
-            atBottom.current = true;
-            setUnseen(0);
-          }}
-        >
-          <ArrowDown aria-hidden="true" /> {unseen} new {unseen === 1 ? "event" : "events"}
-        </Button>
-      )}
+      {/* Centred on the 52rem column, not the scroller. */}
+      <div ref={pillLayer} className="pointer-events-none absolute inset-x-0 bottom-3 px-4 md:px-6">
+        <div className="relative max-w-[52rem]">
+          <JumpPill
+            shown={windowed || speech > 0 || other}
+            speech={speech}
+            other={other}
+            windowed={windowed}
+            onJump={onJump}
+          />
+        </div>
+      </div>
     </div>
   );
+}
+
+/** A plain loop: rows are seq-ordered, but a group keeps its first child's seq. */
+function maxSeq(rows: Row[]): number {
+  let max = 0;
+  for (const r of rows) if (r.seq > max) max = r.seq;
+  return max;
 }
 
 /** Only rows that are mounted: children of collapsed tools are not. */

@@ -95,11 +95,35 @@ test("subscribes from the newest seq and appends live events", async () => {
   expect(await screen.findByText("Live text")).toBeInTheDocument();
 });
 
-test("working status shows the working line; a status frame removes it", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
+test("an open turn shows the activity line under the last row, above the queue; a status frame removes it", async () => {
+  routes["/api/agents/dev"] = () =>
+    json(
+      detail({ status: "working", turnOpen: true }, [
+        {
+          id: "q1",
+          kind: "message",
+          body: "next up",
+          urgent: false,
+          from: "@or",
+          createdAt: "2026-11-18T10:00:00.000Z",
+        },
+      ]),
+    );
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  expect(document.querySelector("[data-working-line]")).toBeInTheDocument();
+  const line = document.querySelector("[data-activity-line]");
+  expect(line).toBeInTheDocument();
+  expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument();
+  const rows = document.querySelectorAll("[data-row-wrap]");
+  const lastRow = rows[rows.length - 1] as Element;
+  const queued = screen.getByText("next up");
+  // Time order: now, then next.
+  expect(
+    lastRow.compareDocumentPosition(line as Element) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    (line as Element).compareDocumentPosition(queued) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
@@ -111,8 +135,22 @@ test("working status shows the working line; a status frame removes it", async (
     }),
   );
   await vi.waitFor(() =>
-    expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument(),
+    expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument(),
   );
+});
+
+test("no activity line while no turn is open, or in a windowed view", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: false }));
+  const first = renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
+  first.unmount();
+  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
+  routes["/api/agents/dev/events?around=5"] = () =>
+    json({ ...conversation(), hasMore: { before: true, after: true } });
+  renderApp("/agents/dev?event=5", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
 });
 
 test("deep link loads a window around the event and highlights it", async () => {
@@ -130,7 +168,9 @@ test("deep link loads a window around the event and highlights it", async () => 
     }),
   );
   expect(screen.queryByText("Later")).not.toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: /Jump to latest · 1 new/ })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "1 new message" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("a windowed view subscribes from the agent's lastSeq, not the highest seq on screen", async () => {
@@ -162,10 +202,11 @@ test("Jump to latest leaves the window and loads the newest page", async () => {
     json({ ...conversation(), hasMore: { before: true, after: true } });
   const { router } = renderApp("/agents/dev?event=5", alice);
   await screen.findByText("Two entries.");
-  await userEvent.click(await screen.findByRole("button", { name: /Jump to latest · 0 new/ }));
+  await userEvent.click(await screen.findByRole("button", { name: "Jump to latest" }));
   await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
+  // The newest page is pinned: the pill stays mounted, hidden.
   await vi.waitFor(() =>
-    expect(screen.queryByRole("button", { name: /Jump to latest/ })).not.toBeInTheDocument(),
+    expect(document.querySelector(".jump-pill")).not.toHaveAttribute("data-shown"),
   );
   expect(document.querySelector("[data-highlighted]")).not.toBeInTheDocument();
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
@@ -275,7 +316,9 @@ test("window mode: a reconnect resubscribes after the newest counted seq and doe
     expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 12 }),
   );
   live(12, { type: "assistant_text", text: "b" }); // replay
-  expect(await screen.findByRole("button", { name: "Jump to latest · 2 new" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "2 new messages" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("a resync while windowed reloads the same window", async () => {
@@ -287,7 +330,9 @@ test("a resync while windowed reloads the same window", async () => {
   expect(arounds()).toBe(1);
   act(() => ws.onMessage?.({ type: "resync", agent: "dev" }));
   await vi.waitFor(() => expect(arounds()).toBe(2));
-  expect(await screen.findByRole("button", { name: /Jump to latest/ })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Jump to latest" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("Load earlier prepends without a new-events pill; a failure says so and a later success clears it", async () => {
@@ -310,7 +355,7 @@ test("Load earlier prepends without a new-events pill; a failure says so and a l
   await userEvent.click(screen.getByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("Earlier text")).toBeInTheDocument();
   expect(screen.queryByText("Couldn't load earlier events.")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /new event/ })).not.toBeInTheDocument();
+  expect(document.querySelector(".jump-pill")).not.toHaveAttribute("data-shown");
   expect(screen.queryByRole("button", { name: "Load earlier" })).not.toBeInTheDocument();
 });
 
@@ -320,12 +365,18 @@ test("scrolled up, live rows are counted into the pill (singular, then plural)",
   const scroller = screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2000 });
   Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 500 });
-  scroller.scrollTop = 100;
+  scroller.scrollTop = 1500; // at the bottom
+  fireEvent.scroll(scroller);
+  scroller.scrollTop = 100; // the reader scrolls up
   fireEvent.scroll(scroller);
   live(11, { type: "assistant_text", text: "one" });
-  expect(await screen.findByRole("button", { name: "1 new event" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "1 new message" })).toHaveAttribute(
+    "data-shown",
+  );
   live(12, { type: "assistant_text", text: "two" });
-  expect(await screen.findByRole("button", { name: "2 new events" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "2 new messages" })).toHaveAttribute(
+    "data-shown",
+  );
 });
 
 test("pinned to the bottom, a content resize (queued block, working line) keeps it pinned", async () => {
@@ -403,7 +454,8 @@ test("a deep link to a seq without its own row tints the nearest later row", asy
     json({ ...conversation(), hasMore: { before: false, after: false } });
   renderApp("/agents/dev?event=8", alice); // seq 8 is `usage`, not rendered
   await screen.findByText("Two entries.");
-  expect(document.getElementById("event-10")).toHaveAttribute("data-highlighted", "true");
+  // The turn's footer (the turn_end, seq 9) is the nearest later row.
+  expect(document.getElementById("event-9")).toHaveAttribute("data-highlighted", "true");
 });
 
 test("Copy link says so inline when the clipboard refuses", async () => {
@@ -487,26 +539,26 @@ test("disconnected: an accepted message shows as queued at once", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   const log = screen.getByRole("log", { name: "Session" });
   expect(await within(log).findByText("offline hello")).toBeInTheDocument();
-  expect(within(log).getByText("Not delivered yet")).toBeInTheDocument();
+  // Not at once: an item younger than 300ms doesn't say so (U3 §13.2).
+  expect(within(log).queryByText("Not delivered yet")).toBeNull();
+  expect(await within(log).findByText("Not delivered yet")).toBeInTheDocument();
 });
 
-test("connected: the queue frame is authoritative, so no local row is added", async () => {
+test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", async () => {
   routes["/api/agents/dev/messages"] = accepted("online hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
   await userEvent.type(screen.getByRole("textbox", { name: /Message to/ }), "online hello");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  await vi.waitFor(() =>
-    expect(screen.getByRole("textbox", { name: /Message to/ })).toHaveValue(""),
-  );
   const log = screen.getByRole("log", { name: "Session" });
-  expect(within(log).queryByText("online hello")).not.toBeInTheDocument();
+  await vi.waitFor(() => expect(within(log).queryByRole("group", { name: "Sending" })).toBeNull());
+  expect(within(log).getAllByText("online hello")).toHaveLength(1);
 });
 
 // --- S4 additions (UI design §4.4) ---
 
-test("header: avatar without badge, name, StatusBadge, one live fact, Stop only while turnOpen, ⋯", async () => {
+test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (it is in the composer), ⋯", async () => {
   routes["/api/agents/dev"] = () =>
     json(
       detail({
@@ -536,7 +588,8 @@ test("header: avatar without badge, name, StatusBadge, one live fact, Stop only 
     .getAllByRole("status")
     .filter((s) => s.textContent);
   expect(facts.map((f) => f.textContent)).toEqual(["Restarts when idle"]);
-  expect(within(header).getByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "Actions for Dev agent" })).toBeInTheDocument();
   // Edit, Compact and Terminate live in the ⋯ menu now.
   expect(within(header).queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
@@ -551,7 +604,7 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const header = screen.getByRole("banner");
-  expect(within(header).queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
@@ -629,7 +682,7 @@ test("restart pending arrives by frame; a frame clears it", async () => {
   await vi.waitFor(() => expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument());
 });
 
-test("archived: the composer is replaced by a line linking the edit page; no Compact or Interrupt", async () => {
+test("archived: the composer is replaced by a line linking the edit page; no Compact or Stop", async () => {
   routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
@@ -642,7 +695,7 @@ test("archived: the composer is replaced by a line linking the edit page; no Com
   );
   expect(screen.queryByRole("textbox", { name: /Message to/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
 });
 
@@ -797,11 +850,11 @@ test("the log and each row wrap can shrink, so no row widens the scroller", asyn
   for (const w of wraps) expect(w).toHaveClass("min-w-0");
 });
 
-test("the Interrupt button uses the stop glyph", async () => {
+test("the Stop button uses the stop glyph", async () => {
   routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  const icon = screen.getByRole("button", { name: /Interrupt/ }).querySelector("svg");
+  const icon = screen.getByRole("button", { name: "Stop" }).querySelector("svg");
   expect(icon).toHaveClass("lucide-circle-stop");
 });
 
@@ -861,7 +914,7 @@ test("a cold load renders from the detail the route waited for while the session
   gate.release(json(detail()));
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-  sessionStorage.removeItem("of-draft:dev"); // the unsent draft would carry into the next test
+  localStorage.removeItem("of-draft:v1:agent:dev"); // the unsent draft would carry into the next test
 });
 
 test("a cached summary whose agent turns out not to exist shows Agent not found", async () => {

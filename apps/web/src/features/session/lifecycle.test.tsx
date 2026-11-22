@@ -55,18 +55,28 @@ const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) 
   });
 const composer = () => screen.getByRole("textbox", { name: "Message to Dev agent" });
 
-test("errored: Restart and Start a new session replace Compact/Interrupt", async () => {
+test("errored: Restart and Start a new session replace Compact/Stop", async () => {
   world({ status: "errored", errorKind: "resume", lastError: "Resume failed" });
   await open();
   expect(screen.getByRole("button", { name: "Restart" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start a new session" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
-  // Leaving Errored brings Compact and Interrupt back and removes both recovery actions.
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
+  // Leaving Errored for an open turn brings Stop (in the composer) and removes both recovery actions.
   frame({ status: "working", turnOpen: true });
-  expect(await screen.findByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Start a new session" })).not.toBeInTheDocument();
+});
+
+test("the header has no Stop: it lives in the composer, left of Send (U3 §6.1, §14)", async () => {
+  world({ status: "working", turnOpen: true });
+  await open();
+  const header = screen.getByRole("banner");
+  expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
+  const form = composer().closest("form");
+  expect(form).not.toBeNull();
+  expect(within(form as HTMLElement).getByRole("button", { name: "Stop" })).toBeInTheDocument();
 });
 
 test("a crash offers Restart only", async () => {
@@ -325,3 +335,108 @@ const mockEvents = (events: ReturnType<typeof se>[]) =>
     resetSeq();
     return json({ events, hasMore: { before: false, after: false } });
   });
+
+// U3 §6.4: Cancel a held message you sent, with Undo, through the session.
+const mine = (id: string, body: string): QueueItem => ({
+  id,
+  kind: "message",
+  from: "@alice",
+  body,
+  createdAt: todayAt(9, 59),
+});
+/** A queue frame, committed: frames are batched per animation frame. */
+const queueOf = async (items: QueueItem[]) => {
+  push({ type: "queue", agent: "dev", items });
+  await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+};
+
+test("Cancel moves the text into an empty box; Undo restores it and empties the box if unchanged", async () => {
+  vi.useRealTimers();
+  world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
+  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
+  api.on("POST /api/agents/dev/queue/m1/restore", () => json(null, 204));
+  await open();
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  // One commit: the message is gone, the line is in its place, the text is in the box.
+  expect(screen.queryByText("Ship it", { selector: "p" })).toBeNull();
+  expect(screen.getByText("Message cancelled · back in the box.")).toBeInTheDocument();
+  expect(composer()).toHaveValue("Ship it");
+  expect(api.calls.some((c) => c.method === "DELETE" && c.url === "/api/agents/dev/queue/m1")).toBe(
+    true,
+  );
+  await queueOf([]);
+  expect(screen.getByText("Message cancelled · back in the box.")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await vi.waitFor(() => expect(composer()).toHaveValue(""));
+  // The line waits for the restored item's frame; both change in one step.
+  expect(screen.getByText("Message cancelled · back in the box.")).toBeInTheDocument();
+  await queueOf([mine("m1", "Ship it")]);
+  expect(screen.queryByText(/Message cancelled/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+});
+
+test("Cancel with text in the box leaves it; the line goes on your next send", async () => {
+  vi.useRealTimers();
+  world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
+  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
+  api.on("POST /api/agents/dev/messages", () => json({ item: mine("m2", "draft") }, 202));
+  await open();
+  await userEvent.type(composer(), "draft");
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  expect(screen.getByText("Message cancelled.")).toBeInTheDocument();
+  expect(composer()).toHaveValue("draft");
+  await queueOf([]);
+  await userEvent.click(composer());
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(screen.queryByText(/Message cancelled/)).toBeNull());
+});
+
+test("Undo leaves a box edited since the Cancel alone", async () => {
+  vi.useRealTimers();
+  world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
+  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
+  api.on("POST /api/agents/dev/queue/m1/restore", () => json(null, 204));
+  await open();
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  await queueOf([]);
+  await userEvent.type(composer(), " now");
+  await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await vi.waitFor(() =>
+    expect(api.calls.some((c) => c.url === "/api/agents/dev/queue/m1/restore")).toBe(true),
+  );
+  await queueOf([mine("m1", "Ship it")]);
+  expect(screen.queryByText(/Message cancelled/)).toBeNull();
+  expect(composer()).toHaveValue("Ship it now");
+});
+
+test("a failed Undo keeps the line, says why and drops Undo", async () => {
+  vi.useRealTimers();
+  world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
+  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
+  api.on("POST /api/agents/dev/queue/m1/restore", () =>
+    json({ error: { code: "agent_ended", message: "This agent has ended." } }, 409),
+  );
+  await open();
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  await queueOf([]);
+  await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(
+    await screen.findByText("Message cancelled. Couldn't undo: This agent has ended."),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  // The text stays in the box: the message is still yours to send.
+  expect(composer()).toHaveValue("Ship it");
+});
+
+test("a failed Cancel brings the message back with the reason, and takes its text out of the box", async () => {
+  vi.useRealTimers();
+  world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
+  api.on("DELETE /api/agents/dev/queue/m1", () =>
+    json({ error: { code: "already_delivered", message: "It was already delivered." } }, 409),
+  );
+  await open();
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  expect(await screen.findByText("Couldn't cancel: It was already delivered.")).toBeInTheDocument();
+  expect(composer()).toHaveValue("");
+  expect(screen.getByText("Ship it")).toBeInTheDocument();
+});

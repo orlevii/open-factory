@@ -122,14 +122,14 @@ test("scrolled up, a width change restores the top row's offset by delta, synchr
   expect(t.scroller.scrollTop).toBe(260);
 });
 
-test("a height-only change does not move a scrolled-up reader", () => {
+test("scrolled up, a height-only change keeps the top row in place too (U3 §8.1)", () => {
   const t = setup();
   t.resize(600);
   t.scroller.scrollTop = 200;
   scrolled(t.scroller);
   t.setRowTop(160);
   t.resize(600); // same width
-  expect(t.scroller.scrollTop).toBe(200);
+  expect(t.scroller.scrollTop).toBe(260);
 });
 
 test("atBottom is not recomputed in the RO callback", () => {
@@ -166,7 +166,9 @@ test("captureAnchor takes a fresh anchor for a toggle that follows no scroll", (
   let top = 30;
   row.getBoundingClientRect = () => ({ top }) as DOMRect;
   document.elementFromPoint = () => row;
-  scroller.scrollTop = 100;
+  scroller.scrollTop = 4600; // at the bottom
+  scrolled(scroller);
+  scroller.scrollTop = 100; // the reader scrolls up
   scrolled(scroller);
   top = 40; // the row moved with no scroll event, so the passive anchor is stale
   act(() => ref.current?.captureAnchor());
@@ -216,7 +218,7 @@ test("a disconnected anchor is skipped without throwing", () => {
   expect(t.scroller.scrollTop).toBe(200);
 });
 
-test("while Load earlier is pending, a width change does not correct", () => {
+test("while Load earlier is pending, a width change keeps the top row in place", () => {
   const t = setup({ onLoadEarlier: () => new Promise<boolean>(() => {}) });
   t.resize(600);
   t.scroller.scrollTop = 200;
@@ -224,7 +226,7 @@ test("while Load earlier is pending, a width change does not correct", () => {
   fireEvent.click(t.view.getByRole("button", { name: "Load earlier" }));
   t.setRowTop(160);
   t.resize(480);
-  expect(t.scroller.scrollTop).toBe(200);
+  expect(t.scroller.scrollTop).toBe(260);
 });
 
 /** The session page's wiring: the panel hook owns the timeline's handle, so `]` can anchor first. */
@@ -263,7 +265,9 @@ test("] takes a fresh anchor before it toggles the in-flow panel, so the top row
     let top = 30;
     row.getBoundingClientRect = () => ({ top }) as DOMRect;
     document.elementFromPoint = () => row;
-    scroller.scrollTop = 100;
+    scroller.scrollTop = 4600; // at the bottom
+    scrolled(scroller);
+    scroller.scrollTop = 100; // the reader scrolls up
     scrolled(scroller);
     top = 40; // the row moved with no scroll event, so the passive anchor is stale
     fireEvent.keyDown(document.body, { key: "]" });

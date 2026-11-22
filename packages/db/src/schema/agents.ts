@@ -169,6 +169,8 @@ export const messages = pgTable(
     dueAt: timestamp("due_at", { withTimezone: true }),
     firings: integer("firings"),
     late: boolean("late"),
+    // U3: the sender's optimistic-row id; idempotent per sender forever.
+    clientMessageId: text("client_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },
@@ -179,6 +181,9 @@ export const messages = pgTable(
     index("messages_delivered_turn_idx")
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
+    uniqueIndex("messages_client_id_unique")
+      .on(t.fromUserId, t.clientMessageId)
+      .where(sql`${t.clientMessageId} is not null`),
   ],
 );
 

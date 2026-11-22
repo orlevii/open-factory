@@ -4,10 +4,12 @@ import { afterEach } from "vitest";
 
 afterEach(() => {
   cleanup();
-  // Drafts (the session and comment composers) live in sessionStorage: no test inherits another's.
-  // A test that left a throwing storage stubbed (private mode) must not fail here.
+  // Drafts (the session composer's in localStorage, the comment composer's in sessionStorage): no test
+  // inherits another's. A test that left a throwing storage stubbed (private mode) must not fail here.
   try {
     sessionStorage.clear();
+    for (const k of Object.keys(localStorage))
+      if (k.startsWith("of-draft:")) localStorage.removeItem(k);
   } catch {
     /* stubbed to throw */
   }

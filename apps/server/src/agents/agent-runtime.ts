@@ -46,6 +46,7 @@ import {
   AgentArchivedError,
   AgentStartError,
   AgentTerminatedError,
+  CompactingError,
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
@@ -55,6 +56,12 @@ import {
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow, Tx } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
+import {
+  AgentEndedError,
+  AlreadyDeliveredError,
+  assertSender,
+  NotSenderError,
+} from "./message-cancel.ts";
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
@@ -312,6 +319,8 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   ...taskFieldsOf(e.row),
   ...scheduleFieldsOf(e.row),
   ...(e.row.kind === "task_update" && e.row.notice ? { fact: e.row.notice } : {}),
+  // U3 §13.2: a UI field on the envelope; never part of the text the model reads.
+  ...(e.row.clientMessageId ? { clientMessageId: e.row.clientMessageId } : {}),
 });
 
 /** How long an escalated stop (SIGKILL, container stop) may take to produce the exit (spec §9.6). */
@@ -365,6 +374,8 @@ export class AgentRuntime {
   private started = false; // session_started seen for this process
   private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
+  /** U3 §5.2: when the open turn's `turn_started` was stored (ISO); set and cleared with `openTurnId`. */
+  private turnStartedAt: string | undefined;
   /** The credential the live process was launched with (`reload()` may move the agent since); cleared on exit. */
   private procCredentialId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
@@ -549,14 +560,7 @@ export class AgentRuntime {
       if (!this.seen.has(row.id)) {
         entry = entryOf(row);
         this.seen.add(row.id);
-        // At its (created_at, id) place, so concurrent sends keep their order: it moves ahead only of newer
-        // messages at the tail, never of a notice or a compact (a barrier).
-        let at = this.queue.length;
-        for (; at > 0; at--) {
-          const e = this.queue[at - 1];
-          if (e?.kind !== "message" || isNotice(e) || byCreated(e, entry) < 0) break;
-        }
-        this.queue.splice(at, 0, entry);
+        this.insertByCreated(entry);
         this.publishQueue();
       } else if (!entry) {
         // Already written (boot reconciliation's wake loaded and delivered it while the Router waited on `booted`):
@@ -586,6 +590,83 @@ export class AgentRuntime {
       if (row.urgent) await this.urgentInterrupt(o.fromLabel);
       await this.flush();
       return this.itemOf(entry ?? entryOf(row));
+    });
+  }
+
+  /**
+   * U3 §13.2: the queue item a repeated send answers with: the queued entry while it is still queued (so a Stop's
+   * `waitReason` shows), otherwise the row's own.
+   */
+  itemFor(row: PendingRow): QueueItem {
+    const queued = this.queue.find((e) => e.kind === "message" && e.row.id === row.id);
+    return this.itemOf(queued ?? entryOf(row));
+  }
+
+  /**
+   * At its (created_at, id) place, so concurrent sends keep their order: it moves ahead only of newer messages at the
+   * tail, never of a notice or a compact (a barrier).
+   */
+  private insertByCreated(entry: MessageEntry) {
+    let at = this.queue.length;
+    for (; at > 0; at--) {
+      const e = this.queue[at - 1];
+      if (e?.kind !== "message" || isNotice(e) || byCreated(e, entry) < 0) break;
+    }
+    this.queue.splice(at, 0, entry);
+  }
+
+  /**
+   * U3 §6.4 (Q26, D2): the sender withdraws a message nothing has written yet. Only their own `kind = 'message'` row
+   * (`NotSenderError` otherwise), only while it is still in the queue (in flight, awaiting or written:
+   * `AlreadyDeliveredError`), and the row changes only if it is still pending and unwritten. A wake already under way
+   * is left alone. Resolves to the cancelled item; one already cancelled resolves to it again (idempotent).
+   */
+  cancelQueued(messageId: string, userId: string): Promise<QueueItem> {
+    return this.apiJob(async () => {
+      const row = await this.d.store.messageRow(messageId);
+      assertSender(row, { agentId: this.agent.id, userId });
+      // Already cancelled (a second tab, a retried DELETE): idempotent, the same item; it was never delivered.
+      if (row.state === "cancelled")
+        return this.itemOf(entryOf(await this.d.store.pendingRow(messageId)));
+      const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === messageId);
+      const entry = this.queue[at];
+      if (!entry) throw new AlreadyDeliveredError();
+      if (!(await this.d.store.cancelPending(messageId))) throw new AlreadyDeliveredError();
+      this.queue.splice(at, 1);
+      this.publishQueue();
+      return this.itemOf(entry);
+    });
+  }
+
+  /**
+   * U3 §6.4: Undo of a cancel. The same sender check; `AgentEndedError` on a terminated or archived agent. The row is
+   * pending again and goes back among the still-queued items by `createdAt` (next, if later ones were written
+   * meanwhile), then wakes and flushes like a delivery, without the `seen` guard (its id is known) and never with an
+   * urgent interrupt. A message that isn't cancelled is left as it is: still queued, a no-op; otherwise
+   * `AlreadyDeliveredError`.
+   */
+  restoreQueued(messageId: string, userId: string): Promise<void> {
+    return this.apiJob(async () => {
+      assertSender(await this.d.store.messageRow(messageId), {
+        agentId: this.agent.id,
+        userId,
+      });
+      if (this.terminated || this.archived) throw new AgentEndedError(this.agent.slug);
+      if (!(await this.d.store.restoreCancelled(messageId))) {
+        if (this.queue.some((e) => e.kind === "message" && e.row.id === messageId)) return;
+        throw new AlreadyDeliveredError();
+      }
+      const row = await this.d.store.pendingJoined(messageId);
+      if (!row) throw new Error(`message ${messageId} is not pending after its restore`);
+      this.seen.add(row.id);
+      this.insertByCreated(entryOf(row));
+      this.publishQueue();
+      if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
+      else {
+        if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
+        await this.wakeInline("message");
+      }
+      await this.flush();
     });
   }
 
@@ -637,27 +718,30 @@ export class AgentRuntime {
       this.publishQueue();
       await this.wakeInline("compact");
       await this.flush();
+      this.publishStatus(); // a compaction written now shows at once (U3 §6.1)
       return this.itemOf(entry);
     });
   }
 
+  /**
+   * Stop (U3 §6.3, D1): takes the same hold as an urgent send, so a message sent right after it waits for the
+   * interrupted turn's result instead of being absorbed by the aborting turn. A hold already set (a Stop or an urgent
+   * send under way) makes it a no-op; a compaction is never interrupted (409 `compacting`, D5).
+   */
   async interrupt(c: { byHandle: string }): Promise<void> {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (this.compactInFlight) throw new CompactingError();
+      if (this.hold) return;
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
-        await this.proc.control("interrupt");
+        await this.beginInterruptHold(`@${c.byHandle}`);
       } catch (err) {
         // The process is going away and its `exited` is not processed yet: there is nothing to interrupt (409).
         if (err instanceof ProcessNotRunningError) throw new NoOpenTurnError();
         throw err;
       }
-      await this.append(this.openTurnId, {
-        type: "control",
-        cmd: "interrupt",
-        by: `@${c.byHandle}`,
-      });
     });
   }
 
@@ -1368,11 +1452,15 @@ export class AgentRuntime {
     runtimeDisabled?: string;
     image?: string;
     pulling?: boolean;
+    turnStartedAt?: string;
+    compacting?: boolean;
   } {
     const pause = this.slots.pauseOf(this.agent.id);
     return {
       status: this.status(),
       turnOpen: Boolean(this.openTurnId),
+      ...(this.openTurnId && this.turnStartedAt ? { turnStartedAt: this.turnStartedAt } : {}),
+      compacting: this.compactInFlight,
       ...(pause
         ? { rateLimitedUntil: pause.until.toISOString(), rateLimitExact: pause.exact }
         : {}),
@@ -1588,7 +1676,11 @@ export class AgentRuntime {
             err instanceof AgentArchivedError ||
             err instanceof AgentTerminatedError ||
             err instanceof NoOpenTurnError ||
-            err instanceof RecoveryRefusedError
+            err instanceof CompactingError ||
+            err instanceof RecoveryRefusedError ||
+            err instanceof NotSenderError ||
+            err instanceof AlreadyDeliveredError ||
+            err instanceof AgentEndedError
           ) &&
           this.proc
         )
@@ -1633,6 +1725,9 @@ export class AgentRuntime {
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
           ...queueScheduleOf(e.row),
+          ...(e.row.clientMessageId ? { clientMessageId: e.row.clientMessageId } : {}),
+          // U3 §6.3: a Stop (or urgent send) is waiting for the interrupted turn's result.
+          ...(this.hold ? { waitReason: "stopping" as const } : {}),
         }
       : {
           id: e.id,
@@ -2292,7 +2387,7 @@ export class AgentRuntime {
         this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.turnKinds = [];
-        await this.append(this.openTurnId, e);
+        this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
         break;
       case "usage":
         this.lastUsage = e;
@@ -2327,6 +2422,7 @@ export class AgentRuntime {
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
           await this.attemptSucceeded();
         this.openTurnId = undefined;
+        this.turnStartedAt = undefined;
         // Held rows pending at this turn boundary are due at once, unless the turn only read updates (S6 §8.1).
         this.dueAtTurnEnd = this.held.some(isUpdate) && !updateOnly;
         this.lastActivityAt = Date.now();
@@ -2478,6 +2574,7 @@ export class AgentRuntime {
     // Notices go ahead of rolled-back batches (spec §9.5); a stable partition keeps each group in order.
     this.queue = [...this.queue.filter(isNotice), ...this.queue.filter((e) => !isNotice(e))];
     this.openTurnId = undefined;
+    this.turnStartedAt = undefined;
     this.releaseHold();
     this.compactInFlight = false;
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
@@ -3151,39 +3248,58 @@ export class AgentRuntime {
     // waits behind the barrier instead)
     if (!this.proc || !this.openTurnId || this.hold || this.compactInFlight) return;
     try {
-      await this.proc.control("interrupt");
+      await this.beginInterruptHold(by);
     } catch (err) {
       // The process is going away: skip the interrupt and the hold. The message stays queued and the coming
       // `exited` cleans up; this is not an internal error.
       if (err instanceof ProcessNotRunningError) return;
       throw err;
     }
+  }
+
+  /**
+   * U3 §6.3 (D1): the interrupt shared by Stop and an urgent send. Writes the control, sets the hold with its fallback,
+   * appends the `control{interrupt}` event and publishes the queue, all in the caller's job, so a `turn_end` can't
+   * slip in between. The callers check the guards (a process, an open turn, no hold, no compaction). A rejected
+   * control write (`ProcessNotRunningError`) sets no hold and is rethrown for the caller to map.
+   */
+  private async beginInterruptHold(by: string): Promise<void> {
+    if (!this.proc) return;
+    await this.proc.control("interrupt");
     const hold = setTimeout(() => {
       this.d.log.warn(
         { agent: this.agent.slug },
-        "no result within the urgent hold timeout; sending anyway",
+        "no result within the interrupt hold timeout; sending anyway",
       );
       void this.run(async () => {
         if (this.hold !== hold) return; // already released (turn_end or exited); never release a newer hold
         this.releaseHold();
         try {
+          await this.append(this.openTurnId, { type: "interrupt_unconfirmed" });
           await this.flush();
           this.maybeRestart();
         } catch (err) {
           if (this.proc) await this.onJobFailure(this.proc, err);
           else
-            this.d.log.error({ err, agent: this.agent.slug }, "flush after the urgent hold failed");
+            this.d.log.error(
+              { err, agent: this.agent.slug },
+              "flush after the interrupt hold failed",
+            );
         }
         this.publishStatus();
       });
     }, this.d.holdTimeoutMs ?? 10_000);
     this.hold = hold;
     await this.append(this.openTurnId, { type: "control", cmd: "interrupt", by });
+    this.publishQueue(); // queued items now read "stopping"
   }
 
+  /** Ends the interrupt hold; the queue is republished so its items stop reading "stopping" (U3 §6.3). */
   private releaseHold() {
-    if (this.hold) clearTimeout(this.hold);
+    if (!this.hold) return;
+    clearTimeout(this.hold);
     this.hold = undefined;
+    this.publishQueue();
   }
 
   /**

@@ -66,3 +66,15 @@ export function atPhrase(at: Date, now: Date): string {
   if (day === "Yesterday") return `yesterday at ${time}`;
   return `on ${day} at ${time}`;
 }
+
+/** The one duration format (U3 §5.4): "42s", "1m 09s", "1h 03m". The smaller unit is padded after a
+ *  larger one, so the width only changes at unit boundaries. */
+export function formatDuration(ms: number): string {
+  const total = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (h > 0) return `${h}h ${pad(m)}m`;
+  if (m > 0) return `${m}m ${pad(total % 60)}s`;
+  return `${total}s`;
+}

@@ -1,4 +1,4 @@
-import type { AgentSummary } from "@open-factory/shared";
+import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, PanelRight } from "lucide-react";
@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
 import { sessionQueryOptions } from "@/lib/session";
+import { TurnActivity } from "./activity-line";
 import {
   AGENT_DETAILS_ID,
   AGENT_DETAILS_TOGGLE_ID,
@@ -26,13 +27,13 @@ import {
   runningQueryOptions,
   summaryFromAgentsList,
 } from "./api";
-import { Composer, focusReadOnly, TerminatedComposer } from "./composer";
-import { InterruptButton } from "./interrupt-button";
+import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResult } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
+import type { CancelledEntry } from "./session-state";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
 import { CronsStopLayer, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
@@ -55,6 +56,29 @@ export function SessionView({
   sheetHost: HTMLElement | null;
 }) {
   const s = useSession(slug, eventSeq, messageId);
+  const { data: me } = useQuery(sessionQueryOptions);
+  // Cancel puts the message back into an empty box; Undo takes it out again if untouched (U3 §6.4).
+  const composerRef = useRef<ComposerHandle>(null);
+  const { cancelItem, undoCancel } = s;
+  const onCancel = useCallback(
+    (item: QueueItem) => {
+      const body = item.body ?? "";
+      const inBox = composerRef.current?.putBackIfEmpty(body) ?? false;
+      cancelItem(
+        item,
+        inBox,
+        inBox ? () => composerRef.current?.clearIfUnchanged(body) : undefined,
+      );
+    },
+    [cancelItem],
+  );
+  const onUndo = useCallback(
+    (id: string, entry: CancelledEntry) => {
+      const body = entry.item.body ?? "";
+      undoCancel(id, entry.inBox ? () => composerRef.current?.clearIfUnchanged(body) : undefined);
+    },
+    [undoCancel],
+  );
   useReadFrom(slug, s.state.ordered.at(-1)?.at);
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -107,6 +131,11 @@ export function SessionView({
   useEffect(() => {
     if (failed && sheetOpen) closePanel(false);
   }, [failed, sheetOpen, closePanel]);
+  // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
+  const leaveWindow = useCallback(
+    () => void navigate({ to: "/agents/$slug", params: { slug }, search: {} }),
+    [navigate, slug],
+  );
   // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.
   if (s.error?.code === "agent_not_found")
     return (
@@ -120,7 +149,6 @@ export function SessionView({
       </>
     );
   if (!agent) return null; // nothing cached and the route's fetch failed: useSession's answer or error follows
-  const working = agent.status === "working";
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";
   const errored = agent.status === "errored";
@@ -178,7 +206,6 @@ export function SessionView({
           actions={
             <SessionActions
               agent={agent}
-              turnEpoch={s.state.turnEpoch}
               archived={archived}
               panel={panel}
               onRestartError={setRestartError}
@@ -228,6 +255,8 @@ export function SessionView({
           <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
             {s.messageNotice.kind === "rejected" ? (
               <RejectedReason to={s.messageNotice.to} viewed={agent} />
+            ) : s.messageNotice.kind === "cancelled" ? (
+              "You cancelled this message."
             ) : (
               "Message not found. Showing the latest."
             )}
@@ -242,50 +271,49 @@ export function SessionView({
             rows={s.rows}
             failedIds={s.failedIds}
             interruptedEnds={s.interruptedEnds}
+            liveAfter={s.state.liveAfter}
+            handedOff={s.state.handedOff}
             highlightSeq={s.missingEvent === undefined ? (eventSeq ?? s.messageSeq) : undefined}
             highlightMessageId={eventSeq === undefined ? messageId : undefined}
             hasMoreBefore={s.state.hasMoreBefore}
             onLoadEarlier={s.loadEarlier}
             earlierError={s.earlierError}
+            windowed={s.state.windowed}
+            newSpeech={s.state.newSpeech}
+            onLeaveWindow={leaveWindow}
             footer={
               <>
-                {s.rows.length === 0 && s.state.queue.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    {archived ? "No messages yet." : "No messages yet. Send the first one below."}
-                  </p>
+                {s.rows.length === 0 &&
+                  s.state.queue.length === 0 &&
+                  s.state.sending.length === 0 &&
+                  s.state.cancelled.size === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      {archived ? "No messages yet." : "No messages yet. Send the first one below."}
+                    </p>
+                  )}
+                {/* Time order under the last row: now, then next (U3 §5.2). */}
+                {agent.turnOpen && !s.state.windowed && (
+                  <TurnActivity
+                    open={s.open}
+                    startedAt={agent.turnStartedAt}
+                    turnKey={String(s.state.turnEpoch)}
+                    compacting={agent.compacting === true}
+                  />
                 )}
-                <QueueItems items={s.state.queue} agent={agent} />
-                {working && (
-                  <p
-                    data-working-line
-                    className="flex h-6 items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="inline-flex size-3 items-center justify-center"
-                    >
-                      <span className="of-tooth" />
-                    </span>
-                    Working
-                  </p>
-                )}
+                <QueueItems
+                  items={s.state.queue}
+                  sending={s.state.sending}
+                  agent={agent}
+                  cancelled={s.state.cancelled}
+                  self={me?.user.handle}
+                  onCancel={onCancel}
+                  onUndo={onUndo}
+                />
               </>
             }
           />
         ) : (
           <TimelineSkeleton />
-        )}
-        {s.state.windowed && (
-          <div className="flex shrink-0 justify-center py-2">
-            <Button
-              variant="outline"
-              size="sm"
-              // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
-              onClick={() => void navigate({ to: "/agents/$slug", params: { slug }, search: {} })}
-            >
-              Jump to latest · {s.state.newWhileAway} new
-            </Button>
-          </div>
         )}
         <div role="status" aria-live="polite" className="sr-only">
           {announce}
@@ -306,11 +334,17 @@ export function SessionView({
           <TerminatedComposer slug={slug} notice={raceNotice} />
         ) : (
           <Composer
+            ref={composerRef}
             slug={slug}
             agent={agent}
+            stopEpoch={s.state.stopEpoch}
             // A send before the session loads would be lost when the load replaces the queue.
             waiting={!loaded}
             onQueued={s.onQueued}
+            onSending={s.onSending}
+            onSendFailed={s.onSendFailed}
+            landed={s.state.landed}
+            onSent={s.clearCancelled}
             onTerminated={(notice) => {
               setRaceNotice(notice);
               void s.refreshAgent();
@@ -475,7 +509,6 @@ function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
 
 function SessionActions({
   agent,
-  turnEpoch,
   archived,
   panel,
   actionsMenu,
@@ -484,7 +517,6 @@ function SessionActions({
   onAgent,
 }: {
   agent: AgentSummary;
-  turnEpoch: number;
   archived: boolean;
   panel: AgentDetailsPanel;
   actionsMenu: ReactNode;
@@ -493,16 +525,13 @@ function SessionActions({
   onAgent(a: AgentSummary): void;
 }) {
   // Edit, Compact, Stop crons and Terminate are in the ⋯ menu (U2 §8.2); the header keeps what
-  // can't wait: Pin, Stop, Restart. A terminated agent's session is read-only for good.
+  // can't wait: Pin, Restart. Stop sits in the composer, where the turn is (U3 §6.1, §14). A
+  // terminated agent's session is read-only for good.
   const live = !archived && agent.status !== "terminated";
   return (
     <>
       {agent.status === "terminated" && canPin(agent) && (
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
-      )}
-      {/* Stop only while a turn is open: it is the one thing to reach for then. */}
-      {live && agent.turnOpen && (
-        <InterruptButton slug={agent.slug} turnOpen={agent.turnOpen} turnEpoch={turnEpoch} />
       )}
       {live && <RecoveryActions agent={agent} onError={onRestartError} />}
       <Tooltip>

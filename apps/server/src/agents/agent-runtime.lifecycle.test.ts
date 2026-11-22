@@ -388,6 +388,51 @@ test("interrupt: 409 while hibernated or starting; allowed with an open turn", a
   expect((await events()).at(-1)?.event).toEqual({ type: "control", cmd: "interrupt", by: "@or" });
 });
 
+test("the status frame carries the open turn's start time and a running compaction", async () => {
+  const lastStatus = () => {
+    const f = frames.filter((m) => m.type === "agent_status").at(-1);
+    if (f?.type !== "agent_status") throw new Error("no agent_status frame");
+    return f;
+  };
+  await send("x");
+  driver.last.emit(ev.session(), ev.turn());
+  await rt.settled();
+  const started = (await store.after(agentId, 0, 1000)).find(
+    (e) => e.event.type === "turn_started",
+  );
+  expect(started).toBeDefined();
+  expect(lastStatus().turnStartedAt).toBe(started?.at);
+  expect(rt.live().turnStartedAt).toBe(started?.at);
+  expect(lastStatus().compacting).toBeFalsy();
+  driver.last.emit(ev.usage(), ev.end());
+  await rt.settled();
+  expect(lastStatus().turnOpen).toBe(false);
+  expect(lastStatus()).not.toHaveProperty("turnStartedAt");
+
+  await rt.compact({ byHandle: "or" });
+  expect(driver.last.controls.at(-1)).toMatchObject({ cmd: "compact" });
+  expect(lastStatus().compacting).toBe(true);
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  expect(lastStatus()).toMatchObject({ compacting: true, turnOpen: true });
+  driver.last.emit(
+    ev.usage(),
+    ev.end({ command: "compact", terminalReason: undefined, numTurns: 0 }),
+  );
+  await rt.settled();
+  expect(lastStatus().compacting).toBeFalsy();
+  expect(lastStatus()).not.toHaveProperty("turnStartedAt");
+});
+
+test("an exit mid-turn clears the turn's start time", async () => {
+  await send("x");
+  driver.last.emit(ev.session(), ev.turn());
+  await rt.settled();
+  expect(rt.live().turnStartedAt).toBeDefined();
+  await rt.stop();
+  expect(rt.live()).not.toHaveProperty("turnStartedAt");
+});
+
 test("message_in always precedes its reply even when the reply is emitted during the write", async () => {
   await send("x");
   const p = driver.last;

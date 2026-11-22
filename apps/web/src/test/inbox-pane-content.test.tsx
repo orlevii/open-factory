@@ -188,10 +188,11 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
   await waitFor(() =>
     expect(
       api.calls.find((c) => c.method === "POST" && c.url === "/api/agents/dev/messages")?.body,
-    ).toEqual({ body: "On it", urgent: false }),
+    ).toEqual({ body: "On it", urgent: false, clientMessageId: expect.any(String) }),
   );
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
-  expect(within(p).getByRole("checkbox", { name: "Urgent" })).toBeInTheDocument();
+  // The session's composer, keys and reserved hint line included (U3 §6.2).
+  expect(p.querySelector("[data-composer-hint]")).not.toBeNull();
 });
 
 test("without seq the excerpt is the latest 7 events, with no highlight", async () => {
@@ -422,7 +423,8 @@ test("switching items shows skeletons, never the previous body", async () => {
   release();
   await waitFor(() => expect(within(pane()).getByText("dev event 60")).toBeInTheDocument());
   expect(pane().querySelector("[data-pane-skeleton]")).toBeNull();
-});
+  // Two full-app route renders and a held fetch: past the default 5s when the suite runs in parallel.
+}, 15_000);
 
 test("?item= outside the loaded pages fetches the item and shows it", async () => {
   setup([item(1)]);

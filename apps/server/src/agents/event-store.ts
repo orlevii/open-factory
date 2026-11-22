@@ -76,7 +76,7 @@ export interface MessageLookup {
   kind: MessageKind;
   from: string;
   to: string;
-  state: "pending" | "delivered" | "rejected";
+  state: "pending" | "delivered" | "rejected" | "cancelled";
   recipientEvent?: { agentSlug: string; seq: number };
   senderEvent?: { agentSlug: string; seq: number };
   scheduleKey?: string;
@@ -730,6 +730,7 @@ export class EventStore {
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
+      clientMessageId?: string | null;
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -737,6 +738,7 @@ export class EventStore {
     await tx.insert(messages).values({
       id,
       kind: "message",
+      clientMessageId: m.clientMessageId ?? null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
       toAgentId: m.toAgentId,
       body: m.body,
@@ -745,6 +747,52 @@ export class EventStore {
       createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);
+  }
+  /**
+   * U3 §13.2: a human's send carrying the client's id. The unique partial index on (`from_user_id`,
+   * `client_message_id`) decides: a repeat (the same sender and id, at any later time, or concurrently) inserts
+   * nothing and returns the original row with `created: false`.
+   */
+  async createClientMessage(m: {
+    fromUserId: string;
+    toAgentId: string;
+    body: string;
+    urgent: boolean;
+    clientMessageId: string;
+  }): Promise<{ row: PendingRow; created: boolean }> {
+    const id = randomUUID();
+    const inserted = await this.db
+      .insert(messages)
+      .values({
+        id,
+        kind: "message",
+        clientMessageId: m.clientMessageId,
+        fromUserId: m.fromUserId,
+        toAgentId: m.toAgentId,
+        body: m.body,
+        urgent: m.urgent,
+        createdAt: this.clock(),
+      })
+      .onConflictDoNothing({
+        target: [messages.fromUserId, messages.clientMessageId],
+        where: sql`${messages.clientMessageId} is not null`,
+      })
+      .returning({ id: messages.id });
+    if (inserted.length) return { row: await this.pendingRow(id), created: true };
+    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId);
+    if (!existing)
+      throw new Error(`client message ${m.clientMessageId} conflicted but isn't there`);
+    return { row: existing, created: false };
+  }
+  /** U3 §13.2: the joined row a sender's earlier send with this client id wrote, whatever its state. */
+  async byClientMessageId(
+    fromUserId: string,
+    clientMessageId: string,
+  ): Promise<PendingRow | undefined> {
+    const [r] = await this.joined(this.db).where(
+      and(eq(messages.fromUserId, fromUserId), eq(messages.clientMessageId, clientMessageId)),
+    );
+    return r;
   }
   /** A held peer or member-update row, pending until the runtime renders it (spec §8). Returns the joined row. */
   async createHeld(
@@ -1049,6 +1097,34 @@ export class EventStore {
   async setDeliveredEventSeq(ids: string[], seq: number, tx: Exec = this.db) {
     if (ids.length)
       await tx.update(messages).set({ deliveredEventSeq: seq }).where(inArray(messages.id, ids));
+  }
+  /** One message row as stored, whatever its state; undefined when there is none. */
+  async messageRow(id: string): Promise<MessageRow | undefined> {
+    const [r] = await this.db.select().from(messages).where(eq(messages.id, id));
+    return r;
+  }
+  /**
+   * U3 §6.4: cancels a message only while nothing has written it (`pending` and no delivery event). False when the
+   * row was written, rejected or already cancelled meanwhile.
+   */
+  async cancelPending(id: string): Promise<boolean> {
+    const rows = await this.db
+      .update(messages)
+      .set({ state: "cancelled" })
+      .where(
+        and(eq(messages.id, id), eq(messages.state, "pending"), isNull(messages.deliveredEventSeq)),
+      )
+      .returning({ id: messages.id });
+    return rows.length > 0;
+  }
+  /** U3 §6.4: a cancelled message is pending again. False when it wasn't cancelled. */
+  async restoreCancelled(id: string): Promise<boolean> {
+    const rows = await this.db
+      .update(messages)
+      .set({ state: "pending" })
+      .where(and(eq(messages.id, id), eq(messages.state, "cancelled")))
+      .returning({ id: messages.id });
+    return rows.length > 0;
   }
   /** The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). */
   async markRejected(id: string, tx: Exec = this.db) {

@@ -301,3 +301,45 @@ test("bootWakes orders by deliverable rows only", async () => {
     .filter((i) => i === "a5" || i === "a6");
   expect(order).toEqual(["a6", "a5"]);
 });
+
+const CID = "7b1d7a0e-3f55-4d8e-9d0e-5a1f2c3b4d5e";
+test("a message row can be cancelled and carries a client id", async () => {
+  const m = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: "a3",
+    body: "hi",
+    urgent: false,
+    clientMessageId: CID,
+  });
+  await t.sql`update messages set state = 'cancelled' where id = ${m.id}`;
+  const row = await store.pendingRow(m.id);
+  expect(row.state).toBe("cancelled");
+  expect(row.clientMessageId).toBe(CID);
+});
+test("the same sender can't reuse a client id", async () => {
+  const send = (body: string) =>
+    store.createMessage({
+      from: { userId: "u2" },
+      toAgentId: "a4",
+      body,
+      urgent: false,
+      clientMessageId: CID,
+    });
+  await send("a");
+  await expect(send("b")).rejects.toThrow();
+});
+
+test("U3 §13.2: createClientMessage inserts once per (sender, client id), even concurrently", async () => {
+  const cid = "6f1c1c2e-8f7e-4a43-9b7d-2f4d7f1f0a01";
+  const m = { fromUserId: "u1", toAgentId: "a1", body: "x", urgent: false, clientMessageId: cid };
+  const results = await Promise.all([1, 2, 3, 4].map(() => store.createClientMessage(m)));
+  expect(results.filter((r) => r.created)).toHaveLength(1);
+  expect(new Set(results.map((r) => r.row.id)).size).toBe(1);
+  const later = await store.createClientMessage({ ...m, body: "other" });
+  expect(later).toMatchObject({ created: false, row: { id: results[0]?.row.id, body: "x" } });
+  const other = await store.createClientMessage({ ...m, fromUserId: "u2" });
+  expect(other.created).toBe(true);
+  expect(
+    (await t.sql`select count(*)::int as n from messages where client_message_id = ${cid}`)[0]?.n,
+  ).toBe(2);
+});

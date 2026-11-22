@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { CalendarClock, Clock, Factory } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { Markdown } from "@/components/markdown/markdown";
+import { Spinner } from "@/components/ui/spinner";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
@@ -125,8 +126,14 @@ export function MessageBlock(props: {
     late?: boolean | undefined;
     firings?: number | undefined;
   };
+  /** U3 §6.4: Cancel on a held message you sent, at the end of the sender line. */
+  action?: ReactNode;
+  /** U3 §13.2: an optimistic send, in the delivered card's shape with its body muted and named
+   *  "Sending"; `label` ("Sending…") takes the time's place once the POST is slow. */
+  sending?: { label?: ReactNode };
 }) {
-  const { from, system, body, urgent, at, queued, failed, badge, scheduled } = props;
+  const { from, system, body, urgent, at, queued, failed, badge, scheduled, action, sending } =
+    props;
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -139,6 +146,7 @@ export function MessageBlock(props: {
   return (
     <div
       data-message-block
+      {...(sending ? { role: "group", "aria-label": "Sending" } : {})}
       className={`rounded-lg border px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
@@ -174,7 +182,14 @@ export function MessageBlock(props: {
         {urgent && !system && (
           <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
         )}
-        {queued ? (
+        {sending ? (
+          sending.label ? (
+            <span className="flex items-center gap-1 text-muted-foreground">
+              <Spinner size="text" />
+              {sending.label}
+            </span>
+          ) : null
+        ) : queued ? (
           <span className="flex items-center gap-1 text-muted-foreground">
             <Clock aria-hidden="true" className="size-3.5" />
             {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
@@ -188,6 +203,7 @@ export function MessageBlock(props: {
             {formatTime(at)}
           </time>
         ) : null}
+        {action && <span className="ml-auto">{action}</span>}
       </div>
       {notes.length > 0 && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
@@ -199,7 +215,16 @@ export function MessageBlock(props: {
           Not delivered
         </p>
       )}
-      <ClampedMarkdown source={body} />
+      {/* One wrapper either way, so a send becoming its queued item keeps the parsed body. The prose
+          reads --foreground, so muting it means pointing that at the muted token. */}
+      <div
+        data-message-body
+        className={
+          sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
+        }
+      >
+        <ClampedMarkdown source={body} />
+      </div>
     </div>
   );
 }
@@ -222,6 +247,7 @@ export function ClampedMarkdown({
       <Markdown source={lines.slice(0, limit).join("\n")} variant="detail" />
       <button
         type="button"
+        data-expands
         onClick={(e) => {
           e.currentTarget.closest<HTMLElement>("[data-row]")?.focus(); // this button unmounts
           setAll(true);

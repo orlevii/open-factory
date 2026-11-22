@@ -1,5 +1,12 @@
 import { expect, test } from "vitest";
-import { atPhrase, formatBytes, formatDay, formatResetTime, formatTokens } from "./format";
+import {
+  atPhrase,
+  formatBytes,
+  formatDay,
+  formatDuration,
+  formatResetTime,
+  formatTokens,
+} from "./format";
 
 test("tokens", () => {
   expect(formatTokens(27545)).toBe("27.5k");
@@ -42,3 +49,12 @@ test("atPhrase: local time with the preposition its output needs, past and futur
   expect(atPhrase(at(22), now)).toBe("on Sun at 14:32");
   expect(atPhrase(at(28), now)).toBe("on 28 Nov at 14:32");
 });
+
+test.each([
+  [0, "0s"],
+  [42_000, "42s"],
+  [69_000, "1m 09s"],
+  [133_000, "2m 13s"],
+  [3_780_000, "1h 03m"],
+  [-5_000, "0s"],
+])("formatDuration %i -> %s", (ms, text) => expect(formatDuration(ms)).toBe(text));

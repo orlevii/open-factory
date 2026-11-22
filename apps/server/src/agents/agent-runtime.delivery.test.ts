@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
-import { NoOpenTurnError } from "./errors.ts";
+import { CompactingError, NoOpenTurnError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
@@ -190,6 +192,7 @@ test("the hold is released after 10 s if no result arrives", async () => {
   await vi.advanceTimersByTimeAsync(1);
   await rt.settled();
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
+  expect(await types()).toContain("interrupt_unconfirmed");
 });
 
 test("a DB failure in the hold-timeout flush stops the process and marks errored", async () => {
@@ -206,6 +209,114 @@ test("a DB failure in the hold-timeout flush stops the process and marks errored
   expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
   expect(rt.live().status).toBe("errored");
   expect((await types()).at(-1)).toBe("exited");
+});
+
+async function startedWithOpenTurn() {
+  await startedIdle();
+  await send("long task");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+}
+const queueFrames = () => frames.filter((f) => f.type === "queue");
+const controlEvents = async () => (await events()).filter((e) => e.type === "control");
+
+test("a plain interrupt holds later messages until the interrupted turn's result", async () => {
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" });
+  await send("steer");
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["long task"]);
+  expect(driver.last.writes.at(-1)).toEqual({ kind: "control", cmd: "interrupt" });
+  expect(rt.queueItems().at(-1)).toMatchObject({ body: "steer", waitReason: "stopping" });
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  expect(driver.last.writes.at(-1)).toMatchObject({ kind: "send" });
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["steer"]);
+  expect(rt.queueItems()).toEqual([]);
+});
+
+test("a second interrupt during the hold writes nothing", async () => {
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ byHandle: "or" }); // resolves (202), no-op
+  await send("STOP", true); // an urgent send during the hold doesn't interrupt again either
+  expect(driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
+  expect((await controlEvents()).map((e) => e.event)).toEqual([
+    { type: "control", cmd: "interrupt", by: "@or" },
+  ]);
+});
+
+test("the 10 s fallback appends interrupt_unconfirmed, then sends the held messages", async () => {
+  await makeRuntime({ realHold: true });
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" });
+  await send("steer");
+  await vi.advanceTimersByTimeAsync(9_999);
+  await rt.settled();
+  expect(await types()).not.toContain("interrupt_unconfirmed");
+  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
+  await vi.advanceTimersByTimeAsync(1);
+  await rt.settled();
+  const after = (await types()).slice(-2);
+  expect(after).toEqual(["interrupt_unconfirmed", "message_in"]); // the line lands before the held message
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["steer"]);
+  expect(rt.queueItems()).toEqual([]);
+});
+
+test("a hold ended by the turn's result never appends interrupt_unconfirmed afterwards", async () => {
+  await makeRuntime({ realHold: true });
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" });
+  await send("steer");
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["steer"]);
+  await vi.advanceTimersByTimeAsync(20_000);
+  await rt.settled();
+  expect(await types()).not.toContain("interrupt_unconfirmed");
+});
+
+test("interrupt during a compaction is 409 compacting and writes nothing", async () => {
+  await startedIdle();
+  await rt.compact({ byHandle: "or" });
+  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(CompactingError);
+  driver.last.emit(ev.turn()); // the compact turn opens
+  await rt.settled();
+  await expect(rt.interrupt({ byHandle: "or" })).rejects.toMatchObject({ code: "compacting" });
+  expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]);
+  expect(rt.live().status).not.toBe("errored");
+});
+
+test("publishQueue runs when the hold begins and when it ends", async () => {
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  const before = queueFrames().length;
+  await rt.interrupt({ byHandle: "or" });
+  expect(queueFrames()).toHaveLength(before + 1);
+  await send("steer");
+  const held = queueFrames().at(-1);
+  expect(held?.type === "queue" && held.items).toEqual([
+    expect.objectContaining({ body: "steer", waitReason: "stopping" }),
+  ]);
+  const beforeEnd = queueFrames().length;
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  expect(queueFrames().length).toBeGreaterThan(beforeEnd);
+  const released = queueFrames().at(-1);
+  expect(released?.type === "queue" && released.items).toEqual([]);
+});
+
+test("a hold released by the turn's result, with nothing queued, still publishes the queue", async () => {
+  await startedWithOpenTurn();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" });
+  const before = queueFrames().length;
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  expect(queueFrames().length).toBeGreaterThan(before);
 });
 
 test("urgent while a compact is in flight does not interrupt it; it waits behind the barrier", async () => {
@@ -387,4 +498,32 @@ test("rolled-back batches go behind notices queued meanwhile", async () => {
     ["system", expect.stringContaining("stopped unexpectedly")],
     ["message", "a"],
   ]);
+});
+
+test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId; the model's text never has it", async () => {
+  await startedIdle();
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  fakeHoldTimer();
+  await rt.interrupt({ byHandle: "or" }); // a hold, so the item is seen queued first
+  const cid = randomUUID();
+  const row = await store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: agentId,
+    body: "with an id",
+    urgent: false,
+    clientMessageId: cid,
+  });
+  const item = await rt.deliver(row, { sender: "human", fromLabel: "@or" });
+  expect(item).toMatchObject({ id: row.id, clientMessageId: cid });
+  expect(rt.queueItems()).toEqual([expect.objectContaining({ clientMessageId: cid })]);
+  driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
+  await rt.settled();
+  const sent = driver.last.sent.at(-1) ?? [];
+  expect(sent).toEqual([expect.objectContaining({ id: row.id, clientMessageId: cid })]);
+  const stored = (await events()).filter((e) => e.type === "message_in").at(-1)?.event;
+  expect(stored).toMatchObject({ messages: [{ id: row.id, clientMessageId: cid }] });
+  const text = renderEnvelopes(sent);
+  expect(text).not.toContain(cid);
+  expect(text).toBe(renderEnvelopes(sent.map(({ clientMessageId: _c, ...m }) => m)));
 });

@@ -30,7 +30,7 @@ let posted: { url: string; body: unknown }[];
 let postReply: (url: string) => Response | Promise<Response>;
 let agentOver: Parameters<typeof detail>[0];
 beforeEach(() => {
-  sessionStorage.clear(); // drafts persist per agent
+  localStorage.clear(); // drafts persist per agent
   posted = [];
   agentOver = {};
   postReply = (url) =>
@@ -70,36 +70,22 @@ test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () 
   await userEvent.keyboard("{Enter}");
   await vi.waitFor(() =>
     expect(posted).toEqual([
-      { url: "/api/agents/dev/messages", body: { body: "line one\nline two", urgent: false } },
+      {
+        url: "/api/agents/dev/messages",
+        body: { body: "line one\nline two", urgent: false, clientMessageId: expect.any(String) },
+      },
     ]),
   );
   await vi.waitFor(() => expect(input).toHaveValue(""));
 });
 
-test("Send is disabled for whitespace; Urgent changes the label and hint, then resets", async () => {
+test("Send is disabled for whitespace; there is no Urgent checkbox (⌥Enter is urgent, U3 §6.2)", async () => {
   agentOver = { status: "working", turnOpen: true };
   renderApp("/agents/dev", alice);
   const input = await box();
   await userEvent.type(input, "   ");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Urgent" }));
-  expect(screen.getByRole("button", { name: "Send urgent" })).toBeInTheDocument();
-  expect(screen.getByText("Interrupts the current turn, then runs next.")).toBeInTheDocument();
-  await userEvent.type(input, "stop");
-  await userEvent.click(screen.getByRole("button", { name: "Send urgent" }));
-  await vi.waitFor(() => expect(posted[0]?.body).toEqual({ body: "stop", urgent: true }));
-  await vi.waitFor(() =>
-    expect(screen.getByRole("checkbox", { name: "Urgent" })).not.toBeChecked(),
-  );
-});
-
-test("urgent while no turn is open sends normally: label Send, empty hint line", async () => {
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Urgent" }));
-  expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
-  expect(screen.queryByText(/Interrupts the current turn/)).toBeNull();
-  expect(screen.queryByText(/No turn is running/)).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
 });
 
 test("a 70 KB message is refused before sending, with the draft kept", async () => {
@@ -150,7 +136,7 @@ test("slash text is sent as a plain message", async () => {
   await vi.waitFor(() =>
     expect(posted[0]).toEqual({
       url: "/api/agents/dev/messages",
-      body: { body: "/compact", urgent: false },
+      body: { body: "/compact", urgent: false, clientMessageId: expect.any(String) },
     }),
   );
 });
@@ -171,18 +157,6 @@ test("Compact popover: focus moves to the input; Enter submits with the focus te
   await userEvent.type(focus, "keep the API{Enter}");
   await vi.waitFor(() =>
     expect(posted).toEqual([{ url: "/api/agents/dev/compact", body: { focus: "keep the API" } }]),
-  );
-});
-
-test("Interrupt posts only while a turn is open", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(screen.getByRole("button", { name: "Interrupt" }));
-  await vi.waitFor(() => expect(posted).toEqual([{ url: "/api/agents/dev/interrupt", body: {} }]));
-  expect(screen.getByRole("button", { name: "Interrupt" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
   );
 });
 
@@ -207,7 +181,7 @@ const status = (turnOpen: boolean) =>
       restartWaitingOn: 0,
     }),
   );
-const interrupt = () => screen.getByRole("button", { name: "Interrupt" });
+const stop = () => screen.getByRole("button", { name: /^(Stop|Stopping…)$/ });
 
 test("composer: IME composition Enter does not send (isComposing or keyCode 229)", async () => {
   renderApp("/agents/dev", alice);
@@ -273,17 +247,6 @@ test("composer: text typed while the send is in flight is kept", async () => {
   await vi.waitFor(() => expect(input).toHaveValue(" second"));
 });
 
-test("composer: the urgent hint sits under the composer row", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Urgent" }));
-  const hint = screen.getByText("Interrupts the current turn, then runs next.");
-  const send = screen.getByRole("button", { name: "Send urgent" });
-  expect(send.parentElement?.contains(hint)).toBe(false); // not squeezed into the button row
-  expect(send.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-});
-
 test("compact: Escape closes the popover and focus returns to the trigger", async () => {
   renderApp("/agents/dev", alice);
   await box();
@@ -330,82 +293,44 @@ test("compact: an error shows inside the popover and it stays open", async () =>
   expect(focus).toHaveValue("x");
 });
 
-test("interrupt: not offered while no turn is open", async () => {
+test("Stop: not offered while no turn is open", async () => {
   renderApp("/agents/dev", alice);
   await box();
-  expect(screen.queryByRole("button", { name: "Interrupt" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(posted).toEqual([]);
 });
 
-test("interrupt: when the turn closes under a focused Stop, focus goes to the composer", async () => {
+test("Stop: when the turn closes under a focused Stop, focus goes to the composer", async () => {
   agentOver = { status: "working", turnOpen: true };
   renderApp("/agents/dev", alice);
   const input = await box();
-  interrupt().focus();
+  stop().focus();
   status(false);
-  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull());
+  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
   await vi.waitFor(() => expect(input).toHaveFocus());
 });
 
-test("interrupt: a turn closing doesn't move focus that wasn't on Stop", async () => {
+test("Stop: posts one interrupt and re-enables when the turn closes and a new one opens", async () => {
   agentOver = { status: "working", turnOpen: true };
   renderApp("/agents/dev", alice);
   await box();
-  const menu = screen.getByRole("button", { name: "Actions for Dev agent" });
-  menu.focus();
-  status(false);
-  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull());
-  await new Promise((r) => requestAnimationFrame(() => r(null)));
-  expect(menu).toHaveFocus();
-});
-
-test("interrupt: re-enables when the turn closes and a new one opens", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(interrupt());
-  await vi.waitFor(() => expect(posted).toHaveLength(1));
-  expect(interrupt()).toHaveAttribute("aria-disabled", "true");
-  // Both frames land in one commit (spec §9.6): the button still sees the turn change.
-  status(false);
-  expect(interrupt()).toHaveAttribute("aria-disabled", "true");
-  status(true);
-  await vi.waitFor(() => expect(interrupt()).toHaveAttribute("aria-disabled", "false"));
-});
-
-test("interrupt: a 409 (the turn already ended) is ignored", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  postReply = () => json({ error: { code: "no_open_turn", message: "No turn is open" } }, 409);
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(interrupt());
-  await vi.waitFor(() => expect(posted).toHaveLength(1));
-  await new Promise((r) => setTimeout(r, 20));
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(interrupt()).toHaveAttribute("aria-disabled", "true");
-});
-
-test("interrupt: any other failure shows an inline error and allows a retry", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  postReply = () => json({ error: { code: "internal", message: "Boom" } }, 500);
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(interrupt());
-  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't interrupt: Boom");
-  expect(interrupt()).toHaveAttribute("aria-disabled", "false");
   postReply = () => json({}, 202);
-  await userEvent.click(interrupt());
-  await vi.waitFor(() => expect(posted).toHaveLength(2));
-  await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
-});
-
-test("interrupt: after a click the tooltip says it was sent", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
-  await box();
-  await userEvent.click(interrupt());
-  await vi.waitFor(() => expect(posted).toHaveLength(1));
-  await userEvent.unhover(interrupt()); // Radix keeps a clicked trigger's tooltip shut until re-entry
-  await userEvent.hover(interrupt());
-  expect(await screen.findByRole("tooltip")).toHaveTextContent("Interrupt sent");
+  await userEvent.click(stop());
+  await vi.waitFor(() => expect(posted).toEqual([{ url: "/api/agents/dev/interrupt", body: {} }]));
+  expect(stop()).toHaveAttribute("aria-disabled", "true");
+  // Both frames land in one commit (spec §9.6): Stop still sees the turn change.
+  act(() => {
+    for (const open of [false, true])
+      ws.onMessage?.({
+        type: "agent_status",
+        agent: "dev",
+        status: open ? "working" : "idle",
+        turnOpen: open,
+        restartPending: false,
+        restartWaitingOn: 0,
+      });
+  });
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Stop" })).toHaveAttribute("aria-disabled", "false"),
+  );
 });

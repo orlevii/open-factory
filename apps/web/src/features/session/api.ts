@@ -83,12 +83,36 @@ export function fetchEvents(
 export const fetchMessage = (id: string) =>
   apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
 
-export const postMessage = (slug: string, body: string, urgent: boolean) =>
+/** U3 §13.2: `clientMessageId` makes a retry idempotent (the server answers a repeat with the original). */
+export const postMessage = (
+  slug: string,
+  body: string,
+  o: { urgent: boolean; clientMessageId?: string; signal?: AbortSignal },
+) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/messages`, {
     method: "POST",
-    body: { body, urgent },
+    body: {
+      body,
+      urgent: o.urgent,
+      ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
+    },
+    schema: queueItemResponseSchema,
+    ...(o.signal ? { signal: o.signal } : {}),
+  }).then((r) => r.item);
+
+/** U3 §6.4: withdraw a held message you sent; resolves to the cancelled item. */
+export const cancelQueued = (slug: string, messageId: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}`, {
+    method: "DELETE",
     schema: queueItemResponseSchema,
   }).then((r) => r.item);
+
+/** U3 §6.4: Undo of a cancel (204); the restored item arrives in the next `queue` frame. */
+export const restoreQueued = (slug: string, messageId: string) =>
+  apiFetch(
+    `/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}/restore`,
+    { method: "POST", body: {}, schema: z.unknown() },
+  ).then(() => undefined);
 
 export const postCompact = (slug: string, focus?: string) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/compact`, {

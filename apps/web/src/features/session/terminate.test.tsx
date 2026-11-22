@@ -113,7 +113,8 @@ test("a live spawned agent: Terminate… in the ⋯ menu, no Edit; 'Spawned by @
   const buttons = within(header)
     .getAllByRole("button")
     .map((b) => b.getAttribute("aria-label") ?? b.textContent);
-  expect(buttons.slice(-3)).toEqual(["Interrupt", "Agent details", "Actions for Tech Lead · ab12"]);
+  expect(buttons.slice(-2)).toEqual(["Agent details", "Actions for Tech Lead · ab12"]);
+  expect(buttons).not.toContain("Stop");
   expect(within(header).queryByRole("link", { name: /Edit/ })).toBeNull();
   await userEvent.click(
     within(header).getByRole("button", { name: "Actions for Tech Lead · ab12" }),
@@ -165,7 +166,7 @@ test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; su
     screen.getByText("This agent was terminated. Its session is read-only."),
   ).toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: /Message/ })).toBeNull();
-  expect(screen.queryByRole("button", { name: /Terminate|Compact|Interrupt/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Terminate|Compact|Stop/ })).toBeNull();
 });
 
 test("terminated while viewing: popovers close, the read-only line takes focus, the draft can be copied", async () => {
@@ -187,7 +188,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   await vi.waitFor(() =>
     expect(screen.queryByRole("button", { name: "Copy unsent message" })).toBeNull(),
   );
-  expect(sessionStorage.getItem(`of-draft:${SLUG}`) ?? "").toBe("");
+  expect(localStorage.getItem(`of-draft:v1:agent:${SLUG}`)).toBeNull();
   // The detail was refetched for the header's dates.
   expect(await screen.findByText(/Terminated by/)).toBeInTheDocument();
 });
@@ -422,7 +423,7 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
     "Agent details",
     "Actions for Tech Lead · ab12",
   ]);
-  expect(within(header).queryByRole("button", { name: /Compact|Interrupt/ })).toBeNull();
+  expect(within(header).queryByRole("button", { name: /Compact|Stop/ })).toBeNull();
   await menuItem("Terminate…");
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));

@@ -17,3 +17,16 @@ export function isSendKey(
   if (e.metaKey || e.ctrlKey) return true;
   return !e.shiftKey && !coarse;
 }
+
+/** ⌥/Alt+Enter sends with `urgent: true` (U3 §6.2): fine pointers only, never while composing. `isSendKey` also
+ *  matches it, so a key handler checks this first. */
+export function isUrgentSendKey(
+  e: Pick<
+    KeyboardEvent,
+    "key" | "altKey" | "shiftKey" | "metaKey" | "ctrlKey" | "keyCode" | "isComposing"
+  >,
+  coarse = isCoarsePointer(),
+): boolean {
+  if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return false;
+  return e.altKey && !coarse;
+}

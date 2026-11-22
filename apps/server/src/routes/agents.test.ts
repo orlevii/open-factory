@@ -3,8 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
+import { CompactingError } from "../agents/errors.ts";
+import { AgentEndedError } from "../agents/message-cancel.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -91,6 +93,16 @@ test("send, then read events back; interrupt 409 while idle, 202 with an open tu
   driver.last.emit(ev.turn());
   await rt?.settled();
   expect((await req("POST", "/api/agents/dev/interrupt")).statusCode).toBe(202);
+});
+
+test("interrupt during a compaction is 409 compacting", async () => {
+  const rt = await t.app.runtimes.bySlug("dev");
+  if (!rt) throw new Error("no runtime");
+  const spy = vi.spyOn(rt, "interrupt").mockRejectedValueOnce(new CompactingError());
+  const res = await req("POST", "/api/agents/dev/interrupt");
+  spy.mockRestore();
+  expect(res.statusCode).toBe(409);
+  expect(res.json().error).toEqual({ code: "compacting", message: "A compaction is running" });
 });
 
 test("history query edge cases", async () => {
@@ -543,5 +555,204 @@ describe("S7: the ended list is bounded", () => {
     queries.length = 0;
     await svc.summary("old-5");
     expect(queries.filter((q) => /from "agents"/.test(q) && !/ where /.test(q))).toEqual([]);
+  });
+});
+
+describe("U3 §6.4: cancel and restore a held message", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let or: { cookie: string; id: string };
+  let sam: { cookie: string; id: string };
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    await s.seedAgent();
+    const a = await s.signUpUser({ handle: "or6" });
+    const b = await s.signUpUser({ handle: "sam6" });
+    or = { cookie: a.cookie, id: a.user.id };
+    sam = { cookie: b.cookie, id: b.user.id };
+  });
+  afterAll(() => s.close());
+
+  const call = (
+    who: { cookie: string },
+    method: "GET" | "POST" | "DELETE",
+    url: string,
+    payload?: object,
+  ) =>
+    s.app.inject({ method, url, headers: { cookie: who.cookie }, ...(payload ? { payload } : {}) });
+  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
+
+  /** A message sent while a Stop's hold is on: queued, unwritten. */
+  async function held(body: string): Promise<string> {
+    if (!drv.starts.length) {
+      await call(or, "POST", "/api/agents/dev/messages", { body: "work", urgent: false });
+      drv.last.emit(ev.session(), ev.turn());
+      await settled();
+      expect((await call(or, "POST", "/api/agents/dev/interrupt")).statusCode).toBe(202);
+    }
+    const res = await call(or, "POST", "/api/agents/dev/messages", { body, urgent: false });
+    expect(res.json().item).toMatchObject({ body, waitReason: "stopping" });
+    return res.json().item.id;
+  }
+
+  test("the sender cancels (200 with the item); another user gets 403; the lookup reports cancelled", async () => {
+    const id = await held("hold me");
+    const other = await call(sam, "DELETE", `/api/agents/dev/queue/${id}`);
+    expect(other.statusCode).toBe(403);
+    expect(other.json().error.code).toBe("not_sender");
+    const res = await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      item: expect.objectContaining({ id, body: "hold me", from: "@or6" }),
+    });
+    // A second DELETE (another tab, a retry) is idempotent: 200 with the same item, never "already delivered".
+    const again = await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual({ item: expect.objectContaining({ id, body: "hold me" }) });
+    expect((await call(or, "GET", `/api/messages/${id}`)).json()).toMatchObject({
+      id,
+      state: "cancelled",
+    });
+    expect((await call(or, "GET", "/api/agents/dev")).json().queue).toEqual([]);
+  });
+
+  test("restore is 204 and puts it back; another user's restore is 403; unknown agent is 404", async () => {
+    const id = await held("undo me");
+    expect((await call(or, "DELETE", `/api/agents/dev/queue/${id}`)).statusCode).toBe(200);
+    const other = await call(sam, "POST", `/api/agents/dev/queue/${id}/restore`);
+    expect(other.statusCode).toBe(403);
+    expect(other.json().error.code).toBe("not_sender");
+    const res = await call(or, "POST", `/api/agents/dev/queue/${id}/restore`);
+    expect(res.statusCode).toBe(204);
+    expect((await call(or, "GET", "/api/agents/dev")).json().queue).toEqual([
+      expect.objectContaining({ id, body: "undo me" }),
+    ]);
+    expect((await call(or, "GET", `/api/messages/${id}`)).json().state).toBe("pending");
+    expect((await call(or, "DELETE", `/api/agents/nope/queue/${id}`)).statusCode).toBe(404);
+    // Cleanup for the next test: cancel it again.
+    expect((await call(or, "DELETE", `/api/agents/dev/queue/${id}`)).statusCode).toBe(200);
+  });
+
+  test("restore on an ended agent is 409 agent_ended", async () => {
+    const rt = await s.app.runtimes.bySlug("dev");
+    if (!rt) throw new Error("no runtime");
+    const spy = vi.spyOn(rt, "restoreQueued").mockRejectedValueOnce(new AgentEndedError("dev"));
+    const res = await call(or, "POST", "/api/agents/dev/queue/x/restore");
+    spy.mockRestore();
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("agent_ended");
+  });
+
+  test("both routes log an audit line with the user, the agent and the message", async () => {
+    const id = await held("audit me");
+    const info = vi.spyOn(s.app.log, "info");
+    try {
+      await call(sam, "DELETE", `/api/agents/dev/queue/${id}`);
+      await call(or, "DELETE", `/api/agents/dev/queue/${id}`);
+      await call(or, "POST", `/api/agents/dev/queue/${id}/restore`);
+      const lines = info.mock.calls.map(([obj, msg]) => [obj, msg]);
+      expect(lines).toContainEqual([
+        { user: sam.id, agent: "dev", messageId: id, refused: "not_sender" },
+        "queued message cancel refused",
+      ]);
+      expect(lines).toContainEqual([
+        { user: or.id, agent: "dev", messageId: id },
+        "queued message cancel",
+      ]);
+      expect(lines).toContainEqual([
+        { user: or.id, agent: "dev", messageId: id },
+        "queued message restore",
+      ]);
+    } finally {
+      info.mockRestore();
+    }
+  });
+});
+
+describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
+  let s: Awaited<ReturnType<typeof makeTestApp>>;
+  const drv = new FakeDriver();
+  let or: string;
+  let sam: string;
+  beforeAll(async () => {
+    s = await makeTestApp({ harnessDriver: drv });
+    await s.seedAgent();
+    or = (await s.signUpUser({ handle: "or8" })).cookie;
+    sam = (await s.signUpUser({ handle: "sam8" })).cookie;
+  });
+  afterAll(() => s.close());
+
+  const post = (cookie: string, payload: object) =>
+    s.app.inject({
+      method: "POST",
+      url: "/api/agents/dev/messages",
+      headers: { cookie },
+      payload: { urgent: false, ...payload },
+    });
+  const rows = async (cid: string) =>
+    s.sql`select id, from_user_id from messages where client_message_id = ${cid}`;
+  const sends = () => drv.starts.flatMap((p) => p.writes.filter((w) => w.kind === "send"));
+  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
+
+  test("the same id twice: one row, the same 202 body, echoed on the item", async () => {
+    const cid = randomUUID();
+    const first = await post(or, { body: "once", clientMessageId: cid });
+    expect(first.statusCode).toBe(202);
+    expect(first.json().item).toMatchObject({ body: "once", clientMessageId: cid });
+    const before = sends().length;
+    const second = await post(or, { body: "once", clientMessageId: cid });
+    expect(second.statusCode).toBe(202);
+    expect(second.json()).toEqual(first.json());
+    expect(await rows(cid)).toHaveLength(1);
+    expect(sends()).toHaveLength(before); // nothing queued or delivered again
+  });
+
+  test("the same id much later (written, its turn over) still answers the original 202, no new row", async () => {
+    const cid = randomUUID();
+    const first = await post(or, { body: "later", clientMessageId: cid });
+    drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+    await settled();
+    const before = sends().length;
+    const again = await post(or, { body: "a retry with other text", clientMessageId: cid });
+    expect(again.statusCode).toBe(202);
+    expect(again.json().item).toEqual(first.json().item);
+    expect(await rows(cid)).toHaveLength(1);
+    expect(sends()).toHaveLength(before);
+  });
+
+  test("the same id from a different sender is a new row", async () => {
+    const cid = randomUUID();
+    const a = await post(or, { body: "mine", clientMessageId: cid });
+    const b = await post(sam, { body: "theirs", clientMessageId: cid });
+    expect(b.statusCode).toBe(202);
+    expect(b.json().item.id).not.toBe(a.json().item.id);
+    expect(b.json().item).toMatchObject({ body: "theirs", from: "@sam8", clientMessageId: cid });
+    expect(await rows(cid)).toHaveLength(2);
+  });
+
+  test("concurrency: two simultaneous POSTs with the same id make one row and one delivery", async () => {
+    await settled();
+    const cid = randomUUID();
+    const before = sends().length;
+    const [x, y] = await Promise.all([
+      post(or, { body: "race", clientMessageId: cid }),
+      post(or, { body: "race", clientMessageId: cid }),
+    ]);
+    await settled();
+    expect([x.statusCode, y.statusCode]).toEqual([202, 202]);
+    expect(x.json()).toEqual(y.json());
+    expect(await rows(cid)).toHaveLength(1);
+    const written = sends()
+      .slice(before)
+      .flatMap((w) => (w.kind === "send" ? w.messages : []))
+      .filter((m) => m.clientMessageId === cid);
+    expect(written).toHaveLength(1);
+  });
+
+  test("without an id nothing is deduped", async () => {
+    await post(or, { body: "plain" });
+    await post(or, { body: "plain" });
+    const n = await s.sql`select count(*)::int as n from messages where body = 'plain'`;
+    expect(n[0]?.n).toBe(2);
   });
 });

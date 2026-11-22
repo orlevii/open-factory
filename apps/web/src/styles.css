@@ -283,6 +283,42 @@
   clip-path: polygon(0 28.83%, 100% 0, 100% 100%, 0 100%);
 }
 
+/* Live arrival (U3 §5.2, §8.3): a row that arrived by a live frame and replaces nothing on screen,
+   and the activity line, fade in once when inserted. `@starting-style` applies on insertion only,
+   so a re-render never replays it; reduced motion keeps the fade (opacity only). */
+[data-row-wrap][data-live],
+[data-activity-line] {
+  transition: opacity 150ms var(--ease-out);
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+/* Jump to latest (U3 §8.2): transitions, so a show interrupted by a hide reverses from where it is.
+   Enter 150ms with a 4px rise, exit 100ms with the drop; reduced motion keeps the fade only (the
+   global block only zeroes tw-animate's variables). A key that shows or hides it stamps
+   `data-instant` on its layer. Hidden, it takes no pointer. */
+.jump-pill {
+  translate: -50% 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 100ms var(--ease-out),
+    translate 100ms var(--ease-out);
+}
+.jump-pill[data-shown] {
+  translate: -50% 0;
+  opacity: 1;
+  pointer-events: auto;
+  transition-duration: 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jump-pill,
+  .jump-pill[data-shown] {
+    translate: -50% 0;
+  }
+}
+
 @keyframes of-ignite {
   0% {
     clip-path: inset(0 100% 0 0);

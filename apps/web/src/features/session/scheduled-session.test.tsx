@@ -59,7 +59,7 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
   ],
 });
 function renderEvents(events: AnyEvent[]) {
-  const rows = buildRows(events.map((e) => se(e, null)));
+  const { rows } = buildRows(events.map((e) => se(e, null)));
   return inRouter(
     <div>
       {rows.map((row) => (

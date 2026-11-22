@@ -11,6 +11,7 @@ import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, TriangleAlert, UserPlus } from "lucide-react";
 import {
   type ComponentPropsWithoutRef,
+  type CSSProperties,
   forwardRef,
   lazy,
   memo,
@@ -665,9 +666,19 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
 
 const NO_DIAGS: Diag[] = [];
 
-// The fallback's text starts where the editor's will (gutters + the line's 8px inset), so the swap
-// doesn't move it: line numbers and the lint gutter, or line numbers only below md (no lint gutter).
-const GUTTER_PAD = "pl-15 max-md:pl-10";
+// The fallback's text starts where the editor's will, so the swap doesn't move it: the line-number
+// gutter (16px padding plus one 14px-mono digit, 8.4px, per digit of the line count, CodeMirror's own
+// sizing), its 1px border, the lint gutter (19.6px, from md) and the line's 8px inset. On touch the
+// editor's lines are 24px, so the fallback's are too. Measured in Chromium and WebKit (Task 42).
+const GUTTER_PAD =
+  "pl-[calc(var(--gutter-digits)_*_8.4px_+_44.6px)] max-md:pl-[calc(var(--gutter-digits)_*_8.4px_+_25px)] pointer-coarse:leading-6";
+
+/** The digits of the line count: CodeMirror's line-number gutter is as wide as the widest number. */
+function gutterDigits(value: string) {
+  let lines = 1;
+  for (let i = value.indexOf("\n"); i !== -1; i = value.indexOf("\n", i + 1)) lines++;
+  return String(lines).length;
+}
 
 // Inside MarkdownEditor's frame the surface drops its own frame (border, radius, focus ring).
 const EMBEDDED =
@@ -718,6 +729,7 @@ function FileSurface(p: SurfaceProps) {
           onSave={p.onSave}
           textareaRef={p.textareaRef}
           className={GUTTER_PAD}
+          style={{ "--gutter-digits": gutterDigits(p.value) } as CSSProperties}
         />
       }
     >

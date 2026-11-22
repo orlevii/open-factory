@@ -65,7 +65,9 @@ test("while the editor's chunk loads, the textarea fallback serves an issue's ju
   const el = textarea("settings.json");
   expect(el).toHaveFocus();
   expect(el.selectionStart).toBe(el.value.indexOf("\n") + 1);
-  expect(el).toHaveClass("pl-15"); // padded by the gutter the editor will have
+  // Padded by the gutter the editor will have: sized by the line count's digits (3 lines: one).
+  expect(el.className).toContain("pl-[calc(var(--gutter-digits)");
+  expect(el.style.getPropertyValue("--gutter-digits")).toBe("1");
 });
 
 test("on the swap the selection and focus carry over; an earlier tab's textarea leaves nothing behind", async () => {

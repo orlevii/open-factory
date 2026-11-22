@@ -11,6 +11,8 @@ import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { dropUploadsExcept } from "@/features/session/uploads";
+import { preloadAllSheets } from "@/features/sheets/sheet-bodies";
+import { SheetHost } from "@/features/sheets/sheet-host";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
 import { installFileDropGuard } from "@/lib/file-drop";
@@ -171,6 +173,16 @@ function AppLayout() {
   const shell = useMemo(() => ({ connectionLost }), [connectionLost]);
   const [defaultOpen] = useState(sidebarOpenFromCookie);
 
+  // After first paint, fetch every sheet body's chunk so the skeleton is rare.
+  useEffect(() => {
+    if (typeof requestIdleCallback === "function") {
+      const id = requestIdleCallback(() => preloadAllSheets());
+      return () => cancelIdleCallback(id);
+    }
+    const id = setTimeout(preloadAllSheets, 1000);
+    return () => clearTimeout(id);
+  }, []);
+
   return (
     <WsContext.Provider value={hub}>
       <ShellContext.Provider value={shell}>
@@ -203,6 +215,7 @@ function AppLayout() {
           <Toaster />
           <CommandPalette />
           <GlobalShortcuts />
+          <SheetHost />
         </SidebarProvider>
       </ShellContext.Provider>
     </WsContext.Provider>

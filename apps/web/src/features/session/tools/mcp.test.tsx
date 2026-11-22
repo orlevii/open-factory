@@ -25,6 +25,33 @@ test("collapsed: server · tool, then the first string argument muted", () => {
   expect(within(row).getByTitle(NAME)).toBeInTheDocument();
 });
 
+test("the summary's argument prefers title, name, query, description, path, url over key order (D4)", () => {
+  // As stored: jsonb orders keys by length, so `base` comes before `title`.
+  const input = { base: "main", head: "fix/retry", title: "Fix the retry loop", url: "https://x" };
+  const { unmount } = render(<RowHarness row={toolRow(NAME, input, { content: "ok" })} />);
+  expect(rowToggle()).toHaveTextContent(/Fix the retry loop$/);
+  unmount();
+  render(
+    <RowHarness
+      row={toolRow(NAME, { base: "main", path: "src/a.ts", query: "retry" }, { content: "ok" })}
+    />,
+  );
+  expect(rowToggle()).toHaveTextContent(/retry$/);
+});
+
+test("expanded: the preferred keys lead the input list, the rest keep their order", () => {
+  const { container } = render(
+    <RowHarness
+      open
+      row={toolRow(NAME, { base: "main", head: "x", title: "T", body: "B" }, { content: "ok" })}
+    />,
+  );
+  const terms = within(container.querySelector("dl") as HTMLElement)
+    .getAllByRole("term")
+    .map((t) => t.textContent);
+  expect(terms).toEqual(["title", "base", "head", "body"]);
+});
+
 test("expanded: the input as a key/value list", () => {
   const { container } = render(
     <RowHarness

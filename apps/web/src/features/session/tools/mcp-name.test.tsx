@@ -13,23 +13,35 @@ test("server · tool reads in full", () => {
   expect(container).toHaveTextContent(/^claude_ai_Google_Drive · search_files$/);
 });
 
-test("the server middle-truncates: its head shrinks with an ellipsis, its tail stays", () => {
+test("the server middle-truncates: its head shrinks first to an ellipsis, then its tail ends in one", () => {
   const { container } = render(<McpName name="mcp__claude_ai_Google_Drive__search_files" />);
   const { server } = parts(container);
   expect(server).toHaveTextContent("claude_ai_Google_Drive");
-  expect(server).toHaveClass("min-w-0", "overflow-hidden");
   const [head, tail] = [...server.children] as HTMLElement[];
   expect(head?.textContent).toBe("claude_ai_G");
-  expect(head).toHaveClass("min-w-0", "truncate");
+  expect(head).toHaveClass("truncate", "min-w-[1ch]", "shrink-[100]");
   expect(tail?.textContent).toBe("oogle_Drive");
-  expect(tail).toHaveClass("shrink-0");
-  expect(tail).not.toHaveClass("truncate");
+  expect(tail).toHaveClass("min-w-0", "truncate");
 });
 
-test("the tool keeps its tail: it never shrinks before the server, and cuts from its start", () => {
+test("at narrow widths a long server keeps a minimum width and gives way before the tool (D3 at 320)", () => {
+  const { container } = render(<McpName name="mcp__github-cloud-connector__create_pull_request" />);
+  const { server, tool } = parts(container);
+  // It never collapses to nothing: 8 characters stay, ellipses included.
+  expect(server).toHaveClass("min-w-[8ch]", "shrink-[100]");
+  // The tool shrinks only after the server reached its minimum, from its start.
+  expect(tool).toHaveClass("min-w-0", "truncate");
+  expect(tool).not.toHaveClass("shrink-0");
+  // A server shorter than that never shrinks.
+  const short = render(<McpName name="mcp__gh__create_pull_request" />).container;
+  expect(parts(short).server).toHaveClass("shrink-0");
+  expect(parts(short).server).not.toHaveClass("min-w-[8ch]");
+});
+
+test("the tool keeps its tail: it shrinks after the server, and cuts from its start", () => {
   const { container } = render(<McpName name="mcp__github__create_pull_request_review" />);
   const { tool } = parts(container);
-  expect(tool).toHaveClass("shrink-0", "max-w-full", "truncate");
+  expect(tool).toHaveClass("min-w-0", "truncate");
   expect(tool).toHaveAttribute("dir", "rtl");
   // The text itself stays left-to-right inside the right-to-left box.
   expect(tool.firstElementChild).toHaveAttribute("dir", "ltr");

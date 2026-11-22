@@ -176,13 +176,20 @@ test("a file tool's path middle-truncates", () => {
 test("an MCP label truncates its server first, as the tool row does", () => {
   render(
     <ActivityLine
-      activity={{ kind: "tool", tool: "mcp__github__create_pr", target: "github · create_pr" }}
+      activity={{
+        kind: "tool",
+        tool: "mcp__github-cloud-connector__create_pr",
+        target: "github-cloud-connector · create_pr",
+      }}
     />,
   );
   const label = document.querySelector("[data-activity-label]") as HTMLElement;
   const server = label.querySelector("[data-mcp-server]") as HTMLElement;
-  expect(server).toHaveTextContent(/^github$/);
-  expect(server.firstElementChild).toHaveClass("min-w-0", "truncate");
-  expect(label.querySelector("[data-mcp-tool]")).toHaveClass("shrink-0");
+  expect(server).toHaveTextContent(/^github-cloud-connector$/);
+  // It gives way first, down to 8 characters, its head to an ellipsis and its tail ending in one.
+  expect(server).toHaveClass("min-w-[8ch]", "shrink-[100]");
+  expect(server.firstElementChild).toHaveClass("truncate");
+  expect(server.lastElementChild).toHaveClass("truncate");
+  expect(label.querySelector("[data-mcp-tool]")).toHaveClass("min-w-0", "truncate");
   expect(label.querySelector("[data-mcp-tool]")).toHaveTextContent("create_pr");
 });

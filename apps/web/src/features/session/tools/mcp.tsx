@@ -5,8 +5,19 @@ import { McpName } from "./mcp-name";
 import { isBinary } from "./output";
 import { OutputPlate, OutputTail, TruncatedNote } from "./parts";
 
+/** The arguments that say what a call is about, first: stored inputs come back in jsonb's key order
+ *  (by length), not the agent's, so "first" alone would often pick `base` over `title`. */
+const PREFERRED = ["title", "name", "query", "description", "path", "url"];
+const rank = (k: string) => {
+  const i = PREFERRED.indexOf(k);
+  return i < 0 ? PREFERRED.length : i;
+};
+
+/** The input's entries, the preferred keys first; the rest keep their order (a stable sort). */
 const entriesOf = (input: unknown): [string, unknown][] =>
-  input && typeof input === "object" && !Array.isArray(input) ? Object.entries(input) : [];
+  input && typeof input === "object" && !Array.isArray(input)
+    ? Object.entries(input).sort(([a], [b]) => rank(a) - rank(b))
+    : [];
 
 /** "server · tool" (the server truncates first), then the first string argument, muted (spec §9.2). */
 function McpSummary({ row }: { row: ToolRow }) {

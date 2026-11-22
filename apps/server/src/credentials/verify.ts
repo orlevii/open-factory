@@ -52,6 +52,8 @@ export class CredentialVerifier {
       },
       {},
     );
+    // Partial messages are on for every process (U3 §11.1): drain them, nothing here reads them.
+    if (proc.live) void drain(proc.live);
     const done = (async () => {
       for await (const e of proc.events) {
         if (e.type === "error" && e.code) code = e.code;
@@ -94,4 +96,9 @@ export class CredentialVerifier {
       message: "Couldn't reach Claude to verify. Try again.",
     };
   }
+}
+
+/** Reads an iterable to its end, discarding what it yields. */
+async function drain(items: AsyncIterable<unknown>) {
+  for await (const _ of items) void _;
 }

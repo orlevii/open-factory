@@ -987,6 +987,20 @@ test("a reset's retire list and a patch's retire list remove blocks and retire t
   expect(liveIn(s, patch("m1", 1, 0, "again")).live.texts).toHaveLength(1);
 });
 
+test("a patch that would take a block past twice the server cap is ignored and asks for one snapshot", () => {
+  const max = 2 * 64 * 1024;
+  let s = liveIn(loaded(), patch("m1", 1, 0, "a".repeat(max - 1)));
+  expect(s.live.texts[0]?.text.length).toBe(max - 1);
+  s = liveIn(s, patch("m1", 1, max - 1, "b")); // exactly at the bound: kept
+  expect(s.live.texts[0]?.text.length).toBe(max);
+  s = liveIn(s, patch("m1", 1, max, "c")); // past it: ignored, a gap
+  expect(s.live.texts[0]?.text.length).toBe(max);
+  expect(s.snapshotWanted).toBe(1);
+  s = liveIn(s, patch("m2", 0, 0, "x".repeat(max + 1))); // a new block too
+  expect(s.live.texts.map((t) => t.messageId)).toEqual(["m1"]);
+  expect(s.snapshotWanted).toBe(1); // still waiting for the one reset
+});
+
 test("an offset gap bumps snapshotWanted once until a reset answers it", () => {
   let s = liveIn(loaded(), patch("m1", 1, 0, "Hel"));
   s = liveIn(s, patch("m1", 1, 5, "xx")); // the block is 3 long: a gap

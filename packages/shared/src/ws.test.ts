@@ -98,6 +98,8 @@ test("live frame rejects bad shapes", () => {
     { type: "live", agent: "dev", reset: false },
     { type: "live", agent: "dev", texts: [{ messageId: "m", index: 0.5, offset: 0, append: "" }] },
     { type: "live", agent: "dev", texts: [{ messageId: "m", index: 0, offset: 1.5, append: "" }] },
+    { type: "live", agent: "dev", texts: [{ messageId: "m", index: -1, offset: 0, append: "" }] },
+    { type: "live", agent: "dev", texts: [{ messageId: "m", index: 0, offset: -1, append: "" }] },
     { type: "live", agent: "dev", texts: null },
     { type: "live", agent: "dev", subagents: [{ toolUseId: "t" }] },
   ];

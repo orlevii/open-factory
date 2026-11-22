@@ -498,6 +498,10 @@ function withParts(live: LiveState, m: LiveFrame, reset: boolean): LiveState {
   return next;
 }
 
+/** A live block never grows past this many UTF-16 code units (twice the server's 64 KiB cap, which
+ *  is the real bound): a patch past it is ignored and treated as a gap, so a reset corrects it. */
+export const LIVE_TEXT_MAX = 2 * 64 * 1024;
+
 /** A `live` frame (U3 §11.3, §11.4). A patch extends each block from its `offset` (`offset` is the
  *  block's length before `append`; one below it replaces from there); an `offset` past the end is a
  *  gap, which asks for one snapshot until a `reset` answers. A `reset` replaces the whole live
@@ -549,7 +553,7 @@ function applyLiveFrame(s: SessionState, m: LiveFrame): SessionState {
     const list = grown ?? texts;
     const i = list.findIndex((b) => b.messageId === t.messageId && b.index === t.index);
     const cur = list[i];
-    if (t.offset > (cur?.text.length ?? 0)) {
+    if (t.offset > (cur?.text.length ?? 0) || t.offset + t.append.length > LIVE_TEXT_MAX) {
       gap = true;
       continue;
     }

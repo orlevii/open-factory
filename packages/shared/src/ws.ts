@@ -37,8 +37,8 @@ export const liveKey = (messageId: string, index: number): string => `${messageI
 /** One live text block's growth: `offset` is the block length before `append`, in UTF-16 code units. */
 const liveTextSchema = z.object({
   messageId: z.string(),
-  index: z.number().int(),
-  offset: z.number().int(),
+  index: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
   append: z.string(),
   capped: z.boolean().optional(),
 });

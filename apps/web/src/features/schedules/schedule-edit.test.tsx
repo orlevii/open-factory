@@ -108,7 +108,7 @@ test("an archived target stays selected as an extra option; the helper names the
   ).toBeInTheDocument();
 });
 
-test("pause, resume and delete are header actions; delete returns to the list with Undo", async () => {
+test("pause, resume and delete are header actions; delete returns to the list", async () => {
   const api = mockApi({
     ...common(sched()),
     "POST /api/schedules/S-3/pause": () =>
@@ -123,8 +123,8 @@ test("pause, resume and delete are header actions; delete returns to the list wi
     expect(api.calls.some((c) => c.url === "/api/schedules/S-3/pause")).toBe(true),
   );
   await userEvent.click(screen.getAllByRole("button", { name: "Delete" })[0] as HTMLElement);
-  expect(await screen.findByText("Deleted S-3.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  // The list no longer shows a page-to-page outcome; the edit sheet's Deleted toast arrives with Task 11.
+  expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
 });
 
 test("not found: the route's not-found state", async () => {

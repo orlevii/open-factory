@@ -24,6 +24,14 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     },
     title: "New task",
   },
+  "new-schedule": {
+    load: () => import("@/features/schedules/new-schedule-sheet"),
+    prefetch(qc) {
+      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+      void qc.prefetchQuery(agentsListQueryOptions("only"));
+    },
+    title: "New schedule",
+  },
 };
 
 export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string {

@@ -7,6 +7,7 @@ import {
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useBlocker } from "@tanstack/react-router";
 import {
   type FormEvent,
@@ -20,7 +21,11 @@ import {
 import { FieldShell } from "@/components/field-shell";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
+import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
+import { agentsListQueryOptions } from "@/features/session/api";
+import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
+import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { mergeServer } from "@/features/sheets/merge-server";
 import { agentOptionLabel, useAssignableAgents } from "@/features/tasks/agent-picker";
 import type { CreateScheduleBody, PatchScheduleBody } from "./api";
@@ -69,6 +74,8 @@ export function ScheduleForm({
   cancelTo,
   afterMessage,
   leaving: leavingProp,
+  draftKey,
+  inSheet,
 }: {
   initial?: ScheduleItem | undefined;
   presetTarget?: string | undefined;
@@ -82,20 +89,25 @@ export function ScheduleForm({
   afterMessage?: ReactNode;
   /** Set by the page once it has done something that leaves (a delete): the unsaved-changes guard then stays quiet. */
   leaving?: MutableRefObject<boolean>;
+  /** Create in a sheet: the values live in this draft, and a restored draft keeps its own target over `presetTarget`. */
+  draftKey?: DraftKey;
+  /** In a sheet: no unsaved-changes guard (dismissing never asks), no Cancel link; the footer is the sheet's. */
+  inSheet?: boolean;
 }) {
+  // Only a create in a sheet keeps a draft; the hook is called always, and its key is unused otherwise.
+  const blank = (): FormValues => ({
+    target: presetTarget ?? "",
+    mode: "repeats",
+    cron: "",
+    local: "",
+    zone: browserZone(),
+    body: "",
+  });
+  const draft = useSheetDraft<FormValues>(draftKey ?? "new-schedule", blank);
+  const drafting = Boolean(draftKey) && !initial;
+  const [restored, setRestored] = useState(drafting && draft.restored);
   // The start values are read once: valuesOf formats the instant, and browserZone asks Intl.
-  const [start] = useState<FormValues>(() =>
-    initial
-      ? valuesOf(initial)
-      : {
-          target: presetTarget ?? "",
-          mode: "repeats",
-          cron: "",
-          local: "",
-          zone: browserZone(),
-          body: "",
-        },
-  );
+  const [start] = useState<FormValues>(() => (initial ? valuesOf(initial) : draft.start));
   const [v, setV] = useState<FormValues>(start);
   const base = useRef(start);
   const [errors, setErrors] = useState<Errors>({});
@@ -141,14 +153,40 @@ export function ScheduleForm({
     setPreview(previewText({ mode: out.mode, cron: out.cron, local: out.local, zone: out.zone }));
   }, [serverValues]);
 
+  // The draft follows the values; an untouched form (equal to its start values) holds none.
+  const { save: saveDraft } = draft;
+  useEffect(() => {
+    if (drafting) saveDraft(v);
+  }, [drafting, saveDraft, v]);
+
+  // A draft or link may name an agent that has since ended or never existed: clear it, with the reason under Target.
+  const live = useQuery({ ...agentsListQueryOptions("exclude"), enabled: drafting });
+  const endedList = useQuery({ ...agentsListQueryOptions("only"), enabled: drafting });
+  if (
+    drafting &&
+    v.target &&
+    live.data &&
+    endedList.data &&
+    !live.data.some((a) => a.slug === v.target && !a.archivedAt && !a.terminatedAt)
+  ) {
+    const gone = v.target;
+    const hasEnded = [...live.data, ...endedList.data].some((a) => a.slug === gone);
+    setV((x) => ({ ...x, target: "" }));
+    setErrors((e) => ({
+      ...e,
+      target: hasEnded ? `@${gone} has ended; pick another.` : `There is no agent @${gone}.`,
+    }));
+  }
+
   const changed = (f: keyof FormValues) => v[f] !== base.current[f];
   const dirty = (Object.keys(v) as (keyof FormValues)[]).some(changed);
   useBlocker({
     shouldBlockFn: () => {
-      if (leaving.current || !dirty || readOnly) return false;
+      if (inSheet || leaving.current || !dirty || readOnly) return false;
       return !window.confirm("You have unsaved changes. Leave this page and discard them?");
     },
-    enableBeforeUnload: () => dirty && !leaving.current && !readOnly,
+    enableBeforeUnload: () => !inSheet && dirty && !leaving.current && !readOnly,
+    disabled: inSheet,
   });
 
   const set = (patch: Partial<FormValues>) => setV((x) => ({ ...x, ...patch }));
@@ -243,148 +281,171 @@ export function ScheduleForm({
     }
   }
 
+  const fields = (
+    <fieldset disabled={pending || readOnly} className="grid min-w-0 gap-5">
+      <FieldShell
+        name="target"
+        label="Target"
+        error={errors.target}
+        help={
+          spawnedPicked
+            ? "The schedule wakes this agent at each run. Spawned agents end when their work is done; this schedule is deleted with it."
+            : "The schedule wakes this agent at each run."
+        }
+      >
+        {(a) => (
+          <AgentCombobox
+            id={a.id}
+            aria-label="Target"
+            scope="live"
+            placeholder="Choose an agent…"
+            value={v.target || null}
+            aria-invalid={a.invalid || undefined}
+            aria-describedby={a.describedBy}
+            renderValue={renderEndedTarget}
+            onValueChange={(slug) => {
+              set({ target: slug ?? "" });
+              setError("target", undefined);
+            }}
+          />
+        )}
+      </FieldShell>
+      <WhenField
+        mode={v.mode}
+        onMode={(mode) => {
+          set({ mode });
+          setErrors((e) => ({ ...e, cron: undefined, at: undefined }));
+          refresh({ mode });
+        }}
+        cron={v.cron}
+        onCron={(cron) => {
+          set({ cron });
+          setError("cron", undefined);
+        }}
+        local={v.local}
+        onLocal={(local) => {
+          set({ local });
+          setError("at", undefined);
+        }}
+        errors={errors}
+        onBlurCron={() => {
+          setError("cron", check.cron());
+          refresh();
+        }}
+        onBlurLocal={() => {
+          setError("at", check.at());
+          refresh();
+        }}
+        onPreset={(cron) => {
+          set({ cron });
+          setError("cron", undefined);
+          refresh({ cron });
+        }}
+        zone={v.zone}
+        preview={<RunPreview text={preview} />}
+      />
+      <FieldShell
+        name="timezone"
+        label="Time zone"
+        error={errors.timezone}
+        help="Times are read and shown in this zone."
+      >
+        {(a) => (
+          <TimezoneSelect
+            id={a.id}
+            value={v.zone}
+            describedBy={a.describedBy}
+            invalid={a.invalid}
+            onChange={(zone) => {
+              set({ zone });
+              setError("timezone", undefined);
+              refresh({ zone });
+            }}
+            onBlur={() => setError("timezone", check.timezone())}
+          />
+        )}
+      </FieldShell>
+      {v.mode === "once" && <RunPreview text={preview} />}
+      <FieldShell
+        name="body"
+        label="Message"
+        error={errors.body}
+        help={
+          create
+            ? "Delivered as written, from @scheduler, with you as its author."
+            : agentAuthored
+              ? "Saving a changed message makes you its author."
+              : "Delivered as written, from @scheduler."
+        }
+      >
+        {(a) => (
+          <MarkdownEditor
+            id={a.id}
+            value={v.body}
+            proportional
+            onChange={(body) => {
+              set({ body });
+              setError("body", undefined);
+            }}
+            onBlur={() => setError("body", check.body())}
+            {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
+          />
+        )}
+      </FieldShell>
+      {afterMessage}
+      {failed && (
+        <p role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive">
+          Couldn't save the schedule. Try again.
+        </p>
+      )}
+      {!readOnly && !inSheet && (
+        <div className="flex items-center gap-2">
+          <Button type="submit" disabled={pending}>
+            {create
+              ? pending
+                ? "Creating…"
+                : "Create schedule"
+              : pending
+                ? "Saving…"
+                : "Save changes"}
+          </Button>
+          <Button type="button" variant="outline" asChild>
+            <Link to={cancelTo ?? "/schedules"} search={{}}>
+              Cancel
+            </Link>
+          </Button>
+          {saved && !dirty && !pending && (
+            <span role="status" className="text-[0.8125rem] text-muted-foreground">
+              Saved.
+            </span>
+          )}
+        </div>
+      )}
+    </fieldset>
+  );
+
+  if (inSheet)
+    return (
+      <form ref={form} onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
+        <SheetBody className="grid content-start gap-5">{fields}</SheetBody>
+        <SheetFormFooter
+          submitLabel="Create schedule"
+          pendingLabel="Creating…"
+          pending={pending}
+          restored={restored}
+          onDiscard={() => {
+            draft.clear();
+            setV(blank());
+            setErrors({});
+            setPreview(undefined);
+            setRestored(false);
+          }}
+        />
+      </form>
+    );
   return (
     <form ref={form} onSubmit={submit} noValidate className="grid max-w-[720px] gap-5">
-      <fieldset disabled={pending || readOnly} className="grid min-w-0 gap-5">
-        <FieldShell
-          name="target"
-          label="Target"
-          error={errors.target}
-          help={
-            spawnedPicked
-              ? "The schedule wakes this agent at each run. Spawned agents end when their work is done; this schedule is deleted with it."
-              : "The schedule wakes this agent at each run."
-          }
-        >
-          {(a) => (
-            <AgentCombobox
-              id={a.id}
-              aria-label="Target"
-              scope="live"
-              placeholder="Choose an agent…"
-              value={v.target || null}
-              aria-invalid={a.invalid || undefined}
-              aria-describedby={a.describedBy}
-              renderValue={renderEndedTarget}
-              onValueChange={(slug) => {
-                set({ target: slug ?? "" });
-                setError("target", undefined);
-              }}
-            />
-          )}
-        </FieldShell>
-        <WhenField
-          mode={v.mode}
-          onMode={(mode) => {
-            set({ mode });
-            setErrors((e) => ({ ...e, cron: undefined, at: undefined }));
-            refresh({ mode });
-          }}
-          cron={v.cron}
-          onCron={(cron) => {
-            set({ cron });
-            setError("cron", undefined);
-          }}
-          local={v.local}
-          onLocal={(local) => {
-            set({ local });
-            setError("at", undefined);
-          }}
-          errors={errors}
-          onBlurCron={() => {
-            setError("cron", check.cron());
-            refresh();
-          }}
-          onBlurLocal={() => {
-            setError("at", check.at());
-            refresh();
-          }}
-          onPreset={(cron) => {
-            set({ cron });
-            setError("cron", undefined);
-            refresh({ cron });
-          }}
-          zone={v.zone}
-          preview={<RunPreview text={preview} />}
-        />
-        <FieldShell
-          name="timezone"
-          label="Time zone"
-          error={errors.timezone}
-          help="Times are read and shown in this zone."
-        >
-          {(a) => (
-            <TimezoneSelect
-              id={a.id}
-              value={v.zone}
-              describedBy={a.describedBy}
-              invalid={a.invalid}
-              onChange={(zone) => {
-                set({ zone });
-                setError("timezone", undefined);
-                refresh({ zone });
-              }}
-              onBlur={() => setError("timezone", check.timezone())}
-            />
-          )}
-        </FieldShell>
-        {v.mode === "once" && <RunPreview text={preview} />}
-        <FieldShell
-          name="body"
-          label="Message"
-          error={errors.body}
-          help={
-            create
-              ? "Delivered as written, from @scheduler, with you as its author."
-              : agentAuthored
-                ? "Saving a changed message makes you its author."
-                : "Delivered as written, from @scheduler."
-          }
-        >
-          {(a) => (
-            <MarkdownEditor
-              id={a.id}
-              value={v.body}
-              proportional
-              onChange={(body) => {
-                set({ body });
-                setError("body", undefined);
-              }}
-              onBlur={() => setError("body", check.body())}
-              {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
-            />
-          )}
-        </FieldShell>
-        {afterMessage}
-        {failed && (
-          <p role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive">
-            Couldn't save the schedule. Try again.
-          </p>
-        )}
-        {!readOnly && (
-          <div className="flex items-center gap-2">
-            <Button type="submit" disabled={pending}>
-              {create
-                ? pending
-                  ? "Creating…"
-                  : "Create schedule"
-                : pending
-                  ? "Saving…"
-                  : "Save changes"}
-            </Button>
-            <Button type="button" variant="outline" asChild>
-              <Link to={cancelTo ?? "/schedules"} search={{}}>
-                Cancel
-              </Link>
-            </Button>
-            {saved && !dirty && !pending && (
-              <span role="status" className="text-[0.8125rem] text-muted-foreground">
-                Saved.
-              </span>
-            )}
-          </div>
-        )}
-      </fieldset>
+      {fields}
     </form>
   );
 }

@@ -1,6 +1,9 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { clearDraft } from "@/features/sheets/drafts";
+import { closeSheet } from "@/features/sheets/sheet-store";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { pickComboOption, pickOption } from "@/test/select-helpers";
@@ -11,7 +14,14 @@ vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  fakeMatchMedia.install(false);
+  clearDraft("new-schedule");
+});
+afterEach(() => {
+  act(() => closeSheet());
+  vi.unstubAllGlobals();
+});
 
 const agents = () =>
   json({
@@ -45,7 +55,10 @@ const item = {
 
 /** The agents arrive asynchronously: wait for the option before choosing it. */
 async function pick(slug: string) {
-  await pickOption(await screen.findByLabelText("Target"), new RegExp(`@${slug}$`));
+  await pickOption(
+    await within(await screen.findByRole("dialog")).findByLabelText("Target"),
+    new RegExp(`@${slug}$`),
+  );
 }
 
 /** Repeats starts unchosen; the cron input exists once Custom is chosen. */
@@ -56,7 +69,8 @@ async function chooseCustom() {
 async function openNew() {
   const api = mockApi({ ...base(), "POST /api/schedules": () => json({ schedule: item }, 201) });
   renderApp("/schedules/new", alice);
-  await screen.findByRole("heading", { name: "New schedule" });
+  await screen.findByRole("dialog", { name: "New schedule" });
+  await screen.findByRole("combobox", { name: "Repeats" });
   return api;
 }
 
@@ -143,12 +157,14 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
   expect(await screen.findByText("Choose an agent.")).toBeInTheDocument();
   expect(await screen.findByText("Enter a message.")).toBeInTheDocument();
-  expect(screen.getByLabelText("Target")).toHaveFocus();
+  expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus();
 });
 
 test("the target picker starts at 'Choose an agent…' and a spawned agent adds the helper", async () => {
   await openNew();
-  expect(screen.getByLabelText("Target")).toHaveTextContent("Choose an agent…");
+  expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveTextContent(
+    "Choose an agent…",
+  );
   expect(screen.getByText("The schedule wakes this agent at each run.")).toBeInTheDocument();
   await pick("kid");
   expect(
@@ -158,7 +174,7 @@ test("the target picker starts at 'Choose an agent…' and a spawned agent adds 
   ).toBeInTheDocument();
 });
 
-test("creating sends the form's values and returns to the list with Created S-8.", async () => {
+test("creating sends the form's values and closes the sheet", async () => {
   const api = await openNew();
   await chooseCustom();
   await pick("ceo");
@@ -168,7 +184,7 @@ test("creating sends the form's values and returns to the list with Created S-8.
   );
   await userEvent.type(screen.getByLabelText("Message"), "Review the board");
   await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
-  expect(await screen.findByText("Created S-8.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   const post = api.calls.find((c) => c.method === "POST");
   expect(post?.body).toMatchObject({
     target: "ceo",
@@ -195,6 +211,8 @@ test("a server field error maps to its field", async () => {
       ),
   });
   renderApp("/schedules/new", alice);
+  await screen.findByRole("dialog", { name: "New schedule" });
+  await screen.findByRole("combobox", { name: "Repeats" });
   await pick("ceo");
   await chooseCustom();
   await userEvent.type(

@@ -152,7 +152,7 @@ export interface ActionItem {
 export const ACTIONS: readonly ActionItem[] = [
   { id: "new-agent", label: "New agent", kind: "navigate", to: "/agents/new" },
   { id: "new-task", label: "New task", kind: "open-sheet", sheet: "new-task" },
-  { id: "new-schedule", label: "New schedule", kind: "navigate", to: "/schedules/new" },
+  { id: "new-schedule", label: "New schedule", kind: "open-sheet", sheet: "new-schedule" },
   { id: "agent-details", label: "Agent details", kind: "agent-details", sessionOnly: true },
   { id: "theme-system", label: "Theme: System", kind: "theme-system" },
   { id: "theme-light", label: "Theme: Light", kind: "theme-light" },

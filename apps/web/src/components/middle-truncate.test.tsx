@@ -1,5 +1,5 @@
 import { render } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { MiddleTruncate } from "./middle-truncate";
 
 test("the head shrinks first; the last segment is capped at the line and truncates only then", () => {
@@ -34,7 +34,18 @@ test("a file name that must keep its extension cuts its last segment from the st
   expect(tail).toHaveTextContent("/a-very-long-component-name.tsx");
 });
 
-test("headMin keeps a few characters of the head: the tail is capped short of the whole line", () => {
+test("headMin: a name that fits renders whole, with no gap between its parts", () => {
+  const { container } = render(<MiddleTruncate keepEnd headMin text="notes.md" />);
+  const parts = container.querySelectorAll("[aria-hidden=true]");
+  expect(parts).toHaveLength(1);
+  expect(parts[0]).toHaveTextContent("notes.md");
+  expect(container.querySelector(".min-w-\\[4ch\\]")).toBeNull();
+});
+
+test("headMin: once the name overflows it splits, keeping a few characters of the head", () => {
+  // Every part reports more content than room: the whole name doesn't fit.
+  const sw = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(300);
+  const cw = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100);
   const { container } = render(
     <MiddleTruncate
       keepEnd
@@ -45,5 +56,9 @@ test("headMin keeps a few characters of the head: the tail is capped short of th
   const [head, tail] = container.querySelectorAll("[aria-hidden=true]");
   expect(head).toHaveClass("min-w-[4ch]");
   expect(tail).toHaveClass("max-w-[calc(100%-4ch)]");
-  expect(tail).not.toHaveClass("max-w-full");
+  expect(container.querySelector(".sr-only")).toHaveTextContent(
+    "my-very-long-design-review-notes-for-the-chip-final-v2.md",
+  );
+  sw.mockRestore();
+  cw.mockRestore();
 });

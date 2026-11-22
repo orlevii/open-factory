@@ -523,6 +523,73 @@ test("a late success keeps a draft reopened, typed into and closed again meanwhi
   expect(hasDraft("new-agent")).toBe(true);
 });
 
+test("a late success over a New agent reopened on the sent values clears the draft and closes it", async () => {
+  const post = held();
+  const { api } = await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Team Lead");
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "new-agent" }));
+  await sheet();
+  expect(await screen.findByLabelText("Display name")).toHaveValue("Team Lead");
+  expect(screen.getByText(/Draft restored/)).toBeInTheDocument();
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Created @team-lead.",
+      action: { label: "Open", run: expect.any(Function) },
+    }),
+  );
+  expect(hasDraft("new-agent")).toBe(false);
+  // The form holding the created values closes instead of inviting a second Create.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New agent" })).toBeNull());
+  expect(posts(api)).toHaveLength(1);
+});
+
+test("a late success after a sign-out neither toasts nor touches the next user's draft", async () => {
+  const post = held();
+  await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Team Lead");
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  // The next user types the same values: the late success must not take them for the sent draft.
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  await sheet();
+  const name = await screen.findByLabelText("Display name");
+  await vi.waitFor(() => expect(name).toHaveValue("Team Lead"));
+  await userEvent.clear(name);
+  await userEvent.type(name, "Team Lead");
+  expect(hasDraft("new-agent")).toBe(true);
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("new-agent")).toBe(true);
+  expect(screen.getByRole("dialog", { name: "New agent" })).toBeInTheDocument();
+});
+
+test("a late failure after a sign-out doesn't toast", async () => {
+  const post = held();
+  await openLead({ extra: { "POST /api/agents": post.route } });
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  await act(async () =>
+    post.answer(json({ error: { code: "boom", message: "The server fell over." } }, 500)),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+});
+
 test("a late failure toasts the error with Open form, which reopens the kept draft", async () => {
   const post = held();
   await openLead({ extra: { "POST /api/agents": post.route } });

@@ -40,7 +40,7 @@ import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { projectsQueryOptions } from "@/features/settings/api";
 import { BodySkeleton } from "@/features/sheets/body-skeleton";
-import { clearDraft } from "@/features/sheets/drafts";
+import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import {
@@ -49,7 +49,6 @@ import {
   openChildSheet,
   openSheet,
   returnFocusAfterChild,
-  sheetOpens,
 } from "@/features/sheets/sheet-store";
 import { isMobileNow } from "@/hooks/use-mobile";
 
@@ -185,8 +184,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     const at = document.activeElement;
     // The host parks focus on the panel itself until the body mounts; only focus elsewhere inside it is kept.
     if (!el || (at && at !== content && content?.contains(at))) return;
-    if (isMobileNow()) content?.focus();
-    else el.querySelector<HTMLElement>("#field-displayName")?.focus();
+    if (isMobileNow()) content?.focus({ preventScroll: true });
+    else el.querySelector<HTMLElement>("#field-displayName")?.focus({ preventScroll: true });
   }, []);
 
   // A stacked child's result (§7): the served field takes the value before the child exits, and focus lands on it.
@@ -222,7 +221,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
 
   // Who can manage: persistent agents other than this one and everything under it (picking one would make a cycle).
   // The excluded slugs, joined: a status frame rebuilds the list but not this key, so `canManage` keeps its identity.
-  const excludedKey = (() => {
+  const excludedKey = useMemo(() => {
     const list = activeAgents.data ?? [];
     const excluded = new Set<string>([slug]);
     let grew = true;
@@ -236,7 +235,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       }
     }
     return [...excluded].sort().join("\n");
-  })();
+  }, [activeAgents.data, slug]);
   const canManage = useMemo(() => {
     const excluded = new Set(excludedKey.split("\n"));
     return (a: AgentOpt) => a.kind === "persistent" && !excluded.has(a.slug);
@@ -306,8 +305,9 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   async function save(body: CreateAgentBody | PatchAgentBody): Promise<AgentSummary | undefined> {
     // A patch never names a template; a create body always does.
     if ("template" in body) return undefined;
-    // Edit for this agent opened again after this submit means its draft may hold the user's newer typing.
-    const opensAtSubmit = sheetOpens(draftKey);
+    // A late result is judged against what was submitted (the draft now) and the session it was sent in.
+    const snapshot = peekDraft(draftKey);
+    const generation = draftGeneration();
     const restartsNow = running;
     const nameOnly = onlyDisplayName(body);
     let saved: AgentSummary;
@@ -316,23 +316,33 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     } catch (err) {
       // Dismissed (or the form replaced by another state) while saving: the error has no form to land in. The draft
       // is kept for "Open form".
-      if (!stillOpen())
+      if (!stillOpen() && draftGeneration() === generation)
         notify({
           text: `Couldn't save @${slug}: ${err instanceof ApiError ? err.message : "can't reach the server."}`,
           action: { label: "Open form", run: () => openSheet({ kind: "edit-agent", slug }) },
         });
       throw err;
     }
+    // Nothing is written back after a sign-out: the result belongs to the old session.
+    if (draftGeneration() !== generation) return undefined;
     // The response is the saved agent: show it now; the lists and the detail's queue catch up in the background.
     qc.setQueryData(agentDetailQueryOptions(slug).queryKey, (d) =>
       d ? { ...d, agent: saved } : d,
     );
     void qc.invalidateQueries({ queryKey: ["agents"] });
     void qc.invalidateQueries({ queryKey: ["agent", slug] });
-    if (sheetOpens(draftKey) === opensAtSubmit) clearDraft(draftKey);
     const late = !stillOpen();
-    // Late: dismissed, or the sheet now shows another state the user is reading; it stays.
-    if (!late) closeSheet();
+    // Late: dismissed, or the sheet now shows another state the user is reading; it stays. A late success clears the
+    // draft only if it still holds what was sent; this agent's Edit reopened on those untouched values closes. Edits
+    // made since are kept.
+    if (!late) {
+      clearDraft(draftKey);
+      closeSheet();
+    } else if (clearDraftIf(draftKey, snapshot)) {
+      const parent = getSheetState().parent;
+      if (parent?.kind === "edit-agent" && parent.slug === slug && parent.id !== sheetId)
+        closeSheet();
+    }
     // Silent only when the session under the sheet already shows the result (its header shows the name).
     if (saved.restartPending || restartsNow)
       notify({ text: `Saved @${slug}. Restarts when idle.` });

@@ -397,6 +397,62 @@ test("a late success keeps the draft of the same agent reopened and typed into m
   expect(hasDraft("edit-agent:lead")).toBe(true);
 });
 
+test("a late success over the same agent's Edit reopened on the sent values clears the draft and closes it", async () => {
+  const patch = held();
+  const { api } = await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  await sheet();
+  await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
+  expect(hasDraft("edit-agent:lead")).toBe(false);
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull());
+  expect(patches(api)).toHaveLength(1);
+});
+
+test("a save landing after a sign-out neither toasts nor touches a draft", async () => {
+  const patch = held();
+  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  // The next user types the same value: the late success must not take it for the sent draft.
+  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  await sheet();
+  await vi.waitFor(() => expect(field("Display name")).toBeEnabled());
+  await rename("Boss");
+  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(screen.getByRole("dialog", { name: "Edit agent" })).toBeInTheDocument();
+});
+
+test("a failed save landing after a sign-out doesn't toast", async () => {
+  const patch = held();
+  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await rename("Kept");
+  await userEvent.click(saveButton());
+  await screen.findByRole("button", { name: /Saving…/ });
+  act(() => closeSheet());
+  act(() => resetDrafts());
+  await act(async () =>
+    patch.answer(json({ error: { code: "boom", message: "The server fell over." } }, 500)),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+});
+
 test("a late success still clears its draft when only another agent's Edit opened meanwhile", async () => {
   const patch = held();
   await open({

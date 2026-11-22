@@ -54,7 +54,7 @@ import {
   projectsQueryOptions,
   usersQueryOptions,
 } from "@/features/settings/api";
-import { clearDraft } from "@/features/sheets/drafts";
+import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { MoreOptions } from "@/features/sheets/more-options";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
@@ -64,7 +64,6 @@ import {
   openChildSheet,
   openSheet,
   returnFocusAfterChild,
-  sheetOpens,
 } from "@/features/sheets/sheet-store";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import { isMobileNow } from "@/hooks/use-mobile";
@@ -78,6 +77,7 @@ const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const EMPTY: ReadonlySet<string> = new Set();
 /** A spawned agent never manages. */
 const canManage = (a: AgentOpt) => a.kind === "persistent";
+const SHEET_CONTENT = "[data-slot=sheet-content], [data-slot=drawer-content]";
 // biome-ignore lint/suspicious/noThenProperty: ChildSpec's field, not a thenable
 const NEW_TEMPLATE = { kind: "new-template", then: "return" } as const;
 const TAKEN_LISTS = [
@@ -171,19 +171,23 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   );
 
   // Focus on open: phones the drawer content (the keyboard doesn't rise mid-slide); desktop Template when none is
-  // chosen, else Display name.
+  // chosen, else Display name. Not when focus is already somewhere in the sheet (the user moved it while the skeleton
+  // showed). Once, on mount.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, when the body mounts
   useEffect(() => {
     const el = form.current;
-    if (!el) return;
+    const content = el?.closest<HTMLElement>(SHEET_CONTENT);
+    const at = document.activeElement;
+    // The host parks focus on the panel itself until the body mounts; only focus elsewhere inside it is kept.
+    if (!el || (at && at !== content && content?.contains(at))) return;
     if (isMobileNow()) {
-      el.closest<HTMLElement>("[data-slot=drawer-content]")?.focus();
+      content?.focus({ preventScroll: true });
       return;
     }
     const target =
       (values.template ? null : el.querySelector<HTMLElement>("#field-template")) ??
       el.querySelector<HTMLElement>("#field-displayName");
-    target?.focus();
+    target?.focus({ preventScroll: true });
   }, []);
 
   // The address field opens itself, focused, when Display name is left with a name that derives nothing.
@@ -240,14 +244,16 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   async function create(body: CreateAgentBody | PatchAgentBody) {
     // A create body always names its template; a patch never does.
     if (!("template" in body)) return;
-    // New agent opened again after this submit means the draft may hold the user's newer typing.
-    const opensAtSubmit = sheetOpens("new-agent");
+    // A late result is judged against what was submitted (the draft now) and the session it was sent in.
+    const snapshot = peekDraft("new-agent");
+    const generation = draftGeneration();
     let agent: AgentSummary;
     try {
       agent = await createAgent(body);
     } catch (err) {
-      // Dismissed while creating: the error has no form to land in. The draft is kept for "Open form".
-      if (!stillOpen())
+      // Dismissed while creating: the error has no form to land in. The draft is kept for "Open form". Nothing is
+      // said after a sign-out: the result belongs to the old session.
+      if (!stillOpen() && draftGeneration() === generation)
         notify({
           text:
             err instanceof ApiError
@@ -257,11 +263,15 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         });
       throw err;
     }
+    if (draftGeneration() !== generation) return;
     // The lists refetch in the background; the session view needn't wait for them.
     void qc.invalidateQueries({ queryKey: ["agents"] });
     const open = stillOpen();
-    // A late success must not wipe a draft the user reopened (and maybe edited, maybe closed again) since the submit.
-    if (sheetOpens("new-agent") === opensAtSubmit) clearDraft("new-agent");
+    // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those
+    // untouched values closes, so the same agent can't be created twice. Edits made since are kept.
+    if (open) clearDraft("new-agent");
+    else if (clearDraftIf("new-agent", snapshot) && getSheetState().parent?.kind === "new-agent")
+      closeSheet();
     const go = () => void router.navigate({ to: "/agents/$slug", params: { slug: agent.slug } });
     if (open) {
       closeSheet();

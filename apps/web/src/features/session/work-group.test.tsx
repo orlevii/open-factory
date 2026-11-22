@@ -123,3 +123,15 @@ test("Esc on a call's ⋯ inside an open group returns focus to that call", asyn
   await user.keyboard("{Escape}");
   expect(rowEl("5")).toHaveFocus();
 });
+
+test("the summary's duration never wraps inside itself", () => {
+  const rows = groupWork([
+    sh(3),
+    { ...sh(5), resultAt: "2026-11-19T09:01:40.000Z" },
+    { kind: "text", seq: 9, at, text: "t", key: "9", head: false },
+  ]);
+  timeline(rows);
+  const duration = screen.getByText("· 1m 40s", { exact: false });
+  expect(duration).toHaveTextContent(/1m 40s/);
+  expect(duration).toHaveClass("whitespace-nowrap");
+});

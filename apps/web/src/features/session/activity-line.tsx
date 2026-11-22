@@ -83,6 +83,8 @@ function labelParts(a: Activity): {
   if (a.kind === "subagent") return { prefix: "Subagent: ", target: a.target };
   if (a.kind === "subagents")
     return { prefix: "Subagents: ", target: a.target, suffix: ` and ${a.more} more` };
+  // "Run the tests", not "Running Run the tests" in code.
+  if (a.prose && a.target) return { target: a.target };
   const tool = a.tool ?? "";
   const verb = VERB[tool];
   if (verb && a.target)

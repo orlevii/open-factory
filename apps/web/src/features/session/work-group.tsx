@@ -81,7 +81,7 @@ export function WorkGroup({
           ) : (
             <>
               {text.slice(0, cut)}
-              <span className="text-muted-foreground">{text.slice(cut)}</span>
+              <span className="whitespace-nowrap text-muted-foreground">{text.slice(cut)}</span>
             </>
           )}
         </span>

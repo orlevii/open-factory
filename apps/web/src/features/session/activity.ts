@@ -10,7 +10,14 @@ export type ActivityKind =
   | "text"
   | "working"
   | "compacting";
-export type Activity = { kind: ActivityKind; tool?: string; target?: string; more?: number };
+export type Activity = {
+  kind: ActivityKind;
+  tool?: string;
+  target?: string;
+  more?: number;
+  /** The target is the agent's own words (a Bash `description`): it reads as prose, with no verb. */
+  prose?: true;
+};
 
 /** The live state's parts the activity reads (PR4's `LiveState` satisfies it; PR1 passes nothing). */
 export type ActivityLive = {
@@ -57,6 +64,12 @@ export function formatTarget(tool: string, input: unknown): string | undefined {
   return undefined;
 }
 
+/** A Bash call the agent described: its description already says what it does ("Run the tests"). */
+const described = (r: ToolRow) => {
+  const d = (r.call.input as Record<string, unknown> | null)?.description;
+  return r.call.name === "Bash" && typeof d === "string" && !!d.trim();
+};
+
 const subagentName = (r: ToolRow) => {
   const d = (r.call.input as Record<string, unknown> | null)?.description;
   return typeof d === "string" && d.trim() ? firstLine(d) : r.call.name;
@@ -85,8 +98,9 @@ export function deriveActivity(
   const tool = open?.newestOpenTool;
   if (tool) {
     const target = formatTarget(tool.call.name, tool.call.input);
-    return target === undefined
-      ? { kind: "tool", tool: tool.call.name }
+    if (target === undefined) return { kind: "tool", tool: tool.call.name };
+    return described(tool)
+      ? { kind: "tool", tool: tool.call.name, target, prose: true }
       : { kind: "tool", tool: tool.call.name, target };
   }
   if (live?.thinking) return { kind: "thinking" };
@@ -96,4 +110,4 @@ export function deriveActivity(
 
 /** A primitive per distinct activity, for memo and hold keys. */
 export const activityKey = (a: Activity) =>
-  `${a.kind}:${a.tool ?? ""}:${a.target ?? ""}:${a.more ?? ""}`;
+  `${a.kind}:${a.tool ?? ""}:${a.target ?? ""}:${a.more ?? ""}:${a.prose ? "p" : ""}`;

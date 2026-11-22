@@ -1,7 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import { Profiler } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { Activity } from "./activity";
+import { type Activity, deriveActivity } from "./activity";
 import { ActivityLine, Elapsed, TurnActivity, useFallbackHold } from "./activity-line";
 import { ROW_GUTTER } from "./timeline-item";
 
@@ -192,4 +192,34 @@ test("an MCP label truncates its server first, as the tool row does", () => {
   expect(server.lastElementChild).toHaveClass("truncate");
   expect(label.querySelector("[data-mcp-tool]")).toHaveClass("min-w-0", "truncate");
   expect(label.querySelector("[data-mcp-tool]")).toHaveTextContent("create_pr");
+});
+
+test("a Bash call with a description reads as that description, in prose, with no 'Running' before it", () => {
+  render(
+    <ActivityLine
+      activity={deriveActivity(
+        {
+          openSubagents: [],
+          newestOpenTool: {
+            kind: "tool",
+            seq: 1,
+            at: "2026-11-18T10:00:00.000Z",
+            call: {
+              type: "tool_call",
+              toolUseId: "t",
+              name: "Bash",
+              input: { command: "pnpm test", description: "Run the tests" },
+            },
+            state: "running",
+            children: [],
+            key: "1",
+          },
+        },
+        undefined,
+      )}
+    />,
+  );
+  const label = document.querySelector("[data-activity-label]") as HTMLElement;
+  expect(label).toHaveTextContent(/^Run the tests$/);
+  expect(label.querySelector(".font-mono")).toBeNull();
 });

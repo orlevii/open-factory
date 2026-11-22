@@ -39,7 +39,7 @@ test("priority: subagents, then the newest open tool, then working", () => {
       { openSubagents: [], newestOpenTool: bash("pnpm test", "Run the tests") },
       undefined,
     ),
-  ).toEqual({ kind: "tool", tool: "Bash", target: "Run the tests" });
+  ).toEqual({ kind: "tool", tool: "Bash", target: "Run the tests", prose: true });
   expect(deriveActivity({ openSubagents: [] }, undefined)).toEqual({ kind: "working" });
   expect(deriveActivity(undefined, undefined)).toEqual({ kind: "working" });
 });

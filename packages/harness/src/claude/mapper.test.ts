@@ -910,10 +910,10 @@ describe("tool_result.meta", () => {
     });
   });
 
-  test("stderr is cut at 16 KiB", () => {
+  test("stderr is cut at 16 KiB, keeping its tail (the final error)", () => {
     const meta = toolMetaOf("Bash", {
       stdout: "",
-      stderr: "é".repeat(20 * 1024),
+      stderr: `warning: first\n${"é".repeat(20 * 1024)}\nError: the final failure`,
       interrupted: true,
       isImage: false,
       noOutputExpected: false,
@@ -922,7 +922,10 @@ describe("tool_result.meta", () => {
     const stderr = (meta as { stderr: string }).stderr;
     expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(16 * 1024);
     expect(Buffer.byteLength(stderr)).toBeGreaterThan(16 * 1024 - 4);
-    expect(stderr).toBe("é".repeat(stderr.length)); // no split code point
+    expect(stderr).not.toContain("warning: first");
+    expect(stderr.endsWith("\nError: the final failure")).toBe(true);
+    const lead = stderr.slice(0, stderr.indexOf("\n"));
+    expect(lead).toBe("é".repeat(lead.length)); // no split code point
   });
 
   test("a line with two tool_results carries no meta", () => {

@@ -275,13 +275,14 @@ const STDERR_CAP_BYTES = 16 * 1024;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-/** At most `cap` bytes of UTF-8, never splitting a code point. */
-function cutBytes(s: string, cap: number): string {
+/** The last `cap` bytes of UTF-8 at most, never splitting a code point: a failing command's
+ *  stderr ends with the error that matters. */
+function tailBytes(s: string, cap: number): string {
   const bytes = enc.encode(s);
   if (bytes.length <= cap) return s;
-  let end = cap;
-  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--; // back off continuation bytes
-  return dec.decode(bytes.subarray(0, end));
+  let start = bytes.length - cap;
+  while (start < bytes.length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start++; // skip continuation bytes
+  return dec.decode(bytes.subarray(start));
 }
 
 /** Hunks in order until the array would pass 32 KiB serialized; the rest is dropped and marked. */
@@ -326,7 +327,7 @@ export function toolMetaOf(name: string, r: unknown): ToolMeta | undefined {
         backgroundTaskId: typeof j.backgroundTaskId === "string" ? j.backgroundTaskId : undefined,
         stderr:
           typeof j.stderr === "string" && j.stderr
-            ? cutBytes(j.stderr, STDERR_CAP_BYTES)
+            ? tailBytes(j.stderr, STDERR_CAP_BYTES)
             : undefined,
       });
       break;

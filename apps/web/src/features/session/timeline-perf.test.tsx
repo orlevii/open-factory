@@ -334,6 +334,32 @@ test("rows a display pass rebuilds keep their identity through the second stabil
   expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
 });
 
+test("a repeated failure keeps the first occurrence's row: no new key, no remount, no fade", async () => {
+  await setup();
+  const boom = (seq: number) =>
+    sessionEvent(ev(seq, { type: "error", source: "api", code: "x", message: "boom" }, null));
+  push(boom(201));
+  frame();
+  // The tab coming back spends the first failure's fade.
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const wrap = document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]");
+  expect(wrap).not.toBeNull();
+  expect(wrap).not.toHaveAttribute("data-live");
+  const wraps = document.querySelectorAll("[data-row-wrap]").length;
+  reset();
+  push(boom(202));
+  frame();
+  expect(document.querySelector('[data-row="202"]')).toBeNull();
+  expect(document.querySelector('[data-row="201"]')?.closest("[data-row-wrap]")).toBe(wrap);
+  expect(wrap).not.toHaveAttribute("data-live");
+  expect(document.querySelectorAll("[data-row-wrap]")).toHaveLength(wraps);
+  expect(wrap?.textContent).toContain("2 times");
+  expect(Object.fromEntries(count.rows)).toEqual({ "201": 1 });
+  expect(count.markdown).toBe(0);
+});
+
 test("a tool_result keeps every other row's identity through both stabilizations", async () => {
   await setup();
   const raw = seen?.rawRows ?? [];

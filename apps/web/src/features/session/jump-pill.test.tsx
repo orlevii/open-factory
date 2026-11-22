@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
-import { JumpPill } from "./jump-pill";
+import { arrivedSince, JumpPill } from "./jump-pill";
 import { isSpeechRow, type Row } from "./rows";
 import { Timeline } from "./timeline";
 
@@ -165,4 +165,10 @@ test("End in the log focuses the last loaded row and re-pins; it never leaves th
   expect(document.activeElement).toBe(document.querySelector('[data-row="2"]'));
   expect(t.scroller.scrollTop).toBe(2000);
   expect(onLeaveWindow).not.toHaveBeenCalled();
+});
+
+test("a repeat folded into a failure above what was seen still counts as new output", () => {
+  const merged = { ...quiet(5), count: 2, seqs: [5, 9] } as unknown as Row;
+  expect(arrivedSince([text(1), merged], 6, new Set())).toEqual({ speech: 0, other: true });
+  expect(arrivedSince([text(1), merged], 9, new Set())).toEqual({ speech: 0, other: false });
 });

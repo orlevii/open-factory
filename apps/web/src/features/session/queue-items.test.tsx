@@ -108,7 +108,55 @@ test("a held message during a Stop says so, preferring its waitReason over the a
       agent={agentSummary({ status: "rate_limited", rateLimitedUntil: local(14, 30) })}
     />,
   );
-  expect(screen.getAllByText("Not delivered yet: stopping the turn")).toHaveLength(2);
+  // The reason once, on the first held block (U3 §7.6).
+  expect(screen.getAllByText("Not delivered yet: stopping the turn")).toHaveLength(1);
+  expect(screen.getAllByText("Not delivered yet")).toHaveLength(1);
+});
+
+test("the first held message says why; the rest only that they aren't delivered yet", () => {
+  render(
+    <QueueItems
+      items={[
+        held({ id: "h", waitReason: "turn" }),
+        msg({ id: "a", body: "a" }),
+        msg({ id: "b", body: "b" }),
+      ]}
+      agent={agentSummary({ status: "queued" })}
+    />,
+  );
+  const blocks = document.querySelectorAll("[data-message-block]");
+  expect(blocks[0]).toHaveTextContent("Not delivered yet: waiting for a free slot");
+  expect(blocks[1]?.textContent).toContain("Not delivered yet");
+  expect(blocks[1]?.textContent).not.toContain("Not delivered yet:");
+});
+
+test("queued bodies clamp at three lines", () => {
+  render(
+    <QueueItems items={[msg({ id: "a", body: "1\n\n2\n\n3\n\n4\n\n5" })]} agent={agentSummary()} />,
+  );
+  expect(document.querySelector("[data-message-body]")).toHaveClass("line-clamp-3");
+});
+
+test("three queued messages all show; five show two and '+3 more queued' expands in place", async () => {
+  vi.useRealTimers();
+  const five = ["a", "b", "c", "d", "e"].map((id) => msg({ id, body: `body ${id}` }));
+  const ui = (items: never[]) => (
+    <QueueItems items={items} agent={agentSummary()} self="alice" onCancel={() => {}} />
+  );
+  const { rerender } = render(ui(five.slice(0, 3)));
+  expect(document.querySelectorAll("[data-message-block]")).toHaveLength(3);
+  expect(screen.queryByRole("button", { name: /more queued/ })).toBeNull();
+  rerender(ui(five));
+  expect(document.querySelectorAll("[data-message-block]")).toHaveLength(2);
+  expect(screen.queryByText("body c")).toBeNull();
+  const more = screen.getByRole("button", { name: "+3 more queued" });
+  await userEvent.click(more);
+  expect(document.querySelectorAll("[data-message-block]")).toHaveLength(5);
+  expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(5);
+  expect(screen.queryByRole("button", { name: /more queued/ })).toBeNull();
+  // The disclosure went from under the focus: it lands on the first revealed message's Cancel.
+  const third = screen.getByText("body c").closest("[data-message-block]") as HTMLElement;
+  expect(within(third).getByRole("button", { name: "Cancel" })).toHaveFocus();
 });
 
 test("Cancel only on your own held messages: not others', task comments, scheduled or notices", async () => {

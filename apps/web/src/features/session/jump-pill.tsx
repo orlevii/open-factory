@@ -1,5 +1,6 @@
 import { ArrowDown } from "lucide-react";
 import { memo, useState } from "react";
+import { heldSeqs } from "./display-passes";
 import { isSpeechRow, type Row } from "./rows";
 
 const NOTHING = { speech: 0, other: false } as const;
@@ -17,7 +18,8 @@ export function arrivedSince(
   let other = false;
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i] as Row;
-    if (row.seq <= seenSeq) break;
+    // A merged failure keeps its first seq; a repeat folded into it is new all the same.
+    if ((heldSeqs(row)?.at(-1) ?? row.seq) <= seenSeq) break;
     if (handedOff.has(row.key)) continue;
     if (isSpeechRow(row)) speech++;
     else other = true;

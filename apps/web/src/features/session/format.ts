@@ -47,6 +47,20 @@ export function formatInboxTime(at: Date, now: Date): string {
     : `${date} ${at.getFullYear()} ${hhmm}`;
 }
 
+/** A past moment on a row (U3 §7.6 "last 19:32"): `19:32` today, `Mon 19:32` within the past week,
+ *  else `27 Nov 19:32` (with the year when it differs). */
+export function formatLastAt(at: Date, now: Date): string {
+  const hhmm = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((day(now) - day(at)) / 86_400_000);
+  if (days <= 0) return hhmm;
+  if (days <= 6) return `${WEEKDAYS[at.getDay()]} ${hhmm}`;
+  const date = `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+  return at.getFullYear() === now.getFullYear()
+    ? `${date} ${hhmm}`
+    : `${date} ${at.getFullYear()} ${hhmm}`;
+}
+
 /** A local calendar day for a row note (S7 UI design §3): `19 Nov`, or `31 Dec 2025` in another year.
  *  Past or future alike: the note names the day, never the time. */
 export function formatDay(at: Date, now: Date): string {

@@ -63,7 +63,18 @@ export type Row =
     }
   | { kind: "orphan_result"; seq: number; result: Ev<"tool_result">; key: string }
   | { kind: "compaction"; seq: number; event: Ev<"compacted">; key: string }
-  | { kind: "error"; seq: number; event: Ev<"error">; key: string }
+  | {
+      kind: "error";
+      seq: number;
+      at: string;
+      event: Ev<"error">;
+      key: string;
+      /** Set by `mergeFailures` (U3 §7.6) on a row standing for adjacent identical failures: how
+       *  many, when the last one was, and every seq it holds (the first is `seq`). */
+      count?: number;
+      lastAt?: string;
+      seqs?: number[];
+    }
   | { kind: "denied"; seq: number; event: Ev<"permission_denied">; key: string }
   | { kind: "quiet"; seq: number; event: AnyEvent; key: string }
   /** "Worked 2m 13s · 14 tool calls · $0.42 est." after a finished turn (U3 §5.3). */
@@ -317,7 +328,7 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
         top.push({ kind: "compaction", seq: se.seq, event: e, key: `${se.seq}` });
         break;
       case "error":
-        top.push({ kind: "error", seq: se.seq, event: e, key: `${se.seq}` });
+        top.push({ kind: "error", seq: se.seq, at: se.at, event: e, key: `${se.seq}` });
         break;
       case "permission_denied": {
         const sent = outgoing.get(e.toolUseId);

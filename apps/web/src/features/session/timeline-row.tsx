@@ -6,7 +6,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { CompactionMarker } from "./compaction-marker";
-import { formatDuration } from "./format";
+import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
 import { OutgoingMessage } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
@@ -363,7 +363,14 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp} className="space-y-1">
           <p className="flex items-center gap-1.5 text-sm">
             <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-            {row.event.message}
+            <span className="min-w-0">
+              {row.event.message}
+              {row.count !== undefined && row.lastAt !== undefined && (
+                <span className="text-muted-foreground tabular-nums">
+                  {` · ${row.count} times · last ${formatLastAt(new Date(row.lastAt), new Date())}`}
+                </span>
+              )}
+            </span>
           </p>
           {row.event.fix && (
             <p>

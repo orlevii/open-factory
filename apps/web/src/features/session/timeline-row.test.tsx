@@ -1,8 +1,9 @@
-import type { AnyEvent } from "@open-factory/shared";
+import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
+import { mergeFailures } from "./display-passes";
 import { buildRows } from "./rows";
 import { Timeline } from "./timeline";
 import { TimelineRow } from "./timeline-row";
@@ -281,6 +282,49 @@ test("self-started turns say what woke the agent", () => {
     "Woke for a background task · 12s",
   );
   expect(footerLine({ durationMs: 12_000, origin: "cron" })).toBe("Woke for a cron · 12s");
+});
+
+// Repeated failures (U3 §7.6): one row, the count and the last time.
+test("a merged failure says how many times and when the last one was", () => {
+  const err = (at: string): SessionEvent => ({
+    ...se(
+      { type: "error", source: "spawn", code: "image", message: "Image `playwright` isn't built" },
+      null,
+    ),
+    at,
+  });
+  const today = mergeFailures(
+    buildRows([err(todayAt(9, 0)), err(todayAt(9, 10)), err(todayAt(9, 32))]).rows,
+  );
+  // Monday 16 Nov, three days before NOW (Thursday 19 Nov).
+  const monday = new Date(2026, 10, 16, 19, 32).toISOString();
+  const earlier = mergeFailures(
+    buildRows([err(new Date(2026, 10, 15, 10, 0).toISOString()), err(monday)]).rows,
+  );
+  const { container } = render(
+    <div>
+      {[...today, ...earlier].map((row) => (
+        <div key={row.key} data-row>
+          <TimelineRow
+            slug="dev"
+            row={row}
+            expanded={new Set()}
+            toggle={() => {}}
+            rowProps={() => ({})}
+            failedIds={new Set()}
+            interruptedEnds={new Set()}
+          />
+        </div>
+      ))}
+    </div>,
+  );
+  const texts = [...container.querySelectorAll("[data-row]")].map(
+    (el) => el.querySelector("p")?.textContent,
+  );
+  expect(texts).toEqual([
+    "Image `playwright` isn't built · 3 times · last 09:32",
+    "Image `playwright` isn't built · 2 times · last Mon 19:32",
+  ]);
 });
 
 // Reading sizes (U3 §7.3): nothing in a session outranks the page title.

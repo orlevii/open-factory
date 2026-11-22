@@ -13,7 +13,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { runInstantOn } from "@/lib/run-instant";
-import { childrenOf } from "./display-passes";
+import { childrenOf, heldSeqs } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import type { Row } from "./rows";
 import { registerTimelineRepin } from "./session-commands";
@@ -326,14 +326,17 @@ function rowHasMessage(row: Row, id: string): boolean {
 }
 
 const containsSeq = (rows: readonly Row[], seq: number): boolean =>
-  rows.some((r) => r.seq === seq || containsSeq(childrenOf(r), seq));
+  rows.some(
+    (r) => r.seq === seq || !!heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq),
+  );
 
-/** The row a deep link lands on: its own row, else the row holding it, else the nearest later row
+/** The row a deep link lands on: its own row, else the row holding it (a merged failure's repeat
+ *  included), else the nearest later row
  *  (hidden events such as `usage` have none), else the last row. */
 export function targetRowKey(rows: Row[], seq: number): string | undefined {
   return (
     rows.find((r) => r.seq === seq)?.key ??
-    rows.find((r) => containsSeq(childrenOf(r), seq))?.key ??
+    rows.find((r) => heldSeqs(r)?.includes(seq) || containsSeq(childrenOf(r), seq))?.key ??
     rows.find((r) => r.seq > seq)?.key ??
     rows.at(-1)?.key
   );

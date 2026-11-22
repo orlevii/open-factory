@@ -126,14 +126,28 @@ export function MessageBlock(props: {
     late?: boolean | undefined;
     firings?: number | undefined;
   };
+  /** U3 §7.6: a queued (or sending) block, its body clamped at three lines. */
+  brief?: boolean;
   /** U3 §6.4: Cancel on a held message you sent, at the end of the sender line. */
   action?: ReactNode;
   /** U3 §13.2: an optimistic send, in the delivered card's shape with its body muted and named
    *  "Sending"; `label` ("Sending…") takes the time's place once the POST is slow. */
   sending?: { label?: ReactNode };
 }) {
-  const { from, system, body, urgent, at, queued, failed, badge, scheduled, action, sending } =
-    props;
+  const {
+    from,
+    system,
+    body,
+    urgent,
+    at,
+    queued,
+    failed,
+    badge,
+    scheduled,
+    action,
+    sending,
+    brief,
+  } = props;
   const notes = scheduled
     ? [
         ...(scheduled.late && scheduled.due
@@ -220,10 +234,15 @@ export function MessageBlock(props: {
       <div
         data-message-body
         className={
-          sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
+          [
+            brief && "line-clamp-3",
+            sending && "text-muted-foreground [--foreground:var(--muted-foreground)]",
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined
         }
       >
-        <ClampedMarkdown source={body} />
+        {brief ? <Markdown source={body} variant="detail" /> : <ClampedMarkdown source={body} />}
       </div>
     </div>
   );

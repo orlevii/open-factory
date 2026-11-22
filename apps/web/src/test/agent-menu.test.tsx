@@ -681,3 +681,31 @@ test("desktop: an item that opens an overlay closes the dropdown instantly; a li
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Open tasks" }));
   expect(menu).not.toHaveAttribute("data-instant");
 });
+
+test.each([
+  ["Terminate…", agentSummary({ kind: "ephemeral" }), "Terminate @dev?"],
+  ["Stop crons…", agentSummary({ crons: [cron] }), "Stop @dev's crons?"],
+] as const)(
+  "phone: %s leaves focus in its confirmation once the drawer has gone",
+  async (item, agent, name) => {
+    fakeMatchMedia.install(true, { coarse: true });
+    setup({ agent, context: "session" });
+    const trigger = await screen.findByRole("button", { name: "Actions for Dev agent" });
+    trigger.focus();
+    const drawer = await openDrawer();
+    const content = drawer.closest("[data-slot=drawer-content]") ?? drawer;
+    fireEvent.click(within(drawer).getByRole("button", { name: item }));
+    const dlg = await screen.findByRole("alertdialog", { name });
+    // The drawer's close must not pull focus back to ⋯ under the confirmation (it would flicker on a
+    // device; jsdom's focus trap hides it, so watch the call).
+    const refocus = vi.spyOn(trigger, "focus");
+    await vi.waitFor(() => expect(dlg.contains(document.activeElement)).toBe(true));
+    endExit(content);
+    await vi.waitFor(() => expect(content.isConnected).toBe(false));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(dlg.contains(document.activeElement)).toBe(true);
+    expect(refocus).not.toHaveBeenCalled();
+  },
+);

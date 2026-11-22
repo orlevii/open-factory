@@ -462,6 +462,10 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 
   const ulRef = useRef<HTMLUListElement>(null);
   const loaded = shapeKey !== undefined;
+  // The menu's agent left the list: the tree's own state closes (state only, no effect), so the row
+  // drops its selected look and the agent coming back never reopens the menu by itself.
+  if (menu.open && menu.slug && loaded && !bySlug.has(menu.slug))
+    setMenu((m) => ({ ...m, open: false }));
   useEffect(() => {
     if (!activeSlug || !loaded) return;
     const id = requestAnimationFrame(() =>
@@ -505,9 +509,12 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
         ? activeSlug
         : visible[0]?.slug;
 
+  // A row that has gone (its agent left the list with the menu open) hands focus to the tab stop.
   const focusRow = (slug: string) => {
-    setFocusSlug(slug);
-    rowOf(ulRef.current, slug)?.focus();
+    const el = rowOf(ulRef.current, slug) ?? (tabStop ? rowOf(ulRef.current, tabStop) : undefined);
+    if (!el) return;
+    setFocusSlug(el.dataset.agentRow ?? slug);
+    el.focus();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {

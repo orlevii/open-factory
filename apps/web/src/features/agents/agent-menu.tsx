@@ -184,7 +184,15 @@ export function AgentMenu({
     );
   if (canStopCrons)
     views.push(
-      <AdaptiveMenuItem key="stop-crons" opensOverlay onSelect={() => stop.openConfirm(trigger)}>
+      <AdaptiveMenuItem
+        key="stop-crons"
+        opensOverlay
+        onSelect={() => {
+          // The confirmation places focus and returns it to ⋯ itself: the menu's close leaves it be.
+          handoff.current = () => {};
+          stop.openConfirm(trigger);
+        }}
+      >
         Stop crons…
       </AdaptiveMenuItem>,
     );
@@ -220,7 +228,10 @@ export function AgentMenu({
         key="terminate"
         variant="destructive"
         opensOverlay
-        onSelect={() => setTerminateOpen(true)}
+        onSelect={() => {
+          handoff.current = () => {}; // as Stop crons…: the confirmation owns focus
+          setTerminateOpen(true);
+        }}
       >
         Terminate…
       </AdaptiveMenuItem>,

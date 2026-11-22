@@ -342,6 +342,21 @@ test("the menu's title names the row: who a message is from, the tool, with the 
   expect(rowMenuTitle(text(1), "dev")).toBe(`@dev · ${t}`);
   expect(rowMenuTitle(outgoing("bob"), "dev")).toBe(`Message to @bob · ${t}`);
   expect(rowMenuTitle(footer, "dev")).toBe("Turn summary");
+  const peer = (left?: { reason: "archived" }): Row => ({
+    kind: "peer",
+    seq: 8,
+    key: "8:0",
+    envelope: {
+      id: "e8",
+      from: "@factory",
+      kind: left ? "peer_left" : "peer_joined",
+      urgent: false,
+      body: "",
+      subject: { slug: "bob", displayName: "Bob", relation: "peer", left },
+    },
+  });
+  expect(rowMenuTitle(peer(), "dev")).toBe("@bob joined");
+  expect(rowMenuTitle(peer({ reason: "archived" }), "dev")).toBe("@bob left");
 });
 
 const touchDown = (el: Element) => fireEvent.pointerDown(el, { button: 0, pointerType: "touch" });

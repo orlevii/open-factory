@@ -470,6 +470,32 @@ test("the menu closes when its agent is dropped from the list by a refetch", asy
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 });
 
+test("an agent dropped while its menu is open and then back doesn't reopen it; focus stays in the tree", async () => {
+  const { qc } = setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  row("Alpha").focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await screen.findByRole("menu");
+  act(() => {
+    qc.setQueryData(
+      ["agents", "exclude"],
+      agents({ b: { reportsTo: null } }).filter((a) => a.slug !== "a"),
+    );
+  });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // The row is gone: focus falls to the tree's tab stop, not <body>.
+  await waitFor(() => expect(document.activeElement).toHaveAttribute("data-agent-row"));
+  act(() => {
+    qc.setQueryData(["agents", "exclude"], agents());
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(rowEl("a")).not.toHaveAttribute("data-menu-open");
+});
+
 test("phone: a row's menu is a drawer titled with the agent's name", async () => {
   const original = window.matchMedia;
   fakeMatchMedia.install(true, { coarse: true });

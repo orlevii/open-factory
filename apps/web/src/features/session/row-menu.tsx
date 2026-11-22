@@ -109,8 +109,12 @@ export function rowMenuTitle(row: Row, slug: string): string {
   switch (row.kind) {
     case "message":
       return at(`Message from ${handle(row.message.from)}`, row.at);
-    case "peer":
-      return `Message from ${handle(row.envelope.from)}`;
+    case "peer": {
+      // A neighborhood notice (peer_joined / peer_left), not a message.
+      const who = row.envelope.subject?.slug;
+      if (!who) return "Neighborhood change";
+      return `@${who} ${row.envelope.subject?.left ? "left" : "joined"}`;
+    }
     case "update_group":
       return at(`Updates about ${row.about}`, row.at);
     case "outgoing": {

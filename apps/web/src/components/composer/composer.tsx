@@ -61,6 +61,9 @@ export type CompletionSource = {
   trigger: "/" | "@";
   /** The toolbar button's accessible name; without one there is no button. */
   label?: string;
+  /** While a menu from this source is open: load what `items` reads if needed, and call `onChange`
+   *  when it changes, so late data shows without a keystroke. Returns the unsubscribe. */
+  watch?(onChange: () => void): () => void;
   opensAt(text: string, caret: number): { query: string; from: number } | undefined;
   items(query: string): CompletionItem[];
   accept(
@@ -132,6 +135,12 @@ const NO_ITEMS: CompletionItem[] = [];
 const NO_SOURCES: CompletionSource[] = [];
 /** An open caret menu: its source, the trigger's index, the text typed after it, where it hangs. */
 type OpenMenu = { source: CompletionSource; from: number; query: string; anchor: CaretAnchor };
+
+/** Whether `text` still has the menu's token where it was typed. */
+function holds(m: OpenMenu, text: string): boolean {
+  const hit = m.source.opensAt(text, m.from + 1 + m.query.length);
+  return hit?.from === m.from && hit.query === m.query;
+}
 
 /** A send whose POST aborted: the box got `sent` back (as `box`, after `before`). */
 type Unconfirmed = { id: string; sent: string; box: string; before: string };
@@ -225,10 +234,18 @@ export const Composer = memo(function Composer({
     () => (slash || at ? [slash, at].filter((c) => c !== undefined) : NO_SOURCES),
     [slash, at],
   );
-  const [menu, setMenu] = useState<OpenMenu | undefined>();
+  const [menuState, setMenu] = useState<OpenMenu | undefined>();
+  // The menu holds only while the text still has its token (a send, Reply or a draft change can
+  // replace the text without a keystroke): otherwise it is closed, whatever the state says.
+  const menu = menuState && holds(menuState, text) ? menuState : undefined;
+  // Bumped when the open menu's data changes (the users list arriving, a renamed agent).
+  const [dataVersion, setDataVersion] = useState(0);
+  const watched = menu?.source;
+  useEffect(() => watched?.watch?.(() => setDataVersion((v) => v + 1)), [watched]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dataVersion re-reads the source's data
   const items = useMemo(
     () => (menu ? menu.source.items(menu.query).slice(0, MAX_ROWS) : NO_ITEMS),
-    [menu],
+    [menu, dataVersion],
   );
   const menuOpen = items.length > 0;
   const menuRef = useRef<CaretMenuHandle>(null);
@@ -253,7 +270,7 @@ export const Composer = memo(function Composer({
     if (caret !== null && !sources.some((c) => c.opensAt(box.value, caret))) {
       dismissedAt.current = undefined;
     }
-    if (menu) setMenu(undefined);
+    if (menuState) setMenu(undefined);
   };
   const closeMenu = () => {
     if (menu) dismissedAt.current = menu.from;
@@ -381,6 +398,7 @@ export const Composer = memo(function Composer({
     // Optimistic: the box empties at once; the stored draft keeps the text until the server takes it.
     draft.hold(sent);
     setText("");
+    setMenu(undefined); // ⌥Enter or ⌘Enter sends as typed, with a menu open: it goes with the text
     setPending((n) => n + 1);
     let submitted: Promise<void>;
     try {
@@ -505,6 +523,10 @@ export const Composer = memo(function Composer({
                 if (sources.length) lookForMenu(e.target);
               }}
               onSelect={sources.length ? (e) => lookForMenu(e.currentTarget) : undefined}
+              // A multiline combobox while it has caret menus (U3 §13.4); CaretMenu adds aria-controls
+              // and aria-activedescendant while one is open.
+              role={sources.length ? "combobox" : undefined}
+              aria-haspopup={sources.length ? "listbox" : undefined}
               aria-expanded={sources.length ? menuOpen : undefined}
               aria-autocomplete={sources.length ? "list" : undefined}
               onFocus={draft.bind.onFocus}

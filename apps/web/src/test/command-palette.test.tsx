@@ -159,7 +159,7 @@ test("agents: live first, ended after with 'Ended'; Enter opens the session; ⇧
   expect(options(dialog)[0]).not.toContain("Ended");
   await userEvent.keyboard("{Enter}");
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev"));
-  const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
+  const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
   expect(box).not.toHaveFocus();
 
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
@@ -168,7 +168,7 @@ test("agents: live first, ended after with 'Ended'; Enter opens the session; ⇧
   await waitFor(() => expect(highlighted(again)).toHaveTextContent("@dev"));
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Message to Dev agent" })).toHaveFocus(),
+    expect(screen.getByRole("combobox", { name: "Message to Dev agent" })).toHaveFocus(),
   );
   // The palette remembers the opened agent as recent: an empty query lists it.
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
@@ -207,7 +207,7 @@ test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async
 
 test("'Agent details' is offered on a session page", async () => {
   renderApp("/agents/dev", alice);
-  await screen.findByRole("textbox", { name: "Message to Dev agent" });
+  await screen.findByRole("combobox", { name: "Message to Dev agent" });
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
   const dialog = await screen.findByRole("dialog", { name: "Search" });
   const actions = within(dialog).getByRole("group", { name: "Actions" });
@@ -274,7 +274,7 @@ test.each([768, 900, 1023])(
     try {
       renderApp("/agents/dev", alice);
       // Opened from the composer: the dialog's focus return would send focus back there.
-      const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
+      const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
       box.focus();
       fireEvent.keyDown(box, { key: "k", ctrlKey: true });
       const dialog = await screen.findByRole("dialog", { name: "Search" });
@@ -336,7 +336,7 @@ test("⇧Enter to an agent whose session isn't open yet focuses its composer onc
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev"));
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Message to Dev agent" })).toHaveFocus(),
+    expect(screen.getByRole("combobox", { name: "Message to Dev agent" })).toHaveFocus(),
   );
 });
 

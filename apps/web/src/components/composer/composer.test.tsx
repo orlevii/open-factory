@@ -45,7 +45,8 @@ function setup(over: Partial<Parameters<typeof Composer>[0]> = {}) {
   return {
     ref,
     onSubmit,
-    box: screen.getByRole("textbox", { name: "Message to Dev" }),
+    // With caret menus the textarea is a combobox (U3 §13.4).
+    box: screen.getByRole(props.completions ? "combobox" : "textbox", { name: "Message to Dev" }),
     rerender: (more: Partial<Parameters<typeof Composer>[0]>) =>
       r.rerender(<Composer ref={ref} {...props} {...more} />),
   };
@@ -431,4 +432,94 @@ test("Stop's stand-in holds every label Stop can show, so the slot never grows w
   expect(labels).toEqual(["Stop", "Stopping…", "Compacting…"]);
   // No text node: nothing for a text query to find twice.
   expect(standIn.textContent).toBe("");
+});
+
+test("with caret menus the textarea is a combobox whose popup state matches the menu", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  expect(box.tagName).toBe("TEXTAREA");
+  expect(box).toHaveAttribute("aria-haspopup", "listbox");
+  expect(box).toHaveAttribute("aria-autocomplete", "list");
+  expect(box).toHaveAttribute("aria-expanded", "false");
+  expect(box).not.toHaveAttribute("aria-controls");
+  expect(box).not.toHaveAttribute("aria-activedescendant");
+  await userEvent.type(box, "@");
+  const list = screen.getByRole("listbox");
+  expect(box).toHaveAttribute("aria-expanded", "true");
+  expect(box).toHaveAttribute("aria-controls", list.id);
+  expect(box.getAttribute("aria-activedescendant")).toBe(highlighted()?.id);
+  await userEvent.keyboard("{Escape}");
+  expect(box).toHaveAttribute("aria-expanded", "false");
+  expect(box).not.toHaveAttribute("aria-controls");
+  expect(box).not.toHaveAttribute("aria-activedescendant");
+});
+
+test("without caret menus it stays a plain textbox", () => {
+  setup();
+  expect(screen.getByRole("textbox", { name: "Message to Dev" })).not.toHaveAttribute(
+    "aria-haspopup",
+  );
+  expect(screen.queryByRole("combobox")).toBeNull();
+});
+
+test("⌥Enter and ⌘Enter with the menu open send the text as typed and close the menu", async () => {
+  const { box, onSubmit } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "ping @d");
+  fireEvent.keyDown(box, { key: "Enter", altKey: true });
+  expect(onSubmit).toHaveBeenLastCalledWith("ping @d", expect.objectContaining({ urgent: true }));
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(box).toHaveAttribute("aria-expanded", "false");
+  await userEvent.type(box, "again @d");
+  fireEvent.keyDown(box, { key: "Enter", metaKey: true });
+  expect(onSubmit).toHaveBeenLastCalledWith("again @d", expect.objectContaining({ urgent: false }));
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("a text change from outside the box (Reply) closes the menu", async () => {
+  const { box, ref } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "@d");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  act(() => ref.current?.insertAtStart("@lead "));
+  expect(box).toHaveValue("@lead @d");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("a click outside closes the menu and leaves the text", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "hi @d");
+  await userEvent.click(document.body);
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(box).toHaveValue("hi @d");
+});
+
+test("the toolbar's `@` button with a menu open starts a new handle", async () => {
+  const { box } = setup({ completions: AT_ONLY });
+  await userEvent.type(box, "@d");
+  await userEvent.click(screen.getByRole("button", { name: "Insert an agent's handle" }));
+  expect(box).toHaveValue("@d @");
+  expect(document.activeElement).toBe(box);
+  expect(screen.getAllByRole("option")).toHaveLength(3);
+  await userEvent.keyboard("{Enter}");
+  expect(box).toHaveValue("@d @dev ");
+});
+
+test("data that arrives while the menu is open shows without a keystroke", async () => {
+  let rows: CompletionItem[] = [PEOPLE[0] as CompletionItem];
+  let notify = () => {};
+  const unwatch = vi.fn();
+  const watching: CompletionSource = {
+    ...AT,
+    items: (q) => rows.filter((p) => p.id.startsWith(q)),
+    watch(onChange) {
+      notify = onChange;
+      return unwatch;
+    },
+  };
+  const { box } = setup({ completions: { at: watching } });
+  await userEvent.type(box, "@d");
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  rows = PEOPLE;
+  act(() => notify());
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  await userEvent.keyboard("{Escape}");
+  expect(unwatch).toHaveBeenCalledTimes(1);
 });

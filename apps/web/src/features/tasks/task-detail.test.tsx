@@ -386,7 +386,7 @@ test("Reply puts the author's mention at the start of the composer and focuses i
   world();
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Reply to @dev" }));
-  const box = screen.getByRole("textbox", { name: "Comment" });
+  const box = screen.getByRole("combobox", { name: "Comment" });
   await waitFor(() => expect(box).toHaveFocus());
   expect(box).toHaveValue("@dev ");
   await userEvent.click(screen.getByRole("button", { name: "Reply to @dev" }));
@@ -424,7 +424,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
   renderApp("/tasks/T-42", alice);
   const send = await screen.findByRole("button", { name: "Send" });
   expect(send).toBeDisabled();
-  const box = screen.getByRole("textbox", { name: "Comment" });
+  const box = screen.getByRole("combobox", { name: "Comment" });
   expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention. Enter to post.");
   await userEvent.type(box, "hello @nobody");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
@@ -469,7 +469,7 @@ test("composer: text typed while a post is in flight survives it; the posted par
     return posted("a");
   });
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
@@ -484,7 +484,7 @@ test("composer: with nothing typed during the post the draft clears", async () =
   const api = world();
   api.on("POST /api/tasks/T-42/comments", () => posted("a"));
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(box).toHaveValue(""));
@@ -505,7 +505,7 @@ test("composer: a throwing localStorage (private mode) neither breaks typing nor
   const api = world();
   api.on("POST /api/tasks/T-42/comments", () => posted("hello"));
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   await userEvent.type(box, "hello");
   expect(box).toHaveValue("hello");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
@@ -557,7 +557,7 @@ test("comment composer: Enter posts once, Shift+Enter adds a line", async () => 
   const api = world();
   api.on("POST /api/tasks/T-42/comments", () => posted("a"));
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   await userEvent.type(box, "a{Shift>}{Enter}{/Shift}b");
   expect(box).toHaveValue("a\nb");
   await userEvent.keyboard("{Enter}");
@@ -569,7 +569,7 @@ test("comment composer: on a coarse pointer the helper drops 'Enter to post.' an
   fakeMatchMedia.install(false, { coarse: true });
   const api = world();
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
   await userEvent.type(box, "a{Enter}b");
   expect(box).toHaveValue("a\nb");
@@ -580,7 +580,7 @@ test("comment composer: Enter during IME composition does not post", async () =>
   fakeMatchMedia.install(false);
   const api = world();
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   await userEvent.type(box, "draft");
   fireEvent.keyDown(box, { key: "Enter", isComposing: true });
   fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
@@ -593,7 +593,7 @@ test("comment composer: Ctrl+Enter still posts on a coarse pointer", async () =>
   const api = world();
   api.on("POST /api/tasks/T-42/comments", () => posted("a"));
   renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("textbox", { name: "Comment" });
+  const box = await screen.findByRole("combobox", { name: "Comment" });
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(box).toHaveValue(""));
@@ -640,12 +640,12 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
     "top-1.5",
     "right-1.5",
   );
-  expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("@dev ");
+  expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("@dev ");
   first.unmount();
   const second = renderApp("/tasks/T-42?comment=c2", alice);
   const human = await screen.findByRole("article", { name: "Comment from @sam" });
   await waitFor(() => expect(human).toHaveFocus());
-  expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("");
+  expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("");
   second.unmount();
   renderApp("/tasks/T-42?comment=nope", alice);
   expect(await screen.findByText("Comment not found. Showing the task.")).toBeInTheDocument();
@@ -667,7 +667,7 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
   let current = detail();
   world(() => current);
   renderApp("/tasks/T-42", alice);
-  await userEvent.type(await screen.findByRole("textbox", { name: "Comment" }), "my draft");
+  await userEvent.type(await screen.findByRole("combobox", { name: "Comment" }), "my draft");
   await userEvent.click(screen.getByRole("button", { name: "Edit description" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Description" }), " more");
   current = detail({
@@ -685,7 +685,7 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
   });
   act(() => ws.push({ type: "tasks_changed", keys: ["T-42"] }));
   expect(await screen.findByRole("button", { name: "Status: Done" })).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("my draft");
+  expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("my draft");
   expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("The **brief**. more");
   expect(await screen.findByText("@dev commented")).toBeInTheDocument();
 });
@@ -863,7 +863,7 @@ test("with the tasks list cached, the page shows the title and status at once; n
   expect(screen.getByRole("button", { name: "Edit title" })).toBeDisabled();
   expect(document.querySelectorAll("[data-slot=skeleton]").length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("textbox", { name: "Comment" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Comment" })).not.toBeInTheDocument();
   expect(screen.queryByText("None")).not.toBeInTheDocument();
 
   release(json(detail()));

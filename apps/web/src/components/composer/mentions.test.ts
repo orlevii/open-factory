@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import {
   acceptMention,
   type MentionAgent,
@@ -100,4 +100,52 @@ test("recent agent senders come from the cached inbox", () => {
   });
   const source = mentionSource(qc, "x");
   expect(source.items("").map((i) => i.id)).toEqual(["z", "a", "humans"]);
+});
+
+test("accepting with the caret inside a handle replaces the whole handle", () => {
+  expect(acceptMention("@dex and", "dev", 0, 2)).toEqual({ text: "@dev and", caret: 5 });
+  expect(acceptMention("hi @de-vx", "dev", 3, 5)).toEqual({ text: "hi @dev ", caret: 8 });
+});
+
+test("watching loads the users list once if it isn't cached and reports changes while open", async () => {
+  const fetch = vi.fn(async (_url: string) =>
+    Response.json({
+      users: [
+        {
+          id: "u1",
+          name: "Dana",
+          handle: "dana",
+          email: "d@x",
+          createdAt: "2026-01-01T00:00:00Z",
+          disabledAt: null,
+        },
+      ],
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const qc = new QueryClient();
+    qc.setQueryData(["agents", "exclude"], [agent("dev", "Dev")]);
+    const source = mentionSource(qc, "x");
+    const changed = vi.fn();
+    const stop = source.watch?.(changed);
+    expect(source.items("d").map((i) => i.id)).toEqual(["dev"]);
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0]?.[0])).toContain("/api/users");
+    expect(source.items("d").map((i) => i.id)).toEqual(["dana", "dev"]);
+    // A cached list changing while the menu is open is reported too.
+    changed.mockClear();
+    qc.setQueryData(["agents", "exclude"], [agent("dev", "Dev"), agent("dot", "Dot")]);
+    expect(changed).toHaveBeenCalled();
+    stop?.();
+    changed.mockClear();
+    qc.setQueryData(["agents", "exclude"], [agent("dev", "Dev")]);
+    expect(changed).not.toHaveBeenCalled();
+    // Cached and fresh: watching again fetches nothing.
+    source.watch?.(() => {})?.();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

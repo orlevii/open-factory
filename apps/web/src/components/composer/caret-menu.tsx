@@ -17,11 +17,11 @@ export type CaretMenuHandle = {
 
 const COPY_PROPS = [
   "boxSizing",
-  "width",
   "borderTopWidth",
   "borderRightWidth",
   "borderBottomWidth",
   "borderLeftWidth",
+  "borderStyle",
   "paddingTop",
   "paddingRight",
   "paddingBottom",
@@ -37,39 +37,54 @@ const COPY_PROPS = [
   "textIndent",
   "tabSize",
   "wordSpacing",
+  "wordBreak",
+  "direction",
+  "textAlign",
+  "unicodeBidi",
 ] as const;
+
+const clamp = (n: number, max: number) => Math.min(Math.max(n, 0), max);
 
 /**
  * Where the character at `index` sits in the textarea, relative to the textarea's offset parent, by
- * the mirror-div technique: a hidden copy with the same box and type lays out the text before it and
- * a marker span reports its offset. `y` is the top of that line (the menu opens upward from it),
- * clamped to the textarea's visible box when the line has scrolled out of view.
+ * the mirror-div technique: a hidden copy with the same box, type and direction lays out the text
+ * before it and a marker span reports its offset. The copy is narrower by the textarea's scrollbar
+ * gutter, so it wraps where the textarea does. `y` is the top of that line (the menu opens upward
+ * from it); both are clamped to the textarea's visible content box when the line has scrolled out of
+ * view.
  */
 export function caretAnchor(box: HTMLTextAreaElement, index: number): CaretAnchor {
   const doc = box.ownerDocument;
-  const style = doc.defaultView?.getComputedStyle(box);
   const mirror = doc.createElement("div");
-  const s = mirror.style;
-  if (style) for (const p of COPY_PROPS) s[p] = style[p];
-  s.position = "absolute";
-  s.visibility = "hidden";
-  s.top = "0";
-  s.left = "-9999px";
-  s.whiteSpace = "pre-wrap";
-  s.overflowWrap = "break-word";
-  s.overflow = "hidden";
-  mirror.textContent = box.value.slice(0, index);
-  const marker = doc.createElement("span");
-  marker.textContent = box.value.slice(index, index + 1) || ".";
-  mirror.appendChild(marker);
-  doc.body.appendChild(mirror);
-  const top = marker.offsetTop - box.scrollTop;
-  const left = marker.offsetLeft;
-  mirror.remove();
-  return {
-    x: box.offsetLeft + Math.min(Math.max(left, 0), box.clientWidth),
-    y: box.offsetTop + Math.min(Math.max(top, 0), box.clientHeight),
-  };
+  try {
+    const style = doc.defaultView?.getComputedStyle(box);
+    const s = mirror.style;
+    if (style) {
+      for (const p of COPY_PROPS) s[p] = style[p];
+      const gutter = Math.max(0, box.offsetWidth - box.clientWidth - 2 * box.clientLeft);
+      const width = Number.parseFloat(style.width);
+      if (Number.isFinite(width)) s.width = `${Math.max(0, width - gutter)}px`;
+    }
+    s.position = "absolute";
+    s.visibility = "hidden";
+    s.top = "0";
+    s.left = "-9999px";
+    s.whiteSpace = "pre-wrap";
+    s.overflowWrap = "break-word";
+    s.overflow = "hidden";
+    mirror.textContent = box.value.slice(0, index);
+    const marker = doc.createElement("span");
+    marker.textContent = box.value.slice(index, index + 1) || ".";
+    mirror.appendChild(marker);
+    doc.body.appendChild(mirror);
+    // Offsets inside the copy are from its padding edge; the textarea's border comes on top.
+    return {
+      x: box.offsetLeft + box.clientLeft + clamp(marker.offsetLeft, box.clientWidth),
+      y: box.offsetTop + box.clientTop + clamp(marker.offsetTop - box.scrollTop, box.clientHeight),
+    };
+  } finally {
+    mirror.remove();
+  }
 }
 
 const itemClass =

@@ -1,5 +1,10 @@
 import type { AgentSummary, InboxItem } from "@open-factory/shared";
-import { type InfiniteData, type QueryClient, useQueryClient } from "@tanstack/react-query";
+import {
+  hashKey,
+  type InfiniteData,
+  type QueryClient,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useMemo } from "react";
 import { homeInboxQueryKey, inboxQueryKey } from "@/features/inbox/api";
 import { agentsListQueryOptions } from "@/features/session/api";
@@ -38,9 +43,13 @@ export function mentionOpensAt(text: string, caret: number) {
   return { query, from: caret - query.length - 1 };
 }
 
-/** The typed token becomes `@handle ` (an existing space after the caret is reused, not doubled). */
+const HANDLE_TAIL = /^[A-Za-z0-9-]*/;
+
+/** The handle token becomes `@handle `: through the end of the handle, even with the caret inside it,
+ *  and an existing space after it is reused, not doubled. */
 export function acceptMention(text: string, handle: string, from: number, caret: number) {
-  const rest = text.slice(caret);
+  const end = caret + (HANDLE_TAIL.exec(text.slice(caret))?.[0].length ?? 0);
+  const rest = text.slice(end);
   const insert = `@${handle}${rest.startsWith(" ") ? "" : " "}`;
   return {
     text: text.slice(0, from) + insert + rest,
@@ -98,6 +107,9 @@ export function rankMentions(
       avatarVersion: a.avatarVersion,
     };
     const r = recentAt.get(a.slug);
+    // "Your reports": humans aren't stored as managers, so every root of the reporting line (which
+    // answers to the humans) counts as yours, as does an agent whose manager is your handle. In an org
+    // with several roots, each of them is "yours".
     if (r !== undefined) add(m, 0, r);
     else add(m, a.reportsTo === null || a.reportsTo === me ? 1 : 2);
   }
@@ -117,6 +129,8 @@ export function rankMentions(
   return rows.map((r) => r.m);
 }
 
+/** The users list is refreshed at most this often by an opening menu. */
+const USERS_STALE_MS = 60_000;
 const NO_AGENTS: MentionAgent[] = [];
 const NO_HUMANS: MentionHuman[] = [];
 type InboxPage = { items: Pick<InboxItem, "from">[] };
@@ -144,7 +158,7 @@ const toItem = (m: Mention): CompletionItem => ({
 /**
  * The `@` source over the query cache (review notes M3, m11): `items(query)` reads the agents, users,
  * session and inbox data already cached when the menu asks (only while it is open), so nothing is
- * fetched per keystroke and no list frame renders the composer. Task comments and the session both
+ * fetched per keystroke and no list frame renders the composer while the menu is closed. Task comments and the session both
  * insert `@slug ` (U3 §13.4).
  */
 export function mentionSource(qc: QueryClient, label: string): CompletionSource {
@@ -161,6 +175,19 @@ export function mentionSource(qc: QueryClient, label: string): CompletionSource 
         recent: recentSenders(qc),
       }).map(toItem),
     accept: (item, text, from, caret) => acceptMention(text, item.id, from, caret),
+    // While the menu is open: the users list loads once if nobody cached it (a task page visited
+    // first), and a change to either list re-reads the rows, so late data shows without a keystroke.
+    watch(onChange) {
+      void qc.prefetchQuery({ ...usersQueryOptions, staleTime: USERS_STALE_MS });
+      const watched = new Set([
+        hashKey(usersQueryOptions.queryKey),
+        hashKey(agentsListQueryOptions("exclude").queryKey),
+      ]);
+      return qc.getQueryCache().subscribe((e) => {
+        if (e.type === "updated" && e.action.type === "success" && watched.has(e.query.queryHash))
+          onChange();
+      });
+    },
   };
 }
 

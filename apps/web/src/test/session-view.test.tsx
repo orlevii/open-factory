@@ -538,7 +538,7 @@ test("disconnected: an accepted message shows as queued at once", async () => {
   routes["/api/agents/dev/messages"] = accepted("offline hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  await userEvent.type(screen.getByRole("textbox", { name: /Message to/ }), "offline hello");
+  await userEvent.type(screen.getByRole("combobox", { name: /Message to/ }), "offline hello");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   const log = screen.getByRole("log", { name: "Session" });
   expect(await within(log).findByText("offline hello")).toBeInTheDocument();
@@ -552,7 +552,7 @@ test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", a
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
-  await userEvent.type(screen.getByRole("textbox", { name: /Message to/ }), "online hello");
+  await userEvent.type(screen.getByRole("combobox", { name: /Message to/ }), "online hello");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   const log = screen.getByRole("log", { name: "Session" });
   await vi.waitFor(() => expect(within(log).queryByRole("group", { name: "Sending" })).toBeNull());
@@ -696,7 +696,7 @@ test("archived: the composer is replaced by a line linking the edit page; no Com
     "href",
     "/agents/dev/edit",
   );
-  expect(screen.queryByRole("textbox", { name: /Message to/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: /Message to/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
@@ -913,7 +913,7 @@ test("a cold load renders from the detail the route waited for while the session
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   await vi.waitFor(() => expect(detailRequests()).toBe(2));
   expect(document.querySelector("[data-timeline-skeleton] [data-slot=skeleton]")).not.toBeNull();
-  await userEvent.type(screen.getByRole("textbox", { name: "Message to Dev agent" }), "early");
+  await userEvent.type(screen.getByRole("combobox", { name: "Message to Dev agent" }), "early");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   gate.release(json(detail()));
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
@@ -1001,7 +1001,7 @@ test("the composer can't send until the session has loaded", async () => {
   routes["/api/agents/dev"] = gate.respond;
   renderApp("/agents", alice);
   await userEvent.click(await screen.findByRole("link", { name: /Dev agent/ }));
-  const box = await screen.findByRole("textbox", { name: "Message to Dev agent" });
+  const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
   await userEvent.type(box, "early");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   await userEvent.type(box, "{Enter}");

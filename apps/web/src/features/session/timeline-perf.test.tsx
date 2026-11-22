@@ -692,7 +692,7 @@ test("SessionView: a live frame and an agent_status frame render the composer 0 
     lastSeq: 200,
   };
   await renderSessionView();
-  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  const box = screen.getByRole("combobox", { name: "Message to Dev agent" });
   push(sessionEvent(ev(201, { type: "assistant_text", text: "Text 201" })));
   frame();
   expect(count.rows.get("201")).toBe(1);

@@ -45,7 +45,7 @@ function setup(qc = new QueryClient()) {
       <CommentComposer ref={ref} taskKey="T-1" assignee="dev" />
     </QueryClientProvider>,
   );
-  return { ref, box: () => screen.getByRole("textbox", { name: "Comment" }) };
+  return { ref, box: () => screen.getByRole("combobox", { name: "Comment" }) };
 }
 
 test("reply puts the mention at the start once and focuses", async () => {

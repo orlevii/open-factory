@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useRef } from "react";
 import { expect, test, vi } from "vitest";
-import { CaretMenu, type CaretMenuHandle } from "./caret-menu";
+import { CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
 import type { CompletionItem } from "./composer";
 
 const ITEMS: CompletionItem[] = [
@@ -121,4 +121,51 @@ test("leaving removes the box's combobox attributes", () => {
   expect(box).toHaveAttribute("aria-activedescendant");
   unmount();
   expect(box).not.toHaveAttribute("aria-activedescendant");
+});
+
+test("caretAnchor: a mirror with the textarea's type, direction and wrap width, then removed", () => {
+  const box = document.createElement("textarea");
+  box.value = "hello @de";
+  box.style.width = "216px";
+  box.style.direction = "rtl";
+  box.style.wordBreak = "break-all";
+  document.body.appendChild(box);
+  const seen: { direction?: string; width?: string; wordBreak?: string } = {};
+  const layout: Record<string, (el: HTMLElement) => number> = {
+    offsetTop: (el) => {
+      if (el.tagName !== "SPAN") return 10;
+      const m = (el.parentElement as HTMLElement).style;
+      Object.assign(seen, { direction: m.direction, width: m.width, wordBreak: m.wordBreak });
+      return 40;
+    },
+    offsetLeft: (el) => (el.tagName === "SPAN" ? 30 : 5),
+    offsetWidth: () => 216, // 1px borders and a 14px scrollbar gutter
+    clientWidth: () => 200,
+    clientHeight: () => 60,
+    clientLeft: () => 1,
+    clientTop: () => 1,
+  };
+  const restore = Object.keys(layout).map((k) => {
+    const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, k);
+    Object.defineProperty(HTMLElement.prototype, k, {
+      configurable: true,
+      get(this: HTMLElement) {
+        return layout[k]?.(this);
+      },
+    });
+    return () => d && Object.defineProperty(HTMLElement.prototype, k, d);
+  });
+  try {
+    const before = document.body.childElementCount;
+    expect(caretAnchor(box, 6)).toEqual({ x: 5 + 1 + 30, y: 10 + 1 + 40 });
+    expect(seen).toEqual({ direction: "rtl", width: "202px", wordBreak: "break-all" });
+    expect(document.body.childElementCount).toBe(before);
+    // Scrolled past: clamped to the top of the visible box.
+    box.scrollTop = 100;
+    Object.defineProperty(box, "scrollTop", { configurable: true, value: 100 });
+    expect(caretAnchor(box, 6).y).toBe(10 + 1);
+  } finally {
+    for (const r of restore) r();
+    box.remove();
+  }
 });

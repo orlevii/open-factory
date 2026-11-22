@@ -61,7 +61,7 @@ function setup(initial: AgentSummary, extra?: ReactNode) {
   );
   const r = render(ui(initial, 1));
   return {
-    box: screen.getByRole("textbox", { name: "Message to Dev agent" }),
+    box: screen.getByRole("combobox", { name: "Message to Dev agent" }),
     update: (a: AgentSummary, epoch: number) => r.rerender(ui(a, epoch)),
   };
 }
@@ -408,7 +408,7 @@ const frame = (event: SessionEvent) =>
   act(() => act$?.({ type: "frame", message: { type: "session_event", agent: "dev", event } }));
 function renderSession(agent = agentSummary()) {
   render(<Session agent={agent} />);
-  return screen.getByRole("textbox", { name: "Message to Dev agent" });
+  return screen.getByRole("combobox", { name: "Message to Dev agent" });
 }
 const sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
 
@@ -591,7 +591,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
   render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
-  expect(screen.getByRole("textbox")).not.toHaveFocus();
+  expect(screen.getByRole("combobox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
   });
@@ -625,7 +625,7 @@ test("a remount after an abort resends the unchanged text under the same id", as
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   heldReply();
   const first = render(<Session agent={agentSummary()} />);
-  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  const box = screen.getByRole("combobox", { name: "Message to Dev agent" });
   fireEvent.change(box, { target: { value: "hello" } });
   fireEvent.keyDown(box, { key: "Enter" });
   await act(async () => {
@@ -652,7 +652,8 @@ test("`@` inserts an agent's handle as plain text; nothing in the session says m
   expect(screen.getByRole("option", { name: /QA agent/ })).toBeInTheDocument();
   await userEvent.keyboard("{Enter}");
   expect(box).toHaveValue("ask @qa ");
-  expect(posted).toEqual([]);
+  // Nothing was sent; the opening menu loaded the users list, which nobody had cached (review I-2).
+  expect(posted.map((p) => p.url)).toEqual(["/api/users"]);
   await userEvent.click(button);
   expect(screen.getByRole("listbox")).toBeInTheDocument();
   const composer = document.querySelector("#composer") as HTMLElement;

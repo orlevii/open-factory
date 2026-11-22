@@ -182,7 +182,7 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
 
   // Shown (within the dwell) isn't read yet; replying reads it at once.
   expect(reads()).toHaveLength(0);
-  const box = await within(p).findByRole("textbox", { name: "Message to Dev agent" });
+  const box = await within(p).findByRole("combobox", { name: "Message to Dev agent" });
   await userEvent.type(box, "On it");
   fireEvent.click(within(p).getByRole("button", { name: "Send" }));
   await waitFor(() =>
@@ -226,7 +226,7 @@ test("a @factory message targets the subject agent", async () => {
   await visit("/inbox?item=i1");
   const p = pane();
   await waitFor(() => expect(within(p).getByText("ops event 100")).toBeInTheDocument());
-  const box = await within(p).findByRole("textbox", { name: "Message to Ops" });
+  const box = await within(p).findByRole("combobox", { name: "Message to Ops" });
   await userEvent.type(box, "Restarting you");
   fireEvent.click(within(p).getByRole("button", { name: "Send" }));
   await waitFor(() =>
@@ -301,7 +301,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
     expect(within(p).getByText(`comment ${c}`)).toBeInTheDocument();
   expect(within(p).queryByText("comment c0")).toBeNull();
   expect(within(p).queryByText("comment c5")).toBeNull();
-  const box = within(p).getByRole("textbox", { name: "Comment" });
+  const box = within(p).getByRole("combobox", { name: "Comment" });
   await waitFor(() => expect(box).toHaveValue("@ada "));
   expect(reads()).toHaveLength(0);
   await userEvent.type(box, "thanks");
@@ -334,7 +334,7 @@ test("a mention brings the mentioned comment to the top of the body; the compose
     ).toBe(true),
   );
   // The composer is capped and scrolls within itself, so the body always keeps room.
-  const box = within(p).getByRole("textbox", { name: "Comment" });
+  const box = within(p).getByRole("combobox", { name: "Comment" });
   const composer = box.closest("[data-pane-composer]") as HTMLElement;
   expect(composer).not.toBeNull();
   expect(composer).toHaveClass("overflow-y-auto");
@@ -346,14 +346,14 @@ test("a mention by a human leaves the composer empty", async () => {
   await visit("/inbox?item=i1");
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment h1")).toBeInTheDocument());
-  expect(within(p).getByRole("textbox", { name: "Comment" })).toHaveValue("");
+  expect(within(p).getByRole("combobox", { name: "Comment" })).toHaveValue("");
 });
 
 test("the mention reply is the shared composer: Write/Preview in its toolbar, no attach, a file gets the note", async () => {
   setup([mention(1, "h1", { kind: "human", name: "bob" })]);
   await visit("/inbox?item=i1");
   const p = pane();
-  const box = await within(p).findByRole("textbox", { name: "Comment" });
+  const box = await within(p).findByRole("combobox", { name: "Comment" });
   const toolbar = box.closest("[data-composer-frame]")?.querySelector("[data-composer-toolbar]");
   expect(toolbar?.contains(within(p).getByRole("button", { name: "Preview" }))).toBe(true);
   expect(within(p).queryByRole("button", { name: /attach/i })).toBeNull();
@@ -406,7 +406,7 @@ test("the composer sits below the body's scroller, which scrolls on its own", as
   setup([item(1)]);
   await visit("/inbox?item=i1");
   const p = pane();
-  const box = await within(p).findByRole("textbox", { name: "Message to Dev agent" });
+  const box = await within(p).findByRole("combobox", { name: "Message to Dev agent" });
   const body = p.querySelector("[data-pane-body]") as HTMLElement;
   const composer = box.closest("form") as HTMLElement;
   // jsdom has no layout: this guards the structure (the composer is outside the scroller and after
@@ -509,7 +509,7 @@ test("a half-typed comment reply survives switching items; a posted one is clear
     ),
   );
   const app = await visit("/inbox?item=i1");
-  const box = () => within(pane()).getByRole("textbox", { name: "Comment" });
+  const box = () => within(pane()).getByRole("combobox", { name: "Comment" });
   await waitFor(() => expect(box()).toHaveValue("@ada "));
   await userEvent.type(box(), "half typed");
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });

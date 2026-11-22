@@ -198,7 +198,7 @@ test("at 900px, Esc in the composer closes the peek and leaves focus in the comp
   const user = userEvent.setup();
   await user.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
-  const box = screen.getByRole("textbox", { name: "Message to Dev agent" });
+  const box = screen.getByRole("combobox", { name: "Message to Dev agent" });
   await user.click(box);
   expect(box).toHaveFocus();
   await user.keyboard("{Escape}");

@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { FetchQueryOptions, QueryClient, QueryKey } from "@tanstack/react-query";
 import type { ComponentType } from "react";
 import { scheduleDetailOptions } from "@/features/schedules/api";
 import { agentDetailQueryOptions, agentsListQueryOptions } from "@/features/session/api";
@@ -27,46 +27,55 @@ type Entry = {
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
+/** How long an intent prefetch counts as fresh. Hover, press and open each warm the same lists; within this window
+ *  only the first fetches. Mounted queries keep their own `staleTime` and refetch on mount as before. */
+const PREFETCH_FRESH_MS = 10_000;
+function warm<TData, TError, TKey extends QueryKey>(
+  qc: QueryClient,
+  opts: FetchQueryOptions<TData, TError, TData, TKey>,
+) {
+  void qc.prefetchQuery({ ...opts, staleTime: PREFETCH_FRESH_MS });
+}
+
 export const sheetBodies: { [K in SheetKind]?: Entry } = {
   "new-agent": {
     load: () => import("@/features/agents/new-agent-sheet"),
     // Every list the body reads, together: it suspends on credentials and templates only, the rest fill in.
     prefetch(qc, spec: { template?: string }) {
-      void qc.prefetchQuery(templatesQueryOptions);
-      void qc.prefetchQuery(credentialsQueryOptions);
-      void qc.prefetchQuery(projectsQueryOptions);
-      void qc.prefetchQuery(secretsQueryOptions);
-      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
-      void qc.prefetchQuery(agentsListQueryOptions("only"));
-      void qc.prefetchQuery(usersQueryOptions);
-      if (spec.template)
-        void qc.prefetchQuery({ ...templateQueryOptions(spec.template), retry: false });
+      warm(qc, templatesQueryOptions);
+      warm(qc, credentialsQueryOptions);
+      warm(qc, projectsQueryOptions);
+      warm(qc, secretsQueryOptions);
+      warm(qc, agentsListQueryOptions("exclude"));
+      warm(qc, agentsListQueryOptions("only"));
+      warm(qc, usersQueryOptions);
+      if (spec.template) warm(qc, { ...templateQueryOptions(spec.template), retry: false });
     },
     title: "New agent",
   },
   "edit-agent": {
     load: () => import("@/features/agents/edit-agent-sheet"),
     prefetch(qc, spec: { slug?: string }) {
-      if (spec.slug) void qc.prefetchQuery(agentDetailQueryOptions(spec.slug));
-      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
-      void qc.prefetchQuery(credentialsQueryOptions);
-      void qc.prefetchQuery(projectsQueryOptions);
+      if (spec.slug) warm(qc, agentDetailQueryOptions(spec.slug));
+      warm(qc, agentsListQueryOptions("exclude"));
+      warm(qc, credentialsQueryOptions);
+      warm(qc, projectsQueryOptions);
     },
     title: "Edit agent",
   },
   "new-task": {
     load: () => import("@/features/tasks/new-task-sheet"),
     prefetch(qc) {
-      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
-      void qc.prefetchQuery(agentsListQueryOptions("only"));
+      warm(qc, agentsListQueryOptions("exclude"));
+      warm(qc, agentsListQueryOptions("only"));
     },
     title: "New task",
   },
   "new-schedule": {
     load: () => import("@/features/schedules/new-schedule-sheet"),
     prefetch(qc) {
-      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
-      void qc.prefetchQuery(agentsListQueryOptions("only"));
+      warm(qc, agentsListQueryOptions("exclude"));
+      warm(qc, agentsListQueryOptions("only"));
     },
     title: "New schedule",
   },
@@ -74,14 +83,14 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
   "new-template": {
     load: () => import("@/features/templates/new-template-form"),
     prefetch(qc) {
-      void qc.prefetchQuery(templatesQueryOptions);
+      warm(qc, templatesQueryOptions);
     },
     title: "New template",
   },
   "add-credential": {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddCredentialSheet })),
     prefetch(qc) {
-      void qc.prefetchQuery(credentialsQueryOptions);
+      warm(qc, credentialsQueryOptions);
     },
     title: "Add credential",
     note: "Saved to Settings → Credentials; other agents can use it.",
@@ -89,14 +98,14 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
   "add-project": {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddProjectSheet })),
     prefetch(qc) {
-      void qc.prefetchQuery(projectsQueryOptions);
+      warm(qc, projectsQueryOptions);
     },
     title: "Add project",
   },
   "add-secret": {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddSecretSheet })),
     prefetch(qc) {
-      void qc.prefetchQuery(secretsQueryOptions);
+      warm(qc, secretsQueryOptions);
     },
     title: "Add secret",
   },
@@ -104,8 +113,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
     prefetch(qc, spec: { key: string }) {
       // Edit mode reads the live agents only (the stale-target check and its ended list are create-only).
-      void qc.prefetchQuery(scheduleDetailOptions(spec.key));
-      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+      warm(qc, scheduleDetailOptions(spec.key));
+      warm(qc, agentsListQueryOptions("exclude"));
     },
     title: (spec: { key: string }) => spec.key,
     titleClass: "font-mono",

@@ -4,6 +4,11 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   private waiting: ((r: IteratorResult<T>) => void) | undefined;
   private ended = false;
 
+  /** Items pushed and not yet taken by the consumer. */
+  get pending(): number {
+    return this.items.length;
+  }
+
   push(value: T): void {
     if (this.ended) return;
     if (this.waiting) {

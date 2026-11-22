@@ -2,10 +2,11 @@ import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleAlert, PanelRight } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { InlineOutcome } from "@/components/inline-outcome";
+import { warmHighlighter } from "@/components/markdown/highlight";
 import { PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,7 @@ import type { Row } from "./rows";
 import type { CancelledEntry } from "./session-state";
 import { SpeakerProvider } from "./speaker-line";
 import { StatusBadge, statusAnnouncement, statusLabel } from "./status-badge";
-import { CronsStopLayer, useStopCrons } from "./stop-crons";
+import { CronsStopLayer, type StopCrons, useStopCrons } from "./stop-crons";
 import { Timeline } from "./timeline";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
@@ -58,6 +59,8 @@ export function SessionView({
   sheetHost: HTMLElement | null;
 }) {
   const s = useSession(slug, eventSeq, messageId);
+  // The highlighter's import lands in idle time while the session opens, before any stream (U3 §11.4).
+  useEffect(() => warmHighlighter(), []);
   const { data: me } = useQuery(sessionQueryOptions);
   // Cancel puts the message back into an empty box; Undo takes it out again if untouched (U3 §6.4).
   const composerRef = useRef<ComposerHandle>(null);
@@ -101,15 +104,6 @@ export function SessionView({
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   // A send that raced the termination (409 agent_terminated): the read-only line keeps saying so.
   const [raceNotice, setRaceNotice] = useState<string>();
-  const { refreshAgent } = s;
-  // Stable, so the memoised composer doesn't render for frames that change nothing it reads (U3 M3).
-  const onTerminated = useCallback(
-    (notice: string) => {
-      setRaceNotice(notice);
-      void refreshAgent();
-    },
-    [refreshAgent],
-  );
   // The header's actions report here, in a notice row under it: a failed Restart, a Pin outcome.
   const [restartError, setRestartError] = useState<string>();
   const [pinOutcome, setPinOutcome] = useState<PinOutcome>();
@@ -148,6 +142,103 @@ export function SessionView({
     () => void navigate({ to: "/agents/$slug", params: { slug }, search: {} }),
     [navigate, slug],
   );
+  // A live frame changes only `state.live`: everything below is memoized on its own inputs, so the
+  // header, Agent details, the queue and the composer never re-render for one (U3 §11.4, M1).
+  const { setAgent, refreshAgent } = s;
+  const onTerminateStart = useCallback(() => {
+    selfTerminating.current = true;
+  }, []);
+  const onTerminated = useCallback(
+    (a: AgentSummary, ok: boolean) => {
+      selfTerminating.current = ok;
+      if (ok) setAgent(a);
+    },
+    [setAgent],
+  );
+  // Stable, so the memoised composer doesn't render for frames that change nothing it reads (U3 M3).
+  const onSendRaced = useCallback(
+    (notice: string) => {
+      setRaceNotice(notice);
+      void refreshAgent();
+    },
+    [refreshAgent],
+  );
+  const closeSheet = useCallback(() => closePanel(false), [closePanel]);
+  const slotsMax = running.data?.max;
+  const inflow = panel.mode === "inflow" && panel.open;
+  const inflowDetails = useMemo(
+    () =>
+      agent && inflow ? (
+        <AgentDetails agent={agent} stop={stop} slotsMax={slotsMax} onAgent={setAgent} />
+      ) : null,
+    [agent, inflow, stop, slotsMax, setAgent],
+  );
+  const sheetDetails = useMemo(
+    () =>
+      agent && sheetHost ? (
+        <AgentDetails
+          agent={agent}
+          stop={stop}
+          slotsMax={slotsMax}
+          onAgent={setAgent}
+          onClose={closeSheet}
+        />
+      ) : null,
+    [agent, sheetHost, stop, slotsMax, setAgent, closeSheet],
+  );
+  const cronsLayer = useMemo(
+    () => (agent ? <CronsStopLayer agent={agent} stop={stop} /> : null),
+    [agent, stop],
+  );
+  const self = me?.user.handle;
+  const { queue, sending, cancelled, stopEpoch, landed } = s.state;
+  const queueItems = useMemo(
+    () =>
+      agent ? (
+        <QueueItems
+          items={queue}
+          sending={sending}
+          agent={agent}
+          cancelled={cancelled}
+          self={self}
+          onCancel={onCancel}
+          onUndo={onUndo}
+        />
+      ) : null,
+    [queue, sending, agent, cancelled, self, onCancel, onUndo],
+  );
+  const { onQueued, onSending, onSendFailed, clearCancelled } = s;
+  const composer = useMemo(
+    () =>
+      agent ? (
+        <Composer
+          ref={composerRef}
+          slug={slug}
+          agent={agent}
+          stopEpoch={stopEpoch}
+          // A send before the session loads would be lost when the load replaces the queue.
+          waiting={!loaded}
+          onQueued={onQueued}
+          onSending={onSending}
+          onSendFailed={onSendFailed}
+          landed={landed}
+          onSent={clearCancelled}
+          onTerminated={onSendRaced}
+        />
+      ) : null,
+    [
+      slug,
+      agent,
+      stopEpoch,
+      loaded,
+      onQueued,
+      onSending,
+      onSendFailed,
+      landed,
+      clearCancelled,
+      onSendRaced,
+    ],
+  );
   // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.
   if (s.error?.code === "agent_not_found")
     return (
@@ -164,16 +255,6 @@ export function SessionView({
   const archived = agent.archivedAt !== null;
   const terminated = agent.status === "terminated";
   const errored = agent.status === "errored";
-  const details = (onClose?: () => void) => (
-    <AgentDetails
-      agent={agent}
-      stop={stop}
-      slotsMax={running.data?.max}
-      onAgent={s.setAgent}
-      onClose={onClose}
-    />
-  );
-  const inflow = panel.mode === "inflow" && panel.open;
   return (
     <div className="flex h-svh min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -185,62 +266,17 @@ export function SessionView({
             Skip to composer
           </a>
         )}
-        <PageHeader
-          title={agent.displayName}
-          titleFromData
-          leading={
-            <AgentAvatar
-              slug={agent.slug}
-              template={agent.template}
-              avatarVersion={agent.avatarVersion}
-              size={24}
-            />
-          }
-          heading={<AgentName agent={agent} />}
-          titleClassName="max-w-[45%]"
-          documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
-          meta={
-            <>
-              <span className="shrink-0 max-md:hidden">
-                <StatusBadge
-                  status={agent.status}
-                  rateLimitedUntil={agent.rateLimitedUntil}
-                  rateLimitExact={agent.rateLimitExact}
-                  size="long"
-                />
-              </span>
-              <span className="shrink-0 md:hidden">
-                <StatusBadge status={agent.status} size="short" />
-              </span>
-              <LiveLine fact={liveFact(agent, { slotsMax: running.data?.max, now: new Date() })} />
-            </>
-          }
-          actions={
-            <SessionActions
-              agent={agent}
-              archived={archived}
-              panel={panel}
-              onRestartError={setRestartError}
-              onPinOutcome={setPinOutcome}
-              onAgent={s.setAgent}
-              actionsMenu={
-                <AgentMenu
-                  agent={agent}
-                  context="session"
-                  stop={stop}
-                  onOpenDetails={() => panel.setOpen(true)}
-                  detailsTakeFocus={panel.mode !== "inflow"}
-                  onTerminateStart={() => {
-                    selfTerminating.current = true;
-                  }}
-                  onTerminated={(a, ok) => {
-                    selfTerminating.current = ok;
-                    if (ok) s.setAgent(a);
-                  }}
-                />
-              }
-            />
-          }
+        <SessionHeader
+          agent={agent}
+          archived={archived}
+          panel={panel}
+          stop={stop}
+          slotsMax={slotsMax}
+          onRestartError={setRestartError}
+          onPinOutcome={setPinOutcome}
+          onAgent={setAgent}
+          onTerminateStart={onTerminateStart}
+          onTerminated={onTerminated}
         />
         {errored && restartError && (
           <p
@@ -257,7 +293,7 @@ export function SessionView({
             <InlineOutcome tone={pinOutcome?.tone}>{pinOutcome?.text}</InlineOutcome>
           </div>
         )}
-        <CronsStopLayer agent={agent} stop={stop} />
+        {cronsLayer}
         {s.missingEvent !== undefined && (
           <p className="shrink-0 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:px-6">
             Event {s.missingEvent} isn't in this session. Showing the latest.
@@ -303,6 +339,9 @@ export function SessionView({
               windowed={s.state.windowed}
               newSpeech={s.state.newSpeech}
               onLeaveWindow={leaveWindow}
+              liveTexts={s.state.live.texts}
+              subagents={s.state.live.subagents}
+              textHead={s.textHead}
               footer={
                 <>
                   {s.rows.length === 0 &&
@@ -319,20 +358,13 @@ export function SessionView({
                   {agent.turnOpen && !s.state.windowed && (
                     <TurnActivity
                       open={s.open}
+                      live={s.state.live}
                       startedAt={agent.turnStartedAt}
                       turnKey={String(s.state.turnEpoch)}
                       compacting={agent.compacting === true}
                     />
                   )}
-                  <QueueItems
-                    items={s.state.queue}
-                    sending={s.state.sending}
-                    agent={agent}
-                    cancelled={s.state.cancelled}
-                    self={me?.user.handle}
-                    onCancel={onCancel}
-                    onUndo={onUndo}
-                  />
+                  {queueItems}
                 </>
               }
             />
@@ -358,20 +390,7 @@ export function SessionView({
         ) : terminated ? (
           <TerminatedComposer slug={slug} notice={raceNotice} />
         ) : (
-          <Composer
-            ref={composerRef}
-            slug={slug}
-            agent={agent}
-            stopEpoch={s.state.stopEpoch}
-            // A send before the session loads would be lost when the load replaces the queue.
-            waiting={!loaded}
-            onQueued={s.onQueued}
-            onSending={s.onSending}
-            onSendFailed={s.onSendFailed}
-            landed={s.state.landed}
-            onSent={s.clearCancelled}
-            onTerminated={onTerminated}
-          />
+          composer
         )}
       </div>
       {inflow && (
@@ -380,18 +399,95 @@ export function SessionView({
           aria-label="Agent details"
           className="flex min-h-0 w-80 shrink-0 flex-col border-l border-border bg-card"
         >
-          {details()}
+          {inflowDetails}
         </aside>
       )}
       {/* Kept while the sheet's node exists, so its exit animation still shows the content. */}
-      {sheetHost &&
-        createPortal(
-          details(() => panel.setOpen(false)),
-          sheetHost,
-        )}
+      {sheetHost && sheetDetails && createPortal(sheetDetails, sheetHost)}
     </div>
   );
 }
+
+/** The session's header (U3 §11.4, M1): memoized on the agent and stable handlers, so a live frame
+ *  (which changes neither) never re-renders it. */
+const SessionHeader = memo(function SessionHeader({
+  agent,
+  archived,
+  panel,
+  stop,
+  slotsMax,
+  onRestartError,
+  onPinOutcome,
+  onAgent,
+  onTerminateStart,
+  onTerminated,
+}: {
+  agent: AgentSummary;
+  archived: boolean;
+  panel: AgentDetailsPanel;
+  stop: StopCrons;
+  slotsMax: number | undefined;
+  onRestartError(message: string | undefined): void;
+  onPinOutcome(o: PinOutcome | undefined): void;
+  onAgent(a: AgentSummary): void;
+  onTerminateStart(): void;
+  onTerminated(a: AgentSummary, ok: boolean): void;
+}) {
+  return (
+    <PageHeader
+      title={agent.displayName}
+      titleFromData
+      leading={
+        <AgentAvatar
+          slug={agent.slug}
+          template={agent.template}
+          avatarVersion={agent.avatarVersion}
+          size={24}
+        />
+      }
+      heading={<AgentName agent={agent} />}
+      titleClassName="max-w-[45%]"
+      documentTitle={`${statusLabel(agent.status, "short")} · ${agent.displayName}`}
+      meta={
+        <>
+          <span className="shrink-0 max-md:hidden">
+            <StatusBadge
+              status={agent.status}
+              rateLimitedUntil={agent.rateLimitedUntil}
+              rateLimitExact={agent.rateLimitExact}
+              size="long"
+            />
+          </span>
+          <span className="shrink-0 md:hidden">
+            <StatusBadge status={agent.status} size="short" />
+          </span>
+          <LiveLine fact={liveFact(agent, { slotsMax: slotsMax, now: new Date() })} />
+        </>
+      }
+      actions={
+        <SessionActions
+          agent={agent}
+          archived={archived}
+          panel={panel}
+          onRestartError={onRestartError}
+          onPinOutcome={onPinOutcome}
+          onAgent={onAgent}
+          actionsMenu={
+            <AgentMenu
+              agent={agent}
+              context="session"
+              stop={stop}
+              onOpenDetails={() => panel.setOpen(true)}
+              detailsTakeFocus={panel.mode !== "inflow"}
+              onTerminateStart={onTerminateStart}
+              onTerminated={onTerminated}
+            />
+          }
+        />
+      }
+    />
+  );
+});
 
 /** Static rows where the timeline will be, while the session loads behind a cached header. */
 function TimelineSkeleton() {

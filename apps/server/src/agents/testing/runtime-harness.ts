@@ -138,6 +138,8 @@ export class RuntimeHarness {
       spec?: (a: { id: string; slug: string }) => PreparedSpec;
       /** Runs after the agent row exists and before `init()` (rows a boot would find pending). */
       seed?: (agentId: string) => Promise<void>;
+      /** The interrupt hold's fallback (200ms by default). */
+      holdTimeoutMs?: number;
     } = {},
   ) {
     this.n += 1;
@@ -200,7 +202,7 @@ export class RuntimeHarness {
         if (this.forwardError) throw this.forwardError;
         this.forwarded.push(f);
       },
-      holdTimeoutMs: 200,
+      holdTimeoutMs: opts.holdTimeoutMs ?? 200,
       slots: opts.slots ?? unlimitedSlots,
       ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),
       ...(opts.journal ? { journal: opts.journal } : {}),

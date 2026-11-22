@@ -1,4 +1,14 @@
 import { type HarnessEvent, type ToolMeta, toolMetaSchema } from "@open-factory/shared";
+import {
+  BlockIndexer,
+  createStreamState,
+  type LiveEvent,
+  type LiveEventBody,
+  mapStreamEvent,
+  mapTaskProgress,
+  mapThinkingTokens,
+  type StreamState,
+} from "./live.ts";
 
 // Stream-json is untyped JSON from another program; read it defensively.
 // biome-ignore lint/suspicious/noExplicitAny: stream-json lines are parsed JSON
@@ -32,6 +42,14 @@ export interface MapperState {
   toolNames: Map<string, string>;
   /** tool_use ids already reported as denied, per process, never reset. */
   deniedIds: Set<string>;
+  /** The stdout line being mapped (1-based), stamped on every live event (U3 §11.2). */
+  line: number;
+  /** Reconcile-key indexes per API message (U3 §11.1); reset at turn_end. */
+  blocks: BlockIndexer;
+  /** Partial-message state (U3 §11.1). */
+  stream: StreamState;
+  /** Live events of the line being mapped. */
+  live: LiveEventBody[];
 }
 
 export function createMapperState(opts: {
@@ -55,15 +73,17 @@ export function createMapperState(opts: {
     reported: new Set(),
     toolNames: new Map(),
     deniedIds: new Set(),
+    line: 0,
+    blocks: new BlockIndexer(),
+    stream: createStreamState(),
+    live: [],
   };
 }
 
 /** Drops on purpose (spec §6.2). Anything else unknown is reported once via onUnmapped. */
 const DROPPED_SYSTEM = new Set([
-  "thinking_tokens",
   "commands_changed",
   "task_updated",
-  "task_progress",
   "informational",
   "api_retry",
   "session_state_changed",
@@ -187,16 +207,45 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
       ];
     case "task_notification": {
       const id = String(e.task_id);
+      if (e.tool_use_id) s.blocks.forgetParent(String(e.tool_use_id));
       if (s.foregroundTasks.delete(id)) return [];
+      const u = e.usage;
+      const usage =
+        u && typeof u === "object"
+          ? {
+              toolUses: num(u.tool_uses),
+              tokens: num(u.total_tokens),
+              durationMs: num(u.duration_ms),
+            }
+          : undefined;
       return [
         {
           type: "background_task_finished",
           taskId: id,
           status: String(e.status ?? "unknown"),
           summary: String(e.summary ?? ""),
+          // U3 §9.1: a subagent's totals; all three or none.
+          ...(usage &&
+          usage.toolUses !== undefined &&
+          usage.tokens !== undefined &&
+          usage.durationMs !== undefined
+            ? {
+                usage: {
+                  toolUses: usage.toolUses,
+                  tokens: usage.tokens,
+                  durationMs: usage.durationMs,
+                },
+              }
+            : {}),
         },
       ];
     }
+    case "thinking_tokens":
+      s.live.push(...mapThinkingTokens(e, s.stream));
+      return [];
+    case "task_progress":
+      s.live.push(...mapTaskProgress(e));
+      return [];
     case "background_tasks_changed":
       return [
         {
@@ -246,16 +295,27 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
     return [];
   }
   const out: HarnessEvent[] = [];
-  for (const b of Array.isArray(msg.content) ? msg.content : []) {
-    if (b.type === "text" && b.text)
-      out.push({ type: "assistant_text", text: String(b.text), ...parentOf(e) });
-    else if (b.type === "tool_use") {
+  const content: Json[] = Array.isArray(msg.content) ? msg.content : [];
+  // U3 §11.1: the reconcile key, counting every block of the message, dropped ones included.
+  const id = typeof msg.id === "string" && msg.id ? msg.id : undefined;
+  const keyOf = (position: number) =>
+    id ? { messageId: id, blockIndex: s.blocks.indexFor(id, position) } : {};
+  content.forEach((b, position) => {
+    if (b?.type === "text" && b.text)
+      out.push({
+        type: "assistant_text",
+        text: String(b.text),
+        ...keyOf(position),
+        ...parentOf(e),
+      });
+    else if (b?.type === "tool_use") {
       s.toolNames.set(String(b.id), String(b.name));
       out.push({
         type: "tool_call",
         toolUseId: String(b.id),
         name: String(b.name),
         input: b.input ?? {},
+        ...keyOf(position),
         ...parentOf(e),
       });
       if (b.name === "CronCreate") s.cronCreateCalls.add(String(b.id));
@@ -263,7 +323,13 @@ function assistant(e: Json, s: MapperState): HarnessEvent[] {
         out.push({ type: "cron_deleted", cronId: String(b.input.id) });
     }
     // thinking blocks are dropped (all S0 thinking blocks are empty)
-  }
+  });
+  if (id)
+    s.blocks.seeLine(
+      id,
+      content.length,
+      e.parent_tool_use_id ? String(e.parent_tool_use_id) : undefined,
+    );
   if (msg.stop_reason === "refusal")
     out.push(...errorOnce(s, "refusal", "The model refused this request."));
   return out;
@@ -507,19 +573,33 @@ function result(e: Json, s: MapperState): HarnessEvent[] {
   });
   s.cronWakeupPending = false;
   if (e.local_command === "compact") s.manualCompactPending = false;
+  s.blocks.reset();
+  s.stream = createStreamState();
   return out;
 }
 
-export function mapLine(line: unknown, s: MapperState): HarnessEvent[] {
+export interface MappedLine {
+  events: HarnessEvent[];
+  live: LiveEvent[];
+}
+
+/**
+ * Maps one stdout line. `lineNo` is its stdout line number (the process counts them); without it,
+ * the mapper counts calls. Live events are stamped with it; persisted events are returned as is.
+ */
+export function mapLine(line: unknown, s: MapperState, lineNo?: number): MappedLine {
+  s.line = lineNo ?? s.line + 1;
+  s.live = [];
   const e = (line ?? {}) as Json;
   const out: HarnessEvent[] = [];
+  const stamped = () => s.live.map((l): LiveEvent => ({ ...l, line: s.line }));
   if (s.heldCompacted) {
     const held = s.heldCompacted;
     s.heldCompacted = undefined;
     if (e.type === "user" && e.isSynthetic === true && !e.isReplay) {
       const summary = textOf(e.message?.content);
       out.push(summary ? { ...held, summary } : held);
-      return out;
+      return { events: out, live: [] };
     }
     out.push(held);
   }
@@ -569,10 +649,13 @@ export function mapLine(line: unknown, s: MapperState): HarnessEvent[] {
       break;
     case "control_response":
       break;
+    case "stream_event":
+      s.live.push(...mapStreamEvent(e, s.stream));
+      break;
     default:
       out.push(...unmapped(String(e.type), s));
   }
-  return out;
+  return { events: out, live: stamped() };
 }
 
 /** End of stream: emit a compacted event still waiting for its summary. */

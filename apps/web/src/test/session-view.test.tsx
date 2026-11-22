@@ -495,7 +495,7 @@ test("an invalid ?event is ignored", async () => {
   expect(document.querySelector("[data-highlighted]")).not.toBeInTheDocument();
 });
 
-test("a live tool_result flips Running to Failed; nested work shows only when expanded", async () => {
+test("a live tool_result flips a subagent from Running to Failed; nested work shows only when expanded", async () => {
   routes["/api/agents/dev/events?"] = () => {
     resetSeq();
     return page([
@@ -506,7 +506,7 @@ test("a live tool_result flips Running to Failed; nested work shows only when ex
   };
   routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }, [], 3));
   renderApp("/agents/dev", alice);
-  const tool = await screen.findByRole("button", { name: /Task/ });
+  const tool = await screen.findByRole("button", { name: /Subagent in this session/ });
   expect(within(tool).getByText("Running")).toBeInTheDocument();
   expect(screen.queryByText("nested voice")).not.toBeInTheDocument();
   await userEvent.click(tool);

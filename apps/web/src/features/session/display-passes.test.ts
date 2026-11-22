@@ -266,3 +266,102 @@ test("a deep link to a hidden event between a group's calls lands inside the gro
   expect(targetPath(rows, 4)).toEqual(["3", "5"]);
   expect(targetRowKey(rows, 6)).toBe("7");
 });
+
+// Subagent cards (U3 §12).
+const agentCall = (seq: number, toolUseId = `ag${seq}`) =>
+  ev(seq, {
+    type: "tool_call",
+    toolUseId,
+    name: "Agent",
+    input: { description: `job ${seq}`, prompt: "go", subagent_type: "Explore" },
+  });
+const agentDone = (seq: number, of: number) =>
+  ev(seq, { type: "tool_result", toolUseId: `ag${of}`, content: "ok", isError: false });
+
+test("groupSubagents: five parallel subagents are three cards and one overflow row keyed by the fourth", () => {
+  const raw = rows([1, 2, 3, 4, 5].map((s) => agentCall(s)).concat([agentDone(6, 4)]));
+  expect(raw.map((r) => r.kind)).toEqual(Array(5).fill("subagent"));
+  const out = runDisplayPasses(raw);
+  expect(out.map((r) => `${r.kind}:${r.key}`)).toEqual([
+    "subagent:1",
+    "subagent:2",
+    "subagent:3",
+    "subagent_overflow:4",
+  ]);
+  const over = out[3];
+  if (over?.kind !== "subagent_overflow") throw new Error("no overflow");
+  expect(over.children.map((c) => c.key)).toEqual(["c:4", "5"]);
+  expect(over.running).toBe(1);
+  expect(childrenOf(over)).toBe(over.children);
+  expect(heldSeqs(over)).toEqual([4, 5]);
+  // The cards on screen stay cards: the first three are the same raw rows.
+  for (let i = 0; i < 3; i++) expect(out[i]).toBe(raw[i]);
+  // Three or fewer: nothing to group.
+  const three = rows([1, 2, 3].map((s) => agentCall(s)));
+  expect(runDisplayPasses(three)).toBe(three);
+});
+
+test("groupSubagents: only consecutive subagents count; a subagent's transcript folds per §9.4", () => {
+  const bashIn = (seq: number, parent: string) =>
+    ev(seq, {
+      type: "tool_call",
+      toolUseId: `b${seq}`,
+      name: "Bash",
+      input: { command: "ls" },
+      parentToolUseId: parent,
+    });
+  const bashOk = (seq: number, of: number, parent: string) =>
+    ev(seq, {
+      type: "tool_result",
+      toolUseId: `b${of}`,
+      content: "x",
+      isError: false,
+      parentToolUseId: parent,
+    });
+  const raw = rows([
+    agentCall(1),
+    bashIn(2, "ag1"),
+    bashOk(3, 2, "ag1"),
+    bashIn(4, "ag1"),
+    bashOk(5, 4, "ag1"),
+    agentCall(6),
+    agentCall(7),
+    ev(8, { type: "assistant_text", text: "between" }),
+    agentCall(9),
+    agentCall(10),
+  ]);
+  const out = runDisplayPasses(raw);
+  expect(out.map((r) => r.kind)).toEqual([
+    "subagent",
+    "subagent",
+    "subagent",
+    "text",
+    "subagent",
+    "subagent",
+  ]);
+  const first = out[0];
+  if (first?.kind !== "subagent") throw new Error("no card");
+  expect(first.children.map((c) => c.kind)).toEqual(["work_group"]);
+  // Stabilized again, the folded card keeps its identity.
+  const again = stabilizeRows(out, runDisplayPasses(raw));
+  expect(again).toBe(out);
+});
+
+test("a deep link into an overflowed subagent's transcript opens the overflow row and the card", () => {
+  const raw = rows([
+    agentCall(1),
+    agentCall(2),
+    agentCall(3),
+    agentCall(4),
+    agentCall(5),
+    ev(6, {
+      type: "assistant_text",
+      text: "inside",
+      parentToolUseId: "ag5",
+    }),
+  ]);
+  const out = runDisplayPasses(raw);
+  expect(targetRowKey(out, 6)).toBe("4");
+  expect(targetPath(out, 6)).toEqual(["4", "5", "6"]);
+  expect(targetPath(out, 4)).toEqual(["4", "c:4"]);
+});

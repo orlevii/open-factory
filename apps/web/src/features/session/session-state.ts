@@ -1,12 +1,15 @@
-import type {
-  AgentDetail,
-  AgentSummary,
-  EventsPage,
-  QueueItem,
-  ServerMessage,
-  SessionEvent,
+import {
+  type AgentDetail,
+  type AgentSummary,
+  type EventsPage,
+  type LiveFrame,
+  liveKey,
+  type QueueItem,
+  type ServerMessage,
+  type SessionEvent,
+  type SubagentProgress,
 } from "@open-factory/shared";
-import { speechCount } from "./rows";
+import { speechCount, textRowKey } from "./rows";
 
 /** A held message you cancelled (U3 §6.4): the line "Message cancelled. Undo" shows in its place among
  *  the queue items until your next send. */
@@ -35,6 +38,25 @@ export interface SendingBlock {
   clientMessageId: string;
   body: string;
   urgent: boolean;
+}
+
+/** One streaming text block (U3 §11.4), mirroring the server's `LiveState.texts`. */
+export interface LiveText {
+  messageId: string;
+  index: number;
+  text: string;
+  capped: boolean;
+  /** Its first text came from a `reset` (a subscribe or a snapshot): it never fades in. */
+  fromReset: boolean;
+}
+
+/** What is streaming now (U3 §11.4): never stored, the shape `deriveActivity` reads. `texts` and
+ *  `subagents` keep their identity independently, and a `Progress` entry its own when unchanged. */
+export interface LiveState {
+  texts: readonly LiveText[];
+  toolInput?: { toolUseId: string; name: string; bytes: number; target?: string };
+  thinking?: { tokens: number };
+  subagents: readonly SubagentProgress[];
 }
 
 export interface SessionState {
@@ -74,11 +96,24 @@ export interface SessionState {
   /** `clientMessageId`s of this tab's sends the server has echoed: the composer reads it to treat an
    *  aborted send as sent and to clear its unchanged text (never to send it twice). */
   landed: ReadonlySet<string>;
+  /** Live text, tool input, thinking and subagent progress (U3 §11.4). Survives a socket drop. */
+  live: LiveState;
+  /** `liveKey`s whose persisted `assistant_text` is held (or that the server retired): a frame for
+   *  one is ignored, so a block never shows twice. Emptied by `turn_end` and `exited`. */
+  retired: ReadonlySet<string>;
+  /** Bumped when a patch doesn't fit the block it extends (an offset gap): `useSession` sends
+   *  `live_snapshot` when it changes. The reducer itself never sends. */
+  snapshotWanted: number;
+  /** A gap was seen and its snapshot (a `reset`) hasn't arrived: further gaps don't ask again. */
+  snapshotPending: boolean;
 }
 
 const NONE: ReadonlySet<string> = new Set();
 export const NO_CANCELLED: ReadonlyMap<string, CancelledEntry> = new Map();
 const NO_SENDING: readonly SendingBlock[] = [];
+const NO_TEXTS: readonly LiveText[] = [];
+const NO_SUBAGENTS: readonly SubagentProgress[] = [];
+export const NO_LIVE: LiveState = { texts: NO_TEXTS, subagents: NO_SUBAGENTS };
 /** A frames batch appending more events than this counts as a load: nothing in it fades. */
 const BULK = 10;
 
@@ -101,6 +136,10 @@ export const initialSessionState: SessionState = {
   sending: NO_SENDING,
   awaiting: NONE,
   landed: NONE,
+  live: NO_LIVE,
+  retired: NONE,
+  snapshotWanted: 0,
+  snapshotPending: false,
 };
 
 export type SessionAction =
@@ -287,7 +326,7 @@ const echoedBy = (items: QueueItem[]) => items.map((q) => q.clientMessageId);
  *  `turn_end` closes the turn, so the activity line goes as its footer arrives. Only events above
  *  `liveAfter` count: never loaded, earlier, resync or windowed pages. */
 function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
-  let next = s;
+  let next = liveFromRows(s, fresh);
   for (const se of fresh) {
     if (se.seq <= s.liveAfter) continue;
     const e = se.event;
@@ -342,6 +381,209 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
   return next;
 }
 
+/** A persisted `assistant_text`'s live key, when it carries one (U3 §11.1). */
+const textKey = (e: SessionEvent["event"]) =>
+  e.type === "assistant_text" && e.messageId !== undefined && e.blockIndex !== undefined
+    ? liveKey(e.messageId, e.blockIndex)
+    : undefined;
+
+const withoutKeys = (texts: readonly LiveText[], keys: ReadonlySet<string>) => {
+  const kept = texts.filter((t) => !keys.has(liveKey(t.messageId, t.index)));
+  return kept.length === texts.length ? texts : kept;
+};
+
+/** The keys of the loaded rows' blocks, added to `prev`: a snapshot can still hold a block whose row
+ *  a replay already read, and the guard keeps it from showing twice (U3 §11.4). */
+function seedRetired(prev: ReadonlySet<string>, events: SessionEvent[]): ReadonlySet<string> {
+  let next: Set<string> | undefined;
+  for (const se of events) {
+    const k = textKey(se.event);
+    if (k === undefined || (next ?? prev).has(k)) continue;
+    next ??= new Set(prev);
+    next.add(k);
+  }
+  return next ?? prev;
+}
+
+/** What new persisted rows do to the live state, in the same step (U3 §11.4): an `assistant_text`
+ *  retires its block, a `tool_call` clears the tool input it ends, and `turn_end` or `exited` clears
+ *  everything but subagents and empties `retired`. */
+function liveFromRows(s: SessionState, fresh: SessionEvent[]): SessionState {
+  let live = s.live;
+  let retired = s.retired;
+  let handedOff = s.handedOff;
+  for (const { event: e } of fresh) {
+    if (e.type === "assistant_text") {
+      const k = textKey(e);
+      if (k === undefined || retired.has(k)) continue;
+      retired = new Set(retired).add(k);
+      const texts = withoutKeys(live.texts, new Set([k]));
+      if (texts !== live.texts) {
+        live = { ...live, texts };
+        // The row replaces the live block on screen (same key and DOM): it never fades (U3 §8.3).
+        handedOff = new Set(handedOff).add(
+          textRowKey(e.messageId as string, e.blockIndex as number),
+        );
+      }
+    } else if (e.type === "tool_call" && live.toolInput?.toolUseId === e.toolUseId) {
+      const { toolInput: _, ...rest } = live;
+      live = rest;
+    } else if (e.type === "turn_end" || e.type === "exited") {
+      if (live.texts.length > 0 || live.toolInput || live.thinking)
+        live = { texts: NO_TEXTS, subagents: live.subagents };
+      retired = NONE;
+    }
+  }
+  return live === s.live && retired === s.retired && handedOff === s.handedOff
+    ? s
+    : { ...s, live, retired, handedOff };
+}
+
+const sameProgress = (a: SubagentProgress, b: SubagentProgress) =>
+  a.toolUseId === b.toolUseId &&
+  a.description === b.description &&
+  a.subagentType === b.subagentType &&
+  a.toolUses === b.toolUses &&
+  a.tokens === b.tokens &&
+  a.durationMs === b.durationMs &&
+  a.lastTool === b.lastTool;
+
+/** The frame's subagent list, reusing every unchanged entry, and the previous array when nothing
+ *  changed (a text-only frame re-renders no card, U3 §11.4). */
+function reconcileSubagents(
+  prev: readonly SubagentProgress[],
+  next: readonly SubagentProgress[],
+): readonly SubagentProgress[] {
+  if (next.length === 0) return prev.length === 0 ? prev : NO_SUBAGENTS;
+  const byId = new Map(prev.map((p) => [p.toolUseId, p]));
+  let same = next.length === prev.length;
+  const out = next.map((p, i) => {
+    const old = byId.get(p.toolUseId);
+    const kept = old && sameProgress(old, p) ? old : p;
+    if (kept !== prev[i]) same = false;
+    return kept;
+  });
+  return same ? prev : out;
+}
+
+type ToolInput = NonNullable<LiveState["toolInput"]>;
+const sameToolInput = (a: ToolInput | undefined, b: ToolInput | undefined) =>
+  a === b ||
+  (a !== undefined &&
+    b !== undefined &&
+    a.toolUseId === b.toolUseId &&
+    a.name === b.name &&
+    a.bytes === b.bytes &&
+    a.target === b.target);
+
+/** `live` with the frame's tool input and thinking (`null` clears, absent keeps, equal reuses). */
+function withParts(live: LiveState, m: LiveFrame, reset: boolean): LiveState {
+  let next = live;
+  const toolInput =
+    m.toolInput === undefined ? (reset ? undefined : live.toolInput) : (m.toolInput ?? undefined);
+  if (!sameToolInput(toolInput, live.toolInput)) {
+    const { toolInput: _, ...rest } = next;
+    next = toolInput ? { ...rest, toolInput } : rest;
+  }
+  const thinking =
+    m.thinking === undefined ? (reset ? undefined : live.thinking) : (m.thinking ?? undefined);
+  if (thinking?.tokens !== live.thinking?.tokens) {
+    const { thinking: _, ...rest } = next;
+    next = thinking ? { ...rest, thinking } : rest;
+  }
+  if (m.subagents || reset) {
+    const subagents = reconcileSubagents(live.subagents, m.subagents ?? NO_SUBAGENTS);
+    if (subagents !== live.subagents) next = { ...next, subagents };
+  }
+  return next;
+}
+
+/** A live block never grows past this many UTF-16 code units (twice the server's 64 KiB cap, which
+ *  is the real bound): a patch past it is ignored and treated as a gap, so a reset corrects it. */
+export const LIVE_TEXT_MAX = 2 * 64 * 1024;
+
+/** A `live` frame (U3 §11.3, §11.4). A patch extends each block from its `offset` (`offset` is the
+ *  block's length before `append`; one below it replaces from there); an `offset` past the end is a
+ *  gap, which asks for one snapshot until a `reset` answers. A `reset` replaces the whole live
+ *  state and marks the view caught up. Keys in `retired` are ignored either way. */
+function applyLiveFrame(s: SessionState, m: LiveFrame): SessionState {
+  if (s.windowed) return s;
+  let retired = s.retired;
+  if (m.retire?.length) retired = addKeys(retired, m.retire);
+  if (m.reset) {
+    const prev = new Map(s.live.texts.map((t) => [liveKey(t.messageId, t.index), t]));
+    const next: LiveText[] = [];
+    for (const t of m.texts ?? []) {
+      const k = liveKey(t.messageId, t.index);
+      if (retired.has(k)) continue;
+      const p = prev.get(k);
+      const capped = t.capped ?? false;
+      // A reset entry carries the whole block (offset 0).
+      next.push(
+        p && p.text === t.append && p.capped === capped
+          ? p
+          : {
+              messageId: t.messageId,
+              index: t.index,
+              text: t.append,
+              capped,
+              fromReset: p ? p.fromReset : true,
+            },
+      );
+    }
+    const same = next.length === s.live.texts.length && next.every((t, i) => t === s.live.texts[i]);
+    let live = withParts(s.live, m, true);
+    if (!same) live = { ...live, texts: next.length ? next : NO_TEXTS };
+    const top = topSeq(s);
+    const caughtUp = top > s.liveAfter;
+    if (live === s.live && retired === s.retired && !s.snapshotPending && !caughtUp) return s;
+    return {
+      ...s,
+      live,
+      retired,
+      snapshotPending: false,
+      liveAfter: caughtUp ? top : s.liveAfter,
+    };
+  }
+  let texts = retired === s.retired ? s.live.texts : withoutKeys(s.live.texts, retired);
+  let grown: LiveText[] | undefined; // copied on the first change
+  let gap = false;
+  for (const t of m.texts ?? []) {
+    if (retired.has(liveKey(t.messageId, t.index))) continue;
+    const list = grown ?? texts;
+    const i = list.findIndex((b) => b.messageId === t.messageId && b.index === t.index);
+    const cur = list[i];
+    if (t.offset > (cur?.text.length ?? 0) || t.offset + t.append.length > LIVE_TEXT_MAX) {
+      gap = true;
+      continue;
+    }
+    const text = (cur?.text.slice(0, t.offset) ?? "") + t.append;
+    const capped = t.capped ?? cur?.capped ?? false;
+    if (cur && text === cur.text && capped === cur.capped) continue;
+    grown ??= texts.slice();
+    if (cur) grown[i] = { ...cur, text, capped };
+    else grown.push({ messageId: t.messageId, index: t.index, text, capped, fromReset: false });
+  }
+  if (grown) texts = grown;
+  let live = withParts(s.live, m, false);
+  if (texts !== s.live.texts) live = { ...live, texts };
+  const ask = gap && !s.snapshotPending;
+  if (live === s.live && retired === s.retired && !ask) return s;
+  return {
+    ...s,
+    live,
+    retired,
+    ...(ask ? { snapshotWanted: s.snapshotWanted + 1, snapshotPending: true } : {}),
+  };
+}
+
+const addKeys = (set: ReadonlySet<string>, keys: readonly string[]): ReadonlySet<string> => {
+  if (keys.every((k) => set.has(k))) return set;
+  const next = new Set(set);
+  for (const k of keys) next.add(k);
+  return next;
+};
+
 /** The state with `agent` replaced, counting a `turnOpen` change in `turnEpoch`. */
 const withAgent = (s: SessionState, agent: AgentSummary | undefined): SessionState => {
   const edge = s.agent?.turnOpen === agent?.turnOpen ? 0 : 1;
@@ -377,6 +619,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
               ? { sending: s.sending, awaiting: s.awaiting, landed: s.landed }
               : {}),
             liveAfter: a.page.events.reduce((m, e) => Math.max(m, e.seq), 0),
+            ...loadedLive(s, a),
           },
           a.detail.agent,
         ),
@@ -461,6 +704,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     case "frame": {
       const m = a.message;
       if (!("agent" in m) || m.agent !== s.slug) return s;
+      if (m.type === "live") return applyLiveFrame(s, m);
       if (m.type === "session_event") {
         // Gaps are the server's job: on a missed range it sends `resync`, so no gap detection here.
         if (s.events.has(m.event.seq)) return s;
@@ -525,6 +769,21 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return next;
     }
   }
+}
+
+/** A load's live part: `retired` seeded from the page's rows; a reload of the same session keeps its
+ *  live blocks (the resubscribe's `reset` replaces them), a window or another session holds none.
+ *  `snapshotWanted` carries across loads, so it never repeats a value. */
+function loadedLive(
+  s: SessionState,
+  a: Extract<SessionAction, { type: "loaded" }>,
+): Pick<SessionState, "live" | "retired" | "snapshotWanted"> {
+  const same = s.slug === a.detail.agent.slug;
+  const retired = seedRetired(same ? s.retired : NONE, a.page.events);
+  const keep = same && !(a.mode === "window" && a.page.hasMore.after);
+  const texts = keep ? withoutKeys(s.live.texts, retired) : NO_TEXTS;
+  const live = !keep ? NO_LIVE : texts === s.live.texts ? s.live : { ...s.live, texts };
+  return { live, retired, snapshotWanted: s.snapshotWanted };
 }
 
 /** A reload of the same session: its queue and page may echo sends still in flight. */

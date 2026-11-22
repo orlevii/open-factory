@@ -53,6 +53,17 @@ vi.mock("./queue-items", async (orig) => {
   const m = await orig<typeof import("./queue-items")>();
   return { ...m, QueueItems: await profiled("queue", m.QueueItems) };
 });
+const warm = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/components/markdown/highlight", async (orig) => ({
+  ...(await orig<typeof import("@/components/markdown/highlight")>()),
+  warmHighlighter: () => {
+    warm.count++;
+  },
+}));
+vi.mock("./stop-crons", async (orig) => {
+  const m = await orig<typeof import("./stop-crons")>();
+  return { ...m, CronsStopLayer: await profiled("crons", m.CronsStopLayer) };
+});
 vi.mock("./composer", async (orig) => {
   const m = await orig<typeof import("./composer")>();
   return { ...m, Composer: await profiled("composer", m.Composer) };
@@ -671,7 +682,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   expect(document.querySelector("[data-activity-line]")?.textContent).toContain("0s");
   // The harness sees a SessionView render: the status frame reached every profiled part but the
   // composer, which reads nothing the frame changed (U3 M3).
-  for (const id of ["header", "details", "queue"])
+  for (const id of ["header", "details", "queue", "crons"])
     expect(count.profiled.get(id)).toBeGreaterThan(0);
   expect(count.timeline).toBeGreaterThan(0);
   reset();
@@ -749,4 +760,150 @@ test("SessionView: the announcer reads the unmerged rows, so a repeated failure 
   // The merged timeline shows one row; the second failure is still announced (D3).
   expect(document.querySelectorAll('[data-row="202"]')).toHaveLength(0);
   expect(announced()).toBe("Error: boom\u200b");
+});
+
+const livePatch = (
+  messageId: string,
+  index: number,
+  offset: number,
+  append: string,
+): ServerMessage => ({
+  type: "live",
+  agent: "dev",
+  texts: [{ messageId, index, offset, append }],
+});
+
+test("SessionView: a live frame re-renders only the live row, the activity line and the pill: no other TimelineItem, not the header, details, queue or composer", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  expect(document.querySelector('[data-row="t:m1:1"]')?.textContent).toContain("Hel");
+  expect(document.querySelector("[data-activity-line]")).not.toBeNull();
+  reset();
+  push(livePatch("m1", 1, 3, "lo there"));
+  frame();
+  expect(document.querySelector('[data-row="t:m1:1"]')?.textContent).toContain("Hello there");
+  expect(Object.fromEntries(count.rows)).toEqual({ "t:m1:1": 1 });
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+});
+
+test("SessionView: the persisted block retires the live one in one commit on the same DOM node, re-rendering only that row", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  push(livePatch("m1", 1, 0, "Hello wor"));
+  frame();
+  const node = document.querySelector('[data-row="t:m1:1"]');
+  expect(node).not.toBeNull();
+  reset();
+  push(
+    sessionEvent(
+      ev(201, { type: "assistant_text", text: "Hello world", messageId: "m1", blockIndex: 1 }),
+    ),
+  );
+  frame();
+  expect(document.querySelector('[data-row="t:m1:1"]')).toBe(node);
+  expect(node?.textContent).toContain("Hello world");
+  expect(node?.closest("[data-row-wrap]")).not.toHaveAttribute("data-live");
+  expect(document.querySelectorAll('[data-row="t:m1:1"]')).toHaveLength(1);
+  expect(rerendered(["t:m1:1"])).toEqual({});
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+});
+
+test("SessionView: the activity line reads live frames (text, then tool input), still rendering no other row", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  const label = () => document.querySelector("[data-activity-label]")?.getAttribute("title");
+  // The fixture's running call ends first: an open tool outranks live text (U3 §5.1).
+  push(
+    sessionEvent(
+      ev(201, { type: "tool_result", toolUseId: "tu-run", content: "ok", isError: false }),
+    ),
+  );
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  expect(label()).toBe("Writing a reply");
+  reset();
+  push({
+    type: "live",
+    agent: "dev",
+    toolInput: { toolUseId: "tu9", name: "Write", bytes: 3000, target: "/w/src/app.ts" },
+  });
+  frame();
+  expect(label()).toBe("Writing app.ts");
+  expect(Object.fromEntries(count.rows)).toEqual({});
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+});
+
+const agentCall = (seq: number) =>
+  sessionEvent(
+    ev(seq, {
+      type: "tool_call",
+      toolUseId: `ag${seq}`,
+      name: "Agent",
+      input: { description: `job ${seq}`, prompt: "go" },
+    }),
+  );
+const prog = (id: string, toolUses: number) => ({
+  toolUseId: id,
+  description: "job",
+  subagentType: "general-purpose",
+  toolUses,
+  tokens: 1000,
+  durationMs: 100,
+});
+
+test("SessionView: a progress frame re-renders only its subagent card; a text-only frame renders no card", async () => {
+  detail = {
+    agent: agentSummary({ status: "working", turnOpen: true }),
+    queue: [],
+    lastSeq: 200,
+  };
+  await renderSessionView();
+  push(agentCall(201));
+  push(agentCall(202));
+  frame();
+  push({ type: "live", agent: "dev", subagents: [prog("ag201", 1), prog("ag202", 1)] });
+  frame();
+  expect(
+    document.querySelector('[data-row="201"]')?.closest("[data-subagent]")?.textContent,
+  ).toContain("1 tool call");
+  reset();
+  push({ type: "live", agent: "dev", subagents: [prog("ag201", 1), prog("ag202", 2)] });
+  frame();
+  expect(Object.fromEntries(count.rows)).toEqual({ "202": 1 });
+  expect(Object.fromEntries(count.profiled)).toEqual({});
+  reset();
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  expect(Object.fromEntries(count.rows)).toEqual({ "t:m1:1": 1 });
+});
+
+test("the bare timeline (rows rendering markdown outside a session view) never warms the highlighter", async () => {
+  warm.count = 0;
+  await setup();
+  expect(warm.count).toBe(0);
+});
+
+test("SessionView: warms the highlighter once on open, not per frame", async () => {
+  warm.count = 0;
+  await renderSessionView();
+  expect(warm.count).toBe(1);
+  push(livePatch("m1", 1, 0, "Hel"));
+  frame();
+  push(livePatch("m1", 1, 3, "lo"));
+  frame();
+  expect(warm.count).toBe(1);
 });

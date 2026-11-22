@@ -1,7 +1,7 @@
-import type { AgentDetail, ServerMessage, SessionEvent } from "@open-factory/shared";
+import type { AgentDetail, ClientMessage, ServerMessage, SessionEvent } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { type ReactNode, StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { WsStatus } from "@/lib/ws";
 import { WsContext, type WsHub } from "@/lib/ws-context";
@@ -38,10 +38,14 @@ const frame = (seq: number, agent = "dev"): ServerMessage => ({
   event: ev(seq),
 });
 
-async function setup(status: WsStatus = "open") {
+async function setup(status: WsStatus = "open", o: { strict?: boolean } = {}) {
   let push: (m: ServerMessage) => void = () => {};
-  const hub: WsHub = {
-    send: () => true,
+  const sent: ClientMessage[] = [];
+  let hub: WsHub = {
+    send: (m) => {
+      sent.push(m);
+      return true;
+    },
     listen: (fn) => {
       push = fn;
       return () => {};
@@ -50,11 +54,14 @@ async function setup(status: WsStatus = "open") {
     openCount: 1,
   };
   const qc = new QueryClient();
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={qc}>
-      <WsContext.Provider value={hub}>{children}</WsContext.Provider>
-    </QueryClientProvider>
-  );
+  const wrapper = ({ children }: { children: ReactNode }) => {
+    const tree = (
+      <QueryClientProvider client={qc}>
+        <WsContext.Provider value={hub}>{children}</WsContext.Provider>
+      </QueryClientProvider>
+    );
+    return o.strict ? <StrictMode>{tree}</StrictMode> : tree;
+  };
   let renders = 0;
   const hook = renderHook(
     ({ slug }: { slug: string }) => {
@@ -72,6 +79,12 @@ async function setup(status: WsStatus = "open") {
     hook,
     push: (m: ServerMessage) => push(m),
     renders: () => renders,
+    sent,
+    /** The socket drops (closed) or comes back (open, a new openCount). */
+    setSocket: (next: WsStatus) => {
+      hub = { ...hub, status: next, openCount: hub.openCount + (next === "open" ? 1 : 0) };
+      hook.rerender({ slug: "dev" });
+    },
   };
 }
 
@@ -214,4 +227,97 @@ test("a visibility change commits pending frames at once", async () => {
   });
   expect(hook.result.current.state.ordered).toHaveLength(5);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+// U3 §11.4: live frames share the frame flush.
+const livePatch = (offset: number, append: string): ServerMessage => ({
+  type: "live",
+  agent: "dev",
+  texts: [{ messageId: "m1", index: 1, offset, append }],
+});
+const snapshots = (sent: ClientMessage[]) => sent.filter((m) => m.type === "live_snapshot");
+
+test("mixed session_event and live frames commit once per frame", async () => {
+  const { hook, push, renders } = await setup();
+  const before = renders();
+  push(livePatch(0, "Hel"));
+  push(frame(5));
+  push(livePatch(3, "lo"));
+  push({ type: "live", agent: "dev", thinking: { tokens: 4 } });
+  expect(renders()).toBe(before);
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(renders()).toBe(before + 1);
+  const s = hook.result.current.state;
+  expect(s.ordered).toHaveLength(4);
+  expect(s.live.texts.map((t) => t.text)).toEqual(["Hello"]);
+  expect(s.live.thinking).toEqual({ tokens: 4 });
+});
+
+test("an offset gap sends exactly one live_snapshot, under StrictMode", async () => {
+  const { hook, push, sent } = await setup("open", { strict: true });
+  expect(snapshots(sent)).toEqual([]);
+  push(livePatch(0, "Hel"));
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  push(livePatch(9, "gap"));
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(snapshots(sent)).toEqual([{ type: "live_snapshot", agent: "dev" }]);
+  // Another gap before the snapshot arrives doesn't ask again.
+  push(livePatch(12, "more"));
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(snapshots(sent)).toHaveLength(1);
+  push({
+    type: "live",
+    agent: "dev",
+    reset: true,
+    texts: [{ messageId: "m1", index: 1, offset: 0, append: "Hello gapmore" }],
+  });
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(hook.result.current.state.live.texts.map((t) => t.text)).toEqual(["Hello gapmore"]);
+  expect(snapshots(sent)).toHaveLength(1);
+});
+
+test("live state survives a socket drop; the resubscribe's reset replaces it in place", async () => {
+  const { hook, push, sent, setSocket } = await setup();
+  push(livePatch(0, "Hello"));
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  const live = hook.result.current.state.live;
+  act(() => setSocket("closed"));
+  expect(hook.result.current.state.live).toBe(live);
+  act(() => setSocket("open"));
+  expect(hook.result.current.state.live).toBe(live);
+  expect(sent.filter((m) => m.type === "subscribe")).toHaveLength(2);
+  push({
+    type: "live",
+    agent: "dev",
+    reset: true,
+    texts: [{ messageId: "m1", index: 1, offset: 0, append: "Hello world" }],
+  });
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  const texts = hook.result.current.state.live.texts;
+  expect(texts.map((t) => [t.text, t.fromReset])).toEqual([["Hello world", false]]);
+});
+
+test("a reset marks the view caught up: replayed rows before it don't fade", async () => {
+  const { hook, push } = await setup();
+  push(frame(5));
+  push(frame(6));
+  push({ type: "live", agent: "dev", reset: true });
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(hook.result.current.state.liveAfter).toBe(6);
 });

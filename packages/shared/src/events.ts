@@ -3,6 +3,11 @@ import { envelopeSchema } from "./messaging.ts";
 import { toolMetaSchema } from "./tool-meta.ts";
 
 const parent = { parentToolUseId: z.string().optional() };
+/**
+ * The reconcile key (U3 §11.1): the API `message.id` and the block's index in that message,
+ * counting the blocks the mapper drops (thinking, empty text). Live text uses the same key.
+ */
+const blockKey = { messageId: z.string().optional(), blockIndex: z.number().int().optional() };
 
 export const harnessEventSchema = z.discriminatedUnion("type", [
   z.object({
@@ -18,12 +23,13 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     type: z.literal("message_in"),
     messages: z.array(envelopeSchema),
   }),
-  z.object({ type: z.literal("assistant_text"), text: z.string(), ...parent }),
+  z.object({ type: z.literal("assistant_text"), text: z.string(), ...blockKey, ...parent }),
   z.object({
     type: z.literal("tool_call"),
     toolUseId: z.string(),
     name: z.string(),
     input: z.unknown(),
+    ...blockKey,
     ...parent,
   }),
   z.object({
@@ -46,6 +52,10 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     taskId: z.string(),
     status: z.string(),
     summary: z.string(),
+    /** A subagent's totals from `task_notification` (U3 §9.1). */
+    usage: z
+      .object({ toolUses: z.number(), tokens: z.number(), durationMs: z.number() })
+      .optional(),
   }),
   z.object({
     type: z.literal("background_tasks"),

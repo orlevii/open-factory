@@ -1,10 +1,10 @@
-import type { AnyEvent } from "@open-factory/shared";
+import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { Markdown } from "@/components/markdown/markdown";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
+import { AgentText } from "./agent-text";
 import { CompactionMarker } from "./compaction-marker";
 import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
@@ -14,8 +14,9 @@ import { QuietLine } from "./quiet-line";
 import { NestedRow } from "./row-chrome";
 import { isNoticeKind, type Row } from "./rows";
 import { Actor, SpawnBlock, TerminateLine, terminatedPhrase } from "./spawn-block";
-import { SpeakerLine } from "./speaker-line";
 import { resetPhrase } from "./status-badge";
+import { SubagentCard, SubagentOverflow } from "./subagent-card";
+import type { RowProgress } from "./timeline-item";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
 import { WorkGroup } from "./work-group";
@@ -272,10 +273,14 @@ export interface TimelineRowProps {
   toolTime?: string;
   /** The row is a folded run's call (`NestedRow`): its time follows its own box's hover and focus. */
   nested?: boolean;
+  /** Live progress: a subagent card's entry, or an overflow row's children's (U3 §12). */
+  progress?: RowProgress;
 }
 
 export function TimelineRow(props: TimelineRowProps) {
   const { row, expanded, toggle, rowProps, failedIds, interruptedEnds } = props;
+  // Rows nested under this one never take its progress.
+  const inner = { ...props, progress: undefined };
   const rp = rowProps(row);
   switch (row.kind) {
     case "message":
@@ -344,11 +349,14 @@ export function TimelineRow(props: TimelineRowProps) {
     case "text":
       return (
         <div {...rp}>
-          {/* The turn's first text, and the first after an incoming message (U3 §7.2). */}
-          {row.head && <SpeakerLine from={props.slug} self at={row.at} />}
-          <div dir="auto">
-            <Markdown source={row.text} variant="detail" />
-          </div>
+          <AgentText
+            text={row.text}
+            live={row.live === true}
+            capped={row.capped === true}
+            head={row.head}
+            at={row.at}
+            slug={props.slug}
+          />
         </div>
       );
     case "tool":
@@ -362,10 +370,73 @@ export function TimelineRow(props: TimelineRowProps) {
           nested={props.nested}
         >
           {row.children.map((c) => (
-            <TimelineRow key={c.key} {...props} toolTime={undefined} nested={false} row={c} />
+            <TimelineRow key={c.key} {...inner} toolTime={undefined} nested={false} row={c} />
           ))}
         </ToolCallRow>
       );
+    case "subagent":
+      return (
+        <SubagentCard
+          row={row}
+          expanded={expanded.has(row.key)}
+          onToggle={() => toggle(row.key)}
+          rowProps={rp}
+          progress={
+            Array.isArray(props.progress) ? undefined : (props.progress as SubagentProgress)
+          }
+        >
+          {row.children.map((c) => (
+            // Each nested row keeps its own ⋯ and gutter time (U3 §7.5), one plate deep.
+            <NestedRow
+              key={c.key}
+              row={c}
+              slug={props.slug}
+              focusable={rowProps(c).tabIndex === 0}
+              callShown={expanded.has(c.key)}
+              onToggleCall={() => toggle(c.key)}
+            >
+              <TimelineRow
+                {...inner}
+                row={c}
+                toolTime={c.kind === "tool" ? c.at : undefined}
+                nested={c.kind === "tool"}
+              />
+            </NestedRow>
+          ))}
+        </SubagentCard>
+      );
+    case "subagent_overflow": {
+      const open = groupOpen(row, expanded);
+      const list = Array.isArray(props.progress) ? props.progress : undefined;
+      return (
+        <SubagentOverflow
+          count={row.children.length}
+          running={row.running}
+          open={open}
+          onToggle={() =>
+            toggle(
+              row.key,
+              row.children.map((c) => c.key),
+            )
+          }
+          rowProps={rp}
+        >
+          {open &&
+            row.children.map((c, i) => (
+              <NestedRow
+                key={c.key}
+                row={c}
+                slug={props.slug}
+                focusable={rowProps(c).tabIndex === 0}
+                callShown={expanded.has(c.key)}
+                onToggleCall={() => toggle(c.key)}
+              >
+                <TimelineRow {...inner} row={c} progress={list?.[i]} />
+              </NestedRow>
+            ))}
+        </SubagentOverflow>
+      );
+    }
     case "work_group": {
       const open = groupOpen(row, expanded);
       return (
@@ -392,7 +463,7 @@ export function TimelineRow(props: TimelineRowProps) {
                 callShown={expanded.has(c.key)}
                 onToggleCall={() => toggle(c.key)}
               >
-                <TimelineRow {...props} row={c} toolTime={c.at} nested />
+                <TimelineRow {...inner} row={c} toolTime={c.at} nested />
               </NestedRow>
             ))}
         </WorkGroup>

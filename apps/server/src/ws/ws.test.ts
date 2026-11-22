@@ -417,4 +417,149 @@ describe("agent subscriptions", () => {
     await c.waitFor((f) => f.type === "error" && f.code === "agent_not_found");
     c.ws.close();
   });
+
+  describe("live frames (U3 §11.3)", () => {
+    let line = 1000;
+    /** An open turn on the dev agent with "so far" streamed into a fresh block; returns its message id. */
+    async function midAnswer() {
+      const rt = await a.app.runtimes.bySlug("dev");
+      if (!rt) throw new Error("no dev runtime");
+      // a fresh turn, so earlier tests' blocks are gone
+      if (rt.live().turnOpen) driver.last.emitAt(++line, ev.usage(), ev.end());
+      driver.last.emitAt(++line, ev.turn());
+      await rt.settled();
+      const messageId = `msg_${line}`;
+      driver.last.emitLive(
+        { type: "text_start", messageId, index: 0, line: ++line },
+        { type: "text_delta", messageId, index: 0, text: "so ", line: ++line },
+        { type: "text_delta", messageId, index: 0, text: "far", line: ++line },
+      );
+      await settle();
+      return { rt, messageId };
+    }
+    const delta = (messageId: string, text: string) =>
+      driver.last.emitLive({ type: "text_delta", messageId, index: 0, text, line: ++line });
+    const lives = (frames: Record<string, unknown>[]) => frames.filter((f) => f.type === "live");
+    /** A few events back, so the replay is a replay (earlier tests wrote over 1000 events). */
+    const recent = async () => {
+      const rt = await a.app.runtimes.bySlug("dev");
+      return Math.max(0, (await a.app.store.lastSeq(rt?.agent.id ?? "")) - 3);
+    };
+
+    test("subscribing mid-answer gets the replay, then one reset with the text so far", async () => {
+      const { rt, messageId } = await midAnswer();
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: await recent() }));
+      await c.waitFor((f) => f.type === "live");
+      const last = await a.app.store.lastSeq(rt.agent.id);
+      const types = c.frames.map((f) => f.type);
+      // after every replayed event
+      expect(types.lastIndexOf("session_event")).toBeLessThan(types.indexOf("live"));
+      expect(Math.max(...seqs(c.frames))).toBe(last);
+      expect(lives(c.frames)).toEqual([
+        expect.objectContaining({
+          type: "live",
+          agent: "dev",
+          reset: true,
+          texts: [{ messageId, index: 0, offset: 0, append: "so far" }],
+        }),
+      ]);
+      // then patches from where the reset left off
+      delta(messageId, "!");
+      await c.waitFor((f) => f.type === "live", 2);
+      expect(lives(c.frames)[1]).toEqual({
+        type: "live",
+        agent: "dev",
+        texts: [{ messageId, index: 0, offset: 6, append: "!" }],
+      });
+      c.ws.close();
+    });
+
+    test("live frames published during the replay are dropped; the reset holds their text", async () => {
+      const { messageId } = await midAnswer();
+      const h = hold(a.app.store, "after");
+      try {
+        const afterSeq = await recent();
+        const c = await connect();
+        c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq }));
+        await h.started;
+        delta(messageId, " and");
+        await settle();
+        delta(messageId, " more");
+        await settle();
+        h.release();
+        await c.waitFor((f) => f.type === "live");
+        await settle();
+        expect(lives(c.frames)).toEqual([
+          expect.objectContaining({
+            reset: true,
+            texts: [{ messageId, index: 0, offset: 0, append: "so far and more" }],
+          }),
+        ]);
+        c.ws.close();
+      } finally {
+        h.spy.mockRestore();
+      }
+    });
+
+    test("live_snapshot answers with a reset", async () => {
+      const { rt, messageId } = await midAnswer();
+      const c = await connect();
+      c.ws.send(
+        JSON.stringify({
+          type: "subscribe",
+          agent: "dev",
+          afterSeq: await a.app.store.lastSeq(rt.agent.id),
+        }),
+      );
+      await c.waitFor((f) => f.type === "live");
+      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: "dev" }));
+      const [, second] = await c.waitFor((f) => f.type === "live", 2);
+      expect(second).toMatchObject({
+        type: "live",
+        agent: "dev",
+        reset: true,
+        texts: [{ messageId, index: 0, offset: 0, append: "so far" }],
+      });
+      c.ws.close();
+    });
+
+    test("a windowed subscription (from the last seq, no replay) still receives live frames", async () => {
+      const { rt, messageId } = await midAnswer();
+      const c = await connect();
+      c.ws.send(
+        JSON.stringify({
+          type: "subscribe",
+          agent: "dev",
+          afterSeq: await a.app.store.lastSeq(rt.agent.id),
+        }),
+      );
+      await c.waitFor((f) => f.type === "live");
+      delta(messageId, "?");
+      await c.waitFor((f) => f.type === "live", 2);
+      expect(seqs(c.frames)).toEqual([]);
+      c.ws.close();
+    });
+
+    test("a socket not subscribed to the agent gets no live frames and no snapshot", async () => {
+      const { messageId } = await midAnswer();
+      const c = await connect();
+      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: "dev" }));
+      delta(messageId, " unseen");
+      await settle();
+      // after an unsubscribe too
+      const listeners = devListeners();
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: await recent() }));
+      await c.waitFor((f) => f.type === "live");
+      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+      await until(() => devListeners() === listeners);
+      const before = lives(c.frames).length;
+      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: "dev" }));
+      delta(messageId, " still unseen");
+      await settle();
+      expect(lives(c.frames)).toHaveLength(before);
+      expect(before).toBe(1); // only the subscribe's own reset
+      c.ws.close();
+    });
+  });
 });

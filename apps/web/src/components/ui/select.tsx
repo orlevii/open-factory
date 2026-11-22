@@ -32,6 +32,11 @@ function SelectValue({
   )
 }
 
+/** The field look a Select trigger has; the Combobox trigger shares it so the two read as one control.
+ *  `aria-disabled` looks disabled too: a pending Combobox stays focusable. */
+export const selectTriggerClass =
+  "flex h-8 pointer-coarse:h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-card px-2.5 text-sm data-placeholder:text-muted-foreground aria-invalid:border-destructive disabled:cursor-not-allowed disabled:text-muted-foreground aria-disabled:cursor-not-allowed aria-disabled:text-muted-foreground [&>span]:truncate"
+
 function SelectTrigger({
   className,
   children,
@@ -40,10 +45,7 @@ function SelectTrigger({
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
-      className={cn(
-        "flex h-8 pointer-coarse:h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-card px-2.5 text-sm data-placeholder:text-muted-foreground aria-invalid:border-destructive disabled:cursor-not-allowed disabled:text-muted-foreground [&>span]:truncate",
-        className
-      )}
+      className={cn(selectTriggerClass, className)}
       {...props}
     >
       {children}

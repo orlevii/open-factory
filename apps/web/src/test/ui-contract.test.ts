@@ -36,7 +36,7 @@ describe("styles.css", () => {
 });
 
 describe("overlay surfaces", () => {
-  for (const f of ["popover", "dropdown-menu", "tooltip", "select"]) {
+  for (const f of ["popover", "dropdown-menu", "tooltip", "select", "combobox"]) {
     const path = join(SRC, `components/ui/${f}.tsx`);
     test.skipIf(!existsSync(path))(`${f}.tsx has no shadow and no slide-in`, () => {
       const src = readFileSync(path, "utf8");
@@ -52,7 +52,6 @@ describe("form controls", () => {
     "components/ui/input.tsx",
     "components/ui/textarea.tsx",
     "components/ui/checkbox.tsx",
-    "components/native-select.tsx",
   ];
   for (const f of files) {
     test(`${f} uses the one base-layer focus ring`, () => {
@@ -108,12 +107,12 @@ describe("loading", () => {
 });
 
 describe("selects", () => {
-  test("NativeSelect is imported only by the timezone select", () => {
+  test("NativeSelect is gone", () => {
+    expect(existsSync(join(SRC, "components/native-select.tsx"))).toBe(false);
     const offenders = sourceFiles()
-      .filter((f) => !f.endsWith("components/native-select.tsx"))
-      .filter((f) => readFileSync(f, "utf8").includes("components/native-select"))
+      .filter((f) => /NativeSelect|components\/native-select/.test(readFileSync(f, "utf8")))
       .map((f) => f.replace(SRC, ""));
-    expect(offenders).toEqual(["/features/schedules/timezone-select.tsx"]);
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -168,7 +167,6 @@ describe("secondary buttons", () => {
     "features/tasks/task-detail.tsx": 1, // Edit beside the title
     "features/tasks/task-list.tsx": 1, // Load more
     "features/tasks/status-menu.tsx": 1, // a select-like field trigger, not an action
-    "features/tasks/assignee-menu.tsx": 1, // a select-like field trigger, not an action
     "features/tasks/task-form.tsx": 1, // Cancel of the New task page
     "features/schedules/schedule-form.tsx": 1, // Cancel of the schedule page
   };

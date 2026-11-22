@@ -128,6 +128,42 @@ test("GET /api/tasks: default filter, status=all, repeated status, assignee, una
   expect((await call("GET", "/api/tasks?assignee=nobody")).statusCode).toBe(400);
 });
 
+test("GET /api/tasks?q matches titles case-insensitively; % and _ are literal", async () => {
+  await create({ title: "Fix 100% CPU" });
+  await create({ title: "Fix 100x CPU" });
+  await create({ title: "snake_case" });
+  await create({ title: "snakeXcase" });
+  await create({ title: "back\\slash" });
+  await call("PATCH", "/api/tasks/T-2", { status: "done" });
+  const titles = async (q: string) =>
+    (
+      (await call("GET", `/api/tasks?status=all&q=${encodeURIComponent(q)}`)).json() as TaskPage
+    ).tasks
+      .map((t) => t.title)
+      .sort();
+  expect(await titles("100%")).toEqual(["Fix 100% CPU"]);
+  expect(await titles("snake_")).toEqual(["snake_case"]);
+  expect(await titles("FIX")).toEqual(["Fix 100% CPU", "Fix 100x CPU"]);
+  expect(await titles("k\\s")).toEqual(["back\\slash"]);
+  expect(await titles("%")).toEqual(["Fix 100% CPU"]);
+  expect(await titles("_")).toEqual(["snake_case"]);
+  // the default status filter still applies
+  const open = (await call("GET", "/api/tasks?q=fix")).json() as TaskPage;
+  expect(open.tasks.map((t) => t.title)).toEqual(["Fix 100% CPU"]);
+});
+
+test("GET /api/tasks?q validates: empty is 400, over 200 characters is 400", async () => {
+  expect((await call("GET", "/api/tasks?q=")).statusCode).toBe(400);
+  expect((await call("GET", "/api/tasks?q=%20%20")).statusCode).toBe(400);
+  expect((await call("GET", `/api/tasks?q=${"a".repeat(201)}`)).statusCode).toBe(400);
+  expect((await call("GET", `/api/tasks?q=${"a".repeat(200)}`)).statusCode).toBe(200);
+});
+
+test("GET /api/tasks?q with a NUL byte is 400, not a Postgres error", async () => {
+  expect((await call("GET", "/api/tasks?q=%00")).statusCode).toBe(400);
+  expect((await call("GET", "/api/tasks?q=a%00b")).statusCode).toBe(400);
+});
+
 test("GET /api/tasks: Agent details' query (assignee, limit 5, default status) lists open and in-progress only", async () => {
   await create({ title: "one", assignee: "dev" });
   await create({ title: "two", assignee: "dev" });

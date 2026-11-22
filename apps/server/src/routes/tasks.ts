@@ -88,6 +88,7 @@ export const tasksRoutes: FastifyPluginAsyncZod = async (app) => {
         ...(q.unassigned === "true" ? { unassigned: true } : {}),
         ...(q.creator ? { createdBy: q.creator } : {}),
         ...(q.keys ? { keys: q.keys } : {}),
+        ...(q.q ? { q: q.q } : {}),
         ...(q.before ? { before: q.before } : {}),
         limit: q.limit,
       });

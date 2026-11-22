@@ -20,7 +20,8 @@ import {
 import { FieldShell } from "@/components/field-shell";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
-import { AgentPicker, agentOptionLabel, useAssignableAgents } from "@/features/tasks/agent-picker";
+import { AgentCombobox } from "@/features/agents/agent-combobox";
+import { agentOptionLabel, useAssignableAgents } from "@/features/tasks/agent-picker";
 import type { CreateScheduleBody, PatchScheduleBody } from "./api";
 import { browserZone } from "./format";
 import { previewText, RunPreview } from "./run-preview";
@@ -121,6 +122,20 @@ export function ScheduleForm({
   const ownLeaving = useRef(false);
   const leaving = leavingProp ?? ownLeaving;
   const { agents } = useAssignableAgents();
+  // An archived or terminated target isn't a live option: while it is the value, the trigger names it.
+  const endedTarget =
+    initial &&
+    v.target === initial.target.slug &&
+    (initial.target.archived || initial.target.terminated)
+      ? initial.target
+      : undefined;
+  const renderEndedTarget = useMemo(
+    () =>
+      endedTarget
+        ? () => `@${endedTarget.slug} (${endedTarget.terminated ? "terminated" : "archived"})`
+        : undefined,
+    [endedTarget],
+  );
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 
   // Live: a refreshed schedule updates the fields the user hasn't touched; edited fields are kept.
@@ -253,21 +268,17 @@ export function ScheduleForm({
           }
         >
           {(a) => (
-            <AgentPicker
+            <AgentCombobox
               id={a.id}
-              value={v.target}
-              describedBy={a.describedBy}
+              aria-label="Target"
+              scope="live"
               placeholder="Choose an agent…"
-              extraOption={
-                initial && v.target === initial.target.slug
-                  ? {
-                      value: initial.target.slug,
-                      label: `@${initial.target.slug} (${initial.target.terminated ? "terminated" : "archived"})`,
-                    }
-                  : undefined
-              }
-              onChange={(slug) => {
-                set({ target: slug });
+              value={v.target || null}
+              aria-invalid={a.invalid || undefined}
+              aria-describedby={a.describedBy}
+              renderValue={renderEndedTarget}
+              onValueChange={(slug) => {
+                set({ target: slug ?? "" });
                 setError("target", undefined);
               }}
             />

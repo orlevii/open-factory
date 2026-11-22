@@ -1,35 +1,32 @@
 import type { TaskAgentRef } from "@open-factory/shared";
-import { ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { agentOptionLabel, useAssignableAgents } from "./agent-picker";
+import type { ComboOption } from "@/components/ui/combobox";
+import { AgentCombobox } from "@/features/agents/agent-combobox";
 
-const NONE = "__none";
-const UNASSIGNED = "__unassigned";
+/** Never an agent's slug (slugs are lowercase words), so it matches no option: nothing is checked. */
+const ENDED = "\u0000ended";
+const UNASSIGNED: ComboOption[] = [{ value: "", label: "Unassigned", fixed: true }];
+const chooseAgent = () => "Choose an agent…";
 
 /**
- * The detail page's Assignee: a labelled menu (a native select would assign and wake agents on each arrow key).
- * An ended assignee shows above the trigger, muted, and the trigger reads "Choose an agent…".
+ * The detail page's Assignee: a searchable picker that commits only on Enter or a click (a native select
+ * would assign and wake agents on each arrow key). An ended assignee shows above the trigger, muted, and
+ * the trigger reads "Choose an agent…".
  */
 export function AssigneeMenu({
   value,
   onCommit,
   disabled,
+  pending,
 }: {
   value: TaskAgentRef | null;
   /** A slug, or null to unassign. */
   onCommit(next: string | null): void;
   disabled?: boolean;
+  /** The last pick is saving: the picker won't open again yet, but keeps focus. */
+  pending?: boolean;
 }) {
-  const { agents } = useAssignableAgents();
   const ended = value?.ended;
-  const current = value && !ended ? value.slug : value ? NONE : UNASSIGNED;
+  const current = value && !ended ? value.slug : null;
   const text = ended ? "Choose an agent…" : value ? `@${value.slug}` : "Unassigned";
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
@@ -38,36 +35,21 @@ export function AssigneeMenu({
           <span className="font-mono">@{value.slug}</span> · {ended}
         </p>
       )}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            disabled={disabled}
-            aria-label={`Assignee: ${text}`}
-            className="w-full min-w-0 justify-between"
-          >
-            <span className={`min-w-0 truncate ${value && !ended ? "font-mono" : ""}`}>{text}</span>
-            <ChevronDown aria-hidden="true" data-icon="inline-end" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width)">
-          <DropdownMenuRadioGroup
-            value={current}
-            onValueChange={(v) => {
-              if (v === current) return;
-              onCommit(v === UNASSIGNED ? null : v);
-            }}
-          >
-            <DropdownMenuRadioItem value={UNASSIGNED}>Unassigned</DropdownMenuRadioItem>
-            {agents.map((a) => (
-              // Typeahead matches the slug as typed ("dev-042"), as the Selects do, not "@dev-042".
-              <DropdownMenuRadioItem key={a.slug} value={a.slug} textValue={a.slug}>
-                {agentOptionLabel(a)}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <AgentCombobox
+        aria-label={`Assignee: ${text}`}
+        scope="live"
+        fixed={UNASSIGNED}
+        disabled={disabled}
+        pending={pending}
+        triggerClassName="w-full min-w-0"
+        value={ended ? ENDED : current}
+        renderValue={ended ? chooseAgent : undefined}
+        onValueChange={(next) => {
+          // An ended assignee has no live current value, so Unassigned (null) is a real change.
+          if (!ended && next === current) return;
+          onCommit(next);
+        }}
+      />
     </div>
   );
 }

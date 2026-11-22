@@ -17,3 +17,23 @@ export async function optionNames(trigger: HTMLElement): Promise<string[]> {
   await userEvent.keyboard("{Escape}");
   return names;
 }
+
+/** Opens a Combobox by its trigger and clicks the option. */
+export async function pickComboOption(trigger: HTMLElement, name: string | RegExp) {
+  await userEvent.click(trigger);
+  await userEvent.click(await screen.findByRole("option", { name }));
+}
+
+/** The open Combobox's option labels as shown (the current value's screen-reader ", selected" left
+ *  out; closes it afterwards). */
+export async function comboOptionNames(trigger: HTMLElement): Promise<string[]> {
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  const names = Array.from(document.querySelectorAll("[role=option]")).map((o) => {
+    const copy = o.cloneNode(true) as HTMLElement;
+    for (const sr of copy.querySelectorAll(".sr-only")) sr.remove();
+    return (copy.textContent ?? "").replace(/\s+/g, " ").trim();
+  });
+  await userEvent.keyboard("{Escape}");
+  return names;
+}

@@ -1,17 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { ComboOption } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
-import {
-  ALL,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { agentsQueryOptions } from "@/features/session/api";
-import { AgentItem } from "@/features/tasks/agent-picker";
+import { AgentCombobox } from "@/features/agents/agent-combobox";
 import type { ScheduleFilters } from "./api";
+
+const ANY_AGENT: ComboOption[] = [{ value: "", label: "Any agent", fixed: true }];
 
 export const isDefault = (f: ScheduleFilters) => !f.target && !f.done;
 
@@ -23,8 +16,6 @@ export function ScheduleFiltersBar({
   value: ScheduleFilters;
   onChange(next: ScheduleFilters): void;
 }) {
-  const { data: agents = [] } = useQuery(agentsQueryOptions);
-  const slugs = agents.map((a) => a.slug);
   return (
     <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
       <div className="grid gap-1 md:w-52">
@@ -34,24 +25,14 @@ export function ScheduleFiltersBar({
         >
           Target
         </label>
-        <Select
-          value={value.target ?? ALL}
-          onValueChange={(v) => onChange({ ...value, target: v === ALL ? undefined : v })}
-        >
-          <SelectTrigger id="schedule-target">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Any agent</SelectItem>
-            {/* An ended target is reachable through the URL only; it shows while selected. */}
-            {value.target && !slugs.includes(value.target) && (
-              <AgentItem agent={{ slug: value.target, displayName: "" }} />
-            )}
-            {agents.map((a) => (
-              <AgentItem key={a.slug} agent={a} />
-            ))}
-          </SelectContent>
-        </Select>
+        <AgentCombobox
+          id="schedule-target"
+          aria-label="Target"
+          scope="live+ended"
+          fixed={ANY_AGENT}
+          value={value.target ?? ""}
+          onValueChange={(v) => onChange({ ...value, target: v || undefined })}
+        />
       </div>
       <div className="flex items-center gap-2 md:pb-2">
         <Checkbox

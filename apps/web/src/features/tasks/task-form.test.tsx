@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { pickOption } from "@/test/select-helpers";
+import { pickComboOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -130,7 +130,7 @@ test("creating sends the task and opens it; the button reads Creating… meanwhi
   });
   const { router } = renderApp("/tasks/new", alice);
   await userEvent.type(await screen.findByLabelText("Title"), "  Plan  ");
-  await pickOption(await screen.findByLabelText("Assignee"), /Dev\s+@dev/);
+  await pickComboOption(await screen.findByLabelText("Assignee"), /Dev\s*@dev/);
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   expect(await screen.findByRole("button", { name: "Creating…" })).toBeDisabled();
   release();
@@ -181,4 +181,30 @@ test("Cancel goes back to the list without a dialog", async () => {
   await userEvent.click(await screen.findByRole("link", { name: "Cancel" }));
   await waitFor(() => expect(router.state.location.pathname).toBe("/tasks"));
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("arrow keys in the Assignee picker don't assign; Enter does", async () => {
+  const api = mockApi({
+    ...base,
+    "GET /api/agents?": () =>
+      json({
+        agents: [
+          agentSummary({ slug: "dev", displayName: "Dev" }),
+          agentSummary({ slug: "qa", displayName: "QA" }),
+        ],
+        more: false,
+        running: { count: 0, max: 8 },
+      }),
+  });
+  renderApp("/tasks/new", alice);
+  const trigger = await screen.findByLabelText("Assignee");
+  expect(trigger).toHaveTextContent("Unassigned");
+  await userEvent.click(trigger);
+  await screen.findByRole("option", { name: /Dev\s*@dev/ });
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  expect(trigger).toHaveTextContent("Unassigned");
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(trigger).toHaveTextContent("@"));
+  expect(api.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
 });

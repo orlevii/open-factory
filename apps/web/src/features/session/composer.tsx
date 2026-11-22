@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { isSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
 import { postMessage } from "./api";
+import { registerComposerFocus } from "./session-commands";
 
 const draftKey = (slug: string) => `of-draft:${slug}`;
 const readDraft = (slug: string) => {
@@ -121,6 +122,7 @@ export function Composer({
   const waitsForNewSession =
     agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
   useEffect(() => writeDraft(slug, text), [slug, text]);
+  useEffect(() => registerComposerFocus(slug, () => boxRef.current?.focus()), [slug]);
   const empty = text.trim() === "";
   const urgentNow = urgent && agent.turnOpen;
 

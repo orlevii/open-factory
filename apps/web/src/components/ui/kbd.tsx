@@ -1,6 +1,11 @@
 import { cn } from "@/lib/utils";
 
-const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+/** ⌘ platforms: the palette binds ⌘K there and Ctrl+K elsewhere. */
+export const isMac = () => {
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return /mac|iphone|ipad|ios/i.test(nav.userAgentData?.platform || navigator.platform);
+};
 
 /** Key caps for a shortcut hint: `<Kbd keys={["Mod", "K"]} />`. "Mod" is ⌘ on Apple platforms, else Ctrl. */
 export function Kbd({ keys, className }: { keys: string[]; className?: string }) {

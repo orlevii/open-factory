@@ -560,7 +560,8 @@ function StatusAndAssignee({
       <SideSection label="Status" flush>
         <StatusMenu
           value={status}
-          disabled={pending || disabled}
+          disabled={disabled}
+          pending={pending}
           onCommit={(s) =>
             void apply({ status: s }, `Status set to ${STATUS[s].sentence}`, { status: s })
           }
@@ -569,7 +570,8 @@ function StatusAndAssignee({
       <SideSection label="Assignee">
         <AssigneeMenu
           value={assignee}
-          disabled={pending || disabled}
+          disabled={disabled}
+          pending={pending}
           onCommit={(slug) =>
             void apply({ assignee: slug }, slug ? `Assigned to @${slug}` : "Unassigned", {
               assignee: slug,

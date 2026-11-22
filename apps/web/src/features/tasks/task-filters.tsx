@@ -1,14 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import { AgentChip } from "@/components/agent-chip";
+import type { ComboOption } from "@/components/ui/combobox";
 import {
-  ALL,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { agentsQueryOptions } from "@/features/session/api";
-import { AgentItem } from "./agent-picker";
+import { AgentCombobox } from "@/features/agents/agent-combobox";
 import type { TaskFilters } from "./api";
 
 export const DEFAULT_FILTERS: TaskFilters = { status: "open_in_progress" };
@@ -22,6 +22,18 @@ const STATUS_OPTIONS = [
   ["all", "All"],
 ] as const;
 const UNASSIGNED = "__unassigned";
+// Stable, module-level: AgentCombobox memoizes its options on `fixed`.
+const ASSIGNEE_FIXED: ComboOption[] = [
+  { value: "", label: "Anyone", fixed: true },
+  { value: UNASSIGNED, label: "Unassigned", fixed: true },
+];
+const CREATOR_FIXED: ComboOption[] = [
+  { value: "", label: "Anyone", fixed: true },
+  { value: "me", label: "Me", fixed: true },
+];
+/** A human `@handle` (or bare handle) from the URL is text; anything else is an agent slug. */
+const creatorValue = (v: string): ReactNode =>
+  v.startsWith("@") ? v : <AgentChip slug={v} badge showSlug />;
 
 export const isDefault = (f: TaskFilters) =>
   f.status === "open_in_progress" && !f.assignee && !f.unassigned && !f.creator;
@@ -48,10 +60,7 @@ export function TaskFiltersBar({
   value: TaskFilters;
   onChange(next: TaskFilters): void;
 }) {
-  const { data: agents = [] } = useQuery(agentsQueryOptions);
-  const slugs = agents.map((a) => a.slug);
-  const assignee = value.unassigned ? UNASSIGNED : (value.assignee ?? ALL);
-  const creator = value.creator ?? ALL;
+  const assignee = value.unassigned ? UNASSIGNED : (value.assignee ?? "");
   return (
     <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
       <Field id="task-status" label="Status">
@@ -72,54 +81,31 @@ export function TaskFiltersBar({
         </Select>
       </Field>
       <Field id="task-assignee" label="Assignee">
-        <Select
+        <AgentCombobox
+          id="task-assignee"
+          aria-label="Assignee"
+          scope="live+ended"
+          fixed={ASSIGNEE_FIXED}
           value={assignee}
           onValueChange={(v) =>
             onChange({
               ...value,
-              assignee: v !== ALL && v !== UNASSIGNED ? v : undefined,
+              assignee: v && v !== UNASSIGNED ? v : undefined,
               unassigned: v === UNASSIGNED ? true : undefined,
             })
           }
-        >
-          <SelectTrigger id="task-assignee">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Anyone</SelectItem>
-            <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-            {/* An ended assignee is reachable through the URL only; it shows while selected. */}
-            {value.assignee && !slugs.includes(value.assignee) && (
-              <AgentItem agent={{ slug: value.assignee, displayName: "" }} />
-            )}
-            {agents.map((a) => (
-              <AgentItem key={a.slug} agent={a} />
-            ))}
-          </SelectContent>
-        </Select>
+        />
       </Field>
       <Field id="task-creator" label="Created by">
-        <Select
-          value={creator}
-          onValueChange={(v) => onChange({ ...value, creator: v === ALL ? undefined : v })}
-        >
-          <SelectTrigger id="task-creator">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Anyone</SelectItem>
-            <SelectItem value="me">Me</SelectItem>
-            {/* A human `@handle` works in the URL and shows while selected. */}
-            {creator !== ALL && creator !== "me" && !slugs.includes(creator) && (
-              <SelectItem value={creator}>
-                {creator.startsWith("@") ? creator : `@${creator}`}
-              </SelectItem>
-            )}
-            {agents.map((a) => (
-              <AgentItem key={a.slug} agent={a} />
-            ))}
-          </SelectContent>
-        </Select>
+        <AgentCombobox
+          id="task-creator"
+          aria-label="Created by"
+          scope="live+ended"
+          fixed={CREATOR_FIXED}
+          value={value.creator ?? ""}
+          renderValue={creatorValue}
+          onValueChange={(v) => onChange({ ...value, creator: v || undefined })}
+        />
       </Field>
     </div>
   );

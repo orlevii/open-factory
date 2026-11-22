@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { pickOption } from "@/test/select-helpers";
+import { comboOptionNames, pickComboOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -56,9 +56,11 @@ const sched = (n: number, o: Record<string, unknown> = {}) => ({
   ...o,
 });
 const list = (items: unknown[], more = false) => json({ schedules: items, more });
-const agents = () =>
+const agents = (_body?: unknown, url?: string) =>
   json({
-    agents: [agentSummary({ slug: "ceo" }), agentSummary({ slug: "dev", displayName: "Dev" })],
+    agents: url?.includes("ended=only")
+      ? []
+      : [agentSummary({ slug: "ceo" }), agentSummary({ slug: "dev", displayName: "Dev" })],
     more: false,
     running: { count: 0, max: 8 },
   });
@@ -209,7 +211,7 @@ test("filters live in the URL; empty states, the cap line and the load error", a
   const u = userEvent.setup();
   const { router } = renderApp("/schedules", alice);
   expect(await screen.findByText("No schedules yet.")).toBeInTheDocument();
-  await pickOption(await screen.findByLabelText("Target"), /@dev$/);
+  await pickComboOption(await screen.findByLabelText("Target"), /@dev/);
   await waitFor(() => expect(router.state.location.search).toMatchObject({ target: "dev" }));
   expect(await screen.findByText("No schedules match these filters.")).toBeInTheDocument();
   await u.click(screen.getByLabelText("Show done"));
@@ -262,4 +264,32 @@ test("escaping: a hostile body shows as the literal first line, creates no eleme
     [...li.querySelectorAll("a")].every((a) => !a.getAttribute("href")?.startsWith("javascript:")),
   ).toBe(true);
   expect(alert).not.toHaveBeenCalled();
+});
+
+test("the target filter lists Any agent first, live agents, then an Ended group", async () => {
+  mockApi({
+    "GET /api/agents?": (_b, url) =>
+      json({
+        agents: url.includes("ended=only")
+          ? [
+              agentSummary({
+                slug: "old",
+                displayName: "Old",
+                terminatedAt: "2026-11-01T00:00:00Z",
+              }),
+            ]
+          : [agentSummary({ slug: "dev" })],
+        more: false,
+        running: { count: 0, max: 8 },
+      }),
+    "GET /api/schedules?": () => list([]),
+  });
+  renderApp("/schedules", alice);
+  const trigger = await screen.findByLabelText("Target");
+  const names = await comboOptionNames(trigger);
+  expect(names[0]).toBe("Any agent");
+  expect(names.length).toBe(3);
+  expect(names[2]).toMatch(/Old/);
+  await userEvent.click(trigger);
+  expect(await screen.findByText("Ended")).toBeInTheDocument();
 });

@@ -19,3 +19,36 @@ test("Mod is ⌘ on a Mac and Ctrl elsewhere", () => {
   render(<Kbd keys={["Mod", "K"]} />);
   expect(screen.getByText("Ctrl")).toBeInTheDocument();
 });
+
+test("platform comes from userAgentData when the browser has it", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "macOS" }, configurable: true });
+  try {
+    render(<Kbd keys={["Mod"]} />);
+    expect(screen.getByText("⌘")).toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(navigator, "userAgentData");
+  }
+});
+
+test("a non-Mac userAgentData wins over a Mac navigator.platform", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "Windows" }, configurable: true });
+  try {
+    render(<Kbd keys={["Mod"]} />);
+    expect(screen.getByText("Ctrl")).toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(navigator, "userAgentData");
+  }
+});
+
+test("an empty userAgentData platform falls back to navigator.platform", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "" }, configurable: true });
+  try {
+    render(<Kbd keys={["Mod"]} />);
+    expect(screen.getByText("⌘")).toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(navigator, "userAgentData");
+  }
+});

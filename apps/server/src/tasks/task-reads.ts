@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL, sql } from "driz
 import { alias } from "drizzle-orm/pg-core";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
+import { escapeLike } from "./like.ts";
 import type { Actor } from "./permission.ts";
 import type { TaskStore } from "./task-store.ts";
 
@@ -30,6 +31,8 @@ export type ListFilter = {
   createdBy?: string;
   /** `T-41` style keys: just those tasks. */
   keys?: string[];
+  /** A case-insensitive title substring; `%` and `_` match themselves. */
+  q?: string;
   before?: string;
   limit?: number;
 };
@@ -67,6 +70,7 @@ export class TaskReads {
       const status = f.status ?? (["open", "in_progress"] as TaskStatus[]);
       if (status !== "all") where.push(inArray(tasks.status, status));
     }
+    if (f.q) where.push(sql`${tasks.title} ilike ${`%${escapeLike(f.q)}%`} escape '\\'`);
     if (f.unassigned) where.push(isNull(tasks.assigneeAgentId));
     else if (f.assignee)
       where.push(eq(tasks.assigneeAgentId, await this.agentId(actor, f.assignee)));

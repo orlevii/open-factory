@@ -2,13 +2,21 @@ import {
   apiFetch,
   type createTaskBodySchema,
   type patchTaskBodySchema,
+  type TaskDetail,
+  type TaskPage,
   type TaskStatus,
+  type TaskSummary,
   taskChangeResponseSchema,
   taskCommentResponseSchema,
   taskDetailSchema,
   taskPageSchema,
 } from "@open-factory/shared";
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  infiniteQueryOptions,
+  type QueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
 import type { z } from "zod";
 
 export const tasksQueryKey = ["tasks"] as const;
@@ -51,6 +59,32 @@ export const taskDetailOptions = (key: string) =>
     queryKey: [...tasksQueryKey, "detail", key] as const,
     queryFn: () => apiFetch(`/api/tasks/${encodeURIComponent(key)}`, { schema: taskDetailSchema }),
   });
+
+/** The task's row from any cached list page, so its page can render the title and status while the
+ *  detail loads (spec §11). A plain cache read: it does not subscribe. */
+export function taskSummaryFromList(qc: QueryClient, key: string): TaskSummary | undefined {
+  const lists = qc.getQueriesData<InfiniteData<TaskPage>>({ queryKey: [...tasksQueryKey, "list"] });
+  for (const [, data] of lists) {
+    for (const page of data?.pages ?? []) {
+      const hit = page.tasks.find((t) => t.key === key);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/** A detail stand-in built from a list row: the row's fields, and nothing it doesn't know (no body,
+ *  relations, links or activity). Only ever shown as `isPlaceholderData`, never edited from. */
+export const taskPlaceholder = (s: TaskSummary): TaskDetail => ({
+  ...s,
+  body: "",
+  createdAt: s.updatedAt,
+  dependsOn: [],
+  blocks: [],
+  links: [],
+  activity: [],
+  usage: null,
+});
 
 export type CreateTaskBody = z.input<typeof createTaskBodySchema>;
 export type PatchTaskBody = z.input<typeof patchTaskBodySchema>;

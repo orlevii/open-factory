@@ -9,7 +9,13 @@ import {
   LanguageSupport,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { type Diagnostic, lintGutter, lintKeymap, setDiagnosticsEffect } from "@codemirror/lint";
+import {
+  type Diagnostic,
+  lintGutter,
+  nextDiagnostic,
+  previousDiagnostic,
+  setDiagnosticsEffect,
+} from "@codemirror/lint";
 import {
   Annotation,
   type AnnotationType,
@@ -58,6 +64,21 @@ export const external: AnnotationType<boolean> = Annotation.define<boolean>();
  *  one per mount would make a restored state's compartments unreachable from the next mount. */
 export const languageSlot = new Compartment();
 export const markerSlot = new Compartment();
+export const attrsSlot = new Compartment();
+
+export type EditorIds = { id: string; labelledBy: string; describedBy: string };
+
+/** The content element's id and ARIA wiring; in a compartment, so a description that arrives after
+ *  mount (the template editor's warm hint) reaches the screen reader. */
+export function attrsFor(ids: EditorIds): Extension {
+  return EditorView.contentAttributes.of({
+    id: ids.id,
+    "aria-labelledby": ids.labelledBy,
+    "aria-describedby": ids.describedBy,
+    "aria-multiline": "true",
+    spellcheck: "false",
+  });
+}
 
 export function languageFor(lang: Lang): Extension {
   if (lang === "yaml") return yaml();
@@ -129,6 +150,12 @@ const highlight = HighlightStyle.define([
   { tag: t.invalid, textDecoration: "underline wavy var(--destructive)" },
 ]);
 
+const mask = (shape: string) =>
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">${shape}</svg>`)}")`;
+const circleMask = mask('<circle cx="20" cy="20" r="16"/>');
+const triangleMask = mask('<path d="M20 4L38 36L2 36Z"/>');
+const squareMask = mask('<path d="M6 6H34V34H6Z"/>');
+
 const selection = "color-mix(in oklch, var(--signal) 26%, transparent)";
 
 const theme = EditorView.theme({
@@ -178,6 +205,58 @@ const theme = EditorView.theme({
     textDecorationLine: "underline",
     textDecorationStyle: "dotted",
   },
+  // @codemirror/lint's own colours (orange warnings, light-only fills) replaced with tokens. Its gutter
+  // marks are data-URI SVGs, which can't read CSS variables, so the shapes become masks over a token fill.
+  ".cm-lintRange, .cm-lintRange-error, .cm-lintRange-warning, .cm-lintRange-info, .cm-lintRange-hint":
+    {
+      backgroundImage: "none",
+      paddingBottom: "0",
+      textDecorationLine: "underline",
+      textDecorationStyle: "wavy",
+      textDecorationThickness: "1px",
+      textUnderlineOffset: "3px",
+      textDecorationSkipInk: "none",
+    },
+  ".cm-lintRange-error": { textDecorationColor: "var(--destructive)" },
+  ".cm-lintRange-warning": { textDecorationColor: "var(--warning)" },
+  ".cm-lintRange-info, .cm-lintRange-hint": { textDecorationColor: "var(--muted-foreground)" },
+  ".cm-lintRange-active": {
+    backgroundColor: "color-mix(in oklch, var(--muted-foreground) 18%, transparent)",
+  },
+  ".cm-lintPoint:after": { borderBottomColor: "var(--destructive)" },
+  ".cm-lintPoint-warning:after": { borderBottomColor: "var(--warning)" },
+  ".cm-lintPoint-info:after, .cm-lintPoint-hint:after": {
+    borderBottomColor: "var(--muted-foreground)",
+  },
+  ".cm-diagnostic": { fontFamily: "var(--font-sans)", fontSize: "13px", lineHeight: "18px" },
+  ".cm-diagnostic-error": { borderLeft: "3px solid var(--destructive)" },
+  ".cm-diagnostic-warning": { borderLeft: "3px solid var(--warning)" },
+  ".cm-diagnostic-info, .cm-diagnostic-hint": { borderLeft: "3px solid var(--muted-foreground)" },
+  ".cm-lint-marker, .cm-lint-marker-error, .cm-lint-marker-warning, .cm-lint-marker-info": {
+    content: "normal",
+    maskRepeat: "no-repeat",
+    maskPosition: "center",
+    maskSize: "contain",
+    WebkitMaskRepeat: "no-repeat",
+    WebkitMaskPosition: "center",
+    WebkitMaskSize: "contain",
+  },
+  // Shape as well as colour: an error is a circle, a warning a triangle, anything else a square.
+  ".cm-lint-marker-error": {
+    backgroundColor: "var(--destructive)",
+    maskImage: circleMask,
+    WebkitMaskImage: circleMask,
+  },
+  ".cm-lint-marker-warning": {
+    backgroundColor: "var(--warning)",
+    maskImage: triangleMask,
+    WebkitMaskImage: triangleMask,
+  },
+  ".cm-lint-marker-info": {
+    backgroundColor: "var(--muted-foreground)",
+    maskImage: squareMask,
+    WebkitMaskImage: squareMask,
+  },
   ".cm-tooltip": {
     backgroundColor: "var(--popover)",
     color: "var(--popover-foreground)",
@@ -190,7 +269,7 @@ type Options = {
   onSave(): void;
   onChange(doc: string): void;
   onBlur(): void;
-  ids: { id: string; labelledBy: string; describedBy: string };
+  ids: EditorIds;
   mobile: boolean;
 };
 
@@ -208,7 +287,8 @@ export function extensionsFor(lang: Lang, o: Options): Extension[] {
     keymap.of([
       ...defaultKeymap,
       ...historyKeymap,
-      ...lintKeymap,
+      // Only next/previous diagnostic: lint's panel (Mod-Shift-m) isn't themed or wanted here.
+      { key: "F8", run: nextDiagnostic, shift: previousDiagnostic },
       indentWithTab,
       {
         key: "Mod-s",
@@ -220,13 +300,7 @@ export function extensionsFor(lang: Lang, o: Options): Extension[] {
       },
     ]),
     markerSlot.of(markersFor(o.mobile)),
-    EditorView.contentAttributes.of({
-      id: o.ids.id,
-      "aria-labelledby": o.ids.labelledBy,
-      "aria-describedby": o.ids.describedBy,
-      "aria-multiline": "true",
-      spellcheck: "false",
-    }),
+    attrsSlot.of(attrsFor(o.ids)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && !u.transactions.every((tr) => tr.annotation(external)))
         o.onChange(u.state.doc.toString());

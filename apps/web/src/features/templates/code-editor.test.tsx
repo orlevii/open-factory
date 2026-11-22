@@ -196,4 +196,92 @@ describe("CodeEditor", () => {
     const { container } = setup({ diagnostics: [{ line: 2, message: "nope", severity: "error" }] });
     expect(container.querySelector(".cm-gutter-lint")).not.toBeNull();
   });
+
+  test("an external replace after edits starts a fresh history: undo can't replay old edits onto it", () => {
+    const { view, props, rerender, ref, states } = setup({ value: "keep foo here" });
+    act(() => view().dispatch({ changes: { from: 5, to: 9 }, userEvent: "delete" }));
+    expect(view().state.doc.toString()).toBe("keep here");
+    expect(undoDepth(view().state)).toBe(1);
+    vi.mocked(props.onChange).mockClear();
+
+    rerender(<CodeEditor ref={ref} {...props} value={"server: v2\n"} />);
+    expect(view().state.doc.toString()).toBe("server: v2\n");
+    expect(undoDepth(view().state)).toBe(0);
+    act(() => {
+      undo(view());
+    });
+    expect(view().state.doc.toString()).toBe("server: v2\n");
+    expect(props.onChange).not.toHaveBeenCalled();
+    expect(states.get(props.fileKey)).toBe(view().state);
+  });
+
+  test("a later external value equal to an old emitted doc still replaces the doc", () => {
+    const { view, props, rerender, ref } = setup({ value: "a" });
+    type(view(), "b"); // emits "ab"
+    rerender(<CodeEditor ref={ref} {...props} value="ab" />);
+    rerender(<CodeEditor ref={ref} {...props} value="server" />);
+    expect(view().state.doc.toString()).toBe("server");
+    rerender(<CodeEditor ref={ref} {...props} value="ab" />);
+    expect(view().state.doc.toString()).toBe("ab");
+  });
+
+  test("an external replace keeps the file's diagnostics", () => {
+    const diagnostics = [{ line: 1, message: "nope", severity: "error" as const }];
+    const { view, props, rerender, ref } = setup({ diagnostics });
+    rerender(<CodeEditor ref={ref} {...props} diagnostics={diagnostics} value={"x: 1\n"} />);
+    const found: string[] = [];
+    forEachDiagnostic(view().state, (d) => found.push(d.message));
+    expect(found).toEqual(["nope"]);
+  });
+
+  test("an equal diagnostics list in a new array isn't re-sent", () => {
+    const diag = { line: 1, message: "nope", severity: "error" as const };
+    const { view, props, rerender, ref } = setup({ diagnostics: [diag] });
+    const spy = vi.spyOn(view(), "dispatch");
+    rerender(<CodeEditor ref={ref} {...props} diagnostics={[{ ...diag }]} />);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test("a describedBy that arrives after mount reaches the content element", () => {
+    const { container, props, rerender, ref } = setup({ describedBy: undefined });
+    const content = () => container.querySelector(".cm-content");
+    expect(content()?.getAttribute("aria-describedby")?.split(" ")).not.toContain("warm-hint");
+    rerender(<CodeEditor ref={ref} {...props} describedBy="warm-hint" />);
+    expect(content()?.getAttribute("aria-describedby")?.split(" ")).toContain("warm-hint");
+  });
+
+  test("crossing the phone breakpoint keeps the diagnostic marks", () => {
+    const real = window.matchMedia;
+    const listeners = new Set<(e: Event) => void>();
+    let matches = false;
+    window.matchMedia = ((q: string) => ({
+      ...real(q),
+      get matches() {
+        return matches;
+      },
+      addEventListener: (_: string, l: (e: Event) => void) => listeners.add(l),
+      removeEventListener: (_: string, l: (e: Event) => void) => listeners.delete(l),
+    })) as typeof window.matchMedia;
+    try {
+      const { container } = setup({
+        diagnostics: [{ line: 2, message: "nope", severity: "warning" }],
+      });
+      expect(container.querySelector(".cm-gutter-lint .cm-lint-marker-warning")).not.toBeNull();
+      act(() => {
+        matches = true;
+        for (const l of listeners) l(new Event("change"));
+      });
+      expect(container.querySelector(".cm-gutter-lint")).toBeNull();
+      expect(container.querySelector(".cm-lineNumbers .cm-lineDiag-warning")).toHaveTextContent(
+        "2",
+      );
+      act(() => {
+        matches = false;
+        for (const l of listeners) l(new Event("change"));
+      });
+      expect(container.querySelector(".cm-gutter-lint .cm-lint-marker-warning")).not.toBeNull();
+    } finally {
+      window.matchMedia = real;
+    }
+  });
 });

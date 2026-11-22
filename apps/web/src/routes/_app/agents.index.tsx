@@ -1,18 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { Skeleton } from "@/components/ui/skeleton";
 import { UndoArchiveLine } from "@/features/agents/agent-actions";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
-import { PrerequisiteLine, usePrerequisites } from "@/features/agents/prerequisites";
 import { endedMoreQueryOptions, runningQueryOptions } from "@/features/session/api";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { agentsUsageQuery } from "@/features/usage/api";
+
+const newAgentIntent = sheetIntent("new-agent");
 
 export const Route = createFileRoute("/_app/agents/")({
   // Unknown values fall back to the default view rather than an error page.
@@ -65,14 +67,15 @@ function AgentsPage() {
           </>
         }
         actions={
-          <Button variant="ghost" asChild>
-            <Link /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only link, and repeats the visible text above it */
-              to="/agents/new"
-              title="New agent"
-            >
-              <Plus aria-hidden="true" data-icon="inline-start" />
-              <span className="max-md:sr-only">New agent</span>
-            </Link>
+          <Button
+            variant="ghost"
+            /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only button, and repeats the visible text above it */
+            title="New agent"
+            onClick={() => openSheet({ kind: "new-agent" })}
+            {...newAgentIntent}
+          >
+            <Plus aria-hidden="true" data-icon="inline-start" />
+            <span className="max-md:sr-only">New agent</span>
           </Button>
         }
       />
@@ -124,22 +127,15 @@ function AgentsPage() {
   );
 }
 
+/** A fresh factory starts here: the sheet itself sets up whatever is missing (no gate page, Q4). */
 function EmptyAgents() {
-  const p = usePrerequisites();
-  // A one-line plate at the line's height (text-sm, 20px), so the page doesn't shift when it lands.
-  if (p.loading)
-    return (
-      <div data-empty-agents aria-hidden="true">
-        <Skeleton className="h-5 w-64 max-w-full" />
-      </div>
-    );
-  if (p.failed) return <p className="text-sm text-muted-foreground">No agents yet.</p>;
   return (
-    <PrerequisiteLine
-      missing={p.missing}
-      invalidTemplate={p.invalidTemplate}
-      prefix="No agents yet."
-    />
+    <div className="grid justify-items-start gap-3">
+      <p className="text-sm text-muted-foreground">No agents yet.</p>
+      <Button onClick={() => openSheet({ kind: "new-agent" })} {...newAgentIntent}>
+        Create your first agent
+      </Button>
+    </div>
   );
 }
 

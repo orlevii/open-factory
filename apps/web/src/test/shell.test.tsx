@@ -300,12 +300,12 @@ test("on a live session the Agents row is active while the tree is collapsed", a
   await vi.waitFor(() => expect(agents).not.toHaveAttribute("aria-current"));
 });
 
-test("Agents row: label links /agents, chevron collapses the whole tree (of-tree-collapsed), + links /agents/new", async () => {
+test("Agents row: label links /agents, chevron collapses the whole tree (of-tree-collapsed), + opens New agent", async () => {
   liveAgents();
   localStorage.clear();
   renderApp("/inbox", alice);
   expect(await screen.findByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
-  expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/agents/new");
+  expect(screen.getByRole("button", { name: "New agent" })).toHaveAttribute("type", "button");
   await screen.findByRole("tree", { name: "Agents" });
   const chevron = screen.getByRole("button", { name: "Collapse agents" });
   expect(chevron).toHaveAttribute("aria-expanded", "true");

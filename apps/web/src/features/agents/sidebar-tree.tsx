@@ -37,8 +37,12 @@ import { agentIndex, useAgent } from "@/features/agents/use-agent-index";
 import { type Unread, unreadCountQueryOptions, useUnreadByAgent } from "@/features/inbox/api";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { statusLabel } from "@/features/session/status-badge";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { usePref } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
+
+const newAgentIntent = sheetIntent("new-agent");
 
 const EXPANDED_KEY = "of-tree-expanded";
 const NO_STORED: Record<string, boolean> = {};
@@ -471,13 +475,17 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
     return collapsedRail ? null : (
       <div className="flex flex-col gap-1 px-2 py-1.5 text-sm">
         <p className="text-muted-foreground">No agents yet.</p>
-        <Link
-          to="/agents/new"
-          onClick={() => isMobile && setOpenMobile(false)}
-          className="underline-offset-4 hover:underline"
+        <button
+          type="button"
+          onClick={() => {
+            if (isMobile) setOpenMobile(false);
+            openSheet({ kind: "new-agent" });
+          }}
+          {...newAgentIntent}
+          className="self-start underline-offset-4 hover:underline"
         >
           New agent
-        </Link>
+        </button>
       </div>
     );
   if (collapsedRail) return <AgentRail nodes={nodes} activeSlug={activeSlug} />;

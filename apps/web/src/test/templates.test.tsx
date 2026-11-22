@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { clearDraft } from "@/features/sheets/drafts";
-import { closeSheet } from "@/features/sheets/sheet-store";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { CodeTextarea } from "@/features/templates/code-textarea";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -270,7 +270,7 @@ test("Delete confirms and lands on the list", async () => {
   expect(api.calls.some((c) => c.method === "DELETE")).toBe(true);
 });
 
-test("Create agent: disabled button with errors, link without", async () => {
+test("Create agent: disabled with errors, else it opens New agent with the template", async () => {
   mockApi({ "GET /api/templates/lead": () => json(detail([yamlError])) });
   const { unmount } = renderApp("/templates/lead", alice);
   expect(await screen.findByRole("button", { name: "Create agent" })).toHaveAttribute(
@@ -280,10 +280,10 @@ test("Create agent: disabled button with errors, link without", async () => {
   unmount();
   mockApi({ "GET /api/templates/lead": () => json(detail()) });
   renderApp("/templates/lead", alice);
-  expect(await screen.findByRole("link", { name: "Create agent" })).toHaveAttribute(
-    "href",
-    "/agents/new?template=lead",
-  );
+  const create = await screen.findByRole("button", { name: "Create agent" });
+  expect(create).not.toHaveAttribute("aria-disabled");
+  await userEvent.click(create);
+  expect(getSheetState().parent).toMatchObject({ kind: "new-agent", template: "lead" });
 });
 
 /** The dialog once its lazy body has rendered. */

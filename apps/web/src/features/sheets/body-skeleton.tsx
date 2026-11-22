@@ -2,8 +2,12 @@ import { SheetBody, SheetFooter } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SheetKind } from "./sheet-bodies";
 
+/** A field (label + control) or a one-line row (New agent's address line and More options). */
+type Row = "field" | "line";
+const LAYOUT: Partial<Record<SheetKind, Row[]>> = {
+  "new-agent": ["field", "field", "line", "field", "line"],
+};
 const ROWS: Partial<Record<SheetKind, number>> = {
-  "new-agent": 5,
   "edit-agent": 5,
   "new-task": 3,
   "new-schedule": 5,
@@ -16,7 +20,7 @@ const ROWS: Partial<Record<SheetKind, number>> = {
 
 /** Static stand-in while a body's chunk loads: field rows and a footer at the form's real heights. */
 export function BodySkeleton({ kind }: { kind: SheetKind }) {
-  const rows = ROWS[kind] ?? 3;
+  const rows: Row[] = LAYOUT[kind] ?? Array.from({ length: ROWS[kind] ?? 3 }, () => "field");
   return (
     <div
       data-slot="body-skeleton"
@@ -25,13 +29,18 @@ export function BodySkeleton({ kind }: { kind: SheetKind }) {
       className="flex min-h-0 flex-1 flex-col"
     >
       <SheetBody className="grid content-start gap-4">
-        {Array.from({ length: rows }, (_, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: a static list
-          <div key={i} className="grid gap-2">
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-9 w-full" />
-          </div>
-        ))}
+        {rows.map((row, i) =>
+          row === "line" ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a static list
+            <Skeleton key={i} className="h-7 w-40" />
+          ) : (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a static list
+            <div key={i} className="grid gap-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-9 w-full" />
+            </div>
+          ),
+        )}
       </SheetBody>
       <SheetFooter>
         <Skeleton className="h-9 w-20" />

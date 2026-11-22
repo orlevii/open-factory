@@ -94,11 +94,14 @@ export function useAgentFormState({
   agent,
   draftKey,
   prefill,
+  slugFor,
 }: {
   mode: "create" | "edit";
   agent?: AgentSummary;
   draftKey: DraftKey;
   prefill?: { template?: string };
+  /** New agent: the address derived from the display name, used until the user edits the slug (§6.3). */
+  slugFor?: (displayName: string) => string;
 }) {
   const create = mode === "create";
 
@@ -178,6 +181,11 @@ export function useAgentFormState({
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const credentialsQuery = useQuery(credentialsQueryOptions);
   const credentials: CredentialSummary[] | undefined = credentialsQuery.data;
+  // New agent preselects the first credential the list answered with. If that one goes away while the sheet is open
+  // (or a restored draft's does), nothing is picked for the user when there are several to choose from.
+  const [preselected, setPreselected] = useState<string>();
+  if (create && preselected === undefined && credentials)
+    setPreselected(credentials[0]?.name ?? "");
   const projectList = useQuery(projectsQueryOptions);
   const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
 
@@ -227,20 +235,30 @@ export function useAgentFormState({
         ? values.projects.filter((p) => !goneProjects.includes(p))
         : values.projects,
   };
+  function defaultCredential(): string {
+    if (!credentials) return "";
+    if (credentials.length === 1) return credentials[0]?.name ?? "";
+    if (staleNotes.credential) return "";
+    // `preselected` is set in the render the list first answers; that render reads the list's first one directly.
+    const pre = preselected ?? credentials[0]?.name;
+    return pre && credentials.some((c) => c.name === pre) ? pre : "";
+  }
+  const displayName =
+    !create || values.touched.displayName || !templatePrefill
+      ? base0.displayName
+      : templatePrefill.displayName;
   const shown: Values = !create
     ? base0
     : {
         ...base0,
-        displayName:
-          values.touched.displayName || !templatePrefill
-            ? base0.displayName
-            : templatePrefill.displayName,
+        displayName,
         description:
           values.touched.description || !templatePrefill
             ? base0.description
             : templatePrefill.description,
-        credential: base0.credential || credentials?.[0]?.name || "",
+        credential: base0.credential || defaultCredential(),
         projects: values.custom || !templatePrefill ? base0.projects : templatePrefill.projects,
+        slug: values.touched.slug || !slugFor ? base0.slug : slugFor(displayName),
       };
   // The detail lands asynchronously, so a field the user enters while it is still on the way is theirs as it stands:
   // filling it would mix the prefill into what they are about to type.

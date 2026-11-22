@@ -1,14 +1,7 @@
-import type {
-  AgentSummary,
-  CreateAgentBody,
-  PatchAgentBody,
-  TemplateConfig,
-  TemplateIssue,
-} from "@open-factory/shared";
+import type { AgentSummary, CreateAgentBody, PatchAgentBody } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { TriangleAlert } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -27,6 +20,7 @@ import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { type Errors, FIELDS, useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { TemplateSummary } from "@/features/agents/template-field";
 import { projectsQueryOptions } from "@/features/settings/api";
 import { clearDraft, type DraftKey } from "@/features/sheets/drafts";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
@@ -330,55 +324,5 @@ export function AgentForm(props: Props) {
         </p>
       </div>
     </form>
-  );
-}
-
-/** What the chosen template brings, plus the warnings that would stop its agents starting: the
- *  validator's runtime warning (a local template while the factory's local runtime is off) and
- *  secrets that aren't set. */
-function TemplateSummary({
-  config,
-  issues,
-  missingSecrets,
-}: {
-  config: TemplateConfig;
-  issues: TemplateIssue[];
-  missingSecrets: string[];
-}) {
-  const runtimeWarnings = issues
-    .filter((i) => i.severity === "warning" && i.path === "runtime")
-    .map((i) => i.message);
-  const parts = [
-    config.runtime === "docker" ? "Docker" : "Unsandboxed",
-    config.model && `model ${config.model}`,
-    config.skills.length > 0 && `skills: ${config.skills.join(", ")}`,
-    config.plugins.length > 0 && `plugins: ${config.plugins.length}`,
-    config.secrets.length > 0 && `secrets: ${config.secrets.join(", ")}`,
-  ].filter(Boolean);
-  return (
-    <div id="template-summary" className="grid gap-1 text-[0.8125rem] leading-[1.125rem]">
-      <p className="text-muted-foreground">{parts.join(" · ")}</p>
-      {runtimeWarnings.map((w) => (
-        <Warning key={w}>{w}</Warning>
-      ))}
-      {missingSecrets.map((s) => (
-        <Warning key={s}>
-          Secret <span className="font-mono">{s}</span> isn't set. The agent won't start until you{" "}
-          <Link to="/settings/secrets" search={{ addSecret: s }} className={linkClass}>
-            add it<span className="sr-only"> in Settings</span>
-          </Link>
-          .
-        </Warning>
-      ))}
-    </div>
-  );
-}
-
-function Warning({ children }: { children: ReactNode }) {
-  return (
-    <p className="flex items-start gap-1.5">
-      <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
-      <span>{children}</span>
-    </p>
   );
 }

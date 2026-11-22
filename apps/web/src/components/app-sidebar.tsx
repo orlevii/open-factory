@@ -52,7 +52,11 @@ import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifica
 import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
 import { resetUploads } from "@/features/session/uploads";
 import { resetDrafts } from "@/features/sheets/drafts";
-import { resetSheets } from "@/features/sheets/sheet-store";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
+
+const newAgentIntent = sheetIntent("new-agent");
+
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -258,14 +262,18 @@ export function AppSidebar() {
                   <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center">
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Link
-                          to="/agents/new"
-                          onClick={closeMobile}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            closeMobile();
+                            openSheet({ kind: "new-agent" });
+                          }}
+                          {...newAgentIntent}
                           aria-label="New agent"
                           className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         >
                           <Plus aria-hidden="true" className="size-4" />
-                        </Link>
+                        </button>
                       </TooltipTrigger>
                       <TooltipContent>New agent</TooltipContent>
                     </Tooltip>

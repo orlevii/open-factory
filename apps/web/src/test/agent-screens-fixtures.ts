@@ -68,6 +68,7 @@ export interface World {
   details?: Record<string, ReturnType<typeof templateDetail>>;
   projects?: ReturnType<typeof project>[];
   secrets?: { name: string; updatedAt: string; usedBy: string[] }[];
+  users?: unknown[];
   extra?: Record<string, Handler>;
 }
 
@@ -83,6 +84,7 @@ export function mockWorld(w: World = {}): MockApi {
       json({ dir: "/h/of/templates", templates: w.templates ?? [templateSummary("lead")] }),
     "GET /api/projects": () => json({ projects: w.projects ?? [project("app"), project("docs")] }),
     "GET /api/secrets": () => json({ secrets: w.secrets ?? [] }),
+    "GET /api/users": () => json({ users: w.users ?? [] }),
   };
   const details = w.details ?? { lead: templateDetail(templateConfig()) };
   for (const [name, d] of Object.entries(details))

@@ -2,7 +2,13 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { ComponentType } from "react";
 import { scheduleDetailOptions } from "@/features/schedules/api";
 import { agentsListQueryOptions } from "@/features/session/api";
-import { templatesQueryOptions } from "@/features/templates/api";
+import {
+  credentialsQueryOptions,
+  projectsQueryOptions,
+  secretsQueryOptions,
+  usersQueryOptions,
+} from "@/features/settings/api";
+import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
 
 export type BodyProps<S> = { spec: S; sheetId: number; close(): void };
@@ -20,6 +26,22 @@ type Entry = {
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
 export const sheetBodies: { [K in SheetKind]?: Entry } = {
+  "new-agent": {
+    load: () => import("@/features/agents/new-agent-sheet"),
+    // Every list the body reads, together: it suspends on credentials and templates only, the rest fill in.
+    prefetch(qc, spec: { template?: string }) {
+      void qc.prefetchQuery(templatesQueryOptions);
+      void qc.prefetchQuery(credentialsQueryOptions);
+      void qc.prefetchQuery(projectsQueryOptions);
+      void qc.prefetchQuery(secretsQueryOptions);
+      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+      void qc.prefetchQuery(agentsListQueryOptions("only"));
+      void qc.prefetchQuery(usersQueryOptions);
+      if (spec.template)
+        void qc.prefetchQuery({ ...templateQueryOptions(spec.template), retry: false });
+    },
+    title: "New agent",
+  },
   "new-task": {
     load: () => import("@/features/tasks/new-task-sheet"),
     prefetch(qc) {
@@ -92,6 +114,12 @@ export function preloadSheet(kind: SheetKind, spec?: SheetSpec | ChildSpec) {
   if (!entry) return;
   void loadBody(entry).catch(() => {});
   if (queryClient) entry.prefetch(queryClient, spec ?? { kind });
+}
+
+/** An entry point's intent handlers (hover, focus, pointerdown): each preloads the sheet's chunk and data. */
+export function sheetIntent(kind: SheetKind, spec?: SheetSpec | ChildSpec) {
+  const preload = () => preloadSheet(kind, spec);
+  return { onPointerEnter: preload, onFocus: preload, onPointerDown: preload };
 }
 
 /** Idle after first paint: chunks only (a spec is needed to know which data to read). */

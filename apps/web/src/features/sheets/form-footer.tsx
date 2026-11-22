@@ -13,6 +13,7 @@ export function SheetFormFooter({
   onDiscard,
   left,
   note,
+  submitClassName,
 }: {
   submitLabel: string;
   pendingLabel: string;
@@ -21,6 +22,8 @@ export function SheetFormFooter({
   onDiscard(): void;
   left?: ReactNode;
   note?: ReactNode;
+  /** e.g. a min width that fits the pending label, so the button doesn't change width while pending. */
+  submitClassName?: string;
 }) {
   return (
     <SheetFooter>
@@ -43,7 +46,7 @@ export function SheetFormFooter({
           Close
         </Button>
       </SheetClose>
-      <Button type="submit" aria-disabled={pending || undefined}>
+      <Button type="submit" aria-disabled={pending || undefined} className={submitClassName}>
         {pending && <Spinner />}
         {pending ? pendingLabel : submitLabel}
       </Button>

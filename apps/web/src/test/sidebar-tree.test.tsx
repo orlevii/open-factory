@@ -15,6 +15,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
 import { applyStatusFrames } from "@/features/agents/status-frames";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { createQueryClient } from "@/lib/query-client";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -285,11 +286,13 @@ test("unread count from byAgent, working count hides first when narrow", async (
   expect(line).not.toContainElement(within(row("Bravo")).getByText("99+"));
 });
 
-test("empty: 'No agents yet.' with New agent link", async () => {
+test("empty: 'No agents yet.' with a New agent button that opens the sheet", async () => {
   setup({ list: [] });
   expect(await screen.findByText("No agents yet.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/agents/new");
   expect(screen.queryByRole("tree")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "New agent" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "new-agent" });
+  act(() => closeSheet());
 });
 
 test("loading: three skeleton rows", async () => {

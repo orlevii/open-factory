@@ -1,7 +1,7 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { consumeLongPressRelease, longPressFiredWithin, useLongPress } from "./use-long-press";
+import { consumeLongPressLift, consumeLongPressRelease, useLongPress } from "./use-long-press";
 
 function Row({
   onLongPress,
@@ -31,6 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   consumeLongPressRelease();
+  consumeLongPressLift();
 });
 
 function setup(onClick?: () => void) {
@@ -48,19 +49,34 @@ test("fires at 500ms with the press point, not at 499", () => {
   expect(onLongPress).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 20 });
 });
 
-test("longPressFiredWithin: true from the fire for the given window, false before any fire and after it", () => {
-  // Clear of any earlier test's fire.
-  vi.setSystemTime(Date.now() + 60_000);
+test("consumeLongPressLift: the first check after a fire is true however long the finger is held, then false", () => {
   const { el } = setup();
+  expect(consumeLongPressLift()).toBe(false);
   fireEvent.pointerDown(el, touch());
   act(() => void vi.advanceTimersByTime(499));
-  expect(longPressFiredWithin(400)).toBe(false);
+  expect(consumeLongPressLift()).toBe(false);
   act(() => void vi.advanceTimersByTime(1));
-  expect(longPressFiredWithin(400)).toBe(true);
-  act(() => void vi.advanceTimersByTime(399));
-  expect(longPressFiredWithin(400)).toBe(true);
-  act(() => void vi.advanceTimersByTime(1));
-  expect(longPressFiredWithin(400)).toBe(false);
+  // Held 3s more, then lifted: the lift's click is still the guarded one.
+  act(() => void vi.advanceTimersByTime(3000));
+  fireEvent.pointerUp(document.body, touch());
+  act(() => void vi.advanceTimersByTime(900));
+  expect(consumeLongPressLift()).toBe(true);
+  expect(consumeLongPressLift()).toBe(false);
+});
+
+test("consumeLongPressLift: the guard ends at the next pointerdown or a second after the lift", () => {
+  const { el } = setup();
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(500));
+  fireEvent.pointerUp(el, touch());
+  fireEvent.pointerDown(document.body, touch(10, 20, 2));
+  expect(consumeLongPressLift()).toBe(false);
+
+  fireEvent.pointerDown(el, touch());
+  act(() => void vi.advanceTimersByTime(1500));
+  fireEvent.touchEnd(document.body);
+  act(() => void vi.advanceTimersByTime(1000));
+  expect(consumeLongPressLift()).toBe(false);
 });
 
 test("vibrates on fire when available", () => {

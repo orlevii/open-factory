@@ -11,13 +11,39 @@ const HELD_GRACE_MS = 10_000;
 const RELEASE_GRACE_MS = 1000;
 
 let releaseExpiresAt = 0;
-// When the last long-press fired (its menu opened), for a drawer that ignores the lifting finger's tap.
-let firedAt = Number.NEGATIVE_INFINITY;
 
-/** Whether a long-press fired within the last `ms` (a phone's drawer opened under the finger). */
-export function longPressFiredWithin(ms: number): boolean {
-  const since = Date.now() - firedAt;
-  return since >= 0 && since < ms;
+// D6: a phone's drawer opened by a long-press rises under the finger, so the click its lift sends must not
+// select the item it lands on. Armed when a press fires, the guard lasts while the finger is held
+// (HELD_GRACE_MS) and RELEASE_GRACE_MS past the lift, and ends at the first drawer click it swallows or at
+// the next pointerdown (that's a genuine tap). Watched on the document: the lift can land anywhere.
+let liftGuardUntil = 0;
+
+function armLiftGuard() {
+  liftGuardUntil = Date.now() + HELD_GRACE_MS;
+  document.addEventListener("pointerup", onLift, true);
+  document.addEventListener("touchend", onLift, true);
+  document.addEventListener("pointerdown", disarmLiftGuard, true);
+}
+
+function onLift(e: Event) {
+  if (e.type === "pointerup" && (e as PointerEvent).pointerType !== "touch") return;
+  if (Date.now() < liftGuardUntil) liftGuardUntil = Date.now() + RELEASE_GRACE_MS;
+  else disarmLiftGuard();
+}
+
+function disarmLiftGuard() {
+  liftGuardUntil = 0;
+  document.removeEventListener("pointerup", onLift, true);
+  document.removeEventListener("touchend", onLift, true);
+  document.removeEventListener("pointerdown", disarmLiftGuard, true);
+}
+
+/** True for the first click after a long-press fired, whenever the finger lifted (it's that finger's click):
+ *  a drawer's items call it to ignore the lift. Consumed by the call. */
+export function consumeLongPressLift(): boolean {
+  const guarded = Date.now() < liftGuardUntil;
+  disarmLiftGuard();
+  return guarded;
 }
 
 /** True for one pointerup after a long-press fired: menus call it to ignore the lifting finger. */
@@ -73,7 +99,7 @@ export function useLongPress(
           end(press);
           swallowUntil.current = Date.now() + HELD_GRACE_MS;
           releaseExpiresAt = swallowUntil.current;
-          firedAt = Date.now();
+          armLiftGuard();
           navigator.vibrate?.(10);
           callback.current(at);
         }, HOLD_MS);

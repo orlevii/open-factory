@@ -10,7 +10,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { consumeLongPressRelease, longPressFiredWithin } from "@/hooks/use-long-press";
+import { consumeLongPressLift, consumeLongPressRelease } from "@/hooks/use-long-press";
 import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 import { cn } from "@/lib/utils";
 
@@ -277,13 +277,11 @@ function AdaptiveMenuContent({
   );
 }
 
-/** A drawer opened by a long-press rises under the finger: for this long its items and Cancel ignore a tap, so
- *  lifting that finger can't select the row it lands on (evidence D6). */
-const LIFT_GUARD_MS = 400;
-
-/** Capture phase, so it beats a consumer's own handler (an `asChild` link navigates in its onClick). */
+/** A drawer opened by a long-press rises under the finger: the first click on its items or Cancel after that
+ *  is the lifting finger's, however long it was held, and selects nothing (evidence D6). Capture phase, so it
+ *  beats a consumer's own handler (an `asChild` link navigates in its onClick). */
 function ignoreLiftingFinger(e: React.MouseEvent) {
-  if (!longPressFiredWithin(LIFT_GUARD_MS)) return;
+  if (!consumeLongPressLift()) return;
   e.preventDefault();
   e.stopPropagation();
 }

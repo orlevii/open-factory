@@ -4,6 +4,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Button } from "@/components/ui/button";
 import { endAnimation } from "@/test/end-animation";
+import { useLongPressMenu } from "@/hooks/use-long-press-menu";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import {
   AdaptiveMenu,
@@ -15,21 +16,20 @@ import {
   AdaptiveMenuTrigger,
 } from "./adaptive-menu";
 
-const release = vi.hoisted(() => ({ armed: false, firedAt: Number.NEGATIVE_INFINITY }));
-vi.mock("@/hooks/use-long-press", () => ({
+const release = vi.hoisted(() => ({ armed: false }));
+vi.mock("@/hooks/use-long-press", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/use-long-press")>()),
   consumeLongPressRelease: () => {
     const was = release.armed;
     release.armed = false;
     return was;
   },
-  longPressFiredWithin: (ms: number) => Date.now() - release.firedAt < ms,
 }));
 
 const original = window.matchMedia;
 let mm: ReturnType<typeof fakeMatchMedia.install>;
 beforeEach(() => {
   release.armed = false;
-  release.firedAt = Number.NEGATIVE_INFINITY;
 });
 afterEach(() => {
   window.matchMedia = original;
@@ -579,14 +579,11 @@ test("drawer: when the ⋯ can't take focus, closing returns it to the pressed r
   await waitFor(() => expect(rowLink()).toHaveFocus());
 });
 
-test("drawer: for 400ms after a long-press opened it, a tap on an item or Cancel is the lifting finger and does nothing (evidence D6)", () => {
-  phone();
-  vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
-  try {
-    const onEdit = vi.fn();
-    const onLinkClick = vi.fn();
-    render(
-      <AdaptiveMenu title="Priya Nair">
+function PressRow({ onEdit, onLinkClick }: { onEdit: () => void; onLinkClick: () => void }) {
+  const { press, menu } = useLongPressMenu();
+  return (
+    <div data-testid="row" {...press}>
+      <AdaptiveMenu title="Priya Nair" {...menu}>
         <AdaptiveMenuTrigger asChild>
           <button type="button">More</button>
         </AdaptiveMenuTrigger>
@@ -598,26 +595,86 @@ test("drawer: for 400ms after a long-press opened it, a tap on an item or Cancel
             </a>
           </AdaptiveMenuItem>
         </AdaptiveMenuContent>
-      </AdaptiveMenu>,
-    );
-    // The long-press fires and opens the drawer under the finger.
-    release.firedAt = Date.now();
-    touchTap(trigger());
-    const edit = screen.getByRole("button", { name: "Edit" });
-    const usage = screen.getByRole("link", { name: "Usage" });
-    fireEvent.click(edit);
-    // An asChild link's own handler and its navigation are skipped too.
-    expect(fireEvent.click(usage)).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      </AdaptiveMenu>
+    </div>
+  );
+}
+
+const finger = { pointerType: "touch", pointerId: 1, clientX: 40, clientY: 120 };
+
+/** Long-press the row (it fires at 500ms) and keep the finger down for `holdMs` in all. */
+function holdRow(holdMs: number) {
+  const onEdit = vi.fn();
+  const onLinkClick = vi.fn();
+  render(<PressRow onEdit={onEdit} onLinkClick={onLinkClick} />);
+  fireEvent.pointerDown(screen.getByTestId("row"), finger);
+  act(() => void vi.advanceTimersByTime(holdMs));
+  expect(document.querySelector("[data-slot=drawer-content]")).toHaveAttribute("data-state", "open");
+  return { onEdit, onLinkClick, edit: () => screen.getByRole("button", { name: "Edit" }) };
+}
+
+/** A deliberate tap: a fresh finger touches down on the element, lifts and clicks. */
+const tap = (el: Element) => {
+  fireEvent.pointerDown(el, { ...finger, pointerId: 2 });
+  fireEvent.pointerUp(el, { ...finger, pointerId: 2 });
+  return fireEvent.click(el);
+};
+
+test("drawer: held 1.5s after a long-press opened it, the lifting finger's click on an item does nothing; a tap after it selects (evidence D6)", () => {
+  phone();
+  vi.useFakeTimers();
+  try {
+    const { onEdit, edit } = holdRow(1500);
+    fireEvent.pointerUp(edit(), finger);
+    act(() => void vi.advanceTimersByTime(300));
+    fireEvent.click(edit());
     expect(onEdit).not.toHaveBeenCalled();
-    expect(onLinkClick).not.toHaveBeenCalled();
     expect(document.querySelector("[data-slot=drawer-content]")).toHaveAttribute("data-state", "open");
 
-    vi.advanceTimersByTime(399);
-    fireEvent.click(edit);
-    expect(onEdit).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    fireEvent.click(edit);
+    tap(edit());
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("drawer: lifted the moment a long-press opened it, the click on a link item does nothing (evidence D6)", () => {
+  phone();
+  vi.useFakeTimers();
+  try {
+    const { onLinkClick } = holdRow(500);
+    const usage = screen.getByRole("link", { name: "Usage" });
+    fireEvent.pointerUp(usage, finger);
+    // An asChild link's own handler and its navigation are skipped too.
+    expect(fireEvent.click(usage)).toBe(false);
+    expect(onLinkClick).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-slot=drawer-content]")).toHaveAttribute("data-state", "open");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("drawer: lifted the moment a long-press opened it, the click on Cancel does nothing (evidence D6)", () => {
+  phone();
+  vi.useFakeTimers();
+  try {
+    holdRow(500);
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    fireEvent.pointerUp(cancel, finger);
+    fireEvent.click(cancel);
+    expect(document.querySelector("[data-slot=drawer-content]")).toHaveAttribute("data-state", "open");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("drawer: a finger lifted off the items after a long-press doesn't cost the next tap (evidence D6)", () => {
+  phone();
+  vi.useFakeTimers();
+  try {
+    const { onEdit, edit } = holdRow(1500);
+    fireEvent.pointerUp(document.body, finger);
+    tap(edit());
     expect(onEdit).toHaveBeenCalledTimes(1);
   } finally {
     vi.useRealTimers();

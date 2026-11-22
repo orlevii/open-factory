@@ -2,6 +2,7 @@ import { type AgentSummary, ApiError } from "@open-factory/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { notify } from "@/components/ui/toaster";
 import * as api from "@/features/agents/api";
+import { hasOutput, showOutput } from "@/features/agents/show-output";
 import { agentDetailQueryOptions } from "@/features/session/api";
 
 /**
@@ -14,28 +15,20 @@ import { agentDetailQueryOptions } from "@/features/session/api";
 export const templateProblemText = (name: string, problem: "invalid" | "missing") =>
   `Template ${name} ${problem === "invalid" ? "has errors." : "no longer exists."}`;
 
-/** "@a and @b report to this agent. Change their manager first." */
-export function reportsText(reports: string[]): string {
-  const names = reports.map((r) => `@${r}`);
-  const list =
-    names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-  return `${list} ${reports.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
-}
-
 /** The server's reason, or the network's. */
 const reason = (err: unknown) =>
   err instanceof ApiError ? err.message : "can't reach the server.";
 
-/** One request per agent and action at a time: a second click while one is in flight does nothing. */
-const inFlight = new Set<string>();
-async function once<T>(key: string, run: () => Promise<T>): Promise<T | undefined> {
-  if (inFlight.has(key)) return undefined;
-  inFlight.add(key);
-  try {
-    return await run();
-  } finally {
-    inFlight.delete(key);
-  }
+/** One request per agent and action at a time: a second call while one is in flight sends nothing
+ *  and resolves with the first one's result (an inline Restore overlapping a menu Restore reports
+ *  that restore's outcome, never a success it didn't see). */
+const inFlight = new Map<string, Promise<unknown>>();
+function once<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const running = inFlight.get(key);
+  if (running) return running as Promise<T>;
+  const p = run().finally(() => inFlight.delete(key));
+  inFlight.set(key, p);
+  return p;
 }
 
 const refresh = (qc: QueryClient, slug: string) =>
@@ -74,11 +67,35 @@ export async function resyncAgent(slug: string, qc: QueryClient, template?: stri
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
       let text = reason(err);
-      if ((code === "template_invalid" || code === "template_missing") && template) {
-        text = templateProblemText(template, code === "template_invalid" ? "invalid" : "missing");
-        void qc.invalidateQueries({ queryKey: ["templates", template] });
+      if (code === "template_invalid" || code === "template_missing") {
+        // The server names what is wrong with the template; the generic line only stands in for a
+        // message it didn't send.
+        if (template) {
+          if (!(err instanceof ApiError && err.message))
+            text = templateProblemText(
+              template,
+              code === "template_invalid" ? "invalid" : "missing",
+            );
+          void qc.invalidateQueries({ queryKey: ["templates", template] });
+        }
       } else if (code === "plugin_install_failed") {
         text = `Plugin install failed. Some files were already copied (previous versions in state/agents/${slug}/resync/). Fix the template and re-sync again.`;
+        const output = (err as ApiError).body.output;
+        if (hasOutput(output)) {
+          notify({
+            text: `Couldn't re-sync @${slug}: ${text}`,
+            action: {
+              label: "Show output",
+              run: () =>
+                showOutput({
+                  title: "Plugin install output",
+                  description: `The output of @${slug}'s failed plugin install.`,
+                  output,
+                }),
+            },
+          });
+          return;
+        }
       }
       notify({ text: `Couldn't re-sync @${slug}: ${text}` });
     }
@@ -107,12 +124,9 @@ export async function archiveAgent(
     try {
       await api.archiveAgent(slug);
     } catch (err) {
-      const reports = err instanceof ApiError ? err.body.reports : undefined;
-      const text =
-        err instanceof ApiError && err.code === "has_reports" && Array.isArray(reports)
-          ? reportsText(reports.map(String))
-          : reason(err);
-      notify({ text: `Couldn't archive @${slug}: ${text}` });
+      // The server's message, whatever the blocker: reports to move, or live spawned agents to
+      // terminate (both `has_reports`), each with its own advice.
+      notify({ text: `Couldn't archive @${slug}: ${reason(err)}` });
       return;
     }
     void refresh(qc, slug);
@@ -132,7 +146,7 @@ export async function archiveAgent(
 /**
  * Restores an archived agent. From a menu it toasts "Restored @slug." or the failure; `inline` (a
  * Restore button still on screen) toasts nothing. Resolves to the failure text, or undefined when
- * the agent was restored (or a restore was already in flight).
+ * the agent was restored; a call made while a restore is in flight gets that restore's result.
  */
 export async function restoreAgent(
   slug: string,

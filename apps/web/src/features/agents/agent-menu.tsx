@@ -89,9 +89,14 @@ export function AgentMenu({
   const canArchive = !spawned && live;
   const canRestore = archived && !terminated && !endedInList;
 
-  // An item that opens a sheet hands over once the menu has gone, as Compact… does.
+  // An item that opens a sheet hands over once the menu has gone, as Compact… does. Focus goes back
+  // to the ⋯ (or the row) first, so the sheet returns it there when it closes.
   const openAfterClose = (open: () => void) => {
-    handoff.current = open;
+    handoff.current = () => {
+      if (anchored) anchored.onClose();
+      else trigger.current?.focus();
+      open();
+    };
   };
 
   const create: ReactElement[] = live

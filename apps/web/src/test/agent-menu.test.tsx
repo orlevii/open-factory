@@ -7,10 +7,12 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
+import { restoreAgent } from "@/features/agents/lifecycle";
+import { OutputDialogHost } from "@/features/agents/show-output";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
@@ -431,33 +433,101 @@ test.each([
 );
 
 test.each([
-  ["template_invalid", "Couldn't re-sync @dev: Template developer has errors."],
-  ["template_missing", "Couldn't re-sync @dev: Template developer no longer exists."],
-])("a re-sync refused with %s toasts the template problem", async (code, text) => {
+  ["template_invalid", "Template developer: model must be a string."],
+  ["template_missing", "Template developer no longer exists."],
+])("a re-sync refused with %s toasts the server's own reason", async (code, message) => {
   mockApi({
-    "POST /api/agents/dev/resync": () => json({ error: { code, message: "x" } }, 409),
+    "POST /api/agents/dev/resync": () => json({ error: { code, message } }, 409),
   });
   setup({ agent: agentSummary({ template: "developer" }), context: "session" });
   const u = userEvent.setup();
   await openMenu(u);
   await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({ text: `Couldn't re-sync @dev: ${message}` }),
+  );
 });
 
-test("a failed plugin install on re-sync names the backup folder", async () => {
+test("a failed plugin install on re-sync names the backup folder, and Show output opens the output", async () => {
   mockApi({
     "POST /api/agents/dev/resync": () =>
-      json({ error: { code: "plugin_install_failed", message: "x", output: "boom" } }, 502),
+      json({ error: { code: "plugin_install_failed", message: "x", output: "boom output" } }, 502),
   });
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
   await openMenu(u);
   await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  const n = notify.mock.calls[0]?.[0];
+  expect(n.text).toBe(
+    "Couldn't re-sync @dev: Plugin install failed. Some files were already copied (previous versions in state/agents/dev/resync/). Fix the template and re-sync again.",
+  );
+  expect(n.action.label).toBe("Show output");
+  render(<OutputDialogHost />);
+  act(() => n.action.run());
+  const dlg = await screen.findByRole("alertdialog", { name: "Plugin install output" });
+  expect(within(dlg).getByText("boom output")).toBeInTheDocument();
+  await u.click(within(dlg).getByRole("button", { name: "Close" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test("a failed plugin install with no output toasts without Show output", async () => {
+  mockApi({
+    "POST /api/agents/dev/resync": () =>
+      json({ error: { code: "plugin_install_failed", message: "x" } }, 502),
+  });
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(notify.mock.calls[0]?.[0].action).toBeUndefined();
+});
+
+test("archive blocked by live spawned agents toasts the server's advice to terminate them", async () => {
+  mockApi({
+    "POST /api/agents/dev/archive": () =>
+      json(
+        {
+          error: {
+            code: "has_reports",
+            message: "@dev has live spawned agents: @dev-ab12. Terminate them first.",
+            reports: ["dev-ab12"],
+          },
+        },
+        409,
+      ),
+  });
+  setup({ agent: agentSummary(), context: "list" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
   await vi.waitFor(() =>
     expect(notify).toHaveBeenCalledWith({
-      text: "Couldn't re-sync @dev: Plugin install failed. Some files were already copied (previous versions in state/agents/dev/resync/). Fix the template and re-sync again.",
+      text: "Couldn't archive @dev: @dev has live spawned agents: @dev-ab12. Terminate them first.",
     }),
   );
+});
+
+test("a restore made while another is in flight reports that restore's outcome, not a success", async () => {
+  let release: () => void = () => {};
+  const api = mockApi({
+    "POST /api/agents/dev/unarchive": () =>
+      new Promise<Response>((r) => {
+        release = () =>
+          r(
+            json({ error: { code: "manager_archived", message: "Its manager is archived." } }, 409),
+          );
+      }),
+  });
+  const qc = new QueryClient();
+  const fromMenu = restoreAgent("dev", qc);
+  const inline = restoreAgent("dev", qc, { inline: true });
+  await vi.waitFor(() => expect(api.calls).toHaveLength(1));
+  release();
+  expect(await inline).toBe("Couldn't restore @dev: Its manager is archived.");
+  expect(await fromMenu).toBe("Couldn't restore @dev: Its manager is archived.");
+  expect(api.calls.filter((c) => c.url === "/api/agents/dev/unarchive")).toHaveLength(1);
 });
 
 test("a second Archive while the first is in flight sends one request", async () => {

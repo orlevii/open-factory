@@ -713,7 +713,10 @@ test("archived: Restore restores in place and the composer comes back", async ()
   await vi.waitFor(() =>
     expect(screen.queryByText(/This agent is archived\./)).not.toBeInTheDocument(),
   );
-  expect(screen.getByRole("combobox", { name: /Message to/ })).toBeInTheDocument();
+  const box = screen.getByRole("combobox", { name: /Message to/ });
+  // The focused Restore button went away with the notice: focus follows to the composer.
+  await vi.waitFor(() => expect(box).toHaveFocus());
+  expect(document.activeElement).not.toBe(document.body);
 });
 
 test("archived: a refused Restore says why inline, and the button stays", async () => {

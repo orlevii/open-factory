@@ -284,9 +284,9 @@ test("an archived sender restores in place from the notice: Restore, then the re
   expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(
     true,
   );
-  expect(
-    await within(pane()).findByRole("combobox", { name: "Message to Old" }),
-  ).toBeInTheDocument();
+  const box = await within(pane()).findByRole("combobox", { name: "Message to Old" });
+  // The focused Restore button went away with the notice: focus follows to the composer.
+  await waitFor(() => expect(box).toHaveFocus());
 });
 
 test("an archived sender's refused Restore says why in the pane", async () => {

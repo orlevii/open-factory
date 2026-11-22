@@ -393,3 +393,18 @@ test("one agent's status frame re-renders exactly one row", async () => {
   update((list) => list.map((a) => (a.slug === "a20" ? { ...a, status: "working" } : a)));
   await waitFor(() => expect(chipRenders).toEqual(["a20"]));
 });
+
+test("a sheet opened from a row's menu returns focus to that row's ⋯ when it closes", async () => {
+  mockWorld({ agents: [agentSummary()] });
+  renderApp("/agents", alice);
+  const main = await screen.findByRole("main");
+  const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
+  const u = userEvent.setup();
+  await u.click(more);
+  await u.click(await screen.findByRole("menuitem", { name: "New task" }));
+  const sheet = await screen.findByRole("dialog", { name: "New task" });
+  expect(sheet).toBeInTheDocument();
+  await u.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  await waitFor(() => expect(more).toHaveFocus());
+});

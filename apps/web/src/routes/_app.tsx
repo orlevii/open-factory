@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/toaster";
+import { OutputDialogHost } from "@/features/agents/show-output";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
@@ -213,6 +214,7 @@ function AppLayout() {
             <Outlet />
           </SidebarInset>
           <Toaster />
+          <OutputDialogHost />
           <CommandPalette />
           <GlobalShortcuts />
           <SheetHost />

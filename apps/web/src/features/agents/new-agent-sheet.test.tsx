@@ -1043,3 +1043,35 @@ test("on a phone, Add secret focuses its drawer, and success focuses the parent'
   // jsdom never finishes Vaul's exit, so the drawer's close-autofocus can't run here: check the target it would take.
   expect(takeChildReturnFocus()).toBe(dialog);
 });
+
+test.each([
+  ["one template", [templateSummary("lead")]],
+  ["no templates", []],
+])(
+  "stacked New template: the Template trigger holds the new name in the commit that sets it (%s)",
+  async (_l, start) => {
+    const writer = templateConfig({ name: "writer", displayName: "Writer", description: "" });
+    const templates = [...start];
+    // What the served field shows at the moment it scrolls into view (the same commit as the value write).
+    const seen: { id: string; text: string }[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
+      seen.push({ id: this.id, text: this.textContent ?? "" });
+    });
+    const { dialog } = await open({
+      templates,
+      details: { lead: templateDetail(templateConfig()), writer: templateDetail(writer) },
+      extra: {
+        "POST /api/templates": () => {
+          templates.push({ ...templateSummary("writer"), displayName: "Writer" });
+          return json(templateDetail(writer), 201);
+        },
+      },
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "New template" }));
+    const d = await child("New template");
+    await userEvent.type(await within(d).findByLabelText("Display name"), "Writer");
+    await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+    await waitFor(() => expect(getSheetState().child).toBeUndefined());
+    expect(seen).toContainEqual({ id: "field-template", text: "Writer" });
+  },
+);

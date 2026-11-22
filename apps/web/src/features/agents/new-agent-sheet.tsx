@@ -4,7 +4,13 @@ import {
   type CreateAgentBody,
   type PatchAgentBody,
 } from "@open-factory/shared";
-import { useQueries, useQuery, useQueryClient, useSuspenseQueries } from "@tanstack/react-query";
+import {
+  useQueries,
+  useQuery,
+  useQueryClient,
+  useSuspenseQueries,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import {
@@ -86,17 +92,14 @@ const TAKEN_LISTS = [
  * Each open is a fresh form instance over the `new-agent` draft.
  */
 export default function NewAgentSheet(props: BodyProps<Spec>) {
-  const [, templates] = useSuspenseQueries({
-    queries: [credentialsQueryOptions, templatesQueryOptions],
-  });
-  return <NewAgentForm key={props.sheetId} {...props} templates={templates.data.templates} />;
+  useSuspenseQueries({ queries: [credentialsQueryOptions, templatesQueryOptions] });
+  return <NewAgentForm key={props.sheetId} {...props} />;
 }
 
-function NewAgentForm({
-  spec,
-  sheetId,
-  templates,
-}: BodyProps<Spec> & { templates: TemplateOption[] }) {
+function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
+  // Read here, not passed down: a stacked New template writes the list and sets Template in one flushSync that
+  // re-renders only this form, so the Select must see the new item in that same commit (§7).
+  const templates: TemplateOption[] = useSuspenseQuery(templatesQueryOptions).data.templates;
   const qc = useQueryClient();
   const router = useRouter();
   const taken = useTakenNames(true);

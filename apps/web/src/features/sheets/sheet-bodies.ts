@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ComponentType } from "react";
 import { scheduleDetailOptions } from "@/features/schedules/api";
-import { agentsListQueryOptions } from "@/features/session/api";
+import { agentDetailQueryOptions, agentsListQueryOptions } from "@/features/session/api";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -43,6 +43,16 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
         void qc.prefetchQuery({ ...templateQueryOptions(spec.template), retry: false });
     },
     title: "New agent",
+  },
+  "edit-agent": {
+    load: () => import("@/features/agents/edit-agent-sheet"),
+    prefetch(qc, spec: { slug?: string }) {
+      if (spec.slug) void qc.prefetchQuery(agentDetailQueryOptions(spec.slug));
+      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+      void qc.prefetchQuery(credentialsQueryOptions);
+      void qc.prefetchQuery(projectsQueryOptions);
+    },
+    title: "Edit agent",
   },
   "new-task": {
     load: () => import("@/features/tasks/new-task-sheet"),

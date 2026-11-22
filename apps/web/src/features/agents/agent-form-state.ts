@@ -56,6 +56,15 @@ type Stored = Values & { custom: boolean; touched: Touched };
 /** An edit draft also keeps the server copy it was edited against, so untouched fields follow the server later. */
 type EditDraft = { values: Stored; base: Stored };
 export type SubmitResult = "ok" | "invalid" | "failed" | "nothing";
+/** The fields an edit can send, in the order a sentence names them. */
+export const PATCH_FIELDS = [
+  "displayName",
+  "description",
+  "reportsTo",
+  "credential",
+  "projects",
+] as const satisfies readonly (keyof PatchAgentBody)[];
+export type PatchField = (typeof PATCH_FIELDS)[number];
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -373,14 +382,23 @@ export function useAgentFormState({
     return Object.keys(patch).length > 0 ? patch : null;
   }
 
+  // Edit: the fields a save would send now (the restart notice names them).
+  const editPatch = create ? null : body();
+  const changes: PatchField[] = editPatch
+    ? PATCH_FIELDS.filter((f) => editPatch[f] !== undefined)
+    : [];
+
   const noCredentials = credentials !== undefined && credentials.length === 0;
   const missingSecrets =
     create && config && secrets.data
       ? config.secrets.filter((s) => !secrets.data.some((x) => x.name === s))
       : [];
 
+  /** `onSubmit` resolves to the saved agent on Edit (it becomes the new base); New agent's resolves to nothing. */
   async function submit(
-    onSubmit: (b: CreateAgentBody | PatchAgentBody) => Promise<unknown>,
+    onSubmit: (
+      b: CreateAgentBody | PatchAgentBody,
+    ) => Promise<AgentSummary | undefined> | Promise<void>,
   ): Promise<SubmitResult> {
     // A ref, not `pending`: a second Enter can arrive before the first one's state has rendered.
     if (inFlight.current || noCredentials) return "nothing";
@@ -407,19 +425,11 @@ export function useAgentFormState({
         // of this kind is open, or toasts "Open form" on a late failure.
         if (mounted.current) clearDraft();
       } else {
-        const a = saved as AgentSummary;
-        const wasRunning = agent?.status === "working" || agent?.status === "idle";
-        // The saved copy is the new base; the fields stay as the user left them (they equal it).
-        setBase(storedOf(a));
+        // The saved copy is the new base; the fields stay as the user left them (they equal it). The sheet closes and
+        // toasts the outcome, so there is no inline success line.
+        if (saved) setBase(storedOf(saved));
         // Only this instance's draft: after a dismiss the key may hold a draft the user reopened and edited since.
         if (mounted.current) clearDraft();
-        setOutcome({
-          tone: "success",
-          content:
-            a.restartPending || wasRunning
-              ? "Saved. The agent restarts when idle to apply the changes. Its crons from this session stop."
-              : "Saved.",
-        });
       }
       return "ok";
     } catch (err) {
@@ -490,5 +500,6 @@ export function useAgentFormState({
     restored,
     discard,
     staleNotes,
+    changes,
   };
 }

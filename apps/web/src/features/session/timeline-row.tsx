@@ -4,6 +4,8 @@ import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { resyncAgent } from "@/features/agents/lifecycle";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
@@ -233,11 +235,17 @@ function FixLink({
   if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
   const cls =
     "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+  // Opens Edit agent over the session (U4 §5.6).
   if (fix === "edit_agent")
     return (
-      <Link to="/agents/$slug/edit" params={{ slug }} className={cls}>
+      <button
+        type="button"
+        className={cls}
+        {...sheetIntent("edit-agent", { kind: "edit-agent", slug })}
+        onClick={() => openSheet({ kind: "edit-agent", slug })}
+      >
         Edit the agent
-      </Link>
+      </button>
     );
   // Nothing to link to: an operator has to allow the local runtime (S5 UI design §3.2). The row
   // explains how, as Agent details' Runtime row does.

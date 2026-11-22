@@ -2,7 +2,7 @@ import type { AgentSummary } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
-import { type ReactElement, useLayoutEffect, useRef, useState } from "react";
+import { type ReactElement, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -88,6 +88,7 @@ export function AgentMenu({
   const canResync = !spawned && live;
   const canArchive = !spawned && live;
   const canRestore = archived && !terminated && !endedInList;
+  const editIntent = useMemo(() => sheetIntent("edit-agent", { kind: "edit-agent", slug }), [slug]);
 
   // An item that opens a sheet hands over once the menu has gone, as Compact… does. Focus goes back
   // to the ⋯ (or the row) first, so the sheet returns it there when it closes.
@@ -126,13 +127,14 @@ export function AgentMenu({
         </Link>
       </DropdownMenuItem>,
     );
-  // Task 23 turns Edit into the edit-agent sheet.
   if (canEdit)
     views.push(
-      <DropdownMenuItem key="edit" asChild>
-        <Link to="/agents/$slug/edit" params={{ slug }}>
-          Edit
-        </Link>
+      <DropdownMenuItem
+        key="edit"
+        {...editIntent}
+        onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", slug }))}
+      >
+        Edit
       </DropdownMenuItem>,
     );
   views.push(

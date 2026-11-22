@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
 
@@ -58,7 +59,10 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  resetSheets();
+  vi.unstubAllGlobals();
+});
 
 test("renders the conversation: sender badge, collapsed tool call, text, compaction marker; never raw XML", async () => {
   renderApp("/agents/dev", alice);
@@ -874,7 +878,7 @@ test("an error with fix image links to Templates → Images", async () => {
   );
 });
 
-test("an error with fix edit_agent links to the edit page", async () => {
+test("an error with fix edit_agent opens Edit agent", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
@@ -882,10 +886,10 @@ test("an error with fix edit_agent links to the edit page", async () => {
     fix: "edit_agent",
   });
   renderApp("/agents/dev", alice);
-  expect(await screen.findByRole("link", { name: "Edit the agent" })).toHaveAttribute(
-    "href",
-    "/agents/dev/edit",
-  );
+  const fix = await screen.findByRole("button", { name: "Edit the agent" });
+  expect(screen.queryByRole("link", { name: "Edit the agent" })).not.toBeInTheDocument();
+  await userEvent.click(fix);
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
 test("an error with fix resync runs the agent's Re-sync in place", async () => {

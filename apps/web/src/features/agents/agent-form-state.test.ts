@@ -115,7 +115,8 @@ test("Edit: the body is the diff from the saved agent, and no change is nothing 
   expect(r).toBe("ok");
   expect(onSubmit).toHaveBeenCalledOnce();
   expect(onSubmit).toHaveBeenCalledWith({ displayName: "Boss" });
-  expect(result.current.outcome).toMatchObject({ tone: "success" });
+  // The sheet closes and toasts; no inline success line.
+  expect(result.current.outcome).toBeUndefined();
   // The saved copy is the new base: saving again changes nothing.
   await act(async () => {
     r = await result.current.submit(onSubmit);

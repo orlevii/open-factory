@@ -14,6 +14,7 @@ export function SheetFormFooter({
   left,
   note,
   submitClassName,
+  above,
 }: {
   submitLabel: string;
   pendingLabel: string;
@@ -24,9 +25,14 @@ export function SheetFormFooter({
   note?: ReactNode;
   /** e.g. a min width that fits the pending label, so the button doesn't change width while pending. */
   submitClassName?: string;
+  /** A muted line on its own row above the buttons (Edit agent's restart notice). */
+  above?: ReactNode;
 }) {
   return (
     <SheetFooter>
+      {above && (
+        <p className="w-full text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{above}</p>
+      )}
       {(left || note || restored) && (
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground @sm:mr-auto">
           {left}

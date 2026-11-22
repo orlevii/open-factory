@@ -75,7 +75,6 @@ function setup(props: Parameters<typeof Harness>[0]) {
     routeTree: root.addChildren([
       stub("/tasks"),
       stub("/agents/$slug"),
-      stub("/agents/$slug/edit"),
       stub("/agents/$slug/usage"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
@@ -337,6 +336,22 @@ test("New task and New schedule open their sheets prefilled with the agent", asy
     expect(getSheetState().parent).toMatchObject({ kind: "new-schedule", target: "dev" }),
   );
 });
+
+test.each(["session", "sidebar", "list"] as const)(
+  "Edit (%s) is a plain item that opens Edit agent",
+  async (context) => {
+    setup({ agent: agentSummary(), context });
+    const u = userEvent.setup();
+    const menu = await openMenu(u);
+    const edit = within(menu).getByRole("menuitem", { name: "Edit" });
+    expect(edit.tagName).not.toBe("A");
+    expect(edit).not.toHaveAttribute("href");
+    await u.click(edit);
+    await vi.waitFor(() =>
+      expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" }),
+    );
+  },
+);
 
 test("Archive… archives at once (no confirmation, as before) and toasts with an Undo that restores", async () => {
   const api = mockApi({

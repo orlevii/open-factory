@@ -4,16 +4,25 @@ import { expect, test } from "vitest";
 import { SRC, sourceFiles } from "./ui-contract-files";
 
 // Spec §2.1: nothing in the app navigates to a form URL; the legacy routes only redirect (§5.4).
-// The edit URLs join this list when their sheets land (Edit agent, PR2 Task 23).
-const FORM_URLS = ["/agents/new", "/tasks/new", "/schedules/new", "/templates/new"];
+// The edit URLs joined with Edit agent's sheet (PR2 Task 23).
+const FORM_URLS = [
+  "/agents/new",
+  "/tasks/new",
+  "/schedules/new",
+  "/templates/new",
+  "/agents/$slug/edit",
+  "/schedules/$key",
+];
 const REDIRECTS = new Set([
   "routes/_app/agents.new.tsx",
   "routes/_app/tasks.new.tsx",
   "routes/_app/schedules.new.tsx",
   "routes/_app/templates.new.tsx",
+  "routes/_app/agents.$slug_.edit.tsx",
+  "routes/_app/schedules.$key.tsx",
 ]);
 
-test("no in-app link, navigate or palette action points at a create form URL", () => {
+test("no in-app link, navigate or palette action points at a form URL", () => {
   const hits: string[] = [];
   for (const file of sourceFiles()) {
     const rel = relative(SRC, file);

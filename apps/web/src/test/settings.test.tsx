@@ -2,6 +2,7 @@ import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-fac
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
+import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -12,7 +13,10 @@ vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  resetSheets();
+  vi.unstubAllGlobals();
+});
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 const cred = (o: Partial<CredentialSummary> = {}): CredentialSummary => ({
@@ -288,11 +292,12 @@ test("a credential taken while the dialog was open shows a crimson row line link
     .getAllByRole("alert")
     .find((a) => a.textContent?.includes("Change their credential first.")) as HTMLElement;
   expect(alert).toHaveTextContent("Used by @lead. Change their credential first.");
-  expect(within(alert).getByRole("link", { name: "@lead" })).toHaveAttribute(
-    "href",
-    "/agents/lead/edit",
-  );
   await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  // The agent's handle opens Edit agent over Settings, where the fix is made.
+  const handle = within(alert).getByRole("button", { name: "@lead" });
+  expect(handle).toHaveAttribute("type", "button");
+  await userEvent.click(handle);
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "lead" });
 });
 
 test("secrets are write-only rows; Update saves a new value and says who restarts", async () => {

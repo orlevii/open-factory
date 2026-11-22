@@ -139,6 +139,8 @@ export const templateDetailSchema = z.object({
   issues: z.array(templateIssueSchema),
   agents: z.array(z.string()),
   imageStatus: imageStatusSchema.optional(),
+  /** U2 §15.3: the folder's `avatar.svg` version (null when absent or rejected) and whether it is over 256 KB. */
+  avatar: z.object({ version: z.string().nullable(), tooLarge: z.boolean() }),
 });
 export type TemplateDetail = z.infer<typeof templateDetailSchema>;
 export const templateDetailResponseSchema = z.object({ template: templateDetailSchema });

@@ -185,3 +185,19 @@ test("admin frames invalidate their keys; build log batches don't", async () => 
   expect(images()).toBe(2);
   expect(keys()).toContain("templates");
 });
+
+test("unmounting the layout flushes queued status frames and stops listening for visibilitychange", async () => {
+  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  const { unmount, queryClient: qc } = renderApp("/inbox", alice);
+  await screen.findByText("probe 0");
+  qc.setQueryData(["agents", "exclude"], [{ slug: "dev", status: "idle", turnOpen: false }]);
+  const removed = vi.spyOn(document, "removeEventListener");
+  // Queued for the next animation frame, which never runs before the unmount below.
+  act(() => h.opts?.onMessage?.(status("dev", true)));
+  const listed = () => qc.getQueryData<{ status: string }[]>(["agents", "exclude"])?.[0]?.status;
+  expect(listed()).toBe("idle");
+  unmount();
+  expect(listed()).toBe("working");
+  expect(removed.mock.calls.some(([type]) => type === "visibilitychange")).toBe(true);
+  removed.mockRestore();
+});

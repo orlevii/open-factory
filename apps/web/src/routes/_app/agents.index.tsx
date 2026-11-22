@@ -12,7 +12,6 @@ import { AgentTree } from "@/features/agents/agent-tree";
 import { agentsListQueryOptions } from "@/features/agents/api";
 import { PrerequisiteLine, usePrerequisites } from "@/features/agents/prerequisites";
 import { endedMoreQueryOptions, runningQueryOptions } from "@/features/session/api";
-import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 import { agentsUsageQuery } from "@/features/usage/api";
 
 export const Route = createFileRoute("/_app/agents/")({
@@ -35,7 +34,6 @@ export const Route = createFileRoute("/_app/agents/")({
 });
 
 function AgentsPage() {
-  useAgentStatusFrames();
   const { ended, justArchived } = Route.useSearch();
   const filter = ended ?? "exclude";
   const { data: agents, isError } = useQuery(agentsListQueryOptions(filter));

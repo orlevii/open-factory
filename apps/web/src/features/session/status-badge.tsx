@@ -1,4 +1,5 @@
 import type { AgentStatus } from "@open-factory/shared";
+import { StatusMark } from "../../components/agent-avatar";
 import { formatResetTime } from "./format";
 
 const SHORT: Record<AgentStatus, string> = {
@@ -11,14 +12,9 @@ const SHORT: Record<AgentStatus, string> = {
   terminated: "Terminated",
 };
 
-/** `working` is the tooth and `terminated` an end state with no dot (S7 UI design §2), like Archived. */
-const TOKEN: Record<Exclude<AgentStatus, "working" | "terminated">, string> = {
-  hibernated: "hibernated",
-  queued: "queued",
-  idle: "idle",
-  rate_limited: "rate-limited",
-  errored: "errored",
-};
+/** `working`, `queued`, `rate_limited` and `errored` draw their shared `StatusMark`; `terminated` an end state with no dot (S7 UI design §2), like Archived. */
+const TOKEN = { hibernated: "hibernated", idle: "idle" } as const;
+const TOKEN_REST = new Set<AgentStatus>(["hibernated", "idle"]);
 
 type ResetInput = { rateLimitedUntil?: string | Date; rateLimitExact?: boolean };
 
@@ -73,14 +69,14 @@ export function StatusBadge({
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] whitespace-nowrap">
       <span aria-hidden="true" className="inline-flex size-3 items-center justify-center">
-        {status === "working" ? (
-          <span className="of-tooth" />
-        ) : status === "terminated" ? null : (
+        {status === "terminated" ? null : TOKEN_REST.has(status) ? (
           <span
             data-status-dot
             className="size-1.5 rounded-full"
-            style={{ background: `var(--status-${TOKEN[status]})` }}
+            style={{ background: `var(--status-${TOKEN[status as keyof typeof TOKEN]})` }}
           />
+        ) : (
+          <StatusMark status={status} size={6} />
         )}
       </span>
       {statusLabel(status, size, { rateLimitedUntil, rateLimitExact })}

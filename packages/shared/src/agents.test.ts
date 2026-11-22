@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   agentListQuerySchema,
+  agentSummarySchema,
   patchAgentBodySchema,
   spawnAgentToolSchema,
   terminateAgentToolSchema,
@@ -34,4 +35,10 @@ test("list query: ended defaults to exclude", () => {
 });
 test("list query: the old ?archived= parameter is rejected, not ignored", () => {
   expect(agentListQuerySchema.safeParse({ archived: "only" }).success).toBe(false);
+});
+
+test("agent summary avatarVersion defaults to null", () => {
+  const base = agentSummarySchema.shape;
+  expect(base.avatarVersion.parse(undefined)).toBeNull();
+  expect(base.avatarVersion.parse("v1")).toBe("v1");
 });

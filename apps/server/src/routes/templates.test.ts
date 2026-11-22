@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
@@ -90,4 +91,71 @@ test("validate returns issues; delete removes the folder", async () => {
 
 test("unauthenticated → 401", async () => {
   expect((await h.app.inject({ method: "GET", url: "/api/templates" })).statusCode).toBe(401);
+});
+
+test("avatar route: headers, 404 when absent, 400 invalid name, 404 unknown", async () => {
+  expect((await post("/api/templates", { name: "test", displayName: "Test" })).statusCode).toBe(
+    201,
+  );
+  await h.seedAgent({ slug: "pic" });
+  const tplDir = path.join(h.factoryHome, "templates/test");
+  const avatarOf = async () =>
+    (await get("/api/agents")).json().agents.find((a: { slug: string }) => a.slug === "pic")
+      .avatarVersion;
+  expect((await get("/api/templates/test/avatar.svg")).statusCode).toBe(404);
+  expect((await get("/api/templates/test")).json().template.avatar).toEqual({
+    version: null,
+    tooLarge: false,
+  });
+  expect(await avatarOf()).toBeNull();
+
+  writeFileSync(path.join(tplDir, "avatar.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+  const r = await get("/api/templates/test/avatar.svg");
+  expect(r.statusCode).toBe(200);
+  expect(r.headers["content-type"]).toMatch(/^image\/svg\+xml/);
+  expect(r.headers["x-content-type-options"]).toBe("nosniff");
+  expect(r.headers["content-security-policy"]).toBe(
+    "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  );
+  expect(r.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+  const version = (await get("/api/templates/test")).json().template.avatar.version;
+  expect(version).toMatch(/^\d+-\d+$/);
+  expect(r.headers.etag).toBe(`"${version}"`);
+  expect(r.body).toBe("<svg xmlns='http://www.w3.org/2000/svg'/>");
+  expect(await avatarOf()).toBe(version);
+
+  expect((await get("/api/templates/nope/avatar.svg")).statusCode).toBe(404);
+  for (const url of [
+    "/api/templates/..%2Fx/avatar.svg",
+    "/api/templates/..%2F..%2Fetc/avatar.svg",
+    "/api/templates/%2Ftmp/avatar.svg",
+    "/api/templates/Test/avatar.svg",
+  ])
+    expect((await get(url)).statusCode).toBe(400);
+  expect(
+    (await h.app.inject({ method: "GET", url: "/api/templates/test/avatar.svg" })).statusCode,
+  ).toBe(401);
+
+  // A symlink, inside or outside the folder, is absent: 404, and the agent list reports null.
+  const outside = mkdtempSync(path.join(tmpdir(), "out-"));
+  writeFileSync(path.join(outside, "secret.svg"), "<svg>secret</svg>");
+  for (const target of [path.join(outside, "secret.svg"), path.join(tplDir, "template.yaml")]) {
+    rmSync(path.join(tplDir, "avatar.svg"));
+    symlinkSync(target, path.join(tplDir, "avatar.svg"));
+    const s = await get("/api/templates/test/avatar.svg");
+    expect(s.statusCode).toBe(404);
+    expect(s.body).not.toContain("secret");
+    expect(await avatarOf()).toBeNull();
+    expect((await get("/api/templates/test")).json().template.avatar.version).toBeNull();
+  }
+
+  // Too large: 404, version null, tooLarge on the detail.
+  rmSync(path.join(tplDir, "avatar.svg"));
+  writeFileSync(path.join(tplDir, "avatar.svg"), "x".repeat(256 * 1024 + 1));
+  expect((await get("/api/templates/test/avatar.svg")).statusCode).toBe(404);
+  expect((await get("/api/templates/test")).json().template.avatar).toEqual({
+    version: null,
+    tooLarge: true,
+  });
+  expect(await avatarOf()).toBeNull();
 });

@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { PrincipalChip } from "@/components/agent-chip";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -23,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
-import { AgentLink, LINK_CLASS } from "@/features/session/message-block";
+import { LINK_CLASS } from "@/features/session/message-block";
 import { formatCostEst } from "@/features/usage/format";
 import { sessionQueryOptions } from "@/lib/session";
 import {
@@ -635,11 +636,9 @@ function SideRest({ task, save }: { task: Detail; save: Save }) {
       )}
       <SideSection label="Created by">
         <p className="text-[0.8125rem] leading-[1.125rem]">
-          {task.createdBy.kind === "agent" ? (
-            <AgentLink slug={task.createdBy.slug} />
-          ) : (
-            <span className="font-mono">@{task.createdBy.handle}</span>
-          )}
+          <span data-created-by className="inline-flex items-center align-middle">
+            <PrincipalChip principal={task.createdBy} size={20} link />
+          </span>
           {" · "}
           <time
             dateTime={task.createdAt}

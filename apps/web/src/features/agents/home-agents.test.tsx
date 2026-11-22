@@ -2,6 +2,7 @@ import type { AgentSummary, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
+import { enqueueStatusFrame, flushStatusFrames } from "@/features/agents/status-frames";
 import { agentsQueryOptions } from "@/features/session/api";
 import { createQueryClient } from "@/lib/query-client";
 import { WsContext, type WsHub } from "@/lib/ws-context";
@@ -43,7 +44,13 @@ async function setup(agents: AgentSummary[] | "pending" | "error") {
     </QueryClientProvider>,
   );
   await screen.findByRole("region", { name: "panel" });
-  const push = (m: ServerMessage) => act(() => listener(m));
+  // The shell enqueues status frames; the flush lands them (AppLayout is not mounted here).
+  const push = (m: ServerMessage) =>
+    act(() => {
+      enqueueStatusFrame(qc, m);
+      flushStatusFrames();
+      listener(m);
+    });
   return { qc, view, push };
 }
 const statusFrame = (agent: string, status: AgentSummary["status"]): ServerMessage => ({
@@ -175,7 +182,7 @@ test("an agent appearing while frozen is appended last", async () => {
   await waitFor(() => expect(slugs()).toEqual(["w-1", "idle-1", "new"]));
 });
 
-test("agent_status frames update rows live (Home mounts the status listener)", async () => {
+test("agent_status frames update rows live (folded in by the shell)", async () => {
   const { push } = await setup(fleet());
   expect(slugs()).toEqual(["w-1", "idle-1"]);
   push(statusFrame("idle-1", "errored"));

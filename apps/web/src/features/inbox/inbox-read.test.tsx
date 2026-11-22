@@ -1,9 +1,11 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { inboxQueryKey, unreadQueryKey, useInboxCache } from "./api";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({ push: (_m: ServerMessage) => {} }));
@@ -247,4 +249,62 @@ test("Home's panel shows the 5 newest unread with the same opening behaviour, or
   expect(w.api.calls.some((c) => c.url === "/api/inbox?unread=true&limit=5")).toBe(true);
   await userEvent.click(within(list).getAllByRole("link")[0] as HTMLElement);
   expect(await screen.findByRole("link", { name: "Inbox, 6 unread" })).toBeInTheDocument();
+});
+
+describe("per-agent unread in the cache", () => {
+  const mk = () => {
+    const qc = new QueryClient();
+    qc.setQueryData(unreadQueryKey, { count: 3, byAgent: { ada: 2 } });
+    qc.setQueryData(inboxQueryKey, {
+      pages: [
+        {
+          items: [
+            item(1, { from: { kind: "agent", name: "ada" } }),
+            item(2, { from: { kind: "agent", name: "ada" } }),
+            item(3, { from: { kind: "agent", name: "bob" } }),
+          ],
+          nextCursor: null,
+        },
+      ],
+      pageParams: [undefined],
+    });
+    const { result } = renderHook(() => useInboxCache(), {
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    });
+    return { qc, cache: result.current };
+  };
+
+  test("opening a row keeps byAgent and decrements its sender", () => {
+    const { qc, cache } = mk();
+    cache.setRead(new Set(["i1"]), true, -1, [
+      item(1, { from: { kind: "agent", name: "ada" } }) as never,
+    ]);
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 2, byAgent: { ada: 1 } });
+  });
+
+  test("mark all read leaves byAgent for the refetch", () => {
+    const { qc, cache } = mk();
+    cache.setRead(new Set(["i1", "i2", "i3"]), true, -3);
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 0, byAgent: { ada: 2 } });
+  });
+
+  test("readFrom flips that sender's cached rows and zeroes its count", () => {
+    const { qc, cache } = mk();
+    cache.readFrom("ada");
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 1, byAgent: { ada: 0 } });
+    const d = qc.getQueryData<{ pages: { items: { id: string; read: boolean }[] }[] }>(
+      inboxQueryKey,
+    );
+    expect(d?.pages[0]?.items.map((i) => i.read)).toEqual([true, true, false]);
+  });
+
+  test("the cache object is stable across renders", () => {
+    const qc = new QueryClient();
+    const { result, rerender } = renderHook(() => useInboxCache(), {
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    });
+    const first = result.current;
+    rerender();
+    expect(result.current).toBe(first);
+  });
 });

@@ -58,6 +58,8 @@ export const agentSummarySchema = z.object({
   reports: z.number().int().nonnegative().default(0),
   /** S8: open and in-progress tasks assigned to it (the session strip's link). */
   openTasks: z.number().int().nonnegative().default(0),
+  /** U2: the avatar's cache-busting version, null when the agent has no avatar. */
+  avatarVersion: z.string().nullable().default(null),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
   grantsOverridden: z.boolean(),

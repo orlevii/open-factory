@@ -14,8 +14,10 @@ import type { FastifyRequest } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
+import { ApiError } from "../errors.ts";
 import { statusMemo, templateImageStatus } from "../images/status.ts";
 import type { DockerClient } from "../runtime/docker/client.ts";
+import { readAvatar } from "../templates/avatar.ts";
 
 const params = z.object({ name: nameSchema });
 const fileParams = z.object({ name: nameSchema, file: templateFileSchema });
@@ -80,6 +82,24 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
       return { template: { ...template, ...(imageStatus ? { imageStatus } : {}) } };
     },
   );
+
+  /**
+   * U2 §15.3: the template's `avatar.svg`, served from the handle the symlink checks ran on (`readAvatar`). The path
+   * comes from the index entry, never the URL; anything absent, rejected or over 256 KB is 404. The SVG is locked down:
+   * no sniffing, and a CSP that forbids scripts and fetches and sandboxes it even when opened directly.
+   */
+  app.get("/api/templates/:name/avatar.svg", { schema: { params } }, async (req, reply) => {
+    const row = await app.templates.scanOne(req.params.name);
+    const avatar = row ? await readAvatar(row.path, app.templates.dir) : null;
+    if (!avatar) throw new ApiError(404, "avatar_not_found", "This template has no avatar.");
+    return reply
+      .header("Content-Type", "image/svg+xml")
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+      .header("Cache-Control", "private, max-age=31536000, immutable")
+      .header("ETag", `"${avatar.version}"`)
+      .send(avatar.body);
+  });
 
   app.post(
     "/api/templates",

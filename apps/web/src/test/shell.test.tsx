@@ -5,19 +5,26 @@ import sidebarSource from "@/components/ui/sidebar.tsx?raw";
 import { installInputModality } from "@/lib/input-modality";
 import type { WsOptions, WsStatus } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
+import { agentSummary } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
-const ws = vi.hoisted(() => ({ onStatus: undefined as ((s: WsStatus) => void) | undefined }));
+const ws = vi.hoisted(() => ({
+  onStatus: undefined as ((s: WsStatus) => void) | undefined,
+  onMessage: undefined as ((m: unknown) => void) | undefined,
+}));
 vi.mock("@/lib/ws", () => ({
   connectWs: (opts: WsOptions) => {
     ws.onStatus = opts.onStatus;
+    ws.onMessage = opts.onMessage as ((m: unknown) => void) | undefined;
     return { close() {}, status: () => "connecting", send: () => true };
   },
 }));
 
 beforeEach(() => {
   ws.onStatus = undefined;
+  ws.onMessage = undefined;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -64,8 +71,8 @@ test("activating the skip link focuses main without navigating", async () => {
 test("the active section link is marked aria-current=page", async () => {
   renderApp("/agents", alice);
   const nav = await screen.findByRole("navigation", { name: "Main" });
-  expect(within(nav).getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
   expect(within(nav).getByRole("link", { name: "Inbox" })).not.toHaveAttribute("aria-current");
+  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
 
 test("an unknown path shows the not-found state with a way home", async () => {
@@ -182,4 +189,191 @@ test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens ins
     off();
     window.matchMedia = original;
   }
+});
+
+test("an agent_status frame pushed through the ws onMessage updates the agent row after one frame", async () => {
+  mockApi({
+    "GET /api/agents?": () =>
+      json({
+        agents: [agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" })],
+        running: { count: 1, max: 8 },
+      }),
+  });
+  renderApp("/", alice);
+  const row = await screen.findByRole("link", { name: /Dev agent/ });
+  expect(within(row).getByText("Working")).toBeInTheDocument();
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "idle",
+      turnOpen: false,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  // Coalesced: the write lands on the next animation frame, not synchronously.
+  expect(within(row).getByText("Working")).toBeInTheDocument();
+  expect(await within(row).findByText("Idle")).toBeInTheDocument();
+});
+
+const liveAgents = () =>
+  mockApi({
+    "GET /api/agents?": () =>
+      json({
+        agents: [
+          agentSummary({ slug: "dev", displayName: "Dev agent" }),
+          agentSummary({ slug: "qa", displayName: "QA agent", reportsTo: "dev" }),
+        ],
+        running: { count: 0, max: 8 },
+      }),
+  });
+
+test("nav order: Inbox, Tasks, Templates, Schedules, Settings, then the Agents row heading the tree", async () => {
+  liveAgents();
+  localStorage.clear();
+  renderApp("/inbox", alice);
+  const nav = await screen.findByRole("navigation", { name: "Main" });
+  expect(
+    within(nav)
+      .getAllByRole("link")
+      .map((l) => l.getAttribute("href")),
+  ).toEqual(["/inbox", "/tasks", "/templates", "/schedules", "/settings"]);
+  const agents = screen.getByRole("link", { name: "Agents" });
+  expect(nav.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const tree = await screen.findByRole("tree", { name: "Agents" });
+  expect(agents.compareDocumentPosition(tree) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("on a live agent's session the Agents row is not active and the agent row is", async () => {
+  liveAgents();
+  renderApp("/agents/dev", alice);
+  const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
+  expect(row).toHaveAttribute("aria-current", "page");
+  // The list lands for the tree and the sidebar's liveness select in separate notifications.
+  await vi.waitFor(() =>
+    expect(screen.getByRole("link", { name: "Agents" })).not.toHaveAttribute("aria-current"),
+  );
+});
+
+test("on an ended agent's session the Agents row is active", async () => {
+  liveAgents();
+  renderApp("/agents/gone", alice);
+  await screen.findByRole("tree", { name: "Agents" });
+  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
+});
+
+test("the Agents row is not active while the agents list is still loading, then follows the session", async () => {
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  mockApi({
+    "GET /api/agents?": async () => {
+      await gate;
+      return json({
+        agents: [agentSummary({ slug: "dev", displayName: "Dev agent" })],
+        running: { count: 0, max: 8 },
+      });
+    },
+  });
+  renderApp("/agents/gone", alice);
+  const agents = await screen.findByRole("link", { name: "Agents" });
+  expect(agents).not.toHaveAttribute("aria-current");
+  await act(async () => release?.());
+  await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
+});
+
+test("on a live session the Agents row is active while the tree is collapsed", async () => {
+  liveAgents();
+  localStorage.setItem("of-tree-collapsed", "true");
+  renderApp("/agents/dev", alice);
+  const agents = await screen.findByRole("link", { name: "Agents" });
+  await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
+  expect(screen.queryByRole("tree")).toBeNull();
+  // Expanding the tree hands the highlight back to the agent's own row.
+  await userEvent.click(screen.getByRole("button", { name: "Expand agents" }));
+  expect(await screen.findByRole("treeitem", { name: /^Dev agent/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await vi.waitFor(() => expect(agents).not.toHaveAttribute("aria-current"));
+});
+
+test("Agents row: label links /agents, chevron collapses the whole tree (of-tree-collapsed), + links /agents/new", async () => {
+  liveAgents();
+  localStorage.clear();
+  renderApp("/inbox", alice);
+  expect(await screen.findByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+  expect(screen.getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/agents/new");
+  await screen.findByRole("tree", { name: "Agents" });
+  const chevron = screen.getByRole("button", { name: "Collapse agents" });
+  expect(chevron).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(chevron);
+  expect(screen.queryByRole("tree")).toBeNull();
+  expect(localStorage.getItem("of-tree-collapsed")).toBe("true");
+  const open = screen.getByRole("button", { name: "Expand agents" });
+  expect(open).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(open);
+  expect(await screen.findByRole("tree", { name: "Agents" })).toBeInTheDocument();
+});
+
+test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/badge-worthy avatars; tooltip 'Name · @slug · Status'", async () => {
+  mockApi({
+    "GET /api/agents?": () =>
+      json({
+        agents: [
+          agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" }),
+          agentSummary({ slug: "idle", displayName: "Idle agent", status: "idle" }),
+        ],
+        running: { count: 1, max: 8 },
+      }),
+  });
+  renderApp("/inbox", alice);
+  await screen.findByRole("tree", { name: "Agents" });
+  await userEvent.keyboard("{Meta>}b{/Meta}");
+  const rail = await screen.findByRole("navigation", { name: "Agents" });
+  expect(
+    within(rail)
+      .getAllByRole("link")
+      .map((l) => l.getAttribute("href")),
+  ).toEqual(["/agents/dev"]);
+  const nav = screen.getByRole("navigation", { name: "Main" });
+  const agentsIcon = screen.getByRole("link", { name: "Agents" });
+  expect(agentsIcon).toHaveAttribute("href", "/agents");
+  const rule = screen.getByRole("separator");
+  expect(nav.compareDocumentPosition(rule) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rule.compareDocumentPosition(agentsIcon) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(agentsIcon.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The row's chevron and + do not fit the rail.
+  expect(screen.queryByRole("button", { name: /agents$/ })).toBeNull();
+  const avatar = within(rail).getByRole("link").querySelector("span.relative");
+  await userEvent.hover(avatar as Element);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Dev agent · @dev · Working");
+});
+
+test("mobile drawer: tapping an agent closes the drawer", async () => {
+  liveAgents();
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true);
+  try {
+    renderApp("/inbox", alice);
+    await screen.findByRole("heading", { level: 1, name: "Inbox" });
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    const node = () => document.querySelector<HTMLElement>("[data-slot=drawer-content]");
+    await userEvent.click(await screen.findByRole("treeitem", { name: /^Dev agent/ }));
+    await vi.waitFor(() => expect(node()?.getAttribute("data-state")).not.toBe("open"));
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+test("footer name and handle get a tooltip when truncated", async () => {
+  liveAgents();
+  renderApp("/inbox", alice);
+  const handle = await screen.findByText("@alice", { selector: "span.truncate" });
+  vi.spyOn(handle, "scrollWidth", "get").mockReturnValue(200);
+  vi.spyOn(handle, "clientWidth", "get").mockReturnValue(100);
+  await userEvent.hover(handle);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("@alice");
 });

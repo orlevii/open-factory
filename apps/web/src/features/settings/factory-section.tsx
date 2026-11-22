@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { runningQueryOptions } from "@/features/session/api";
-import { useAgentStatusFrames } from "@/features/session/use-agent-status";
 import { factorySettingsQueryOptions, patchFactorySettings } from "./api";
 import { CodeText, SettingsSection, smallClass } from "./shared";
 
@@ -58,7 +57,6 @@ const LABELS: Record<Field, string> = {
 
 /** "3 of 8 running": the list fetch seeds it, `supervisor` frames keep it live. */
 function RunningCount() {
-  useAgentStatusFrames();
   const { data } = useQuery(runningQueryOptions);
   if (!data) return null;
   return (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { FormField } from "@/components/form-field";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
@@ -39,10 +39,15 @@ export function AddressLine({
   const [open, setOpen] = useState(false);
   const [avatarSlug, settleAvatar] = useDeferredSettle(shown, SETTLE_MS);
 
-  // State-only guard: a force request opens the field once, then reports it.
-  if (forceOpen && !open) setOpen(true);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // State-only guard: a force request or an error opens the field (a closed line would hide it).
+  if ((forceOpen || error) && !open) setOpen(true);
+  // A force request also moves focus, whether the field just opened or already was.
   useEffect(() => {
-    if (forceOpen) onOpened?.();
+    if (!forceOpen) return;
+    inputRef.current?.focus();
+    onOpened?.();
   }, [forceOpen, onOpened]);
 
   if (open) {
@@ -56,6 +61,7 @@ export function AddressLine({
             name="slug"
             label="Slug"
             prefix="@"
+            ref={inputRef}
             autoFocus
             autoComplete="off"
             spellCheck={false}

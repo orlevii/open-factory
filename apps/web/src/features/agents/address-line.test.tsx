@@ -8,6 +8,7 @@ import { agentSummary } from "@/test/session-fixtures";
 import { AddressLine } from "./address-line";
 
 afterEach(() => {
+  opened.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -26,6 +27,8 @@ function routes(taken: string[] = []) {
   });
 }
 
+const opened = vi.fn();
+
 function Harness({
   initialName = "",
   forceOpen = false,
@@ -42,6 +45,9 @@ function Harness({
   return (
     <>
       <input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
+      <button type="button" onClick={() => setForce(true)}>
+        Force
+      </button>
       <AddressLine
         name={name}
         slug={slug}
@@ -52,7 +58,10 @@ function Harness({
         }}
         error={error}
         forceOpen={force}
-        onOpened={() => setForce(false)}
+        onOpened={() => {
+          opened();
+          setForce(false);
+        }}
       />
     </>
   );
@@ -115,6 +124,34 @@ test("forceOpen opens the input focused, with its error, and reports it", async 
   const input = await screen.findByLabelText("Slug");
   expect(input).toHaveFocus();
   expect(screen.getByText("Pick an address.")).toBeInTheDocument();
+  await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+});
+
+test("forceOpen after the Name blurred moves focus to the slug input", async () => {
+  const user = userEvent.setup();
+  setup({ initialName: "" });
+  await user.click(screen.getByLabelText("Name"));
+  await user.tab();
+  await user.click(screen.getByRole("button", { name: "Force" }));
+  expect(await screen.findByLabelText("Slug")).toHaveFocus();
+  expect(opened).toHaveBeenCalledTimes(1);
+});
+
+test("forceOpen with the field already open (via Change) refocuses it", async () => {
+  const user = userEvent.setup();
+  setup({ initialName: "Priya" });
+  await user.click(screen.getByRole("button", { name: "Change" }));
+  await user.click(screen.getByLabelText("Name"));
+  expect(screen.getByLabelText("Name")).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Force" }));
+  await waitFor(() => expect(screen.getByLabelText("Slug")).toHaveFocus());
+  expect(opened).toHaveBeenCalledTimes(1);
+});
+
+test("an error opens the field even without forceOpen", () => {
+  setup({ initialName: "Priya", error: "That address is taken." });
+  expect(screen.getByLabelText("Slug")).toBeInTheDocument();
+  expect(screen.getByText("That address is taken.")).toBeInTheDocument();
 });
 
 test("the avatar's slug settles after 300ms without typing", async () => {

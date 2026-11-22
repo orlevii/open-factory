@@ -945,6 +945,9 @@ test("a long-press on a tool row opens its menu without re-rendering any row", a
   expect(await screen.findByRole("menu")).toBeInTheDocument();
   expect(tool).toHaveAttribute("aria-expanded", "false");
   expect(count.rows.size).toBe(0);
-  // Only that row's menu mounted: every other ⋯ is still a plain button.
-  expect(document.querySelectorAll('[data-slot="dropdown-menu-trigger"]')).toHaveLength(1);
+  // Only that row's menu mounted: its ⋯ and the stand-in at the pressed point; every other ⋯ is still a plain button.
+  expect(
+    document.querySelectorAll('[data-slot="dropdown-menu-trigger"]:not([data-menu-stand-in])'),
+  ).toHaveLength(1);
+  expect(document.querySelectorAll("[data-menu-stand-in]")).toHaveLength(1);
 });

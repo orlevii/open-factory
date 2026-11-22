@@ -262,7 +262,8 @@ const AgentTreeRow = memo(function AgentTreeRow({
           </span>
         )}
       </Link>
-      {/* A sibling of the link, never inside it: one shared menu opens on it (U4 §6.5). */}
+      {/* A sibling of the link, never inside it: one shared menu opens on it (U4 §6.5). 32px on coarse pointers, so
+          its expander reaches 4px, no further than its margin: it never covers the link (U4 §11.3). */}
       <Button
         type="button"
         variant="ghost"
@@ -271,7 +272,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         data-row-more={a.slug}
-        className="mx-1 shrink-0 text-muted-foreground"
+        className="mx-1 shrink-0 text-muted-foreground pointer-coarse:size-8"
         onClick={(e) => onMenu(a.slug, e.currentTarget)}
       >
         <MoreHorizontal aria-hidden="true" />

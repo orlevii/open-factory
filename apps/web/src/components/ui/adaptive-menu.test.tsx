@@ -460,3 +460,61 @@ test("on a phone, closing the drawer with no handoff returns focus to the trigge
   await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
   await waitFor(() => expect(trigger()).toHaveFocus());
 });
+
+/** A long-press sets the anchor; the menu's own opening (the trigger) drops it, as RowMenu and AgentMenu do. */
+function LatchedAnchor() {
+  const [menu, setMenu] = useState<{ open: boolean; anchor?: { x: number; y: number } }>({ open: false });
+  return (
+    <>
+      <button type="button" onClick={() => setMenu({ open: true, anchor: { x: 40, y: 120 } })}>
+        Long-press
+      </button>
+      <AdaptiveMenu
+        title="Priya Nair"
+        open={menu.open}
+        onOpenChange={(open) => setMenu((m) => (open ? { open } : { ...m, open }))}
+        anchor={menu.anchor}
+      >
+        <AdaptiveMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label="Actions for Priya Nair">
+            <MoreHorizontal aria-hidden="true" />
+          </Button>
+        </AdaptiveMenuTrigger>
+        <AdaptiveMenuContent>
+          <AdaptiveMenuItem onSelect={() => {}}>Edit</AdaptiveMenuItem>
+        </AdaptiveMenuContent>
+      </AdaptiveMenu>
+    </>
+  );
+}
+const more = () => screen.getByRole("button", { name: "Actions for Priya Nair", hidden: true });
+
+test("anchored, closing with no handoff returns focus to the visible trigger, not the stand-in", async () => {
+  desktop();
+  render(<LatchedAnchor />);
+  fireEvent.click(screen.getByRole("button", { name: "Long-press" }));
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(more()).toHaveFocus());
+});
+
+test("the visible trigger keeps its element across an anchored then a plain opening", async () => {
+  desktop();
+  render(<LatchedAnchor />);
+  const before = more();
+  fireEvent.click(screen.getByRole("button", { name: "Long-press" }));
+  expect(document.querySelector("[data-menu-stand-in]")).not.toBeNull();
+  expect(more()).toBe(before);
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // The anchor stays latched through the close; the trigger's own opening drops it.
+  mouseDown(more());
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  expect(document.querySelector("[data-menu-stand-in]")).toBeNull();
+  expect(more()).toBe(before);
+  expect(more()).toHaveAttribute("aria-expanded", "true");
+  // Radix's own focus return finds the visible trigger again once the stand-in is gone.
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(more()).toHaveFocus());
+});

@@ -119,45 +119,55 @@ function AdaptiveMenuTrigger({
     },
     [ref, triggerRef],
   );
+  // Swapped in while a stand-in is mounted, so the visible trigger's refs re-attach whenever the stand-in comes
+  // or goes: Radix anchors to (and returns focus to) the trigger whose ref attached last.
+  const setRefBesideStandIn = React.useCallback((el: HTMLButtonElement | null) => setRef(el), [setRef]);
   // Set by a touch or pen pointerdown, read by the click it produces. Written only in handlers.
   const tapping = React.useRef(false);
-  // A long-press opening on desktop: Radix anchors to its trigger, so the trigger is a stand-in at the
-  // point and the visible control opens the menu itself.
+  // A long-press opening on desktop: Radix anchors to its trigger, so a second trigger is a stand-in at the
+  // point, mounted after the visible one so its ref attaches last, and the visible control opens the menu itself.
   const standIn = !mobile && anchor !== undefined;
   const state = open ? "open" : "closed";
-  const shared = {
-    "aria-expanded": open,
-    "data-state": state,
-    // On a phone it opens a drawer (a dialog), and the dropdown content it would control never renders.
-    ...(mobile ? { "aria-haspopup": "dialog" as const, "aria-controls": undefined } : null),
-    onPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
-      onPointerDown?.(e);
-      if (e.defaultPrevented) return;
-      if (e.pointerType !== "mouse") {
-        tapping.current = true;
-        // Radix's trigger skips its own open when the event is default-prevented.
-        e.preventDefault();
-        return;
-      }
-      tapping.current = false;
-      // Closing is left to the dropdown's own outside-pointerdown, so onOpenChange(false) fires once.
-      if (standIn && !open && e.button === 0 && !e.ctrlKey) {
-        e.preventDefault();
-        setOpen(true);
-      }
-    },
-    onClick(e: React.MouseEvent<HTMLButtonElement>) {
-      onClick?.(e);
-      if (e.defaultPrevented || !tapping.current) return;
-      tapping.current = false;
-      setOpen(!open);
-    },
-  };
-  if (standIn && anchor) {
-    const Comp = asChild ? Slot.Root : "button";
-    return (
-      <>
-        <DropdownMenuTrigger asChild>
+  return (
+    <>
+      {/* Always first and always a Radix trigger, so dropping a latched anchor never remounts the control. */}
+      <DropdownMenuTrigger
+        asChild={asChild}
+        {...props}
+        ref={standIn ? setRefBesideStandIn : setRef}
+        aria-expanded={open}
+        data-state={state}
+        // On a phone it opens a drawer (a dialog), and the dropdown content it would control never renders.
+        {...(mobile ? { "aria-haspopup": "dialog" as const, "aria-controls": undefined } : null)}
+        onPointerDown={(e: React.PointerEvent<HTMLButtonElement>) => {
+          onPointerDown?.(e);
+          if (e.defaultPrevented) return;
+          if (e.pointerType !== "mouse") {
+            tapping.current = true;
+            // Radix's trigger skips its own open when the event is default-prevented.
+            e.preventDefault();
+            return;
+          }
+          tapping.current = false;
+          if (!standIn || e.button !== 0 || e.ctrlKey) return;
+          // Radix would toggle its menu, which hangs from the stand-in. Closing is left to the dropdown's own
+          // outside-pointerdown, so onOpenChange(false) fires once.
+          e.preventDefault();
+          if (!open) setOpen(true);
+        }}
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          onClick?.(e);
+          if (e.defaultPrevented || !tapping.current) return;
+          tapping.current = false;
+          setOpen(!open);
+        }}
+        onKeyDown={onKeyDown}
+      >
+        {children}
+      </DropdownMenuTrigger>
+      {standIn && anchor ? (
+        // Its id stays on the visible trigger.
+        <DropdownMenuTrigger asChild id={undefined}>
           <span
             aria-hidden="true"
             data-menu-stand-in=""
@@ -165,30 +175,8 @@ function AdaptiveMenuTrigger({
             style={{ left: anchor.x, top: anchor.y }}
           />
         </DropdownMenuTrigger>
-        <Comp
-          {...(asChild ? null : { type: "button" as const })}
-          aria-haspopup="menu"
-          {...props}
-          ref={setRef}
-          {...shared}
-          onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
-            onKeyDown?.(e);
-            if (e.defaultPrevented) return;
-            if (["Enter", " ", "ArrowDown"].includes(e.key)) {
-              e.preventDefault();
-              setOpen(true);
-            }
-          }}
-        >
-          {children}
-        </Comp>
-      </>
-    );
-  }
-  return (
-    <DropdownMenuTrigger asChild={asChild} {...props} ref={setRef} {...shared} onKeyDown={onKeyDown}>
-      {children}
-    </DropdownMenuTrigger>
+      ) : null}
+    </>
   );
 }
 
@@ -246,7 +234,13 @@ function AdaptiveMenuContent({
           { align: "start" as const, side: "bottom" as const, "aria-label": title, "aria-labelledby": undefined }
         : null)}
       {...props}
-      onCloseAutoFocus={onCloseAutoFocus}
+      onCloseAutoFocus={(e) => {
+        onCloseAutoFocus?.(e);
+        if (e.defaultPrevented || !anchor) return;
+        // Radix would focus the trigger it hung from, the hidden stand-in, which can't take focus: ours instead.
+        e.preventDefault();
+        triggerRef.current?.focus({ preventScroll: true });
+      }}
       onEscapeKeyDown={onEscapeKeyDown}
       onInteractOutside={onInteractOutside}
       onPointerDownOutside={onPointerDownOutside}
@@ -315,27 +309,27 @@ function AdaptiveMenuItem({
   const Comp = asChild ? Slot.Root : "button";
   const { onClick, ...rest } = props as React.ComponentProps<"button">;
   return (
-      <Comp
-        {...(asChild ? null : { type: "button" as const })}
-        {...rest}
-        data-slot="adaptive-menu-item"
-        data-variant={variant}
-        data-disabled={disabled ? "" : undefined}
-        aria-disabled={disabled || undefined}
-        className={cn(ITEM, className)}
-        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-          onClick?.(e);
-          if (disabled || e.defaultPrevented) return;
-          const target = e.currentTarget;
-          const select = new Event("menu.itemSelect", { bubbles: false, cancelable: true });
-          onSelect?.(select);
-          if (select.defaultPrevented) return;
-          if (opensOverlay) stampSurface(target);
-          setOpen(false);
-        }}
-      >
-        {children}
-      </Comp>
+    <Comp
+      {...(asChild ? null : { type: "button" as const })}
+      {...rest}
+      data-slot="adaptive-menu-item"
+      data-variant={variant}
+      data-disabled={disabled ? "" : undefined}
+      aria-disabled={disabled || undefined}
+      className={cn(ITEM, className)}
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        onClick?.(e);
+        if (disabled || e.defaultPrevented) return;
+        const target = e.currentTarget;
+        const select = new Event("menu.itemSelect", { bubbles: false, cancelable: true });
+        onSelect?.(select);
+        if (select.defaultPrevented) return;
+        if (opensOverlay) stampSurface(target);
+        setOpen(false);
+      }}
+    >
+      {children}
+    </Comp>
   );
 }
 

@@ -303,6 +303,18 @@ describe("hit areas (U4 §11.3)", () => {
     expect(src.match(/className=\{CHIP_ACTION\}/g)).toHaveLength(2);
     expect(classOf(src, "data-upload-chip", "`}")).toMatch(/pointer-coarse:gap-1(?![\w-])/);
   });
+  // A 28px icon-sm's expander reaches 6px: next to a 4px gap it would cover its neighbour. At 32px it reaches 4px.
+  test("the settings row ⋯ and the Agents-page ⋯ are 32px on coarse pointers, so their expanders stop at the gap", () => {
+    const shared = read("features/settings/shared.tsx");
+    expect(classOf(shared, "export function MoreButton", "</Button>")).toMatch(
+      /size="icon-sm"[\s\S]*className=\{cn\("pointer-coarse:size-8", className\)\}/,
+    );
+    expect(classOf(shared, "export function RowLine", "{actions}")).toMatch(
+      /ml-auto flex shrink-0 items-center gap-1"/,
+    );
+    const more = classOf(read("features/agents/agent-tree.tsx"), "data-row-more", "onClick");
+    expect(more).toMatch(/className="mx-1 [^"]*pointer-coarse:size-8[^"]*"/);
+  });
   test("no clipping wrapper around PageHeader, SheetHeader or composer toolbar icon buttons", () => {
     const header = read("components/page-header.tsx");
     expect(classOf(header, "<header", ">")).not.toMatch(CLIP);

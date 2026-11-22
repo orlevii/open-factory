@@ -17,6 +17,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { pickRowOutsideFields, useLongPressMenu } from "@/hooks/use-long-press-menu";
+import { cn } from "@/lib/utils";
 
 export const linkClass = "underline underline-offset-4 decoration-current/40 hover:decoration-ring";
 export const monoClass = "font-mono text-[0.8125rem]";
@@ -223,14 +224,24 @@ export function RowName({ children }: { children: ReactNode }) {
   return <span className={`${monoClass} min-w-0 break-all md:w-36 md:shrink-0`}>{children}</span>;
 }
 
-/** The `⋯` button that opens a row's menu (rendered as the Radix trigger's child). */
+/** The `⋯` button that opens a row's menu (rendered as the Radix trigger's child). 32px on coarse pointers, so its
+ *  expander reaches 4px, no further than `RowLine`'s gap: it never covers a neighbouring action (U4 §11.3). */
 export function MoreButton({
   label,
   id,
+  className,
   ...props
 }: { label: string; id: string } & ComponentProps<typeof Button>) {
   return (
-    <Button type="button" variant="ghost" size="icon-sm" id={id} aria-label={label} {...props}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      id={id}
+      aria-label={label}
+      className={cn("pointer-coarse:size-8", className)}
+      {...props}
+    >
       <Ellipsis aria-hidden="true" />
     </Button>
   );

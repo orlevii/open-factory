@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { closeSheet } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption, pickOption } from "@/test/select-helpers";
@@ -21,6 +22,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date(2026, 10, 19, 15, 0));
 });
 afterEach(() => {
+  act(() => closeSheet());
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -205,7 +207,7 @@ test("a failed first load shows one line and Retry", async () => {
   expect(await screen.findByRole("link", { name: /^T-1,/ })).toBeInTheDocument();
 });
 
-test("tasks_changed refetches without losing focus on a row; the header action links to New task", async () => {
+test("tasks_changed refetches without losing focus on a row; the header action opens New task", async () => {
   let rows = [task(2), task(1)];
   mockApi({ "GET /api/agents?": agents, "GET /api/tasks?": () => json(page(rows)) });
   renderApp("/tasks", alice);
@@ -214,9 +216,10 @@ test("tasks_changed refetches without losing focus on a row; the header action l
   rows = [task(1, { title: "Task 1 renamed" }), task(2)];
   act(() => ws.push({ type: "tasks_changed", keys: ["T-1"] }));
   expect(await screen.findByRole("link", { name: /^T-1, Task 1 renamed/ })).toHaveFocus();
-  expect(screen.getByRole("link", { name: "New task" })).toHaveAttribute("href", "/tasks/new");
   const links = within(screen.getByRole("list", { name: "Tasks" })).getAllByRole("link");
   expect(links[0]).toHaveAttribute("href", "/tasks/T-1");
+  await userEvent.click(screen.getByRole("button", { name: "New task" }));
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeInTheDocument();
 });
 
 test("rows carry no nested anchors, even for an agent creator", async () => {

@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import { SearchIcon } from "lucide-react";
 import { Dialog } from "radix-ui";
@@ -14,6 +14,7 @@ import { AgentChip } from "@/components/agent-chip";
 import { isMac } from "@/components/ui/kbd";
 import { agentsListQueryOptions, endedMoreQueryKey } from "@/features/session/api";
 import { openAgentDetails, requestComposerFocus } from "@/features/session/session-commands";
+import { openSheet, type SheetSpec } from "@/features/sheets/sheet-store";
 import { openShortcutsSheet } from "@/features/shortcuts/sheet-store";
 import { newTask } from "@/features/tasks/actions";
 import { lookupTasks, tasksSearchOptions } from "@/features/tasks/api";
@@ -170,6 +171,7 @@ export function CommandPalette() {
 function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null> }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const router = useRouter();
   const onSession = useRouterState({ select: (s) => SESSION_PATH.test(s.location.pathname) });
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -252,8 +254,12 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
     switch (a.kind) {
       case "navigate":
         return leave(() => void navigate({ to: a.to as string }));
-      case "new-task":
-        return leave(() => newTask(navigate));
+      case "open-sheet":
+        // Opened after the close hand-off, like the other sheets: the palette dialog traps focus until then.
+        return commit(NOTHING, () => {
+          if (a.sheet === "new-task") newTask(router);
+          else openSheet({ kind: a.sheet } as SheetSpec);
+        });
       case "agent-details":
         // Opened after the close hand-off: a peek sheet doesn't trap focus, so the dialog's focus
         // return would otherwise pull focus back out of it.

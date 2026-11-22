@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ComponentType } from "react";
+import { agentsListQueryOptions } from "@/features/session/api";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
 
 export type BodyProps<S> = { spec: S; sheetId: number; close(): void };
@@ -14,7 +15,16 @@ type Entry = {
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
-export const sheetBodies: { [K in SheetKind]?: Entry } = {};
+export const sheetBodies: { [K in SheetKind]?: Entry } = {
+  "new-task": {
+    load: () => import("@/features/tasks/new-task-sheet"),
+    prefetch(qc) {
+      void qc.prefetchQuery(agentsListQueryOptions("exclude"));
+      void qc.prefetchQuery(agentsListQueryOptions("only"));
+    },
+    title: "New task",
+  },
+};
 
 export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string {
   const t = sheetBodies[kind]?.title;

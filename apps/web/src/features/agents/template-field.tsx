@@ -98,10 +98,11 @@ export function TemplateField({
               {broken[0]?.name}
             </Link>
           ) : (
-            <Link to="/templates" className={`font-mono ${linkClass}`}>
-              {broken[0]?.name}
+            <Link to="/templates" className={linkClass}>
+              {broken.length} templates
             </Link>
           )}
+          .
         </p>
       ) : (
         <Select

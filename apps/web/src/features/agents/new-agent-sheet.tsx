@@ -1,4 +1,9 @@
-import { type AgentSummary, ApiError, type CreateAgentBody } from "@open-factory/shared";
+import {
+  type AgentSummary,
+  ApiError,
+  type CreateAgentBody,
+  type PatchAgentBody,
+} from "@open-factory/shared";
 import { useQueries, useQuery, useQueryClient, useSuspenseQueries } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
@@ -41,6 +46,7 @@ import {
   getSheetState,
   openChildSheet,
   openSheet,
+  sheetOpens,
 } from "@/features/sheets/sheet-store";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import { isMobileNow } from "@/hooks/use-mobile";
@@ -174,10 +180,14 @@ function NewAgentForm({
   }, [pending, errors]);
 
   const stillOpen = () => getSheetState().parent?.id === sheetId;
-  async function create(body: unknown) {
+  async function create(body: CreateAgentBody | PatchAgentBody) {
+    // A create body always names its template; a patch never does.
+    if (!("template" in body)) return;
+    // New agent opened again after this submit means the draft may hold the user's newer typing.
+    const opensAtSubmit = sheetOpens("new-agent");
     let agent: AgentSummary;
     try {
-      agent = await createAgent(body as CreateAgentBody);
+      agent = await createAgent(body);
     } catch (err) {
       // Dismissed while creating: the error has no form to land in. The draft is kept for "Open form".
       if (!stillOpen())
@@ -193,8 +203,8 @@ function NewAgentForm({
     // The lists refetch in the background; the session view needn't wait for them.
     void qc.invalidateQueries({ queryKey: ["agents"] });
     const open = stillOpen();
-    // A late success must not wipe a draft the user restored by reopening New agent while this was in flight.
-    if (getSheetState().parent?.kind !== "new-agent" || open) clearDraft("new-agent");
+    // A late success must not wipe a draft the user reopened (and maybe edited, maybe closed again) since the submit.
+    if (sheetOpens("new-agent") === opensAtSubmit) clearDraft("new-agent");
     const go = () => void router.navigate({ to: "/agents/$slug", params: { slug: agent.slug } });
     if (open) {
       closeSheet();

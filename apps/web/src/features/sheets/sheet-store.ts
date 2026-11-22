@@ -25,6 +25,11 @@ let nextId = 1;
 let pathnameSource: () => string = () => window.location.pathname;
 const listeners = new Set<() => void>();
 const pending = new Map<number, { parentId: number; onDone: (name: string) => void }>();
+const opens = new Map<SheetSpec["kind"], number>();
+
+/** How many times a kind has been opened: a late result compares it with the count at submit, to tell whether the
+ *  user opened that kind again since (and may have edited its draft). */
+export const sheetOpens = (kind: SheetSpec["kind"]) => opens.get(kind) ?? 0;
 
 function set(next: SheetState) {
   state = next;
@@ -38,6 +43,7 @@ export function setPathnameSource(fn: () => string) {
 
 export function openSheet(spec: SheetSpec, opts?: { instant?: boolean; at?: string }) {
   pending.clear();
+  opens.set(spec.kind, sheetOpens(spec.kind) + 1);
   set({
     parent: {
       ...spec,

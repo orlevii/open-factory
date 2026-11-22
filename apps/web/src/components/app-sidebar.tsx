@@ -55,13 +55,13 @@ import { resetDrafts } from "@/features/sheets/drafts";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
 
-const newAgentIntent = sheetIntent("new-agent");
-
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+
+const newAgentIntent = sheetIntent("new-agent");
 
 const themes = [
   { value: "system", label: "System", icon: Monitor },

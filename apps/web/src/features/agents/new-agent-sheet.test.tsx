@@ -184,11 +184,20 @@ test("template items show the display name, the description outside it, and brok
 });
 
 test.each([
-  [[templateSummary("solo", 1)], "/templates/solo"],
-  [[templateSummary("one", 1), templateSummary("two", 3)], "/templates"],
-])("all templates broken: a link to fix them (%#)", async (templates, href) => {
+  [
+    [templateSummary("solo", 1)],
+    "No template is ready: fix the errors in solo.",
+    "/templates/solo",
+  ],
+  [
+    [templateSummary("one", 1), templateSummary("two", 3)],
+    "No template is ready: fix the errors in 2 templates.",
+    "/templates",
+  ],
+])("all templates broken: a link to fix them (%#)", async (templates, text, href) => {
   const { dialog } = await open({ templates });
   const line = within(dialog).getByText(/^No template is ready: fix the errors in/);
+  expect(line).toHaveTextContent(text);
   expect(within(line).getByRole("link")).toHaveAttribute("href", href);
   expect(within(dialog).getByRole("button", { name: "New template" })).toBeInTheDocument();
 });
@@ -487,6 +496,24 @@ test("a late success keeps the draft of a New agent reopened and typed into mean
   await waitFor(() => expect(notify).toHaveBeenCalled());
   expect(hasDraft("new-agent")).toBe(true);
   expect(field("Display name").value).toBe("Second");
+});
+
+test("a late success keeps a draft reopened, typed into and closed again meanwhile", async () => {
+  const post = held();
+  await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
+  await userEvent.click(createButton());
+  await screen.findByRole("button", { name: /Creating…/ });
+  act(() => closeSheet());
+  act(() => openSheet({ kind: "new-agent" }));
+  await sheet();
+  const name = await screen.findByLabelText("Display name");
+  await vi.waitFor(() => expect(name).toBeEnabled());
+  await userEvent.clear(name);
+  await userEvent.type(name, "Second");
+  act(() => closeSheet());
+  await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  expect(hasDraft("new-agent")).toBe(true);
 });
 
 test("a late failure toasts the error with Open form, which reopens the kept draft", async () => {

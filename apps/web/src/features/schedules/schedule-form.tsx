@@ -171,9 +171,9 @@ export function ScheduleForm({
     const gone = v.target;
     const hasEnded = [...live.data, ...endedList.data].some((a) => a.slug === gone);
     // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline (a ref write, idempotent),
-    // so closing leaves no draft and the next preset still applies.
-    if (!draft.restored && gone === presetTarget)
-      draft.rebase({ ...(draft.start as FormValues), target: "" });
+    // so closing leaves no draft and the next preset still applies. `restored` is the form's own state, so after
+    // Discard the preset counts as a fresh one.
+    if (!restored && gone === presetTarget) draft.rebase({ ...blank(), target: "" });
     setV((x) => ({ ...x, target: "" }));
     setErrors((e) => ({
       ...e,

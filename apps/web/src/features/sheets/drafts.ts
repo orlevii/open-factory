@@ -65,6 +65,18 @@ export function useSheetDraft<T>(
 
 export const hasDraft = (key: DraftKey) => drafts.has(key);
 export const clearDraft = (key: DraftKey) => void drafts.delete(key);
+/** A copy of the draft as it is now (`undefined` when there is none): the snapshot a submit is judged against later. */
+export const peekDraft = (key: DraftKey): unknown =>
+  drafts.has(key) ? structuredClone(drafts.get(key)) : undefined;
+/**
+ * A late result clears the draft only if it still holds what was submitted: a reopened form left untouched holds the
+ * same values (cleared), one edited since holds the edits (kept). True when it cleared one.
+ */
+export function clearDraftIf(key: DraftKey, snapshot: unknown): boolean {
+  if (snapshot === undefined || !drafts.has(key) || !same(drafts.get(key), snapshot)) return false;
+  drafts.delete(key);
+  return true;
+}
 
 /** Sign-out: drop every draft. */
 export function resetDrafts() {

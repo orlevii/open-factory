@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
-import { notify, Toaster, toastDuration } from "./toaster";
+import { notify, resetToasts, Toaster, toastDuration } from "./toaster";
 
 beforeEach(() => fakeMatchMedia.install(false));
 afterEach(() => {
@@ -98,6 +98,55 @@ test("a held toast waits until the toaster is no longer aria-hidden", async () =
   });
   expect(await screen.findByText("Late toast.")).toBeInTheDocument();
   root.remove();
+});
+
+test("resetToasts drops held toasts and stops watching", async () => {
+  const disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
+  const modal = document.createElement("div");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("data-state", "open");
+  document.body.append(modal);
+  render(<Toaster />);
+  act(() => notify({ text: "Previous user's toast." }));
+  disconnect.mockClear();
+  resetToasts();
+  expect(disconnect).toHaveBeenCalled();
+  await act(async () => {
+    modal.remove();
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(screen.queryByText("Previous user's toast.")).toBeNull();
+  // The next toast is not queued behind the dropped one.
+  act(() => notify({ text: "Fresh toast." }));
+  expect(await screen.findByText("Fresh toast.")).toBeInTheDocument();
+});
+
+test("while held, the release check runs at most once per animation frame", async () => {
+  const modal = document.createElement("div");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("data-state", "open");
+  document.body.append(modal);
+  render(<Toaster />);
+  act(() => notify({ text: "Held." }));
+  const raf = vi.spyOn(window, "requestAnimationFrame");
+  const query = vi.spyOn(document, "querySelector");
+  // A burst of DOM changes behind the modal (a streaming session) in one task.
+  await act(async () => {
+    for (let i = 0; i < 20; i++) document.body.append(document.createElement("span"));
+    await Promise.resolve();
+  });
+  expect(raf).toHaveBeenCalledTimes(1);
+  expect(query).not.toHaveBeenCalled();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(query.mock.calls.length).toBeLessThanOrEqual(2);
+  expect(screen.queryByText("Held.")).toBeNull();
+  await act(async () => {
+    modal.remove();
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(await screen.findByText("Held.")).toBeInTheDocument();
 });
 
 test("duration is 60ms per character, at least 5s", () => {

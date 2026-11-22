@@ -44,10 +44,13 @@ export function TaskForm({
   draftKey,
   prefill,
   onSubmit,
+  onDiscard,
 }: {
   draftKey: DraftKey;
   prefill?: { assignee?: string };
   onSubmit(body: CreateTaskBody): Promise<void>;
+  /** After Discard: the form is back to its blank start, prefill included. */
+  onDiscard?(): void;
 }) {
   const draft = useSheetDraft<Values>(draftKey, () => blank(prefill));
   const values = useRef<Values>(draft.start);
@@ -89,20 +92,23 @@ export function TaskForm({
   const staleSlug = v.assignee;
   const staleEnded =
     stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.slug === staleSlug);
+  // The reason shows in the same commit that empties the field; the effect keeps it once the value is cleared.
+  const staleError = stale
+    ? staleEnded
+      ? `@${staleSlug} has ended; pick another.`
+      : `There is no agent @${staleSlug}.`
+    : undefined;
+  const assigneeError = errors.assignee ?? staleError;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `update` and `draft.rebase` only write refs, the draft and state
   useEffect(() => {
-    if (!stale) return;
-    // A stale prefill cleared is not an edit: the cleared form is the new baseline, so it leaves no draft.
-    if (!draft.restored && staleSlug === prefill?.assignee)
+    if (!staleError) return;
+    // A stale prefill cleared is not an edit: the cleared form is the new baseline, so it leaves no draft. `restored`
+    // is the form's own state, so after Discard the prefill counts as a fresh one.
+    if (!restored && staleSlug === prefill?.assignee)
       draft.rebase({ ...blank(prefill), assignee: "" });
     update({ assignee: "" });
-    setErrors((e) => ({
-      ...e,
-      assignee: staleEnded
-        ? `@${staleSlug} has ended; pick another.`
-        : `There is no agent @${staleSlug}.`,
-    }));
-  }, [stale, staleSlug, staleEnded]);
+    setErrors((e) => ({ ...e, assignee: staleError }));
+  }, [staleError]);
 
   const hasValues = deps.trim() !== "" || rows.length > 0;
   const hasError = Boolean(errors.dependsOn || errors.links);
@@ -202,7 +208,7 @@ export function TaskForm({
           <FieldShell
             name="assignee"
             label="Assignee"
-            error={errors.assignee}
+            error={assigneeError}
             help="Assigning sends the task to the agent's session right away."
           >
             {(a) => (
@@ -287,6 +293,7 @@ export function TaskForm({
           setResolved([]);
           setUserOpen(undefined);
           setRestored(false);
+          onDiscard?.();
         }}
       />
     </form>

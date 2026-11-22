@@ -59,6 +59,8 @@ export function Toaster() {
 
 const held: Notification[] = [];
 let observer: MutationObserver | undefined;
+/** The pending release check: at most one per animation frame, however many mutations land in it. */
+let frame: number | undefined;
 
 function modalOpen() {
   return document.querySelector(MODAL_SELECTOR) !== null;
@@ -77,10 +79,18 @@ function release() {
   for (const n of held.splice(0)) show(n);
 }
 
+function scheduleRelease() {
+  if (frame !== undefined) return;
+  frame = requestAnimationFrame(() => {
+    frame = undefined;
+    release();
+  });
+}
+
 function hold(n: Notification) {
   held.push(n);
   if (observer) return;
-  observer = new MutationObserver(release);
+  observer = new MutationObserver(scheduleRelease);
   observer.observe(document.body, {
     subtree: true,
     childList: true,
@@ -122,4 +132,13 @@ function show({ text, action, undo }: Notification) {
 export function notify(n: Notification): void {
   if (held.length > 0 || modalOpen()) hold(n);
   else show(n);
+}
+
+/** Sign-out: drop held toasts (they belong to the previous user) and stop watching for the modal to close. */
+export function resetToasts() {
+  held.length = 0;
+  observer?.disconnect();
+  observer = undefined;
+  if (frame !== undefined) cancelAnimationFrame(frame);
+  frame = undefined;
 }

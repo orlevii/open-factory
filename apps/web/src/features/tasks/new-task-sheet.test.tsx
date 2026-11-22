@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft, hasDraft } from "@/features/sheets/drafts";
+import { clearDraft, hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -195,10 +195,11 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("Plan");
 });
 
-test("a late success does not wipe a draft restored by reopening New task", async () => {
+/** Submits "Plan" with POST held until `release()`, and closes the sheet while it is pending. */
+async function submitThenClose() {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
-  mockApi({
+  const api = mockApi({
     ...base,
     "POST /api/tasks": async () => {
       await gate;
@@ -213,12 +214,65 @@ test("a late success does not wipe a draft restored by reopening New task", asyn
   await screen.findByRole("button", { name: "Creating…" });
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  return { release, api };
+}
+
+test("a late success keeps a draft edited in a reopened New task, which stays open", async () => {
+  const { release } = await submitThenClose();
   press("c");
   await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Another");
   release();
   await waitFor(() => expect(notify).toHaveBeenCalled());
   expect(hasDraft("new-task")).toBe(true);
   expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("PlanAnother");
+});
+
+test("a late success keeps edits made in a reopened New task that was closed again", async () => {
+  const { release } = await submitThenClose();
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Another");
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  release();
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  expect(hasDraft("new-task")).toBe(true);
+  press("c");
+  expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("PlanAnother");
+});
+
+test("a late success over a reopened New task still holding the sent values clears the draft and closes it", async () => {
+  const { release, api } = await submitThenClose();
+  press("c");
+  expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("Plan");
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  release();
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "Created T-42.",
+      action: { label: "Open", run: expect.any(Function) },
+    }),
+  );
+  expect(hasDraft("new-task")).toBe(false);
+  // The form holding the created values closes (so the held toast shows) instead of inviting a second Create.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  press("c");
+  expect(await within(await sheet()).findByLabelText("Title")).toHaveValue("");
+});
+
+test("a result landing after a sign-out neither toasts nor touches the next user's draft", async () => {
+  const { release } = await submitThenClose();
+  act(() => resetDrafts());
+  // The next user types the same values: the late success must not take them for the sent draft.
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Plan");
+  release();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(notify).not.toHaveBeenCalled();
+  expect(hasDraft("new-task")).toBe(true);
+  expect(screen.getByRole("dialog", { name: "New task" })).toBeInTheDocument();
 });
 
 test("a stale prefill that gets cleared leaves no draft, so the next prefill still applies", async () => {
@@ -256,6 +310,42 @@ test("a restored draft hides For X: the prefill did not apply", async () => {
   act(() => openSheet({ kind: "new-task", assignee: "ada" }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   expect(screen.queryByText("For Ada")).toBeNull();
+});
+
+test("Discard over a prefilled open brings the prefill back, with For X", async () => {
+  mockApi(base);
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  expect(screen.queryByText("For Ada")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(await assignee()).toHaveTextContent("Ada");
+  expect(await screen.findByText("For Ada")).toBeInTheDocument();
+});
+
+test("Discard over a stale prefill leaves no phantom draft", async () => {
+  mockApi({ ...base, "GET /api/agents?": liveEnded(["bo"], ["ada"]) });
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  press("c");
+  await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(await screen.findByText("@ada has ended; pick another.")).toBeInTheDocument();
+  expect(hasDraft("new-task")).toBe(false);
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  act(() => openSheet({ kind: "new-task", assignee: "bo" }));
+  expect(await assignee()).toHaveTextContent("Bo");
+  expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
 
 test("desktop: Title takes focus when the body mounts; the panel shows no ring", async () => {

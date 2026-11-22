@@ -708,3 +708,14 @@ test("the row menu copies a command and its output", () => {
   );
   expect(copies).toEqual([[["Copy command", "/context"]], [["Copy text", "ctx"]]]);
 });
+
+test("/context output is untrusted markdown: a mermaid fence shows as code", () => {
+  renderRows([
+    { type: "command_output", command: "context", text: "```mermaid\ngraph TD; A-->B\n```" },
+  ]);
+  const row = document.querySelector("[data-test-row=command_output]") as HTMLElement;
+  expect(row.querySelector(".md-diagram")).toBeNull();
+  expect(row.querySelector("pre")?.textContent).toContain("graph TD");
+  // Shown as code (the plain code block with its own Copy), never handed to mermaid.
+  expect(within(row).getAllByRole("button", { name: "Copy" })).toHaveLength(2);
+});

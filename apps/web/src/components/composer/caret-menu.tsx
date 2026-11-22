@@ -193,7 +193,7 @@ export function CaretMenu({
           if (e.target === input.current) e.preventDefault();
         }}
         onMouseDown={keepFocus}
-        className="@container w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 gap-0 p-1"
+        className="w-max max-w-[min(28rem,calc(100vw-2rem))] min-w-56 gap-0 p-1"
       >
         <CommandPrimitive
           label={label}
@@ -228,7 +228,8 @@ export function CaretMenu({
 
 /**
  * A `/` row (U3 §13.3): `/name` in mono, middle-truncated keeping the part after a plugin's `:` (the
- * prefix muted); the argument hint muted, hidden below a 24rem menu; "alias: cost" when an alias
+ * prefix muted); the argument hint muted, hidden below a 24rem menu (a viewport under 26rem: the menu
+ * is at most 100vw - 2rem wide; a container query would collapse the content-sized menu, review I1); "alias: cost" when an alias
  * matched; a one-line description under it.
  */
 function CommandRow({ item }: { item: CompletionItem }) {
@@ -251,7 +252,10 @@ function CommandRow({ item }: { item: CompletionItem }) {
           <span className="min-w-0 truncate font-mono text-[0.8125rem]">{name}</span>
         )}
         {item.hint ? (
-          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground @max-[24rem]:hidden">
+          <span
+            data-arg-hint
+            className="min-w-0 truncate font-mono text-xs text-muted-foreground max-[26rem]:hidden"
+          >
             {item.hint}
           </span>
         ) : null}

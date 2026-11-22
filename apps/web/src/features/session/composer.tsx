@@ -5,6 +5,7 @@ import {
   MAX_BODY_BYTES,
   type QueueItem,
 } from "@open-factory/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import {
   memo,
@@ -30,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { agentDraftKey, readDraft, writeDraft } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
 import { postInterrupt, postMessage } from "./api";
-import { postCommand, unescapeSlash, useCommandSource } from "./commands";
+import { commandsQueryOptions, postCommand, unescapeSlash, useCommandSource } from "./commands";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
 import type { SendingBlock } from "./session-state";
 import { rememberSent, uploadsFor } from "./uploads";
@@ -288,6 +289,12 @@ export const Composer = memo(function SessionComposer({
   // `@` inserts a handle as plain text; the session never calls it a mention (Q23).
   const at = useMentionSource(SESSION_AT_LABEL);
   const slash = useCommandSource(slug);
+  // The list also loads where this composer stands outside a session view (the inbox pane); in a
+  // session the view's own prefetch already started it, and this one is deduped.
+  const qc = useQueryClient();
+  useEffect(() => {
+    void qc.prefetchQuery(commandsQueryOptions(slug));
+  }, [qc, slug]);
   const completions = useMemo(() => ({ at, slash }), [at, slash]);
 
   // Messages still queue; only a new session delivers them (UI design §3.6).

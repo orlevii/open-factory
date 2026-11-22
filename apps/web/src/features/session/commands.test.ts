@@ -2,6 +2,7 @@ import type { AgentCommandsResponse, Command } from "@open-factory/shared";
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, expect, test, vi } from "vitest";
 import {
+  COMMANDS_FAILED,
   commandSource,
   commandsQueryOptions,
   EMPTY_COMMANDS,
@@ -173,5 +174,18 @@ test("watch loads the list once and reports when it changes", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe("/api/agents/dev/commands");
   stop?.();
+  vi.unstubAllGlobals();
+});
+
+test("a list that failed to load says so in the menu", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("{}", { status: 500 })),
+  );
+  await qc.prefetchQuery({ ...commandsQueryOptions("dev"), retry: false });
+  const src = commandSource(qc, "dev");
+  expect(COMMANDS_FAILED).toBe("Couldn't load this agent's commands.");
+  expect(src.menuNote?.(0)).toBe(COMMANDS_FAILED);
+  expect(src.missNote?.()).toBeUndefined();
   vi.unstubAllGlobals();
 });

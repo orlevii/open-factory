@@ -179,6 +179,8 @@ export type ComposerProps = {
   ref?: Ref<ComposerHandle>;
 };
 
+/** A draft stored in command mode: `/name args` on one line (U3 §13.3). */
+const STORED_COMMAND = /^\/(\S+) ([^\n]*)$/;
 /** At most this many rows in a caret menu (U3 §13.3, §13.4). */
 const MAX_ROWS = 8;
 const NO_ITEMS: CompletionItem[] = [];
@@ -225,7 +227,14 @@ export const Composer = memo(function Composer({
   className,
   ref,
 }: ComposerProps) {
-  const [text, setText, draft] = useDraft(draftKey);
+  // Command mode as last set (state may not have committed): the draft stores `/name args` while it is
+  // on, so a restored draft shows what it is and never sends the args as a message (U3 §13.3).
+  const commandRef = useRef<CommandMode | undefined>(undefined);
+  const storedText = useCallback(
+    (t: string) => (commandRef.current ? `/${commandRef.current.name} ${t}` : t),
+    [],
+  );
+  const [text, setText, draft] = useDraft(draftKey, storedText);
   const [error, setError] = useState<string | undefined>();
   const [filesNote, setFilesNote] = useState(false);
   // Files (U3 §13.5): the counts Send reads; a progress tick never changes them.
@@ -299,7 +308,22 @@ export const Composer = memo(function Composer({
     [slash, at],
   );
   // Command mode (U3 §13.3): the box holds the arguments; the `/` menu doesn't open inside them.
-  const [command, setCommand] = useState<CommandMode | undefined>();
+  const [command, setCommandState] = useState<CommandMode | undefined>();
+  /** Set before the text, so the draft write that follows stores the right form. */
+  const setCommand = useCallback((m: CommandMode | undefined) => {
+    commandRef.current = m;
+    setCommandState(m);
+  }, []);
+  // A stored `/name args` comes back in command mode when the list knows the name (one look, at
+  // mount); otherwise it stays plain text.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on the draft the box mounted with
+  useLayoutEffect(() => {
+    const m = STORED_COMMAND.exec(text);
+    const mode = m ? slash?.commandFor?.(`/${m[1]} `) : undefined;
+    if (!m || !mode) return;
+    setCommand(mode);
+    setText(m[2] ?? "");
+  }, []);
   const menuSources = useMemo(
     () => (command ? sources.filter((c) => c.trigger !== "/") : sources),
     [command, sources],
@@ -367,7 +391,7 @@ export const Composer = memo(function Composer({
       pendingCaret.current = { at: r.caret, look: false };
       box.focus();
     },
-    [menu, setText],
+    [menu, setText, setCommand],
   );
   /** The toolbar's `@`: inserts the trigger at the caret (after a space when it follows a word). */
   const insertTrigger = (trigger: string) => {
@@ -473,9 +497,10 @@ export const Composer = memo(function Composer({
     if (!command || !onCommand || waiting) return;
     const mode = command;
     const sent = text;
+    const full = `/${mode.name} ${sent}`;
     setError(undefined);
     setFilesNote(false);
-    draft.hold(sent);
+    draft.hold(full);
     setCommand(undefined);
     setText("");
     setMenu(undefined);
@@ -489,16 +514,23 @@ export const Composer = memo(function Composer({
     boxRef.current?.focus();
     try {
       await run;
-      draft.clearSent(sent);
+      draft.clearSent(full);
     } catch (e) {
-      draft.release(sent);
-      let back = false;
-      setText((cur) => {
-        if (cur.trim() !== "") return cur;
-        back = true;
-        return sent;
+      draft.release(full);
+      let cur = "";
+      setText((c) => {
+        cur = c;
+        return c;
       });
-      if (back) setCommand((cur) => cur ?? mode);
+      if (commandRef.current) {
+        // Another command was started meanwhile: it stays; the error says what happened to this one.
+      } else if (cur.trim() === "") {
+        setCommand(mode);
+        setText(sent);
+      } else {
+        // The box was used since: the command goes after it as text, never lost (and never run).
+        setText(`${cur}\n${full}`);
+      }
       draft.persist();
       setError(e instanceof Error && e.message ? e.message : NETWORK_ERROR);
     } finally {
@@ -600,14 +632,14 @@ export const Composer = memo(function Composer({
       }
     }
     if (e.key === "Escape") {
+      // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
+      if (e.nativeEvent.defaultPrevented) return;
       if (command) {
         e.preventDefault();
         e.stopPropagation();
         leaveCommand(false);
         return;
       }
-      // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
-      if (e.nativeEvent.defaultPrevented) return;
       if (!stopRef.current?.stop()) return;
       e.preventDefault();
       e.stopPropagation();
@@ -693,7 +725,10 @@ export const Composer = memo(function Composer({
     (menu && !menuOpen ? menu.source.missNote?.() : undefined) ??
     (command ? undefined : slash?.textNote?.(text));
   const hintShown = hintMode !== undefined && hintMode !== "none" && turnOpen;
-  const describedBy = [note && noteId, hintShown && hintId].filter(Boolean).join(" ") || undefined;
+  const commandId = `${uid}-command`;
+  const describedBy =
+    [command && commandId, note && noteId, hintShown && hintId].filter(Boolean).join(" ") ||
+    undefined;
   // 2 → 6 lines or 35svh below md, 2 → 12 lines or 40svh from md; then it scrolls (U3 §13.1).
   const growth =
     "min-h-[calc(2lh_+_1rem)] max-h-[min(calc(6lh_+_1rem),35svh)] md:max-h-[min(calc(12lh_+_1rem),40svh)] overflow-y-auto";
@@ -733,6 +768,7 @@ export const Composer = memo(function Composer({
             <div className="flex min-w-0 items-start">
               {command && (
                 <span
+                  id={commandId}
                   data-command-chip
                   className="mt-2 ml-2 flex max-w-[50%] shrink-0 items-center gap-1.5 rounded-sm border border-border px-1.5 text-[0.8125rem] leading-5"
                 >
@@ -986,14 +1022,17 @@ export const Composer = memo(function Composer({
             {pendingLabel}
           </p>
         ) : null}
-        {slashNote && (
-          <p
-            role="status"
-            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
-            {slashNote}
-          </p>
-        )}
+        {/* Live regions mounted with the box, so a note that appears is announced. */}
+        <p
+          aria-live="polite"
+          data-slash-note
+          className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground empty:mt-0"
+        >
+          {slashNote}
+        </p>
+        <p aria-live="polite" className="sr-only">
+          {command ? `Command mode: /${command.name}. Esc to leave.` : ""}
+        </p>
         {attachNote && (
           <p
             role="status"

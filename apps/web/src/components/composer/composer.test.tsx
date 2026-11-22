@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -1048,4 +1048,98 @@ test("↑ in an empty box recalls your last message's text; not with text or the
   expect(box).toHaveValue("see this");
   await userEvent.keyboard("{ArrowUp}");
   expect(recall).toHaveBeenCalledTimes(1);
+});
+
+// ---- Task 56 fix round 1 ----
+
+test("command mode is perceivable: the box is described by the chip, and the change is announced", async () => {
+  const { box } = setupSlash();
+  const live = screen.getAllByText((_, el) => el?.getAttribute("aria-live") === "polite");
+  expect(live.length).toBeGreaterThan(0);
+  await userEvent.type(box, "/context ");
+  const c = chip() as HTMLElement;
+  expect(c.id).not.toBe("");
+  expect(box.getAttribute("aria-describedby")?.split(" ")).toContain(c.id);
+  const announce = screen.getByText("Command mode: /context. Esc to leave.");
+  expect(announce).toHaveAttribute("aria-live", "polite");
+  await userEvent.keyboard("{Escape}");
+  expect(announce).toHaveTextContent("");
+  expect(box.getAttribute("aria-describedby") ?? "").not.toContain(c.id);
+});
+
+test("command mode is stored in the draft as `/name args`", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "/code-review ");
+  await userEvent.type(box, "src/");
+  box.blur();
+  expect(readDraft("agent:dev")).toBe("/code-review src/");
+});
+
+test("a stored `/name args` draft comes back in command mode when the name is known; else plain text", () => {
+  localStorage.setItem(
+    "of-draft:v1:agent:dev",
+    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
+  );
+  const { box } = setupSlash();
+  expect(chip()).toHaveTextContent("/code-review");
+  expect(box).toHaveValue("src/");
+  cleanup();
+  localStorage.setItem(
+    "of-draft:v1:agent:dev",
+    JSON.stringify({ text: "/nope src/", at: Date.now() }),
+  );
+  const again = setupSlash();
+  expect(chip()).toBeNull();
+  expect(again.box).toHaveValue("/nope src/");
+});
+
+test("a refused command after the box was used goes after the new text, never lost", async () => {
+  let fail: (e: unknown) => void = () => {};
+  const onCommand = vi.fn<OnCommand>(
+    () =>
+      new Promise<void>((_, rej) => {
+        fail = rej;
+      }),
+  );
+  const { box } = setupSlash({ onCommand });
+  await userEvent.type(box, "/context ");
+  await userEvent.type(box, "now{Enter}");
+  await userEvent.type(box, "hello");
+  await act(async () => fail(new SubmitError("Refused.")));
+  expect(box).toHaveValue("hello\n/context now");
+  expect(chip()).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent("Refused.");
+});
+
+test("an Esc a peek already took closes only the peek: command mode stays", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "/context ");
+  const ev = createEvent.keyDown(box, { key: "Escape", cancelable: true });
+  ev.preventDefault();
+  fireEvent(box, ev);
+  expect(chip()).not.toBeNull();
+});
+
+test("the slash note's live region is there before the note", async () => {
+  const { box } = setupSlash();
+  const region = document.querySelector("[data-slash-note]") as HTMLElement;
+  expect(region).toHaveAttribute("aria-live", "polite");
+  expect(region).toHaveTextContent("");
+  await userEvent.type(box, "/foo");
+  expect(region).toHaveTextContent("Not a command for this agent; sends as text");
+});
+
+test("the `/` button is disabled while the box has text", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "hi");
+  expect(screen.getByRole("button", { name: "Run a command" })).toBeDisabled();
+});
+
+test("⌥Enter with the `/` menu open sends the text as typed", async () => {
+  const { box, onSubmit, onCommand } = setupSlash();
+  await userEvent.type(box, "/code");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  fireEvent.keyDown(box, { key: "Enter", altKey: true });
+  expect(onSubmit).toHaveBeenCalledWith("/code", expect.objectContaining({ urgent: true }));
+  expect(onCommand).not.toHaveBeenCalled();
 });

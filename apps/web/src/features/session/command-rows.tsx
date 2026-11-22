@@ -33,7 +33,8 @@ const MARKDOWN_OUTPUT = new Set(["context"]);
 
 /**
  * What a local command printed (U3 §13.3): `/context` as markdown (its tables scroll in `.md-table`),
- * `/usage` and `/cost` as a code plate; both with Copy.
+ * `/usage` and `/cost` as a code plate; both with Copy. `/context` lists names a repo controls (skills,
+ * MCP servers, memory files), so its markdown is untrusted: a mermaid fence shows as code.
  */
 export function CommandOutput({
   command,
@@ -48,7 +49,7 @@ export function CommandOutput({
     <div {...rowProps} data-command-output className="group/code relative min-w-0">
       {MARKDOWN_OUTPUT.has(command) ? (
         <div className="pr-8">
-          <Markdown source={text} variant="work" />
+          <Markdown source={text} variant="work" untrusted />
         </div>
       ) : (
         <CodePlate>{text}</CodePlate>

@@ -41,6 +41,8 @@ export const EMPTY_COMMANDS = "No commands loaded yet. They appear after the age
 export const FROM_TEMPLATE = "From template";
 export const NOT_A_COMMAND = "Not a command for this agent; sends as text";
 export const SENDS_AS_TEXT = "Sends as text; the agent may still run a skill by that name";
+/** The list couldn't be fetched: said in the menu, rather than a menu that never opens. */
+export const COMMANDS_FAILED = "Couldn't load this agent's commands.";
 /** The session's `/` button label. */
 export const SLASH_LABEL = "Run a command";
 const staleNote = (at: string) =>
@@ -155,7 +157,7 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
     },
     menuNote(rows) {
       const data = read();
-      if (!data) return undefined;
+      if (!data) return qc.getQueryState(key)?.status === "error" ? COMMANDS_FAILED : undefined;
       if (data.commands.length === 0) return EMPTY_COMMANDS;
       if (rows === 0) return undefined;
       if (data.stale && data.at) return staleNote(data.at);

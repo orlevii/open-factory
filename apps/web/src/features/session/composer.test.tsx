@@ -207,7 +207,8 @@ test("⌥Enter during IME composition does not send", async () => {
   fireEvent.keyDown(box, { key: "Enter", altKey: true, isComposing: true });
   fireEvent.keyDown(box, { key: "Enter", altKey: true, keyCode: 229 });
   await tick();
-  expect(posted).toEqual([]);
+  // Only the commands list's prefetch (a GET); nothing sent.
+  expect(posted.filter((p) => !p.url.endsWith("/commands"))).toEqual([]);
 });
 
 test("the hint shows only while a turn is open; the composer height is unchanged", () => {
@@ -653,7 +654,8 @@ test("`@` inserts an agent's handle as plain text; nothing in the session says m
   await userEvent.keyboard("{Enter}");
   expect(box).toHaveValue("ask @qa ");
   // Nothing was sent; the opening menu loaded the users list, which nobody had cached (review I-2).
-  expect(posted.map((p) => p.url)).toEqual(["/api/users"]);
+  // (The commands list is prefetched on mount, U3 §13.3 m11.)
+  expect(posted.map((p) => p.url).filter((u) => !u.endsWith("/commands"))).toEqual(["/api/users"]);
   await userEvent.click(button);
   expect(screen.getByRole("listbox")).toBeInTheDocument();
   const composer = document.querySelector("#composer") as HTMLElement;
@@ -751,4 +753,32 @@ test("`/foo` sends as text with the note", async () => {
   await userEvent.keyboard("{Enter}");
   await tick();
   expect(posted.find((p) => p.url.endsWith("/messages"))?.body).toMatchObject({ body: "/foo" });
+});
+
+test("a command over 64 KB is refused inline before any POST", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/context ");
+  fireEvent.change(box, { target: { value: "x".repeat(70_000) } });
+  await userEvent.type(box, "{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent("The command is larger than 64 KB.");
+  expect(posted.some((p) => p.url.endsWith("/commands") && "name" in (p.body as object))).toBe(
+    false,
+  );
+});
+
+test.each([
+  [413, "too_large", "The command is larger than 64 KB."],
+  [501, "commands_unsupported", "This agent can't run commands."],
+  [409, "agent_archived", "This agent is archived."],
+])("a %i shows inline and sends no text", async (status, code, message) => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url, init) =>
+    url.endsWith("/commands") && init?.method === "POST"
+      ? json({ error: { code, message } }, status)
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  await userEvent.type(box, "/context {Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
 });

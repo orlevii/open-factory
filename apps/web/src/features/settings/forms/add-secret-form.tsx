@@ -1,43 +1,9 @@
 import { ApiError, type SecretSummary, secretNameSchema } from "@open-factory/shared";
 import { type ChangeEvent, useState } from "react";
-import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
-import { PasswordInput } from "@/components/password-input";
 import { putSecret } from "@/features/settings/api";
 import { FormFrame, type FormFrameKind } from "./form-frame";
-
-export function ValueField({
-  name,
-  label,
-  value,
-  error,
-  onChange,
-  onBlur,
-}: {
-  name: string;
-  label: string;
-  value: string;
-  error?: string;
-  onChange(v: string): void;
-  onBlur?(): void;
-}) {
-  return (
-    <FieldShell name={name} label={label} error={error}>
-      {(a) => (
-        <PasswordInput
-          id={a.id}
-          name={name}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          spellCheck={false}
-          aria-invalid={a.invalid || undefined}
-          aria-describedby={a.describedBy}
-        />
-      )}
-    </FieldShell>
-  );
-}
+import { ValueField } from "./shared";
 
 export function AddSecretForm({
   frame,

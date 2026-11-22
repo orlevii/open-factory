@@ -21,7 +21,8 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
-import { AddSecretForm, ValueField } from "./forms/add-secret-form";
+import { AddSecretForm } from "./forms/add-secret-form";
+import { ValueField } from "./forms/shared";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 

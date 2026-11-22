@@ -37,13 +37,8 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
-import {
-  AddCredentialForm,
-  TokenField,
-  type Verdict,
-  valueNoun,
-  verdictOf,
-} from "./forms/add-credential-form";
+import { AddCredentialForm } from "./forms/add-credential-form";
+import { TokenField, type Verdict, valueNoun, verdictOf } from "./forms/shared";
 import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };

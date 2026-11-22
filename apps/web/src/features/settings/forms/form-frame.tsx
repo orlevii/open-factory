@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from "react";
+import { type FormEvent, type ReactNode, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -39,6 +39,14 @@ export function FormFrame({
   left?: ReactNode;
   children: ReactNode;
 }) {
+  // Sheet frame: the Sheet places focus on open, so a prefilled form names the field it wants instead
+  // (`reveal` only scrolls an inline form into view, which a sheet doesn't need).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
+  useEffect(() => {
+    if (frame !== "sheet" || !autoFocusId) return;
+    const t = setTimeout(() => document.getElementById(autoFocusId)?.focus(), 0);
+    return () => clearTimeout(t);
+  }, []);
   if (frame === "inline") {
     return (
       <InlineForm

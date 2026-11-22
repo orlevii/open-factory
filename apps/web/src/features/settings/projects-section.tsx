@@ -32,7 +32,8 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
-import { AddProjectForm, checkPath, fieldsOf, PATH_HELP } from "./forms/add-project-form";
+import { AddProjectForm } from "./forms/add-project-form";
+import { checkPath, fieldsOf, PATH_HELP } from "./forms/shared";
 
 type Outcome = {
   tone: "success" | "error" | "pending";

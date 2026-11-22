@@ -79,13 +79,13 @@ test("credential: validates, submits once on Enter, maps a rejection under the t
 
 test("secret: uppercases, validates, submits once on Enter, maps a reserved name under Name", async () => {
   let puts = 0;
+  let release: (r: Response) => void = () => {};
   const api = mockApi({
     "PUT /api/secrets/MY_VAR": () => {
       puts++;
-      return json(
-        { error: { code: "secret_name_reserved", message: "That name is reserved." } },
-        409,
-      );
+      return new Promise<Response>((r) => {
+        release = r;
+      });
     },
   });
   inSheet(
@@ -104,6 +104,12 @@ test("secret: uppercases, validates, submits once on Enter, maps a reserved name
   expect(describedText(within(dialog).getByLabelText("Value"))).toBe("Enter a value.");
   expect(api.calls).toHaveLength(0);
   await userEvent.type(within(dialog).getByLabelText("Value"), "v{Enter}");
+  await userEvent.type(within(dialog).getByLabelText("Value"), "{Enter}");
+  expect(await within(dialog).findByRole("button", { name: /Adding…/ })).toBeInTheDocument();
+  expect(puts).toBe(1);
+  release(
+    json({ error: { code: "secret_name_reserved", message: "That name is reserved." } }, 409),
+  );
   const name = within(dialog).getByLabelText("Name");
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
   expect(describedText(name)).toBe("That name is reserved.");
@@ -111,15 +117,31 @@ test("secret: uppercases, validates, submits once on Enter, maps a reserved name
   expect(puts).toBe(1);
 });
 
+test("secret: a prefilled name focuses Value in the sheet frame", async () => {
+  inSheet(
+    "Add secret",
+    <AddSecretForm
+      frame="sheet"
+      initialName="GH_TOKEN"
+      existing={[]}
+      onDone={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add secret" });
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("GH_TOKEN");
+  await waitFor(() => expect(within(dialog).getByLabelText("Value")).toHaveFocus());
+});
+
 test("project: validates, submits once on Enter, maps a duplicate under Name", async () => {
   let posts = 0;
+  let release: (r: Response) => void = () => {};
   const api = mockApi({
     "POST /api/projects": () => {
       posts++;
-      return json(
-        { error: { code: "project_exists", message: "A project named app exists." } },
-        409,
-      );
+      return new Promise<Response>((r) => {
+        release = r;
+      });
     },
   });
   inSheet(
@@ -134,6 +156,10 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   const path = within(dialog).getByLabelText("Path");
   await userEvent.clear(path);
   await userEvent.type(path, "/code/app{Enter}");
+  await userEvent.type(path, "{Enter}");
+  expect(await within(dialog).findByRole("button", { name: /Adding…/ })).toBeInTheDocument();
+  expect(posts).toBe(1);
+  release(json({ error: { code: "project_exists", message: "A project named app exists." } }, 409));
   const name = within(dialog).getByLabelText("Name");
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
   expect(describedText(name)).toBe("A project named app exists.");

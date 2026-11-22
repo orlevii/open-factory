@@ -3,20 +3,7 @@ import { useState } from "react";
 import { FormField } from "@/components/form-field";
 import { createProject } from "@/features/settings/api";
 import { FormFrame, type FormFrameKind } from "./form-frame";
-
-export const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
-export const checkPath = (p: string) =>
-  p.trim() === ""
-    ? "Enter a path."
-    : p.trim().startsWith("/")
-      ? undefined
-      : "Enter an absolute path.";
-
-/** Server field errors (`400 validation_error` with `fields`) for this form's fields. */
-export const fieldsOf = (err: unknown): Record<string, string> | undefined =>
-  err instanceof ApiError && err.code === "validation_error"
-    ? ((err.body.fields ?? {}) as Record<string, string>)
-    : undefined;
+import { checkPath, fieldsOf, PATH_HELP } from "./shared";
 
 export function AddProjectForm({
   frame,

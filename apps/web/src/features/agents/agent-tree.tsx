@@ -164,15 +164,17 @@ const AgentTreeRow = memo(function AgentTreeRow({
           "@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem] @min-[54rem]:py-0",
         )}
       >
-        <span className="flex w-28 shrink-0 items-center gap-1.5">
+        {/* Below md the column is the status shape alone, its label sr-only (U4 §11.6, #102): a 7rem
+            column left a deep row's name cell about 8px at 320, so its avatar ran under the ⋯. */}
+        <span data-status-cell className="flex shrink-0 items-center gap-1.5 md:w-28">
           {a.archivedAt && a.status !== "terminated" ? (
             <span className="inline-flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
               {/* The empty dot slot keeps the label aligned with the live statuses. */}
               <span aria-hidden="true" className="size-3" />
-              Archived
+              <span className="max-md:sr-only">Archived</span>
             </span>
           ) : (
-            <StatusBadge status={a.status} size="short" />
+            <StatusBadge status={a.status} size="short" labelClassName="max-md:sr-only" />
           )}
           {a.restartPending && !ended && (
             <>
@@ -220,7 +222,10 @@ const AgentTreeRow = memo(function AgentTreeRow({
                 {`└\u00a0${level}`}
               </span>
             )}
-            <AgentChip agent={a} showSlug />
+            {/* The full name for a name cut to a few characters on a phone (U4 §11.6). */}
+            <span title={a.displayName} className="flex min-w-0">
+              <AgentChip agent={a} showSlug />
+            </span>
             {/* Inline, not a second line, so live updates never change the row height. It
                   gives way (truncates) before the name does. */}
             {note && (
@@ -242,7 +247,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
           )}
         </span>
         {/* A second line below md and in the two-line grid; grid cells in the full one. */}
-        <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
+        <span className="flex min-w-0 max-w-full basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
           <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
             {a.template !== slugStem(a.slug) ? a.template : null}
           </span>

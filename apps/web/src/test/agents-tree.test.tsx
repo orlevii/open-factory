@@ -346,9 +346,12 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(within(dev).getByText("Estimated cost, last 7 days: $0.50")).toHaveClass("sr-only");
     expect(within(idle).getByText("—")).toBeInTheDocument();
     expect(within(idle).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
-    // Hidden below md; no tooltip trigger or title inside a row link.
+    // Hidden below md; no tooltip trigger inside a row link, and the only title is the name's (U4 §11.6).
     expect(within(lead).getByText("$4.60").parentElement).toHaveClass("hidden", "md:block");
-    expect(lead.querySelector("[title], [data-slot=tooltip-trigger]")).toBeNull();
+    expect(lead.querySelector("[data-slot=tooltip-trigger]")).toBeNull();
+    expect([...lead.querySelectorAll("[title]")].map((e) => e.getAttribute("title"))).toEqual([
+      "Team Lead",
+    ]);
   });
 
   test("the name keeps a minimum width: two lines from md, full columns only on a wide tree", async () => {
@@ -361,8 +364,9 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(list).toHaveClass("@container");
     expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
     expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
-    // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320.
-    expect(lead.querySelector(".basis-full")).toHaveClass("min-w-0", "flex-wrap");
+    // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320,
+    // and never grows past the row (U4 §11.6).
+    expect(lead.querySelector(".basis-full")).toHaveClass("min-w-0", "max-w-full", "flex-wrap");
     expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
       "md:col-start-3",
       "md:row-start-1",
@@ -481,6 +485,40 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     const r = await rows();
     // root, a, a1, a2, b, b1: a1 sits under a, which has a later sibling (b); a2 too; b1's parent b is last.
     expect(r.map((l) => lines(l))).toEqual([0, 0, 1, 1, 0, 0]);
+  });
+
+  test("phones (#102, class contract, jsdom has no layout): the status column is the shape alone, its label kept for screen readers; the name carries its full value in title", async () => {
+    mockWorld({
+      agents: [A("lead", { displayName: "A very long team lead display name", status: "working" })],
+    });
+    renderApp("/agents", alice);
+    const [lead] = (await rows()) as [HTMLElement];
+    // The label is still the row's text (the link's accessible name keeps it)...
+    const label = within(lead).getByText("Working");
+    // ...but below md it takes no width, and the column shrinks to the shape: a fixed 7rem column
+    // left a deep row's name cell ~8px at 320, so the avatar ran under the ⋯.
+    expect(label).toHaveClass("max-md:sr-only");
+    const column = label.closest("[data-status-cell]");
+    expect(column).not.toBeNull();
+    expect(column).toHaveClass("md:w-28");
+    expect(column).not.toHaveClass("w-28");
+    expect(lead).toHaveAccessibleName(/Working/);
+    const name = lead.querySelector("[title]");
+    expect(name).toHaveAttribute("title", "A very long team lead display name");
+    expect(name).toHaveTextContent("A very long team lead display name");
+  });
+
+  test("an archived row's label hides below md too", async () => {
+    const old = A("old", { displayName: "Old one", archivedAt: "2026-11-01T10:00:00.000Z" });
+    mockWorld({
+      extra: {
+        "GET /api/agents?ended=only": () =>
+          json({ agents: [old], more: false, running: { count: 0, max: 8 } }),
+      },
+    });
+    renderApp("/agents?ended=only", alice);
+    const [row] = (await rows()) as [HTMLElement];
+    expect(within(row).getByText("Archived")).toHaveClass("max-md:sr-only");
   });
 
   test("rows deeper than the cap show a depth marker", async () => {

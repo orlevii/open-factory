@@ -15,6 +15,18 @@ type HastNode = {
 };
 
 const IMAGE_ALT_MAX = 80;
+const SCHEME = /^[a-z][a-z\d+.-]*:/i;
+const SAFE_SCHEME = /^(?:https?|mailto):/i;
+
+/** A link worth an `<a>`: http(s), mailto, or a path or fragment in the app. Not an empty href (the
+ *  sanitizer's answer to `javascript:`), another scheme, or a protocol-relative `//host` (another
+ *  site, opened in this tab). */
+function safeHref(href: unknown): href is string {
+  if (typeof href !== "string") return false;
+  const h = href.trim();
+  if (!h || h.startsWith("//")) return false;
+  return SCHEME.test(h) ? SAFE_SCHEME.test(h) : true;
+}
 const HTTP = /^https?:\/\//i;
 
 /** "Image: <alt>", the alt cut to 80 characters, else the source's host (U3 §9.3). */
@@ -59,6 +71,14 @@ function imagesAsLinks() {
 function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
   return {
     a: ({ href, title, children }) => {
+      // The sanitizer empties a javascript: href rather than dropping the link, and an empty or
+      // foreign-scheme href would still navigate the whole app away: such a link is its text only.
+      if (!safeHref(href))
+        return (
+          <span data-inert-link title={title}>
+            {children}
+          </span>
+        );
       const external = typeof href === "string" && HTTP.test(href);
       return external ? (
         // The accessible name stays the link text; "Opens in a new tab" is a shared description.

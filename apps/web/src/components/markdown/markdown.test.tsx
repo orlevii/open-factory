@@ -91,6 +91,26 @@ test("renders mermaid blocks with strict security", async () => {
   );
 });
 
+test("a link that would not go anywhere safe is plain text: no <a>, so no click navigates the app away", () => {
+  render(
+    <Markdown
+      untrusted
+      source={
+        "[js](javascript:alert(1)) [data](data:text/html,x) [vb](vbscript:x) [proto](//evil.example/x) [ok](https://example.com) [mail](mailto:a@b.co) [in](/inbox) [frag](#top)"
+      }
+    />,
+  );
+  for (const name of ["js", "data", "vb", "proto"]) {
+    const el = screen.getByText(name);
+    expect(el.closest("a")).toBeNull();
+    expect(el.tagName).toBe("SPAN");
+  }
+  expect(screen.getByRole("link", { name: "ok" })).toHaveAttribute("rel", "noopener noreferrer");
+  expect(screen.getByRole("link", { name: "mail" })).toHaveAttribute("href", "mailto:a@b.co");
+  expect(screen.getByRole("link", { name: "in" })).toHaveAttribute("href", "/inbox");
+  expect(screen.getByRole("link", { name: "frag" })).toHaveAttribute("href", "#top");
+});
+
 test("javascript: links are not rendered as executable hrefs", () => {
   render(<Markdown source={"[x](javascript:alert(1))"} />);
   const a = screen.getByText("x").closest("a");

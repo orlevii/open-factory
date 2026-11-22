@@ -132,6 +132,9 @@ function SidebarProvider({
           {
             "--sidebar-width": SIDEBAR_WIDTH,
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+            // Read by the toaster's left offset; follows the sidebar's state.
+            "--sidebar-current-width":
+              state === "expanded" ? "var(--sidebar-width)" : "var(--sidebar-width-icon)",
             ...style,
           } as React.CSSProperties
         }

@@ -2,6 +2,7 @@ import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-fac
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
+import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -790,7 +791,7 @@ test.each([
   renderApp(path, alice);
   await screen.findByRole("navigation", { name: "Settings" });
   await waitFor(() => expect(settingsCalls(api)).toEqual(expect.arrayContaining(expected)));
-  await screen.findByRole("region");
+  await screen.findByRole("region", { name: (n) => !n.startsWith(TOASTER_LABEL) });
   // Not deduplicated: the loader fetches, and the section skips its own mount fetch.
   expect(settingsCalls(api).sort()).toEqual([...expected].sort());
 });

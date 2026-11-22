@@ -20,6 +20,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
+import { registerDockedComposer } from "@/lib/composer-height";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
 import { isSendKey, isUrgentSendKey } from "@/lib/send-key";
 import { cn } from "@/lib/utils";
@@ -186,6 +187,8 @@ export type ComposerProps = {
   /** The form's id and classes (the session's composer is `#composer`, its own bordered strip). */
   id?: string;
   className?: string;
+  /** A bottom-docked composer (not one mid-page): its height lifts the toasts above it. */
+  docked?: boolean;
   ref?: Ref<ComposerHandle>;
 };
 
@@ -235,8 +238,15 @@ export const Composer = memo(function Composer({
   landed = NO_LANDED,
   id: formId,
   className,
+  docked = false,
   ref,
 }: ComposerProps) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const dockId = useId();
+  useLayoutEffect(() => {
+    const form = formRef.current;
+    return docked && form ? registerDockedComposer(dockId, form) : undefined;
+  }, [docked, dockId]);
   // Command mode as last set (state may not have committed): the draft stores `/name args` while it is
   // on, so a restored draft shows what it is and never sends the args as a message (U3 §13.3).
   const commandRef = useRef<CommandMode | undefined>(undefined);
@@ -806,6 +816,7 @@ export const Composer = memo(function Composer({
 
   return (
     <form
+      ref={formRef}
       id={formId}
       className={className}
       onSubmit={(e) => {

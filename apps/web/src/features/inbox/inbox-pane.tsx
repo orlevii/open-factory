@@ -198,6 +198,7 @@ function MessageContent({
         <TerminatedComposer key={slug} slug={slug} notice={raceNotice} />
       ) : (
         <Composer
+          docked
           key={slug}
           slug={slug}
           agent={agent}

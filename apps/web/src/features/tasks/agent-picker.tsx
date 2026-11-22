@@ -21,10 +21,6 @@ export function useAssignableAgents() {
   return { agents: data ?? NONE, ...rest };
 }
 
-/** "@slug · Display name" (UI design §8.1). */
-export const agentOptionLabel = (a: { slug: string; displayName: string }) =>
-  `@${a.slug} · ${a.displayName}`;
-
 /** The muted mono `@slug` that follows a name in agent options and triggers. */
 export const Slug = ({ slug }: { slug: string }) => (
   <span className="text-muted-foreground font-mono">@{slug}</span>

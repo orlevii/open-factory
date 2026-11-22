@@ -3,12 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
+import { preloadSheet } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { agentTasksOptions } from "@/features/tasks/api";
 import { STATUS } from "@/features/tasks/status-label";
 import { agentsUsageQuery } from "@/features/usage/api";
@@ -286,7 +289,19 @@ function Org({ agent }: { agent: AgentSummary }) {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-function Work({ agent }: { agent: AgentSummary }) {
+/** Phones: Agent details is a modal drawer. A sheet opened from it would be a second, unstacked Vaul root, and Vaul's
+ *  one saved body position would be restored under it (spec §5.3). So the drawer closes at once first, and the sheet
+ *  opens over the session alone. */
+function openFromDetails(onClose: (() => void) | undefined, open: () => void) {
+  const el = document.getElementById(AGENT_DETAILS_ID);
+  if (onClose && el?.matches("[data-slot=drawer-content]")) {
+    closeInstantly(el);
+    flushSync(onClose);
+  }
+  open();
+}
+
+function Work({ agent, onClose }: { agent: AgentSummary; onClose?: (() => void) | undefined }) {
   // Mounted only while Agent details is open, so these fetch only then; no count, nothing to ask.
   const tasks = useQuery({ ...agentTasksOptions(agent.slug), enabled: agent.openTasks > 0 }).data;
   const schedules = useQuery({
@@ -332,13 +347,21 @@ function Work({ agent }: { agent: AgentSummary }) {
           <ul className="grid gap-1">
             {schedules?.slice(0, MAX_WORK).map((s) => (
               <li key={s.key} className="flex min-w-0 items-baseline justify-between gap-2">
-                <Link
-                  to="/schedules/$key"
-                  params={{ key: s.key }}
+                <button
+                  type="button"
                   className={`font-mono text-foreground ${LINK_CLASS}`}
+                  onPointerEnter={() =>
+                    preloadSheet("edit-schedule", { kind: "edit-schedule", key: s.key })
+                  }
+                  onFocus={() =>
+                    preloadSheet("edit-schedule", { kind: "edit-schedule", key: s.key })
+                  }
+                  onClick={() =>
+                    openFromDetails(onClose, () => openSheet({ kind: "edit-schedule", key: s.key }))
+                  }
                 >
                   {s.key}
-                </Link>
+                </button>
                 <span className="truncate text-muted-foreground">
                   {s.nextRunAt ? (
                     <>
@@ -488,7 +511,7 @@ export function AgentDetails({
         </div>
         <Now agent={agent} stop={stop} slotsMax={slotsMax} onAgent={onAgent} />
         <Org agent={agent} />
-        <Work agent={agent} />
+        <Work agent={agent} onClose={onClose} />
         <Usage agent={agent} />
         <Runtime agent={agent} />
       </div>

@@ -15,7 +15,7 @@ const IGNORED_TARGETS =
   "input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=menu],[role=menubar],[role=listbox],[role=tree],[role=grid],[role=radiogroup],[role=combobox],[role=textbox]";
 /** Radix's modal Dialog renders `role="dialog"` without `aria-modal`. Non-modal layers (a peek
  *  sheet marks `data-modal="false"`, a popover is `popover-content`) leave the page usable. */
-const MODAL =
+export const MODAL_SELECTOR =
   '[aria-modal="true"],[role="alertdialog"],[role="dialog"][data-state="open"]:not([data-modal="false"]):not([data-slot="popover-content"])';
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
 
@@ -38,7 +38,7 @@ function ignoredPress(e: KeyboardEvent): boolean {
 
 function openModals(e: KeyboardEvent): Element[] {
   const doc = e.target instanceof Element ? e.target.ownerDocument : document;
-  return [...doc.querySelectorAll(MODAL)];
+  return [...doc.querySelectorAll(MODAL_SELECTOR)];
 }
 
 function hasSequenceStartingWith(first: string): boolean {

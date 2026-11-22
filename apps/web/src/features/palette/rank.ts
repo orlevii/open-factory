@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
+import type { SheetSpec } from "@/features/sheets/sheet-store";
 
 export interface RankedAgent {
   agent: AgentSummary;
@@ -128,7 +129,7 @@ export const GO_TO: readonly GoToItem[] = [
 
 export type ActionKind =
   | "navigate"
-  | "new-task"
+  | "open-sheet"
   | "agent-details"
   | "theme-system"
   | "theme-light"
@@ -141,6 +142,8 @@ export interface ActionItem {
   kind: ActionKind;
   /** Navigation target for `navigate`. */
   to?: string;
+  /** The sheet an `open-sheet` action opens. */
+  sheet?: SheetSpec["kind"];
   /** Only offered on session pages. */
   sessionOnly?: boolean;
 }
@@ -148,8 +151,8 @@ export interface ActionItem {
 /** §10.2 "Actions". There is deliberately no "Mark all read" (Q28). */
 export const ACTIONS: readonly ActionItem[] = [
   { id: "new-agent", label: "New agent", kind: "navigate", to: "/agents/new" },
-  { id: "new-task", label: "New task", kind: "new-task" },
-  { id: "new-schedule", label: "New schedule", kind: "navigate", to: "/schedules/new" },
+  { id: "new-task", label: "New task", kind: "open-sheet", sheet: "new-task" },
+  { id: "new-schedule", label: "New schedule", kind: "open-sheet", sheet: "new-schedule" },
   { id: "agent-details", label: "Agent details", kind: "agent-details", sessionOnly: true },
   { id: "theme-system", label: "Theme: System", kind: "theme-system" },
   { id: "theme-light", label: "Theme: Light", kind: "theme-light" },

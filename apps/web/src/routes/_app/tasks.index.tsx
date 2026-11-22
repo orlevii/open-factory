@@ -1,10 +1,12 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { closeInstantly } from "@/components/ui/sheet";
+import { preloadSheet } from "@/features/sheets/sheet-bodies";
+import { newTask } from "@/features/tasks/actions";
 import type { TaskFilters } from "@/features/tasks/api";
 import { TaskFiltersBar } from "@/features/tasks/task-filters";
 import { findTaskRow, TaskList, type TaskPeekControl } from "@/features/tasks/task-list";
@@ -26,6 +28,7 @@ export const Route = createFileRoute("/_app/tasks/")({
 function TasksPage() {
   const search = Route.useSearch();
   const navigate = useNavigate();
+  const router = useRouter();
   const filters: TaskFilters = {
     status: search.status ?? "open_in_progress",
     assignee: search.assignee,
@@ -63,14 +66,16 @@ function TasksPage() {
       <PageHeader
         title="Tasks"
         actions={
-          <Button variant="ghost" asChild>
-            <Link /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only link, and repeats the visible text above it */
-              to="/tasks/new"
-              title="New task"
-            >
-              <Plus aria-hidden="true" data-icon="inline-start" />
-              <span className="max-md:sr-only">New task</span>
-            </Link>
+          <Button
+            variant="ghost"
+            /* ui-contract:allow the visible label collapses to sr-only below md; the title names the icon-only button, and repeats the visible text above it */
+            title="New task"
+            onClick={() => newTask(router)}
+            onPointerEnter={() => preloadSheet("new-task")}
+            onFocus={() => preloadSheet("new-task")}
+          >
+            <Plus aria-hidden="true" data-icon="inline-start" />
+            <span className="max-md:sr-only">New task</span>
           </Button>
         }
       />

@@ -7,8 +7,10 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
 import { resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
@@ -79,13 +81,12 @@ function renderEvents(events: AnyEvent[]) {
   );
 }
 
-test("a delivered scheduled block: Scheduler, the S-3 badge linking to the schedule, by @or, no notes when on time", async () => {
+test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule's sheet, by @or, no notes when on time", async () => {
   const { container } = renderEvents([scheduled()]);
   expect(await screen.findByText("Scheduler")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Schedule S-3" })).toHaveAttribute(
-    "href",
-    "/schedules/S-3",
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Schedule S-3" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
+  act(() => closeSheet());
   expect(container.textContent).toContain("by @or");
   expect(container.textContent).not.toContain("delivered late");
   expect(container.textContent).not.toContain("covers");
@@ -113,7 +114,7 @@ test("a pending scheduled item shows in the dashed block with the badge and 'cov
   const { container } = inRouter(
     <QueueItems items={[item]} agent={{ slug: "dev", status: "errored" } as never} />,
   );
-  expect(await screen.findByRole("link", { name: "Schedule S-5" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Schedule S-5" })).toBeInTheDocument();
   expect(container.textContent).toContain("Scheduler");
   expect(container.textContent).toContain("covers 3 runs");
   expect(container.querySelector(".border-dashed")).not.toBeNull();

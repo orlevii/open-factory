@@ -187,8 +187,6 @@ describe("secondary buttons", () => {
     "features/tasks/task-detail.tsx": 1, // Edit beside the title
     "features/tasks/task-list.tsx": 1, // Load more
     "features/tasks/status-menu.tsx": 1, // a select-like field trigger, not an action
-    "features/tasks/task-form.tsx": 1, // Cancel of the New task page
-    "features/schedules/schedule-form.tsx": 1, // Cancel of the schedule page
   };
   test("outline buttons appear only at the page-level sites named here", () => {
     const counts = Object.fromEntries(

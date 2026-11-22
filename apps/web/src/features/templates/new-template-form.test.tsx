@@ -69,7 +69,8 @@ test("fields: Display name, the folder line, Description; the name follows the d
   const labels = within(d)
     .getAllByRole("textbox")
     .map((e) => e.getAttribute("id"));
-  expect(labels).toEqual(["field-displayName", "field-description"]);
+  // Prefixed: stacked over New agent, that form's Display name and Description are on the page too.
+  expect(labels).toEqual(["field-template-displayName", "field-template-description"]);
   expect(within(d).queryByLabelText("Name")).toBeNull();
   await userEvent.type(within(d).getByLabelText("Display name"), "Priya Nair");
   expect(within(d).getByText("templates/priya-nair")).toBeInTheDocument();

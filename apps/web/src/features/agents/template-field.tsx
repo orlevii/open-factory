@@ -154,15 +154,18 @@ export function TemplateField({
 }
 
 /** What the chosen template brings: its description in full (touch has no `title`), then the warnings that would stop
- *  its agents starting: the validator's runtime warning and secrets that aren't set. */
+ *  its agents starting: the validator's runtime warning and secrets that aren't set, each with "Add secret" (§7.3)
+ *  when the form can stack that sheet. */
 export function TemplateSummary({
   config,
   issues,
   missingSecrets,
+  onAddSecret,
 }: {
   config: TemplateConfig;
   issues: TemplateIssue[];
   missingSecrets: string[];
+  onAddSecret?(name: string): void;
 }) {
   const runtimeWarnings = issues
     .filter((i) => i.severity === "warning" && i.path === "runtime")
@@ -184,23 +187,31 @@ export function TemplateSummary({
         <Warning key={w}>{w}</Warning>
       ))}
       {missingSecrets.map((s) => (
-        <Warning key={s}>
-          Secret <span className="font-mono">{s}</span> isn't set. The agent won't start until you{" "}
-          <Link to="/settings/secrets" search={{ addSecret: s }} className={linkClass}>
-            add it<span className="sr-only"> in Settings</span>
-          </Link>
-          .
+        <Warning
+          key={s}
+          action={
+            onAddSecret && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => onAddSecret(s)}>
+                Add secret
+              </Button>
+            )
+          }
+        >
+          {/* Secret names have no break points. */}
+          Secret <span className="font-mono [overflow-wrap:anywhere]">{s}</span> isn't set. The
+          agent won't start until you add it.
         </Warning>
       ))}
     </div>
   );
 }
 
-function Warning({ children }: { children: ReactNode }) {
+function Warning({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <p className="flex items-start gap-1.5">
+    <div className="flex items-start gap-1.5">
       <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
-      <span>{children}</span>
-    </p>
+      <span className="min-w-0 flex-1">{children}</span>
+      {action && <span className="-my-1 shrink-0">{action}</span>}
+    </div>
   );
 }

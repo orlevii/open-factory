@@ -125,7 +125,7 @@ test("the child sheet stacks over the parent; Esc closes only the child", async 
   const child = await screen.findByRole("dialog", { name: "Add project" });
   expect(await screen.findByText("child body")).toBeInTheDocument();
   expect(child).toHaveTextContent("child body");
-  expect(screen.getByText("For New task")).toBeInTheDocument();
+  expect(screen.getByText("For New task.")).toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add project" })).toBeNull());
   expect(dialog()).toBeInTheDocument();

@@ -5,11 +5,22 @@ import {
   type PatchAgentBody,
 } from "@open-factory/shared";
 import { useQueries, useQuery, useQueryClient, useSuspenseQueries } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
+import { Button } from "@/components/ui/button";
 import type { ComboOption } from "@/components/ui/combobox";
 import {
   Select,
@@ -46,6 +57,7 @@ import {
   getSheetState,
   openChildSheet,
   openSheet,
+  returnFocusAfterChild,
   sheetOpens,
 } from "@/features/sheets/sheet-store";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
@@ -57,8 +69,6 @@ const NO_MANAGER: ComboOption[] = [
   { value: "", label: "No manager (reports to the humans)", fixed: true },
 ];
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
-const linkClass =
-  "text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
 const EMPTY: ReadonlySet<string> = new Set();
 /** A spawned agent never manages. */
 const canManage = (a: AgentOpt) => a.kind === "persistent";
@@ -112,6 +122,50 @@ function NewAgentForm({
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const projects = useQuery(projectsQueryOptions);
   const form = useRef<HTMLFormElement>(null);
+  // The latest shown values, for a stacked child's result that lands after this render.
+  const latestShown = useRef(shown);
+  useLayoutEffect(() => {
+    latestShown.current = shown;
+  });
+
+  // A stacked child's result (§7): the served field takes the value and scrolls into view (instantly) before the child
+  // exits, and focus lands on it after the child closes. Phones focus the drawer content, so the keyboard doesn't rise.
+  // `onDone` never runs once this sheet instance has closed (the store drops it), so it writes no closed form's draft.
+  const serve = (write: () => void, find: () => HTMLElement | null | undefined) => {
+    flushSync(write);
+    find()?.scrollIntoView({ block: "nearest", behavior: "instant" });
+    returnFocusAfterChild(() =>
+      isMobileNow()
+        ? (form.current?.closest<HTMLElement>("[data-slot=drawer-content]") ?? null)
+        : (find() ?? null),
+    );
+  };
+  const byId = (id: string) => () => form.current?.querySelector<HTMLElement>(`#${id}`);
+  const onAddCredential = () =>
+    openChildSheet({ kind: "add-credential" }, (name) =>
+      serve(() => set("credential", name), byId("field-credential")),
+    );
+  const onAddProject = () =>
+    openChildSheet({ kind: "add-project" }, (name) =>
+      serve(
+        // Joins the grant set as an override (setProjects).
+        () => s.setProjects([...latestShown.current.projects.filter((p) => p !== name), name]),
+        () => form.current?.querySelector<HTMLElement>(`[data-project="${CSS.escape(name)}"]`),
+      ),
+    );
+  // The warning disappears with the secrets cache; Template is the field it served.
+  const onAddSecret = (name: string) =>
+    openChildSheet({ kind: "add-secret", name }, () => serve(() => {}, byId("field-template")));
+  const onNewTemplate = () =>
+    openChildSheet(NEW_TEMPLATE, (name) =>
+      serve(() => set("template", name), byId("field-template")),
+    );
+  const addCredential = (
+    <Button type="button" variant="ghost" size="sm" onClick={onAddCredential}>
+      <Plus aria-hidden="true" data-icon="inline-start" />
+      Add credential
+    </Button>
+  );
 
   // Focus on open: phones the drawer content (the keyboard doesn't rise mid-slide); desktop Template when none is
   // chosen, else Display name.
@@ -246,7 +300,7 @@ function NewAgentForm({
             onBlur={() => blur("template")}
             templates={templates}
             error={errors.template}
-            onNewTemplate={() => openChildSheet(NEW_TEMPLATE, (name) => set("template", name))}
+            onNewTemplate={onNewTemplate}
             describedBy={config ? "template-summary" : undefined}
           >
             {config && (
@@ -254,6 +308,7 @@ function NewAgentForm({
                 config={config}
                 issues={detail.data?.issues ?? []}
                 missingSecrets={missingSecrets}
+                onAddSecret={onAddSecret}
               />
             )}
           </TemplateField>
@@ -324,14 +379,10 @@ function NewAgentForm({
               )}
             </FieldShell>
             {noCredentials ? (
-              <div className="grid gap-1.5">
+              // More options' summary says "No Claude credential yet."; the field offers to add one.
+              <div className="flex min-h-7 items-center justify-between gap-2">
                 <p className="text-[0.8125rem] font-medium">Credential</p>
-                <p className="text-[0.8125rem] text-muted-foreground">
-                  <Link to="/settings/credentials" className={linkClass}>
-                    Add a Claude credential in Settings
-                  </Link>{" "}
-                  first.
-                </p>
+                {addCredential}
               </div>
             ) : (
               <FieldShell
@@ -339,6 +390,7 @@ function NewAgentForm({
                 label="Credential"
                 error={errors.credential}
                 help={staleNotes.credential}
+                action={addCredential}
               >
                 {(a) => (
                   <Select value={shown.credential} onValueChange={(v) => set("credential", v)}>
@@ -369,6 +421,7 @@ function NewAgentForm({
                 error={errors.projects}
                 onChange={s.setProjects}
                 onUseDefault={s.applyTemplateDefault}
+                onAddProject={onAddProject}
               />
               {staleNotes.projects && (
                 <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">

@@ -23,6 +23,7 @@ import { HeaderSlotContext } from "./header-slot";
 import {
   type BodyProps,
   bindSheetQueryClient,
+  childDescription,
   loadBody,
   preloadSheet,
   resetBodyLoad,
@@ -39,6 +40,7 @@ import {
   type OpenChild,
   type OpenParent,
   setPathnameSource,
+  takeChildReturnFocus,
   useSheet,
 } from "./sheet-store";
 
@@ -98,13 +100,17 @@ function SheetLayer({
   open,
   onClose,
   stacked,
-  description,
+  parentTitle,
+  returnFocus,
 }: {
   spec: (OpenParent | OpenChild) | undefined;
   open: boolean;
   onClose(): void;
   stacked?: boolean;
-  description?: string;
+  /** A stacked child names the parent it serves in its description. */
+  parentTitle?: string;
+  /** Where focus goes on close; null keeps Radix's return to the trigger. */
+  returnFocus?: () => HTMLElement | null;
 }) {
   // Kept after close so the exit animation still has its content.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
@@ -113,6 +119,7 @@ function SheetLayer({
   const shown = last.current;
   if (!shown) return null;
   const title = sheetTitle(shown.kind, shown);
+  const description = parentTitle ? childDescription(shown.kind, parentTitle) : undefined;
   return (
     <Sheet
       open={open}
@@ -123,6 +130,7 @@ function SheetLayer({
       <SheetContent
         // Focus-on-open is the body's job, on mount.
         onOpenAutoFocus={(e) => e.preventDefault()}
+        returnFocus={returnFocus}
         data-instant={"instant" in shown && shown.instant ? "" : undefined}
       >
         <SheetHeader>
@@ -193,7 +201,9 @@ export function SheetHost() {
         open={!!child}
         onClose={closeChildSheet}
         stacked
-        description={parentTitle ? `For ${parentTitle}` : undefined}
+        parentTitle={parentTitle}
+        // A child that served its parent hands focus to the field it filled (§7).
+        returnFocus={takeChildReturnFocus}
       />
     </>
   );

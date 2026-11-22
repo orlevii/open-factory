@@ -4,11 +4,14 @@ import {
   isReservedTemplateName,
   RESERVED_TEMPLATE_NAME_MESSAGE,
   RESERVED_TEMPLATE_NAMES,
+  type TemplateDetail,
+  type templatesListSchema,
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import type { z } from "zod";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { Button } from "@/components/ui/button";
@@ -16,7 +19,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { deriveSlug } from "@/features/agents/derive-slug";
 import { FormFrame, type FormFrameKind } from "@/features/settings/forms/form-frame";
-import { clearDraft, useSheetDraft } from "@/features/sheets/drafts";
+import { refreshList, withItem, writeToList } from "@/features/sheets/add-to-list";
+import { clearDraft, draftGeneration, useSheetDraft } from "@/features/sheets/drafts";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import {
   closeChildSheet,
@@ -39,6 +43,18 @@ const MESSAGES: Record<Field, string> = {
   description: "Keep the description under 500 characters.",
 };
 const ORDER: readonly Field[] = ["displayName", "name", "description"];
+
+type TemplateList = z.infer<typeof templatesListSchema>;
+/** The list's row for a template just created (it has no agents yet). */
+const summaryOf = (t: TemplateDetail): TemplateList["templates"][number] => ({
+  name: t.name,
+  displayName: t.config?.displayName,
+  description: t.config?.description,
+  runtime: t.config?.runtime,
+  errors: t.issues.filter((i) => i.severity === "error").length,
+  warnings: t.issues.filter((i) => i.severity === "warning").length,
+  agentCount: 0,
+});
 
 function check(field: Field, v: { displayName: string; name: string; description: string }) {
   if (field === "displayName" && v.displayName.trim() === "") return "Enter a display name.";
@@ -105,7 +121,9 @@ export function NewTemplateForm({
     if (!stacked) draft.save(next);
   };
   const setError = (f: Field, m: string | undefined) => setErrors((e) => ({ ...e, [f]: m }));
-  const focus = (f: Field) => form.current?.querySelector<HTMLElement>(`#field-${f}`)?.focus();
+  // Ids carry a `template-` prefix: stacked over New agent, the parent's Display name and Description share the page.
+  const focus = (f: Field) =>
+    form.current?.querySelector<HTMLElement>(`#field-template-${f}`)?.focus();
   /** Rendered before focusing: Name only exists once revealed. */
   const show = (e: Errors) => {
     flushSync(() => {
@@ -139,14 +157,24 @@ export function NewTemplateForm({
       show(found);
       if (ORDER.some((f) => found[f])) return;
       setPending(true);
+      // A sign-out while creating drops the result: it belongs to the old session.
+      const generation = draftGeneration();
       try {
         const t = await createTemplate({
           name,
           displayName: v.displayName.trim(),
           description: v.description.trim() || undefined,
         });
-        void qc.invalidateQueries({ queryKey: ["templates"] });
+        if (draftGeneration() !== generation) return;
+        // In the list before the parent's Template takes it (§7), then refetched in the background.
+        const listKey = templatesQueryOptions.queryKey;
+        await writeToList<TemplateList>(qc, listKey, (old) => ({
+          ...old,
+          templates: withItem(summaryOf(t))(old.templates),
+        }));
+        if (draftGeneration() !== generation) return;
         onDone(t.name);
+        refreshList(qc, listKey);
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : "Couldn't create the template. Try again.";
@@ -202,7 +230,7 @@ export function NewTemplateForm({
     >
       <div ref={form} className="grid gap-4">
         <FormField
-          name="displayName"
+          name="template-displayName"
           label="Display name"
           error={errors.displayName}
           value={v.displayName}
@@ -215,7 +243,7 @@ export function NewTemplateForm({
         />
         {v.revealed ? (
           <FormField
-            name="name"
+            name="template-name"
             label="Name"
             help={NAME_HELP}
             error={errors.name}
@@ -243,7 +271,11 @@ export function NewTemplateForm({
             </Button>
           </p>
         )}
-        <FieldShell name="description" label="Description (optional)" error={errors.description}>
+        <FieldShell
+          name="template-description"
+          label="Description (optional)"
+          error={errors.description}
+        >
           {(a) => (
             <Textarea
               id={a.id}

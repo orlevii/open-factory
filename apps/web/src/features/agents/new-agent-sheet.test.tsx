@@ -2,12 +2,19 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft, hasDraft } from "@/features/sheets/drafts";
-import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
+import { clearDraft, hasDraft, resetDrafts } from "@/features/sheets/drafts";
+import {
+  closeSheet,
+  getSheetState,
+  openSheet,
+  resetSheets,
+  takeChildReturnFocus,
+} from "@/features/sheets/sheet-store";
 import {
   agentSummary,
   credential,
   mockWorld,
+  project,
   templateConfig,
   templateDetail,
   templateSummary,
@@ -648,24 +655,6 @@ test("a docker template shows the summary; a local one says Unsandboxed and the 
   expect(screen.getByText("The local runtime is disabled on this factory.")).toBeInTheDocument();
 });
 
-test("a secret that isn't set warns under the template and links to the prefilled add form", async () => {
-  await openLead({
-    details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) },
-    secrets: [],
-  });
-  expect(
-    await screen.findByText(
-      (_c, el) =>
-        el?.tagName === "SPAN" &&
-        /^Secret GH_TOKEN isn't set\. The agent/.test(el.textContent ?? ""),
-    ),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /add it/ })).toHaveAttribute(
-    "href",
-    "/settings/secrets?addSecret=GH_TOKEN",
-  );
-});
-
 test("the slow line is per attempt: a resubmit after a slow failure starts without it", async () => {
   let n = 0;
   const failNext: { current: () => void } = { current: () => {} };
@@ -711,16 +700,16 @@ test("toggling the grants back to the template's set is not Custom", async () =>
   expect(posts(api)[0]?.body).not.toHaveProperty("projects");
 });
 
-test("no projects registered says where to add one", async () => {
-  await openLead({
+test("no projects registered says so beside Add project", async () => {
+  const { dialog } = await openLead({
     projects: [],
     details: { lead: templateDetail(templateConfig({ projects: [] })) },
   });
   await userEvent.click(more());
-  const line = screen.getByText(
-    (_c, el) => el?.tagName === "P" && el.textContent === "No projects yet. Add one in Settings.",
-  );
-  expect(within(line).getByRole("link")).toHaveAttribute("href", "/settings/projects");
+  const group = within(dialog).getByRole("group", { name: /Projects/ });
+  expect(within(group).getByText("No projects yet.")).toBeInTheDocument();
+  expect(within(group).queryByRole("link")).not.toBeInTheDocument();
+  expect(within(group).getByRole("button", { name: "Add project" })).toBeInTheDocument();
 });
 
 test("the template error waits for the list to close, and a pick doesn't flash it", async () => {
@@ -781,4 +770,276 @@ test("the manager picker pads by depth, at most three levels, then marks deeper 
     ["2.25rem", "D"],
     ["2.25rem", "└E"],
   ]);
+});
+
+// --- Stacked setup sheets (§7) ---
+
+const child = (name: string) => screen.findByRole("dialog", { name });
+/** The parent sits under a modal child: its contents are aria-hidden, so queries reach them by id. */
+const parentField = (id: string) => document.getElementById(id) as HTMLElement;
+/** A GET that answers only when the test says so, with the list the test passes. */
+function heldList<T>(key: string) {
+  const answers: ((r: Response) => void)[] = [];
+  return {
+    route: () => new Promise<Response>((r) => answers.push(r)),
+    answer: (body: T) => answers.shift()?.(json({ [key]: body })),
+    get waiting() {
+      return answers.length;
+    },
+  };
+}
+/** Resolves once the POST to `url` has reached the (mocked) server. */
+const posted = (api: { calls: { method: string; url: string }[] }, url: string) =>
+  waitFor(() => expect(api.calls.some((c) => c.method === "POST" && c.url === url)).toBe(true));
+/** A server that keeps what it is given: the POST adds to the list later GETs read. */
+function storing() {
+  const credentials = [credential("work")];
+  return {
+    credentials,
+    "POST /api/credentials": (body: unknown) => {
+      const c = credential((body as { name: string }).name);
+      credentials.push(c);
+      return json({ credential: c }, 201);
+    },
+  };
+}
+function storingSecrets() {
+  const secrets: { name: string; updatedAt: string; usedBy: string[] }[] = [];
+  return {
+    secrets,
+    extra: {
+      "PUT /api/secrets/GH_TOKEN": () => {
+        const secret = { name: "GH_TOKEN", updatedAt: "2026-11-22T08:00:00.000Z", usedBy: [] };
+        secrets.push(secret);
+        return json({ secret });
+      },
+    },
+  };
+}
+async function addCredential(name: string, token = "sk-ant-oat-1") {
+  const d = await child("Add credential");
+  await userEvent.type(await within(d).findByLabelText("Name"), name);
+  await userEvent.type(within(d).getByLabelText("Token"), token);
+  await userEvent.click(within(d).getByRole("button", { name: "Verify and add" }));
+  return d;
+}
+async function openAddCredential(world: World = {}) {
+  const r = await openLead(world);
+  await userEvent.click(more());
+  await userEvent.click(within(r.dialog).getByRole("button", { name: "Add credential" }));
+  return r;
+}
+
+test("Add credential opens a stacked sheet over New agent, which keeps its typed values", async () => {
+  const { dialog } = await openLead();
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Mine");
+  await userEvent.click(more());
+  const add = within(dialog).getByRole("button", { name: "Add credential" });
+  expect(add).toHaveAttribute("type", "button");
+  await userEvent.click(add);
+  const d = await child("Add credential");
+  expect(d).toHaveAccessibleDescription(
+    "For New agent. Saved to Settings → Credentials; other agents can use it.",
+  );
+  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect((parentField("field-displayName") as HTMLInputElement).value).toBe("Mine");
+});
+
+test("Verify and add selects the new credential and focus lands on the Credential trigger", async () => {
+  const { credentials, ...extra } = storing();
+  await openAddCredential({ credentials, extra });
+  await addCredential("prod");
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  expect(field("Credential")).toHaveTextContent("prod");
+  await waitFor(() => expect(field("Credential")).toHaveFocus());
+});
+
+test("the No Claude credential yet state offers Add credential", async () => {
+  const { credentials, ...extra } = storing();
+  credentials.length = 0;
+  const { dialog } = await open({ credentials, extra });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await addCredential("prod");
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  expect(field("Credential")).toHaveTextContent("prod");
+  expect(within(dialog).queryByText("No Claude credential yet.")).not.toBeInTheDocument();
+});
+
+test("a rejected token stays an inline error in the stacked sheet and nothing is stored", async () => {
+  const { queryClient } = await openAddCredential({
+    extra: {
+      "POST /api/credentials": () =>
+        json(
+          { error: { code: "credential_rejected", message: "Claude rejected this token." } },
+          422,
+        ),
+    },
+  });
+  const d = await addCredential("prod");
+  expect(await within(d).findByText("Claude rejected this token.")).toBeInTheDocument();
+  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect(
+    (queryClient.getQueryData(["credentials"]) as { name: string }[]).map((c) => c.name),
+  ).toEqual(["work"]);
+});
+
+test("a credentials fetch already pending when the credential is added resolves without dropping it", async () => {
+  const list = heldList<ReturnType<typeof credential>[]>("credentials");
+  const { credentials, ...extra } = storing();
+  const r = await openAddCredential({ credentials, extra });
+  r.api.on("GET /api/credentials", list.route);
+  // A refetch started before the POST answers, and reads the list without the new credential.
+  void r.queryClient.refetchQueries({ queryKey: ["credentials"] });
+  await waitFor(() => expect(list.waiting).toBe(1));
+  await addCredential("prod");
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  await act(async () => list.answer([credential("work")]));
+  const names = () =>
+    (r.queryClient.getQueryData(["credentials"]) as { name: string }[]).map((c) => c.name);
+  expect(names()).toEqual(["work", "prod"]);
+  expect(field("Credential")).toHaveTextContent("prod");
+  // The background refetch the add started reads the server's list, which has it.
+  await waitFor(() => expect(list.waiting).toBe(1));
+  await act(async () => list.answer([credential("work"), credential("prod")]));
+  expect(names()).toEqual(["work", "prod"]);
+});
+
+test("the parent closed while the child verifies: the late success updates the cache only", async () => {
+  const post = held();
+  const { queryClient, api } = await openAddCredential({
+    extra: { "POST /api/credentials": post.route },
+  });
+  await addCredential("prod");
+  await posted(api, "/api/credentials");
+  act(() => closeSheet());
+  post.answer(json({ credential: credential("prod") }, 201));
+  await waitFor(() =>
+    expect(
+      (queryClient.getQueryData(["credentials"]) as { name: string }[]).map((c) => c.name),
+    ).toContain("prod"),
+  );
+  expect(hasDraft("new-agent")).toBe(false);
+  expect(getSheetState()).toEqual({});
+});
+
+test("sign-out while a child is pending drops its late result", async () => {
+  const post = held();
+  const { queryClient, api } = await openAddCredential({
+    extra: { "POST /api/credentials": post.route },
+  });
+  await addCredential("prod");
+  await posted(api, "/api/credentials");
+  act(() => {
+    resetSheets();
+    resetDrafts();
+  });
+  // The next session's list reads never answer, so a stray write can't be hidden by a refetch.
+  api.on("GET /api/credentials", heldList("credentials").route);
+  act(() => openSheet({ kind: "new-agent" }));
+  await sheet();
+  post.answer(json({ credential: credential("prod") }, 201));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  expect(
+    (queryClient.getQueryData(["credentials"]) as { name: string }[]).map((c) => c.name),
+  ).toEqual(["work"]);
+  expect(hasDraft("new-agent")).toBe(false);
+});
+
+test("Add project adds it to the grants as an override and focuses it", async () => {
+  const projects = [project("app"), project("docs")];
+  const { dialog } = await openLead({
+    projects,
+    extra: {
+      "POST /api/projects": () => {
+        projects.push(project("web"));
+        return json({ project: project("web") }, 201);
+      },
+    },
+  });
+  await userEvent.click(more());
+  const group = within(dialog).getByRole("group", { name: /Projects/ });
+  const add = within(group).getByRole("button", { name: "Add project" });
+  expect(add).toHaveAttribute("type", "button");
+  await userEvent.click(add);
+  const d = await child("Add project");
+  expect(d).toHaveAccessibleDescription("For New agent.");
+  await userEvent.type(await within(d).findByLabelText("Name"), "web");
+  await userEvent.type(within(d).getByLabelText("Path"), "/src/web");
+  await userEvent.click(within(d).getByRole("button", { name: "Add project" }));
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  const web = await within(group).findByRole("checkbox", { name: /web/ });
+  expect(web).toBeChecked();
+  expect(within(group).getByRole("checkbox", { name: /app/ })).toBeChecked();
+  expect(within(group).getByText("Custom")).toBeInTheDocument();
+  await waitFor(() => expect(web).toHaveFocus());
+});
+
+test("Add secret opens prefilled with Value focused; success removes the warning and focuses Template", async () => {
+  const { dialog } = await openLead({
+    details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) },
+    ...storingSecrets(),
+  });
+  const warning = await within(dialog).findByText(
+    (_c, el) =>
+      el?.tagName === "SPAN" &&
+      el.textContent === "Secret GH_TOKEN isn't set. The agent won't start until you add it.",
+  );
+  expect(within(dialog).queryByRole("link", { name: /add it/ })).not.toBeInTheDocument();
+  const add = within(dialog).getByRole("button", { name: "Add secret" });
+  expect(add).toHaveAttribute("type", "button");
+  await userEvent.click(add);
+  const d = await child("Add secret");
+  expect(d).toHaveAccessibleDescription("For New agent.");
+  expect(await within(d).findByLabelText("Name")).toHaveValue("GH_TOKEN");
+  await waitFor(() => expect(within(d).getByLabelText("Value")).toHaveFocus());
+  await userEvent.type(within(d).getByLabelText("Value"), "ghp_1");
+  await userEvent.click(within(d).getByRole("button", { name: "Add secret" }));
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  expect(warning).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(/isn't set/)).not.toBeInTheDocument();
+  await waitFor(() => expect(field("Template")).toHaveFocus());
+});
+
+test("New template (stacked) selects the new template", async () => {
+  const writer = templateConfig({ name: "writer", displayName: "Writer", description: "" });
+  const templates = [templateSummary("lead")];
+  const { dialog } = await open({
+    templates,
+    details: { lead: templateDetail(templateConfig()), writer: templateDetail(writer) },
+    extra: {
+      "POST /api/templates": () => {
+        templates.push({ ...templateSummary("writer"), displayName: "Writer" });
+        return json(templateDetail(writer), 201);
+      },
+    },
+  });
+  await userEvent.click(within(dialog).getByRole("button", { name: "New template" }));
+  const d = await child("New template");
+  expect(d).toHaveAccessibleDescription("For New agent.");
+  await userEvent.type(await within(d).findByLabelText("Display name"), "Writer");
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  expect(field("Template")).toHaveTextContent("Writer");
+  await vi.waitFor(() => expect(field("Display name").value).toBe("Writer"));
+  await waitFor(() => expect(field("Template")).toHaveFocus());
+});
+
+test("on a phone, Add secret focuses its drawer, and success focuses the parent's drawer", async () => {
+  fakeMatchMedia.install(true);
+  const { dialog } = await openLead({
+    details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) },
+    ...storingSecrets(),
+  });
+  await userEvent.click(await within(dialog).findByRole("button", { name: "Add secret" }));
+  const d = await child("Add secret");
+  await within(d).findByLabelText("Value");
+  await waitFor(() => expect(d).toHaveFocus());
+  await userEvent.type(within(d).getByLabelText("Value"), "ghp_1");
+  await userEvent.click(within(d).getByRole("button", { name: "Add secret" }));
+  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  // jsdom never finishes Vaul's exit, so the drawer's close-autofocus can't run here: check the target it would take.
+  expect(takeChildReturnFocus()).toBe(dialog);
 });

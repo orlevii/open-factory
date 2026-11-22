@@ -1,8 +1,9 @@
-import { type FormEvent, type ReactNode, useEffect } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { InlineForm, smallClass } from "@/features/settings/shared";
+import { isMobileNow } from "@/hooks/use-mobile";
 
 export type FormFrameKind = "inline" | "sheet";
 
@@ -39,12 +40,25 @@ export function FormFrame({
   left?: ReactNode;
   children: ReactNode;
 }) {
-  // Sheet frame: the Sheet places focus on open, so a prefilled form names the field it wants instead
-  // (`reveal` only scrolls an inline form into view, which a sheet doesn't need).
+  // Sheet frame: focus on open is the body's job (the host prevents Radix's). Phones focus the drawer content, so the
+  // keyboard doesn't rise mid-slide; desktop the field a prefilled form names, else its first field.
+  // (`reveal` only scrolls an inline form into view, which a sheet doesn't need.)
+  const form = useRef<HTMLFormElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
-    if (frame !== "sheet" || !autoFocusId) return;
-    const t = setTimeout(() => document.getElementById(autoFocusId)?.focus(), 0);
+    if (frame !== "sheet") return;
+    const t = setTimeout(() => {
+      const el = form.current;
+      if (!el) return;
+      if (isMobileNow()) {
+        el.closest<HTMLElement>("[data-slot=drawer-content]")?.focus();
+        return;
+      }
+      const target =
+        (autoFocusId ? document.getElementById(autoFocusId) : null) ??
+        el.querySelector<HTMLElement>("input:not([type=hidden]), textarea, [role=combobox]");
+      target?.focus();
+    }, 0);
     return () => clearTimeout(t);
   }, []);
   if (frame === "inline") {
@@ -66,6 +80,7 @@ export function FormFrame({
   }
   return (
     <form
+      ref={form}
       aria-label={label}
       noValidate
       onSubmit={(e: FormEvent) => {

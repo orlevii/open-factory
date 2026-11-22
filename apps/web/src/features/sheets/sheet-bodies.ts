@@ -22,6 +22,8 @@ type Entry = {
   title: string | ((spec: any) => string);
   /** Classes for the title (edit-schedule shows its key in mono). */
   titleClass?: string;
+  /** A stacked child's line after "For <parent>." in its description. */
+  note?: string;
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
@@ -66,6 +68,28 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     },
     title: "New template",
   },
+  "add-credential": {
+    load: () => import("./setup-sheets").then((m) => ({ default: m.AddCredentialSheet })),
+    prefetch(qc) {
+      void qc.prefetchQuery(credentialsQueryOptions);
+    },
+    title: "Add credential",
+    note: "Saved to Settings → Credentials; other agents can use it.",
+  },
+  "add-project": {
+    load: () => import("./setup-sheets").then((m) => ({ default: m.AddProjectSheet })),
+    prefetch(qc) {
+      void qc.prefetchQuery(projectsQueryOptions);
+    },
+    title: "Add project",
+  },
+  "add-secret": {
+    load: () => import("./setup-sheets").then((m) => ({ default: m.AddSecretSheet })),
+    prefetch(qc) {
+      void qc.prefetchQuery(secretsQueryOptions);
+    },
+    title: "Add secret",
+  },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
     prefetch(qc, spec: { key: string }) {
@@ -84,6 +108,12 @@ export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string
 }
 
 export const sheetTitleClass = (kind: SheetKind) => sheetBodies[kind]?.titleClass;
+
+/** A stacked child's description: whom it serves ("For New agent."), then its own note. */
+export function childDescription(kind: SheetKind, parentTitle: string): string {
+  const note = sheetBodies[kind]?.note;
+  return note ? `For ${parentTitle}. ${note}` : `For ${parentTitle}.`;
+}
 
 /** Forget a failed (or any) load so the next render imports again. */
 export function resetBodyLoad(entry: Entry) {

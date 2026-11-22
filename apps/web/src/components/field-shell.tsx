@@ -10,10 +10,12 @@ type Props = {
   help?: string;
   /** Group of controls: a fieldset with a legend instead of a label for one input. */
   legend?: boolean;
+  /** A control at the end of the label row (a ghost "Add credential"); single-input fields only. */
+  action?: ReactNode;
   children: (a: { id: string; describedBy?: string; invalid: boolean }) => ReactNode;
 };
 
-export function FieldShell({ name, label, error, help, legend, children }: Props) {
+export function FieldShell({ name, label, error, help, legend, action, children }: Props) {
   const id = `field-${name}`;
   const errorId = `${id}-error`;
   const helpId = `${id}-help`;
@@ -44,11 +46,21 @@ export function FieldShell({ name, label, error, help, legend, children }: Props
       </fieldset>
     );
   }
+  const labelEl = (
+    <Label htmlFor={id} className="text-[0.8125rem]">
+      {label}
+    </Label>
+  );
   return (
     <div className="grid gap-1.5">
-      <Label htmlFor={id} className="text-[0.8125rem]">
-        {label}
-      </Label>
+      {action ? (
+        <div className="flex min-h-7 items-center justify-between gap-2">
+          {labelEl}
+          {action}
+        </div>
+      ) : (
+        labelEl
+      )}
       {body}
       {note}
     </div>

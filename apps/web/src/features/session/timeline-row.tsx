@@ -263,6 +263,8 @@ export interface TimelineRowProps {
   rowProps(row: Row): Record<string, unknown>;
   failedIds: ReadonlySet<string>;
   interruptedEnds: ReadonlySet<number>;
+  /** A top-level tool row's time, in its own line on hover or focus (U3 §7.5); never its children's. */
+  toolTime?: string;
 }
 
 export function TimelineRow(props: TimelineRowProps) {
@@ -353,9 +355,10 @@ export function TimelineRow(props: TimelineRowProps) {
           expanded={expanded.has(row.key)}
           onToggle={() => toggle(row.key)}
           rowProps={rp}
+          time={props.toolTime}
         >
           {row.children.map((c) => (
-            <TimelineRow key={c.key} {...props} row={c} />
+            <TimelineRow key={c.key} {...props} toolTime={undefined} row={c} />
           ))}
         </ToolCallRow>
       );

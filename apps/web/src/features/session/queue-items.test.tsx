@@ -315,7 +315,7 @@ test("a failed restore moves focus from Undo to the error line", async () => {
   await vi.waitFor(() => expect(errorLine).toHaveFocus());
 });
 
-test("queued, Sending and cancelled blocks keep the rows' right gutter, so a handoff never jumps", () => {
+test("queued and Sending cards span the column like a delivered card; a cancelled line keeps the rows' gutter", () => {
   render(
     <QueueItems
       items={[msg({ id: "a", body: "queued" })]}
@@ -327,8 +327,11 @@ test("queued, Sending and cancelled blocks keep the rows' right gutter, so a han
     />,
   );
   const wrap = (el: Element | null) => el?.closest(".pt-3");
-  expect(wrap(screen.getByText("queued"))).toHaveClass(ROW_GUTTER);
-  expect(wrap(screen.getByText("sending"))).toHaveClass(ROW_GUTTER);
+  expect(wrap(screen.getByText("queued"))).not.toHaveClass(ROW_GUTTER);
+  expect(wrap(screen.getByText("sending"))).not.toHaveClass(ROW_GUTTER);
+  // The card's own padding matches a delivered card's, so its body wraps the same at the handoff.
+  for (const t of ["queued", "sending"])
+    expect(screen.getByText(t).closest("[data-message-block]")).toHaveClass("pr-9");
   expect(wrap(screen.getByText("Message cancelled."))).toHaveClass(ROW_GUTTER);
 });
 

@@ -278,7 +278,8 @@ function OutgoingMessage({
     return () => clearTimeout(t);
   }, [sending, grown, sentAt]);
   return (
-    <div ref={wrap} {...(focusFirst ? { tabIndex: -1 } : {})} className={`pt-3 ${ROW_GUTTER}`}>
+    // A card spans the column like the delivered card that replaces it (U3 §7.5): no right gutter.
+    <div ref={wrap} {...(focusFirst ? { tabIndex: -1 } : {})} className="pt-3">
       {children(!grown, sending && slow)}
     </div>
   );

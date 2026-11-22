@@ -89,9 +89,18 @@ export function rowGap(row: Row, prev: Row | undefined): string {
   return speaks || prev.kind === "turn_footer" ? "mt-6" : "mt-2";
 }
 
-/** The rows' right gutter, a fixed 2rem column for the row menu (U3 §7.5): everything under the rows that should line up with them
- *  (the activity line, queued and Sending blocks, cancelled lines) uses it too. */
+/** The rows' right gutter, a fixed 2rem column for the row menu (U3 §7.5): everything unboxed under
+ *  the rows that should line up with them (the activity line, cancelled lines) uses it too. Cards
+ *  span the full column instead, with the ⋯ inside their own padding. */
 export const ROW_GUTTER = "pr-8";
+
+/** A card (U3 §7.1): an envelope that crossed a session boundary. A factory notice is a quiet line. */
+export function isCard(row: Row): boolean {
+  if (row.kind === "outgoing" || row.kind === "spawn") return true;
+  if (row.kind !== "message") return false;
+  const k = row.message.kind;
+  return k !== "system" && k !== "task_assigned" && k !== "task_update";
+}
 
 /** One timeline entry: the wrap (deep-link id, live fade), the row, its gutter time and its menu. */
 export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
@@ -104,17 +113,17 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       // `data-arrived` on the row's own box (U3 §7.4).
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${p.gap}`}
+      className={`group relative min-w-0 rounded-md ${isCard(row) ? "" : ROW_GUTTER} ${p.gap}`}
     >
       <ItemContent {...p} />
     </div>
   );
 }, itemPropsEqual);
 
-/** Agent text and tool rows show their time in the gutter on hover or focus (U3 §7.5); a head text
- *  row's speaker line already shows it, and messages keep their visible time. */
+/** Agent text shows its time in the gutter on hover or focus (U3 §7.5); a head text row's speaker
+ *  line already shows it, messages keep their visible time, and a tool row puts it in its own line. */
 function gutterTime(row: Row): string | undefined {
-  if (row.kind === "tool" || (row.kind === "text" && !row.head)) return row.at;
+  if (row.kind === "text" && !row.head) return row.at;
   return undefined;
 }
 
@@ -154,9 +163,11 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         })}
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}
+        toolTime={row.kind === "tool" ? row.at : undefined}
       />
       {time !== undefined && (
-        // Content | chip | time | ⋯: the time sits just left of the menu, over the row's end.
+        // Content | chip | time | ⋯: the time sits just left of the menu, over the text row's end
+        // (agent text has nothing there; a tool row shows its time in its own line).
         <time
           data-gutter-time
           dateTime={time}
@@ -171,6 +182,7 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
         focusable={row.key === p.tabKey}
         callShown={p.expanded.has(row.key)}
         onToggleCall={onToggleCall}
+        inCard={isCard(row)}
       />
     </>
   );

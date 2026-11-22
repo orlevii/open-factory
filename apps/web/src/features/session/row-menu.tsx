@@ -76,12 +76,19 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
   return items;
 }
 
+/** Where the trigger sits (U3 §7.5): in an unboxed row's 2rem right column, or inside a card's own
+ *  right padding (`pr-9`), off its border. "Couldn't copy" sits just left of it. */
+const PLACE = {
+  gutter: { trigger: "top-1 right-0", failed: "top-1 right-8" },
+  card: { trigger: "top-1.5 right-1.5", failed: "top-1.5 right-9" },
+} as const;
+
 // Shown instantly on hover or focus within the row (fine pointers), always on touch, and always while
 // its menu is open: the modal menu takes the row's hover and focus, and Radix anchors the menu to
 // this element's box, so a hidden trigger would send it to the viewport's corner. The 0.98 press is
 // explicit: Button leaves it off popup triggers.
 const TRIGGER =
-  "absolute top-1 right-0 text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
+  "absolute text-muted-foreground group-focus-within:inline-flex group-hover:inline-flex pointer-coarse:inline-flex data-[state=open]:inline-flex data-returning:inline-flex active:scale-[0.98] motion-reduce:active:scale-100";
 
 /**
  * The one ⋯ per row (U3 §7.5). At rest it is a plain button, so a long timeline mounts no menu roots;
@@ -95,6 +102,7 @@ export function RowMenu({
   label = "Row actions",
   callShown = false,
   onToggleCall,
+  inCard = false,
 }: {
   /** The list, or a stable function that builds it: called only once the menu is first opened, so a
    *  long timeline does none of that work at mount. */
@@ -105,8 +113,11 @@ export function RowMenu({
   /** The raw call is showing: its item reads "Hide tool call". */
   callShown?: boolean;
   onToggleCall?(): void;
+  /** The row is a card: the trigger sits inside its padding. */
+  inCard?: boolean;
 }) {
   const { state, instant, copy } = useCopy();
+  const place = PLACE[inCard ? "card" : "gutter"];
   const [mounted, setMounted] = useState(false);
   // The first opening mounts the Radix root after the key that asked for it, so Radix's own
   // keyboard-modality listener never saw that key: the content then moves focus to the first item
@@ -128,6 +139,7 @@ export function RowMenu({
       label={state === "copied" ? "Copied" : label}
       focusable={focusable}
       shown={state !== "idle"}
+      position={place.trigger}
       {...(mounted ? {} : { onPointerDown: activate, onKeyDown: activate })}
     >
       <CopyIcon
@@ -154,7 +166,7 @@ export function RowMenu({
       ) : (
         button
       )}
-      {state === "failed" && <CopyFailed className="absolute top-1 right-8" />}
+      {state === "failed" && <CopyFailed className={`absolute ${place.failed}`} />}
     </>
   );
 }
@@ -164,6 +176,7 @@ function TriggerButton({
   label,
   focusable,
   shown,
+  position,
   children,
   ...rest
 }: {
@@ -171,6 +184,7 @@ function TriggerButton({
   label: string;
   focusable: boolean;
   shown: boolean;
+  position: string;
   children: ReactNode;
   onPointerDown?(e: PointerEvent): void;
   onKeyDown?(e: KeyboardEvent): void;
@@ -186,7 +200,7 @@ function TriggerButton({
       aria-label={label}
       tabIndex={focusable ? 0 : -1}
       // Feedback stays visible after the pointer leaves.
-      className={`${shown ? "inline-flex" : "hidden"} ${TRIGGER}`}
+      className={`${shown ? "inline-flex" : "hidden"} ${position} ${TRIGGER}`}
       {...rest}
     >
       {children}

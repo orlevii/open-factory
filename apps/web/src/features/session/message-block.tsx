@@ -218,7 +218,9 @@ export function MessageBlock(props: {
     <div
       data-message-block
       {...(sending ? { role: "group", "aria-label": "Sending" } : {})}
-      className={`rounded-lg border bg-card px-3 py-2 ${queued ? "border-dashed border-input" : "border-border"}`}
+      // pr-9: the row menu's ⋯ sits inside the card (U3 §7.5); queued and Sending cards keep the same
+      // padding, so a body wraps the same before and after the handoff.
+      className={`rounded-lg border bg-card py-2 pr-9 pl-3 ${queued ? "border-dashed border-input" : "border-border"}`}
     >
       {scheduled || system ? (
         // Scheduler and queued factory notices keep their own sender (S9, S5).

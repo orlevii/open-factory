@@ -10,7 +10,7 @@ export function presetOf(cron: string): string | undefined {
   return REPEATS_PRESETS.find((p) => p.cron === normalized)?.label;
 }
 
-const MINUTE_STEPS = new Set([5, 10, 15, 20, 30]);
+const MINUTE_STEPS = new Set([2, 3, 4, 5, 6, 10, 12, 15, 20, 30]);
 const HOUR_STEPS = new Set([2, 3, 4, 6, 8, 12]);
 const DAY_NAMES = [
   "Sundays",
@@ -38,7 +38,7 @@ function joinNames(names: string[]): string {
 
 function weekdays(field: string): string | undefined {
   if (field === "1-5") return "Weekdays";
-  if (!/^\d(,\d)*$/.test(field)) return undefined;
+  if (!/^[0-7](,[0-7])*$/.test(field)) return undefined;
   const days = field.split(",").map((d) => Number(d) % 7);
   if (days.some((d, i) => i > 0 && d <= (days[i - 1] as number))) return undefined;
   if (days.length > 3) return undefined;

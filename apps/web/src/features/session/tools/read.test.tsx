@@ -133,6 +133,15 @@ test("Show content is text, never HTML", async () => {
   expect(container.querySelector("b")).toBeNull();
 });
 
+test("Show content drops bidi and control characters, as diffs do (Trojan source)", async () => {
+  const line = 'if (role === "user\u202e \u2066// admin\u2069 \u2066") {\u0007';
+  const row = toolRow("Read", { file_path: "/work/x.txt" }, { content: numbered([line]) });
+  const { container } = render(<RowHarness open row={row} />);
+  await userEvent.click(screen.getByRole("button", { name: "Show content" }));
+  const text = container.querySelector("[data-code]")?.textContent ?? "";
+  expect(text).toBe('if (role === "user // admin ") {');
+});
+
 test("a failed read shows its error, not Show content", () => {
   render(
     <RowHarness

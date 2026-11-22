@@ -63,6 +63,13 @@ test("stripAnsi stays linear on a 64 KB line, with or without a trailing carriag
   expect(stripAnsi(`${line}\rb`)).toBe("b");
 });
 
+test("stripAnsi stays linear on line separators (U+2028), which a multiline ^ would treat as line starts", () => {
+  const seps = "\u2028".repeat(65536);
+  expect(timed(() => stripAnsi(`${seps}\r`))).toBeLessThan(50);
+  expect(timed(() => stripAnsi(`${seps}\rb`))).toBeLessThan(50);
+  expect(stripAnsi(`a\u2028b\rc`)).toBe("c");
+});
+
 test("firstLine reads only the start of a long error", () => {
   const content = `<tool_use_error>Error: boom ${"x".repeat(65536)}</tool_use_error>`;
   let line = "";

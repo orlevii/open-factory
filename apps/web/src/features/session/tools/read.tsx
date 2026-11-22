@@ -2,6 +2,7 @@ import type { ToolMeta } from "@open-factory/shared";
 import { useEffect, useMemo, useState } from "react";
 import { type HighlightToken, highlightFile } from "@/components/markdown/highlight";
 import type { ToolRow } from "../rows";
+import { cleanCode } from "./output";
 import { ExpandButton, OutputTail } from "./parts";
 
 /** "Show content" shows this much before "Show all", like Bash's tail but from the top (spec §9.2). */
@@ -146,7 +147,11 @@ function FileLines({ lines, path }: { lines: Line[]; path: string }) {
 
 function ShowContent({ content, path }: { content: string; path: string }) {
   const [open, setOpen] = useState(false);
-  const lines = useMemo(() => (open ? parseNumbered(content) : []), [open, content]);
+  // Bidi and control characters dropped, as in diffs, so the text reads as it runs (Trojan source).
+  const lines = useMemo(
+    () => (open ? parseNumbered(content).map((l) => ({ ...l, text: cleanCode(l.text) })) : []),
+    [open, content],
+  );
   if (!open) return <ExpandButton onExpand={() => setOpen(true)}>Show content</ExpandButton>;
   if (lines.length === 0) return <p className="text-[0.8125rem] text-muted-foreground">Empty</p>;
   return <FileLines lines={lines} path={path} />;

@@ -27,25 +27,44 @@ const HIT = /^([^\s:]*\/[^\s:]*|[^\s:/]+\.\w+):(.*)$/;
 // A count line: the file, a colon, its number of occurrences.
 const COUNT = /^(.+):(\d+)$/;
 
+const NUMBERED_CONTEXT = /-\d+-/g;
+
+/** A context line `<known file>-12-text`: each `-N-` in the line is tried as the end of the file
+ *  name, a set lookup each, so the cost follows the line's length, not the number of files. */
+function numberedContext(line: string, known: ReadonlySet<string>) {
+  for (const m of line.matchAll(NUMBERED_CONTEXT)) {
+    const file = line.slice(0, m.index);
+    if (known.has(file)) return { file, text: line.slice(file.length + 1) };
+  }
+  return undefined;
+}
+
+/** A context line without line numbers, `<known file>-text`: each dash tried the same way. */
+function plainContext(line: string, known: ReadonlySet<string>) {
+  for (let i = line.indexOf("-"); i >= 0; i = line.indexOf("-", i + 1)) {
+    const file = line.slice(0, i);
+    if (known.has(file)) return { file, text: line.slice(i + 1) };
+  }
+  return undefined;
+}
+
 /** Content mode: matches read `path:12:text`, context lines `path-12-text` with `--` between
- *  blocks. A line that starts with a file already seen on a match, then a dash, is context. */
+ *  blocks. A numbered context line of a file seen on a match comes first (its text may hold a
+ *  colon); then a match, so `a.ts-old.ts:3:x` stays a match; then an unnumbered context line. */
 function parseContent(lines: string[], found: number | undefined): SearchResult {
   const known = new Set<string>();
   for (const line of lines) {
     const m = HIT.exec(line);
     if (m?.[1]) known.add(m[1]);
   }
-  const contextOf = (line: string) => {
-    for (const f of known)
-      if (line.startsWith(`${f}-`)) return { file: f, text: line.slice(f.length + 1) };
-    return undefined;
-  };
   const groups: { file: string; lines: HitLine[] }[] = [];
   let count = 0;
   for (const line of lines) {
     if (line === "--") continue; // the separator between context blocks
-    const ctx = contextOf(line);
-    const m = ctx ? undefined : HIT.exec(line);
+    const numbered = numberedContext(line, known);
+    const hit = numbered ? undefined : HIT.exec(line);
+    const ctx = numbered ?? (hit ? undefined : plainContext(line, known));
+    const m = ctx ? undefined : hit;
     const file = ctx?.file ?? m?.[1] ?? "";
     const entry = { text: ctx?.text ?? (m ? (m[2] ?? "") : line), match: !ctx };
     if (entry.match) count++;

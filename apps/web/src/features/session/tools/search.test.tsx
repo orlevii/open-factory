@@ -54,6 +54,29 @@ describe("parseSearch", () => {
       ],
     });
   });
+  test("a match in a file whose name starts with a known file and a dash is a match, not context", () => {
+    const r = parseSearch(
+      ["src/a.ts:1:x", "src/a.ts-old.ts:3:x", "src/a.ts-2-ctx"].join("\n"),
+      "content",
+    );
+    expect(r).toEqual({
+      kind: "content",
+      count: 2,
+      groups: [
+        { file: "src/a.ts", lines: [{ text: "1:x", match: true }] },
+        { file: "src/a.ts-old.ts", lines: [{ text: "3:x", match: true }] },
+        { file: "src/a.ts", lines: [{ text: "2-ctx", match: false }] },
+      ],
+    });
+  });
+  test("context lookup stays linear in the number of files", () => {
+    const files = Array.from({ length: 2000 }, (_, i) => `src/dir/file-${i}.ts`);
+    const lines = files.flatMap((f) => [`${f}:1:hit`, `${f}-2-ctx`]);
+    const t = performance.now();
+    const r = parseSearch(lines.join("\n"), "content");
+    expect(performance.now() - t).toBeLessThan(100);
+    expect(r.count).toBe(2000);
+  });
   test("context lines (path-N-text) and -- separators are shown but never counted", () => {
     const r = parseSearch(
       [

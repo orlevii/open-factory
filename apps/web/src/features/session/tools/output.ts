@@ -7,8 +7,10 @@ const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)
 // C0 except tab and newline, DEL and C1.
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 // A line redrawn with carriage returns (a progress bar): everything up to its last `\r` before text.
-// Anchored at a line start, so a long line is scanned once, not once per character.
-const REDRAWN = /^[^\n]*\r(?=[^\n])/gm;
+// Anchored at a line start, so a long line is scanned once, not once per character. A lookbehind,
+// not `^` with the `m` flag: that also matches after U+2028 and U+2029, which made a run of them
+// quadratic.
+const REDRAWN = /(?<=^|\n)[^\n]*\r(?=[^\n])/g;
 // Control characters (tab kept) and bidi controls, which could reorder how code reads.
 const CODE_UNSAFE =
   /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;

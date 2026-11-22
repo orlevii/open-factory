@@ -53,7 +53,7 @@ export function PrerequisiteLine({
       {lead}
       {missing === "credential" && (
         <>
-          <Link to="/settings" hash="credentials" className={linkClass}>
+          <Link to="/settings/credentials" className={linkClass}>
             Add a Claude credential in Settings
           </Link>{" "}
           first.

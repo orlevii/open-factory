@@ -1,5 +1,5 @@
 import type { CredentialKind } from "@open-factory/shared";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { Ellipsis } from "lucide-react";
 import {
   type ComponentProps,
@@ -238,6 +238,7 @@ export function InlineForm({
   pending,
   formError,
   autoFocusId,
+  reveal = false,
 }: {
   label: string;
   onSubmit(): void;
@@ -249,14 +250,27 @@ export function InlineForm({
   formError?: string;
   /** The field to focus on open, when it isn't the first one (a prefilled name). */
   autoFocusId?: string;
+  /** Opened by a link (?addSecret): bring the whole form into view, wherever it sits on the page. */
+  reveal?: boolean;
 }) {
   const ref = useRef<HTMLFormElement>(null);
+  const router = useRouter();
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
     const first = autoFocusId
       ? document.getElementById(autoFocusId)
       : ref.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
-    first?.focus();
+    first?.focus({ preventScroll: reveal });
+    if (!reveal) return;
+    const show = () => ref.current?.scrollIntoView?.({ block: "nearest" });
+    show();
+    // The navigation that opened the form resets the page to the top once it has rendered, which
+    // is after this effect: show the form again then. Only that one navigation.
+    const off = router.subscribe("onRendered", () => {
+      off();
+      show();
+    });
+    return off;
   }, []);
   return (
     <form

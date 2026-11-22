@@ -223,13 +223,14 @@ function FixLink({
         Re-sync the agent
       </Link>
     );
-  const label = {
-    credentials: "Credentials",
-    secrets: "Secrets",
-    projects: "Projects",
-  }[fix];
+  const target = {
+    credentials: { to: "/settings/credentials", label: "Credentials" },
+    secrets: { to: "/settings/secrets", label: "Secrets" },
+    projects: { to: "/settings/projects", label: "Projects" },
+  } as const;
+  const { to, label } = target[fix];
   return (
-    <Link to="/settings" hash={fix} className={cls}>
+    <Link to={to} className={cls}>
       Open Settings → {label}
     </Link>
   );

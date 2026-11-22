@@ -1,11 +1,4 @@
-import type {
-  AgentUsageRow,
-  CredentialSummary,
-  CredentialUsageRow,
-  ProjectSummary,
-  SecretSummary,
-  Totals,
-} from "@open-factory/shared";
+import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-factory/shared";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
@@ -47,46 +40,7 @@ const project = (o: Partial<ProjectSummary> = {}): ProjectSummary => ({
   ...o,
 });
 
-const totals = (o: Partial<Totals> = {}): Totals => ({
-  costUsd: 0,
-  inputTokens: 0,
-  outputTokens: 0,
-  cacheWriteTokens: 0,
-  cacheReadTokens: 0,
-  turns: 0,
-  ...o,
-});
-function daily(n: number, cost = 0.5, turns = 1) {
-  return Array.from({ length: n }, (_, i) => {
-    const d = new Date(Date.UTC(2026, 10, 20 - (n - 1 - i)));
-    return { date: d.toISOString().slice(0, 10), ...totals({ costUsd: cost, turns }) };
-  });
-}
-const usageRow = (o: Partial<AgentUsageRow> & { slug: string }): AgentUsageRow => ({
-  displayName: o.slug,
-  kind: "persistent",
-  archived: false,
-  terminated: false,
-  own: totals(),
-  total: o.own ?? totals(),
-  ...o,
-});
-const credUsage = (o: Partial<CredentialUsageRow> = {}): CredentialUsageRow => ({
-  name: "work",
-  kind: "oauth_token",
-  totals: totals(),
-  agents: [],
-  rateLimit: null,
-  ...o,
-});
-type UsageWorld = {
-  daily?: ReturnType<typeof daily>;
-  agents?: AgentUsageRow[];
-  credentials?: CredentialUsageRow[];
-};
-
 type World = {
-  usage?: UsageWorld;
   credentials?: CredentialSummary[];
   secrets?: SecretSummary[];
   projects?: ProjectSummary[];
@@ -103,15 +57,16 @@ function world(w: World = {}) {
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
-    "GET /api/usage/daily?": () =>
-      json({ timezone: "Europe/Berlin", days: w.usage?.daily ?? daily(30, 0, 0) }),
-    "GET /api/usage/agents?": () => json({ agents: w.usage?.agents ?? [] }),
-    "GET /api/usage/credentials?": () =>
-      json({ credentials: w.usage?.credentials ?? [], unattributed: totals() }),
     ...w.extra,
   });
   return { api, state };
 }
+const settingsCalls = (api: { calls: { method: string; url: string }[] }) =>
+  api.calls
+    .filter((c) =>
+      /^\/api\/(credentials|secrets|projects|users|invites|settings\/factory)$/.test(c.url),
+    )
+    .map((c) => `${c.method} ${c.url}`);
 const section = (name: string) => screen.findByRole("region", { name });
 const row = (region: HTMLElement, name: string) =>
   within(region)
@@ -123,38 +78,6 @@ const describedText = (el: HTMLElement) =>
     .map((id) => document.getElementById(id)?.textContent ?? "")
     .join(" ");
 
-test("sections are Usage, Credentials, Secrets, Projects, Users, Factory, each with its anchor", async () => {
-  world();
-  renderApp("/settings", alice);
-  await section("Credentials");
-  const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-  expect(headings).toEqual(["Usage", "Credentials", "Secrets", "Projects", "Users", "Factory"]);
-  for (const id of ["usage", "credentials", "secrets", "projects", "users", "factory"]) {
-    expect(document.getElementById(id)?.tagName).toBe("SECTION");
-  }
-  expect(document.getElementById("credentials")).toHaveTextContent(
-    "Claude logins agents use. Each agent picks one.",
-  );
-  expect(document.getElementById("secrets")).toHaveTextContent(
-    "Environment variables agents receive when their template lists them. Values can't be viewed after saving.",
-  );
-  expect(document.getElementById("projects")).toHaveTextContent(
-    "Folders on this machine that agents can be granted. Granted agents see them at ./projects/<name>.",
-  );
-  expect(screen.queryByText("Nothing to configure yet.")).not.toBeInTheDocument();
-});
-
-test("cold entry fetches each settings list once: the loader's answer is reused on mount", async () => {
-  const { api } = world();
-  renderApp("/settings", alice);
-  await section("Credentials");
-  await section("Projects");
-  const count = (path: string) => api.calls.filter((c) => c.url === path).length;
-  expect(count("/api/credentials")).toBe(1);
-  expect(count("/api/secrets")).toBe(1);
-  expect(count("/api/projects")).toBe(1);
-});
-
 test("add credential: kind radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
   let release: (r: Response) => void = () => {};
   const { api, state } = world({
@@ -165,7 +88,7 @@ test("add credential: kind radios, a password field, Verifying…, a rejected to
         }),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
   const name = within(region).getByLabelText("Name");
@@ -229,7 +152,7 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
         ),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
   await userEvent.type(within(region).getByLabelText("Name"), "work");
@@ -255,7 +178,7 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
       "POST /api/credentials/spare/verify": () => json({ credential: cred({ name: "spare" }) }),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await waitFor(() => expect(row(region, "work")).toBeDefined());
   expect(row(region, "work")).toHaveTextContent("Used by @lead");
@@ -313,7 +236,7 @@ test("deleting an unused credential confirms, then calls DELETE", async () => {
       },
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await waitFor(() => expect(row(region, "work")).toBeDefined());
   await userEvent.click(
@@ -350,7 +273,7 @@ test("a credential taken while the dialog was open shows a crimson row line link
         ),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await waitFor(() => expect(row(region, "work")).toBeDefined());
   await userEvent.click(
@@ -380,7 +303,7 @@ test("secrets are write-only rows; Update saves a new value and says who restart
         json({ secret: secret({ name: "GH_TOKEN", usedBy: ["lead"] }) }),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/secrets", alice);
   const region = await section("Secrets");
   await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
   const r = row(region, "GH_TOKEN");
@@ -406,7 +329,7 @@ test("Delete… on a secret confirms with the agents that lose it", async () => 
     secrets: [secret({ name: "GH_TOKEN", usedBy: ["lead", "dev-1"] })],
     extra: { "DELETE /api/secrets/GH_TOKEN": () => json(null, 204) },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/secrets", alice);
   const region = await section("Secrets");
   await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
   await userEvent.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Delete…" }));
@@ -424,15 +347,52 @@ test("Delete… on a secret confirms with the agents that lose it", async () => 
 
 test("?addSecret=GH_TOKEN opens the add form with the name filled and the value focused", async () => {
   world();
-  renderApp("/settings?addSecret=GH_TOKEN#secrets", alice);
+  renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
   const region = await section("Secrets");
   await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
   expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
 });
 
+test("?addSecret brings the add form into view after the navigation's scroll reset", async () => {
+  // jsdom has no layout: record the order of the router's reset (window.scrollTo) and the form's
+  // scrollIntoView; the form must be the last thing scrolled, or the reset hides it again.
+  const scrolls: string[] = [];
+  const reset = vi.spyOn(window, "scrollTo").mockImplementation(() => scrolls.push("reset"));
+  const into = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+    this: Element,
+  ) {
+    scrolls.push(this.getAttribute("aria-label") ?? this.tagName);
+  });
+  try {
+    world();
+    renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
+    const region = await section("Secrets");
+    await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
+    await waitFor(() => expect(scrolls).toContain("reset"));
+    await waitFor(() => expect(scrolls.at(-1)).toBe("Add secret"));
+  } finally {
+    reset.mockRestore();
+    into.mockRestore();
+  }
+});
+
+test("opening the add form with its button scrolls nothing itself", async () => {
+  const into = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  try {
+    world();
+    renderApp("/settings/secrets", alice);
+    const region = await section("Secrets");
+    await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
+    expect(within(region).getByLabelText("Name")).toHaveFocus();
+    expect(into).not.toHaveBeenCalled();
+  } finally {
+    into.mockRestore();
+  }
+});
+
 test("the secret name is uppercased while typing, keeping the caret; reserved names error on blur", async () => {
   world();
-  renderApp("/settings", alice);
+  renderApp("/settings/secrets", alice);
   const region = await section("Secrets");
   await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
   const name = within(region).getByLabelText("Name") as HTMLInputElement;
@@ -458,7 +418,7 @@ test("projects: a middle-truncated path, grant wording, and Remove disabled with
       project({ name: "docs", hostPath: "/srv/docs" }),
     ],
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/projects", alice);
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());
   const r = row(region, "app");
@@ -491,7 +451,7 @@ test("projects: a live spawned grantee is named through its spawner in Remove's 
         }),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/projects", alice);
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());
   await userEvent.click(
@@ -519,7 +479,7 @@ test("removing an unused project offers Undo, notes its templates, and Undo re-a
       },
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/projects", alice);
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());
   await userEvent.click(
@@ -561,7 +521,7 @@ test("Change path saves with the restart warning; a missing folder is a field er
       },
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/projects", alice);
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());
   await userEvent.click(
@@ -601,7 +561,7 @@ test("add project: a missing folder lands under Path, then the row appears", asy
         ),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/projects", alice);
   const region = await section("Projects");
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await userEvent.type(within(region).getByLabelText("Name"), "app");
@@ -628,7 +588,7 @@ test("add project: a missing folder lands under Path, then the row appears", asy
 
 test("inline forms focus their first field; Cancel and Escape return focus to the opener", async () => {
   world();
-  renderApp("/settings", alice);
+  renderApp("/settings/projects", alice);
   const region = await section("Projects");
   const add = within(region).getByRole("button", { name: "Add project" });
   await userEvent.click(add);
@@ -646,29 +606,21 @@ test("inline forms focus their first field; Cancel and Escape return focus to th
   expect(within(region).queryByLabelText("Path")).not.toBeInTheDocument();
 });
 
-test("#projects focuses the Projects heading once the sections load", async () => {
-  world();
-  renderApp("/settings#projects", alice);
-  const heading = await screen.findByRole("heading", { level: 2, name: "Projects" });
-  await waitFor(() => expect(heading).toHaveFocus());
-});
-
 test("Add secret waits for the secrets list: a failed load shows no add button or form", async () => {
   mockApi({
     "GET /api/credentials": () => json({ credentials: [] }),
     "GET /api/secrets": () => json({ error: { code: "internal", message: "boom" } }, 500),
     "GET /api/projects": () => json({ projects: [] }),
   });
-  renderApp("/settings?addSecret=GH_TOKEN#secrets", alice);
+  renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
   const region = await section("Secrets");
   expect(within(region).queryByRole("button", { name: "Add secret" })).not.toBeInTheDocument();
   expect(within(region).queryByLabelText("Name")).not.toBeInTheDocument();
 });
 
-test("a failing section shows only its own error line, with Retry; the others render", async () => {
+test("a failing section shows its own error line, with Retry", async () => {
   let fail = true;
   world({
-    secrets: [secret()],
     extra: {
       "GET /api/credentials": () =>
         fail
@@ -676,19 +628,15 @@ test("a failing section shows only its own error line, with Retry; the others re
           : json({ credentials: [cred()] }),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   const text = await within(region).findByText("Couldn't load credentials.");
   const line = text.parentElement as HTMLElement;
   const icon = line.querySelector("svg");
   expect(icon).toHaveAttribute("aria-hidden", "true");
   expect(icon).toHaveClass("text-destructive");
+  // The route loader's failure is the section's error, never the route's.
   expect(screen.queryByText("Couldn't load settings.")).not.toBeInTheDocument();
-  expect(screen.queryByText(/Couldn't load (secrets|projects|usage)\./)).not.toBeInTheDocument();
-  expect(row(await section("Secrets"), "GH_TOKEN")).toBeInTheDocument();
-  expect(
-    await within(await section("Projects")).findByText("No projects yet."),
-  ).toBeInTheDocument();
   fail = false;
   await userEvent.click(within(line).getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(row(region, "work")).toBeInTheDocument());
@@ -702,276 +650,33 @@ test("secrets and projects show their own error lines", async () => {
       "GET /api/projects": () => json({ error: { code: "internal", message: "boom" } }, 500),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/secrets", alice);
   expect(
     await within(await section("Secrets")).findByText("Couldn't load secrets."),
   ).toBeInTheDocument();
+  await userEvent.click(
+    within(screen.getByRole("navigation", { name: "Settings" })).getByRole("link", {
+      name: "Projects",
+    }),
+  );
   expect(
     await within(await section("Projects")).findByText("Couldn't load projects."),
   ).toBeInTheDocument();
-  expect(within(await section("Credentials")).getByText("No credentials yet.")).toBeInTheDocument();
 });
 
-test("On this page links all six anchors; #usage focuses the Usage heading", async () => {
-  world();
-  renderApp("/settings#usage", alice);
-  const nav = await screen.findByRole("navigation", { name: "On this page" });
-  const links = within(nav).getAllByRole("link");
-  expect(links.map((l) => l.textContent)).toEqual([
-    "Usage",
-    "Credentials",
-    "Secrets",
-    "Projects",
-    "Users",
-    "Factory",
-  ]);
-  expect(links.map((l) => l.getAttribute("href")?.replace(/^.*#/, "#"))).toEqual([
-    "#usage",
-    "#credentials",
-    "#secrets",
-    "#projects",
-    "#users",
-    "#factory",
-  ]);
-  const heading = await screen.findByRole("heading", { level: 2, name: "Usage" });
-  await waitFor(() => expect(heading).toHaveFocus());
-});
-
-test("clicking the anchor of the current hash again still moves focus to its heading", async () => {
-  world();
-  renderApp("/settings#credentials", alice);
-  const heading = await screen.findByRole("heading", { level: 2, name: "Credentials" });
-  await waitFor(() => expect(heading).toHaveFocus());
-  const nav = screen.getByRole("navigation", { name: "On this page" });
-  within(nav).getByRole("link", { name: "Usage" }).focus();
-  await userEvent.click(within(nav).getByRole("link", { name: "Credentials" }));
-  await waitFor(() => expect(heading).toHaveFocus());
-});
-
-test("a same-document fragment change (address bar, back/forward) also focuses its heading", async () => {
-  world();
-  renderApp("/settings#credentials", alice);
-  const credentials = await screen.findByRole("heading", { level: 2, name: "Credentials" });
-  await waitFor(() => expect(credentials).toHaveFocus());
-  // A browser-initiated fragment navigation the router doesn't see: only hashchange fires.
-  window.history.replaceState(window.history.state, "", "/settings#factory");
-  window.dispatchEvent(new HashChangeEvent("hashchange"));
-  const factory = screen.getByRole("heading", { level: 2, name: "Factory" });
-  await waitFor(() => expect(factory).toHaveFocus());
-});
-
-const leadFamily = (): AgentUsageRow[] => [
-  usageRow({
-    slug: "writer",
-    own: totals({ costUsd: 0.5, turns: 4 }),
-    total: totals({ costUsd: 0.5, turns: 4 }),
-  }),
-  usageRow({
-    slug: "lead",
-    own: totals({ costUsd: 1.2, turns: 12 }),
-    spawned: totals({ costUsd: 3.4, turns: 29 }),
-    total: totals({ costUsd: 4.6, turns: 41 }),
-  }),
-  ...["lead-a1", "lead-b2", "lead-c3"].map((slug, i) =>
-    usageRow({
-      slug,
-      kind: "ephemeral",
-      spawnerSlug: "lead",
-      terminated: i === 0,
-      own: totals({ costUsd: 1 + i * 0.2, turns: 9 + i }),
-      total: totals({ costUsd: 1 + i * 0.2, turns: 9 + i }),
-    }),
-  ),
-  ...Array.from({ length: 8 }, (_, i) => usageRow({ slug: `idle-${i}` })),
-];
-
-test("Usage: range, Daily chart, estimate line, and the Agents table sorted by total", async () => {
-  const api = world({ usage: { daily: daily(30), agents: leadFamily() } }).api;
-  renderApp("/settings", alice);
-  const region = await section("Usage");
-  expect(within(region).getByRole("radio", { name: "30 days" })).toBeChecked();
-  expect(
-    await within(region).findByRole("heading", { level: 3, name: "Daily" }),
-  ).toBeInTheDocument();
-  expect(within(region).getByText("30 days to today, in Europe/Berlin.")).toBeInTheDocument();
-  expect(
-    within(region).getByText(
-      "Estimated at API prices. A subscription is billed by plan, not per token.",
-    ),
-  ).toBeInTheDocument();
-  expect(api.calls.some((c) => c.url === "/api/usage/agents?days=30")).toBe(true);
-
-  const table = within(region).getByRole("table", { name: "Agents" });
-  const headers = within(table)
-    .getAllByRole("columnheader")
-    .map((h) => h.textContent);
-  expect(headers).toEqual(["Agent", "Turns", "Own (est.)", "Spawned (est.)", "Total (est.)"]);
-  const bodyRows = within(table).getAllByRole("row").slice(1);
-  // lead (4.60) before writer (0.50); the children are collapsed behind the disclosure.
-  expect(bodyRows[0]).toHaveTextContent("@lead");
-  expect(bodyRows[0]).toHaveTextContent("$1.20");
-  expect(bodyRows[0]).toHaveTextContent("$3.40");
-  expect(bodyRows[0]).toHaveTextContent("$4.60");
-  const lead = within(table).getByRole("link", { name: "@lead" });
-  expect(lead).toHaveAttribute("href", "/agents/lead/usage");
-  expect(within(table).queryByText("@lead-a1")).not.toBeInTheDocument();
-
-  const disclosure = within(table).getByRole("button", { name: "Show 3 spawned agents of @lead" });
-  expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  await userEvent.click(disclosure);
-  expect(disclosure).toHaveAttribute("aria-expanded", "true");
-  const child = within(table).getByRole("link", { name: "@lead-c3" });
-  expect(child).toHaveAttribute("href", "/agents/lead-c3/usage");
-  const childRow = child.closest("tr") as HTMLElement;
-  const cells = within(childRow).getAllByRole("cell");
-  // Agent, turns, own, spawned (blank), total.
-  expect(cells[2]).toHaveTextContent("$1.40");
-  expect(cells[3]).toHaveTextContent(/^$/);
-  expect(cells[4]).toHaveTextContent("$1.40");
-  expect(within(table).getByText("@writer").closest("tr")).toHaveTextContent("$0.50");
-});
-
-test("Usage: agents with no usage fold into one row with Show", async () => {
-  world({ usage: { daily: daily(30), agents: leadFamily() } });
-  renderApp("/settings", alice);
-  const region = await section("Usage");
-  const table = await within(region).findByRole("table", { name: "Agents" });
-  expect(within(table).queryByText("@idle-0")).not.toBeInTheDocument();
-  const fold = within(table).getByText("8 agents with no usage").closest("tr") as HTMLElement;
-  const show = within(fold).getByRole("button", { name: "Show" });
-  expect(show).toHaveAttribute("aria-expanded", "false");
-  await userEvent.click(show);
-  expect(within(table).getByRole("link", { name: "@idle-7" })).toHaveAttribute(
-    "href",
-    "/agents/idle-7/usage",
-  );
-});
-
-test("Usage: the Credentials table with cost, top agents and the rate-limit line", async () => {
-  world({
-    usage: {
-      daily: daily(30),
-      agents: leadFamily(),
-      credentials: [
-        credUsage({
-          totals: totals({ costUsd: 4.12, turns: 30 }),
-          agents: [
-            { slug: "lead", costUsd: 3 },
-            { slug: "writer", costUsd: 1.12 },
-          ],
-          rateLimit: {
-            status: "allowed_warning",
-            type: "five_hour",
-            utilization: 0.82,
-            resetsAt: new Date(Date.now() + 3_600_000).toISOString(),
-            observedAt: new Date(Date.now() - 60_000).toISOString(),
-          },
-        }),
-      ],
-    },
-  });
-  renderApp("/settings", alice);
-  const region = await section("Usage");
-  const table = await within(region).findByRole("table", { name: "Credentials" });
-  // The scroll region has its own name, apart from the Credentials section's landmark.
-  expect(within(region).getByRole("region", { name: "Credential usage" })).toContainElement(table);
-  const headers = within(table).getAllByRole("columnheader");
-  expect(headers.map((h) => h.textContent)).toEqual([
-    "Name",
-    "Kind",
-    "Cost (est.)",
-    "Top agents",
-    "Rate limit",
-  ]);
-  // Below md: Name (with the rate-limit line under it) and Cost only.
-  expect(headers.map((h) => h.classList.contains("hidden"))).toEqual([
-    false,
-    true,
-    false,
-    true,
-    true,
-  ]);
-  const r = within(table).getAllByRole("row")[1] as HTMLElement;
-  const cells = within(r).getAllByRole("cell");
-  expect(cells.map((c) => c.classList.contains("hidden"))).toEqual([
-    false,
-    true,
-    false,
-    true,
-    true,
-  ]);
-  const narrow = cells[0]?.querySelector(".md\\:hidden") as HTMLElement;
-  expect(narrow).toHaveTextContent("82% of the 5-hour limit used");
-  expect(r).toHaveTextContent("work");
-  expect(r).toHaveTextContent("OAuth token");
-  expect(r).toHaveTextContent("$4.12");
-  expect(within(r).getByRole("link", { name: "@lead" })).toHaveAttribute(
-    "href",
-    "/agents/lead/usage",
-  );
-  expect(cells[4]).toHaveTextContent("82% of the 5-hour limit used");
-});
-
-test("rate-limit lines refetch every minute while Settings is open", async () => {
+test("rate-limit lines refetch every minute while the Credentials page is open", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   try {
-    const { api } = world({ usage: { daily: daily(30), credentials: [credUsage()] } });
-    renderApp("/settings", alice);
-    await within(await section("Usage")).findByRole("table", { name: "Credentials" });
+    const { api } = world();
+    renderApp("/settings/credentials", alice);
+    await section("Credentials");
     const count = (url: string) => api.calls.filter((c) => c.url === url).length;
     const creds = count("/api/credentials");
-    const usage = count("/api/usage/credentials?days=30");
     vi.advanceTimersByTime(60_000);
     await waitFor(() => expect(count("/api/credentials")).toBe(creds + 1));
-    await waitFor(() => expect(count("/api/usage/credentials?days=30")).toBe(usage + 1));
   } finally {
     vi.useRealTimers();
   }
-});
-
-test("Usage: all-zero days show the empty line instead of the chart; credentials stay", async () => {
-  world({
-    usage: {
-      daily: daily(30, 0, 0),
-      agents: [usageRow({ slug: "lead" })],
-      credentials: [credUsage()],
-    },
-  });
-  renderApp("/settings", alice);
-  const region = await section("Usage");
-  expect(await within(region).findByText("No usage in the last 30 days.")).toBeInTheDocument();
-  expect(within(region).queryByText("30 days to today, in Europe/Berlin.")).not.toBeInTheDocument();
-  const table = within(region).getByRole("table", { name: "Credentials" });
-  expect(table).toHaveTextContent("work");
-  expect(table).toHaveTextContent("No rate-limit data yet");
-});
-
-test("Usage: ?days=7 asks for 7 days and a range switch keeps the page", async () => {
-  const { api } = world({ usage: { daily: daily(7), agents: leadFamily() } });
-  const { router } = renderApp("/settings?days=7", alice);
-  const region = await section("Usage");
-  expect(within(region).getByRole("radio", { name: "7 days" })).toBeChecked();
-  await waitFor(() =>
-    expect(api.calls.some((c) => c.url === "/api/usage/daily?days=7")).toBe(true),
-  );
-  await userEvent.click(within(region).getByRole("radio", { name: "90 days" }));
-  await waitFor(() => expect(router.state.location.search).toEqual({ days: 90 }));
-  await waitFor(() =>
-    expect(api.calls.some((c) => c.url === "/api/usage/credentials?days=90")).toBe(true),
-  );
-});
-
-test("a failing usage query shows Couldn't load usage. in its section only", async () => {
-  world({
-    extra: {
-      "GET /api/usage/agents?": () => json({ error: { code: "internal", message: "boom" } }, 500),
-    },
-  });
-  renderApp("/settings", alice);
-  const region = await section("Usage");
-  expect(await within(region).findByText("Couldn't load usage.")).toBeInTheDocument();
-  expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  expect(within(await section("Credentials")).getByText("No credentials yet.")).toBeInTheDocument();
 });
 
 test("credential rows show the rate-limit line", async () => {
@@ -992,7 +697,7 @@ test("credential rows show the rate-limit line", async () => {
       }),
     ],
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await waitFor(() => expect(row(region, "work")).toBeInTheDocument());
   expect(row(region, "work")).toHaveTextContent("No rate-limit data yet");
@@ -1002,11 +707,11 @@ test("credential rows show the rate-limit line", async () => {
 
 test("a later ?addSecret updates the open add form and refocuses the value field", async () => {
   world();
-  const { router } = renderApp("/settings?addSecret=GH_TOKEN#secrets", alice);
+  const { router } = renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
   const region = await section("Secrets");
   await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
   await userEvent.click(within(region).getByLabelText("Name"));
-  await router.navigate({ to: "/settings", search: { addSecret: "NPM_TOKEN" }, hash: "secrets" });
+  await router.navigate({ to: "/settings/secrets", search: { addSecret: "NPM_TOKEN" } });
   await waitFor(() => expect(within(region).getByLabelText("Name")).toHaveValue("NPM_TOKEN"));
   await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
 });
@@ -1026,7 +731,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
         ),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/secrets", alice);
   const region = await section("Secrets");
   await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
   await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
@@ -1049,7 +754,7 @@ test("add secret: server fields land under their fields, whatever the code", asy
         ),
     },
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/secrets", alice);
   const region = await section("Secrets");
   await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
   await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
@@ -1058,4 +763,91 @@ test("add secret: server fields land under their fields, whatever the code", asy
   const name = within(region).getByLabelText("Name");
   await waitFor(() => expect(describedText(name)).toBe("Name is bad."));
   expect(name).toHaveFocus();
+});
+
+test.each([
+  ["/settings/credentials", ["GET /api/credentials"]],
+  ["/settings/secrets", ["GET /api/secrets"]],
+  ["/settings/projects", ["GET /api/projects"]],
+  ["/settings/users", ["GET /api/users", "GET /api/invites"]],
+  ["/settings/factory", ["GET /api/settings/factory"]],
+])("%s loads only its own queries", async (path, expected) => {
+  const { api } = world({
+    extra: {
+      "GET /api/users": () => json({ users: [] }),
+      "GET /api/invites": () => json({ invites: [] }),
+      "GET /api/settings/factory": () =>
+        json({
+          maxRunningAgents: 8,
+          defaultWarmWindowMinutes: 70,
+          memberUpdateDebounceSeconds: 30,
+          allowLocalRuntime: false,
+          updatedAt: null,
+          updatedBy: null,
+        }),
+    },
+  });
+  renderApp(path, alice);
+  await screen.findByRole("navigation", { name: "Settings" });
+  await waitFor(() => expect(settingsCalls(api)).toEqual(expect.arrayContaining(expected)));
+  await screen.findByRole("region");
+  // Not deduplicated: the loader fetches, and the section skips its own mount fetch.
+  expect(settingsCalls(api).sort()).toEqual([...expected].sort());
+});
+
+test("a hover preload warms a list once; entering the page then reuses it", async () => {
+  const { api } = world({ credentials: [cred()] });
+  const { router } = renderApp("/settings/secrets", alice);
+  await section("Secrets");
+  api.calls.length = 0;
+  await router.preloadRoute({ to: "/settings/credentials" });
+  expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
+  await router.preloadRoute({ to: "/settings/credentials" });
+  expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
+});
+
+test("sub-nav lists the five pages; the current one is aria-current with medium weight", async () => {
+  world();
+  renderApp("/settings/projects", alice);
+  const nav = await screen.findByRole("navigation", { name: "Settings" });
+  const links = within(nav).getAllByRole("link");
+  expect(links.map((l) => l.textContent)).toEqual([
+    "Credentials",
+    "Secrets",
+    "Projects",
+    "Users",
+    "Factory",
+  ]);
+  const current = links.filter((l) => l.getAttribute("aria-current") === "page");
+  expect(current.map((l) => l.textContent)).toEqual(["Projects"]);
+  expect(current[0]).toHaveClass("font-medium");
+  expect(links.find((l) => l.textContent === "Users")).not.toHaveClass("font-medium");
+  await userEvent.click(within(nav).getByRole("link", { name: "Secrets" }));
+  expect(await section("Secrets")).toBeInTheDocument();
+  expect(within(nav).getByRole("link", { name: "Secrets" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
+test("below a 40rem content width the sub-nav is a Section select", async () => {
+  world();
+  renderApp("/settings/secrets", alice);
+  const nav = await screen.findByRole("navigation", { name: "Settings" });
+  // jsdom has no layout: the container query is checked through its classes (browser pass for the real width).
+  expect(nav.className).toMatch(/hidden/);
+  expect(nav.className).toMatch(/@min-\[53\.75rem\]:block/);
+  const select = screen.getByRole("combobox", { name: "Section" });
+  expect(select.closest("div")?.className).toMatch(/@min-\[53\.75rem\]:hidden/);
+  expect(select).toHaveTextContent("Secrets");
+  await userEvent.click(select);
+  await userEvent.click(await screen.findByRole("option", { name: "Projects" }));
+  expect(await section("Projects")).toBeInTheDocument();
+});
+
+test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", async () => {
+  world();
+  renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
+  const region = await section("Secrets");
+  expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
 });

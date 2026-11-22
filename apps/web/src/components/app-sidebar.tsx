@@ -3,6 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bot,
   CalendarClock,
+  ChartColumn,
   ChevronDown,
   ChevronsUpDown,
   Inbox,
@@ -63,6 +64,7 @@ const nav = [
   { to: "/tasks", label: "Tasks", icon: ListTodo },
   { to: "/templates", label: "Templates", icon: LayoutTemplate },
   { to: "/schedules", label: "Schedules", icon: CalendarClock },
+  { to: "/usage", label: "Usage", icon: ChartColumn },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

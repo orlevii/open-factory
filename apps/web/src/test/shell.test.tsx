@@ -229,7 +229,7 @@ const liveAgents = () =>
       }),
   });
 
-test("nav order: Inbox, Tasks, Templates, Schedules, Settings, then the Agents row heading the tree", async () => {
+test("nav order: Inbox, Tasks, Templates, Schedules, Usage, Settings, then the Agents row heading the tree", async () => {
   liveAgents();
   localStorage.clear();
   renderApp("/inbox", alice);
@@ -238,7 +238,7 @@ test("nav order: Inbox, Tasks, Templates, Schedules, Settings, then the Agents r
     within(nav)
       .getAllByRole("link")
       .map((l) => l.getAttribute("href")),
-  ).toEqual(["/inbox", "/tasks", "/templates", "/schedules", "/settings"]);
+  ).toEqual(["/inbox", "/tasks", "/templates", "/schedules", "/usage", "/settings"]);
   const agents = screen.getByRole("link", { name: "Agents" });
   expect(nav.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const tree = await screen.findByRole("tree", { name: "Agents" });

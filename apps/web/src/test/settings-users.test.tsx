@@ -90,7 +90,7 @@ test("users list: name, handle, email, Joined day, (you), Disabled, and a labell
   world({
     users: [ME, ALICE, user({ id: "u-bob", handle: "bob", disabledAt: NOW.toISOString() })],
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const or = await userRow("or");
   expect(or).toHaveTextContent("Or Levi");
   expect(or).toHaveTextContent("(you)");
@@ -106,7 +106,7 @@ test("users list: name, handle, email, Joined day, (you), Disabled, and a labell
 test("Disable is unavailable for the last enabled user, with the reason", async () => {
   // A stale list where you show as disabled: alice is then the only enabled user.
   world({ users: [{ ...ME, disabledAt: NOW.toISOString() }, ALICE] });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const menu = await openMenu("alice");
   expect(
     within(menu).getByRole("menuitem", { name: "Disable (last enabled user)" }),
@@ -118,7 +118,7 @@ test("Disable is unavailable for the last enabled user, with the reason", async 
 
 test("Disable is unavailable for yourself, with the reason", async () => {
   world();
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const menu = await openMenu("or");
   expect(within(menu).getByRole("menuitem", { name: "Disable (that's you)" })).toHaveAttribute(
     "aria-disabled",
@@ -154,7 +154,7 @@ test.each([
       },
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   if (n > 0) await screen.findAllByText(/Created by @alice/);
   const menu = await openMenu("alice");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "Disable…" }));
@@ -179,7 +179,7 @@ test.each([
         json({ error: { code, message: "server text" } }, 409),
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const menu = await openMenu("alice");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "Disable…" }));
   const dialog = await screen.findByRole("alertdialog");
@@ -198,7 +198,7 @@ test("Enable needs no confirmation and says so inline", async () => {
       },
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const menu = await openMenu("alice");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "Enable" }));
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -213,7 +213,7 @@ test("Enable needs no confirmation and says so inline", async () => {
 
 test("a pending invite whose creator isn't listed reads Created by a former user", async () => {
   world({ invites: [invite({ createdBy: "u-gone" })] });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const region = await usersSection();
   expect(
     await within(region).findByText("Created by a former user · expires in 6 days"),
@@ -235,7 +235,7 @@ test("pending invites: creator and expiry; Revoke is immediate with Undo; Undo r
       },
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const region = await usersSection();
   expect(
     await within(region).findByRole("heading", { level: 3, name: "Pending invites" }),
@@ -274,7 +274,7 @@ test("an Undo that fails says why", async () => {
         json({ error: { code: "invite_expired", message: "This invite has expired." } }, 409),
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const region = await usersSection();
   await userEvent.click(await within(region).findByRole("button", { name: /^Revoke / }));
   await userEvent.click(await within(region).findByRole("button", { name: "Undo" }));
@@ -296,7 +296,7 @@ test("Create invite link: the reveal is focused and selected, Copy, the shown-on
       },
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const region = await usersSection();
   await userEvent.click(await within(region).findByRole("button", { name: "Create invite link" }));
   const field = (await within(region).findByDisplayValue(
@@ -331,7 +331,7 @@ test("a failed create says so", async () => {
       "POST /api/invites": () => json({ error: { code: "internal", message: "boom" } }, 500),
     },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const region = await usersSection();
   await userEvent.click(await within(region).findByRole("button", { name: "Create invite link" }));
   expect(
@@ -343,7 +343,7 @@ test("a failed users load shows its line with Retry", async () => {
   world({
     extra: { "GET /api/users": () => json({ error: { code: "internal", message: "x" } }, 500) },
   });
-  renderApp("/settings", me);
+  renderApp("/settings/users", me);
   const region = await usersSection();
   expect(await within(region).findByText("Couldn't load users.")).toBeInTheDocument();
   expect(within(region).getByRole("button", { name: "Retry" })).toBeInTheDocument();

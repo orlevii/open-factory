@@ -13,7 +13,7 @@ import { RangeFilter } from "@/features/usage/range-filter";
 import { UsageChart } from "@/features/usage/usage-chart";
 import { linkClass, td, tdNum, th, thNum } from "@/features/usage/usage-tables";
 import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
-import { KIND_LABEL, SettingsSection, smallClass } from "./shared";
+import { KIND_LABEL, smallClass } from "./shared";
 
 /** Below `md` the Agents table keeps only the agent and total columns, Credentials only name and cost. */
 const wide = "hidden md:table-cell";
@@ -209,7 +209,7 @@ function CredentialsTable({ data }: { data: CredentialsUsage }) {
   const { credentials, unattributed } = data;
   return (
     <Table
-      title="Credentials"
+      title="By credential"
       regionLabel="Credential usage"
       head={
         <>
@@ -266,7 +266,7 @@ function CredentialsTable({ data }: { data: CredentialsUsage }) {
   );
 }
 
-/** Settings → Usage (spec §12.4): the factory's chart, agents and credentials for one range. */
+/** The Usage page (spec §9): the factory's chart, agents and credentials for one range. */
 export function UsageSection({
   days,
   onDaysChange,
@@ -290,8 +290,8 @@ export function UsageSection({
   const empty = d ? d.days.every((x) => x.turns === 0) : false;
 
   return (
-    <SettingsSection id="usage" title="Usage">
-      <RangeFilter value={days} onChange={onDaysChange} name="settings-usage-range" />
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+      <RangeFilter value={days} onChange={onDaysChange} />
       {failed.length > 0 ? (
         <ErrorLine
           text="Couldn't load usage."
@@ -326,6 +326,6 @@ export function UsageSection({
           ) : null}
         </>
       )}
-    </SettingsSection>
+    </div>
   );
 }

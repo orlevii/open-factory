@@ -82,7 +82,7 @@ const DEBOUNCE_HINT =
 
 test("the three fields carry their hints and suffixes, with the loaded values", async () => {
   world();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
   const warm = await field("Default warm window");
   const debounce = await field("Member-update debounce");
@@ -100,7 +100,7 @@ test("the three fields carry their hints and suffixes, with the loaded values", 
 
 test("the running count is live from the supervisor frame", async () => {
   world();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const region = await factory();
   expect(await within(region).findByText("2 of 8 running")).toBeInTheDocument();
   await frame({ type: "supervisor", running: 3, max: 8 });
@@ -109,7 +109,7 @@ test("the running count is live from the supervisor frame", async () => {
 
 test("the local runtime row is read-only with how to change it", async () => {
   world();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const region = await factory();
   expect(await within(region).findByText("Local runtime: Not allowed")).toBeInTheDocument();
   expect(
@@ -124,14 +124,14 @@ test("the local runtime row is read-only with how to change it", async () => {
 
 test("allowed local runtime reads Allowed", async () => {
   world({}, settings({ allowLocalRuntime: true }));
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   expect(await within(await factory()).findByText("Local runtime: Allowed")).toBeInTheDocument();
 });
 
 test("blur validates the cap; editing clears the error", async () => {
   world();
   const user = userEvent.setup();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
   await waitFor(() => expect(cap).toHaveValue(8));
   await user.clear(cap);
@@ -149,7 +149,7 @@ test("blur validates the cap; editing clears the error", async () => {
 test("Save validates first and focuses the invalid field without sending", async () => {
   const { api } = world();
   const user = userEvent.setup();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const debounce = await field("Member-update debounce");
   await waitFor(() => expect(debounce).toHaveValue(30));
   await user.clear(debounce);
@@ -163,7 +163,7 @@ test("Save validates first and focuses the invalid field without sending", async
 test("Save sends only the changed fields and shows Saved.", async () => {
   const { api } = world();
   const user = userEvent.setup();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const warm = await field("Default warm window");
   await waitFor(() => expect(warm).toHaveValue(70));
   await user.clear(warm);
@@ -201,7 +201,7 @@ test("a server 400 maps to its field", async () => {
       ),
   });
   const user = userEvent.setup();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
   await waitFor(() => expect(cap).toHaveValue(8));
   await user.clear(cap);
@@ -216,7 +216,7 @@ test("a server 400 maps to its field", async () => {
 test("a settings_changed frame while dirty shows the conflict notice; Reload takes the new values", async () => {
   const { state } = world();
   const user = userEvent.setup();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
   await waitFor(() => expect(cap).toHaveValue(8));
   await user.clear(cap);
@@ -248,7 +248,7 @@ test("our own save's echo arriving before the PATCH resolves is no conflict", as
     },
   });
   const user = userEvent.setup();
-  const { queryClient } = renderApp("/settings", alice);
+  const { queryClient } = renderApp("/settings/factory", alice);
   const warm = await field("Default warm window");
   await waitFor(() => expect(warm).toHaveValue(70));
   await user.clear(warm);
@@ -280,7 +280,7 @@ test("our own save's echo arriving before the PATCH resolves is no conflict", as
 test("the conflict notice clears when the server goes back to the loaded values", async () => {
   const { state } = world();
   const user = userEvent.setup();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
   await waitFor(() => expect(cap).toHaveValue(8));
   await user.clear(cap);
@@ -303,7 +303,7 @@ test("the conflict notice clears when the server goes back to the loaded values"
 
 test("a settings_changed frame on a clean form just takes the new values", async () => {
   const { state } = world();
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
   await waitFor(() => expect(cap).toHaveValue(8));
   state.settings = settings({ maxRunningAgents: 4 });
@@ -316,7 +316,7 @@ test("a failing load shows Couldn't load factory settings. with Retry", async ()
   world({
     "GET /api/settings/factory": () => json({ error: { code: "boom", message: "x" } }, 500),
   });
-  renderApp("/settings", alice);
+  renderApp("/settings/factory", alice);
   expect(
     await within(await factory()).findByText("Couldn't load factory settings."),
   ).toBeInTheDocument();

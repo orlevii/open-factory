@@ -36,7 +36,7 @@ test("the prerequisites replace the form when there's no credential", async () =
     (_c, el) =>
       el?.tagName === "P" && el.textContent === "Add a Claude credential in Settings first.",
   );
-  expect(within(line).getByRole("link")).toHaveAttribute("href", "/settings#credentials");
+  expect(within(line).getByRole("link")).toHaveAttribute("href", "/settings/credentials");
   expect(screen.queryByRole("button", { name: "Create agent" })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Slug")).not.toBeInTheDocument();
 });
@@ -129,7 +129,7 @@ test("a secret that isn't set warns and links to the prefilled add form", async 
   ).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /add it/ })).toHaveAttribute(
     "href",
-    "/settings?addSecret=GH_TOKEN#secrets",
+    "/settings/secrets?addSecret=GH_TOKEN",
   );
 });
 
@@ -254,7 +254,7 @@ test("no projects registered says where to add one", async () => {
   const line = screen.getByText(
     (_c, el) => el?.tagName === "P" && el.textContent === "No projects yet. Add one in Settings.",
   );
-  expect(within(line).getByRole("link")).toHaveAttribute("href", "/settings#projects");
+  expect(within(line).getByRole("link")).toHaveAttribute("href", "/settings/projects");
 });
 
 test("while creating the fields are disabled; Installing plugins… appears after 3 s", async () => {

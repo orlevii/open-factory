@@ -180,7 +180,7 @@ test.each<[string, World, string, string]>([
     "no credential wins over everything",
     { credentials: [], templates: [] },
     "No agents yet. Add a Claude credential in Settings first.",
-    "/settings#credentials",
+    "/settings/credentials",
   ],
   [
     "no templates",

@@ -1,3 +1,5 @@
+import { schema } from "@open-factory/db";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { makeTestApp, signUp, TEST_ORIGIN, testInvite } from "../test/helpers.ts";
 
@@ -87,6 +89,60 @@ describe("sign-up and /api/me", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(me.statusCode).toBe(401);
+  });
+});
+
+describe("name and email lengths (spec §13.2)", () => {
+  const NAME_MESSAGE = "Keep your name to 80 characters or fewer.";
+  const emailOf = (n: number) => `${"a".repeat(n - "@example.com".length)}@example.com`;
+  const signUpBody = async (fields: Record<string, unknown>) => ({
+    invite: await testInvite(t.app),
+    password: "password123",
+    ...fields,
+  });
+
+  test("sign-up with an 81-character name is 400 NAME_TOO_LONG, even without a handle", async () => {
+    const withHandle = await post(
+      "/api/auth/sign-up/email",
+      await signUpBody({ name: "n".repeat(81), handle: "long-name", email: emailOf(40) }),
+    );
+    expect(withHandle.statusCode).toBe(400);
+    expect(withHandle.json()).toMatchObject({ code: "NAME_TOO_LONG", message: NAME_MESSAGE });
+    const withoutHandle = await post(
+      "/api/auth/sign-up/email",
+      await signUpBody({ name: "n".repeat(81), email: emailOf(41) }),
+    );
+    expect(withoutHandle.statusCode).toBe(400);
+    expect(withoutHandle.json()).toMatchObject({ code: "NAME_TOO_LONG" });
+  });
+
+  test("sign-up with a 255-character email is 400 EMAIL_TOO_LONG", async () => {
+    const res = await post(
+      "/api/auth/sign-up/email",
+      await signUpBody({ name: "Long", handle: "long-email", email: emailOf(255) }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      code: "EMAIL_TOO_LONG",
+      message: "Keep your email to 254 characters or fewer.",
+    });
+  });
+
+  test("update-user with an 81-character name is 400 NAME_TOO_LONG", async () => {
+    const { cookie } = await signUp(t.app);
+    const res = await post("/api/auth/update-user", { name: "n".repeat(81) }, { cookie });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ code: "NAME_TOO_LONG" });
+  });
+
+  test("update-user without a name succeeds for a user whose stored name is 120 characters", async () => {
+    const { cookie, user } = await signUp(t.app);
+    await t.db
+      .update(schema.users)
+      .set({ name: "n".repeat(120) })
+      .where(eq(schema.users.id, user.id));
+    const res = await post("/api/auth/update-user", { handle: `${user.handle}-b` }, { cookie });
+    expect(res.statusCode).toBe(200);
   });
 });
 

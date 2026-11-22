@@ -1,3 +1,5 @@
+import { EMAIL_TOO_LONG_MESSAGE, NAME_TOO_LONG_MESSAGE } from "@open-factory/shared";
+
 export type AuthField = "name" | "handle" | "email" | "password";
 
 /** Sentinel code for "the request never got a real answer from the server". */
@@ -23,6 +25,10 @@ export function mapAuthError(
       return { field: "handle", message: "That handle is already taken." };
     case "VALIDATION_ERROR":
       return { field: "handle", message }; // handle is the only validated additional field (spec §7.4)
+    case "NAME_TOO_LONG":
+      return { field: "name", message: NAME_TOO_LONG_MESSAGE };
+    case "EMAIL_TOO_LONG":
+      return { field: "email", message: EMAIL_TOO_LONG_MESSAGE };
     case "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL":
       return { field: "email", message: "An account with this email already exists." };
     case "PASSWORD_TOO_SHORT":

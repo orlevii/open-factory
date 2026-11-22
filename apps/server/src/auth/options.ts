@@ -1,4 +1,10 @@
-import { handleSchema } from "@open-factory/shared";
+import {
+  EMAIL_MAX,
+  EMAIL_TOO_LONG_MESSAGE,
+  handleSchema,
+  NAME_TOO_LONG_MESSAGE,
+  USER_NAME_MAX,
+} from "@open-factory/shared";
 import { APIError, type BetterAuthOptions } from "better-auth";
 import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
@@ -14,6 +20,26 @@ export interface AuthOptionParams {
   mayCreateUser?: () => boolean;
   /** True when the user is disabled (S10 §9.4); no session can be created for them. */
   isDisabled?: (userId: string) => Promise<boolean>;
+}
+
+/**
+ * The name and email length limits (spec §13.2) for a better-auth endpoint path and its body, or null.
+ * Input only: a body without `name` passes, so an old stored name longer than the limit never blocks an update.
+ */
+export function inputLengthError(
+  path: string,
+  body: unknown,
+): { code: "NAME_TOO_LONG" | "EMAIL_TOO_LONG"; message: string } | null {
+  if (path !== "/sign-up/email" && path !== "/update-user") return null;
+  if (!body || typeof body !== "object") return null;
+  const { name, email } = body as { name?: unknown; email?: unknown };
+  if (typeof name === "string" && name.trim().length > USER_NAME_MAX) {
+    return { code: "NAME_TOO_LONG", message: NAME_TOO_LONG_MESSAGE };
+  }
+  if (path === "/sign-up/email" && typeof email === "string" && email.length > EMAIL_MAX) {
+    return { code: "EMAIL_TOO_LONG", message: EMAIL_TOO_LONG_MESSAGE };
+  }
+  return null;
 }
 
 export function authOptions(p: AuthOptionParams) {
@@ -68,6 +94,9 @@ export function authOptions(p: AuthOptionParams) {
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        // Before the handle check's early returns, so it runs with or without a handle (spec §13.2).
+        const tooLong = inputLengthError(ctx.path, ctx.body);
+        if (tooLong) throw new APIError("BAD_REQUEST", tooLong);
         if ((ctx.path !== "/sign-up/email" && ctx.path !== "/update-user") || !p.nameTaken) return;
         const handle = (ctx.body as { handle?: unknown } | undefined)?.handle;
         if (typeof handle !== "string") return;

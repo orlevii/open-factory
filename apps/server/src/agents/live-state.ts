@@ -173,11 +173,15 @@ export class LiveState {
     this.publishReset(retire);
   }
 
-  /** A subagent finished (its `background_task_finished`, or a non-async call's `tool_result`): its entry goes. */
-  finishSubagent(toolUseId: string): void {
-    this.finishedSubagents.add(toolUseId);
-    if (!this.subagents.delete(toolUseId)) return;
-    this.publishReset([]);
+  /**
+   * A call finished (its `background_task_finished`, or a non-async call's `tool_result`): a subagent's entry goes.
+   * Only an Agent call (or one that had an entry) is remembered against late progress lines, so the set doesn't grow
+   * with every tool call of a long-lived process.
+   */
+  finishSubagent(toolUseId: string, opts: { agent: boolean }): void {
+    const had = this.subagents.delete(toolUseId);
+    if (opts.agent || had) this.finishedSubagents.add(toolUseId);
+    if (had) this.publishReset([]);
   }
 
   /**
@@ -190,17 +194,31 @@ export class LiveState {
     this.subagentsEndedBefore = 0;
   }
 
-  /** The whole state as a `reset` body (U3 §11.3): a subscriber's catch-up and the answer to `live_snapshot`. */
+  /**
+   * The state as a `reset` body for one subscriber (U3 §11.3): its catch-up and the answer to `live_snapshot`. Texts
+   * hold only what the published frames carry (at most one window, 50ms, behind), so the next patch's `offset` is
+   * exactly the snapshot's length; a block nothing was published for yet is left out (its first patch starts at 0).
+   */
   snapshot(): LiveFrameBody {
-    return {
-      reset: true,
-      texts: this.texts.map((b) => ({
+    return this.state(false);
+  }
+
+  private state(full: boolean): LiveFrameBody {
+    const texts: NonNullable<LiveFrameBody["texts"]> = [];
+    for (const b of this.texts) {
+      const length = full ? b.text.length : b.sent;
+      if (!full && length === 0) continue;
+      texts.push({
         messageId: b.messageId,
         index: b.index,
         offset: 0,
-        append: b.text,
-        ...(b.capped ? { capped: true } : {}),
-      })),
+        append: b.text.slice(0, length),
+        ...((full ? b.capped : b.cappedSent) ? { capped: true } : {}),
+      });
+    }
+    return {
+      reset: true,
+      texts,
       toolInput: this.toolInput ? this.publicTool(this.toolInput) : null,
       thinking: this.thinking ? { tokens: this.thinking.tokens } : null,
       subagents: [...this.subagents.values()],
@@ -230,12 +248,6 @@ export class LiveState {
     if (this.subagentsDirty) body.subagents = [...this.subagents.values()];
     this.toolDirty = this.thinkingDirty = this.subagentsDirty = false;
     return Object.keys(body).length ? body : undefined;
-  }
-
-  /** Stops the coalescing timer (the runtime is going away). */
-  dispose(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
   }
 
   private block(e: { messageId: string; index: number; line: number }): Block {
@@ -268,8 +280,9 @@ export class LiveState {
     return !this.texts.length && !this.toolInput && !this.thinking && !this.subagents.size;
   }
 
+  /** A broadcast reset carries everything and brings every block's published length up to date. */
   private publishReset(retire: string[]): void {
-    const body = this.snapshot();
+    const body = this.state(true);
     for (const b of this.texts) {
       b.sent = b.text.length;
       b.cappedSent = b.capped;

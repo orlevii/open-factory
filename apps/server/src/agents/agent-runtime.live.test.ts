@@ -179,9 +179,27 @@ test("a restarted process's live queue is drained", async () => {
   second.emitAt(1, ev.session(), ev.turn());
   await rt.settled();
   for (let i = 0; i < 50; i++) second.emitLive(textDelta(2 + i, "m9", 0, "x"));
-  await tick();
+  await tick(80);
   expect(second.live.pending).toBe(0);
   expect(liveTexts()).toEqual(["x".repeat(50)]);
   // the first process's queue ended with it and was drained to the end
   expect(driver.starts[0]?.live.pending).toBe(0);
+});
+
+test("the turn_end reset is published right after the turn_end row, before any later await", async () => {
+  await openTurn();
+  driver.last.emitLive(textStart(2, "m1", 0), textDelta(3, "m1", 0, "orphan"));
+  await tick();
+  let resetRightAfter: boolean | undefined;
+  const off = h.bus.subscribe(rt.agent.slug, (m: ServerMessage) => {
+    if (m.type !== "session_event" || m.event.event.type !== "turn_end") return;
+    const before = liveFrames().length;
+    queueMicrotask(() => {
+      resetRightAfter = liveFrames().length === before + 1 && liveFrames().at(-1)?.reset === true;
+    });
+  });
+  driver.last.emitAt(5, ev.usage(), ev.end());
+  await rt.settled();
+  off();
+  expect(resetRightAfter).toBe(true);
 });

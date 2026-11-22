@@ -31,10 +31,10 @@ export const agentStatusFrameSchema = z.object({
 });
 export type AgentStatusFrame = z.infer<typeof agentStatusFrameSchema>;
 
-/** One live text block's growth: `offset` is the block length before `append`, in UTF-16 code units. */
 /** A live block's retire key (U3 §11.2, §11.3): the server's `retire` list and the client's `retired` set. */
 export const liveKey = (messageId: string, index: number): string => `${messageId}:${index}`;
 
+/** One live text block's growth: `offset` is the block length before `append`, in UTF-16 code units. */
 const liveTextSchema = z.object({
   messageId: z.string(),
   index: z.number().int(),

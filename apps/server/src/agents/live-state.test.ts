@@ -72,6 +72,7 @@ describe("text blocks", () => {
     s.apply(delta(2, "m", 1, "first"));
     s.apply(start(3, "m", 2));
     s.apply(delta(4, "m", 2, "second"));
+    out();
     expect(s.snapshot().texts?.map((t) => [t.index, t.append])).toEqual([
       [1, "first"],
       [2, "second"],
@@ -190,7 +191,7 @@ describe("tool input, thinking and subagents", () => {
       ["toolu_a", 4],
       ["toolu_b", 1],
     ]);
-    s.finishSubagent("toolu_a");
+    s.finishSubagent("toolu_a", { agent: true });
     expect(published.at(-1)).toMatchObject({ reset: true });
     expect(published.at(-1)?.subagents?.map((p) => p.toolUseId)).toEqual(["toolu_b"]);
     s.apply(progress(4, "toolu_a", 5)); // a lagging progress line can't bring it back
@@ -220,5 +221,47 @@ describe("coalescing", () => {
     // quiet: nothing more is published
     vi.advanceTimersByTime(500);
     expect(published).toHaveLength(3);
+  });
+});
+
+describe("snapshot and patch offsets (review I1)", () => {
+  test("a snapshot inside the window holds what was published, so the next patch continues it", () => {
+    s.apply(start(1, "m", 0));
+    s.apply(delta(2, "m", 0, "so ")); // leading: published
+    s.apply(delta(3, "m", 0, "far")); // waits for the window
+    published.length = 0;
+    const [snap] = s.snapshot().texts ?? [];
+    expect(snap).toEqual({ messageId: "m", index: 0, offset: 0, append: "so " });
+    const [patch] = out().flatMap((p) => p.texts ?? []);
+    expect(patch?.offset).toBe(snap?.append.length);
+    expect(`${snap?.append}${patch?.append}`).toBe("so far");
+  });
+
+  test("a block not published yet is left out; capped shows once its patch went out", () => {
+    s.apply(start(1, "m", 0));
+    s.apply(delta(2, "m", 0, "a")); // leading
+    s.apply(start(3, "m", 1));
+    s.apply(delta(4, "m", 1, "b")); // inside the window
+    s.apply(delta(5, "m", 0, "x".repeat(CAP_BYTES))); // caps block 0, not yet sent
+    expect(s.snapshot().texts).toEqual([{ messageId: "m", index: 0, offset: 0, append: "a" }]);
+    out();
+    expect(s.snapshot().texts?.map((t) => [t.index, t.capped])).toEqual([
+      [0, true],
+      [1, undefined],
+    ]);
+  });
+});
+
+describe("finished subagents (review M1)", () => {
+  test("finishing a call that was never a subagent doesn't block that id later", () => {
+    s.finishSubagent("toolu_bash", { agent: false });
+    s.apply(progress(1, "toolu_bash"));
+    expect(s.snapshot().subagents?.map((p) => p.toolUseId)).toEqual(["toolu_bash"]);
+  });
+
+  test("an Agent call's finish blocks a late progress line even before any progress arrived", () => {
+    s.finishSubagent("toolu_agent", { agent: true });
+    s.apply(progress(1, "toolu_agent"));
+    expect(s.snapshot().subagents).toEqual([]);
   });
 });

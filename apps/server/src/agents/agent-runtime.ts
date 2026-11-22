@@ -1746,7 +1746,13 @@ export class AgentRuntime {
         };
   }
 
-  private async append(turnId: string | null | undefined, event: AnyEvent, tx?: Tx) {
+  /** `afterPublish` runs in the same tick as the `session_event` publish (U3 §11.2: a live reset right after its row). */
+  private async append(
+    turnId: string | null | undefined,
+    event: AnyEvent,
+    tx?: Tx,
+    afterPublish?: () => void,
+  ) {
     const dto = await this.d.store.append(this.agent.id, turnId ?? null, event, tx);
     if (!tx) {
       this.retireLive(event);
@@ -1756,6 +1762,7 @@ export class AgentRuntime {
         event: dto,
       });
       this.endSubagentLive(event);
+      afterPublish?.();
     }
     await this.forwardEvent(event);
     return dto;
@@ -2363,7 +2370,11 @@ export class AgentRuntime {
     return proc.lineOf?.(e) ?? Number.POSITIVE_INFINITY;
   }
 
-  /** Before a persisted row is published: its live block retires, so no snapshot holds both (U3 §11.2). */
+  /**
+   * Before a persisted row is published: its live block retires, so no frame published after the row holds it (U3
+   * §11.2). A subscriber whose replay read the row just before this runs can still get it in its snapshot; the client
+   * ignores a reset text for a key it already has a row for (§11.4).
+   */
   private retireLive(e: AnyEvent) {
     if (e.type !== "assistant_text" && e.type !== "tool_call") return;
     if (e.parentToolUseId) return; // subagents never stream
@@ -2379,11 +2390,11 @@ export class AgentRuntime {
     else if (e.type === "background_task_finished") {
       const toolUseId = this.taskToolUse.get(e.taskId);
       this.taskToolUse.delete(e.taskId);
-      if (toolUseId) this.liveState.finishSubagent(toolUseId);
+      if (toolUseId) this.liveState.finishSubagent(toolUseId, { agent: true });
     } else if (e.type === "tool_result" && !e.parentToolUseId) {
       // An async (auto-backgrounded) call's result is the launch notice: it keeps running (§12).
       if (e.meta?.tool === "Agent" && e.meta.async) return;
-      this.liveState.finishSubagent(e.toolUseId);
+      this.liveState.finishSubagent(e.toolUseId, { agent: e.meta?.tool === "Agent" });
     }
   }
 
@@ -2474,10 +2485,11 @@ export class AgentRuntime {
         const updateOnly =
           !e.originKind && ran.length > 0 && ran.every((k) => HELD_KINDS.includes(k));
         this.turnKinds = [];
-        await this.append(turnId, e);
-        // U3 §11.2: after the turn_end row, so the client clears its live state first and the reset restores a block
-        // a self-started turn already began.
-        this.liveState.endBefore(this.lineOf(proc, e), { subagents: false });
+        // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
+        // live state first and the reset restores a block a self-started turn already began.
+        await this.append(turnId, e, undefined, () =>
+          this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
+        );
         if (turnId) {
           const close = {
             isError: e.isError,

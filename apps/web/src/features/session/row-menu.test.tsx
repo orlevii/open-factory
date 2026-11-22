@@ -82,7 +82,10 @@ test("outgoing: View tool call, and Open in inbox only when it went to a human",
     "Copy link",
     "Copy text",
     "View tool call",
+    "View in @b's session",
   ]);
+  // Not sent yet: nothing to view in the recipient's session.
+  expect(labels(outgoing("b"))).toEqual(["Copy link", "Copy text", "View tool call"]);
 });
 
 test("the copied text is the markdown source; the link is the row's deep link", () => {
@@ -280,7 +283,12 @@ const card = (kind: "system" | "message", seq: number): Row => ({
 
 test("cards span the column with ⋯ inside their padding; unboxed rows keep the 2rem right column", async () => {
   renderInRouter(
-    timeline([text(1), outgoing("bob", { id: "m1", to: "bob", status: "delivered" }), card("message", 5), card("system", 6)]),
+    timeline([
+      text(1),
+      outgoing("bob", { id: "m1", to: "bob", status: "delivered" }),
+      card("message", 5),
+      card("system", 6),
+    ]),
   );
   await screen.findByText("Body 6");
   const wrapOf = (key: string) =>

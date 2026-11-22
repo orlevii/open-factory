@@ -1,3 +1,4 @@
+import { type InfiniteData, useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Ellipsis } from "lucide-react";
 import {
@@ -7,6 +8,7 @@ import {
   type ReactNode,
   type Ref,
   type RefObject,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -20,6 +22,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { inboxQueryOptions } from "@/features/inbox/api";
 import { useMedia } from "@/lib/breakpoints";
 import { parseSendResult } from "./outgoing-message";
 import type { Row } from "./rows";
@@ -29,7 +32,10 @@ export type RowMenuItem =
   | { kind: "copy"; label: string; text: string }
   /** Shows or hides the raw call (outgoing, spawn). */
   | { kind: "call"; label: string }
-  | { kind: "inbox"; label: string }
+  /** Your inbox item for this send (to a human), by the message's id: shown only once found. */
+  | { kind: "inbox"; label: string; messageId: string }
+  /** The message in the recipient agent's session. */
+  | { kind: "session"; label: string; to: string; messageId: string }
   /** The row's time, as a label: touch only, where the gutter time never shows. */
   | { kind: "time"; label: string };
 
@@ -40,8 +46,9 @@ const clock = (iso: string) => {
 };
 
 /** The items that apply to `row`, and only those: Copy link (all), Copy text (agent text, message
- *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), Open in inbox
- *  (outgoing to a human), and the time on touch. */
+ *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), View in the
+ *  recipient's session (a delivered send to an agent), Open in inbox (a send to a human, when it is
+ *  in your inbox), and the time on touch. */
 export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
@@ -66,9 +73,17 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
   }
   if (row.kind === "outgoing" || row.kind === "spawn")
     items.push({ kind: "call", label: "View tool call" });
-  // A human's copy lands in the inbox; an agent's in its session (the speaker line links it).
-  if (row.kind === "outgoing" && parseSendResult(row.result)?.to.startsWith("@"))
-    items.push({ kind: "inbox", label: "Open in inbox" });
+  // A human's copy lands in the inbox; an agent's in its session. A result names agents bare.
+  const sent = row.kind === "outgoing" ? parseSendResult(row.result) : undefined;
+  if (sent?.to.startsWith("@"))
+    items.push({ kind: "inbox", label: "Open in inbox", messageId: sent.id });
+  else if (sent)
+    items.push({
+      kind: "session",
+      label: `View in @${sent.to}'s session`,
+      to: sent.to,
+      messageId: sent.id,
+    });
   if ("at" in row && row.at) {
     const speech = row.kind === "message" || row.kind === "outgoing" || row.kind === "text";
     items.push({ kind: "time", label: speech ? `Sent ${clock(row.at)}` : clock(row.at) });
@@ -281,9 +296,18 @@ function RowMenuContent({
               </DropdownMenuItem>
             );
           case "inbox":
+            return <InboxItem key={item.label} messageId={item.messageId} label={item.label} />;
+          case "session":
             return (
               <DropdownMenuItem key={item.label} asChild>
-                <Link to="/inbox">{item.label}</Link>
+                <Link
+                  to="/agents/$slug"
+                  params={{ slug: item.to }}
+                  search={{ message: item.messageId }}
+                  aria-label={`View this message in @${item.to}'s session`}
+                >
+                  {item.label}
+                </Link>
               </DropdownMenuItem>
             );
           default:
@@ -299,5 +323,27 @@ function RowMenuContent({
         }
       })}
     </DropdownMenuContent>
+  );
+}
+
+/** "Open in inbox" for a send to a human: your inbox item for that message, from the inbox's loaded
+ *  pages (fetched when the menu opens, if they aren't yet). No item of yours, no action. */
+function InboxItem({ messageId, label }: { messageId: string; label: string }) {
+  const select = useCallback(
+    (d: InfiniteData<{ items: { id: string; messageId: string }[] }>) => {
+      for (const page of d.pages)
+        for (const i of page.items) if (i.messageId === messageId) return i.id;
+      return undefined;
+    },
+    [messageId],
+  );
+  const id = useInfiniteQuery({ ...inboxQueryOptions, select }).data;
+  if (id === undefined) return null;
+  return (
+    <DropdownMenuItem asChild>
+      <Link to="/inbox" search={{ item: id }}>
+        {label}
+      </Link>
+    </DropdownMenuItem>
   );
 }

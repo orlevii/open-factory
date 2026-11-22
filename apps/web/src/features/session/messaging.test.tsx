@@ -332,13 +332,30 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
   expect(screen.queryByText("mcp__factory__send_message")).toBeNull();
   const menu = await rowMenu(block);
   expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
+  // The message in the recipient's session (U3 lead ruling R1).
+  const view = within(menu).getByRole("menuitem", { name: "View this message in @b's session" });
+  expect(view).toHaveAttribute("href", "/agents/b?message=m9");
+  expect(view).toHaveTextContent("View in @b's session");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByText("mcp__factory__send_message")).toBeInTheDocument();
   const again = await rowMenu(block);
   expect(within(again).getByRole("menuitem", { name: "Hide tool call" })).toBeInTheDocument();
 });
 
-test("a send to humans has no footer; Open in inbox is in the row menu", async () => {
+const inboxItem = (id: string, messageId: string) => ({
+  id,
+  messageId,
+  kind: "message",
+  read: false,
+  from: { kind: "agent", name: "dev" },
+  to: "@humans",
+  preview: "need a human",
+  urgent: false,
+  createdAt: "2026-11-21T10:00:00.000Z",
+  link: { kind: "session", agentSlug: "dev" },
+});
+
+test("a send to humans has no footer; Open in inbox opens its inbox item", async () => {
   await open(
     [
       { type: "turn_started" },
@@ -346,15 +363,37 @@ test("a send to humans has no footer; Open in inbox is in the row menu", async (
       result(JSON.stringify({ id: "m10", to: "@humans", status: "inbox" })),
     ],
     "need a human",
+    {
+      "GET /api/inbox?": () =>
+        json({ items: [inboxItem("i1", "m1"), inboxItem("i10", "m10")], nextCursor: null }),
+    },
   );
   expect(screen.queryByText("Sent to the inbox")).toBeNull();
   expect(screen.queryByRole("link", { name: /View this message/ })).toBeNull();
   const block = screen.getByRole("article", { name: /Message from @dev/ });
   const menu = await rowMenu(block);
-  expect(within(menu).getByRole("menuitem", { name: "Open in inbox" })).toHaveAttribute(
+  expect(await within(menu).findByRole("menuitem", { name: "Open in inbox" })).toHaveAttribute(
     "href",
-    "/inbox",
+    "/inbox?item=i10",
   );
+  expect(within(menu).queryByRole("menuitem", { name: /View this message/ })).toBeNull();
+});
+
+test("a send to humans with no inbox item of yours has no Open in inbox", async () => {
+  const api = await open(
+    [
+      { type: "turn_started" },
+      call({ to: "@humans", body: "need a human" }),
+      result(JSON.stringify({ id: "m10", to: "@humans", status: "inbox" })),
+    ],
+    "need a human",
+    { "GET /api/inbox?": () => json({ items: [inboxItem("i1", "m1")], nextCursor: null }) },
+  );
+  const menu = await rowMenu(screen.getByRole("article", { name: /Message from @dev/ }));
+  await vi.waitFor(() => expect(api.calls.some((c) => c.url.startsWith("/api/inbox?"))).toBe(true));
+  await act(async () => {});
+  expect(within(menu).getByRole("menuitem", { name: "View tool call" })).toBeInTheDocument();
+  expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
 });
 
 test("no result after the turn ended says 'Not sent'", async () => {

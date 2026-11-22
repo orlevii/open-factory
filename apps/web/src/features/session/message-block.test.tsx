@@ -88,7 +88,9 @@ test("Show all moves focus to its row without scrolling it into view (nothing ab
   expect(focus).toHaveBeenCalledWith({ preventScroll: true });
 });
 
-const notice = (body: string) => <MessageBlock from="@factory" system body={body} at="2026-11-19T10:00:00Z" />;
+const notice = (body: string) => (
+  <MessageBlock from="@factory" system body={body} at="2026-11-19T10:00:00Z" />
+);
 
 test("once layout has measured a notice, the measurement decides: a long notice that fits has no Show all", () => {
   const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(48);

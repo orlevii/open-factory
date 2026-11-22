@@ -1,15 +1,24 @@
-import { memo } from "react";
+import { memo, type TransitionEvent } from "react";
 import { CopyLink } from "./copy-link";
 import { childrenOf } from "./display-passes";
 import type { Row } from "./rows";
 import { TimelineRow } from "./timeline-row";
 
+/** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
+export type Arrival = "on" | "fading";
+
 export type TimelineItemProps = {
   row: Row;
   slug: string;
   spawned?: boolean;
-  /** The deep-link tint is on this row. */
+  /** This item holds the deep-link target (the row itself, or one of its children). */
   lit: boolean;
+  /** The row the deep link landed on, when this item holds it: it carries the tint (U3 §7.4). */
+  arrivedKey: string | undefined;
+  /** The tint's phase on `arrivedKey`; undefined once it has faded. */
+  arrival: Arrival | undefined;
+  /** The tint's fade finished. Stable. */
+  onArrivedEnd(): void;
   /** Arrived by a live frame and replaces nothing on screen: it fades in once (U3 §8.3). */
   live: boolean;
   /** The first row of its seq carries `id="event-<seq>"` (a message_in can render several rows). */
@@ -43,6 +52,9 @@ function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean 
     a.slug !== b.slug ||
     a.spawned !== b.spawned ||
     a.lit !== b.lit ||
+    a.arrivedKey !== b.arrivedKey ||
+    a.arrival !== b.arrival ||
+    a.onArrivedEnd !== b.onArrivedEnd ||
     a.firstOfSeq !== b.firstOfSeq ||
     a.toggle !== b.toggle ||
     a.onRowFocus !== b.onRowFocus
@@ -89,7 +101,7 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
       {...(p.firstOfSeq ? { id: `event-${row.seq}` } : {})}
       {...(p.lit ? { "data-highlighted": "true" } : {})}
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${p.gap} ${p.lit ? "bg-[color-mix(in_oklab,var(--signal)_26%,transparent)]" : ""}`}
+      className={`group relative min-w-0 rounded-md ${ROW_GUTTER} ${p.gap}`}
     >
       <ItemContent {...p} />
     </div>
@@ -112,6 +124,18 @@ const ItemContent = memo(function ItemContent(p: TimelineItemProps) {
           "data-row": r.key,
           tabIndex: r.key === p.tabKey ? 0 : -1,
           onFocus: () => p.onRowFocus(r.key),
+          // The tint sits on the row's own box (the card or the row), never the wrap (U3 §7.4).
+          ...(r.key === p.arrivedKey && p.arrival
+            ? {
+                "data-arrived": p.arrival === "fading" ? "fading" : "",
+                onTransitionEnd: (e: TransitionEvent) => {
+                  // Only the tint's own fade: a child's transition bubbles here too.
+                  if (e.target !== e.currentTarget || p.arrival !== "fading") return;
+                  if (e.propertyName && e.propertyName !== "opacity") return;
+                  p.onArrivedEnd();
+                },
+              }
+            : {}),
         })}
         failedIds={p.failedIds}
         interruptedEnds={p.interruptedEnds}

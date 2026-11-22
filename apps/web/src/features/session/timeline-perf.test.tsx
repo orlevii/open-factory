@@ -466,6 +466,9 @@ const props = (over: Partial<TimelineItemProps> = {}): TimelineItemProps => ({
   row: parent,
   slug: "dev",
   lit: false,
+  arrivedKey: undefined,
+  arrival: undefined,
+  onArrivedEnd: noop,
   live: false,
   firstOfSeq: true,
   gap: "",
@@ -492,6 +495,14 @@ test("itemPropsEqual: unrelated keys and fresh but equal sets are not a change",
   expect(itemPropsEqual(props(), props({ failedIds: new Set(["x"]) }))).toBe(true);
   expect(itemPropsEqual(props(), props({ row: { ...parent } }))).toBe(false);
   expect(itemPropsEqual(props(), props({ lit: true }))).toBe(false);
+  // The deep-link tint's phase reaches only the item holding it.
+  expect(itemPropsEqual(props(), props({ arrivedKey: "4", arrival: "on" }))).toBe(false);
+  expect(
+    itemPropsEqual(
+      props({ arrivedKey: "4", arrival: "on" }),
+      props({ arrivedKey: "4", arrival: "fading" }),
+    ),
+  ).toBe(false);
 });
 
 test("buildRows runs once per events change, not for status or queue frames; open reuses the rendered row", async () => {

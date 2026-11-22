@@ -294,6 +294,36 @@
   }
 }
 
+/* Timeline rows take the focus ring inset (DESIGN.md → Rows), so it never spills over a neighbour.
+   A deep-linked row focused after a mouse navigation may not match :focus-visible; it carries
+   `data-focus-ring` until blur, drawn the same ("ring = focus", U3 §7.4). */
+[data-row]:focus-visible,
+[data-row][data-focus-ring] {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* Deep-link arrival (U3 §7.4): a 6% signal tint on the row's own box, under its content. After 2s of
+   visible time it fades over 300ms; the attribute stays as "fading" until transitionend, so the fade
+   isn't cut. An opacity fade, so reduced motion keeps it. */
+[data-arrived] {
+  position: relative;
+  isolation: isolate;
+}
+[data-arrived]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--signal) 6%, transparent);
+  transition: opacity 300ms var(--ease-out);
+}
+[data-arrived="fading"]::before {
+  opacity: 0;
+}
+
 /* Jump to latest (U3 §8.2): transitions, so a show interrupted by a hide reverses from where it is.
    Enter 150ms with a 4px rise, exit 100ms with the drop; reduced motion keeps the fade only (the
    global block only zeroes tw-animate's variables). A key that shows or hides it stamps

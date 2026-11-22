@@ -185,16 +185,17 @@ test("a windowed view subscribes from the agent's lastSeq, not the highest seq o
   expect(ws.sent).not.toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 });
 });
 
-test("the deep-link tint stays until a click elsewhere", async () => {
+test("a deep link focuses its row, and a click elsewhere doesn't take the target away", async () => {
   routes["/api/agents/dev/events?around=5"] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
   renderApp("/agents/dev?event=5", alice);
   await screen.findByText("Two entries.");
-  const row = document.getElementById("event-5");
-  await userEvent.click(within(row as HTMLElement).getByRole("button", { name: /Bash/ }));
-  expect(row).toHaveAttribute("data-highlighted", "true");
+  const wrap = document.getElementById("event-5") as HTMLElement;
+  const row = wrap.querySelector("[data-row]") as HTMLElement;
+  await vi.waitFor(() => expect(row).toHaveFocus());
+  expect(row).toHaveAttribute("data-arrived");
   await userEvent.click(screen.getByText("Two entries."));
-  expect(row).not.toHaveAttribute("data-highlighted");
+  expect(wrap).toHaveAttribute("data-highlighted", "true");
 });
 
 test("Jump to latest leaves the window and loads the newest page", async () => {

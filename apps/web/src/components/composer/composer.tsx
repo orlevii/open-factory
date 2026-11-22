@@ -78,6 +78,8 @@ export type CompletionItem = {
   detail?: string;
   hint?: string;
   group: string;
+  /** Starts a group headed by this text in the menu (the `/` menu while browsing, U3 §13.3). */
+  heading?: string;
   exact?: boolean;
   /** An agent row's face (16px). */
   avatar?: { slug: string; template?: string; avatarVersion?: string | null };

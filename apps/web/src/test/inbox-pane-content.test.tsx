@@ -363,6 +363,29 @@ test("the mention reply is the shared composer: Write/Preview in its toolbar, no
   expect(box).toHaveValue("");
 });
 
+test("an agent message's reply has no files and no `/` commands: a pasted or dropped file gets the note", async () => {
+  setup([item(1)]);
+  await visit("/inbox?item=i1");
+  const p = pane();
+  const box = await within(p).findByRole("combobox", { name: "Message to Dev agent" });
+  expect(within(p).queryByRole("button", { name: "Attach files" })).toBeNull();
+  expect(within(p).queryByRole("button", { name: "Run a command" })).toBeNull();
+  expect(box).toHaveAttribute("placeholder", "Message Dev agent");
+  const file = new File(["x"], "shot.png", { type: "image/png" });
+  const pasted = fireEvent.paste(box, {
+    clipboardData: { files: [file], getData: () => "", types: ["Files"] },
+  });
+  expect(pasted).toBe(false);
+  expect(within(p).getByText("Files can be sent in an agent's session")).toBeInTheDocument();
+  const frame = box.closest("[data-composer-frame]") as HTMLElement;
+  fireEvent.drop(frame, { dataTransfer: { files: [file], types: ["Files"] } });
+  expect(p.querySelector("[data-upload-chip]")).toBeNull();
+  // Typing `/` opens no menu.
+  await userEvent.type(box, "/co");
+  expect(within(p).queryByRole("listbox")).toBeNull();
+  expect(api.calls.some((c) => c.url.includes("/uploads"))).toBe(false);
+});
+
 test("a task event shows the fact and Open task, with no composer", async () => {
   setup([
     item(1, {

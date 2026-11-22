@@ -189,3 +189,23 @@ test("a list that failed to load says so in the menu", async () => {
   expect(src.missNote?.()).toBeUndefined();
   vi.unstubAllGlobals();
 });
+
+test("browsing (`/` alone) groups the rows Skills, Commands, Factory, each headed once; a query ranks flat", () => {
+  respond();
+  const src = commandSource(qc, "dev");
+  const all = src.items("");
+  expect(all.map((i) => i.group)).toEqual([
+    "Skills",
+    "Skills",
+    "Commands",
+    "Commands",
+    "Commands",
+    "Factory",
+  ]);
+  expect(all.filter((i) => i.heading).map((i) => [i.heading, i.id])).toEqual([
+    ["Skills", "acme:lint-all"],
+    ["Commands", "code-review"],
+    ["Factory", "compact"],
+  ]);
+  expect(src.items("co").some((i) => i.heading)).toBe(false);
+});

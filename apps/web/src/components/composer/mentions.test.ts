@@ -1,12 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { expect, test, vi } from "vitest";
-import {
-  acceptMention,
-  type MentionAgent,
-  mentionOpensAt,
-  mentionSource,
-  rankMentions,
-} from "./mentions";
+import { mentionSource } from "@/features/mentions/mention-source";
+import { acceptMention, type MentionAgent, mentionOpensAt, rankMentions } from "./mentions";
 
 const agent = (slug: string, displayName: string, over: Partial<MentionAgent> = {}) =>
   ({

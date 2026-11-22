@@ -5,7 +5,7 @@ import {
   MAX_BODY_BYTES,
   type QueueItem,
 } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import {
   memo,
@@ -26,12 +26,19 @@ import {
   type SubmitOptions,
   UNCONFIRMED,
 } from "@/components/composer/composer";
-import { SESSION_AT_LABEL, useMentionSource } from "@/components/composer/mentions";
 import { Button } from "@/components/ui/button";
+import { SESSION_AT_LABEL, useMentionSource } from "@/features/mentions/mention-source";
 import { agentDraftKey, readDraft, writeDraft } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
+import { sessionQueryOptions } from "@/lib/session";
 import { postInterrupt, postMessage } from "./api";
-import { commandsQueryOptions, postCommand, unescapeSlash, useCommandSource } from "./commands";
+import {
+  COMMAND_UNCONFIRMED,
+  commandsQueryOptions,
+  postCommand,
+  unescapeSlash,
+  useCommandSource,
+} from "./commands";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
 import type { SendingBlock } from "./session-state";
 import { rememberSent, uploadsFor } from "./uploads";
@@ -110,6 +117,8 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
 /** The most one `[attached: …]` line adds (its newline, the prefix, date, id, an 80-byte safe name). */
 const ATTACHED_LINE_BYTES = "\n[attached: .factory/uploads/yyyymmdd-".length + 36 + 1 + 80 + 1;
 
+const selectUserId = (s: { user: { id: string } } | null) => s?.user.id;
+
 /** The 64 KB body limit, checked before the box empties (a module constant: a stable prop). The server
  *  appends a blank line and one line per file to the body, inside the same limit (U3 §13.5). */
 function checkBody(text: string, files: number): string | undefined {
@@ -143,6 +152,10 @@ type SessionComposerProps = {
   onTerminated?: (notice: string) => void;
   /** ↑ in an empty box: your last message's text from the loaded timeline (U3 §13.2). Stable. */
   recall?: () => string | undefined;
+  /** Where it stands. Only the session view's composer has files and `/` commands (U3 §13.1, Q38);
+   *  elsewhere (the inbox pane's reply) a pasted or dropped file gets the "Files can be sent in an
+   *  agent's session" note and there is no attach or `/` button. */
+  context?: "session" | "inbox";
 };
 
 /** The props compared by identity: every prop but `agent` (keep this list in step with the type). */
@@ -158,6 +171,7 @@ const IDENTITY_KEYS = [
   "onSent",
   "onTerminated",
   "recall",
+  "context",
 ] as const satisfies readonly Exclude<keyof SessionComposerProps, "agent">[];
 
 /** Only the agent fields the composer reads: a status frame that changes nothing here (a new
@@ -193,7 +207,11 @@ export const Composer = memo(function SessionComposer({
   onSendFailed,
   landed = NO_LANDED,
   recall,
+  context = "inbox",
 }: SessionComposerProps) {
+  const inSession = context === "session";
+  // Uploads are the signed-in user's (U3 §13.5): a user change gives this composer that user's store.
+  const userId = useQuery({ ...sessionQueryOptions, select: selectUserId }).data;
   const inner = useRef<ComposerHandle>(null);
   useImperativeHandle(
     ref,
@@ -218,7 +236,7 @@ export const Composer = memo(function SessionComposer({
       // `//x` goes as `/x` (U3 §13.3).
       const body = unescapeSlash(text.trim());
       // Its files ride on the optimistic block and, by id, on its queue item (U3 §13.5).
-      const files = attachments.length ? uploadsFor(slug).describe(attachments) : [];
+      const files = attachments.length ? uploadsFor(userId, slug).describe(attachments) : [];
       rememberSent(clientMessageId, files);
       onSending?.({
         clientMessageId,
@@ -266,7 +284,7 @@ export const Composer = memo(function SessionComposer({
         clearTimeout(timer);
       }
     },
-    [slug, onSending, onQueued, onSent, onSendFailed, onTerminated],
+    [slug, userId, onSending, onQueued, onSent, onSendFailed, onTerminated],
   );
   // Command mode's Enter (U3 §13.3): POST /commands with the chosen entry's name and the args as data.
   // A refusal (422 unknown_command, 413, an agent that can't run commands) shows inline; nothing is
@@ -276,16 +294,22 @@ export const Composer = memo(function SessionComposer({
       if (new TextEncoder().encode(commandText(name, args)).length > MAX_BODY_BYTES)
         throw new SubmitError("The command is larger than 64 KB.");
       repinTimeline(slug);
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
       try {
         // The queue frame shows a held command; the 202's item isn't added here (frames are authoritative).
-        await postCommand(slug, { name, args, clientMessageId });
+        await postCommand(slug, { name, args, clientMessageId }, abort.signal);
         onSent?.();
       } catch (e) {
+        // A hung POST never leaves the box pending: it comes back in command mode with this reason.
+        if (abort.signal.aborted) throw new SubmitError(COMMAND_UNCONFIRMED);
         if (e instanceof ApiError && e.code === "agent_terminated") {
           onTerminated?.(terminatedNotSent(slug));
           throw new SubmitError(terminatedNotSent(slug));
         }
         throw new SubmitError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      } finally {
+        clearTimeout(timer);
       }
     },
     [slug, onSent, onTerminated],
@@ -298,9 +322,9 @@ export const Composer = memo(function SessionComposer({
   // session the view's own prefetch already started it, and this one is deduped.
   const qc = useQueryClient();
   useEffect(() => {
-    void qc.prefetchQuery(commandsQueryOptions(slug));
-  }, [qc, slug]);
-  const completions = useMemo(() => ({ at, slash }), [at, slash]);
+    if (inSession) void qc.prefetchQuery(commandsQueryOptions(slug));
+  }, [qc, slug, inSession]);
+  const completions = useMemo(() => (inSession ? { at, slash } : { at }), [at, slash, inSession]);
 
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
@@ -313,9 +337,11 @@ export const Composer = memo(function SessionComposer({
       className="shrink-0 border-t border-border px-4 py-3 md:px-6"
       draftKey={agentDraftKey(slug)}
       label={`Message to ${agent.displayName}`}
-      placeholder={`Message ${agent.displayName} · / for commands`}
+      placeholder={
+        inSession ? `Message ${agent.displayName} · / for commands` : `Message ${agent.displayName}`
+      }
       onSubmit={onSubmit}
-      onCommand={onCommand}
+      onCommand={inSession ? onCommand : undefined}
       validate={checkBody}
       waiting={waiting}
       landed={landed}
@@ -326,7 +352,7 @@ export const Composer = memo(function SessionComposer({
       hintMode={hintMode}
       completions={completions}
       note={waitsForNewSession ? "Messages wait until a new session is started." : undefined}
-      attachments={uploadsFor(slug)}
+      attachments={inSession ? uploadsFor(userId, slug) : undefined}
       recall={recall}
     />
   );

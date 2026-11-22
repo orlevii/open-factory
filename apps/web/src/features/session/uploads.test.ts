@@ -5,6 +5,7 @@ import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-
 import { json, mockApi } from "@/test/mock-api";
 import {
   createUploadStore,
+  dropUploadsExcept,
   PROXY_TOO_LARGE,
   recallText,
   resetUploads,
@@ -135,20 +136,23 @@ test("a delivered message's uploads leave the composer without being deleted", (
   expect(api.calls).toEqual([]);
 });
 
-test("sign-out aborts every upload, disarms beforeunload and forgets the files; the next user starts empty", () => {
-  resetUploads("u-alice");
-  const s = uploadsFor("dev");
+test("a user change aborts every other user's uploads, disarms beforeunload and forgets their files", () => {
+  const s = uploadsFor("u-alice", "dev");
   s.add([file("secret.txt")]);
   const x = lastXhr();
-  resetUploads("u-bob");
+  const bob = uploadsFor("u-bob", "dev");
+  expect(bob).not.toBe(s);
+  expect(bob.keys()).toEqual([]);
+  dropUploadsExcept("u-bob");
   expect(x.aborted).toBe(true);
   expect(s.keys()).toEqual([]);
   const ev = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(ev);
   expect(ev.defaultPrevented).toBe(false);
-  expect(uploadsFor("dev")).not.toBe(s);
-  expect(uploadsFor("dev").keys()).toEqual([]);
+  expect(uploadsFor("u-bob", "dev")).toBe(bob); // the kept user's store is untouched
+  expect(uploadsFor("u-alice", "dev")).not.toBe(s);
   resetUploads();
+  expect(uploadsFor("u-bob", "dev")).not.toBe(bob);
 });
 
 test("a non-JSON 413 (a proxy's limit) says so; a network error says the server can't be reached", () => {
@@ -228,8 +232,8 @@ test("take hands the finished uploads to a send; restore puts them back, settle 
 });
 
 test("the store is per agent and outlives the composer", () => {
-  expect(uploadsFor("dev")).toBe(uploadsFor("dev"));
-  expect(uploadsFor("dev")).not.toBe(uploadsFor("other"));
+  expect(uploadsFor("u1", "dev")).toBe(uploadsFor("u1", "dev"));
+  expect(uploadsFor("u1", "dev")).not.toBe(uploadsFor("u1", "other"));
 });
 
 test("an image gets a 64px-wide bitmap thumbnail; never the full-size file", async () => {

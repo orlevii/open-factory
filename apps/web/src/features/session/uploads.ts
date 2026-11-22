@@ -334,26 +334,33 @@ export function createUploadStore(slug: string): UploadStore {
 }
 
 const stores = new Map<string, UploadStore>();
-let owner: string | undefined;
-/** The agent's uploads for the signed-in user, kept for the page's life, so leaving the session and coming back
- *  keeps them. Keyed by user: another user signing in on this tab never sees them. */
-export function uploadsFor(slug: string): UploadStore {
-  const key = `${owner ?? ""}:${slug}`;
+const storeKey = (user: string | undefined, slug: string) => `${user ?? ""}:${slug}`;
+/** The agent's uploads for this user, kept for the page's life, so leaving the session and coming back keeps
+ *  them. Keyed by the user: another user signing in on this tab never sees them. */
+export function uploadsFor(user: string | undefined, slug: string): UploadStore {
+  const key = storeKey(user, slug);
   const s = stores.get(key) ?? createUploadStore(slug);
   stores.set(key, s);
   return s;
 }
 
-/** Whose uploads `uploadsFor` serves (the signed-in user's id). */
-export const uploadsOwner = () => owner;
+/** A user change: every other user's uploads are aborted (beforeunload disarms) and forgotten, with their
+ *  chips, thumbnails and remembered sends. */
+export function dropUploadsExcept(user: string | undefined) {
+  const keep = `${user ?? ""}:`;
+  for (const [k, s] of stores)
+    if (!k.startsWith(keep)) {
+      s.abortAll();
+      stores.delete(k);
+    }
+  if (user === undefined) sent.clear();
+}
 
-/** Sign-out or a user change: every upload in flight is aborted (beforeunload disarms), every chip, thumbnail
- *  and remembered send is dropped. Nothing holds a File or a bitmap of the previous user after this. */
-export function resetUploads(user?: string) {
+/** Sign-out: nothing of this user's files stays in memory. */
+export function resetUploads() {
   for (const s of stores.values()) s.abortAll();
   stores.clear();
   sent.clear();
-  owner = user;
 }
 
 // This tab's sends with files, by `clientMessageId`: their queue items show the chips too.

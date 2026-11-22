@@ -2,7 +2,7 @@ import type { TaskCommentResponse } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { type Ref, useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Composer, type ComposerHandle, SubmitError } from "@/components/composer/composer";
-import { useMentionSource } from "@/components/composer/mentions";
+import { useMentionSource } from "@/features/mentions/mention-source";
 import { taskDraftKey } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
 import { postComment, taskDetailOptions, tasksQueryKey } from "./api";

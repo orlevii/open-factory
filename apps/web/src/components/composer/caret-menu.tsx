@@ -87,6 +87,17 @@ export function caretAnchor(box: HTMLTextAreaElement, index: number): CaretAncho
   }
 }
 
+/** The rows in runs: a row with a heading starts a group; rows before any heading stand alone. */
+function runs(items: readonly CompletionItem[]): { heading?: string; items: CompletionItem[] }[] {
+  const out: { heading?: string; items: CompletionItem[] }[] = [];
+  for (const it of items) {
+    const last = out.at(-1);
+    if (it.heading !== undefined || !last) out.push({ heading: it.heading, items: [it] });
+    else last.items.push(it);
+  }
+  return out;
+}
+
 const itemClass =
   "flex min-h-8 pointer-coarse:min-h-9 cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm select-none data-[selected=true]:bg-accent";
 
@@ -173,6 +184,17 @@ export function CaretMenu({
     };
   }, [input]);
 
+  const row = (item: CompletionItem) => (
+    <CommandPrimitive.Item
+      key={item.id}
+      value={item.id}
+      data-caret-item={item.id}
+      onSelect={() => onPick(item)}
+      className={itemClass}
+    >
+      {item.kind === "command" ? <CommandRow item={item} /> : <MentionRow item={item} />}
+    </CommandPrimitive.Item>
+  );
   return (
     <Popover open onOpenChange={(open) => !open && onClose()}>
       <PopoverAnchor
@@ -203,17 +225,19 @@ export function CaretMenu({
           onValueChange={setValue}
         >
           <CommandPrimitive.List ref={setList} label={label} className="scroll-py-1">
-            {items.map((item) => (
-              <CommandPrimitive.Item
-                key={item.id}
-                value={item.id}
-                data-caret-item={item.id}
-                onSelect={() => onPick(item)}
-                className={itemClass}
-              >
-                {item.kind === "command" ? <CommandRow item={item} /> : <MentionRow item={item} />}
-              </CommandPrimitive.Item>
-            ))}
+            {runs(items).map((run) =>
+              run.heading ? (
+                <CommandPrimitive.Group
+                  key={`g:${run.items[0]?.id}`}
+                  heading={run.heading}
+                  className="**:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:pt-1.5 **:[[cmdk-group-heading]]:pb-0.5 **:[[cmdk-group-heading]]:text-xs **:[[cmdk-group-heading]]:text-muted-foreground"
+                >
+                  {run.items.map(row)}
+                </CommandPrimitive.Group>
+              ) : (
+                run.items.map(row)
+              ),
+            )}
           </CommandPrimitive.List>
           {note ? (
             <p className="px-2 py-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">

@@ -220,6 +220,7 @@ export function SessionView({
   // A delivered message of yours used its uploads: any chip still holding one goes (a send that landed
   // after its 15s abort and a remount, whose chips came back). Only events past the last look are read.
   const lookedThrough = useRef({ slug, seq: 0 });
+  const userId = me?.user.id;
   useEffect(() => {
     const ordered = s.state.ordered;
     orderedRef.current = ordered;
@@ -227,8 +228,8 @@ export function SessionView({
     const from = lookedThrough.current.slug === slug ? lookedThrough.current.seq : 0;
     const used = uploadsUsedSince(ordered, from, self);
     lookedThrough.current = { slug, seq: ordered.at(-1)?.seq ?? from };
-    if (used.length) uploadsFor(slug).forgetUploads(used);
-  }, [s.state.ordered, slug, self]);
+    if (used.length) uploadsFor(userId, slug).forgetUploads(used);
+  }, [s.state.ordered, slug, self, userId]);
   const recall = useCallback(() => recallText(orderedRef.current, self), [self]);
   const composer = useMemo(
     () =>
@@ -247,6 +248,7 @@ export function SessionView({
           onSent={clearCancelled}
           onTerminated={onSendRaced}
           recall={recall}
+          context="session"
         />
       ) : null,
     [

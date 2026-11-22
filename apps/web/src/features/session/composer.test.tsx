@@ -56,7 +56,7 @@ function setup(initial: AgentSummary, extra?: ReactNode) {
   const ui = (agent: AgentSummary, epoch: number) => (
     <>
       {extra}
-      <Composer slug="dev" agent={agent} stopEpoch={epoch} />
+      <Composer slug="dev" agent={agent} stopEpoch={epoch} context="session" />
     </>
   );
   const r = render(ui(initial, 1));
@@ -350,6 +350,7 @@ function Session({ agent }: { agent: AgentSummary }) {
         slug="dev"
         agent={agent}
         stopEpoch={1}
+        context="session"
         onSending={onSending}
         onSendFailed={onSendFailed}
         onQueued={onQueued}
@@ -591,7 +592,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
 
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
-  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
+  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} context="session" />);
   expect(screen.getByRole("combobox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
@@ -781,4 +782,28 @@ test.each([
   await userEvent.type(box, "/context {Enter}");
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
+});
+
+test("a command POST that hangs is aborted after 15s with the reason inline", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  reply = (url, init) =>
+    url.endsWith("/commands") && init?.method === "POST"
+      ? new Promise<Response>((_, rej) =>
+          init.signal?.addEventListener("abort", () =>
+            rej(new DOMException("aborted", "AbortError")),
+          ),
+        )
+      : json(COMMANDS_RESPONSE);
+  const { box } = setup(agentSummary());
+  fireEvent.change(box, { target: { value: "/context " } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(async () => {
+    vi.advanceTimersByTime(15_000);
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't confirm the command. Check the queue before running it again.",
+  );
+  expect(document.querySelector("[data-command-chip]")).not.toBeNull();
 });

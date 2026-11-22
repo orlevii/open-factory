@@ -1,4 +1,12 @@
-import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -1206,4 +1214,25 @@ test("⌥Enter with the `/` menu open sends the text as typed", async () => {
   fireEvent.keyDown(box, { key: "Enter", altKey: true });
   expect(onSubmit).toHaveBeenCalledWith("/code", expect.objectContaining({ urgent: true }));
   expect(onCommand).not.toHaveBeenCalled();
+});
+
+test("a row with a heading starts a labelled group in the menu", async () => {
+  const items: CompletionItem[] = [
+    { id: "a", label: "/a", group: "Skills", kind: "command", heading: "Skills", exact: true },
+    { id: "b", label: "/b", group: "Skills", kind: "command", exact: true },
+    { id: "c", label: "/c", group: "Commands", kind: "command", heading: "Commands", exact: true },
+  ];
+  const slash: CompletionSource = {
+    trigger: "/",
+    opensAt: (t, c) =>
+      /^\/\S*$/.test(t.slice(0, c)) ? { query: t.slice(1, c), from: 0 } : undefined,
+    items: () => items,
+    accept: () => ({ text: "", caret: 0 }),
+  };
+  const { box } = setup({ completions: { slash } });
+  await userEvent.type(box, "/");
+  const groups = screen.getAllByRole("group");
+  expect(groups.map((g) => within(g).getAllByRole("option").length)).toEqual([2, 1]);
+  expect(screen.getByText("Skills")).toBeInTheDocument();
+  expect(screen.getByText("Commands")).toBeInTheDocument();
 });

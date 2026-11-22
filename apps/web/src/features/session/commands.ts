@@ -30,12 +30,18 @@ export const commandsQueryOptions = (slug: string) =>
 export const postCommand = (
   slug: string,
   body: { name: string; args: string; clientMessageId: string },
+  signal?: AbortSignal,
 ) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/commands`, {
     method: "POST",
     body,
     schema: queueItemResponseSchema,
+    ...(signal ? { signal } : {}),
   }).then((r) => r.item);
+
+/** A command POST not answered in 15s (like a message send): it may still have been queued. */
+export const COMMAND_UNCONFIRMED =
+  "Couldn't confirm the command. Check the queue before running it again.";
 
 export const EMPTY_COMMANDS = "No commands loaded yet. They appear after the agent starts.";
 export const FROM_TEMPLATE = "From template";
@@ -115,6 +121,16 @@ export function rankCommands(query: string, commands: readonly Command[]): Ranke
 
 const group = (c: Command) =>
   !c.builtin ? "Skills" : FACTORY.has(c.name) ? "Factory" : "Commands";
+const GROUP_ORDER = ["Skills", "Commands", "Factory"];
+
+/** Browsing (`/` alone): the rows by group (U3 §13.3), each group's first row carrying its heading. A
+ *  typed query keeps the flat ranking, so the best name match stays first for Enter. */
+function grouped(items: CompletionItem[]): CompletionItem[] {
+  const out = items.toSorted((a, b) => GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group));
+  return out.map((it, i) =>
+    i === 0 || out[i - 1]?.group !== it.group ? { ...it, heading: it.group } : it,
+  );
+}
 
 const toItem = ({ command: c, alias, prefix }: RankedCommand): CompletionItem => ({
   id: c.name,
@@ -142,7 +158,10 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
     trigger: "/",
     label: SLASH_LABEL,
     opensAt: slashOpensAt,
-    items: (query) => rankCommands(query, read()?.commands ?? []).map(toItem),
+    items: (query) => {
+      const rows = rankCommands(query, read()?.commands ?? []).map(toItem);
+      return query === "" ? grouped(rows) : rows;
+    },
     enterNeedsExact: true,
     accept: (item) => {
       const c = read()?.commands.find((x) => x.name === item.id);

@@ -9,7 +9,7 @@ import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/s
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
-import { resetUploads, uploadsOwner } from "@/features/session/uploads";
+import { dropUploadsExcept } from "@/features/session/uploads";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
 import { installFileDropGuard } from "@/lib/file-drop";
@@ -47,10 +47,12 @@ const sidebarOpenFromCookie = () => !document.cookie.split("; ").includes("sideb
 function AppLayout() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  // Uploads belong to the signed-in user (U3 §13.5): another user on this tab starts with none. Settled
-  // during render, before any session composer below reads its store (idempotent).
+  // Uploads belong to the signed-in user (U3 §13.5): composers read their store by user id, and a user
+  // change here drops every other user's (aborting what is in flight).
   const userId = useQuery(sessionQueryOptions).data?.user.id;
-  if (userId !== undefined && uploadsOwner() !== userId) resetUploads(userId);
+  useEffect(() => {
+    if (userId !== undefined) dropUploadsExcept(userId);
+  }, [userId]);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const [openCount, setOpenCount] = useState(0);
   const listeners = useRef(new Set<(m: ServerMessage) => void>());

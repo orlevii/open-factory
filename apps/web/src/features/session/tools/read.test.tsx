@@ -63,6 +63,21 @@ test("collapsed image read: the file name · image · its dimensions; the body s
   expect(screen.queryByRole("button", { name: "Show content" })).not.toBeInTheDocument();
 });
 
+test("an image read has nothing to expand: no chevron and no expanded state", () => {
+  const { container } = render(
+    <RowHarness
+      row={toolRow(
+        "Read",
+        { file_path: "/tmp/screenshot.png" },
+        { content: "[image]", meta: { tool: "ReadImage", bytes: 1, width: 2, height: 2 } },
+      )}
+    />,
+  );
+  expect(rowToggle()).not.toHaveAttribute("aria-expanded");
+  expect(rowToggle().querySelector(".lucide-chevron-right")).toBeNull();
+  expect(container.querySelector("[data-row-body]")).toBeNull();
+});
+
 test("expanded text read: nothing until Show content, which strips the N→ prefixes into a gutter", async () => {
   const row = toolRow(
     "Read",

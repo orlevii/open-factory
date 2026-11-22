@@ -26,9 +26,10 @@ test("tailOutput: the last 12 lines when they are shorter; nothing cut for a sho
     tail: lines.slice(-12).join("\n"),
     total: 30,
     cut: true,
+    midLine: false,
   });
-  expect(tailOutput("a\nb\n")).toEqual({ tail: "a\nb", total: 2, cut: false });
-  expect(tailOutput("")).toEqual({ tail: "", total: 0, cut: false });
+  expect(tailOutput("a\nb\n")).toEqual({ tail: "a\nb", total: 2, cut: false, midLine: false });
+  expect(tailOutput("")).toEqual({ tail: "", total: 0, cut: false, midLine: false });
 });
 
 test("stripAnsi: colours, cursor moves, OSC links and control characters go; tabs and newlines stay", () => {

@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { ToolRow } from "../rows";
 import { OutputPlate, OutputTail, ShowInput, TruncatedNote } from "./parts";
 
@@ -33,17 +34,19 @@ function splitStderr(row: ToolRow): { output: string; stderr?: string } {
   return { output: content.slice(0, content.length - stderr.length), stderr };
 }
 
-/** The command adds to the collapsed line when it is multi-line, long or was capped. */
-const commandAdds = (row: ToolRow, command: string, description: string) =>
+/** The command adds to the collapsed line when it is multi-line, longer than the row shows at the
+ *  usual width (80 characters, the description beside it or not), or was capped. */
+const commandAdds = (row: ToolRow, command: string) =>
   command.includes("\n") ||
-  command.length > (description ? 40 : 80) ||
+  command.length > 80 ||
   Object.keys(row.truncated ?? {}).some((k) => k.startsWith("input."));
 
 /** Expanded: the output's tail first, stderr in its own plate, then the command behind "Show input"
  *  when it adds something (spec §9.2). Before the result lands, the command itself. */
 function BashBody({ row }: { row: ToolRow }) {
-  const { command, description } = bashInput(row.call.input);
+  const { command } = bashInput(row.call.input);
   const { output, stderr } = splitStderr(row);
+  const stderrId = useId();
   const input = (
     <>
       <OutputPlate>{`$ ${command}`}</OutputPlate>
@@ -59,13 +62,17 @@ function BashBody({ row }: { row: ToolRow }) {
         !stderr && <p className="text-[0.8125rem] text-muted-foreground">No output</p>
       )}
       {stderr && (
-        <div>
-          <p className="text-[0.8125rem] leading-[1.125rem] text-destructive/80">stderr</p>
+        // The label names its plate for assistive technology too.
+        // biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls, not an output plate
+        <div role="group" aria-labelledby={stderrId}>
+          <p id={stderrId} className="text-[0.8125rem] leading-[1.125rem] text-destructive/80">
+            stderr
+          </p>
           <OutputTail text={stderr} />
         </div>
       )}
       <TruncatedNote row={row} prefix="result." />
-      {commandAdds(row, command, description) && <ShowInput>{input}</ShowInput>}
+      {commandAdds(row, command) && <ShowInput>{input}</ShowInput>}
     </>
   );
 }

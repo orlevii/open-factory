@@ -15,6 +15,8 @@ import { webRenderer } from "./web";
 export type ToolRenderer = {
   Summary: ComponentType<{ row: ToolRow }>;
   Body: ComponentType<{ row: ToolRow }>;
+  /** False when the body would show nothing (an image read): the row then has no chevron. */
+  hasBody?(row: ToolRow): boolean;
 };
 
 /** Renderers by tool name; a module constant, so a row's renderer never changes identity. */

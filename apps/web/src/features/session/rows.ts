@@ -73,6 +73,8 @@ export type Row =
       state: ToolState;
       /** A `permission_denied` for this call (UI design §4.4): it renders inside the call's row. */
       denial?: Ev<"permission_denied">;
+      /** Its error result landed after someone asked the turn to stop: it was cut, not failed. */
+      interrupted?: true;
       /** The background task this call started (U3 §9.5): its lines render on this row instead. */
       backgroundTask?: BackgroundTask;
       children: Row[];
@@ -262,6 +264,7 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
   const tools = new Map<string, ToolRow>();
   // Running background tasks attached to their call rows, by task id (U3 §9.5).
   const tasks = new Map<string, ToolRow>();
+  let stopAsked = false;
   const outgoing = new Map<string, FactoryRow>();
   const top: Row[] = [];
   const place = (row: Row, parent?: string) => {
@@ -286,6 +289,9 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
       usage = undefined;
     } else if (e.type === "tool_call") calls++;
     else if (e.type === "usage") usage = e;
+    // A stop asked in this turn: an error result after it is the call being cut short.
+    if (e.type === "turn_started" || e.type === "turn_end") stopAsked = false;
+    else if (e.type === "control" && e.cmd === "interrupt") stopAsked = true;
     if (e.type === "exited") {
       // Background tasks die with the process: one with no finish by now stopped.
       for (const call of tasks.values())
@@ -383,6 +389,7 @@ export function buildRows(events: SessionEvent[]): { rows: Row[]; open: OpenTurn
         call.result = e;
         call.resultAt = se.at;
         call.state = e.isError ? "failed" : "done";
+        if (e.isError && stopAsked) call.interrupted = true;
         if (se.truncated)
           call.truncated = {
             ...call.truncated,

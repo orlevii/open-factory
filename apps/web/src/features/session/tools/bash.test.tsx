@@ -224,3 +224,59 @@ test("a background task the process took down: 'Stopped'", () => {
   render(<Harness row={withTask({ taskId: "b", state: "stopped" })} />);
   expect(within(toggle()).getByText("Stopped")).toBeInTheDocument();
 });
+
+test("a 64 KB single-line output: 'Show all', never 'Show all 1 line', and the cut tail starts with an ellipsis", async () => {
+  const line = `${"x".repeat(64 * 1024 - 3)}END`;
+  render(<Harness open row={bashRow({ command: "cat big" }, { content: line })} />);
+  expect(screen.queryByRole("button", { name: /1 line/ })).toBeNull();
+  const show = screen.getByRole("button", { name: "Show all" });
+  expect(document.querySelector("pre")?.textContent?.startsWith("…x")).toBe(true);
+  await userEvent.click(show);
+  expect(document.querySelector("pre")?.textContent).toBe(line);
+});
+
+test("a one-line command short enough to read on the row needs no Show input, with a description too", () => {
+  const command = "pnpm vitest run apps/web/src/features/a.test.ts";
+  expect(command.length).toBeGreaterThan(40);
+  render(
+    <Harness open row={bashRow({ command, description: "Run the tests" }, { content: "ok" })} />,
+  );
+  expect(screen.queryByRole("button", { name: "Show input" })).not.toBeInTheDocument();
+});
+
+test("the stderr plate is named by its label", () => {
+  render(
+    <Harness
+      open
+      row={bashRow(
+        { command: "make" },
+        {
+          content: "built\nwarning: deprecated",
+          meta: { tool: "Bash", interrupted: false, stderr: "warning: deprecated" },
+        },
+      )}
+    />,
+  );
+  expect(screen.getByRole("group", { name: "stderr" })).toHaveTextContent("warning: deprecated");
+});
+
+test("a call cut by Stop reads 'Interrupted', not 'Failed', with no error detail line", () => {
+  resetSeq();
+  const rows = buildRows(
+    [
+      { type: "turn_started" },
+      { type: "tool_call", toolUseId: "tu1", name: "Bash", input: { command: "sleep 60" } },
+      { type: "control", cmd: "interrupt", by: "@or" },
+      {
+        type: "tool_result",
+        toolUseId: "tu1",
+        content: "The user doesn't want to proceed with this tool use.",
+        isError: true,
+      },
+    ].map((e) => se(e as AnyEvent)),
+  ).rows;
+  const row = rows.find((r) => r.kind === "tool") as ToolRow;
+  render(<Harness row={row} />);
+  expect(within(toggle()).getByText("Interrupted")).toBeInTheDocument();
+  expect(screen.queryByText(/doesn't want to proceed/)).toBeNull();
+});

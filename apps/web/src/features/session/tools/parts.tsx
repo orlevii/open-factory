@@ -45,7 +45,7 @@ export function ExpandButton({ onExpand, children }: { onExpand(): void; childre
 
 type OutputView =
   | { binary: true; bytes: number }
-  | { binary: false; clean: string; tail: string; total: number; cut: boolean };
+  | { binary: false; clean: string; tail: string; total: number; cut: boolean; midLine: boolean };
 
 /** The end of a tool's output (spec §9.2): the last 12 lines or 2,000 characters with "Show all N
  *  lines" in place, ANSI and control characters stripped, binary output summarized. */
@@ -69,10 +69,11 @@ export function OutputTail({ text }: { text: string }) {
   const cut = view.cut && !all;
   return (
     <div>
-      <OutputPlate>{cut ? view.tail : view.clean}</OutputPlate>
+      <OutputPlate>{cut ? `${view.midLine ? "…" : ""}${view.tail}` : view.clean}</OutputPlate>
       {cut && (
         <ExpandButton onExpand={() => setAll(true)}>
-          Show all {view.total} {view.total === 1 ? "line" : "lines"}
+          {/* One long line: its count says nothing, so just "Show all". */}
+          {view.total === 1 ? "Show all" : `Show all ${view.total} lines`}
         </ExpandButton>
       )}
     </div>

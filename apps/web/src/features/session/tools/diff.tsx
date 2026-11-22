@@ -191,10 +191,18 @@ function DiffLines({
   );
 }
 
-/** "Diff truncated · show raw output": the harness kept only the hunks that fit (spec §9.1). */
-function Truncated({ raw }: { raw: string }) {
+/** "Diff truncated · show raw output": the harness kept only the hunks that fit (spec §9.1). The
+ *  result's own text says only that the file was updated, so the raw view is the call's input (the
+ *  strings it replaced or wrote), under the marker, which stays. */
+function Truncated({ input }: { input: unknown }) {
   const [open, setOpen] = useState(false);
-  if (open) return <CodePlate>{raw}</CodePlate>;
+  if (open)
+    return (
+      <>
+        <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">Diff truncated</p>
+        <CodePlate>{JSON.stringify(input, null, 2)}</CodePlate>
+      </>
+    );
   return (
     <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
       Diff truncated · <ExpandButton onExpand={() => setOpen(true)}>show raw output</ExpandButton>
@@ -220,7 +228,7 @@ function DiffView({ row, meta }: { row: ToolRow; meta: DiffMeta }) {
       {view.lines.length > 0 && (
         <DiffLines lines={view.lines} collapsed={view.collapsed} label={changesLabel(row)} />
       )}
-      {meta.partial && <Truncated raw={row.result?.content ?? ""} />}
+      {meta.partial && <Truncated input={row.call.input} />}
       <TruncatedNote row={row} prefix="input." />
       <TruncatedNote row={row} prefix="result." />
     </>

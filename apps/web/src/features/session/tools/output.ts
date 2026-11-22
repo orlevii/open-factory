@@ -41,15 +41,16 @@ export function isBinary(s: string): boolean {
 /**
  * The end of an output: its last `lines` lines or `chars` characters, whichever is shorter, starting
  * at a line start when the character cut lands mid-line and an earlier newline exists. `total` is
- * the output's line count; `cut` whether anything was left out.
+ * the output's line count; `cut` whether anything was left out; `midLine` whether the tail starts
+ * inside a line.
  */
 export function tailOutput(
   text: string,
   lines = 12,
   chars = 2000,
-): { tail: string; total: number; cut: boolean } {
+): { tail: string; total: number; cut: boolean; midLine: boolean } {
   const body = text.replace(/\n+$/, "");
-  if (!body) return { tail: "", total: 0, cut: false };
+  if (!body) return { tail: "", total: 0, cut: false, midLine: false };
   let total = 1;
   let start = body.length;
   // Walk back to the start of the last `lines` lines without splitting the whole output.
@@ -73,7 +74,9 @@ export function tailOutput(
     if (nl !== -1 && nl < tail.length - 1) tail = tail.slice(nl + 1);
     else if (/^[\udc00-\udfff]/.test(tail)) tail = tail.slice(1); // never half a surrogate pair
   }
-  return { tail, total, cut: tail.length < body.length };
+  const cut = tail.length < body.length;
+  // The tail starts inside a line (one longer than the character cap): it reads with an ellipsis.
+  return { tail, total, cut, midLine: cut && body[body.length - tail.length - 1] !== "\n" };
 }
 
 /** A line of file content for a diff: no control or bidi characters, so it reads as stored. */

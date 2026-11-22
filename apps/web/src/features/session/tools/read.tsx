@@ -167,4 +167,8 @@ function ReadBody({ row }: { row: ToolRow }) {
   return <ShowContent content={result.content} path={filePath(row)} />;
 }
 
-export const readRenderer = { Summary: ReadSummary, Body: ReadBody };
+/** An image read's body is empty (the image is never stored), so its row doesn't expand. */
+const readHasBody = (row: ToolRow) =>
+  !(row.result && row.state !== "failed" && readMeta(row)?.tool === "ReadImage");
+
+export const readRenderer = { Summary: ReadSummary, Body: ReadBody, hasBody: readHasBody };

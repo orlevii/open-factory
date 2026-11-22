@@ -35,6 +35,7 @@ const TASK_CHIP = {
 function chipOf(row: ToolRow): string | null {
   if (row.denial) return "Denied";
   if (row.backgroundTask) return TASK_CHIP[row.backgroundTask.state];
+  if (row.interrupted) return "Interrupted";
   const meta = row.result?.meta;
   if (meta?.tool === "Bash" && meta.interrupted) return "Interrupted";
   return STATE_LABEL[row.state];
@@ -101,12 +102,15 @@ export function ToolCallRow({
 }) {
   const R = rendererFor(row.call.name);
   const chip = chipOf(row);
+  // Nothing to show (an image read): a plain row, no chevron, no expanded state.
+  const expandable = R.hasBody?.(row) !== false || Boolean(children);
   return (
     <div>
       <button
         type="button"
-        aria-expanded={expanded}
+        {...(expandable ? { "aria-expanded": expanded } : {})}
         onClick={(e) => {
+          if (!expandable) return;
           // A keyboard-triggered click (Enter/Space) has detail 0: it toggles without the transition.
           if (e.detail === 0) runInstant(onToggle);
           else onToggle();
@@ -116,10 +120,15 @@ export function ToolCallRow({
         // min-h-8, not h-8: at large text sizes the line wraps rather than clips (Break M9).
         className="of-row flex min-h-8 w-full min-w-0 items-start gap-2 rounded-md px-1 py-1.5 text-left text-sm leading-5"
       >
-        <ChevronRight
-          aria-hidden="true"
-          className={`mt-0.5 size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
-        />
+        {expandable ? (
+          <ChevronRight
+            aria-hidden="true"
+            className={`mt-0.5 size-4 shrink-0 transition-transform duration-150 ease-(--ease-out) motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
+          />
+        ) : (
+          // The chevron's width stays, so the summary lines up with its neighbours'.
+          <span aria-hidden="true" className="size-4 shrink-0" />
+        )}
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <R.Summary row={row} />
         </span>
@@ -138,7 +147,7 @@ export function ToolCallRow({
         )}
       </button>
       <Detail row={row} chip={chip} />
-      {expanded && (
+      {expanded && expandable && (
         // Its controls belong to the row above (`rowOf`): tab order, Esc, focus and scroll anchor.
         <div data-row-body={row.key} className="mt-1 space-y-2 pl-6">
           <R.Body row={row} />

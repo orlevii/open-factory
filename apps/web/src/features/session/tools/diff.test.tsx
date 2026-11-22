@@ -172,7 +172,17 @@ test("partial: Diff truncated · show raw output", async () => {
   const line = screen.getByText(/^Diff truncated/).closest("p");
   expect(line).toHaveTextContent("Diff truncated · show raw output");
   await userEvent.click(screen.getByRole("button", { name: "show raw output" }));
-  expect(screen.getByText("The file has been updated.")).toBeInTheDocument();
+  // The result's text says nothing more; the raw view is the call's input (see the next test).
+  expect(screen.getByText(/"old_string": "x"/)).toBeInTheDocument();
+});
+
+test("partial: show raw output keeps the 'Diff truncated' marker and shows the call's input", async () => {
+  render(<Harness open row={edit([HUNK], true)} />);
+  await userEvent.click(screen.getByRole("button", { name: "show raw output" }));
+  expect(screen.getByText(/^Diff truncated/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "show raw output" })).toBeNull();
+  const plates = [...document.querySelectorAll("pre")].map((p) => p.textContent ?? "");
+  expect(plates.some((t) => t.includes("new_string"))).toBe(true);
 });
 
 test("a create: 'created · N lines' and the input's first 20 lines as + lines", async () => {

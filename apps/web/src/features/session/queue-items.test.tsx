@@ -134,7 +134,7 @@ test("queued bodies clamp at three lines", () => {
   render(
     <QueueItems items={[msg({ id: "a", body: "1\n\n2\n\n3\n\n4\n\n5" })]} agent={agentSummary()} />,
   );
-  expect(document.querySelector("[data-message-body]")).toHaveClass("line-clamp-3");
+  expect(document.querySelector("[data-message-body] .line-clamp-3")).not.toBeNull();
 });
 
 test("three queued messages all show; five show two and '+3 more queued' expands in place", async () => {

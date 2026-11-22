@@ -145,6 +145,16 @@ describe("CodeEditor", () => {
     expect(view().state.selection.main.head).toBe(view().state.doc.line(4).from);
   });
 
+  test("restore takes over a textarea's selection, backwards and clamped, and focus", () => {
+    const { view, ref, container } = setup();
+    act(() => ref.current?.restore({ anchor: 7, head: 2, focus: true }));
+    expect(view().state.selection.main.anchor).toBe(7);
+    expect(view().state.selection.main.head).toBe(2);
+    expect(container.querySelector(".cm-content")).toHaveFocus();
+    act(() => ref.current?.restore({ anchor: 0, head: 999, focus: false }));
+    expect(view().state.selection.main.head).toBe(view().state.doc.length);
+  });
+
   test("Mod-s calls onSave", () => {
     const { container, props } = setup();
     const content = container.querySelector(".cm-content") as HTMLElement;

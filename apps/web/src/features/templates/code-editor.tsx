@@ -16,7 +16,11 @@ import {
   toDiagnostics,
 } from "./code-editor-setup";
 
-export type CodeEditorHandle = { focusLine(line: number): void };
+export type CodeEditorHandle = {
+  focusLine(line: number): void;
+  /** Takes over a selection (and focus) from the textarea it replaced, so the swap is seamless. */
+  restore(at: { anchor: number; head: number; focus: boolean }): void;
+};
 
 type Props = {
   value: string;
@@ -208,6 +212,14 @@ const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEditor(props
           effects: EditorView.scrollIntoView(at, { y: "center" }),
         });
         view.focus();
+      },
+      restore({ anchor, head, focus }) {
+        const view = viewRef.current;
+        if (!view) return;
+        const len = view.state.doc.length;
+        const clamp = (n: number) => Math.min(Math.max(0, n), len);
+        view.dispatch({ selection: EditorSelection.single(clamp(anchor), clamp(head)) });
+        if (focus) view.focus();
       },
     }),
     [],

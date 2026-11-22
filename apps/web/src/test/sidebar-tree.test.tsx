@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -89,7 +89,14 @@ function setup({
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([stub("/agents/$slug"), stub("/agents/new"), stub("/agents")]),
+    routeTree: root.addChildren([
+      stub("/agents/$slug"),
+      stub("/agents/$slug/edit"),
+      stub("/agents/$slug/usage"),
+      stub("/tasks"),
+      stub("/agents/new"),
+      stub("/agents"),
+    ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   render(
@@ -113,6 +120,7 @@ async function push(qc: QueryClient, f: Frame) {
 }
 
 const row = (name: string) => screen.getByRole("treeitem", { name: new RegExp(`^${name}`) });
+const rowEl = (slug: string) => document.querySelector(`[data-agent-row="${slug}"]`);
 const stored = () => localStorage.getItem("of-tree-expanded");
 const resetProbe = () => {
   probe.tree = 0;
@@ -344,4 +352,86 @@ test("a click on a collapsed manager's working count follows the row's link", as
   const trigger = row("Bravo").querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
   await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b"));
+});
+
+test("each row carries a ⋯ that is out of the tab order; it opens the sidebar menu on its own row", async () => {
+  setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  const more = screen.getByRole("button", { name: "Actions for Alpha" });
+  expect(more).toHaveAttribute("tabindex", "-1");
+  await user.click(more);
+  const menu = await screen.findByRole("menu");
+  expect(within(menu).getByRole("menuitem", { name: "Open session" })).toBeInTheDocument();
+  expect(within(menu).queryByRole("menuitem", { name: /Agent details|Compact/ })).toBeNull();
+  // The open menu hides the page from the accessibility tree: read the row from the DOM.
+  expect(rowEl("a")).toHaveAttribute("data-menu-open");
+  expect(screen.getAllByRole("menu")).toHaveLength(1);
+});
+
+test("one menu for the tree: opening it on another row moves it, rows hold no menu of their own", async () => {
+  setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  await screen.findByRole("menu");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await user.click(screen.getByRole("button", { name: "Actions for Bravo" }));
+  await screen.findByRole("menu");
+  expect(rowEl("b")).toHaveAttribute("data-menu-open");
+  expect(rowEl("a")).not.toHaveAttribute("data-menu-open");
+});
+
+test("Shift+F10 and the Context Menu key open the menu for the focused row; Esc returns focus to the row", async () => {
+  setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  row("Alpha").focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(row("Alpha")).toHaveFocus();
+  await user.keyboard("{ContextMenu}");
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+});
+
+test("after a row's menu closes, a frame for that agent doesn't re-render the tree", async () => {
+  const { qc } = setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  await screen.findByRole("menu");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  resetProbe();
+  // Alpha is an open root: its own status is no one's working count.
+  await push(qc, frame("a", "working"));
+  expect(probe.tree).toBe(0);
+});
+
+test("right-click keeps the browser's own menu", async () => {
+  setup({ activeSlug: "a" });
+  await screen.findByRole("tree");
+  // fireEvent returns false when a handler called preventDefault.
+  expect(fireEvent.contextMenu(row("Alpha"))).toBe(true);
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+test("the menu keeps its place over the row while it closes", async () => {
+  setup({ activeSlug: "a" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  const el = rowEl("a") as HTMLElement;
+  el.getBoundingClientRect = () => new DOMRect(12, 34, 200, 32);
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  await screen.findByRole("menu");
+  const standIn = () => document.querySelector<HTMLElement>("[data-menu-stand-in]");
+  expect(standIn()?.style.top).toBe("34px");
+  await user.keyboard("{Escape}");
+  // Closed: the stand-in still sits where the row was, so the exit animation doesn't jump.
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(standIn()?.style.top).toBe("34px");
+  expect(standIn()?.style.left).toBe("12px");
 });

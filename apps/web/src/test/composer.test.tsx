@@ -155,10 +155,17 @@ test("slash text is sent as a plain message", async () => {
   );
 });
 
+/** Compact… lives in the header's ⋯ menu (U2 §8.4). */
+const menu = () => screen.getByRole("button", { name: "Actions for Dev agent" });
+async function openCompact() {
+  await userEvent.click(menu());
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Compact…" }));
+}
+
 test("Compact popover: focus moves to the input; Enter submits with the focus text", async () => {
   renderApp("/agents/dev", alice);
   await box();
-  await userEvent.click(screen.getByRole("button", { name: "Compact" }));
+  await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
   expect(focus).toHaveFocus();
   await userEvent.type(focus, "keep the API{Enter}");
@@ -280,8 +287,8 @@ test("composer: the urgent hint sits under the composer row", async () => {
 test("compact: Escape closes the popover and focus returns to the trigger", async () => {
   renderApp("/agents/dev", alice);
   await box();
-  const trigger = screen.getByRole("button", { name: "Compact" });
-  await userEvent.click(trigger);
+  const trigger = menu();
+  await openCompact();
   await screen.findByRole("textbox", { name: "Focus (optional)" });
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() =>
@@ -294,7 +301,7 @@ test("compact: Escape closes the popover and focus returns to the trigger", asyn
 test("compact: a second submit while one is in flight posts nothing; success closes it", async () => {
   renderApp("/agents/dev", alice);
   await box();
-  await userEvent.click(screen.getByRole("button", { name: "Compact" }));
+  await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
   const d = deferred();
   postReply = () => d.promise;
@@ -312,7 +319,7 @@ test("compact: a second submit while one is in flight posts nothing; success clo
 test("compact: an error shows inside the popover and it stays open", async () => {
   renderApp("/agents/dev", alice);
   await box();
-  await userEvent.click(screen.getByRole("button", { name: "Compact" }));
+  await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
   postReply = () =>
     json({ error: { code: "validation_error", message: "Focus is too long" } }, 400);
@@ -323,13 +330,33 @@ test("compact: an error shows inside the popover and it stays open", async () =>
   expect(focus).toHaveValue("x");
 });
 
-test("interrupt: does nothing while no turn is open", async () => {
+test("interrupt: not offered while no turn is open", async () => {
   renderApp("/agents/dev", alice);
   await box();
-  expect(interrupt()).toHaveAttribute("aria-disabled", "true");
-  await userEvent.click(interrupt());
-  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByRole("button", { name: "Interrupt" })).not.toBeInTheDocument();
   expect(posted).toEqual([]);
+});
+
+test("interrupt: when the turn closes under a focused Stop, focus goes to the composer", async () => {
+  agentOver = { status: "working", turnOpen: true };
+  renderApp("/agents/dev", alice);
+  const input = await box();
+  interrupt().focus();
+  status(false);
+  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull());
+  await vi.waitFor(() => expect(input).toHaveFocus());
+});
+
+test("interrupt: a turn closing doesn't move focus that wasn't on Stop", async () => {
+  agentOver = { status: "working", turnOpen: true };
+  renderApp("/agents/dev", alice);
+  await box();
+  const menu = screen.getByRole("button", { name: "Actions for Dev agent" });
+  menu.focus();
+  status(false);
+  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull());
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  expect(menu).toHaveFocus();
 });
 
 test("interrupt: re-enables when the turn closes and a new one opens", async () => {

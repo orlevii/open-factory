@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { mockWorld } from "@/test/agent-screens-fixtures";
 import { alice, renderApp } from "@/test/render-app";
@@ -218,4 +218,31 @@ test("an empty list holds its line with a skeleton while the prerequisites load"
   });
   expect(plate).toHaveClass("h-5");
   expect(within(screen.getByRole("main")).queryByText(/No agents yet\./)).not.toBeInTheDocument();
+});
+
+test("?focus scrolls that agent's row into view and marks it for the visit", async () => {
+  const scrolled: Element[] = [];
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
+    scrolled.push(this);
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json({
+        agents: [
+          agentSummary({ slug: "lead", displayName: "Lead agent" }),
+          agentSummary({ slug: "other", displayName: "Other agent" }),
+        ],
+        running: { count: 0, max: 8 },
+      }),
+    ),
+  );
+  renderApp("/agents?focus=lead", alice);
+  const main = await screen.findByRole("main");
+  const lead = await within(main).findByRole("link", { name: /Lead agent/ });
+  await waitFor(() => expect(scrolled.some((el) => lead.contains(el) || el === lead)).toBe(true));
+  expect(lead).toHaveAttribute("data-focused");
+  expect(within(main).getByRole("link", { name: /Other agent/ })).not.toHaveAttribute(
+    "data-focused",
+  );
 });

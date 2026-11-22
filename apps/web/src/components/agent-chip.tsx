@@ -93,9 +93,11 @@ function ChipView({
     link && "rounded-sm hover:underline",
     className,
   );
+  // Each line is capped at the chip's width: stacked (items-start), a line would otherwise size to
+  // its content and the name would never truncate.
   const body = (
     <>
-      <span className="flex min-w-0 items-center gap-1.5">
+      <span className="flex min-w-0 max-w-full items-center gap-1.5">
         <AgentAvatar
           slug={a.slug}
           template={a.template}
@@ -110,7 +112,7 @@ function ChipView({
       {showSlug && !a.stub ? (
         <TruncTooltip
           text={`@${a.slug}`}
-          className="min-w-24 font-mono text-muted-foreground @max-[24rem]:text-xs"
+          className="min-w-24 max-w-full font-mono text-muted-foreground @max-[24rem]:text-xs"
         >
           <MiddleTruncate text={`@${a.slug}`} />
         </TruncTooltip>

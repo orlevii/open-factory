@@ -329,7 +329,7 @@ test("scrolled up, live rows are counted into the pill (singular, then plural)",
 });
 
 test("pinned to the bottom, a content resize (queued block, working line) keeps it pinned", async () => {
-  const observers: (() => void)[] = [];
+  const observers: ResizeObserverCallback[] = [];
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -346,7 +346,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
   const scroller = screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 900 });
   act(() => {
-    for (const cb of observers) cb();
+    for (const cb of observers) cb([], {} as ResizeObserver);
   });
   expect(scroller.scrollTop).toBe(900);
 });
@@ -506,46 +506,109 @@ test("connected: the queue frame is authoritative, so no local row is added", as
 
 // --- S4 additions (UI design §4.4) ---
 
-test("strip: slug, template, manager, credential and runtime, identifiers in mono", async () => {
+test("header: avatar without badge, name, StatusBadge, one live fact, Stop only while turnOpen, ⋯", async () => {
   routes["/api/agents/dev"] = () =>
-    json(detail({ slug: "dev", template: "tech-lead", reportsTo: "cto", credential: "work" }));
+    json(
+      detail({
+        status: "working",
+        turnOpen: true,
+        restartPending: true,
+        waitingOn: {
+          tasks: [
+            { taskId: "t1", description: "pnpm test", startedAt: "2026-11-18T10:00:00.000Z" },
+          ],
+          crons: 0,
+        },
+      }),
+    );
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  const strip = document.querySelector("[data-agent-strip]") as HTMLElement;
-  expect(strip.textContent).toBe(
-    "dev·tech-lead·Reports to @cto·Usage·credential work·Unsandboxed: runs directly on this machine",
+  const header = screen.getByRole("banner");
+  expect(within(header).getByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
+  // The avatar is decorative and carries no status badge (the badge beside it does).
+  const avatar = header.querySelector("[data-agent-avatar]");
+  expect(avatar).not.toBeNull();
+  expect(avatar).toHaveAttribute("aria-hidden", "true");
+  expect(avatar?.querySelector(".of-avatar-cut")).toBeNull();
+  expect(within(header).getAllByText("Working").length).toBeGreaterThan(0);
+  // One fact only: restart pending beats the waiting task.
+  const facts = within(header)
+    .getAllByRole("status")
+    .filter((s) => s.textContent);
+  expect(facts.map((f) => f.textContent)).toEqual(["Restarts when idle"]);
+  expect(within(header).getByRole("button", { name: /Interrupt/ })).toBeInTheDocument();
+  expect(within(header).getByRole("button", { name: "Actions for Dev agent" })).toBeInTheDocument();
+  // Edit, Compact and Terminate live in the ⋯ menu now.
+  expect(within(header).queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+  expect(within(header).queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
+});
+
+test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
+  routes["/api/agents/dev"] = () =>
+    json(detail({ status: "errored", lastError: "Boom\nmore", errorKind: "crash" }));
+  routes["/api/agents/dev/restart"] = () =>
+    json({ error: { code: "restart_failed", message: "No slot." } }, 500);
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  const header = screen.getByRole("banner");
+  expect(within(header).queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
+  expect(within(header).getByText("Boom")).toBeInTheDocument();
+  await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
+  const alert = await screen.findByText(/Couldn't restart: No slot\./);
+  expect(header.contains(alert)).toBe(false);
+  // Leaving Errored clears it: a later error doesn't bring back the old failure.
+  const frame = (status: "idle" | "errored") =>
+    act(() =>
+      ws.onMessage?.({
+        type: "agent_status",
+        agent: "dev",
+        status,
+        turnOpen: false,
+        restartPending: false,
+        restartWaitingOn: 0,
+      }),
+    );
+  frame("idle");
+  await vi.waitFor(() => expect(screen.queryByText(/Couldn't restart/)).not.toBeInTheDocument());
+  frame("errored");
+  await vi.waitFor(() =>
+    expect(within(header).getByRole("button", { name: "Restart" })).toBeInTheDocument(),
   );
-  for (const id of ["dev", "tech-lead", "@cto", "work"])
-    expect(within(strip).getByText(id)).toHaveClass("font-mono");
+  expect(screen.queryByText(/Couldn't restart/)).not.toBeInTheDocument();
 });
 
-test("strip: No manager for a root; Docker for docker agents", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ reportsTo: null, runtime: "docker" }));
-  renderApp("/agents/dev", alice);
-  await screen.findByText("Two entries.");
-  const strip = document.querySelector("[data-agent-strip]") as HTMLElement;
-  expect(within(strip).getByText("No manager")).toBeInTheDocument();
-  expect(within(strip).getByText("Docker")).toBeInTheDocument();
-  expect(strip.textContent).not.toMatch(/Unsandboxed/);
-});
-
-test("restart pending: the strip says so with the waiting count; Why? explains in a popover", async () => {
+test("header: a terminated agent's Pin is its own button, outside the live line", async () => {
   routes["/api/agents/dev"] = () =>
-    json(detail({ restartPending: true, restartWaitingOn: 1, status: "working", turnOpen: true }));
+    json(
+      detail({
+        kind: "ephemeral",
+        status: "terminated",
+        terminatedAt: "2026-11-18T09:00:00.000Z",
+        terminatedBy: "lead",
+        workspaceGraceEndsAt: "2099-11-21T09:00:00.000Z",
+      }),
+    );
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
-  expect(
-    screen.getByText("Restarts when idle to apply changes (waiting on 1 background task)"),
-  ).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Why does it restart?" }));
-  expect(
-    await screen.findByText(
-      "The agent finishes its current turn and background tasks, then restarts with the new settings. Its session is kept. Its crons from this session stop, and it's told which, so it can recreate them.",
-    ),
-  ).toBeInTheDocument();
+  const header = screen.getByRole("banner");
+  const pin = within(header).getByRole("button", { name: /Pin workspace/ });
+  const line = within(header)
+    .getAllByRole("status")
+    .find((s) => s.textContent?.startsWith("Terminated by @lead"));
+  expect(line).toBeDefined();
+  expect(line?.contains(pin)).toBe(false);
 });
 
-test("restart pending arrives by frame, plural waiting count; a frame clears it", async () => {
+test("no strip: 'Reports to' no longer renders under the header", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ reportsTo: "cto" }));
+  renderApp("/agents/dev", alice);
+  await screen.findByText("Two entries.");
+  expect(document.querySelector("[data-agent-strip]")).toBeNull();
+  // Agent details is closed by default below 1280px, and the header carries no org segment.
+  expect(screen.queryByText(/Reports to/)).not.toBeInTheDocument();
+});
+
+test("restart pending arrives by frame; a frame clears it", async () => {
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument();
@@ -561,19 +624,9 @@ test("restart pending arrives by frame, plural waiting count; a frame clears it"
       }),
     );
   frame(true, 2);
-  expect(
-    await screen.findByText("Restarts when idle to apply changes (waiting on 2 background tasks)"),
-  ).toBeInTheDocument();
-  frame(true, 0);
-  expect(await screen.findByText("Restarts when idle to apply changes")).toBeInTheDocument();
+  expect(await screen.findByText("Restarts when idle")).toBeInTheDocument();
   frame(false, 0);
   await vi.waitFor(() => expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument());
-});
-
-test("header: an Edit link to the edit page", async () => {
-  renderApp("/agents/dev", alice);
-  await screen.findByText("Two entries.");
-  expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute("href", "/agents/dev/edit");
 });
 
 test("archived: the composer is replaced by a line linking the edit page; no Compact or Interrupt", async () => {
@@ -591,7 +644,6 @@ test("archived: the composer is replaced by a line linking the edit page; no Com
   expect(screen.queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Interrupt/ })).not.toBeInTheDocument();
   expect(screen.queryByText("Skip to composer")).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Edit" })).toBeInTheDocument();
 });
 
 test("archived with no events: the empty line doesn't point at a composer", async () => {
@@ -746,6 +798,7 @@ test("the log and each row wrap can shrink, so no row widens the scroller", asyn
 });
 
 test("the Interrupt button uses the stop glyph", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const icon = screen.getByRole("button", { name: /Interrupt/ }).querySelector("svg");

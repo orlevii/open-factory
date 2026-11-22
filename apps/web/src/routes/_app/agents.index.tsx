@@ -21,6 +21,8 @@ export const Route = createFileRoute("/_app/agents/")({
     /** S4's bookmark: redirected to `ended=only` (S7 UI design §3). */
     archived: z.literal("only").optional().catch(undefined),
     justArchived: z.string().min(1).optional().catch(undefined),
+    /** Agent details' "All N reports": the row to scroll to and mark (the page acts on it, U2 §8.3). */
+    focus: z.string().min(1).optional().catch(undefined),
   }),
   beforeLoad: ({ search }) => {
     if (search.archived)
@@ -34,7 +36,7 @@ export const Route = createFileRoute("/_app/agents/")({
 });
 
 function AgentsPage() {
-  const { ended, justArchived } = Route.useSearch();
+  const { ended, justArchived, focus } = Route.useSearch();
   const filter = ended ?? "exclude";
   const { data: agents, isError } = useQuery(agentsListQueryOptions(filter));
   // The tree's 7-day cost column; a failure just leaves the cells empty.
@@ -112,7 +114,7 @@ function AgentsPage() {
                 Costs are estimates for the last 7 days. A persistent agent's figure includes the
                 agents it spawned.
               </p>
-              <AgentTree agents={agents} flat={filter === "only"} usage={usage} />
+              <AgentTree agents={agents} flat={filter === "only"} usage={usage} focus={focus} />
               {filter === "only" && <EndedMoreLine />}
             </div>
           )}

@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import type { z } from "zod";
 
 export const json = (data: unknown, status = 200) =>
   new Response(status === 204 ? null : JSON.stringify(data), {
@@ -40,3 +41,25 @@ export function mockApi(routes: Record<string, Handler>): MockApi {
   );
   return api;
 }
+
+/** A URL's query as Fastify parses it: a repeated key becomes an array. */
+function queryObject(url: string): Record<string, string | string[]> {
+  const q = new URL(url, "http://x").searchParams;
+  const out: Record<string, string | string[]> = {};
+  for (const k of new Set(q.keys())) {
+    const all = q.getAll(k);
+    out[k] = all.length === 1 ? (all[0] as string) : all;
+  }
+  return out;
+}
+
+/** Answers 400 as the server does when the request's query fails the route's schema (the real one,
+ *  from `@open-factory/shared`), so a test cannot pass with a URL the server would refuse. */
+export const validQuery =
+  (schema: z.ZodType, h: Handler): Handler =>
+  (body, url) => {
+    const r = schema.safeParse(queryObject(url));
+    return r.success
+      ? h(body, url)
+      : json({ error: { code: "validation_error", message: r.error.message } }, 400);
+  };

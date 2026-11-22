@@ -10,6 +10,7 @@ import { useInboxNotifier } from "@/features/inbox/notifications";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { useConnectionLost } from "@/lib/connection";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
+import { installShortcuts } from "@/lib/shortcuts";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
 import { WsContext, type WsHub } from "@/lib/ws-context";
 
@@ -54,6 +55,7 @@ function AppLayout() {
   // The socket outlives renders: it always calls the latest notifier.
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
+  useEffect(() => installShortcuts(), []);
   useEffect(() => {
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.

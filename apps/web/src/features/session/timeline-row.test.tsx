@@ -1,5 +1,6 @@
 import type { AnyEvent } from "@open-factory/shared";
-import { render, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
 import { buildRows } from "./rows";
@@ -136,7 +137,7 @@ test("timeline: the unexpected exit's detail carries the code and stderr", () =>
   expect(pre?.textContent).toBe("Signal SIGKILL\nkilled");
 });
 
-test("timeline: a runtime error has no fix link (the strip explains it)", () => {
+test("timeline: a runtime error has no fix link but explains the gate in its Why popover", async () => {
   const { els } = lines([
     {
       type: "error",
@@ -145,7 +146,15 @@ test("timeline: a runtime error has no fix link (the strip explains it)", () => 
       fix: "runtime",
     },
   ]);
-  expect((els[0] as HTMLElement).querySelector("a")).toBeNull();
+  const row = els[0] as HTMLElement;
+  expect(row.querySelector("a")).toBeNull();
+  vi.useRealTimers();
+  await userEvent.click(
+    within(row).getByRole("button", { name: "Why is the local runtime disabled?" }),
+  );
+  expect(await screen.findByText(/An operator has to allow unsandboxed agents/)).toHaveTextContent(
+    "FACTORY_ALLOW_LOCAL_RUNTIME=true",
+  );
 });
 
 test("timeline: a spawned agent's error never links to the edit page (it can't be edited)", () => {

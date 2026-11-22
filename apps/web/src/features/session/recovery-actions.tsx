@@ -13,17 +13,24 @@ import { NewSessionDialog } from "./new-session-dialog";
  * Interrupt. Mounted for every status, so an open dialog survives the status frame that a confirmed
  * reset publishes before its response, and can still move focus to the composer when it closes.
  */
-export function RecoveryActions({ agent }: { agent: AgentSummary }) {
+export function RecoveryActions({
+  agent,
+  onError,
+}: {
+  agent: AgentSummary;
+  /** Where a failed Restart's message goes (the header's notice row); inline when absent. */
+  onError?: (message: string | undefined) => void;
+}) {
   const [dialog, setDialog] = useState<{ open: boolean; lastError?: string }>({ open: false });
   const trigger = useRef<HTMLButtonElement>(null);
   const kind = agent.errorKind;
   const errored = agent.status === "errored";
-  // A Restart certain to fail isn't offered (the strip's disabled segment explains the gate).
+  // A Restart certain to fail isn't offered (Agent details' Runtime says the local runtime is off).
   const canRestart = errored && kind !== "resume_unrecoverable" && !agent.runtimeDisabled;
   const canReset = errored && (kind === "resume" || kind === "resume_unrecoverable");
   return (
     <>
-      {canRestart && <RestartButton slug={agent.slug} />}
+      {canRestart && <RestartButton slug={agent.slug} onError={onError} />}
       {canReset && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -56,10 +63,18 @@ export function RecoveryActions({ agent }: { agent: AgentSummary }) {
  * response and the next status frame are both in, or on the next `error` event, whichever comes
  * first, so a Restart that fails comes back as "Restart". A 409 not_errored is ignored.
  */
-function RestartButton({ slug }: { slug: string }) {
+function RestartButton({
+  slug,
+  onError,
+}: {
+  slug: string;
+  onError?: ((message: string | undefined) => void) | undefined;
+}) {
   const ws = useWs();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | undefined>();
+  const [ownError, setOwnError] = useState<string | undefined>();
+  const error = onError ? undefined : ownError;
+  const setError = onError ?? setOwnError;
   const progress = useRef({ responded: false, framed: false });
 
   useEffect(() => {

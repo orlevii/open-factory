@@ -2,8 +2,10 @@ import { ArrowDown, CircleAlert } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -14,11 +16,15 @@ import type { Row } from "./rows";
 import { TimelineItem } from "./timeline-item";
 
 const NEAR_BOTTOM = 64;
+/** What a toggle that resizes the timeline calls first (spec §8.1). */
+export type TimelineHandle = { captureAnchor(): void };
+
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
 /** The only scrolling region: stick-to-bottom, "N new events", Load earlier with a scroll anchor,
  *  deep-link centring and tint, and one tab stop with roving focus (UI design §4.3, §7). */
 export function Timeline(props: {
+  ref?: Ref<TimelineHandle>;
   slug: string;
   spawned?: boolean;
   rows: Row[];
@@ -40,6 +46,10 @@ export function Timeline(props: {
   const prevLastKey = useRef<string | undefined>(undefined);
   const anchor = useRef<{ height: number; top: number; firstKey?: string } | null>(null);
   const centred = useRef(false);
+  // The row at the top of the viewport and its offset, kept for width changes (spec §8.1).
+  const widthAnchor = useRef<{ el: HTMLElement; top: number } | null>(null);
+  const lastWidth = useRef<number | undefined>(undefined);
+  const scrollFrame = useRef(0);
   const [unseen, setUnseen] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
@@ -79,18 +89,58 @@ export function Timeline(props: {
     else if (appended > 0) setUnseen((n) => n + appended);
   }, [rows, litKey]);
 
+  const captureAnchor = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const hit = document
+      .elementFromPoint(box.left + 32, box.top + 1)
+      ?.closest<HTMLElement>("[data-row]");
+    // The point can land in the space between rows: take the first row that reaches the viewport top.
+    const row =
+      hit && el.contains(hit)
+        ? hit
+        : [...el.querySelectorAll<HTMLElement>("[data-row]")].find(
+            (r) => r.getBoundingClientRect().bottom > box.top,
+          );
+    // A probe that finds nothing keeps the last good anchor rather than clearing it.
+    if (row) widthAnchor.current = { el: row, top: row.getBoundingClientRect().top };
+  }, []);
+  useImperativeHandle(props.ref, () => ({ captureAnchor }), [captureAnchor]);
+
   // Footer and async content (queued blocks, the Working line, highlighting, "Show all") change the
   // height without changing rows: stay pinned while at the bottom.
   useEffect(() => {
     const el = scroller.current;
     const content = log.current;
     if (!el || !content || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((entries) => {
+      // A width change (sidebar, Agent details, window) reflows every row: pinned stays pinned,
+      // otherwise the top row goes back to where it was. Synchronous: after layout, before paint.
+      // atBottom is the last scroll's answer; the reflow itself must not change it.
+      const w = entries.find((e) => e.target === el)?.contentRect.width;
+      const widthChanged =
+        w !== undefined && lastWidth.current !== undefined && w !== lastWidth.current;
+      if (w !== undefined) lastWidth.current = w;
+      if (widthChanged && !anchor.current) {
+        const a = widthAnchor.current;
+        if (atBottom.current) el.scrollTop = el.scrollHeight;
+        else if (a?.el.isConnected) el.scrollTop += a.el.getBoundingClientRect().top - a.top;
+        return;
+      }
       if (atBottom.current && !anchor.current) el.scrollTop = el.scrollHeight;
     });
     ro.observe(content);
+    ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(scrollFrame.current);
+      scrollFrame.current = 0;
+    },
+    [],
+  );
 
   // The tint stays until the user clicks somewhere other than the highlighted row.
   useEffect(() => {
@@ -108,6 +158,11 @@ export function Timeline(props: {
     if (!el) return;
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
     if (atBottom.current) setUnseen(0);
+    if (!scrollFrame.current)
+      scrollFrame.current = requestAnimationFrame(() => {
+        scrollFrame.current = 0;
+        captureAnchor();
+      });
   };
 
   const loadEarlier = async () => {

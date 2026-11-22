@@ -670,7 +670,7 @@ test("?message= highlights the row holding that envelope, not the event's first 
   expect(lit).not.toHaveTextContent("first body");
 });
 
-test("the strip's manager is a link to its session; the reports count is plain text", async () => {
+test("Agent details' manager is a link to its session", async () => {
   mockApi({
     "GET /api/agents/dev": () => json(detail({ reportsTo: "lead", reports: 3 })),
     "GET /api/agents/dev/events?": () =>
@@ -685,11 +685,10 @@ test("the strip's manager is a link to its session; the reports count is plain t
       }),
   });
   renderApp("/agents/dev", alice);
-  expect(await screen.findByRole("link", { name: "@lead" })).toHaveAttribute(
-    "href",
-    "/agents/lead",
+  await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
+  await vi.waitFor(() =>
+    expect(document.querySelector('#agent-details a[href="/agents/lead"]')).not.toBeNull(),
   );
-  expect(screen.queryByRole("link", { name: /3 reports/ })).toBeNull();
 });
 
 test("held updates show as quiet lines from the queue", async () => {
@@ -875,7 +874,7 @@ test("a pending task message shows its badge in the dashed block", async () => {
   );
 });
 
-test("the strip's open tasks link goes to that agent's tasks", async () => {
+test("Agent details' open tasks link goes to that agent's tasks", async () => {
   mockApi({
     "GET /api/agents/dev": () => json(detail({ openTasks: 3 })),
     "GET /api/agents/dev/events?": () =>
@@ -887,7 +886,8 @@ test("the strip's open tasks link goes to that agent's tasks", async () => {
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
   renderApp("/agents/dev", alice);
-  expect(await screen.findByRole("link", { name: "3 open tasks" })).toHaveAttribute(
+  await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
+  expect(await screen.findByRole("link", { name: "All 3 tasks" })).toHaveAttribute(
     "href",
     "/tasks?assignee=dev",
   );

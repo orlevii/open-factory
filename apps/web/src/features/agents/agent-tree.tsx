@@ -1,6 +1,7 @@
 import type { AgentSummary, AgentUsageRow } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { RotateCw } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { formatDay } from "@/features/session/format";
 import { resetPhrase, StatusBadge } from "@/features/session/status-badge";
@@ -107,12 +108,23 @@ export function AgentTree({
   agents,
   flat = false,
   usage,
+  focus,
 }: {
   agents: AgentSummary[];
   flat?: boolean;
   /** 7-day usage by slug; the cost cell stays empty until it arrives. */
   usage?: Map<string, AgentUsageRow>;
+  /** A slug to scroll to and mark with the hover fill (Agent details' "All N reports", U2 §8.3). */
+  focus?: string;
 }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusPresent = focus !== undefined && agents.some((a) => a.slug === focus);
+  useEffect(() => {
+    if (!focus || !focusPresent) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-agent-link="${CSS.escape(focus)}"]`)
+      ?.scrollIntoView({ block: "center" });
+  }, [focus, focusPresent]);
   const isMobile = useIsMobile();
   const now = new Date();
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
@@ -126,7 +138,11 @@ export function AgentTree({
   const cap = isMobile ? MOBILE_DEPTH_CAP : DESKTOP_DEPTH_CAP;
   const continues = continuations(agents.map((a) => shown.get(a.slug) ?? 0));
   return (
-    <ul aria-label="Agents" className="@container divide-y divide-border border-y border-border">
+    <ul
+      ref={listRef}
+      aria-label="Agents"
+      className="@container divide-y divide-border border-y border-border"
+    >
       {agents.map((a, i) => {
         const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
         const level = shown.get(a.slug) ?? 0;
@@ -141,8 +157,10 @@ export function AgentTree({
             <Link
               to="/agents/$slug"
               params={{ slug: a.slug }}
+              data-agent-link={a.slug}
+              data-focused={a.slug === focus || undefined}
               className={cn(
-                "of-row flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
+                "of-row flex data-focused:bg-accent min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
                 // md: two lines (status, name, cost; then slug, template, runtime under the name), so the
                 // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
                 // window with the sidebar open doesn't give, so they key on the tree's width, not the window.

@@ -1,10 +1,10 @@
 import { ApiError } from "@open-factory/shared";
 import { CircleAlert, CircleStop } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { postInterrupt } from "./api";
-import { NETWORK_ERROR } from "./composer";
+import { focusComposer, NETWORK_ERROR } from "./composer";
 
 /**
  * aria-disabled (not disabled) so the tooltip still shows and the button stays focusable.
@@ -29,6 +29,16 @@ export function InterruptButton({
     setError(undefined);
   }, [turnEpoch]);
   const enabled = turnOpen && !sent;
+  // The header shows Stop only while a turn is open (U2 §8.2): when it unmounts under the focus (the
+  // turn closed), focus goes to the composer rather than <body>. The cleanup runs before React
+  // removes the button, so the button can still be checked for focus.
+  const button = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const el = button.current;
+    return () => {
+      if (el && el === document.activeElement) requestAnimationFrame(focusComposer);
+    };
+  }, []);
 
   async function interrupt() {
     setSent(true);
@@ -58,6 +68,7 @@ export function InterruptButton({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
+            ref={button}
             variant="ghost"
             aria-disabled={!enabled}
             onClick={() => {

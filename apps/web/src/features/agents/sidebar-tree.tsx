@@ -1,7 +1,7 @@
 import type { AgentSummary, TreeRow } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, MoreHorizontal } from "lucide-react";
 import {
   type KeyboardEvent,
   type MouseEvent,
@@ -19,6 +19,7 @@ import { TruncTooltip } from "@/components/agent-chip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentMenu } from "@/features/agents/agent-menu";
 import { AgentName } from "@/features/agents/agent-tree";
 import {
   ancestorsOf,
@@ -130,6 +131,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   menuOpen,
   managerName,
   onToggle,
+  onMenu,
 }: {
   slug: string;
   level: number;
@@ -146,6 +148,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   /** Set past the indent cap, where the tooltip names the manager. */
   managerName: string | null;
   onToggle: (slug: string, via: Via) => void;
+  /** Opens the tree's one AgentMenu on this row. */
+  onMenu: (slug: string) => void;
 }) {
   const agent = useAgent(slug);
   const unread = useUnreadByAgent(slug);
@@ -165,6 +169,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         aria-setsize={setsize}
         aria-posinset={posinset}
         aria-expanded={hasChildren ? expanded : undefined}
+        aria-keyshortcuts="Shift+F10"
         aria-current={active ? "page" : undefined}
         tabIndex={tabbable ? 0 : -1}
         className={ROW}
@@ -218,7 +223,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           {working > 0 ? (
             <HoverTip
               text={`${working} working`}
-              className={cn("inline-flex shrink-0 items-center gap-0.5", COUNT)}
+              className={cn("of-row-count inline-flex shrink-0 items-center gap-0.5", COUNT)}
             >
               <span aria-hidden="true" className="of-tooth scale-75" />
               <span aria-hidden="true">{countText(working)}</span>
@@ -228,12 +233,37 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         </span>
         {unread > 0 ? (
           <>
-            <span aria-hidden="true" className={cn("shrink-0", COUNT)}>
+            <span aria-hidden="true" className={cn("of-row-count shrink-0", COUNT)}>
               {countText(unread)}
             </span>
             <span className="sr-only">, {unread} unread</span>
           </>
         ) : null}
+        {/* Hover (fine pointer only, by CSS) shows it in place of the counts. Not a tab stop: the
+            keyboard opens the same menu with Shift+F10. A span, as the chevron is: no button in a link. */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: a pointer affordance; the keyboard has Shift+F10 on the row */}
+        {/* biome-ignore lint/a11y/useSemanticElements: a <button> cannot nest in the row's link */}
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label={`Actions for ${name}`}
+          aria-haspopup="menu"
+          data-row-more=""
+          className="of-row-more size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-border hover:text-sidebar-accent-foreground"
+          onPointerDown={(e) => e.preventDefault()}
+          // Middle-click must not follow the enclosing link.
+          onAuxClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onMenu(slug);
+          }}
+        >
+          <MoreHorizontal aria-hidden="true" className="size-4" />
+        </span>
       </Link>
     </li>
   );
@@ -395,8 +425,14 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 
   const [focusSlug, setFocusSlug] = useState<string | null>(null);
   const [pointerToggled, setPointerToggled] = useState<string | null>(null);
-  // AgentMenu (PR2) is one instance for the tree, opened on the row named here.
-  const [menuSlug] = useState<string | null>(null);
+  // One AgentMenu for the tree, opened on the row named here. The slug outlives the close so the
+  // menu keeps its content for the exit animation.
+  const [menu, setMenu] = useState<{ slug: string | null; open: boolean }>({
+    slug: null,
+    open: false,
+  });
+  const menuSlug = menu.open ? menu.slug : null;
+  const openMenu = useCallback((slug: string) => setMenu({ slug, open: true }), []);
 
   // Read by the stable toggle, so rows never see a new callback.
   const latest = useRef({ nodes, bySlug, stored, revealed, setStored });
@@ -465,6 +501,11 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
     const i = visible.findIndex((n) => n.slug === slug);
     const n = visible[i];
     if (!slug || !n) return;
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      e.preventDefault();
+      openMenu(slug);
+      return;
+    }
     const open = n.hasChildren && isExpanded(n, stored, revealed);
     let target: string | null | undefined;
     switch (e.key) {
@@ -539,10 +580,46 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
                 n.level > MAX_INDENT_LEVEL && n.parent ? (names.get(n.parent) ?? null) : null
               }
               onToggle={toggle}
+              onMenu={openMenu}
             />
           );
         })}
       </ul>
+      {menu.slug ? (
+        <TreeAgentMenu
+          slug={menu.slug}
+          open={menu.open}
+          onOpenChange={(open) => setMenu((m) => ({ ...m, open }))}
+          anchor={rowOf(ulRef.current, menu.slug) ?? null}
+          onClose={focusRow}
+        />
+      ) : null}
     </nav>
   );
 });
+
+/** The tree's one AgentMenu. It subscribes to its agent itself, so that agent's status frames
+ *  re-render the menu only, not the tree (the slug outlives the close for the exit animation). */
+function TreeAgentMenu({
+  slug,
+  open,
+  onOpenChange,
+  anchor,
+  onClose,
+}: {
+  slug: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  anchor: HTMLElement | null;
+  onClose: (slug: string) => void;
+}) {
+  const agent = useAgent(slug);
+  if (!agent) return null;
+  return (
+    <AgentMenu
+      agent={agent}
+      context="sidebar"
+      anchored={{ open, onOpenChange, anchor, onClose: () => onClose(slug) }}
+    />
+  );
+}

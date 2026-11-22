@@ -43,3 +43,6 @@ if (!Element.prototype.scrollIntoView) {
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
+
+// jsdom has no elementFromPoint; the timeline's scroll anchor probes with it. Nothing is hit by default.
+if (!document.elementFromPoint) document.elementFromPoint = () => null;

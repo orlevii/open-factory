@@ -815,7 +815,7 @@ Implements §8.3. Builds on `agent-strip.tsx` segments (re-homed), `agentsUsageQ
 
 **Files:**
 - Create: `apps/web/src/features/session/agent-details.tsx`
-- Modify: `apps/web/src/features/tasks/api.ts` (`agentTasksOptions(slug)`: key `["tasks", "agent", slug]`, `GET /api/tasks?status=open_in_progress&assignee=<slug>&limit=5`, `queryOptions` not infinite)
+- Modify: `apps/web/src/features/tasks/api.ts` (`agentTasksOptions(slug)`: key `["tasks", "agent", slug]`, `GET /api/tasks?assignee=<slug>&limit=5`, with no `status`: the server default is open + in progress, and `open_in_progress` is only the web list's URL sentinel, which the server rejects, `queryOptions` not infinite)
 - Test: `apps/web/src/test/agent-details.test.tsx`
 
 **Interfaces:**

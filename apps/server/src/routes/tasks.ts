@@ -1,7 +1,6 @@
 import {
   createTaskBodySchema,
   patchTaskBodySchema,
-  TASK_STATUSES,
   type TaskActivity,
   type TaskDetail,
   type TaskStatus,
@@ -9,6 +8,7 @@ import {
   taskCommentBodySchema,
   taskCommentResponseSchema,
   taskDetailSchema,
+  taskListQuerySchema,
   taskPageSchema,
 } from "@open-factory/shared";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
@@ -17,30 +17,6 @@ import { requireUser } from "../auth/require-user.ts";
 import type { Actor } from "../tasks/permission.ts";
 import type { TaskReads } from "../tasks/task-reads.ts";
 
-const arrayOf = <T extends z.ZodType>(t: T) =>
-  z.preprocess((v) => (v === undefined || Array.isArray(v) ? v : [v]), z.array(t));
-
-const listQuerySchema = z.object({
-  /** Repeatable (`status=done&status=cancelled`), or `all`; default open and in progress. */
-  status: arrayOf(z.union([z.enum(TASK_STATUSES), z.literal("all")])).optional(),
-  assignee: z.string().min(1).optional(),
-  unassigned: z.enum(["true", "false"]).optional(),
-  creator: z.string().min(1).optional(),
-  /** `T-41,T-44`: just those tasks (the dependency editor's lookup). */
-  keys: z
-    .string()
-    .min(1)
-    .transform((s) =>
-      s
-        .split(",")
-        .map((k) => k.trim())
-        .filter(Boolean),
-    )
-    .pipe(z.array(z.string().max(20)).max(50))
-    .optional(),
-  before: z.string().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
 const keyParams = z.object({ key: z.string().min(1).max(20) });
 
 type Detail = Awaited<ReturnType<TaskReads["detail"]>>;
@@ -100,7 +76,7 @@ export const tasksRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     "/api/tasks",
-    { schema: { querystring: listQuerySchema, response: { 200: taskPageSchema } } },
+    { schema: { querystring: taskListQuerySchema, response: { 200: taskPageSchema } } },
     async (req) => {
       const q = req.query;
       const status: TaskStatus[] | "all" | undefined = q.status?.includes("all")

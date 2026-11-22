@@ -218,3 +218,30 @@ export const taskCommentResponseSchema = z.object({
   note: z.string().optional(),
 });
 export type TaskCommentResponse = z.infer<typeof taskCommentResponseSchema>;
+
+const arrayOf = <T extends z.ZodType>(t: T) =>
+  z.preprocess((v) => (v === undefined || Array.isArray(v) ? v : [v]), z.array(t));
+
+/** `GET /api/tasks`'s query, as Fastify parses it (a repeated key is an array). Shared so a client
+ *  test can check the URLs it builds against the server's contract. */
+export const taskListQuerySchema = z.object({
+  /** Repeatable (`status=done&status=cancelled`), or `all`; default open and in progress. */
+  status: arrayOf(z.union([z.enum(TASK_STATUSES), z.literal("all")])).optional(),
+  assignee: z.string().min(1).optional(),
+  unassigned: z.enum(["true", "false"]).optional(),
+  creator: z.string().min(1).optional(),
+  /** `T-41,T-44`: just those tasks (the dependency editor's lookup). */
+  keys: z
+    .string()
+    .min(1)
+    .transform((s) =>
+      s
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.string().max(20)).max(50))
+    .optional(),
+  before: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});

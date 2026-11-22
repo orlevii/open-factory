@@ -78,7 +78,21 @@ async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
   await screen.findByText("history");
   return { api, state, app };
 }
-const strip = () => document.querySelector("[data-agent-strip]") as HTMLElement;
+/** Agent details (closed by default at this test's width), opened from the header. */
+async function details() {
+  await userEvent.click(screen.getByRole("button", { name: "Agent details" }));
+  await vi.waitFor(() => expect(document.getElementById("agent-details")).not.toBeNull());
+  return document.getElementById("agent-details") as HTMLElement;
+}
+/** The header's ⋯ menu (the sidebar row has one too): Compact… and Terminate… live there (U2 §8.4). */
+async function menuItem(name: string) {
+  await userEvent.click(
+    within(screen.getByRole("banner")).getByRole("button", {
+      name: "Actions for Tech Lead · ab12",
+    }),
+  );
+  await userEvent.click(await screen.findByRole("menuitem", { name }));
+}
 const sentence = () =>
   (document.querySelector("[data-terminated-text]") as HTMLElement | null)?.textContent;
 const terminatedFrame = () =>
@@ -93,26 +107,24 @@ const terminatedFrame = () =>
     } as ServerMessage),
   );
 
-test("a live spawned agent: Compact, Interrupt, a divider and Terminate; no Edit; 'Spawned by @lead'", async () => {
-  await open(spawned());
+test("a live spawned agent: Terminate… in the ⋯ menu, no Edit; 'Spawned by @lead' in Agent details", async () => {
+  await open(spawned({ status: "working", turnOpen: true }));
   const header = screen.getByRole("banner");
   const buttons = within(header)
     .getAllByRole("button")
     .map((b) => b.getAttribute("aria-label") ?? b.textContent);
-  expect(buttons.slice(-3)).toEqual(["Compact", "Interrupt", `Terminate @${SLUG}`]);
-  const terminate = within(header).getByRole("button", { name: `Terminate @${SLUG}` });
-  expect(terminate).toHaveTextContent("Terminate");
-  // A crimson icon with an ink label (DESIGN.md → Buttons), after a 1px divider.
-  expect(terminate.querySelector("svg")).toHaveClass("text-destructive");
-  expect(terminate.className).not.toMatch(/text-destructive/);
-  const divider = header.querySelector("[data-action-divider]") as HTMLElement;
-  expect(divider).toHaveAttribute("aria-hidden", "true");
-  expect(
-    divider.nextElementSibling?.contains(terminate) || divider.nextElementSibling === terminate,
-  ).toBe(true);
+  expect(buttons.slice(-3)).toEqual(["Interrupt", "Agent details", "Actions for Tech Lead · ab12"]);
   expect(within(header).queryByRole("link", { name: /Edit/ })).toBeNull();
-  expect(strip().textContent).toContain("Spawned by @lead");
-  expect(strip().textContent).not.toContain("Reports to");
+  await userEvent.click(
+    within(header).getByRole("button", { name: "Actions for Tech Lead · ab12" }),
+  );
+  const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
+  expect(items).toContain("Terminate…");
+  expect(items).not.toContain("Edit");
+  await userEvent.keyboard("{Escape}");
+  const panel = await details();
+  expect(panel.textContent).toContain("Spawned by");
+  expect(panel.textContent).not.toContain("Reports to");
 });
 
 test("the header keeps a spawned agent's ' · ab12' tail; the title says Terminated", async () => {
@@ -135,7 +147,7 @@ test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; su
       return json({ agent: state.agent });
     },
   });
-  await userEvent.click(screen.getByRole("button", { name: `Terminate @${SLUG}` }));
+  await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByRole("heading", { name: `Terminate @${SLUG}?` })).toBeInTheDocument();
   expect(within(dialog).getByText(BODY)).toBeInTheDocument();
@@ -161,7 +173,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   const { state } = await open(spawned());
   await userEvent.type(screen.getByRole("textbox", { name: /Message/ }), "half a thought");
-  await userEvent.click(screen.getByRole("button", { name: "Compact" }));
+  await menuItem("Compact…");
   expect(await screen.findByLabelText("Focus (optional)")).toBeInTheDocument();
   state.agent = terminated({ terminatedBy: "@or" });
   terminatedFrame();
@@ -176,7 +188,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
     expect(screen.queryByRole("button", { name: "Copy unsent message" })).toBeNull(),
   );
   expect(sessionStorage.getItem(`of-draft:${SLUG}`) ?? "").toBe("");
-  // The detail was refetched for the strip's dates.
+  // The detail was refetched for the header's dates.
   expect(await screen.findByText(/Terminated by/)).toBeInTheDocument();
 });
 
@@ -202,17 +214,16 @@ test("a send that races the termination says so", async () => {
   expect(screen.getByRole("button", { name: "Copy unsent message" })).toBeInTheDocument();
 });
 
-test("strip: in the grace period, with Pin workspace, outside the status region; credential omitted when gone", async () => {
+test("Agent details: in the grace period, with Pin workspace; credential omitted when gone", async () => {
   await open(terminated({ credential: null }));
+  const panel = await details();
   expect(sentence()).toBe(
     "Terminated by @lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
   );
-  const seg = document.querySelector("[data-terminated]") as HTMLElement;
-  expect(seg.closest("[role=status]")).toBeNull();
-  expect(within(seg).getByRole("link", { name: "Open @lead's session" })).toBeInTheDocument();
-  expect(within(seg).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
-  expect(strip().textContent).not.toContain("credential");
-  expect(strip().textContent).toContain("Spawned by @lead");
+  expect(within(panel).getByRole("link", { name: "Open @lead's session" })).toBeInTheDocument();
+  expect(within(panel).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
+  expect(panel.textContent).not.toContain("Credential");
+  expect(panel.textContent).toContain("Spawned by");
 });
 
 test.each([
@@ -246,7 +257,7 @@ test.each([
     "Terminated by @or on 14 Nov at 14:32. Workspace pinned.",
     "Unpin workspace",
   ],
-] as const)("strip: %s", async (_, over, text, button) => {
+] as const)("Agent details: %s", async (_, over, text, button) => {
   await open(
     terminated({
       terminatedAt: local(14, 14, 32),
@@ -254,19 +265,27 @@ test.each([
       ...over,
     }),
   );
+  const panel = await details();
   expect(sentence()).toBe(text);
-  const toggle = screen.queryByRole("button", { name: /^(Pin|Unpin) workspace$/ });
+  const toggle = within(panel).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ });
   expect(toggle?.textContent ?? undefined).toBe(button);
+  // The header offers the same toggle, as its own button.
+  const header = screen.getByRole("banner");
+  expect(
+    within(header).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ })?.textContent ??
+      undefined,
+  ).toBe(button);
   // A human ends it in plain mono; an agent is a link (the grace-period test).
   if ("terminatedBy" in over && over.terminatedBy === "@or") {
-    const or = within(strip()).getByText("@or");
+    const or = within(panel).getByText("@or");
     expect(or).toHaveClass("font-mono");
     expect(or.closest("a")).toBeNull();
   }
 });
 
-test("strip: What's kept? explains in a popover", async () => {
+test("Agent details: What's kept? explains in a popover", async () => {
   await open(terminated());
+  await details();
   await userEvent.click(screen.getByRole("button", { name: "What's kept?" }));
   expect(
     await screen.findByText(
@@ -353,7 +372,7 @@ test("the terminated frame arriving before the response: the dialog stays open u
       return json({ agent: state.agent });
     },
   });
-  await userEvent.click(screen.getByRole("button", { name: `Terminate @${SLUG}` }));
+  await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
   await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
   await vi.waitFor(() => expect(framed).toBe(true));
@@ -382,7 +401,7 @@ test("a failed terminate request after the agent was terminated anyway closes th
       return json({ error: { code: "internal", message: "Something broke." } }, 500);
     },
   });
-  await userEvent.click(screen.getByRole("button", { name: `Terminate @${SLUG}` }));
+  await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
   await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
@@ -391,18 +410,22 @@ test("a failed terminate request after the agent was terminated anyway closes th
   await vi.waitFor(() => expect(document.activeElement).toBe(pin));
 });
 
-test("an errored spawned agent: the recovery actions, the divider, then Terminate", async () => {
+test("an errored spawned agent: the recovery actions in the header, Terminate… in the menu", async () => {
   await open(spawned({ status: "errored", errorKind: "resume", lastError: "boom" }));
   const header = screen.getByRole("banner");
   const names = within(header)
     .getAllByRole("button")
     .map((b) => b.getAttribute("aria-label") ?? b.textContent);
-  expect(names.slice(-3)).toEqual(["Restart", "Start a new session", `Terminate @${SLUG}`]);
+  expect(names.slice(-4)).toEqual([
+    "Restart",
+    "Start a new session",
+    "Agent details",
+    "Actions for Tech Lead · ab12",
+  ]);
   expect(within(header).queryByRole("button", { name: /Compact|Interrupt/ })).toBeNull();
-  const divider = header.querySelector("[data-action-divider]") as HTMLElement;
-  expect(divider.nextElementSibling).toBe(
-    within(header).getByRole("button", { name: `Terminate @${SLUG}` }),
-  );
+  await menuItem("Terminate…");
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 });
 
 test("a spawned agent's edit page says it can't be edited and links back to its session", async () => {

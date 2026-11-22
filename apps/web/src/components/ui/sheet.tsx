@@ -16,7 +16,7 @@ import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 import { stampInstant, useStampedRef } from "@/lib/input-modality";
 import { cn } from "@/lib/utils";
 
-const SheetCtx = React.createContext<{ mobile: boolean }>({ mobile: false });
+const SheetCtx = React.createContext<{ mobile: boolean; modal: boolean }>({ mobile: false, modal: true });
 const useMobile = () => React.useContext(SheetCtx).mobile;
 
 /** One sheet for create/edit forms and peeks (DESIGN.md → Overlays): a 480px right panel on desktop, a
@@ -24,14 +24,17 @@ const useMobile = () => React.useContext(SheetCtx).mobile;
 function Sheet({
   open,
   onOpenChange,
+  modal = true,
   children,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
+  /** `false` makes a desktop peek: no scrim, no focus trap, the page behind stays usable. Phones are always modal. */
+  modal?: boolean;
   children: React.ReactNode;
 }) {
   const mobile = useLatchedMobile(open);
-  const ctx = React.useMemo(() => ({ mobile }), [mobile]);
+  const ctx = React.useMemo(() => ({ mobile, modal: modal || mobile }), [mobile, modal]);
   return (
     <SheetCtx.Provider value={ctx}>
       {mobile ? (
@@ -39,7 +42,7 @@ function Sheet({
           {children}
         </Drawer>
       ) : (
-        <SheetPrimitive.Root open={open} onOpenChange={onOpenChange}>
+        <SheetPrimitive.Root open={open} onOpenChange={onOpenChange} modal={modal}>
           {children}
         </SheetPrimitive.Root>
       )}
@@ -47,35 +50,115 @@ function Sheet({
   );
 }
 
+/** A key that closes an overlay stamps `data-instant` first, so the close is instant however it opened. */
+function closeInstantly(contentEl: HTMLElement | null | undefined, onOpenChange?: (open: boolean) => void) {
+  contentEl?.setAttribute("data-instant", "");
+  onOpenChange?.(false);
+}
+
+const WIDTH = { sheet: "w-[min(30rem,100%)]", panel: "w-[min(20rem,100%)]" } as const;
+const INSET = { full: "inset-y-0", "below-header": "top-12 bottom-0" } as const;
+
 /** Travels 100% of its width with no panel fade; under reduced motion it fades instead (the global
  *  reduced-motion rule zeroes the slide). No shadow: the scrim and the edge rule separate it. */
-function SheetContent({ className, children, ref, ...props }: React.ComponentProps<typeof SheetPrimitive.Content>) {
-  const mobile = useMobile();
-  const stampedRef = useStampedRef(ref);
+function SheetContent({
+  className,
+  children,
+  ref,
+  width = "sheet",
+  inset = "full",
+  returnFocus,
+  keepFocus,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
+  onEscapeKeyDown,
+  onInteractOutside,
+  onFocusOutside,
+  ...props
+}: React.ComponentProps<typeof SheetPrimitive.Content> & {
+  width?: keyof typeof WIDTH;
+  inset?: keyof typeof INSET;
+  /** Where focus goes on close, sheet or drawer (a close without a trigger leaves it on <body>). */
+  returnFocus?: () => HTMLElement | null;
+  /** Opening leaves focus where it was (a peek opened by a key on a list). */
+  keepFocus?: boolean;
+}) {
+  const { mobile, modal } = React.useContext(SheetCtx);
+  const contentRef = React.useRef<HTMLDivElement | null>(null);
+  const composed = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      contentRef.current = node;
+      if (typeof ref === "function") return ref(node);
+      if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = node;
+    },
+    [ref],
+  );
+  const stampedRef = useStampedRef(composed);
+  const closeAutoFocus = (e: Event) => {
+    onCloseAutoFocus?.(e);
+    if (e.defaultPrevented) return;
+    const target = returnFocus?.();
+    if (target) {
+      e.preventDefault();
+      target.focus();
+    }
+  };
   if (mobile) {
     return (
-      <DrawerContent ref={ref} className={className} {...props}>
+      <DrawerContent
+        ref={ref}
+        className={className}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={closeAutoFocus}
+        onEscapeKeyDown={onEscapeKeyDown}
+        onInteractOutside={onInteractOutside}
+        onFocusOutside={onFocusOutside}
+        {...props}
+      >
         {children}
       </DrawerContent>
     );
   }
   return (
     <SheetPrimitive.Portal>
-      <SheetPrimitive.Overlay
-        data-slot="sheet-overlay"
-        ref={stampInstant}
-        className="fixed inset-0 z-50 bg-black/20 duration-250 ease-(--ease-drawer) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-200 data-closed:ease-(--ease-out) dark:bg-black/40"
-      />
+      {modal && (
+        <SheetPrimitive.Overlay
+          data-slot="sheet-overlay"
+          ref={stampInstant}
+          className="fixed inset-0 z-50 bg-black/20 duration-250 ease-(--ease-drawer) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-200 data-closed:ease-(--ease-out) dark:bg-black/40"
+        />
+      )}
       <SheetPrimitive.Content
         data-slot="sheet-content"
+        // The shortcut layer keeps working beside a non-modal peek.
+        data-modal={modal ? undefined : "false"}
         ref={stampedRef}
         className={cn(
-          "fixed inset-y-0 right-0 z-50 flex w-[min(30rem,100%)] flex-col border-l border-float-edge bg-popover text-sm text-popover-foreground",
+          "fixed right-0 z-50 flex flex-col border-l border-float-edge bg-popover text-sm text-popover-foreground",
           "duration-250 ease-(--ease-drawer) data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right data-closed:duration-200 data-closed:ease-(--ease-out)",
           "motion-reduce:data-open:fade-in-0 motion-reduce:data-closed:fade-out-0",
           "[@media(max-height:30rem)]:overflow-y-auto",
+          INSET[inset],
+          WIDTH[width],
           className,
         )}
+        onOpenAutoFocus={(e) => {
+          onOpenAutoFocus?.(e);
+          if (keepFocus) e.preventDefault();
+        }}
+        onCloseAutoFocus={closeAutoFocus}
+        onEscapeKeyDown={(e) => {
+          onEscapeKeyDown?.(e);
+          contentRef.current?.setAttribute("data-instant", "");
+        }}
+        onInteractOutside={(e) => {
+          onInteractOutside?.(e);
+          if (!modal) e.preventDefault();
+        }}
+        onFocusOutside={(e) => {
+          onFocusOutside?.(e);
+          if (!modal) e.preventDefault();
+        }}
         {...props}
       >
         {children}
@@ -169,6 +252,7 @@ function SheetClose(props: React.ComponentProps<typeof SheetPrimitive.Close>) {
 }
 
 export {
+  closeInstantly,
   Sheet,
   SheetBody,
   SheetClose,

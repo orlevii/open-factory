@@ -567,6 +567,21 @@
   [data-status-dot] {
     transition: background-color 150ms var(--ease-out);
   }
+  /* A sidebar row's ⋯ takes the place of its counts, instantly, only for a fine hovering pointer;
+     coarse pointers never show it (long-press is U4's). */
+  .of-row-more {
+    display: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    [data-agent-row]:hover .of-row-more,
+    [data-agent-row][data-menu-open] .of-row-more {
+      display: inline-flex;
+    }
+    [data-agent-row]:hover .of-row-count,
+    [data-agent-row][data-menu-open] .of-row-count {
+      display: none;
+    }
+  }
 }
 
 /* Vaul drawer timing. At the end of the file, OUTSIDE any @layer.

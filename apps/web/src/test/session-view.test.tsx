@@ -736,7 +736,8 @@ test("a paired denial shows inside its call: Denied state and the reason line; n
   };
   routes["/api/agents/dev"] = () => json(detail({}, [], 7));
   renderApp("/agents/dev", alice);
-  const read = await screen.findByRole("button", { name: /Read/ });
+  // A Read row names its file, not the tool (spec §9.2); the full path is the name's title.
+  const read = (await screen.findByTitle("/etc/x")).closest("button") as HTMLElement;
   expect(within(read).getByText("Denied")).toBeInTheDocument();
   expect(within(read).queryByText("Failed")).not.toBeInTheDocument();
   expect(

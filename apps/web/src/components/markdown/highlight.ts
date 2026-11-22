@@ -130,3 +130,64 @@ export async function highlight(code: string, lang: string): Promise<string | nu
   await loadGrammar(h, grammar.id, grammar.load);
   return h.codeToHtml(code, { lang: grammar.id, themes: THEMES });
 }
+
+// File extensions (and whole file names) that differ from a fence name; anything else is looked up
+// as a fence name, so `.ts`, `.py`, `.rs`, `.yml` … resolve through the aliases above.
+const EXTENSIONS: Record<string, string> = {
+  htm: "html",
+  tf: "hcl",
+  tfvars: "hcl",
+  mk: "make",
+  gradle: "kotlin",
+  bashrc: "shellscript",
+  zshrc: "shellscript",
+};
+const FILE_NAMES: Record<string, string> = {
+  dockerfile: "dockerfile",
+  makefile: "make",
+  gnumakefile: "make",
+};
+
+/** The grammar id for a file path, by its extension or name; undefined renders plain. */
+export function langForPath(path: string): string | undefined {
+  const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+  if (!name) return undefined;
+  const byName = FILE_NAMES[name];
+  if (byName) return byName;
+  if (name === ".env" || name.startsWith(".env.")) return "dotenv";
+  const dot = name.lastIndexOf(".");
+  if (dot === -1) return undefined;
+  const ext = name.slice(dot + 1);
+  return resolveLang(EXTENSIONS[ext] ?? ext);
+}
+
+/** Files longer than this stay plain: highlighting them costs more than it gives (spec §9.2). */
+export const MAX_HIGHLIGHT_LINES = 2000;
+
+/** One coloured run of a highlighted line: inline styles carry both themes (`--shiki-dark`). */
+export type HighlightToken = { content: string; style?: Record<string, string> };
+
+/** Tokens per line for a file's text, or null when its path has no grammar or it runs past
+ *  `MAX_HIGHLIGHT_LINES` lines. Lines are split as `code.split("\n")` splits them. */
+export async function highlightFile(
+  code: string,
+  path: string,
+): Promise<HighlightToken[][] | null> {
+  const id = langForPath(path);
+  if (!id) return null;
+  // A trailing newline ends the last line rather than starting another.
+  const body = code.endsWith("\n") ? code.slice(0, -1) : code;
+  let lines = 1;
+  for (let i = body.indexOf("\n"); i !== -1; i = body.indexOf("\n", i + 1))
+    if (++lines > MAX_HIGHLIGHT_LINES) return null;
+  const grammar = GRAMMARS[id] as { id: string; load: GrammarLoader };
+  const h = await getHighlighter();
+  await loadGrammar(h, grammar.id, grammar.load);
+  return h
+    .codeToTokens(code, { lang: grammar.id, themes: THEMES })
+    .tokens.map((line) =>
+      line.map((t) =>
+        t.htmlStyle ? { content: t.content, style: t.htmlStyle } : { content: t.content },
+      ),
+    );
+}

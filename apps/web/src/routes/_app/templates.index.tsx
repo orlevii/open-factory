@@ -1,15 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
-import { PageBody, PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
+import { PageBody } from "@/components/page-header";
 import { clearedState, deletedTemplateFrom, templatesQueryOptions } from "@/features/templates/api";
-import { ImagesSection } from "@/features/templates/images-section";
 import { TemplateList } from "@/features/templates/template-list";
+import { TemplatesHeader } from "@/features/templates/templates-header";
 
-export const Route = createFileRoute("/_app/templates/")({ component: TemplatesPage });
+export const Route = createFileRoute("/_app/templates/")({
+  // Images was a section here (`/templates#images`); old bookmarks and links land on its view.
+  beforeLoad: ({ location }) => {
+    if (location.hash === "images") throw redirect({ to: "/templates/images", replace: true });
+  },
+  component: TemplatesPage,
+});
 
 function TemplatesPage() {
   const { data, isError } = useQuery(templatesQueryOptions);
@@ -26,25 +30,7 @@ function TemplatesPage() {
   }, [fromState]);
   return (
     <>
-      <PageHeader
-        title="Templates"
-        actions={
-          <>
-            <Button variant="ghost" asChild className="max-sm:hidden">
-              <Link to="/templates" hash="images">
-                Images
-              </Link>
-            </Button>
-            <Button variant="ghost" asChild>
-              <Link to="/templates/new">
-                <Plus aria-hidden="true" data-icon="inline-start" />
-                <span className="max-sm:hidden">New template</span>
-                <span className="sm:hidden">New</span>
-              </Link>
-            </Button>
-          </>
-        }
-      />
+      <TemplatesHeader />
       <PageBody>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
           <div role="status" aria-live="polite" className="empty:hidden">
@@ -56,7 +42,6 @@ function TemplatesPage() {
             </p>
           )}
           {data && <TemplateList dir={data.dir} templates={data.templates} />}
-          <ImagesSection />
         </div>
       </PageBody>
     </>

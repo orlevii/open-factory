@@ -1,4 +1,9 @@
-import { ApiError, createTemplateBodySchema } from "@open-factory/shared";
+import {
+  ApiError,
+  createTemplateBodySchema,
+  isReservedTemplateName,
+  RESERVED_TEMPLATE_NAME_MESSAGE,
+} from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
@@ -26,7 +31,10 @@ function check(field: Field, v: Record<Field, string>): string | undefined {
   const r = createTemplateBodySchema.shape[field].safeParse(
     field === "description" && v.description.trim() === "" ? undefined : v[field],
   );
-  return r.success ? undefined : MESSAGES[field];
+  if (r.success) return undefined;
+  return field === "name" && isReservedTemplateName(v.name)
+    ? RESERVED_TEMPLATE_NAME_MESSAGE
+    : MESSAGES[field];
 }
 
 function NewTemplate() {

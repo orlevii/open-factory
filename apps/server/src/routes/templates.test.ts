@@ -89,6 +89,33 @@ test("validate returns issues; delete removes the folder", async () => {
   expect((await get("/api/templates/lead")).statusCode).toBe(404);
 });
 
+test("the names the web routes use are reserved: POST rejects them; a folder on disk with one still lists", async () => {
+  for (const name of ["images", "new"]) {
+    const r = await post("/api/templates", { name, displayName: "X" });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatchObject({
+      code: "validation_error",
+      message: "That name is reserved.",
+      fields: { name: "That name is reserved." },
+    });
+  }
+  // Made on disk (an agent, a shell): the list and its detail don't crash on it.
+  for (const name of ["images", "new"]) {
+    mkdirSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true });
+    writeFileSync(
+      path.join(h.factoryHome, `templates/${name}/template.yaml`),
+      `name: ${name}\ndisplay_name: X\n`,
+    );
+  }
+  const list = await get("/api/templates");
+  expect(list.statusCode).toBe(200);
+  const names = list.json().templates.map((t: { name: string }) => t.name);
+  expect(names).toEqual(expect.arrayContaining(["images", "new"]));
+  expect((await get("/api/templates/images")).statusCode).toBe(200);
+  for (const name of ["images", "new"])
+    rmSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true, force: true });
+});
+
 test("unauthenticated → 401", async () => {
   expect((await h.app.inject({ method: "GET", url: "/api/templates" })).statusCode).toBe(401);
 });

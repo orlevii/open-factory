@@ -7,7 +7,7 @@ import {
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
-import { Trash2, UserPlus } from "lucide-react";
+import { Trash2, TriangleAlert, UserPlus } from "lucide-react";
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -599,6 +599,15 @@ const TemplateHeader = memo(function TemplateHeader({
               </Link>
             ))}
           </span>
+        )}
+        {template.avatar.tooLarge && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="flex items-center gap-1.5">
+              <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
+              avatar.svg ignored: over 256 KB
+            </span>
+          </>
         )}
       </div>
     </>

@@ -71,7 +71,7 @@ const nav = [
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-/** A section stays highlighted on its detail routes (/agents/foo). "/" highlights nothing. */
+/** A section stays highlighted on its detail routes (/agents/foo). "/" redirects to the Inbox. */
 const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
 /** The slug of `/agents/$slug` itself, not of its /edit or /usage children. */
@@ -123,7 +123,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="h-12 justify-center px-3 py-0 group-data-[collapsible=icon]:px-2">
         <Link
-          to="/"
+          to="/inbox"
           onClick={closeMobile}
           aria-label="Open Factory"
           className="flex items-center rounded-md group-data-[collapsible=icon]:justify-center"

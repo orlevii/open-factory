@@ -24,16 +24,15 @@ test.each([
   expect(await screen.findByText(text)).toBeInTheDocument();
 });
 
-test("the dashboard shows the Inbox and Agents panels, each empty", async () => {
+test("/ opens the Inbox, empty", async () => {
   mockApi({
     "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 0 }),
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   renderApp("/", alice);
-  expect(await screen.findByText("Nothing unread.")).toBeInTheDocument();
-  const main = screen.getByRole("main");
-  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
+  expect(await screen.findByText("Nothing in your inbox.")).toBeInTheDocument();
 });
 
 test("the sidebar links every section in order", async () => {

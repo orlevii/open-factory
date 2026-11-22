@@ -157,7 +157,7 @@ describe("secondary buttons", () => {
   // site is a deliberate choice: add it here with the reason.
   const OUTLINE: Record<string, number> = {
     "components/confirm-dialog.tsx": 1, // Cancel in a dialog
-    "components/route-states.tsx": 1, // Go to Home on the error page
+    "components/route-states.tsx": 1, // Go to Inbox on the error page
     "features/agents/agent-actions.tsx": 3, // Re-sync, Restore, Archive: the agent's page actions
     "features/inbox/inbox-list.tsx": 1, // Load earlier
     "features/inbox/inbox-pane.tsx": 1, // Open in session / Open task in the pane header (spec §11.2)

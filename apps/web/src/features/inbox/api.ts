@@ -82,7 +82,7 @@ export function prefetchPane(qc: QueryClient, item: InboxItem) {
     : qc.prefetchQuery(taskDetailOptions(link.key)));
 }
 
-/** Home's panel: the 5 newest unread items. */
+/** The 5 newest unread items: what the notifier reads. */
 export const homeInboxQueryOptions = queryOptions({
   queryKey: homeInboxQueryKey,
   queryFn: () => apiFetch("/api/inbox?unread=true&limit=5", { schema: inboxPageSchema }),

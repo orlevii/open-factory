@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -95,7 +95,7 @@ test("an unknown server error is shown at form level", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Failed to create user");
 });
 
-test("a successful sign-up refreshes the session and lands on the dashboard", async () => {
+test("a successful sign-up refreshes the session and lands on the Inbox", async () => {
   auth.signUp.email.mockResolvedValue({ data: { user: alice.user }, error: null });
   auth.getSession.mockResolvedValue({ data: alice });
   api.on("GET /api/agents?", () =>
@@ -104,11 +104,9 @@ test("a successful sign-up refreshes the session and lands on the dashboard", as
   const { router } = renderApp("/sign-up", null);
   await screen.findByLabelText("Name");
   await fill(valid);
-  await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/inbox"));
   expect(auth.getSession).toHaveBeenCalled();
-  // The sidebar tree says it too: the dashboard is the main region once Home renders.
-  await screen.findByRole("heading", { level: 1, name: "Home" });
-  expect(await within(screen.getByRole("main")).findByText("No agents yet.")).toBeInTheDocument();
+  await screen.findByRole("heading", { level: 1, name: "Inbox" });
 });
 
 test("the handle field has an @ adornment and help text that an error replaces", async () => {

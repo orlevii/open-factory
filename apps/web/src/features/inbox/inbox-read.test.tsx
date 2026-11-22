@@ -241,16 +241,6 @@ test("the sidebar: count at the right edge, 99+, nothing at 0; the collapsed rai
   await waitFor(() => expect(screen.getByRole("link", { name: "Inbox" })).toBeInTheDocument());
 });
 
-test("Home's panel shows the 5 newest unread with the same opening behaviour, or 'Nothing unread.'", async () => {
-  const w = world(Array.from({ length: 7 }, (_, i) => item(i + 1)));
-  renderApp("/", alice);
-  const list = await screen.findByRole("list", { name: "Unread inbox" });
-  expect(within(list).getAllByRole("link")).toHaveLength(5);
-  expect(w.api.calls.some((c) => c.url === "/api/inbox?unread=true&limit=5")).toBe(true);
-  await userEvent.click(within(list).getAllByRole("link")[0] as HTMLElement);
-  expect(await screen.findByRole("link", { name: "Inbox, 6 unread" })).toBeInTheDocument();
-});
-
 describe("per-agent unread in the cache", () => {
   const mk = () => {
     const qc = new QueryClient();

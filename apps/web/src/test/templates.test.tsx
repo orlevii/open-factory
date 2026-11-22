@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -7,9 +7,14 @@ import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+const ws = vi.hoisted(() => ({ onMessage: undefined as ((m: unknown) => void) | undefined }));
 vi.mock("@/lib/ws", () => ({
-  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+  connectWs: (opts: { onMessage?(m: unknown): void }) => {
+    ws.onMessage = opts.onMessage;
+    return { close() {}, status: () => "open", send: () => true };
+  },
 }));
+const emit = (m: unknown) => act(() => ws.onMessage?.(m));
 afterEach(() => vi.unstubAllGlobals());
 
 const summary = (
@@ -286,6 +291,55 @@ test("new template: a taken name shows the field error", async () => {
   expect(await screen.findByText("A template named lead already exists.")).toBeInTheDocument();
 });
 
+test("new template: a name the routes use is reserved, before anything is sent", async () => {
+  const api = mockApi({});
+  renderApp("/templates/new", alice);
+  const name = await screen.findByLabelText("Name");
+  await userEvent.type(name, "images");
+  await userEvent.tab();
+  expect(await screen.findByText("That name is reserved.")).toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText("Display name"), "Images");
+  await userEvent.click(screen.getByRole("button", { name: "Create template" }));
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("list: a folder named images or new can't be opened by URL; its row says to rename it", async () => {
+  mockApi({
+    "GET /api/templates": () =>
+      json({
+        dir: "/d",
+        templates: [
+          summary({ name: "images" }),
+          summary({ name: "new" }),
+          summary({ name: "lead" }),
+        ],
+      }),
+  });
+  renderApp("/templates", alice);
+  const notes = await screen.findAllByText("Rename this folder: its name is reserved.");
+  expect(notes).toHaveLength(2);
+  for (const n of notes) {
+    const row = n.closest("li") as HTMLElement;
+    expect(within(row).queryByRole("link")).toBeNull();
+  }
+  expect(screen.getByRole("link", { name: /^lead/ })).toHaveAttribute("href", "/templates/lead");
+});
+
+test("template page: an oversize avatar.svg is named as ignored", async () => {
+  const d = detail();
+  const api = mockApi({
+    "GET /api/templates/lead": () =>
+      json({ template: { ...d.template, avatar: { version: null, tooLarge: true } } }),
+  });
+  const { unmount } = renderApp("/templates/lead", alice);
+  expect(await screen.findByText("avatar.svg ignored: over 256 KB")).toBeInTheDocument();
+  unmount();
+  api.on("GET /api/templates/lead", () => json(detail()));
+  renderApp("/templates/lead", alice);
+  await screen.findByRole("textbox", { name: "template.yaml" });
+  expect(screen.queryByText(/avatar\.svg ignored/)).toBeNull();
+});
+
 test("new template: blur validates the name; submit validates everything", async () => {
   const api = mockApi({});
   renderApp("/templates/new", alice);
@@ -537,7 +591,14 @@ test("list: the Image column shows each status as an icon and a word, plus the i
   expect(screen.getByText("pw")).toHaveClass("font-mono");
 });
 
-test("Images section: rows with status, Used by, Build/Rebuild, View log only when a log is held; the note", async () => {
+const brokenBuild = {
+  state: "failed",
+  finishedAt: new Date().toISOString(),
+  durationMs: 1000,
+  error: "boom",
+};
+
+test("Images section: rows show status, Used by, Build/Rebuild and Build log, never an inline log; the note", async () => {
   const api = mockApi({
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
     "GET /api/images": () =>
@@ -549,39 +610,97 @@ test("Images section: rows with status, Used by, Build/Rebuild, View log only wh
           usedBy: ["lead", "dev"],
         }),
         img({ name: "fresh", status: "not_built" }),
-        img({
-          name: "broken",
-          status: "failed",
-          lastBuild: {
-            state: "failed",
-            finishedAt: new Date().toISOString(),
-            durationMs: 1000,
-            error: "boom",
-          },
-        }),
+        img({ name: "broken", status: "failed", lastBuild: brokenBuild }),
       ]),
     "POST /api/images/fresh/build": () => json({ state: "building" }, 202),
     "GET /api/images/fresh/log": () => json({ state: null, lines: [] }),
   });
-  renderApp("/templates", alice);
+  renderApp("/templates/images", alice);
   const section = await screen.findByRole("region", { name: "Images" });
   const row = (name: string) =>
     within(section).getByText(name, { selector: "[data-image-name]" }).closest("li") as HTMLElement;
   await within(section).findByText("Built 2 hours ago");
   expect(within(row("playwright")).getByText("Used by lead, dev")).toBeInTheDocument();
   expect(within(row("playwright")).getByRole("button", { name: "Rebuild" })).toBeInTheDocument();
-  expect(within(row("playwright")).queryByRole("button", { name: "View log" })).toBeNull();
   expect(within(row("fresh")).getByRole("button", { name: "Build" })).toBeInTheDocument();
-  expect(within(row("broken")).getByRole("button", { name: "View log" })).toBeInTheDocument();
+  for (const n of ["playwright", "fresh", "broken"])
+    expect(within(row(n)).getByRole("button", { name: "Build log" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "View log" })).toBeNull();
   expect(
     within(section).getByText("Agents use a rebuilt image from their next start."),
   ).toBeInTheDocument();
 
   await userEvent.click(within(row("fresh")).getByRole("button", { name: "Build" }));
-  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
-    true,
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
+      true,
+    ),
   );
-  expect(await within(row("fresh")).findByRole("log")).toBeInTheDocument();
+  // A row's Build doesn't grow a log under the row, or open the panel.
+  expect(screen.queryByRole("log")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("Build log opens a non-modal side panel that streams the build; another row's Build log retargets it; Build in its footer", async () => {
+  const api = mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
+    "GET /api/images": () =>
+      imagesList([
+        img({ name: "broken", status: "failed", lastBuild: brokenBuild }),
+        img({ name: "fresh", status: "not_built" }),
+      ]),
+    "GET /api/images/broken/log": () => json({ state: "failed", lines: ["step 1", "boom"] }),
+    "GET /api/images/fresh/log": () => json({ state: null, lines: [] }),
+    "POST /api/images/fresh/build": () => json({ state: "building" }, 202),
+  });
+  renderApp("/templates/images", alice);
+  const section = await screen.findByRole("region", { name: "Images" });
+  const row = (name: string) =>
+    within(section).getByText(name, { selector: "[data-image-name]" }).closest("li") as HTMLElement;
+  await within(section).findByText("fresh", { selector: "[data-image-name]" });
+
+  const brokenTrigger = within(row("broken")).getByRole("button", { name: "Build log" });
+  await userEvent.click(brokenTrigger);
+  const sheet = await screen.findByRole("dialog", { name: "broken build log" });
+  // A peek, not a modal: no scrim, the shortcut layer stays live, the rows stay usable.
+  expect(sheet).toHaveAttribute("data-modal", "false");
+  expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull();
+  const log = within(sheet).getByRole("log");
+  expect(await within(sheet).findByText(/step 1/)).toBeInTheDocument();
+  expect(section.contains(log)).toBe(false);
+  // The page keeps the panel's width clear while it is open (where there is room), so the rows' actions
+  // stay under the pointer; the CSS applies it only from 54rem of view (browser-verified).
+  expect(section).toHaveAttribute("data-log-open");
+
+  // Frames stream into the open panel.
+  emit({ type: "image_build", name: "broken", state: "building" });
+  emit({ type: "image_build", name: "broken", state: "building", lines: ["Step 1/2 : FROM base"] });
+  await waitFor(() =>
+    expect(within(sheet).getByRole("log")).toHaveTextContent("Step 1/2 : FROM base"),
+  );
+
+  // Another row's Build log retargets the same panel node.
+  await userEvent.click(within(row("fresh")).getByRole("button", { name: "Build log" }));
+  expect(await screen.findByRole("dialog", { name: "fresh build log" })).toBe(sheet);
+  // The body is keyed by image: a fresh log, not the last image's lines.
+  await waitFor(() =>
+    expect(within(sheet).getByRole("log")).toHaveAccessibleName("Build log for fresh"),
+  );
+  expect(within(sheet).getByRole("log")).not.toHaveTextContent("Step 1/2");
+
+  // Build in the footer starts this image's build.
+  await userEvent.click(within(sheet).getByRole("button", { name: "Build" }));
+  await waitFor(() =>
+    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/images/fresh/build")).toBe(
+      true,
+    ),
+  );
+
+  // Closing returns focus to the row whose log was shown.
+  await userEvent.click(within(sheet).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(row("fresh")).getByRole("button", { name: "Build log" })).toHaveFocus();
+  expect(section).not.toHaveAttribute("data-log-open");
 });
 
 test("Images section: Rebuild stays rendered but aria-disabled while building; none without a Dockerfile", async () => {
@@ -594,7 +713,7 @@ test("Images section: Rebuild stays rendered but aria-disabled while building; n
       ]),
     "GET /api/images/busy/log": () => json({ state: "building", lines: [] }),
   });
-  renderApp("/templates", alice);
+  renderApp("/templates/images", alice);
   const section = await screen.findByRole("region", { name: "Images" });
   const row = (name: string) =>
     within(section).getByText(name, { selector: "[data-image-name]" }).closest("li") as HTMLElement;
@@ -611,7 +730,7 @@ test("Images section: empty state names imagesDir and baseImage from the server"
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
     "GET /api/images": () => imagesList([]),
   });
-  renderApp("/templates", alice);
+  renderApp("/templates/images", alice);
   const section = await screen.findByRole("region", { name: "Images" });
   expect(
     await within(section).findByText((_, el) =>
@@ -628,7 +747,7 @@ test("Images section: an unknown status shows the Docker isn't reachable line; a
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
     "GET /api/images": () => imagesList([img({ status: "unknown" })]),
   });
-  const { unmount } = renderApp("/templates", alice);
+  const { unmount } = renderApp("/templates/images", alice);
   expect(
     await screen.findByText(
       "Docker isn't reachable. Check that the daemon is running and the server can reach its socket.",
@@ -636,19 +755,53 @@ test("Images section: an unknown status shows the Docker isn't reachable line; a
   ).toBeInTheDocument();
   unmount();
   api.on("GET /api/images", () => json({ error: { code: "x", message: "boom" } }, 500));
-  renderApp("/templates", alice);
+  renderApp("/templates/images", alice);
   expect(await screen.findByText("Couldn't load images.")).toBeInTheDocument();
 });
 
-test("the header's Images link goes to #images and focuses the section heading", async () => {
+test("an old /templates#images link lands on the Images view", async () => {
   mockApi({
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
     "GET /api/images": () => imagesList([]),
   });
-  renderApp("/templates#images", alice);
-  const heading = await screen.findByRole("heading", { name: "Images" });
-  await vi.waitFor(() => expect(heading).toHaveFocus());
-  expect(screen.getByRole("link", { name: "Images" })).toHaveAttribute("href", "/templates#images");
+  const { router } = renderApp("/templates#images", alice);
+  await screen.findByRole("region", { name: "Images" });
+  expect(router.state.location.pathname).toBe("/templates/images");
+  expect(router.state.location.hash).toBe("");
+});
+
+test("Templates and Images are two views: each shows only its own content, the switch marks the current one", async () => {
+  const api = mockApi({
+    "GET /api/templates": () => json({ dir: "/d", templates: [summary({})] }),
+    "GET /api/images": () => imagesList([img({ name: "playwright", status: "built" })]),
+  });
+  const { router } = renderApp("/templates", alice);
+  const nav = await screen.findByRole("navigation", { name: "Templates views" });
+  expect(within(nav).getByRole("link", { name: "Templates" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(within(nav).getByRole("link", { name: "Images" })).not.toHaveAttribute("aria-current");
+  expect(within(nav).getByRole("link", { name: "Images" })).toHaveAttribute(
+    "href",
+    "/templates/images",
+  );
+  expect(await screen.findByText("Lead")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Images" })).toBeNull();
+  expect(api.calls.some((c) => c.url === "/api/images")).toBe(false);
+  expect(screen.queryAllByRole("radio")).toEqual([]);
+
+  await userEvent.click(within(nav).getByRole("link", { name: "Images" }));
+  await screen.findByRole("region", { name: "Images" });
+  expect(router.state.location.pathname).toBe("/templates/images");
+  const nav2 = screen.getByRole("navigation", { name: "Templates views" });
+  expect(within(nav2).getByRole("link", { name: "Images" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(within(nav2).getByRole("link", { name: "Templates" })).not.toHaveAttribute("aria-current");
+  expect(screen.queryByText("Lead")).toBeNull();
+  expect(document.title).toBe("Images · Open Factory");
 });
 
 const withUserImage = (status: string) => {
@@ -735,15 +888,23 @@ test("Save reads 'Saving…' while the PUT is pending", async () => {
   expect(await screen.findByText("Saved.")).toBeInTheDocument();
 });
 
-test("list header: below sm the button reads New and the Images link is hidden", async () => {
+test("list header (class contract, jsdom has no layout): the h1 gives way to the switch below a 25rem header; New template goes icon-only below sm, keeping its name and a tooltip", async () => {
   mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
   renderApp("/templates", alice);
-  // Both spans are in the name (jsdom applies no breakpoint CSS), joined without a space.
-  const link = await screen.findByRole("link", { name: "New templateNew" });
-  const spans = link.querySelectorAll("span");
-  expect(spans[0]).toHaveClass("max-sm:hidden");
-  expect(spans[0]).toHaveTextContent("New template");
-  expect(spans[1]).toHaveClass("sm:hidden");
-  expect(spans[1]).toHaveTextContent("New");
-  expect(screen.getByRole("link", { name: "Images" })).toHaveClass("max-sm:hidden");
+  const h1 = await screen.findByRole("heading", { level: 1, name: "Templates" });
+  // The header is the @container: visible from 25rem of header width, sr-only (still the page's h1) below.
+  expect(h1).toHaveClass("@max-[25rem]:sr-only");
+  expect(h1).not.toHaveClass("sr-only");
+  expect(h1.closest("header")).toHaveClass("@container");
+  // Neither the switch nor the action shrinks or wraps (the h1 gives way instead).
+  const nav = screen.getByRole("navigation", { name: "Templates views" });
+  expect(nav).toHaveClass("shrink-0");
+  const link = screen.getByRole("link", { name: "New template" });
+  expect(link).toHaveAttribute("aria-label", "New template");
+  expect(link).toHaveAttribute("href", "/templates/new");
+  const label = within(link).getByText("New template");
+  expect(label).toHaveClass("max-sm:sr-only");
+  expect(link.parentElement).toHaveClass("shrink-0");
+  await userEvent.hover(link);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("New template");
 });

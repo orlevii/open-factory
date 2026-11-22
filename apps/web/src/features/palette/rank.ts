@@ -108,16 +108,15 @@ export interface GoToItem {
   id: string;
   label: string;
   to: string;
-  hash?: string;
 }
 
-/** §10.2 "Go to". Images links `/templates#images` until PR6 moves it to `/templates/images`. */
+/** §10.2 "Go to". */
 export const GO_TO: readonly GoToItem[] = [
   { id: "inbox", label: "Inbox", to: "/inbox" },
   { id: "agents", label: "Agents", to: "/agents" },
   { id: "tasks", label: "Tasks", to: "/tasks" },
   { id: "templates", label: "Templates", to: "/templates" },
-  { id: "images", label: "Images", to: "/templates", hash: "images" },
+  { id: "images", label: "Images", to: "/templates/images" },
   { id: "schedules", label: "Schedules", to: "/schedules" },
   { id: "usage", label: "Usage", to: "/usage" },
   { id: "settings-credentials", label: "Settings: Credentials", to: "/settings/credentials" },

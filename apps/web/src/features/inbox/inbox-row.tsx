@@ -105,7 +105,7 @@ function labelOf(item: InboxItem, time: string): string {
 const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
 
 /**
- * One inbox row (shared with Home's panel): a single link, three lines, an ink dot in a fixed slot when unread.
+ * One inbox row: a single link, three lines, an ink dot in a fixed slot when unread.
  * Opening it (click, Cmd/Ctrl-click, middle-click via `onAuxClick`, Enter) calls `onOpen`, which may
  * `preventDefault` to select the row instead of following the link.
  */

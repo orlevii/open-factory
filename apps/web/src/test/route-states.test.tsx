@@ -32,13 +32,13 @@ test("a slow session check shows the pilot-light pending screen", async () => {
   expect(pending).toHaveClass("is-loading");
   expect(screen.getAllByRole("main")).toHaveLength(1);
   resolve({ data: alice });
-  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
 });
 
 test("a fast session check never shows the pending screen", async () => {
   auth.getSession.mockResolvedValue({ data: alice });
   renderApp("/", undefined);
-  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
   expect(screen.queryByText("Loading…")).toBeNull();
 });
 
@@ -50,7 +50,7 @@ test("a session check that fails while the server restarts retries under the pen
     .mockResolvedValue({ data: alice });
   renderApp("/", undefined);
   await runBackoff();
-  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Something went wrong." })).toBeNull();
   expect(auth.getSession).toHaveBeenCalledTimes(3);
 });
@@ -71,7 +71,7 @@ test("a failed session check shows the error state once its retries run out; Ret
 
   auth.getSession.mockResolvedValue({ data: alice });
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
 });
 
 test("ResourceNotFound shows a given detail instead of the default line", async () => {

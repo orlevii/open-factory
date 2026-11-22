@@ -444,3 +444,19 @@ test("controlled: open and onOpenChange drive it", () => {
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   expect(screen.getByText("S-12")).toBeVisible();
 });
+
+test("on a phone, closing the drawer with no handoff returns focus to the trigger", async () => {
+  phone();
+  render(<Menu />);
+  trigger().focus();
+  touchTap(trigger());
+  const content = document.querySelector("[data-slot=drawer-content]") as HTMLElement;
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const end = new Event("animationend", { bubbles: true });
+  Object.defineProperty(end, "animationName", { value: getComputedStyle(content).animationName });
+  act(() => {
+    content.dispatchEvent(end);
+  });
+  await waitFor(() => expect(document.querySelector("[data-slot=drawer-content]")).toBeNull());
+  await waitFor(() => expect(trigger()).toHaveFocus());
+});

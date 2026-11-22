@@ -472,7 +472,10 @@ test("Copy link says so inline when the clipboard refuses", async () => {
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   const row = document.getElementById("event-7") as HTMLElement;
-  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), { button: 0 });
+  fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), {
+    button: 0,
+    pointerType: "mouse",
+  });
   fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   expect(await within(row).findByText("Couldn't copy")).toBeInTheDocument();
 });

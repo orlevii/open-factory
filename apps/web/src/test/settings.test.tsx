@@ -1,8 +1,9 @@
 import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-factory/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -865,3 +866,30 @@ test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", as
   const region = await section("Secrets");
   expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
 });
+
+test.each([
+  ["credentials", "Credentials", "work", ["Replace token", "Delete…"]],
+  ["projects", "Projects", "app", ["Change path", "Remove"]],
+] as const)(
+  "phone: a %s row's menu is a drawer titled with its name",
+  async (path, name, item, items) => {
+    const original = window.matchMedia;
+    fakeMatchMedia.install(true, { coarse: true });
+    try {
+      world({ credentials: [cred({ name: "work" })], projects: [project({ name: "app" })] });
+      renderApp(`/settings/${path}`, alice);
+      const region = await section(name);
+      await waitFor(() => expect(row(region, item)).toBeDefined());
+      const trigger = within(row(region, item)).getByRole("button", {
+        name: `Actions for ${item}`,
+      });
+      fireEvent.pointerDown(trigger, { button: 0, pointerType: "touch" });
+      fireEvent.click(trigger);
+      const drawer = await screen.findByRole("dialog", { name: item });
+      for (const label of items)
+        expect(within(drawer).getByRole("button", { name: label })).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
+  },
+);

@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback } from "react";
 import { formatTime } from "./format";
-import { RowMenu, rowMenuItems } from "./row-menu";
+import { RowMenu, rowMenuItems, rowMenuTitle } from "./row-menu";
 import type { Row } from "./rows";
 
 /** Agent text shows its time in the gutter on hover or focus (U3 §7.5); a head text row's speaker
@@ -41,6 +41,7 @@ export function RowChrome({
   inCard?: boolean;
 }) {
   const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
+  const title = useCallback(() => rowMenuTitle(row, slug), [row, slug]);
   const time = gutterTime(row);
   return (
     <>
@@ -58,6 +59,7 @@ export function RowChrome({
       )}
       <RowMenu
         items={items}
+        title={title}
         focusable={focusable}
         callShown={callShown}
         onToggleCall={onToggleCall}

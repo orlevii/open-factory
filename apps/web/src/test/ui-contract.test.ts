@@ -216,3 +216,16 @@ describe("native tooltips", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("row menus", () => {
+  // U4 §11.1: every row and header menu is an AdaptiveMenu (a drawer on phones). A bare DropdownMenu
+  // in features is a picker, not a row menu: name it here.
+  const PICKERS = ["features/tasks/status-menu.tsx"];
+  test("no feature keeps a bare DropdownMenu except the pickers", () => {
+    const users = sourceFiles()
+      .filter((f) => f.includes("/features/") && !/\.test\.tsx?$/.test(f))
+      .filter((f) => /\bDropdownMenu/.test(readFileSync(f, "utf8")))
+      .map((f) => f.replace(`${SRC}/`, ""));
+    expect(users).toEqual(PICKERS);
+  });
+});

@@ -1,10 +1,12 @@
 import type { AnyEvent } from "@open-factory/shared";
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { renderInRouter } from "@/test/render-in-router";
-import { RowMenu, rowMenuItems } from "./row-menu";
+import { formatTime } from "./format";
+import { RowMenu, type RowMenuHandle, rowMenuItems, rowMenuTitle } from "./row-menu";
 import type { Row } from "./rows";
 import { Timeline } from "./timeline";
 
@@ -58,7 +60,8 @@ const labels = (row: Row) =>
 
 let writeText: ReturnType<typeof vi.fn>;
 beforeEach(() => {
-  fakeMatchMedia.install(true);
+  // Desktop (48rem and up), fine pointer.
+  fakeMatchMedia.install(false);
   writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
 });
@@ -106,7 +109,7 @@ const openMenu = async (trigger: HTMLElement) => {
 };
 
 test("a row with only Copy link still opens the menu; no disabled filler", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(footer, "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(footer, "dev")} title="@dev" focusable />);
   const menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   const items = within(menu).getAllByRole("menuitem");
   expect(items.map((i) => i.textContent)).toEqual(["Copy link"]);
@@ -114,20 +117,23 @@ test("a row with only Copy link still opens the menu; no disabled filler", async
 });
 
 test("on touch the menu carries the time as a label; on a fine pointer it doesn't", async () => {
-  const media = fakeMatchMedia.install(true, { coarse: true });
-  const first = renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  // A tablet: touch, but wide enough for the dropdown.
+  const media = fakeMatchMedia.install(false, { coarse: true });
+  const first = renderInRouter(
+    <RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />,
+  );
   let menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   expect(within(menu).getByText(/^Sent \d\d:\d\d:\d\d$/)).toBeInTheDocument();
   first.unmount();
   media.setCoarse(false);
-  fakeMatchMedia.install(true, { coarse: false });
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  fakeMatchMedia.install(false, { coarse: false });
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   expect(within(menu).queryByText(/^Sent /)).toBeNull();
 });
 
 test("Copy text copies the source, and the trigger shows the check", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   const trigger = await screen.findByRole("button", { name: "Row actions" });
   const menu = await openMenu(trigger);
   await userEvent.click(within(menu).getByRole("menuitem", { name: "Copy text" }));
@@ -136,7 +142,7 @@ test("Copy text copies the source, and the trigger shows the check", async () =>
 });
 
 test("the keyboard opens the menu on the first Enter or Space, and its copy feedback is instant", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   const user = userEvent.setup();
   // setup() installs its own clipboard; ours goes back on top.
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
@@ -158,7 +164,7 @@ test("the keyboard opens the menu on the first Enter or Space, and its copy feed
 });
 
 test("Space opens a trigger that was never activated, focused on its first item", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   (await screen.findByRole("button", { name: "Row actions" })).focus();
   await userEvent.keyboard(" ");
   const menu = await screen.findByRole("menu");
@@ -168,7 +174,7 @@ test("Space opens a trigger that was never activated, focused on its first item"
 });
 
 test("Escape returns focus to the trigger, which shows while it returns", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   (await screen.findByRole("button", { name: "Row actions" })).focus();
   await userEvent.keyboard("{Enter}");
   await screen.findByRole("menu");
@@ -180,14 +186,14 @@ test("Escape returns focus to the trigger, which shows while it returns", async 
 });
 
 test("a pointer opening leaves focus on the menu, not an item", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   const menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   await vi.waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
   expect(within(menu).getByRole("menuitem", { name: "Copy link" })).not.toHaveFocus();
 });
 
 test("while its menu is open the trigger stays shown, so the menu keeps its anchor", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"]') as HTMLElement;
   expect(trigger).toHaveAttribute("data-state", "open");
@@ -197,7 +203,7 @@ test("while its menu is open the trigger stays shown, so the menu keeps its anch
 
 test("a builder is called only when the menu first opens", async () => {
   const build = vi.fn(() => rowMenuItems(text(1), "dev"));
-  renderInRouter(<RowMenu items={build} focusable />);
+  renderInRouter(<RowMenu items={build} title="@dev" focusable />);
   const trigger = await screen.findByRole("button", { name: "Row actions" });
   expect(build).not.toHaveBeenCalled();
   const menu = await openMenu(trigger);
@@ -207,7 +213,7 @@ test("a builder is called only when the menu first opens", async () => {
 
 test("the check reverts after 1.5s", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  renderInRouter(<RowMenu items={rowMenuItems(footer, "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(footer, "dev")} title="@dev" focusable />);
   const menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy link" }));
   expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
@@ -217,7 +223,7 @@ test("the check reverts after 1.5s", async () => {
 
 test("a refused clipboard says Couldn't copy inline", async () => {
   writeText.mockRejectedValue(new Error("denied"));
-  renderInRouter(<RowMenu items={rowMenuItems(footer, "dev")} focusable />);
+  renderInRouter(<RowMenu items={rowMenuItems(footer, "dev")} title="@dev" focusable />);
   const menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy link" }));
   expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
@@ -319,4 +325,77 @@ test("a tool row's gutter time sits in the row's own line after its state, never
   expect(time).toHaveAttribute("aria-hidden", "true");
   // Content | time | ⋯: the time is the line's last item, after the state when there is one.
   expect(row.lastElementChild).toBe(time);
+});
+
+const message: Row = {
+  kind: "message",
+  seq: 4,
+  at,
+  message: { id: "m4", from: "@or", kind: "message", urgent: false, body: "Hi" },
+  key: "4:0",
+};
+
+test("the menu's title names the row: who a message is from, the tool, with the time", () => {
+  const t = formatTime(at);
+  expect(rowMenuTitle(message, "dev")).toBe(`Message from @or · ${t}`);
+  expect(rowMenuTitle(tool("Bash", { command: "ls" }), "dev")).toBe(`Bash · ${t}`);
+  expect(rowMenuTitle(text(1), "dev")).toBe(`@dev · ${t}`);
+  expect(rowMenuTitle(outgoing("bob"), "dev")).toBe(`Message to @bob · ${t}`);
+  expect(rowMenuTitle(footer, "dev")).toBe("Turn summary");
+});
+
+const touchDown = (el: Element) => fireEvent.pointerDown(el, { button: 0, pointerType: "touch" });
+
+test("a touch pointerdown on ⋯ opens nothing: a scroll may be starting there", async () => {
+  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
+  const trigger = await screen.findByRole("button", { name: "Row actions" });
+  touchDown(trigger);
+  fireEvent.pointerCancel(trigger, { pointerType: "touch" });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  // The tap's click opens it (on a tablet, the dropdown).
+  touchDown(trigger);
+  fireEvent.click(trigger);
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+});
+
+test("on a phone the ⋯ opens a drawer titled for the row", async () => {
+  fakeMatchMedia.install(true, { coarse: true });
+  const build = vi.fn(() => rowMenuTitle(message, "dev"));
+  renderInRouter(<RowMenu items={rowMenuItems(message, "dev")} title={build} focusable />);
+  const trigger = await screen.findByRole("button", { name: "Row actions" });
+  expect(build).not.toHaveBeenCalled();
+  touchDown(trigger);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(trigger);
+  const drawer = await screen.findByRole("dialog", {
+    name: `Message from @or · ${formatTime(at)}`,
+  });
+  await userEvent.click(within(drawer).getByRole("button", { name: "Copy text" }));
+  expect(writeText).toHaveBeenCalledWith("Hi");
+});
+
+test("openAt opens the menu hanging from the point, and the ⋯ reopens it from itself", async () => {
+  const ref = createRef<RowMenuHandle>();
+  renderInRouter(<RowMenu ref={ref} items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
+  await screen.findByRole("button", { name: "Row actions" });
+  act(() => ref.current?.openAt({ x: 40, y: 120 }));
+  const menu = await screen.findByRole("menu", { name: "@dev" });
+  expect(within(menu).getByRole("menuitem", { name: "Copy text" })).toBeInTheDocument();
+  const standIn = document.querySelector<HTMLElement>("[data-menu-stand-in]");
+  expect(standIn?.style.left).toBe("40px");
+  expect(standIn?.style.top).toBe("120px");
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await openMenu(screen.getByRole("button", { name: "Row actions" }));
+  expect(document.querySelector("[data-menu-stand-in]")).toBeNull();
+});
+
+test("the handle is stable across renders", async () => {
+  const ref = createRef<RowMenuHandle>();
+  const items = rowMenuItems(text(1), "dev");
+  const { rerender } = render(<RowMenu ref={ref} items={items} title="@dev" focusable />);
+  const first = ref.current;
+  rerender(<RowMenu ref={ref} items={items} title="@dev" focusable={false} />);
+  expect(ref.current).toBe(first);
 });

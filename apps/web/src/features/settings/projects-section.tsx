@@ -6,14 +6,14 @@ import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenu,
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuSeparator,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { agentsQueryOptions } from "@/features/session/api";
 import {
   createProject,
@@ -282,14 +282,14 @@ export function ProjectsSection() {
                 >
                   <RowLine
                     actions={
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                      <AdaptiveMenu title={p.name}>
+                        <AdaptiveMenuTrigger asChild>
                           <MoreButton
                             id={`project-menu-${p.name}`}
                             label={`Actions for ${p.name}`}
                           />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
+                        </AdaptiveMenuTrigger>
+                        <AdaptiveMenuContent
                           align="end"
                           onCloseAutoFocus={(e) => {
                             const target = menuHandsOff.current;
@@ -299,7 +299,7 @@ export function ProjectsSection() {
                             if (target) document.getElementById(target)?.focus();
                           }}
                         >
-                          <DropdownMenuItem
+                          <AdaptiveMenuItem
                             onSelect={() => {
                               menuHandsOff.current = `field-project-path-${p.name}`;
                               setRow(p.name, undefined);
@@ -307,18 +307,18 @@ export function ProjectsSection() {
                             }}
                           >
                             Change path
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
+                          </AdaptiveMenuItem>
+                          <AdaptiveMenuSeparator />
+                          <AdaptiveMenuItem
                             variant="destructive"
                             disabled={Boolean(blocker) || removing === p.name}
                             // Focus goes back to ⋯ while it runs, then to the outcome's Undo.
                             onSelect={() => void remove(p)}
                           >
                             {blocker ? `Remove (${blocker})` : "Remove"}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                          </AdaptiveMenuItem>
+                        </AdaptiveMenuContent>
+                      </AdaptiveMenu>
                     }
                   >
                     <RowName>{p.name}</RowName>

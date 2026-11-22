@@ -607,7 +607,9 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 });
 
 /** The tree's one AgentMenu. It subscribes to its agent itself, so that agent's status frames
- *  re-render the menu only, not the tree (the slug outlives the close for the exit animation). */
+ *  re-render the menu only, not the tree (the slug outlives the close for the exit animation).
+ *  When the agent leaves the list (terminated, archived, deleted) the menu closes: its open state is
+ *  derived here, and the last copy of the agent keeps its content through the exit. */
 function TreeAgentMenu({
   slug,
   open,
@@ -622,12 +624,16 @@ function TreeAgentMenu({
   onClose: (slug: string) => void;
 }) {
   const agent = useAgent(slug);
-  if (!agent) return null;
+  const [last, setLast] = useState(agent);
+  if (agent && agent !== last) setLast(agent);
+  const shown = agent ?? (last?.slug === slug ? last : undefined);
+  if (!shown) return null;
+  const present = agent !== undefined && agent.status !== "terminated";
   return (
     <AgentMenu
-      agent={agent}
+      agent={shown}
       context="sidebar"
-      anchored={{ open, onOpenChange, anchor, onClose: () => onClose(slug) }}
+      anchored={{ open: open && present, onOpenChange, anchor, onClose: () => onClose(slug) }}
     />
   );
 }

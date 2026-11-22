@@ -907,3 +907,31 @@ test("SessionView: warms the highlighter once on open, not per frame", async () 
   frame();
   expect(warm.count).toBe(1);
 });
+
+test("200 rows at rest mount no menu root and read no phone or pointer query (menus mount on intent)", async () => {
+  const reads = new Map<string, number>();
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) => {
+    const real = original(query);
+    return new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop === "matches" || prop === "addEventListener")
+          reads.set(query, (reads.get(query) ?? 0) + 1);
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+  }) as typeof window.matchMedia;
+  try {
+    await setup();
+    expect(document.querySelectorAll("[data-row-menu]").length).toBeGreaterThan(190);
+    expect(document.querySelector('[data-slot="dropdown-menu-trigger"]')).toBeNull();
+    expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
+    const menuQueries = [...reads.keys()].filter(
+      (q) => q.includes("48rem") || q.includes("pointer"),
+    );
+    expect(menuQueries).toEqual([]);
+  } finally {
+    window.matchMedia = original;
+  }
+});

@@ -17,6 +17,7 @@ import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
 import { applyStatusFrames } from "@/features/agents/status-frames";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { createQueryClient } from "@/lib/query-client";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { agentSummary } from "@/test/session-fixtures";
 
 // Render probes: the tree reads `of-tree-expanded` once per render, a row reads its unread count
@@ -436,4 +437,49 @@ test("the menu keeps its place over the row while it closes", async () => {
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(standIn()?.style.top).toBe("34px");
   expect(standIn()?.style.left).toBe("12px");
+});
+
+test("the menu closes when its agent leaves the list (terminated by a status frame)", async () => {
+  // The refetch the terminate triggers never settles: the frame alone must close it.
+  vi.stubGlobal("fetch", () => new Promise(() => {}));
+  const { qc } = setup({ activeSlug: "c" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Charlie" }));
+  await screen.findByRole("menu");
+  await push(qc, frame("c", "terminated"));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // Another agent's menu still opens.
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+});
+
+test("the menu closes when its agent is dropped from the list by a refetch", async () => {
+  const { qc } = setup({ activeSlug: "c" });
+  const user = userEvent.setup();
+  await screen.findByRole("tree");
+  await user.click(screen.getByRole("button", { name: "Actions for Charlie" }));
+  await screen.findByRole("menu");
+  act(() => {
+    qc.setQueryData(
+      ["agents", "exclude"],
+      agents().filter((a) => a.slug !== "c"),
+    );
+  });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+});
+
+test("phone: a row's menu is a drawer titled with the agent's name", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    setup({ activeSlug: "a" });
+    await screen.findByRole("tree");
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Bravo" }));
+    const drawer = await screen.findByRole("dialog", { name: "Bravo" });
+    expect(within(drawer).getByRole("link", { name: "Open session" })).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).toBeNull();
+  } finally {
+    window.matchMedia = original;
+  }
 });

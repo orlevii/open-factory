@@ -61,7 +61,13 @@ export function CommentBlock({
         </Button>
       </div>
       <ClampedMarkdown source={comment.body} />
-      <RowMenu items={commentMenu(taskKey, comment)} label="Comment actions" focusable inCard />
+      <RowMenu
+        items={commentMenu(taskKey, comment)}
+        title={`Comment from ${who}`}
+        label="Comment actions"
+        focusable
+        inCard
+      />
     </article>
   );
 }

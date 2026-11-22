@@ -23,6 +23,8 @@ type Ctx = {
   title: string;
   /** The point a long-press opened it at, latched per opening like `mobile`. */
   anchor: Point | undefined;
+  /** The visible trigger, where a drawer returns focus (Vaul's dialog only knows its own trigger). */
+  triggerRef: React.RefObject<HTMLElement | null>;
 };
 const MenuCtx = React.createContext<Ctx | null>(null);
 function useMenu(name: string): Ctx {
@@ -73,6 +75,7 @@ function AdaptiveMenu({
   }
   const ax = anchor?.x;
   const ay = anchor?.y;
+  const triggerRef = React.useRef<HTMLElement | null>(null);
   const ctx = React.useMemo<Ctx>(
     () => ({
       open,
@@ -80,6 +83,7 @@ function AdaptiveMenu({
       mobile,
       title,
       anchor: ax === undefined || ay === undefined ? undefined : { x: ax, y: ay },
+      triggerRef,
     }),
     [open, setOpen, mobile, title, ax, ay],
   );
@@ -97,6 +101,7 @@ function AdaptiveMenu({
 /** Opens on `click` for touch and pen and on `pointerdown` only for a mouse, so starting a scroll on the
  *  trigger never opens a menu (spec §11.1). */
 function AdaptiveMenuTrigger({
+  ref,
   asChild,
   onPointerDown,
   onClick,
@@ -104,7 +109,16 @@ function AdaptiveMenuTrigger({
   children,
   ...props
 }: React.ComponentProps<typeof DropdownMenuTrigger>) {
-  const { open, setOpen, mobile, anchor } = useMenu("AdaptiveMenuTrigger");
+  const { open, setOpen, mobile, anchor, triggerRef } = useMenu("AdaptiveMenuTrigger");
+  // Ours and the consumer's.
+  const setRef = React.useCallback(
+    (el: HTMLButtonElement | null) => {
+      triggerRef.current = el;
+      if (typeof ref === "function") ref(el);
+      else if (ref) ref.current = el;
+    },
+    [ref, triggerRef],
+  );
   // Set by a touch or pen pointerdown, read by the click it produces. Written only in handlers.
   const tapping = React.useRef(false);
   // A long-press opening on desktop: Radix anchors to its trigger, so the trigger is a stand-in at the
@@ -155,6 +169,7 @@ function AdaptiveMenuTrigger({
           {...(asChild ? null : { type: "button" as const })}
           aria-haspopup="menu"
           {...props}
+          ref={setRef}
           {...shared}
           onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
             onKeyDown?.(e);
@@ -171,7 +186,7 @@ function AdaptiveMenuTrigger({
     );
   }
   return (
-    <DropdownMenuTrigger asChild={asChild} {...props} {...shared} onKeyDown={onKeyDown}>
+    <DropdownMenuTrigger asChild={asChild} {...props} ref={setRef} {...shared} onKeyDown={onKeyDown}>
       {children}
     </DropdownMenuTrigger>
   );
@@ -188,13 +203,19 @@ function AdaptiveMenuContent({
   onPointerDownOutside,
   ...props
 }: React.ComponentProps<typeof DropdownMenuContent>) {
-  const { open, setOpen, mobile, title, anchor } = useMenu("AdaptiveMenuContent");
+  const { open, setOpen, mobile, title, anchor, triggerRef } = useMenu("AdaptiveMenuContent");
   if (mobile)
     return (
       <Drawer open={open} onOpenChange={setOpen} direction="bottom">
         <DrawerContent
           aria-describedby={undefined}
-          onCloseAutoFocus={onCloseAutoFocus}
+          onCloseAutoFocus={(e) => {
+            onCloseAutoFocus?.(e);
+            if (e.defaultPrevented) return;
+            // Vaul's dialog would focus its own trigger, which a menu doesn't have: back to ours.
+            e.preventDefault();
+            triggerRef.current?.focus({ preventScroll: true });
+          }}
           onEscapeKeyDown={onEscapeKeyDown}
           onInteractOutside={onInteractOutside}
           onPointerDownOutside={onPointerDownOutside}

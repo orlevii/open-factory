@@ -3,15 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
 import { type ReactElement, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AdaptiveMenu,
+  AdaptiveMenuContent,
+  AdaptiveMenuItem,
+  AdaptiveMenuSeparator,
+  AdaptiveMenuShortcut,
+  AdaptiveMenuTrigger,
+} from "@/components/ui/adaptive-menu";
+import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { archiveAgent, restoreAgent, resyncAgent } from "@/features/agents/lifecycle";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -102,120 +102,126 @@ export function AgentMenu({
 
   const create: ReactElement[] = live
     ? [
-        <DropdownMenuItem
+        <AdaptiveMenuItem
           key="new-task"
+          opensOverlay
           {...newTaskIntent}
           onSelect={() => openAfterClose(() => openSheet({ kind: "new-task", assignee: slug }))}
         >
           New task
-        </DropdownMenuItem>,
-        <DropdownMenuItem
+        </AdaptiveMenuItem>,
+        <AdaptiveMenuItem
           key="new-schedule"
+          opensOverlay
           {...newScheduleIntent}
           onSelect={() => openAfterClose(() => openSheet({ kind: "new-schedule", target: slug }))}
         >
           New schedule
-        </DropdownMenuItem>,
+        </AdaptiveMenuItem>,
       ]
     : [];
   const views: ReactElement[] = [];
   if (context === "sidebar")
     views.push(
-      <DropdownMenuItem key="open" asChild>
+      <AdaptiveMenuItem key="open" asChild>
         <Link to="/agents/$slug" params={{ slug }}>
           Open session
         </Link>
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   if (canEdit)
     views.push(
-      <DropdownMenuItem
+      <AdaptiveMenuItem
         key="edit"
+        opensOverlay
         {...editIntent}
         onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", slug }))}
       >
         Edit
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   views.push(
-    <DropdownMenuItem key="usage" asChild>
+    <AdaptiveMenuItem key="usage" asChild>
       <Link to="/agents/$slug/usage" params={{ slug }}>
         Usage
       </Link>
-    </DropdownMenuItem>,
-    <DropdownMenuItem key="tasks" asChild>
+    </AdaptiveMenuItem>,
+    <AdaptiveMenuItem key="tasks" asChild>
       <Link to="/tasks" search={{ assignee: slug }}>
         Open tasks
       </Link>
-    </DropdownMenuItem>,
+    </AdaptiveMenuItem>,
   );
   if (session)
     views.push(
-      <DropdownMenuItem
+      <AdaptiveMenuItem
         key="details"
+        opensOverlay={detailsTakeFocus}
         onSelect={() => {
           if (!detailsTakeFocus) return onOpenDetails?.();
           handoff.current = () => onOpenDetails?.();
         }}
       >
         Agent details
-        <DropdownMenuShortcut>
+        <AdaptiveMenuShortcut>
           <Kbd keys={["]"]} />
-        </DropdownMenuShortcut>
-      </DropdownMenuItem>,
+        </AdaptiveMenuShortcut>
+      </AdaptiveMenuItem>,
     );
   if (canCompact)
     views.push(
-      <DropdownMenuItem
+      <AdaptiveMenuItem
         key="compact"
+        opensOverlay
         onSelect={() => {
           handoff.current = () => setCompactOpen(true);
         }}
       >
         Compact…
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   if (canStopCrons)
     views.push(
-      <DropdownMenuItem key="stop-crons" onSelect={() => stop.openConfirm(trigger)}>
+      <AdaptiveMenuItem key="stop-crons" opensOverlay onSelect={() => stop.openConfirm(trigger)}>
         Stop crons…
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   const lifecycle: ReactElement[] = [];
   if (canResync)
     lifecycle.push(
-      <DropdownMenuItem key="resync" onSelect={() => void resyncAgent(slug, qc, agent.template)}>
+      <AdaptiveMenuItem key="resync" onSelect={() => void resyncAgent(slug, qc, agent.template)}>
         Re-sync from template…
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   if (canArchive)
     lifecycle.push(
-      <DropdownMenuItem
+      <AdaptiveMenuItem
         key="archive"
         variant="destructive"
         onSelect={() => void archiveAgent(agent, qc, { onChanged: onLifecycle })}
       >
         Archive…
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   if (canRestore)
     lifecycle.push(
-      <DropdownMenuItem
+      <AdaptiveMenuItem
         key="restore"
         onSelect={() => void restoreAgent(slug, qc, { onChanged: onLifecycle })}
       >
         Restore
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   if (canTerminate)
     lifecycle.push(
-      <DropdownMenuItem
+      <AdaptiveMenuItem
         key="terminate"
         variant="destructive"
+        opensOverlay
         onSelect={() => setTerminateOpen(true)}
       >
         Terminate…
-      </DropdownMenuItem>,
+      </AdaptiveMenuItem>,
     );
   const groups = [create, views, lifecycle].filter((g) => g.length > 0);
 
@@ -231,8 +237,12 @@ export function AgentMenu({
   }, [open, anchorEl]);
   return (
     <>
-      <DropdownMenu open={anchored?.open} onOpenChange={anchored?.onOpenChange}>
-        <DropdownMenuTrigger asChild>
+      <AdaptiveMenu
+        open={anchored?.open}
+        onOpenChange={anchored?.onOpenChange}
+        title={agent.displayName}
+      >
+        <AdaptiveMenuTrigger asChild>
           {anchored ? (
             // A stand-in for the row: fixed over it, invisible and out of the way of pointers.
             <span
@@ -256,8 +266,8 @@ export function AgentMenu({
               <MoreHorizontal aria-hidden="true" />
             </Button>
           )}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
+        </AdaptiveMenuTrigger>
+        <AdaptiveMenuContent
           align="end"
           // Compact… opens a popover anchored on the ⋯ button, and Agent details may open a sheet:
           // focus belongs to them, not back here.
@@ -276,10 +286,10 @@ export function AgentMenu({
           }}
         >
           {groups.flatMap((g, i) =>
-            i === 0 ? g : [<DropdownMenuSeparator key={`sep-${g[0]?.key}`} />, ...g],
+            i === 0 ? g : [<AdaptiveMenuSeparator key={`sep-${g[0]?.key}`} />, ...g],
           )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </AdaptiveMenuContent>
+      </AdaptiveMenu>
       {canCompact && (
         <CompactPopover
           slug={slug}

@@ -1,8 +1,9 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
+import { fakeMatchMedia } from "@/test/fake-match-media";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption } from "@/test/select-helpers";
@@ -315,4 +316,45 @@ test("a row opens the Edit schedule sheet over the list, from its key and from t
   await userEvent.click(screen.getByRole("button", { name: "Actions for S-3" }));
   await userEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
+});
+
+test("a row's menu closes when a refetch drops its schedule", async () => {
+  const api = mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/schedules?": () => list([sched(1), sched(3)]),
+  });
+  const u = userEvent.setup();
+  renderApp("/schedules", alice);
+  await u.click(await screen.findByRole("button", { name: "Actions for S-3" }));
+  expect(await screen.findByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+  api.on("GET /api/schedules?", () => list([sched(1)])); // deleted elsewhere
+  act(() => ws.push({ type: "schedules_changed" }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  // Nothing modal is left behind: the page takes pointers again.
+  expect(document.body.style.pointerEvents).not.toBe("none");
+  expect(screen.getByRole("button", { name: "Actions for S-1" })).toBeInTheDocument();
+});
+
+test("phone: a row's menu is a drawer titled with the schedule's key", async () => {
+  const original = window.matchMedia;
+  fakeMatchMedia.install(true, { coarse: true });
+  try {
+    mockApi({
+      "GET /api/agents?": agents,
+      "GET /api/schedules?": () => list([sched(3)]),
+    });
+    renderApp("/schedules", alice);
+    const trigger = await screen.findByRole("button", { name: "Actions for S-3" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "touch" });
+    fireEvent.click(trigger);
+    const drawer = await screen.findByRole("dialog", { name: "S-3" });
+    expect(within(drawer).getByRole("button", { name: "Delete" })).toHaveAttribute(
+      "data-variant",
+      "destructive",
+    );
+    fireEvent.click(within(drawer).getByRole("button", { name: "Edit" }));
+    expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
+  } finally {
+    window.matchMedia = original;
+  }
 });

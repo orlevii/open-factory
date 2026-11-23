@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
 import { hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { agentSummary, credential, mockWorld, type World } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json } from "@/test/mock-api";
@@ -138,36 +139,46 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   ]);
 });
 
-test("the restart notice names the dirty credential on a running agent, and goes when it's undone", async () => {
+const SELF = FORM_MSG.restartsSelf;
+const RUNNING_HELP =
+  "A running agent restarts when idle to apply a change. Crons it set in this session stop.";
+
+test("every restart notice fits the outcome line: at most 40 characters, no user value", () => {
+  for (const m of [FORM_MSG.restartsSelf, FORM_MSG.restartsReports, FORM_MSG.restartsBoth]) {
+    expect(m.length, m).toBeLessThanOrEqual(40);
+    expect(m).not.toContain("@");
+  }
+});
+
+test("the restart notice shows on a running agent's change, and goes when it's undone", async () => {
   await open({
     agents: [lead({ status: "idle" })],
     credentials: [credential("work"), credential("prod")],
   });
-  const notice =
-    "Saving restarts @lead the next time it is idle, to apply the new credential. Crons it set in this session stop.";
   expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
   await pickOption(field("Credential"), /^prod/);
-  expect(await screen.findByText(notice)).toBeInTheDocument();
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
   await pickOption(field("Credential"), /^work/);
   expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
 });
 
-test("the restart notice names every changed kind", async () => {
-  await open({
-    agents: [lead({ status: "working" }), agentSummary({ slug: "cto", displayName: "CTO" })],
+test("the restart help is there before any edit and unchanged by one, so nothing moves", async () => {
+  const { dialog } = await open({
+    agents: [
+      lead({ status: "working" }),
+      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
+      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "idle", depth: 1 }),
+      agentSummary({ slug: "dev-3", reportsTo: "lead", status: "hibernated", depth: 1 }),
+    ],
     credentials: [credential("work"), credential("prod")],
   });
+  const help = `${RUNNING_HELP} Its direct reports @dev-1 and @dev-2 restart too when a name or description changes.`;
+  const before = await within(dialog).findByText(help);
+  expect(before.closest("[data-slot=sheet-footer]")).toBeNull();
   await pickOption(field("Credential"), /^prod/);
-  await userEvent.click(
-    within(screen.getByRole("group", { name: /Projects/ })).getByRole("checkbox", {
-      name: /docs/,
-    }),
-  );
-  expect(
-    await screen.findByText(
-      "Saving restarts @lead the next time it is idle, to apply the new credential and the new projects. Crons it set in this session stop.",
-    ),
-  ).toBeInTheDocument();
+  await rename("Boss");
+  expect(await screen.findByText(FORM_MSG.restartsBoth)).toBeInTheDocument();
+  expect(within(dialog).getByText(help)).toBe(before);
 });
 
 test("Save is described by the restart notice, so it is heard", async () => {
@@ -177,11 +188,7 @@ test("Save is described by the restart notice, so it is heard", async () => {
   });
   expect(saveButton()).not.toHaveAccessibleDescription();
   await pickOption(field("Credential"), /^prod/);
-  await vi.waitFor(() =>
-    expect(saveButton()).toHaveAccessibleDescription(
-      "Saving restarts @lead the next time it is idle, to apply the new credential. Crons it set in this session stop.",
-    ),
-  );
+  await vi.waitFor(() => expect(saveButton()).toHaveAccessibleDescription(SELF));
 });
 
 test("the restart notice is the footer's notice; a save failure replaces it until the next edit", async () => {
@@ -191,20 +198,20 @@ test("the restart notice is the footer's notice; a save failure replaces it unti
     extra: { "PATCH /api/agents/lead": () => Promise.reject(new TypeError("Failed to fetch")) },
   });
   await pickOption(field("Credential"), /^prod/);
-  const notice = await screen.findByText(/^Saving restarts @lead/);
+  const notice = await screen.findByText(SELF);
   expect(notice.closest("[data-slot=sheet-footer]")).not.toBeNull();
   expect(notice).toHaveAttribute("data-shown");
   await userEvent.click(saveButton());
   const error = await screen.findByText("Couldn't reach the server. Try again.");
   expect(error.closest("[role=alert]")?.closest("[data-slot=sheet-footer]")).not.toBeNull();
-  expect(screen.getByText(/^Saving restarts @lead/)).not.toHaveAttribute("data-shown");
+  expect(screen.getByText(SELF)).not.toHaveAttribute("data-shown");
   expect(saveButton()).not.toHaveAccessibleDescription();
   await rename("Boss");
   expect(screen.queryByText("Couldn't reach the server. Try again.")).toBeNull();
-  expect(screen.getByText(/^Saving restarts @lead/)).toHaveAttribute("data-shown");
+  expect(screen.getByText(SELF)).toHaveAttribute("data-shown");
 });
 
-test("a text change names the running direct reports that restart too", async () => {
+test("a text change restarts the running direct reports too", async () => {
   await open({
     agents: [
       lead({ status: "idle" }),
@@ -213,18 +220,19 @@ test("a text change names the running direct reports that restart too", async ()
     ],
     credentials: [credential("work"), credential("prod")],
   });
-  await pickOption(field("Credential"), /^prod/);
-  // A credential is the agent's own: its reports don't restart.
-  expect(await screen.findByText(/^Saving restarts @lead/)).not.toHaveTextContent("dev-1");
-  await rename("Boss");
   expect(
     await screen.findByText(
-      "Saving restarts @lead the next time it is idle, to apply the new display name and the new credential. Crons it set in this session stop. Its direct report @dev-1 restarts too, the next time it is idle.",
+      `${RUNNING_HELP} Its direct report @dev-1 restarts too when a name or description changes.`,
     ),
   ).toBeInTheDocument();
+  await pickOption(field("Credential"), /^prod/);
+  // A credential is the agent's own: its reports don't restart.
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
+  await rename("Boss");
+  expect(await screen.findByText(FORM_MSG.restartsBoth)).toBeInTheDocument();
 });
 
-test("a stopped agent's text change still names its running reports", async () => {
+test("a stopped agent's text change still restarts its running reports", async () => {
   await open({
     agents: [
       lead(),
@@ -232,13 +240,15 @@ test("a stopped agent's text change still names its running reports", async () =
       agentSummary({ slug: "dev-2", reportsTo: "lead", status: "working", depth: 1 }),
     ],
   });
-  await userEvent.clear(field("Description"));
-  await userEvent.type(field("Description"), "New");
   expect(
     await screen.findByText(
-      "Saving restarts its direct reports @dev-1 and @dev-2 the next time they are idle, to apply the new description.",
+      "Its direct reports @dev-1 and @dev-2 restart when idle if a name or description changes.",
     ),
   ).toBeInTheDocument();
+  expect(screen.queryByText(/^A running agent/)).not.toBeInTheDocument();
+  await userEvent.clear(field("Description"));
+  await userEvent.type(field("Description"), "New");
+  expect(await screen.findByText(FORM_MSG.restartsReports)).toBeInTheDocument();
 });
 
 test("the credential select is disabled while the list loads", async () => {
@@ -247,11 +257,12 @@ test("the credential select is disabled while the list loads", async () => {
   expect(field("Credential")).toHaveTextContent("work");
 });
 
-test("no restart notice for an agent that isn't running", async () => {
+test("no restart notice or help for an agent that isn't running", async () => {
   await open({ credentials: [credential("work"), credential("prod")] });
   await pickOption(field("Credential"), /^prod/);
   await vi.waitFor(() => expect(field("Credential")).toHaveTextContent("prod"));
   expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/restarts? (too )?when/)).not.toBeInTheDocument();
 });
 
 test("Nothing to save: no field changed. stays inline and sends nothing", async () => {
@@ -324,11 +335,7 @@ test("a running agent's save says it restarts", async () => {
     extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", displayName: "Boss" })) },
   });
   await rename("Boss");
-  expect(
-    screen.getByText(
-      "Saving restarts @lead the next time it is idle, to apply the new display name. Crons it set in this session stop.",
-    ),
-  ).toBeInTheDocument();
+  expect(screen.getByText(SELF)).toBeInTheDocument();
   await userEvent.click(saveButton());
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
   expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead. Restarts when idle.");

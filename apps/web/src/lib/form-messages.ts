@@ -43,4 +43,7 @@ export const FORM_MSG = {
   accountDisabled: "This account is disabled. Ask a member.",
   wrongPassword: "Wrong email or password.",
   somethingWrong: "Something went wrong. Try again.",
+  restartsSelf: "Saving restarts this agent when idle.",
+  restartsReports: "Saving restarts its reports when idle.",
+  restartsBoth: "Saving restarts it and its reports.",
 } as const;

@@ -33,7 +33,7 @@ import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/componen
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
-import { type PatchField, useAgentFormState } from "@/features/agents/agent-form-state";
+import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
@@ -51,6 +51,7 @@ import {
   returnFocusAfterChild,
 } from "@/features/sheets/sheet-store";
 import { isMobileNow } from "@/hooks/use-mobile";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 
 type Spec = { kind: "edit-agent"; slug: string; at?: string };
 
@@ -58,14 +59,6 @@ const NO_MANAGER: ComboOption[] = [
   { value: "", label: "No manager (reports to the humans)", fixed: true },
 ];
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
-/** What a save applies, as the restart notice names it. */
-const APPLIES: Record<PatchField, string> = {
-  displayName: "the new display name",
-  description: "the new description",
-  reportsTo: "the new manager",
-  credential: "the new credential",
-  projects: "the new projects",
-};
 const andList = (items: string[]) =>
   items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 /** A process is running, so a save that changes anything restarts it when idle (the server restarts on every field). */
@@ -262,33 +255,21 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   const running = isRunning(agent);
   // A display name or description change also restarts the agent's live direct reports (their prompt names their
   // manager); only the running ones restart anything.
-  const textChanges = changes.filter((f) => f === "displayName" || f === "description");
-  const runningReports =
-    textChanges.length > 0
-      ? (activeAgents.data ?? [])
-          .filter((a) => a.reportsTo === slug && isRunning(a))
-          .map((a) => `@${a.slug}`)
-      : [];
-  const notice: string[] = [];
-  if (running && changes.length > 0)
-    notice.push(
-      `Saving restarts @${slug} the next time it is idle, to apply ${andList(
-        changes.map((f) => APPLIES[f]),
-      )}. Crons it set in this session stop.`,
-    );
-  if (runningReports.length > 0)
-    notice.push(
-      running
-        ? runningReports.length === 1
-          ? `Its direct report ${runningReports[0]} restarts too, the next time it is idle.`
-          : `Its direct reports ${andList(runningReports)} restart too, the next time they are idle.`
-        : `Saving restarts its direct ${runningReports.length === 1 ? "report" : "reports"} ${andList(
-            runningReports,
-          )} the next time ${runningReports.length === 1 ? "it is" : "they are"} idle, to apply ${andList(
-            textChanges.map((f) => APPLIES[f]),
-          )}.`,
-    );
-  const restartNotice = notice.length > 0 ? notice.join(" ") : undefined;
+  const runningReports = (activeAgents.data ?? [])
+    .filter((a) => a.reportsTo === slug && isRunning(a))
+    .map((a) => `@${a.slug}`);
+  const selfRestarts = running && changes.length > 0;
+  const reportsRestart =
+    runningReports.length > 0 && changes.some((f) => f === "displayName" || f === "description");
+  // One short line on the reserved outcome line (§8); the detail is the static help below, which no edit changes.
+  const restartNotice = selfRestarts
+    ? reportsRestart
+      ? FORM_MSG.restartsBoth
+      : FORM_MSG.restartsSelf
+    : reportsRestart
+      ? FORM_MSG.restartsReports
+      : undefined;
+  const restartHelp = restartHelpText(running, runningReports);
 
   // The form is gone while the sheet shows another state (archived or terminated elsewhere mid-save): a result then
   // has no form to land in, though the sheet is still open.
@@ -466,6 +447,9 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             onAddProject={onAddProject}
           />
         </fieldset>
+        {restartHelp && (
+          <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{restartHelp}</p>
+        )}
       </SheetBody>
       <SheetFormFooter
         submitLabel="Save changes"
@@ -478,6 +462,27 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       />
     </form>
   );
+}
+
+/** What a save restarts, from stable data only (never the edit), so it never appears or changes as the user types. */
+function restartHelpText(running: boolean, reports: string[]) {
+  const parts: string[] = [];
+  if (running)
+    parts.push(
+      "A running agent restarts when idle to apply a change. Crons it set in this session stop.",
+    );
+  if (reports.length > 0) {
+    const who =
+      reports.length === 1
+        ? `Its direct report ${reports[0]} restarts`
+        : `Its direct reports ${andList(reports)} restart`;
+    parts.push(
+      running
+        ? `${who} too when a name or description changes.`
+        : `${who} when idle if a name or description changes.`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
 /** Only the display name changes: the header of the agent's own session already shows it. */

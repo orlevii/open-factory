@@ -1,3 +1,4 @@
+import { neutraliseEnvelopeTags } from "@open-factory/harness";
 import {
   agentCommandsResponseSchema,
   agentDetailSchema,
@@ -5,17 +6,17 @@ import {
   agentListSchema,
   agentResponseSchema,
   agentUsageSchema,
-  commandText,
+  classifyInput,
   compactBodySchema,
   createAgentBodySchema,
   eventsPageSchema,
   eventsQuerySchema,
+  inputBodySchema,
   MAX_BODY_BYTES,
   MAX_FOCUS_CHARS,
   patchAgentBodySchema,
   queueItemResponseSchema,
   resyncResponseSchema,
-  runCommandBodySchema,
   sendMessageBodySchema,
   slugSchema,
   stopCronsResponseSchema,
@@ -24,7 +25,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
-import { commandsResponse } from "../agents/commands.ts";
+import { commandList, commandsResponse } from "../agents/commands.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -326,60 +327,70 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   /**
-   * U3 §13.3 (dispatch): a human runs a slash command. Humans only: an agent has no session (the REST API never reads
-   * agent tokens), and its `send_message` text is never a command. The name resolves against the same allowed set the
-   * GET returns (422 `unknown_command` otherwise), and the raw text is built from the allowed entry's own name, never
-   * the typed token. `compact` takes the server's Compact flow; everything else is held and written raw. (`clear` is
-   * not allowed yet: see BUILTIN_ALLOWLIST.) Every outcome is audited with the entry's name, never the typed text.
+   * I1 §5.1: a human types into the session. Humans only (the REST API never reads agent tokens). The text is a
+   * command when its first token is a known name or on the denylist, free text otherwise; either way envelope tags
+   * are neutralised and every other byte is as typed. `compact` takes the Compact flow, everything else is held and
+   * written raw. Every outcome is audited with the kind and refusal code, never the text.
    */
   app.post(
-    "/api/agents/:slug/commands",
-    { schema: { params: slugParams, body: runCommandBodySchema } },
+    "/api/agents/:slug/input",
+    { schema: { params: slugParams, body: inputBodySchema } },
     async (req, reply) => {
       const u = user(req);
       const row = await app.store.agentBySlug(req.params.slug);
       const rt = row && (await app.runtimes.bySlug(req.params.slug));
       if (!row || !rt)
         return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      const { name, args, clientMessageId } = req.body;
-      const allowed = commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
-      // Until the input route replaces this one: the entry the typed token names, by name or alias.
-      const entry = allowed.commands.find(
-        (c) => !c.denied && (c.name === name || c.aliases?.includes(name)),
-      );
-      const audit = { user: u.id, agent: row.slug, command: entry?.name ?? null };
-      const refuse = (status: number, code: string, message: string) => {
-        app.log.info({ ...audit, refused: code }, "command refused");
+      const { clientMessageId } = req.body;
+      const text = req.body.text.trimEnd();
+      const audit = { user: u.id, agent: row.slug };
+      const refuse = (kind: string, status: number, code: string, message: string) => {
+        app.log.info({ ...audit, kind, refused: code }, "input refused");
         return err(reply, status, code, message);
       };
-      if (!entry)
-        return refuse(422, "unknown_command", `/${name} isn't a command this agent can run.`);
-      if (utf8.encode(commandText(entry.name, args)).length > MAX_BODY_BYTES)
-        return refuse(413, "too_large", "The command is larger than 64 KB.");
-      if (entry.name === "compact" && args.length > MAX_FOCUS_CHARS)
-        return refuse(
-          400,
-          "validation_error",
-          `The compact focus is longer than ${MAX_FOCUS_CHARS} characters.`,
-        );
+      if (!text) return refuse("text", 400, "validation_error", "Input is empty.");
+      if (utf8.encode(text).length > MAX_BODY_BYTES)
+        return refuse("text", 400, "validation_error", "Input is larger than 64 KB.");
+      const known = new Set(
+        commandList((await app.store.agentCommands(row.id))?.commands, row.config.skills).flatMap(
+          (c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()),
+        ),
+      );
+      const cls = classifyInput(text, known);
+      if (cls.kind === "command") {
+        if (cls.denied) return refuse("command", 422, "command_denied", cls.denied);
+        if (cls.multiline)
+          return refuse("command", 400, "validation_error", "A command must be one line.");
+        if (cls.name === "compact" && cls.args.length > MAX_FOCUS_CHARS)
+          return refuse(
+            "command",
+            400,
+            "validation_error",
+            `The compact focus is longer than ${MAX_FOCUS_CHARS} characters.`,
+          );
+      }
+      const kind = cls.kind === "command" ? "command" : "text";
       try {
         const item =
-          entry.name === "compact"
-            ? await rt.compact({ ...(args ? { focus: args } : {}), byHandle: u.handle })
-            : await rt.command({
-                name: entry.name,
-                args,
-                userId: u.id,
+          cls.kind === "command" && cls.name === "compact"
+            ? await rt.compact({
+                ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
                 byHandle: u.handle,
-                ...(clientMessageId ? { clientMessageId } : {}),
+              })
+            : await rt.rawInput({
+                text: neutraliseEnvelopeTags(cls.kind === "command" ? text.trimStart() : text),
+                userId: u.id,
+                by: `@${u.handle}`,
+                clientMessageId,
               });
-        app.log.info(audit, "command queued");
+        app.log.info({ ...audit, kind: cls.kind === "command" ? cls.name : kind }, "input queued");
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
-        if (e instanceof CommandsUnsupportedError) return refuse(501, e.code, e.message);
-        if (e instanceof AgentArchivedError) return refuse(409, "agent_archived", e.message);
-        if (e instanceof AgentTerminatedError) return refuse(409, "agent_terminated", e.message);
-        if (e instanceof AgentStartError) return refuse(503, "agent_start_failed", e.message);
+        if (e instanceof CommandsUnsupportedError) return refuse(kind, 501, e.code, e.message);
+        if (e instanceof AgentArchivedError) return refuse(kind, 409, "agent_archived", e.message);
+        if (e instanceof AgentTerminatedError)
+          return refuse(kind, 409, "agent_terminated", e.message);
+        if (e instanceof AgentStartError) return refuse(kind, 503, "agent_start_failed", e.message);
         throw e;
       }
     },

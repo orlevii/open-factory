@@ -1,10 +1,4 @@
-import {
-  type AgentSummary,
-  ApiError,
-  commandText,
-  MAX_BODY_BYTES,
-  type QueueItem,
-} from "@open-factory/shared";
+import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import {
@@ -295,7 +289,7 @@ export const Composer = memo(function SessionComposer({
   // ever sent as text in its place.
   const onCommand = useCallback(
     async (name: string, args: string, { clientMessageId }: { clientMessageId: string }) => {
-      if (new TextEncoder().encode(commandText(name, args)).length > MAX_BODY_BYTES)
+      if (new TextEncoder().encode(args ? `/${name} ${args}` : `/${name}`).length > MAX_BODY_BYTES)
         throw new SubmitError("The command is larger than 64 KB.");
       repinTimeline(slug);
       const abort = new AbortController();

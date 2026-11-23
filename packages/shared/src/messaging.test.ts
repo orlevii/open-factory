@@ -4,16 +4,6 @@ import { anyEventSchema } from "./events.ts";
 import { readFromBodySchema, readFromResponseSchema, unreadCountSchema } from "./messaging.ts";
 import { serverMessageSchema } from "./ws.ts";
 
-test("a pre-S6 message_in row (no parts) still parses", () => {
-  const e = {
-    type: "message_in",
-    messages: [
-      { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
-    ],
-  };
-  expect(anyEventSchema.parse(e)).toEqual(e);
-});
-
 test("a merged member_update envelope with parts and a factory fact parse", () => {
   const e = {
     type: "message_in",
@@ -40,6 +30,9 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
         fact: "denied",
         urgent: false,
         body: "Bash was denied for @dev.",
+        parts: [
+          { id: "m3", body: "Bash was denied for @dev.", createdAt: "2026-11-24T10:00:00.000Z" },
+        ],
       },
       {
         id: "m4",
@@ -49,6 +42,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
         about: "dev",
         urgent: false,
         body: "…",
+        parts: [{ id: "m4", body: "…", createdAt: "2026-11-24T10:00:00.000Z" }],
         subject: {
           slug: "dev",
           displayName: "Dev",

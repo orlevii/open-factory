@@ -20,7 +20,15 @@ describe("event schemas", () => {
       {
         type: "message_in",
         messages: [
-          { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+          {
+            id: "m1",
+            from: "@or",
+            fromKind: "human",
+            kind: "message",
+            urgent: false,
+            body: "hi",
+            parts: [{ id: "m1", body: "hi", createdAt: "2026-11-24T10:00:00.000Z" }],
+          },
         ],
       },
       { type: "assistant_text", text: "hello" },
@@ -86,6 +94,7 @@ describe("event schemas", () => {
             kind: "system",
             urgent: false,
             body: "x",
+            parts: [{ id: "n1", body: "x", createdAt: "2026-11-24T10:00:00.000Z" }],
           },
         ],
       },
@@ -123,6 +132,7 @@ describe("event schemas", () => {
             kind: "peer_left",
             urgent: false,
             body: "",
+            parts: [{ id: "m", body: "", createdAt: "2026-11-24T10:00:00.000Z" }],
             subject: {
               slug: "x",
               displayName: "X",
@@ -189,7 +199,7 @@ describe("sendMessagesBodySchema", () => {
 });
 
 describe("reconcile keys and Agent usage (U3 §11.1, §9.1)", () => {
-  test("assistant_text and tool_call keep messageId and blockIndex; old rows parse without them", () => {
+  test("assistant_text and tool_call keep messageId and blockIndex", () => {
     const text = anyEventSchema.parse({
       type: "assistant_text",
       text: "hi",
@@ -206,10 +216,6 @@ describe("reconcile keys and Agent usage (U3 §11.1, §9.1)", () => {
       blockIndex: 2,
     });
     expect(call).toMatchObject({ messageId: "msg_1", blockIndex: 2 });
-    expect(anyEventSchema.parse({ type: "assistant_text", text: "old" })).toEqual({
-      type: "assistant_text",
-      text: "old",
-    });
     expect(
       anyEventSchema.safeParse({ type: "assistant_text", text: "x", blockIndex: 1.5 }).success,
     ).toBe(false);

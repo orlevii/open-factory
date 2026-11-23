@@ -1,7 +1,6 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import sidebarSource from "@/components/ui/sidebar.tsx?raw";
 import { installInputModality } from "@/lib/input-modality";
 import type { WsOptions, WsStatus } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -133,11 +132,6 @@ test("a short blip never shows the strip", async () => {
   act(() => ws.onStatus?.("open"));
   await act(() => vi.advanceTimersByTimeAsync(10_000));
   expect(strip()).toBeNull();
-});
-
-test("sidebar.tsx no longer animates menu-item or group-label layout", () => {
-  expect(sidebarSource).not.toContain("transition-[width,height,padding]");
-  expect(sidebarSource).not.toContain("transition-[margin,opacity]");
 });
 
 test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens instantly, a click reopen does not", async () => {
@@ -367,27 +361,6 @@ test("mobile drawer: tapping an agent closes the drawer", async () => {
     const node = () => document.querySelector<HTMLElement>("[data-slot=drawer-content]");
     await userEvent.click(await screen.findByRole("treeitem", { name: /^Dev agent/ }));
     await vi.waitFor(() => expect(node()?.getAttribute("data-state")).not.toBe("open"));
-  } finally {
-    window.matchMedia = original;
-  }
-});
-
-test("large text on a short phone: the tree keeps 12rem and the sidebar content scrolls, so an agent row stays reachable", async () => {
-  // jsdom has no layout: the classes are the contract. At 200% text on 390x844 the nav filled the drawer and
-  // the tree shrank to a sliver under its sticky Agents row, so a press on an agent row landed on that row.
-  liveAgents();
-  const original = window.matchMedia;
-  fakeMatchMedia.install(true);
-  try {
-    renderApp("/inbox", alice);
-    await screen.findByRole("heading", { level: 1, name: "Inbox" });
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
-    const tree = await screen.findByRole("tree", { name: "Agents" });
-    const group = tree.closest<HTMLElement>("[data-sidebar=group]");
-    const content = tree.closest<HTMLElement>("[data-sidebar=content]");
-    expect(group).toHaveClass("min-h-48", "overflow-y-auto");
-    expect(group).not.toHaveClass("min-h-0");
-    expect(content).toHaveClass("overflow-y-auto");
   } finally {
     window.matchMedia = original;
   }

@@ -11,7 +11,7 @@ const hunkSchema = z.object({
 
 /**
  * Per-tool facts the harness keeps from a tool result (spec §9.1). Unknown
- * tools carry none; a `tool_result` without meta (old rows) still parses.
+ * tools carry none, so a `tool_result` has no meta.
  */
 export const toolMetaSchema = z.discriminatedUnion("tool", [
   z.object({

@@ -8,18 +8,14 @@ test("the head shrinks first; the last segment is capped at the line and truncat
   );
   const [head, tail] = container.querySelectorAll("[aria-hidden=true]");
   expect(head).toHaveTextContent("/home/templates");
-  expect(head).toHaveClass("truncate");
   expect(tail).toHaveTextContent("/platform-reliability-incident-commanders");
-  expect(tail).toHaveClass("shrink-0", "max-w-full", "truncate");
 });
 
 test("a handle (no '/') truncates in the middle: its head and its tail both stay", () => {
   const { container } = render(<MiddleTruncate text="@marketing-team" />);
   const [head, tail] = container.querySelectorAll("[aria-hidden=true]");
   expect(head).toHaveTextContent("@marketi");
-  expect(head).toHaveClass("truncate");
   expect(tail).toHaveTextContent("ng-team");
-  expect(tail).toHaveClass("shrink-0");
   expect(container.querySelector(".sr-only")).toHaveTextContent("@marketing-team");
 });
 
@@ -29,7 +25,6 @@ test("a file name that must keep its extension cuts its last segment from the st
   );
   const tail = container.querySelectorAll("[aria-hidden=true]")[1] as HTMLElement;
   expect(tail).toHaveAttribute("dir", "rtl");
-  expect(tail).toHaveClass("shrink-0", "max-w-full", "truncate");
   expect(tail.firstElementChild).toHaveAttribute("dir", "ltr");
   expect(tail).toHaveTextContent("/a-very-long-component-name.tsx");
 });
@@ -39,7 +34,6 @@ test("headMin: a name that fits renders whole, with no gap between its parts", (
   const parts = container.querySelectorAll("[aria-hidden=true]");
   expect(parts).toHaveLength(1);
   expect(parts[0]).toHaveTextContent("notes.md");
-  expect(container.querySelector(".min-w-\\[4ch\\]")).toBeNull();
 });
 
 test("headMin: once the name overflows it splits, keeping a few characters of the head", () => {
@@ -53,9 +47,7 @@ test("headMin: once the name overflows it splits, keeping a few characters of th
       text="my-very-long-design-review-notes-for-the-chip-final-v2.md"
     />,
   );
-  const [head, tail] = container.querySelectorAll("[aria-hidden=true]");
-  expect(head).toHaveClass("min-w-[4ch]");
-  expect(tail).toHaveClass("max-w-[calc(100%-4ch)]");
+  expect(container.querySelectorAll("[aria-hidden=true]")).toHaveLength(2);
   expect(container.querySelector(".sr-only")).toHaveTextContent(
     "my-very-long-design-review-notes-for-the-chip-final-v2.md",
   );

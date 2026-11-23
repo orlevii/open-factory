@@ -184,11 +184,10 @@ describe("LiveLine", () => {
     expect(el).toHaveAttribute("title", "It broke\nmore");
   });
 
-  test("no fact: an empty status region that takes no room", () => {
+  test("no fact: an empty status region", () => {
     render(<LiveLine fact={null} />);
     const el = screen.getByRole("status", { hidden: true });
     expect(el).toBeEmptyDOMElement();
-    expect(el).toHaveClass("hidden");
   });
 });
 

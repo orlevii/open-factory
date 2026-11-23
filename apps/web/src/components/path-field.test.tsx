@@ -27,7 +27,6 @@ test("the label row holds the help button; the input is mono with no autocomplet
     <PathField name="p" label="Path" help="Some help." value="" onChange={() => {}} />,
   );
   const input = screen.getByLabelText("Path");
-  expect(input).toHaveClass("font-mono");
   expect(input).toHaveAttribute("autocomplete", "off");
   expect(input).toHaveAttribute("spellcheck", "false");
   expect(screen.getByRole("button", { name: "How do I find this path?" })).toBeInTheDocument();

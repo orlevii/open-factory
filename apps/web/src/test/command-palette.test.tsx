@@ -87,12 +87,11 @@ const options = (dialog: HTMLElement) =>
 const highlighted = (dialog: HTMLElement) =>
   dialog.querySelector('[role="option"][aria-selected="true"]');
 
-test("⌘K opens from inside an input; overlay and content carry data-instant; sr-only title 'Search'", async () => {
+test("⌘K opens from inside an input; overlay and content carry data-instant", async () => {
   const { dialog, input } = await openFromInput();
   expect(dialog).toHaveAttribute("data-instant");
   const overlay = document.querySelector("[data-slot='palette-overlay']");
   expect(overlay).toHaveAttribute("data-instant");
-  expect(screen.getByText("Search", { selector: "h2" })).toHaveClass("sr-only");
   expect(input).toHaveFocus();
   // A modal is open: a single-key shortcut doesn't fire behind it.
   const fired = vi.fn();

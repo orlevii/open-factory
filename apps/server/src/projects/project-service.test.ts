@@ -162,7 +162,7 @@ test("an FK violation from a racing grant maps to 409 project_in_use", async () 
   }
 });
 
-test("a terminated grantee does not block removal; a live spawned grantee is named with its spawner", async () => {
+test("a live spawned grantee blocks removal and is named with its spawner", async () => {
   await svc.create({ name: "kids", hostPath: dir("kids") });
   await grant("boss", "kids");
   const proj = (
@@ -170,7 +170,7 @@ test("a terminated grantee does not block removal; a live spawned grantee is nam
   )[0];
   const [boss] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "boss"));
   const [cred] = await t.db.select().from(schema.credentials).limit(1);
-  const kid = (slug: string, terminated: boolean) => ({
+  const kid = (slug: string) => ({
     id: `${slug}-id`,
     slug,
     displayName: slug,
@@ -179,12 +179,10 @@ test("a terminated grantee does not block removal; a live spawned grantee is nam
     runtime: "local" as const,
     kind: "ephemeral",
     reportsTo: boss?.id,
-    credentialId: terminated ? null : (cred?.id ?? null),
-    terminatedAt: terminated ? new Date() : null,
-    terminatedBy: terminated ? "boss" : null,
+    credentialId: cred?.id ?? null,
   });
-  for (const slug of ["tl-ab12", "tl-dead"]) await claimTestHandle(t.db, slug, "agent");
-  await t.db.insert(schema.agents).values([kid("tl-ab12", false), kid("tl-dead", true)]);
+  await claimTestHandle(t.db, "tl-ab12", "agent");
+  await t.db.insert(schema.agents).values(kid("tl-ab12"));
   await t.db
     .insert(schema.agentProjectGrants)
     .values({ agentId: "tl-ab12-id", projectId: proj?.id ?? "" });

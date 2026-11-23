@@ -105,16 +105,12 @@ test("the page: header, tabs, the template's rows, and a footer in the flow whil
   expect(save()).toHaveAttribute("aria-disabled", "true");
 });
 
-test("the header keeps '@ana · Template dev' at every width: it wraps, it never hides", async () => {
+test("the header names the agent and links its template: '@ana · Template dev'", async () => {
   await open();
   const link = screen.getByRole("link", { name: "dev" });
   const meta = link.closest("[data-slot=config-meta]") as HTMLElement;
   expect(meta).not.toBeNull();
-  expect(meta.className).not.toMatch(/hidden/);
-  expect(meta.className).not.toMatch(/truncate/);
   expect(meta).toHaveTextContent("@ana · Template dev");
-  // The header may take a second line, where the meta moves when it can't fit beside the title.
-  expect(meta.closest("header")?.className).toMatch(/flex-wrap/);
 });
 
 test("Discard works with only an MCP editor open, and closes it", async () => {
@@ -134,7 +130,6 @@ test("the footer is sticky only while dirty, or while an outcome shows", async (
   expect(footer()).not.toHaveAttribute("data-sticky");
   await addAllowRule("Read");
   expect(footer()).toHaveAttribute("data-sticky");
-  expect(footer().className).toMatch(/\bsticky\b/);
   await userEvent.click(save());
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.saved)).toBeInTheDocument();
   expect(footer()).toHaveAttribute("data-sticky"); // the outcome shows

@@ -13,7 +13,7 @@ Method:
 
 Never removed: tests of security boundaries (auth, redaction, path safety, mounts, secrets), races and locks, data integrity, error paths, and regression guards. When unsure, a test stays and is flagged. A folded test only goes once every assertion that guards behaviour lives in the survivor.
 
-Net effect: 184 files changed, 1409 insertions, 3048 deletions. Tests 5330 to 5143 (-187), files 461 to 459 (deleted: `routes/auth.names.test.ts`, `test/radio-group.test.tsx`).
+Net effect: 184 files changed, 1409 insertions, 3048 deletions. After the first pass: tests 5330 to 5143 (-187), files 461 to 459 (deleted: `routes/auth.names.test.ts`, `test/radio-group.test.tsx`). After Or's decisions: 5070 tests in 458 files (`components/ui/button.test.tsx` also went).
 
 ## Totals
 
@@ -25,14 +25,31 @@ Test counts count `it`/`test` calls; a `.each` counts as 1. Removed / consolidat
 | server-routes | 41 / 40 | 426 / 410 | 3 | 14 | 18 | 5 |
 | server-domain | 42 / 42 | 440 / 434 | 0 | 9 | 10 | 4 |
 | server-runtime | 50 / 50 | 477 / 464 | 1 | 15 | 12 | 4 |
-| web-session | 49 / 49 | 762 / 749 | 2 | 10 | 9 | 5 |
-| web-features-a | 36 / 36 | 497 / 477 | 4 | 17 | 11 | 8 |
-| web-features-b | 41 / 41 | 473 / 463 | 1 | 12 | 13 | 8 |
-| web-app | 67 / 66 | 821 / 760 | 17 | 32 | 19 | 12 |
-| components, packages, e2e | 89 / 89 | 849 / 814 | 10 | 14 | 4 | 16 |
-| Total | 461 / 459 | 5330 / 5143 | 39 | 137 | 101 | 65 |
+| web-session | 49 / 49 | 762 / 730 | 2 | 10 | 9 | 5 |
+| web-features-a | 36 / 36 | 497 / 474 | 4 | 17 | 11 | 8 |
+| web-features-b | 41 / 41 | 473 / 455 | 1 | 12 | 13 | 8 |
+| web-app | 67 / 66 | 821 / 741 | 17 | 32 | 19 | 12 |
+| components, packages, e2e | 89 / 88 | 849 / 790 | 10 | 14 | 4 | 16 |
+| Total | 461 / 458 | 5330 / 5070 | 39 | 137 | 101 | 65 |
+
+The after column includes Or's decisions below (compatibility leftovers and CSS-class tests removed). The removed / consolidated / rewritten / flagged columns are the first pass only; the CSS pass removed about 69 more tests and trimmed class assertions from about 185.
 
 The e2e and smoke scripts were reviewed and not changed: `scripts/smoke-cli.sh` runs in `ci.yml`, `images/base/test/smoke.sh` runs in `base-image-build.yml`, and the harness fake-claude and scenarios are all used.
+
+## Decisions after review (Or)
+
+1. **Compatibility leftovers deleted, with their tests** (ADR 0028; production change authorised):
+   - Envelope `parts` is required (`packages/shared/src/messaging.ts`, `packages/harness/src/types.ts`). Every envelope comes from `groupEnvelopes`, which always sets parts; the one hand-built envelope (`apps/server/src/credentials/verify.ts`) now carries its part. `features/session/update-group.tsx` and `timeline.tsx` read `e.parts` directly. Deleted: `messaging.test.tsx` "a pre-S6 member_update without parts…", shared `messaging.test.ts` "a pre-S6 message_in row (no parts) still parses".
+   - Attachment `bytes` is required (`messageAttachmentSchema`); `message-block.tsx` drops the unknown-size guard. The unknown-size case left "an image over 1 MB… previews only when asked".
+   - The `?archived=only` alias on `/agents` is gone (`routes/_app/agents.index.tsx`). Deleted: agents-tree "an old ?archived=only bookmark…", agents-list "an old /agents?archived=only&justArchived=x URL…". The API tests that refuse `?archived=` stay (they test the current contract).
+   - `routes/_app/schedules.$key.tsx` ("the old page URL") is deleted and `routeTree.gen.ts` regenerated. Nothing in the app, server or CLI linked to `/schedules/<key>`; schedules open as the Edit schedule sheet. Deleted: edit-schedule-sheet "the old page URL opens the sheet…"; test routers and `form-urls.test.ts` updated.
+   - Shared "old rows" tests: `events.test.ts` lost its old-rows assertion. `messageId`/`blockIndex` and `tool_result.meta` stay optional for a current reason (the harness emits no key when a stream message has no id; tools without facts carry no meta); only the "old rows" wording went.
+   - Fixtures across web, shared and harness tests now build envelopes with parts (`envelope()` helper in `apps/web/src/test/session-fixtures.ts`).
+2. **CSS-class tests removed.** Every web test that only asserted classes or styling was deleted (about 69, including the 25 flagged class contracts and `components/ui/button.test.tsx`), and class assertions were dropped from about 185 mixed tests, keeping their role, name, text, focus, aria and state checks. Tests renamed where the old name described styling. AGENTS.md now says: don't assert CSS classes or styling; test behaviour and accessible output.
+3. **project-service terminated-grantee test.** Termination deletes an agent's grants in the same transaction (`event-store.ts` `terminateRows`), so a terminated grantee with a grant row cannot exist, and the test half could not fail. Giving the terminated agent a grant row to make it fail showed the `isNull(terminatedAt)` filter is dead code: the FK would still block the delete. The terminated half was deleted; the test is now "a live spawned grantee blocks removal and is named with its spawner". `settings-routes.test.ts` keeps the route-level case.
+4. **Accepted losses:** the `verify.ts` source-text check and the three real-database config-change tests stay removed.
+
+Other compatibility leftovers of the same kind, not in scope of the decision: the legacy form-URL redirects (`agents.new`, `tasks.new`, `schedules.new`, `templates.new`, `agents.$slug_.edit` via `features/sheets/redirect.ts`).
 
 ## server-agents
 
@@ -446,13 +463,13 @@ Shared schema boundaries (limits, reserved handles, event round trips), db CHECK
 1. `templates/template-index.ts` `writeConfig`: multi-file save is not atomic. The planned assertion "template.yaml is as it was after a failed write" fails today, so it was not added (see defects).
 2. `test/composer.test.tsx`, "compact: an error shows inside the popover and it stays open": web-cross folded it; the lead restored it. The survivor (compact-popover unit test) cannot assert the popover stays open with the typed value, because `open` is a fixed prop there.
 3. `test/confirm-dialog.test.tsx`, "pendingLabel is required": kept on purpose. The guard is type-level (`@ts-expect-error`, checked by typecheck); the runtime part is thin.
-4. Compat leftovers that ADR 0028 says to delete, each with its test: `features/session/update-group.tsx` parts-less branch (`messaging.test.tsx` "a pre-S6 member_update without parts..."), the `?archived=only` alias (agents-tree, agents-list), `schedules.$key.tsx` "old page URL" (edit-schedule-sheet test), "old rows still parse" tests in shared (`events.test.ts`, `messaging.test.ts`).
-5. `project-service.test.ts` terminated-grantee test cannot fail: a terminated agent never gets a grant row, so the check passes without the filter. `settings-routes.test.ts` keeps its own copy for that reason.
+4. Compat leftovers: resolved, deleted with their tests (see Decisions).
+5. `project-service.test.ts` terminated-grantee half: resolved, deleted; the filter it named is dead code (see Decisions).
 6. Tests the review found unable to fail were removed (`row-nav` selected-class, `agents-tree` rolling-window) or rewritten (`read-from` preload with unread messages, `ws-hub` listener spy); `confirm-dialog` "pendingLabel is required" stays as a type-level guard (item 3).
 7. Audit restores (commit 8d6a9e7): `schema.messages` `peer_left` insert, "resume error shows in the timeline" (session-view), a distinct server hostPath message (forms.test), the Go-to command id and path test (`palette/rank.test.ts`), the exact copy-link count (`timeline-perf`/`row-menu`).
 8. Accepted audit losses (low severity, all with other coverage): `verify.ts` source lint; three real-database config-change tests (fake-world equivalents in `config-changes.flow.test.ts` lines 197, 228, 276 and `runtimes.config.test.ts` stay); the cap and debounce config tombstone (`app.test.ts` covers a set value having no effect); gif, webp and data.json upload route rows (`sniff.test` covers them); bad name and missing display name submitted together; the exact `48rem` pin.
 9. `session-view.test.tsx`, "a stale list status turning into the loaded one is not announced": takes the first polite sr-only status element; passes vacuously if another renders first.
-10. Class-contract tests (about 25, listed under web-app): kept because jsdom cannot see layout, but they pin classes, not behaviour. Worth a policy decision.
+10. Class-contract tests: resolved, removed (see Decisions).
 11. Agent-menu premise: the review said a spawned agent has no Compact; a live spawned agent in the session does offer it. The test was narrowed instead.
 12. `terminate.test.ts` escalation count: the review said `stop_escalated` is recorded once; the real baseline is 2. The test asserts "the sweeps add none".
 13. `template-index.test.ts` unreadable-folder test needs a non-root user (chmod 000 is ignored as root).
@@ -469,9 +486,9 @@ Shared schema boundaries (limits, reserved handles, event round trips), db CHECK
 - `apps/server/src/workspace/links.ts` (line 52) and `templates/validate.ts` (line 99): a regular file in `skills/` gets "skills/README.md must be a folder, not a link." (misleading). `links.test.ts` (line 204) locks the wording in. The skills-folder rule is implemented twice.
 - Duplicate keyed mutex: `workspace/lock.ts` `KeyedMutex` and `templates/key-lock.ts` `KeyLock` have the same semantics. Merge and keep one test file.
 - Duplicated config Discard, Undo and MCP-editor save lock in `features/config/config-page.tsx` and `features/templates/template-config-tab.tsx`; `hooks/use-mobile.ts` duplicates `lib/breakpoints.ts` `useMedia`.
-- Compat leftovers against ADR 0028: `features/session/update-group.tsx` (line 33) parts-less branch; the `?archived=only` to `?ended=only` redirect; `routes/_app/schedules.$key.tsx` "old page URL"; old-row schema tests in shared (`events.test.ts` "pre-S6 message_in", "S7 ... old rows still parse"; `messaging.test.ts`), which may be keeping optional fields that only exist for old data.
+- Compat leftovers against ADR 0028: deleted in this branch (see Decisions). The legacy form-URL redirects in `features/sheets/redirect.ts` remain.
 - Agent not-found copy is inconsistent: a cold load of an unknown slug shows "Page not found." (`routes/_app/agents.$slug.tsx` throws `notFound()` with no `notFoundComponent`), while the cached path, usage and config routes show "Agent not found.".
-- `apps/server/src/projects/project-service.ts` `grants()` `isNull(terminatedAt)` filter: unclear it does anything. If termination deletes grant rows it is dead code; if not, a terminated agent's leftover grant may still block the delete at the FK.
+- `apps/server/src/projects/project-service.ts` `grants()` `isNull(terminatedAt)` filter is dead code: termination deletes grant rows in the same transaction (and if a terminated agent ever kept one, the FK would still block the delete).
 - `images/builder.test.ts` "pull defaults through as true" never exercised the default (it passed `pull: true`); the route-level test now covers the default.
 
 ## Follow-ups

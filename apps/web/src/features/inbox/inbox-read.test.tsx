@@ -102,14 +102,14 @@ test("kinds: a mention, a human mention and a task event render their sender lin
     name: "Unread, @dev mentioned you on T-42 Plan the billing migration, 14:31",
   });
   expect(m).toHaveAttribute("href", "/tasks/T-42?comment=c7");
-  expect(within(m).getByText("T-42")).toHaveClass("font-mono");
+  expect(within(m).getByText("T-42")).toBeInTheDocument();
   const e = screen.getByRole("link", {
     name: "Unread, Factory, done, T-40 Add usage export, 14:32",
   });
   expect(e).toHaveAttribute("href", "/tasks/T-40");
   expect(within(e).getByText("Done")).toBeInTheDocument();
   const h = screen.getByRole("link", { name: /^Unread, @sam mentioned you on T-1 One/ });
-  expect(within(h).getByText("@sam")).toHaveClass("font-mono");
+  expect(within(h).getByText("@sam")).toBeInTheDocument();
 });
 
 test("opening a row (click) marks it read and drops the sidebar count at once, then fires the request", async () => {
@@ -232,12 +232,11 @@ test("the button hides when nothing is unread", async () => {
   expect(screen.queryByRole("button", { name: "Mark all read" })).toBeNull();
 });
 
-test("the sidebar: count at the right edge, 99+, nothing at 0; the collapsed rail has an ink dot and a tooltip text", async () => {
+test("the sidebar: the count, 99+, nothing at 0", async () => {
   const w = world([item(1)], 150);
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: "Inbox, 150 unread" });
   expect(within(link).getByText("99+")).toBeInTheDocument();
-  expect(link.querySelector(".group-data-\\[collapsible\\=icon\\]\\:block")).not.toBeNull();
   w.set([item(1)], 3);
   act(() => ws.push({ type: "inbox_changed" }));
   expect(await screen.findByRole("link", { name: "Inbox, 3 unread" })).toBeInTheDocument();

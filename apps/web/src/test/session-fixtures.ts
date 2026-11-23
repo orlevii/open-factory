@@ -2,12 +2,18 @@ import type {
   AgentDetail,
   AgentSummary,
   AnyEvent,
+  Envelope,
   EventsPage,
   SessionEvent,
 } from "@open-factory/shared";
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
+/** An envelope as the server sends it: one part per row, so a single row's part is its own body. */
+export const envelope = (e: Omit<Envelope, "parts"> & { parts?: Envelope["parts"] }): Envelope => ({
+  ...e,
+  parts: e.parts ?? [{ id: e.id, body: e.body, createdAt: at }],
+});
 export const se = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq: ++seq,
   agentSlug: "dev",
@@ -70,14 +76,14 @@ export function conversation(): EventsPage {
         {
           type: "message_in",
           messages: [
-            {
+            envelope({
               id: "m1",
               from: "@or",
               fromKind: "human",
               kind: "message",
               urgent: true,
               body: "Please **list** files",
-            },
+            }),
           ],
         },
         null,

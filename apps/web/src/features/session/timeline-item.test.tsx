@@ -1,6 +1,7 @@
 import { screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { renderInRouter } from "@/test/render-in-router";
+import { envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
 import { Timeline } from "./timeline";
 
@@ -17,14 +18,14 @@ const message = (seq: number, id: string): Row => ({
   kind: "message",
   seq,
   at,
-  message: {
+  message: envelope({
     id,
     from: "@or",
     fromKind: "human",
     kind: "message",
     urgent: false,
     body: `Body ${id}`,
-  },
+  }),
   key: `${seq}:0`,
 });
 const footer: Row = { kind: "turn_footer", seq: 13, key: "13", durationMs: 5000, costUsd: 0 };

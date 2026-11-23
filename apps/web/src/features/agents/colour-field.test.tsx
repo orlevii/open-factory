@@ -32,15 +32,11 @@ test("thirteen radios, Auto first, one tab stop on the selected one", () => {
   expect(radios.filter((r) => r.tabIndex === 0).map((r) => r.getAttribute("aria-label"))).toEqual([
     "Teal",
   ]);
-  expect(screen.getByRole("radio", { name: "Teal" }).className).toContain(
-    "ring-2 ring-foreground ring-offset-2",
-  );
 });
 
-test("the group is named once, by the legend, and the ring offset takes the sheet colour", () => {
+test("the group is named once, by the legend", () => {
   render(<Harness start={4} />);
   expect(screen.getByRole("radiogroup", { name: "Colour · Teal" })).toBeInTheDocument();
-  expect(screen.getByRole("radio", { name: "Teal" }).className).toContain("ring-offset-popover");
 });
 
 test("arrow keys with Alt, Ctrl or Meta are left to the browser", async () => {

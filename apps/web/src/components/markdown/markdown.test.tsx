@@ -55,11 +55,6 @@ test("internal links have no new-tab note", () => {
   expect(a).not.toHaveAccessibleDescription();
 });
 
-test("tables are wrapped so wide ones scroll on their own", () => {
-  render(<Markdown source={"| a | b |\n|---|---|\n| 1 | 2 |"} />);
-  expect(screen.getByRole("table").parentElement).toHaveClass("md-table");
-});
-
 test("unlabeled fenced blocks render inside <pre>, inline code does not", () => {
   const { container } = render(<Markdown source={"Use `x` here.\n\n```\nplain block\n```"} />);
   const pre = container.querySelector("pre");
@@ -83,8 +78,6 @@ test("highlights code blocks once shiki loads", async () => {
 test("renders mermaid blocks with strict security", async () => {
   render(<Markdown source={"```mermaid\ngraph TD; A-->B\n```"} />);
   await waitFor(() => expect(screen.getByTestId("mermaid-svg")).toBeInTheDocument());
-  // The diagram sits on the light "paper" card in both color schemes.
-  expect(screen.getByTestId("mermaid-svg").parentElement).toHaveClass("md-diagram");
   const mermaid = (await import("mermaid")).default;
   expect(mermaid.initialize).toHaveBeenCalledWith(
     expect.objectContaining({ securityLevel: "strict" }),
@@ -154,20 +147,6 @@ test("a code block switching to an unknown language drops the old highlight", as
   rerender(<Markdown source={"```nope\nother code\n```"} />);
   await waitFor(() => expect(container.querySelector("pre.shiki")).toBeNull());
   expect(container.querySelector("pre")).toHaveTextContent("other code");
-});
-
-test("variant detail wraps in .prose-of-detail, the default does not", () => {
-  const { container, rerender } = render(<Markdown source="# A" variant="detail" />);
-  expect(container.querySelector(".prose-of-detail")).not.toBeNull();
-  rerender(<Markdown source="# A" />);
-  expect(container.querySelector(".prose-of-detail")).toBeNull();
-});
-
-test("variant work is a modifier on .prose-of (tool output), never the detail scale", () => {
-  const { container } = render(<Markdown source="# A" variant="work" />);
-  const root = container.firstElementChild;
-  expect(root).toHaveClass("prose-of", "prose-of-work");
-  expect(root).not.toHaveClass("prose-of-detail");
 });
 
 test("re-rendering the parent with the same source does not parse again", () => {
@@ -305,7 +284,7 @@ test("data: and protocol-relative image sources are plain text, never links or i
 
 test("the bidi overrides keep hast props: GFM footnotes keep their sr-only label and item ids", () => {
   const { container } = render(<Markdown source={"A claim.[^1]\n\n[^1]: The source."} />);
-  expect(container.querySelector("h2#footnote-label")).toHaveClass("sr-only");
+  expect(container.querySelector("h2#footnote-label")).not.toBeNull();
   const item = container.querySelector("li#user-content-fn-1");
   expect(item).not.toBeNull();
   expect(item).toHaveAttribute("dir", "auto");
@@ -318,11 +297,4 @@ test("the prose's last child is the content, so typography's last-child margin r
   expect(prose.lastElementChild).toHaveTextContent("Two");
   // The link's shared description still exists, outside the prose.
   expect(screen.getByRole("link")).toHaveAccessibleDescription("Opens in a new tab");
-});
-
-test("a code block's Copy wrapper passes the prose's first and last child margins to its pre", () => {
-  const { container } = render(<Markdown source={"```\ncode\n```"} />);
-  const frame = container.querySelector(".prose-of > div") as HTMLElement;
-  expect(frame.querySelector("pre")).not.toBeNull();
-  expect(frame).toHaveClass("first:[&_pre]:mt-0", "last:[&_pre]:mb-0");
 });

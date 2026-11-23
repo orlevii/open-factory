@@ -42,8 +42,8 @@ export const messageAttachmentSchema = z.object({
   uploadId: z.string(),
   name: z.string(),
   kind: z.enum(["image", "text"]),
-  /** The file's size: the UI previews an image automatically only when it is small (absent on older rows). */
-  bytes: z.number().int().nonnegative().optional(),
+  /** The file's size: the UI previews an image automatically only when it is small. */
+  bytes: z.number().int().nonnegative(),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
 });
@@ -70,7 +70,7 @@ export const envelopeSchema = z.object({
   late: z.boolean().optional(),
   ids: z.array(z.string()).optional(),
   about: z.string().optional(),
-  parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })).optional(),
+  parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })),
   fact: z.string().optional(),
   subject: subjectSchema.optional(),
   /** UI-only: the sender's optimistic-row id. Never rendered into the model's text. */

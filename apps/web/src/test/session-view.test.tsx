@@ -2,11 +2,17 @@ import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { COARSE_ICON_GROUP } from "@/components/ui/button";
 import { flushStatusFrames } from "@/features/agents/status-frames";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
-import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import {
+  agentSummary,
+  conversation,
+  detail,
+  envelope,
+  resetSeq,
+  se,
+} from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({
   onMessage: undefined as undefined | ((m: ServerMessage) => void),
@@ -444,14 +450,14 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
         {
           type: "message_in",
           messages: [
-            {
+            envelope({
               id: "m1",
               from: "@or",
               fromKind: "human",
               kind: "message",
               urgent: false,
               body: "See [docs](https://example.com)",
-            },
+            }),
           ],
         },
         null,
@@ -637,27 +643,6 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
   expect(within(header).queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
 });
 
-test("header on touch: Agent details and ⋯ are both the coarse group's 40px boxes, though each is a trigger's child (evidence D2)", async () => {
-  renderApp("/agents/dev/session", alice);
-  await screen.findByText("Two entries.");
-  const header = screen.getByRole("banner");
-  const details = within(header).getByRole("button", { name: "Agent details" });
-  const menu = within(header).getByRole("button", { name: "Actions for Dev agent" });
-  // Each takes its trigger's data-slot (asChild), which is why a `[data-slot=button]` selector missed them.
-  expect(details).not.toHaveAttribute("data-slot", "button");
-  const group = details.parentElement;
-  expect(group?.className).toContain(COARSE_ICON_GROUP);
-  expect(group?.contains(menu)).toBe(true);
-  const selector = COARSE_ICON_GROUP.match(/\[&_(.+)\]:size-10/)?.[1]?.replaceAll("_", " ");
-  expect(selector).toBeDefined();
-  const sized = Array.from(group?.querySelectorAll(selector ?? "") ?? []);
-  expect(sized).toContain(details);
-  expect(sized).toContain(menu);
-  // Below a 22rem header (a phone, or 200% text) the avatar, the switch and this toggle give way to the ⋯ menu.
-  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
-  expect(details).toHaveClass("@max-[22rem]:hidden");
-});
-
 test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
   routes["/api/agents/dev"] = () =>
     json(detail({ status: "errored", lastError: "Boom\nmore", errorKind: "crash" }));
@@ -668,8 +653,6 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   const header = screen.getByRole("banner");
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
-  // Restart is a third 40px action; the avatar gives way below a 22rem header (break H3).
-  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
   expect(header.contains(alert)).toBe(false);
@@ -921,16 +904,6 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(screen.queryByRole("link", { name: "Edit the agent" })).not.toBeInTheDocument();
   await userEvent.click(fix);
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
-});
-
-test("the log and each row wrap can shrink, so no row widens the scroller", async () => {
-  renderApp("/agents/dev/session", alice);
-  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
-  const log = screen.getByRole("log", { name: "Session" });
-  expect(log).toHaveClass("min-w-0");
-  const wraps = log.querySelectorAll("[data-row-wrap]");
-  expect(wraps.length).toBeGreaterThan(0);
-  for (const w of wraps) expect(w).toHaveClass("min-w-0");
 });
 
 /** A response the test releases by hand; every request before or after the release gets a copy. */

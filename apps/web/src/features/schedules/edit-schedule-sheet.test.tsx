@@ -76,29 +76,23 @@ const openOver = async (path = "/schedules") => {
   return r;
 };
 
-test("the header has the key in mono, the first line, and an icon Pause named with the key", async () => {
+test("the header has the key, the first line, and an icon Pause named with the key", async () => {
   mockApi(common(sched()));
   await openOver();
   const dialog = await sheet();
-  expect(within(dialog).getByText("S-3")).toHaveClass("font-mono");
+  expect(within(dialog).getByText("S-3")).toBeInTheDocument();
   expect(await within(dialog).findByText("Morning review", { selector: "[id]" })).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Pause S-3" })).toBeInTheDocument();
 });
 
-test("the footer has Save changes, Close and a ghost crimson Delete schedule on the left", async () => {
+test("the footer has Save changes, Close and Delete schedule", async () => {
   mockApi(common(sched()));
   await openOver();
   const dialog = await sheet();
   await message();
   expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeInTheDocument();
   expect(within(dialog).getAllByRole("button", { name: "Close" }).length).toBeGreaterThan(0);
-  const del = within(dialog).getByRole("button", { name: "Delete schedule" });
-  expect(del).toHaveClass("text-destructive");
-  const footer = del.closest("[data-slot=sheet-footer]") as HTMLElement;
-  const aside = footer.querySelector(".sm\\:mr-auto");
-  expect(aside?.contains(del)).toBe(true);
-  // The outcome line leads the footer; the aside follows it on the left.
-  expect(footer.firstElementChild).toHaveClass("form-outcome");
+  expect(within(dialog).getByRole("button", { name: "Delete schedule" })).toBeInTheDocument();
 });
 
 test("phones: the footer stacks Save changes first and Close last, Delete between", async () => {
@@ -638,14 +632,6 @@ test("a late save failure toasts the error with Open form", async () => {
 test("a ScheduleBadge opens the sheet for its key", async () => {
   render(<ScheduleBadge scheduleKey="S-3" />);
   await userEvent.click(screen.getByRole("button", { name: "Schedule S-3" }));
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
-});
-
-test("the old page URL opens the sheet over the list, key upper-cased, replacing the entry", async () => {
-  mockApi(common(sched()));
-  const { router } = renderApp("/schedules/s-3", alice);
-  expect(await sheet()).toBeInTheDocument();
-  expect(router.state.location.pathname).toBe("/schedules");
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
 });
 

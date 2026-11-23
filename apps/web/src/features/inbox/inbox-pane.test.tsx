@@ -176,21 +176,6 @@ test("retargeting never puts a fading row (data-live) on screen, not even for a 
   expect(seen).toEqual([]);
 });
 
-test("the strip keeps its controls whole, lets the name shrink and wraps (a second line) rather than scrolling at 200% text", async () => {
-  // jsdom has no layout, so the fit itself is asserted by the classes that decide it: the name is the
-  // one shrinkable child (`min-w-0`), the link and the icon-only switch never shrink, and the row wraps before the page scrolls sideways.
-  await visit("/inbox?item=chat:dev");
-  const strip = (await waitFor(() => {
-    const el = pane().querySelector<HTMLElement>("[data-chat-strip]");
-    expect(el).not.toBeNull();
-    return el;
-  })) as HTMLElement;
-  expect(strip).toHaveClass("min-h-10", "flex-wrap", "items-center");
-  expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveClass("shrink-0");
-  const name = await within(strip).findByText("Dev agent");
-  expect(name.closest(".min-w-0")).not.toBeNull();
-});
-
 test("a thread cached before the row's newest message puts the divider on the right message", async () => {
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);

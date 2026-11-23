@@ -49,7 +49,6 @@ test("the agent's reply is unboxed prose and never clamped", async () => {
   renderApp("/agents/dev/chat", alice);
   expect(await screen.findByText("Paragraph 60")).toBeInTheDocument();
   const r = row("m1") as HTMLElement;
-  expect(r.querySelector(".prose-of")).not.toBeNull();
   expect(r.querySelector("[data-message-block]")).toBeNull();
   expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
 });

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import { conversation, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({ onMessage: undefined as undefined | ((m: ServerMessage) => void) }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -168,8 +168,9 @@ test("dialog copy names the agent and the loss; Cancel focused; confirm moves fo
       "@dev won't remember anything from its current session. The history stays visible here, its files are kept, and waiting messages become its first turn.",
     ),
   ).toBeInTheDocument();
-  const detailLine = within(dialog).getByText("No conversation found with session ID 1234");
-  expect(detailLine).toHaveClass("font-mono");
+  expect(
+    within(dialog).getByText("No conversation found with session ID 1234"),
+  ).toBeInTheDocument();
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   // Cancel returns focus to the button that opened it.
   await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -292,14 +293,14 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
       {
         type: "message_in",
         messages: [
-          {
+          envelope({
             id: "m9",
             from: "@factory",
             fromKind: "factory",
             kind: "system",
             urgent: true,
             body: "Your previous process stopped unexpectedly.",
-          },
+          }),
         ],
       },
       null,
@@ -308,18 +309,16 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
   renderApp("/agents/dev/session", alice);
   const delivered = await screen.findByText("Your previous process stopped unexpectedly.");
   const block = delivered.closest("[data-message-block]") as HTMLElement;
-  const sender = within(block).getByText("Factory");
-  expect(sender).not.toHaveClass("font-mono");
+  expect(within(block).getByText("Factory")).toBeInTheDocument();
   expect(block.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   expect(within(block).queryByText("Urgent")).not.toBeInTheDocument();
   expect(block.textContent).not.toMatch(/@factory/);
-  // The queued notice is a dashed "Not delivered yet" block with the same sender.
+  // The queued notice is a "Not delivered yet" block with the same sender.
   const queued = screen
     .getByText("Restarted by @or after an error.")
     .closest("[data-message-block]") as HTMLElement;
   expect(within(queued).getByText("Factory")).toBeInTheDocument();
   expect(within(queued).getByText(/Not delivered yet/)).toBeInTheDocument();
-  expect(queued.className).toMatch(/border-dashed/);
   for (const region of screen.getAllByRole("status"))
     expect(region.textContent).not.toMatch(/stopped unexpectedly|Restarted by/);
 });

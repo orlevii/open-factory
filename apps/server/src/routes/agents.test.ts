@@ -817,12 +817,15 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
   test("before the first start: the template's skills, source template", async () => {
     const res = await get();
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      commands: [{ name: "research", description: "", argumentHint: "" }],
-      source: "template",
-      at: null,
-      stale: false,
+    expect(res.json()).toMatchObject({ source: "template", at: null, stale: false });
+    const commands = res.json().commands as { name: string; denied?: string }[];
+    expect(commands.map((c) => c.name)).toContain("context");
+    expect(commands.find((c) => c.name === "research")).toEqual({
+      name: "research",
+      description: "",
+      argumentHint: "",
     });
+    expect(commands.find((c) => c.name === "clear")?.denied).toMatch(/isn't available/);
   });
 
   test("after a start: the session's allowed list, stored apart from the agent row", async () => {
@@ -836,7 +839,12 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     expect(sent.statusCode).toBe(202);
     await expect.poll(async () => (await get()).json().source, { timeout: 5000 }).toBe("session");
     const body = (await get()).json();
-    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual([
+      "research",
+      "model",
+      "usage",
+      "batch",
+    ]);
     expect(body.stale).toBe(false);
     expect(Number.isNaN(Date.parse(body.at))).toBe(false);
     const [row] = await s.db.select().from(schema.agentCommands);
@@ -882,7 +890,12 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     const body = (await get()).json();
     expect(body).toMatchObject({ source: "session", stale: true });
     // The session's list stays what the menu shows until the next start.
-    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual([
+      "research",
+      "model",
+      "usage",
+      "batch",
+    ]);
   });
 });
 

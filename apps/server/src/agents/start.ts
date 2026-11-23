@@ -276,6 +276,7 @@ export function createPrepareStart(d: {
           grants,
           peers: hood.peers.map(entry),
           reports: hood.reports.map(entry),
+          humans: await d.neighborhood.humans(),
           kind: spawned ? "ephemeral" : "persistent",
           spawner: spawned ? { slug: spawned.spawner.slug } : null,
           spawning: maySpawn(agent)

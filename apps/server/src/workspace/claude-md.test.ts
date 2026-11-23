@@ -12,6 +12,7 @@ const input: ClaudeMdInput = {
   secretNames: ["GH_TOKEN"],
   peers: [],
   reports: [],
+  humans: [],
   kind: "persistent",
   spawner: null,
   spawning: null,
@@ -61,8 +62,50 @@ test("Your org lists peers and reports as @slug (Display name): description, sor
   expect(md.indexOf("@p00")).toBeLessThan(md.indexOf("@p01"));
 });
 
-test("no org section without peers or reports", () => {
-  expect(buildClaudeMd({ ...input, peers: [], reports: [] })).not.toContain("## Your org");
+test("no org section without peers, reports or humans", () => {
+  expect(buildClaudeMd({ ...input, peers: [], reports: [], humans: [] })).not.toContain(
+    "## Your org",
+  );
+});
+
+test("Your org lists the humans by handle and name, capped at 25; no @humans anywhere", () => {
+  const one = buildClaudeMd({
+    ...input,
+    humans: [{ handle: "orlevi", name: "Or Levi" }],
+  });
+  expect(one).toContain("## Your org");
+  expect(one).toContain("Humans: `@orlevi` (Or Levi)");
+  expect(one).not.toContain("@humans");
+  const crowd = Array.from({ length: 27 }, (_, i) => ({
+    handle: `h${String(i).padStart(2, "0")}`,
+    name: `H ${i}`,
+  }));
+  const md = buildClaudeMd({ ...input, humans: crowd });
+  expect(md).toContain("`@h24` (H 24)");
+  expect(md).not.toContain("@h25");
+  expect(md).toContain("and 2 more; call mcp__factory__list_peers");
+  const line = md.split("\n").find((l) => l.startsWith("Humans:")) ?? "";
+  expect(line).not.toContain("\n");
+  expect(buildClaudeMd({ ...input, humans: [{ handle: "x", name: "A\nB" }] })).toContain(
+    "`@x` (A B)",
+  );
+});
+
+test("the envelope paragraph explains from, from_kind and to", () => {
+  expect(buildClaudeMd(input)).toContain(
+    "`from` is the sender's handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to.",
+  );
+});
+
+test("messaging lines follow the spec: one list, humans by handle, no all-humans address", () => {
+  const md = buildClaudeMd(input);
+  expect(md).toContain(
+    "Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans.",
+  );
+  expect(md).toContain(
+    "Message a human only when you need a decision or have something they asked for: they read every message.",
+  );
+  expect(md).toContain("Address people by handle; there is no address for all humans.");
 });
 
 test("Messaging section names the factory tools and the rules once; manager/report lines are conditional", () => {

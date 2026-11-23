@@ -45,6 +45,22 @@ function orgList(title: string, entries: OrgEntry[]): string[] {
   ];
 }
 
+/** A human who can be messaged: `handle` is bare (no `@`), as stored. */
+export interface OrgHuman {
+  handle: string;
+  name: string;
+}
+
+function humansLine(humans: OrgHuman[]): string[] {
+  if (!humans.length) return [];
+  const shown = humans.slice(0, ORG_LIST_CAP).map((h) => `\`@${h.handle}\` (${inline(h.name)})`);
+  const more = humans.length - shown.length;
+  return [
+    `Humans: ${shown.join(", ")}${more > 0 ? `, and ${more} more; call mcp__factory__list_peers` : ""}`,
+    "",
+  ];
+}
+
 export interface ClaudeMdInput {
   slug: string;
   displayName: string;
@@ -56,6 +72,8 @@ export interface ClaudeMdInput {
   secretNames: string[];
   peers: OrgEntry[];
   reports: OrgEntry[];
+  /** The enabled users, by name then handle. */
+  humans: OrgHuman[];
   kind: "persistent" | "ephemeral";
   /** A spawned agent's spawner (S7 §11.2); null for a persistent agent. */
   spawner: { slug: string } | null;
@@ -71,9 +89,10 @@ export interface ClaudeMdInput {
 function orgSection(i: ClaudeMdInput): string[] {
   const peers = orgList("Peers (same manager)", i.peers);
   const reports = orgList("Your reports", i.reports);
-  if (!peers.length && !reports.length) return [];
+  const humans = humansLine(i.humans);
+  if (!peers.length && !reports.length && !humans.length) return [];
   const spawned = [...i.peers, ...i.reports].some((e) => e.spawnedBy);
-  return ["## Your org", ...(spawned ? [SPAWNED_INTRO] : []), ...peers, ...reports];
+  return ["## Your org", ...(spawned ? [SPAWNED_INTRO] : []), ...peers, ...reports, ...humans];
 }
 
 function lifecycleSection(spawner: string): string[] {
@@ -104,7 +123,7 @@ function spawningSection(s: { maxLive: number; perHour: number }): string[] {
 function messagingSection(i: ClaudeMdInput): string[] {
   return [
     "## Messaging",
-    "- Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `mcp__factory__list_peers` shows your neighborhood, everyone else and the humans. These are the only messaging tools that reach other agents and humans here.",
+    "- Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans.",
     "- Your text output is not delivered to whoever messaged you: reply with `send_message`, or they never see it.",
     ...(i.manager
       ? [
@@ -173,7 +192,7 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     "",
     ...(spawner ? lifecycleSection(spawner.slug) : []),
     "## How messages reach you",
-    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is an agent\'s slug, a human\'s `@handle`, or `@factory`. An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes). `@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).',
+    'Every message arrives in a `<factory-message from="…" kind="…" urgent="…" id="…">` envelope. `from` is the sender\'s handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to. An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes). `@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).',
     "",
     "Your whole session is visible to the humans who run this factory, so work in the open: say what you are doing and why.",
     "",

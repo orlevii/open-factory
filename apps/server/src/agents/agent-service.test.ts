@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { resyncPendingDir } from "../workspace/paths.ts";
 import type { AgentService } from "./agent-service.ts";
@@ -494,15 +495,14 @@ async function createSpawner(slug: string) {
   return idOf(slug);
 }
 /** A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). */
-const insertChild = (
-  q: typeof t.sql,
-  spawnerId: string,
-  slug: string,
-  terminated = false,
-) => q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+const insertChild = (q: typeof t.sql, spawnerId: string, slug: string, terminated = false) =>
+  claimTestHandleSql(q, slug, "agent").then(
+    () =>
+      q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
        select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
               ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
-       from agents where id = ${spawnerId}`;
+       from agents where id = ${spawnerId}`,
+  );
 
 /**
  * Resolves once `n` archives are waiting on the row lock `holder` holds: their own `for no key update` query, in a

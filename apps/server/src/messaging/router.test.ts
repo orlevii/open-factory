@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
+import { claimTestHandle, claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import { Router } from "./router.ts";
 
@@ -82,6 +83,7 @@ test("rejections are tool errors with one sentence", async () => {
   await h.app.agents.archive("bob");
   expect(await err("bob")).toBe("@bob is archived and can't receive messages.");
   // A name both an agent and a user hold (only a race can make one) is refused, never guessed.
+  await claimTestHandleSql(h.sql, "lead", "user");
   await h.sql`insert into users (id, name, email, handle) values ('dup', 'Dup', 'dup@x.io', 'lead')`;
   expect(await err("lead")).toBe(
     "'lead' matches both an agent and a user; ask a human to rename one.",
@@ -570,6 +572,7 @@ test("a message to a terminated agent is refused; a terminated sender can't send
 async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {}) {
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("no lead");
+  await claimTestHandle(tx, slug, "agent");
   const [row] = await tx
     .insert(schema.agents)
     .values({

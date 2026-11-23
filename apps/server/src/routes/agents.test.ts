@@ -9,6 +9,7 @@ import { CompactingError } from "../agents/errors.ts";
 import { AgentEndedError } from "../agents/message-cancel.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { png } from "../uploads/fixtures.ts";
 
@@ -308,6 +309,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   ) => s.app.inject({ method, url, headers: { cookie: c }, ...(payload ? { payload } : {}) });
   /** A live spawned agent of boss, with a workdir of its own. */
   const child = async (slug: string) => {
+    await claimTestHandleSql(s.sql, slug, "agent");
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
       select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
       from agents where id = ${bossId}`;
@@ -463,6 +465,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   });
 
   test("a terminated agent whose stop failed is stuck, loaded or not", async () => {
+    await claimTestHandleSql(s.sql, "boss-ff66", "agent");
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to,
         terminated_at, terminated_by, status, error_kind, last_error)
       select ${randomUUID()}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
@@ -492,14 +495,18 @@ describe("S7: the ended list is bounded", () => {
   afterAll(() => s.close());
   const get = (url: string) => s.app.inject({ method: "GET", url, headers: { cookie: c } });
   /** `n` archived agents, `old-<i>`, the higher `i` the older. */
-  const archived = (n: number, from = 0) =>
-    s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, archived_at)
+  const archived = async (n: number, from = 0) => {
+    await s.sql`insert into handles (handle, kind)
+      select 'old-' || i, 'agent' from generate_series(${from}::int, ${from + n - 1}::int) i on conflict do nothing`;
+    return s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, archived_at)
       select gen_random_uuid(), 'old-' || i, 'Old', template, config, runtime, credential_id,
              now() - make_interval(hours => 1 + i)
       from agents, generate_series(${from}::int, ${from + n - 1}::int) i where slug = 'boss'`;
+  };
 
   test("newest end first, archived and terminated together; at most 200 with more", async () => {
     await archived(199);
+    await claimTestHandleSql(s.sql, "boss-new1", "agent");
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
       select gen_random_uuid(), 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), '@factory'
       from agents where slug = 'boss'`;

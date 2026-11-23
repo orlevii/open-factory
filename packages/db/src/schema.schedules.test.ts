@@ -15,6 +15,7 @@ beforeAll(async () => {
     await h.close();
     await t.drop();
   };
+  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('lead','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id) values

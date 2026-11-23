@@ -2,6 +2,7 @@ import type { Envelope } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { peerBody } from "../messaging/peer-body.ts";
 import type { CredentialPause } from "../supervisor/slots.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -15,6 +16,7 @@ beforeAll(async () => {
   await h.setup();
   await insertAgent(h.t.sql, { id: REPORT, slug: "devrep" });
   await insertAgent(h.t.sql, { id: LEAD, slug: "leadx" });
+  await claimTestHandleSql(h.t.sql, "sam", "user");
   await h.t
     .sql`insert into users (id, name, email, handle) values ('u2', 'Sam', 'sam@x.io', 'sam')`;
 });

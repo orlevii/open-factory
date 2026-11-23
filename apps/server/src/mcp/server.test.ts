@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { callerOf, createFactoryMcp, toolUseIdOf } from "./server.ts";
 import { listPeersTool } from "./tools/list-peers.ts";
@@ -9,6 +10,7 @@ import { listPeersTool } from "./tools/list-peers.ts";
 let t: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   t = await createTestDb();
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   await insertAgent(t.sql, { id: "lead", slug: "lead", displayName: "Lead" });
   await insertAgent(t.sql, { id: "dev", slug: "dev", displayName: "Dev", reportsTo: "lead" });

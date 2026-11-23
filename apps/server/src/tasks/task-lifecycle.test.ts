@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import type { Actor } from "./permission.ts";
 
@@ -197,6 +198,7 @@ test("start a new session with only a task_update queued starts an attempt (S5's
 });
 
 test("one namespace: an assignee named like both a user and an agent gets S6's sentence", async () => {
+  await claimTestHandleSql(h.sql, "twin", "user");
   await h.sql`insert into users (id,name,email,handle) values ('twin-u','Twin','twin@x.io','twin')`;
   await h.sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id)
     select 'twin-a','twin','Twin','t','{}','local',credential_id from agents where slug = 'qa'`;

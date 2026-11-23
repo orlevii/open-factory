@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { CompactingError, NoOpenTurnError } from "./errors.ts";
@@ -19,6 +20,7 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());

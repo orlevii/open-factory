@@ -10,6 +10,7 @@ beforeAll(async () => {
   await migrate(tdb.url, MIGRATIONS_DIR);
   sql = postgres(tdb.url, { max: 1, onnotice: () => {} });
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1','c1','oauth_token',${Buffer.from("x")}), ('c2','c2','oauth_token',${Buffer.from("x")})`;
+  await sql`insert into handles (handle, kind) values ('lead','agent'),('kid-abcd','agent')`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id) values ('lead','lead','Lead','t','{}','local','c1')`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
             values ('kid','kid-abcd','Kid','t','{}','local','c2','ephemeral','lead', now(), 'lead')`;

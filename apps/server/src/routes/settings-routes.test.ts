@@ -5,6 +5,7 @@ import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -107,6 +108,7 @@ test("projects: a project granted only to a terminated spawned agent can be remo
     201,
   );
   const lead = await t.seedAgent({ slug: "lead-t" });
+  await claimTestHandle(t.db, "kid-term-ab12", "agent");
   await t.db.insert(schema.agents).values({
     id: "kid-term",
     slug: "kid-term-ab12",

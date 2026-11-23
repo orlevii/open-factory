@@ -6,6 +6,7 @@ import { type AgentRow, schema } from "@open-factory/db";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { templateCopyDir } from "../workspace/paths.ts";
 import { SpawnService } from "./spawn-service.ts";
@@ -117,6 +118,7 @@ const agentCount = async (app: T) => (await app.db.select().from(schema.agents))
 
 /** A spawned child row inserted directly (no folder): for the live count and the rate. */
 async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?: boolean } = {}) {
+  await claimTestHandle(app.db, slug, "agent");
   await app.db.insert(schema.agents).values({
     id: randomUUID(),
     slug,

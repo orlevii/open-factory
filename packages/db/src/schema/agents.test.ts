@@ -17,6 +17,7 @@ afterAll(async () => {
 
 test("agent tables exist; seq is unique per agent; deleting an agent cascades", async () => {
   const { sql } = h;
+  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('other','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
@@ -50,6 +51,7 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
 
 test("0003: system rows need no user and a notice; user rows need a user and no notice", async () => {
   const { sql } = h;
+  await sql`insert into handles (handle, kind) values ('al','user'),('third','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u2', 'Al', 'al@x.io', 'al')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c2', 'two', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)

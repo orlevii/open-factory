@@ -81,13 +81,13 @@ test("titles by kind", () => {
   ).toBe("T-40 was cancelled");
   expect(
     notificationTitle(
-      item(1, { kind: "message", task: undefined, link: { kind: "session", agentSlug: "dev" } }),
+      item(1, { kind: "notice", task: undefined, link: { kind: "session", agentSlug: "dev" } }),
     ),
   ).toBe("@dev messaged you");
   expect(
     notificationTitle(
       item(1, {
-        kind: "message",
+        kind: "notice",
         from: { kind: "factory", name: "factory" },
         about: "ops",
         task: undefined,

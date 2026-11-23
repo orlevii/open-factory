@@ -7,6 +7,7 @@ import {
   type Command,
   type ErrorKind,
   formatKey,
+  type InboxItem,
   type MessageAttachment,
   type MessageKind,
   parseCommands,
@@ -93,6 +94,8 @@ export interface MessageLookup {
   dueAt?: string;
 }
 /** One agent's unread messages to a user (I1 §6.7); the route adds the agent's summary. */
+/** How much of a message body `plainPreview` reads: generous, so a fence or link closing late still renders. */
+const PREVIEW_PREFIX = 20_000;
 export type UnreadChat = {
   slug: string;
   unread: number;
@@ -101,7 +104,7 @@ export type UnreadChat = {
 export interface InboxEntry {
   id: string;
   messageId: string;
-  kind: "message" | "mention" | "task_event";
+  kind: InboxItem["kind"];
   read: boolean;
   from: { kind: "agent" | "human" | "factory"; name: string };
   about?: string;
@@ -767,7 +770,8 @@ export class EventStore {
 
   /**
    * Boot (spec §5.7 step 3): turns still open when the server stopped are closed as `factory_restarted`, errors.
-   * In the same transaction each agent's delivered, unstamped `message` rows are stamped with its turn (I1 §6.3): the
+   * In the same transaction each agent's delivered, unstamped `message` rows written after its previous closed turn
+   * ended are stamped with its turn (I1 §6.3; older ones belong to no turn): the
    * starting batch is stamped only at close, so a restart leaves it unstamped. Absorbed rows were stamped when written.
    * Returns the ids of the agents that had one.
    */
@@ -782,7 +786,9 @@ export class EventStore {
         await tx.execute(sql`
           update messages set delivered_turn_id = ${t.id}
           where to_agent_id = ${t.agentId} and kind = 'message' and state = 'delivered'
-            and delivered_turn_id is null and delivered_event_seq is not null`);
+            and delivered_turn_id is null and delivered_event_seq is not null
+            and delivered_event_seq > coalesce((select max(end_event_seq) from turns
+              where agent_id = ${t.agentId} and ended_at is not null and id <> ${t.id}), 0)`);
         await this.closeTurn(t.id, { isError: true, terminalReason: "factory_restarted" }, tx);
       }
       return [...new Set(open.map((t) => t.agentId))];
@@ -1393,7 +1399,7 @@ export class EventStore {
       items.push({
         id: r.item.id,
         messageId: r.m.id,
-        kind: r.item.kind,
+        kind: r.item.kind === "message" ? "notice" : r.item.kind,
         read: r.item.readAt !== null,
         from: r.fromHandle
           ? { kind: "human", name: r.fromHandle }
@@ -1435,7 +1441,7 @@ export class EventStore {
     before?: string,
     limit = 50,
     o: { unread?: boolean } = {},
-  ): Promise<{ chats: UnreadChat[]; items: InboxEntry[]; nextCursor: string | null }> {
+  ): Promise<{ chats?: UnreadChat[]; items: InboxEntry[]; nextCursor: string | null }> {
     let cursor: SQL | undefined;
     if (before) {
       const [at, id] = Buffer.from(before, "base64url").toString().split("|");
@@ -1446,7 +1452,7 @@ export class EventStore {
       and(
         eq(inboxItems.userId, userId),
         // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A factory notice
-        // (`system`) has no chat, so it stays an item.
+        // (`system`) has no chat: it is an item of kind `notice`.
         ne(messages.kind, "message"),
         cursor,
         o.unread ? isNull(inboxItems.readAt) : undefined,
@@ -1461,7 +1467,8 @@ export class EventStore {
       rows.length > limit && last
         ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
         : null;
-    return { chats: await this.unreadChats(userId), items, nextCursor };
+    // `chats` is unpaginated: only the first page carries it.
+    return { ...(before ? {} : { chats: await this.unreadChats(userId) }), items, nextCursor };
   }
 
   /**
@@ -1481,7 +1488,7 @@ export class EventStore {
         .selectDistinctOn([fa.slug], {
           slug: fa.slug,
           messageId: messages.id,
-          body: sql<string>`left(${messages.body}, 2000)`,
+          body: sql<string>`left(${messages.body}, ${PREVIEW_PREFIX})`,
           urgent: messages.urgent,
           createdAt: sql<string>`to_char(${inboxItems.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
         })

@@ -2694,8 +2694,10 @@ export class AgentRuntime {
             await this.append(null, { type: "mcp_unavailable", status });
           }
         }
-        for (const batch of this.inFlight.splice(0))
-          await this.d.store.markDelivered(batch.map((m) => m.row.id));
+        const flight = this.inFlight.splice(0);
+        for (const batch of flight) await this.d.store.markDelivered(batch.map((m) => m.row.id));
+        // A batch written before session_started was pending until now (I1 §6.5): its sender's chat changed.
+        this.chatChanged(flight.flatMap((batch) => batch.map((m) => m.row.fromUserId)));
         break;
       }
       case "turn_started":
@@ -2945,7 +2947,10 @@ export class AgentRuntime {
     this.rawInFlight = false;
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
-    const unansweredIds = this.awaiting.flatMap((b) => b.ids); // stamped by the close below (I1 §6.3)
+    // Stamped by the close below (I1 §6.3). A batch written before session_started is still in `rolledBack`: it was
+    // never delivered, goes back to pending (or is rejected) and gets no stamp or turn of its own.
+    const rolledIds = new Set(rolledBack.flat().map((m) => m.row.id));
+    const unansweredIds = this.awaiting.flatMap((b) => b.ids).filter((id) => !rolledIds.has(id));
     const closingBatches = [...this.awaiting, ...this.absorbed];
     const credentialId = this.procCredentialId ?? null; // cleared below, the close still records it
     this.awaiting = [];

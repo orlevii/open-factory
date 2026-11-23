@@ -1,5 +1,10 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { type AgentStatus, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
+import {
+  type AgentStatus,
+  MAX_BODY_BYTES,
+  type QueueItem,
+  type RefusalCode,
+} from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { AgentStartError } from "../agents/errors.ts";
@@ -22,18 +27,6 @@ import { HUMANS_SEND_REFUSAL, resolveName } from "./principals.ts";
 export type Sender =
   | { agentId: string; toolUseId?: string | null }
   | { userId: string; handle: string };
-
-export type RefusalCode =
-  | "not_found"
-  | "reserved"
-  | "channel"
-  | "self"
-  | "archived"
-  | "terminated"
-  | "disabled"
-  | "human"
-  | "invalid_attachment"
-  | "too_large";
 
 /** One recipient's outcome (spec §4.4): each succeeds or fails alone. */
 export type RecipientResult =

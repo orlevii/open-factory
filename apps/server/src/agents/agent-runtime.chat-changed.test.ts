@@ -113,3 +113,13 @@ test("queued rows dropped by a committed termination tell their senders", async 
   expect(u1).toContainEqual(frame());
   expect(u2).toEqual([]);
 });
+
+test("session_started tells the sender of a batch written before it that the row is delivered", async () => {
+  await start();
+  await h.send("cold");
+  const before = count(u1);
+  h.driver.last.emit(ev.session());
+  await h.rt.settled();
+  expect(count(u1)).toBeGreaterThan(before);
+  expect(u2).toEqual([]);
+});

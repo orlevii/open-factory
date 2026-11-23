@@ -134,7 +134,7 @@ export const postUndoReadAll = (readAt: string) =>
   });
 
 const fromAgent = (i: InboxItem) =>
-  i.kind === "message" && i.from.kind === "agent" ? i.from.name : null;
+  i.kind === "notice" && i.from.kind === "agent" ? i.from.name : null;
 
 /** Flips `read` for the given ids in every cached inbox view, and moves the unread count by `delta`. With `items`,
  *  each agent-sender's count moves too; without them `byAgent` is left for the refetch. */

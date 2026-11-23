@@ -70,7 +70,7 @@ function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undef
         <TaskBadge taskKey={item.task.key} title={item.task.title} />
       </span>
     );
-  if (item.kind === "message" && !(viewer && item.to === `@${viewer}`))
+  if (item.kind === "notice" && !(viewer && item.to === `@${viewer}`))
     return <span className={`min-w-0 truncate font-mono ${tone}`}>→ {item.to}</span>;
   return null;
 }

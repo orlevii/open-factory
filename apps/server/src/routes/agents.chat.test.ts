@@ -270,6 +270,14 @@ describe("I1 §6.3: the chat thread", () => {
     });
   });
 
+  test("a limit of 0 or 101 is a 400", async () => {
+    for (const limit of ["0", "101"]) {
+      const r = await get(`?limit=${limit}`);
+      expect(r.statusCode, limit).toBe(400);
+      expect(r.json().error.code).toBe("validation_error");
+    }
+  });
+
   test("a human session only: no auth and an agent token are 401; an unknown agent is 404", async () => {
     expect((await get("", null)).statusCode).toBe(401);
     const { token } = s.app.agentTokens.mint(agentId);

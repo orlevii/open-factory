@@ -41,8 +41,9 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
           unread: req.query.unread === "true",
         });
         // The chat rows carry their agent's summary fields (I1 §6.7). The response schema validates and serializes it.
+        const { chats: unread, ...rest } = page;
         const chats = await Promise.all(
-          page.chats.map(async ({ slug, ...rest }) => {
+          (unread ?? []).map(async ({ slug, ...rest }) => {
             const a = await app.agents.summary(slug);
             return {
               ...rest,
@@ -58,7 +59,7 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
             };
           }),
         );
-        return { ...page, chats };
+        return unread ? { ...rest, chats } : rest;
       } catch (err) {
         if (err instanceof InvalidCursorError) throw new FieldError("before", err.message);
         throw err;

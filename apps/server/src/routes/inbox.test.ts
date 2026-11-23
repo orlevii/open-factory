@@ -151,6 +151,9 @@ test("GET /api/inbox pages items with a cursor; a bad cursor or limit is a 400, 
   const p2 = (await get(`/api/inbox?limit=2&before=${p1.nextCursor}`)).json();
   expect(p2.items.map((i: { preview: string }) => i.preview)).toEqual(["m0"]);
   expect(p2.nextCursor).toBeNull();
+  expect(p1.chats).toEqual([]);
+  expect("chats" in p2).toBe(false); // only the first page carries the chats
+  for (const i of [...p1.items, ...p2.items]) expect(i.kind).toBe("notice"); // never "message" (I1 §6.7)
 
   const forged = (s: string) => Buffer.from(s).toString("base64url");
   for (const before of [

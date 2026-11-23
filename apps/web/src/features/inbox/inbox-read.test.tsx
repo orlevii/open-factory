@@ -29,7 +29,7 @@ const at = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 const item = (n: number, o: Record<string, unknown> = {}) => ({
   id: `i${n}`,
   messageId: `m${n}`,
-  kind: "message",
+  kind: "notice",
   read: false,
   from: { kind: "agent", name: "dev" },
   to: "@bob",

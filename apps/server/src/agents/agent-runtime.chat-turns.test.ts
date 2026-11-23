@@ -87,6 +87,36 @@ test("an exit with a written batch and no turn creates a zero-length errored tur
   expect(await deliveredTurn(m.id)).toBe(turn?.id);
 });
 
+test("an exit before session_started opens no turn and leaves the batch pending, unstamped", async () => {
+  await h.makeRuntime();
+  const before = (await turnRows()).length;
+  const m = await h.send("cold");
+  h.driver.last.exit(1, "boom");
+  await h.rt.settled();
+  expect(await turnRows()).toHaveLength(before);
+  expect(await deliveredTurn(m.id)).toBeNull();
+  const [r] = await h.t.sql`select state from messages where id = ${m.id}`;
+  expect(r?.state).toBe("pending");
+});
+
+test("closeDanglingTurns leaves a stale delivered row from before an earlier closed turn unstamped", async () => {
+  await idle();
+  const stale = await h.send("stale");
+  // Simulate a row delivered, then the server dying with no turn open: delivered and unstamped.
+  await h.t
+    .sql`update messages set state = 'delivered', delivered_turn_id = null where id = ${stale.id}`;
+  h.driver.last.emit(...ev.fullTurn()); // a later turn closes normally (its end_event_seq is past the row)
+  await h.rt.settled();
+  await h.t.sql`update messages set delivered_turn_id = null where id = ${stale.id}`;
+  const m = await h.send("in flight");
+  h.driver.last.emit(ev.turn());
+  await h.rt.settled();
+  await h.store.closeDanglingTurns();
+  const turnId = (await turnRows()).at(-1)?.id ?? "";
+  expect(await deliveredTurn(m.id)).toBe(turnId);
+  expect(await deliveredTurn(stale.id)).toBeNull();
+});
+
 test("closeDanglingTurns stamps the dangling turn's delivered messages", async () => {
   await idle();
   const m = await h.send("in flight");

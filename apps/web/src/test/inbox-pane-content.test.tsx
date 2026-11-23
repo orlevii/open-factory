@@ -41,7 +41,7 @@ type Over = Record<string, unknown>;
 const item = (n: number, o: Over = {}) => ({
   id: `i${n}`,
   messageId: `m${n}`,
-  kind: "message",
+  kind: "notice",
   read: false,
   from: { kind: "agent", name: "dev" },
   to: "@alice",

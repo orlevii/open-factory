@@ -328,7 +328,12 @@ test("the human REST send resolves only agents: each refused target is its own r
   await h.app.agents.archive("bob");
   const r = await post("bob");
   expect(r.json().results).toEqual([
-    { to: "@bob", status: "refused", reason: "@bob is archived and can't receive messages." },
+    {
+      to: "@bob",
+      status: "refused",
+      reason: "@bob is archived and can't receive messages.",
+      code: "archived",
+    },
   ]);
   expect(await pendingOf("bob")).toEqual([]);
   expect(await h.sql`select id from inbox_items`).toEqual([]);

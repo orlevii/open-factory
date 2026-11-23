@@ -179,7 +179,12 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
       payload: { to: ["dev"], body: "hi", urgent: false },
     });
     expect(sent.json().results).toEqual([
-      { to: "@dev", status: "refused", reason: "@dev is archived and can't receive messages." },
+      {
+        to: "@dev",
+        status: "refused",
+        reason: "@dev is archived and can't receive messages.",
+        code: "archived",
+      },
     ]);
     for (const [url, payload] of [
       ["/api/agents/dev/compact", {}],

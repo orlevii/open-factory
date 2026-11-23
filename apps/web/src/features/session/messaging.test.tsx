@@ -368,7 +368,7 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
 const inboxItem = (id: string, messageId: string) => ({
   id,
   messageId,
-  kind: "message",
+  kind: "notice",
   read: false,
   from: { kind: "agent", name: "dev" },
   to: "@alice",

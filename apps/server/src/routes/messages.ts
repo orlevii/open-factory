@@ -64,7 +64,8 @@ export const messagesRoutes: FastifyPluginAsyncZod = async (app) => {
         if (r.code === "too_large") throw new ApiError(400, "validation_error", r.reason);
       }
       const out: SendMessagesResponse["results"] = results.map((r) => {
-        if (r.status === "refused") return { to: r.to, status: "refused", reason: r.reason };
+        if (r.status === "refused")
+          return { to: r.to, status: "refused", reason: r.reason, code: r.code };
         if (r.status === "start_failed")
           return { to: r.to, status: "start_failed", id: r.id, reason: r.note };
         return {

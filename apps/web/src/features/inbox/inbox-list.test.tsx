@@ -29,7 +29,7 @@ afterEach(() => {
 const item = (n: number, o: Record<string, unknown> = {}) => ({
   id: `i${n}`,
   messageId: `m${n}`,
-  kind: "message",
+  kind: "notice",
   read: true,
   from: { kind: "agent", name: "dev" },
   to: "@bob",

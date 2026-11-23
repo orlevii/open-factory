@@ -52,6 +52,7 @@ test("a human recipient is refused", async () => {
       to: "@sam",
       status: "refused",
       reason: "@sam is a person; you can message agents only.",
+      code: "human",
     },
   ]);
   expect(await rowsOf("to a person")).toEqual([]);
@@ -111,6 +112,29 @@ test("a retry with the same clientMessageId returns every row's result and write
     first.json().results.map((r: { to: string; id: string }) => [r.to, r.id]),
   );
   expect(await rowsOf("retry")).toHaveLength(2);
+});
+
+test("a retry with the same clientMessageId publishes no chat_changed", async () => {
+  const [u] = await s.sql`select id from users where handle = 'or'`;
+  const frames: string[] = [];
+  const off = s.app.bus.subscribeUser(u?.id as string, (m) => frames.push(m.type));
+  const clientMessageId = randomUUID();
+  await post({ to: ["ops"], body: "quiet retry", clientMessageId });
+  await (await s.app.runtimes.bySlug("ops"))?.settled();
+  const first = frames.filter((t) => t === "chat_changed").length;
+  expect(first).toBeGreaterThan(0);
+  await post({ to: ["ops"], body: "quiet retry", clientMessageId });
+  await (await s.app.runtimes.bySlug("ops"))?.settled();
+  expect(frames.filter((t) => t === "chat_changed")).toHaveLength(first);
+  off();
+});
+
+test("a refused recipient carries its code", async () => {
+  const res = await post({ to: ["old", "nobody"], body: "codes" });
+  expect(res.json().results.map((r: { code: string }) => r.code)).toEqual([
+    "terminated",
+    "not_found",
+  ]);
 });
 
 test("a human session only: no auth and an agent token are 401", async () => {

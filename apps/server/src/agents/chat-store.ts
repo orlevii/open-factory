@@ -61,15 +61,6 @@ export class ChatStore {
       .limit(limit);
   }
 
-  /** The id's row when it's in this thread. */
-  async hasMessage(t: ChatThread, id: string): Promise<boolean> {
-    const [r] = await this.db
-      .select({ id: messages.id })
-      .from(messages)
-      .where(and(eq(messages.id, id), this.threadWhere(t)));
-    return Boolean(r);
-  }
-
   async page(t: ChatThread, q: ChatQuery): Promise<ChatSlice | null> {
     const base = this.threadWhere(t);
     const before = (at: string, id: string) =>

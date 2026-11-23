@@ -87,7 +87,7 @@ export const fetchMessage = (id: string) =>
 
 /**
  * `POST /api/messages` to one agent. U3 §13.2: `clientMessageId` makes a retry idempotent. The recipient's result
- * is the call's: a refusal or a failed start throws as the per-agent route's errors did.
+ * is the call's: a refusal or a failed start throws; a queued one without an item resolves to nothing.
  */
 export const postMessage = async (
   slug: string,
@@ -107,15 +107,10 @@ export const postMessage = async (
     ...(o.signal ? { signal: o.signal } : {}),
   });
   const r = results[0];
-  if (r?.status === "queued" && r.item) return r.item;
+  if (r?.status === "queued") return r.item; // no item: queued, with nothing to show in the queue
   const reason = r?.reason ?? "The message wasn't sent.";
   if (r?.status === "start_failed") throw new ApiError(503, "agent_start_failed", reason);
-  const code = /archived/.test(reason)
-    ? "agent_archived"
-    : /terminated/.test(reason)
-      ? "agent_terminated"
-      : "agent_not_found";
-  throw new ApiError(409, code, reason);
+  throw new ApiError(409, `agent_${r?.code ?? "not_found"}`, reason);
 };
 
 /** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).

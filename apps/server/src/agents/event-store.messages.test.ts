@@ -132,6 +132,7 @@ test("inboxPage pages newest first with a cursor; chat messages come back as cha
   const p1 = await store.inboxPage("u1", undefined, 2);
   expect(p1.items.map((i) => i.messageId)).toEqual([ids[2], ids[1]]);
   expect(p1.nextCursor).not.toBeNull();
+  expect(p1.items.every((i) => i.kind === "notice")).toBe(true); // a factory notice is `notice`, never `message`
   expect(p1.chats).toEqual([
     expect.objectContaining({
       slug: "dev",
@@ -142,6 +143,8 @@ test("inboxPage pages newest first with a cursor; chat messages come back as cha
   const p2 = await store.inboxPage("u1", p1.nextCursor ?? undefined, 2);
   expect(p2.items.map((i) => i.messageId)).toEqual([ids[0]]);
   expect(p2.nextCursor).toBeNull();
+  expect(p2.chats).toBeUndefined(); // only the first page carries the chats
+  expect([...p1.items, ...p2.items].some((i) => (i.kind as string) === "message")).toBe(false);
 });
 
 test("markPending clears delivered_event_seq; rejected is a state", async () => {
@@ -281,8 +284,22 @@ test("inbox preview is code-point safe", async () => {
     body: "😀".repeat(300),
     urgent: false,
   });
-  const preview = (await store.inboxPage("u1")).chats[0]?.latest.preview ?? "";
+  const preview = (await store.inboxPage("u1")).chats?.[0]?.latest.preview ?? "";
   expect(Array.from(preview)).toHaveLength(280);
+});
+
+test("inbox preview reads past 2000 characters, so a late-closing fence still renders", async () => {
+  await t.sql`delete from messages where to_user_id is not null or to_all_humans`;
+  await store.createHumanMessage({
+    kind: "message",
+    recipients: ["@or"],
+    fromAgentId: "a1",
+    to: { userId: "u1" },
+    body: `[${"w".repeat(2500)}](https://x.io)`,
+    urgent: false,
+  });
+  const preview = (await store.inboxPage("u1")).chats?.[0]?.latest.preview ?? "";
+  expect(preview).toBe("w".repeat(280)); // the link text, not "[www..." cut before its closing "](...)"
 });
 
 test("markRejected only touches pending rows", async () => {

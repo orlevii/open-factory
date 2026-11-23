@@ -26,7 +26,8 @@ export const chatRowSchema = z.object({
 });
 export type ChatRow = z.infer<typeof chatRowSchema>;
 export const inboxPageSchema = z.object({
-  chats: z.array(chatRowSchema),
+  /** The unread chats: only on the first page (no `before`), unpaginated. */
+  chats: z.array(chatRowSchema).optional(),
   items: z.array(inboxItemSchema),
   nextCursor: z.string().nullable(),
 });

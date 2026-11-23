@@ -242,7 +242,7 @@ export const Composer = memo(function SessionComposer({
           ? postInput(slug, { text: body, clientMessageId }, abort.signal)
           : postMessage(slug, body, { urgent, clientMessageId, signal: abort.signal }));
         // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
-        onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
+        if (item) onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
         onSent?.();
       } catch (e) {
         if (e instanceof ApiError && e.code === "agent_start_failed") {

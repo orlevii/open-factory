@@ -3,6 +3,7 @@ import {
   agentCommandsResponseSchema,
   apiFetch,
   type Command,
+  classifyInput,
   deniedReason,
   type ServerMessage,
 } from "@open-factory/shared";
@@ -30,10 +31,30 @@ export const commandsQueryOptions = (slug: string) =>
  *  is open (`watch`) fetches it again. Called from the socket's global handler, so a closed menu costs
  *  nothing and the session's own reducer never sees the frame. */
 export function invalidateCommands(qc: QueryClient, m: ServerMessage): void {
-  if (m.type === "agent_commands_changed")
-    void qc.invalidateQueries({ queryKey: ["agent-commands", m.agent] });
+  if (m.type !== "agent_commands_changed") return;
+  const filters = { queryKey: ["agent-commands", m.agent] };
+  const invalidate = () => void qc.invalidateQueries(filters);
+  // A fetch under way (a menu opened just before the start) was answered with the old list, and its
+  // arrival would reset the invalidation: cancel it first, so the invalidation fetches again.
+  if (qc.isFetching(filters)) void qc.cancelQueries(filters).then(invalidate);
+  else invalidate();
 }
 
+/** The lowercase names and aliases of a list, built once per data object (a refetch makes a new one). */
+const knownByData = new WeakMap<AgentCommandsResponse, ReadonlySet<string>>();
+function knownNames(data: AgentCommandsResponse): ReadonlySet<string> {
+  let known = knownByData.get(data);
+  if (!known) {
+    known = new Set(
+      data.commands.flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase())),
+    );
+    knownByData.set(data, known);
+  }
+  return known;
+}
+
+/** A command with more lines: refused in the slot, as the server would. */
+export const ONE_LINE = "A command must be one line.";
 export const EMPTY_COMMANDS = "No commands loaded yet. They appear after the agent starts.";
 export const FROM_TEMPLATE = "From template";
 /** The list couldn't be fetched: said in the menu, rather than a menu that never opens. */
@@ -179,7 +200,14 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
       const m = FIRST_TOKEN.exec(text);
       if (!m?.[1] || (m[2] === "" && !sending)) return undefined;
       const reason = deniedReason(m[1]);
-      return reason ? { kind: "refusal", text: reason } : undefined;
+      if (reason) return { kind: "refusal", text: reason };
+      // The server's rule, before sending: one command is one line (a trailing newline is trimmed).
+      const data = read();
+      if (data) {
+        const cls = classifyInput(text.trimEnd(), knownNames(data));
+        if (cls.kind === "command" && cls.multiline) return { kind: "refusal", text: ONE_LINE };
+      }
+      return undefined;
     },
     // While the menu is open: the list loads if the prefetch hasn't (or is stale), an invalidation
     // (the agent started) fetches it again, and its arrival re-reads the rows without a keystroke.

@@ -278,12 +278,7 @@ export const Composer = memo(function SessionComposer({
   // has no `@`: what it sends is what Claude reads.
   const at = useMentionSource(SESSION_AT_LABEL);
   const slash = useCommandSource(slug);
-  // The list also loads where this composer stands outside a session view (the inbox pane); in a
-  // session the view's own prefetch already started it, and this one is deduped.
-  const qc = useQueryClient();
-  useEffect(() => {
-    if (inSession) void qc.prefetchQuery(commandsQueryOptions(slug));
-  }, [qc, slug, inSession]);
+  // The session view prefetches the list; an opening menu fetches it if that hasn't (`watch`).
   const completions = useMemo(() => (inSession ? { slash } : { at }), [at, slash, inSession]);
 
   // Messages still queue; only a new session delivers them (UI design §3.6).
@@ -338,6 +333,7 @@ export const Composer = memo(function SessionComposer({
       hintMode={hintMode}
       completions={completions}
       note={note}
+      reserveNote={inSession}
       noFilesNote={inSession ? RAW_FILES_NOTE : undefined}
       recall={recall}
     />

@@ -117,6 +117,7 @@ export function CommentComposer({
         onSubmit={onSubmit}
         completions={completions}
         note={note}
+        reserveNote
         preview
         pendingLabel="Posting…"
       />

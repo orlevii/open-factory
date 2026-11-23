@@ -186,6 +186,9 @@ export type ComposerProps = {
   hintMode?: HintMode;
   /** The one external note slot (who it goes to, why messages wait, a refusal). */
   note?: ComposerNote;
+  /** Below md the note line is reserved under the frame only for composers that show notes; the
+   *  others get it when an error or a refusal needs it. */
+  reserveNote?: boolean;
   /** Sending waits (typing works). */
   waiting?: boolean;
   /** A muted status line while a submit is pending ("Posting…" for comments, which have no
@@ -241,6 +244,7 @@ export const Composer = memo(function Composer({
   noFilesNote = FILES_NOTE,
   hintMode,
   note,
+  reserveNote,
   waiting = false,
   pendingLabel,
   validate,
@@ -728,6 +732,8 @@ export const Composer = memo(function Composer({
     ) : (
       <span role="status">{slotNote.text}</span>
     );
+  // Truncated text stays readable: the slot carries its plain text (a refusal's reason is why Send holds).
+  const slotTitle = typeof slotNote?.text === "string" ? slotNote.text : undefined;
   const describedBy = [hintId, phone && slotNote && lineId].filter(Boolean).join(" ") || undefined;
   // 2 → 6 lines or 35svh below md, 2 → 12 lines or 40svh from md; then it scrolls (U3 §13.1).
   const growth =
@@ -924,7 +930,12 @@ export const Composer = memo(function Composer({
                 id={hintId}
                 data-composer-hint
                 aria-live="polite"
-                className="h-5 min-w-0 flex-1 basis-0 truncate px-1.5 text-[0.8125rem] leading-5 text-muted-foreground"
+                title={slotTitle}
+                className={cn(
+                  "h-5 flex-1 basis-0 truncate px-1.5 text-[0.8125rem] leading-5 text-muted-foreground",
+                  // A reason is why Send holds: it is the last thing the toolbar cuts.
+                  slotNote && slotNote.kind !== "hint" ? "min-w-[12rem]" : "min-w-0",
+                )}
               >
                 {slotBody ?? (hintShown ? <Hint mode={hintMode} compacting={compacting} /> : null)}
               </p>
@@ -1008,10 +1019,11 @@ export const Composer = memo(function Composer({
             </div>
           </div>
         </div>
-        {phone ? (
+        {phone && (reserveNote || slotBody !== undefined) ? (
           // Below md the slot is one line reserved under the frame (DESIGN §9.3).
           <p
             id={lineId}
+            title={slotTitle}
             data-composer-note-line
             aria-live="polite"
             className="mt-1 h-[1.125rem] truncate text-[0.8125rem] leading-[1.125rem] text-muted-foreground"

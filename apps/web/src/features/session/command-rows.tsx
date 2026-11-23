@@ -20,7 +20,7 @@ const RAW_NOTE = "text-muted-foreground";
  * Raw input a human sent (I1 §5): a card with the speaker line and "· raw", the text as typed
  * (`pre-wrap`, mono when it is a slash command), clamped with Show all. The same component serves the
  * block from "Sending" to the `operator_input` row, so `pending` changes while the node stays: sending
- * (the muted body, "Sending…" once slow), queued (dashed, "Runs after the current turn" once not
+ * (the muted body, "Sending…" once slow), queued (dashed, "Runs after the current turn." once not
  * young, Cancel on yours) and delivered (no `pending`).
  */
 export function CommandBlock({
@@ -49,7 +49,7 @@ export function CommandBlock({
   ) : queued && !young ? (
     <span className="flex items-center gap-1 text-muted-foreground">
       <Clock aria-hidden="true" className="size-3.5" />
-      Runs after the current turn
+      Runs after the current turn.
     </span>
   ) : null;
   const cancel = pending?.onCancel;

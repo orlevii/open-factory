@@ -4,11 +4,13 @@ import { type CancelledEntry, queueView, type SendingBlock } from "./session-sta
 
 type CommandRow = Extract<Row, { kind: "command" }>;
 
+/** A send without a time sorts after every timestamp. */
+const LAST = "\uffff";
 const NO_ROWS: readonly CommandRow[] = [];
 
 /**
  * The raw sends that have no timeline row yet, as rows for the tail of the timeline's items (I1 §5):
- * queued ones (yours get Cancel) then those still sending. Each is keyed `raw:${clientMessageId}`, the
+ * the queued ones (yours get Cancel) and those still sending, oldest first. Each is keyed `raw:${clientMessageId}`, the
  * key its `operator_input` row gets, so React keeps one node across sending, queued and delivered.
  */
 export function rawTailRows(
@@ -50,5 +52,9 @@ export function rawTailRows(
       pending: { sending: true },
     });
   }
-  return rows.length === 0 ? NO_ROWS : rows;
+  if (rows.length === 0) return NO_ROWS;
+  // Two quick sends can answer out of order: the later one's 202 must not put it above the earlier.
+  return rows.length > 1
+    ? rows.toSorted((a, b) => (a.at || LAST).localeCompare(b.at || LAST))
+    : rows;
 }

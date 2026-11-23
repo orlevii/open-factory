@@ -337,8 +337,10 @@ const echoedBy = (items: QueueItem[]) => items.map((q) => q.clientMessageId);
 function rawLanded(s: SessionState, cid: string): SessionState {
   const queue = s.queue.filter((q) => q.clientMessageId !== cid);
   const block = s.sending.some((b) => b.clientMessageId === cid);
-  if (queue.length === s.queue.length && !block) return s;
-  const next = withEchoes({ ...s, queue }, [cid]);
+  const removed = queue.length !== s.queue.length || block;
+  // An aborted send has neither: the row still lands it, clears its error and hands the key off.
+  const next = withEchoes(removed ? { ...s, queue } : s, [cid]);
+  if (!removed && !s.awaiting.has(cid)) return next;
   return { ...next, handedOff: new Set(next.handedOff).add(rawKey(cid)) };
 }
 
@@ -690,6 +692,8 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       const cid = a.item.clientMessageId;
       const handsOff = cid !== undefined && s.sending.some((b) => b.clientMessageId === cid);
       if (!handsOff && a.live) return s; // the frames are authoritative while connected
+      // Its row already landed: a late 202 must not queue a second node under the same key.
+      if (cid !== undefined && !handsOff && s.landed.has(cid)) return s;
       const next = withEchoes(s, [cid]);
       // A retry's 202 answers with the original, even one you cancelled since: it stays cancelled.
       if (next.queue.some((q) => q.id === a.item.id) || hides(next.cancelled.get(a.item.id)))

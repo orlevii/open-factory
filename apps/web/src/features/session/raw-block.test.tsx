@@ -91,9 +91,9 @@ test("Sending… and Runs after… stay hidden on a fast path", () => {
   act(() => vi.advanceTimersByTime(SLOW_SEND_MS - 50));
   expect(screen.queryByText("Sending…")).toBeNull();
   rerender(view({ pending: rawTailRows([queueItem], [], none, "alice", undefined) }));
-  expect(screen.queryByText("Runs after the current turn")).toBeNull();
+  expect(screen.queryByText("Runs after the current turn.")).toBeNull();
   act(() => vi.advanceTimersByTime(YOUNG_ITEM_MS + 50));
-  expect(screen.getByText("Runs after the current turn")).toBeInTheDocument();
+  expect(screen.getByText("Runs after the current turn.")).toBeInTheDocument();
 });
 
 test("a slow send says Sending…", () => {
@@ -115,4 +115,25 @@ test("Cancel is on your own queued raw block only", () => {
   expect(buttons).toHaveLength(1);
   act(() => buttons[0]?.click());
   expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ id: "q1" }));
+});
+
+test("two sends show oldest first, whatever order they were queued in", () => {
+  const later = {
+    ...(queueItem as object),
+    id: "q2",
+    body: "second",
+    clientMessageId: "c-2",
+    createdAt: new Date(2026, 10, 19, 14, 0, 5).toISOString(),
+  } as never;
+  const early = { ...(queueItem as object), body: "first" } as never;
+  const rows = rawTailRows([later, early], [], new Map(), "alice", undefined);
+  expect(rows.map((r) => r.text)).toEqual(["first", "second"]);
+  const sendingFirst = rawTailRows(
+    [later],
+    [{ ...block, at: new Date(2026, 10, 19, 14, 0, 1).toISOString(), body: "sending" }],
+    new Map(),
+    "alice",
+    undefined,
+  );
+  expect(sendingFirst.map((r) => r.text)).toEqual(["sending", "second"]);
 });

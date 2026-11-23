@@ -8,6 +8,7 @@ import {
   EMPTY_COMMANDS,
   FROM_TEMPLATE,
   invalidateCommands,
+  ONE_LINE,
   rankCommands,
   slashOpensAt,
 } from "./commands";
@@ -268,4 +269,49 @@ test("an open menu fetches the list again when the agent starts", async () => {
   expect(n).toBe(2);
   stop?.();
   vi.unstubAllGlobals();
+});
+
+test("an invalidation cancels a fetch under way, so the old list never wins", async () => {
+  const held: ((r: Response) => void)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          held.push(resolve);
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("x", "AbortError")),
+          );
+        }),
+    ),
+  );
+  const body = (commands: Command[]) =>
+    new Response(JSON.stringify({ commands, source: "session", at: null, stale: false }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const src = commandSource(qc, "dev");
+  const stop = src.watch?.(() => {});
+  await vi.waitFor(() => expect(held).toHaveLength(1)); // the menu's GET, held open
+  invalidateCommands(qc, { type: "agent_commands_changed", agent: "dev" });
+  await vi.waitFor(() => expect(held).toHaveLength(2));
+  held[0]?.(body([cmd("old")])); // answered before the start: too late
+  held[1]?.(body([cmd("fresh")]));
+  await vi.waitFor(() => expect(src.items("").map((i) => i.id)).toEqual(["fresh"]));
+  stop?.();
+  vi.unstubAllGlobals();
+});
+
+test("a known command over several lines is refused before sending; unknown text and compact", () => {
+  respond();
+  const src = commandSource(qc, "dev");
+  expect(src.textNote?.("/context\nfoo")).toEqual({ kind: "refusal", text: ONE_LINE });
+  expect(src.textNote?.("/COST\u2028x")).toEqual({ kind: "refusal", text: ONE_LINE });
+  expect(src.textNote?.("/compact\nfocus")).toEqual({ kind: "refusal", text: ONE_LINE });
+  // A trailing newline is trimmed, an unknown token is text.
+  expect(src.textNote?.("/context\n")).toBeUndefined();
+  expect(src.textNote?.("/Users/or/log.txt\nx")).toBeUndefined();
+  // Before the list loads nothing is known; the server still refuses.
+  qc.clear();
+  expect(commandSource(qc, "dev").textNote?.("/context\nfoo")).toBeUndefined();
 });

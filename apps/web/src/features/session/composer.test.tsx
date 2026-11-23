@@ -927,3 +927,49 @@ test("on a phone the inbox reply's placeholder carries the queued hint while a t
     window.matchMedia = real;
   }
 });
+
+test("the note slot carries a refusal's full text in its title, since the line can be cut", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  expect(hintLine()).not.toHaveAttribute("title");
+  await userEvent.type(box, "/clear ");
+  expect(hintLine()).toHaveAttribute(
+    "title",
+    "/clear isn't available: each agent keeps one session.",
+  );
+});
+
+test("a known command over several lines is refused in the slot and held", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "/context{Shift>}{Enter}{/Shift}more");
+  expect(hintLine()).toHaveTextContent("A command must be one line.");
+  fireEvent.keyDown(box, { key: "Enter" });
+  await tick();
+  expect(inputs()).toEqual([]);
+  await userEvent.clear(box);
+  await userEvent.type(box, "/Users/or/x{Shift>}{Enter}{/Shift}y");
+  expect(hintLine()).not.toHaveTextContent("one line");
+});
+
+test("on a phone the session composer reserves the note line", () => {
+  const real = window.matchMedia;
+  fakeMatchMedia.install(true);
+  try {
+    raw();
+    expect(document.querySelector("[data-composer-note-line]")).not.toBeNull();
+  } finally {
+    window.matchMedia = real;
+  }
+});
+
+test("on a phone the inbox reply reserves no note line", () => {
+  const real = window.matchMedia;
+  fakeMatchMedia.install(true);
+  try {
+    setup(agentSummary());
+    expect(document.querySelector("[data-composer-note-line]")).toBeNull();
+  } finally {
+    window.matchMedia = real;
+  }
+});

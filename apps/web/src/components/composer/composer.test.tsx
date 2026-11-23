@@ -1359,7 +1359,7 @@ test("a fine pointer shows the note in the toolbar slot and the frame never chan
 test("below md the one line is reserved under the frame, with no note in it", () => {
   const restore = onPhone();
   try {
-    const { box, rerender } = setup();
+    const { box, rerender } = setup({ reserveNote: true });
     const line = noteLine() as HTMLElement;
     expect(line).not.toBeNull();
     expect(line).toBeEmptyDOMElement();
@@ -1373,6 +1373,26 @@ test("below md the one line is reserved under the frame, with no note in it", ()
   } finally {
     restore();
   }
+});
+
+test("below md a composer that shows no notes reserves no line until one needs it", () => {
+  const restore = onPhone();
+  try {
+    const { rerender } = setup();
+    expect(noteLine()).toBeNull();
+    rerender({ note: { kind: "refusal", text: "Nope." } });
+    expect(noteLine()).toHaveTextContent("Nope.");
+  } finally {
+    restore();
+  }
+});
+
+test("the slot carries its plain text in a title, so a cut line stays readable", () => {
+  const { rerender } = setup({ note: { kind: "refusal", text: "A long reason." } });
+  expect(slot()).toHaveAttribute("title", "A long reason.");
+  expect(slot()).toHaveClass("min-w-[12rem]"); // a reason is cut last
+  rerender({ note: { kind: "hint", text: "A hint." } });
+  expect(slot()).toHaveClass("min-w-0");
 });
 
 test("one note at a time: error > refusal > conflict > hint", async () => {

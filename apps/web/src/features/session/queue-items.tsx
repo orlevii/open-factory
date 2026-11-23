@@ -27,7 +27,7 @@ const messageReason = (q: QueueItem, fallback: string | undefined) =>
 /** Cancel is for a plain message or a command you sent: never another sender's, a task comment or a
  *  scheduled row (U3 §6.4, §13.3, Q26, Q39, D2). */
 const cancellable = (q: QueueItem, self: string | undefined) =>
-  (q.kind === "message" || q.kind === "command") &&
+  (q.kind === "message" || q.kind === "raw") &&
   self !== undefined &&
   q.from === `@${self}` &&
   q.taskKey === undefined &&
@@ -217,7 +217,7 @@ export const QueueItems = memo(function QueueItems({
           )}
         </OutgoingMessage>
       );
-    if (q.kind === "command")
+    if (q.kind === "raw")
       return (
         <CommandItem
           key={q.id}
@@ -362,7 +362,7 @@ function CancelledLine({
 }) {
   const failed = entry.error !== undefined;
   // A command is cancelled for good: it lived in memory, so there is nothing to restore (Q39).
-  const isCommand = entry.item.kind === "command";
+  const isCommand = entry.item.kind === "raw";
   // The line going under the focus (Undo brought the message back, or a rollback did): focus lands on
   // that message's Cancel, else the composer, never <body>. The cleanup runs before the node is removed.
   const wrap = useRef<HTMLDivElement>(null);

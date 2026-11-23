@@ -375,7 +375,7 @@ test("after a successful Undo focus goes to the restored message's Cancel, else 
 const command = (o: Record<string, unknown>) =>
   ({
     id: "c1",
-    kind: "command",
+    kind: "raw",
     from: "@alice",
     body: "/code-review src/ --fix",
     waitReason: "turn",

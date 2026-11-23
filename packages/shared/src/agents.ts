@@ -90,7 +90,7 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice", "held", "command"]),
+  kind: z.enum(["message", "compact", "notice", "held", "raw"]),
   body: z.string().optional(),
   count: z.number().int().positive().optional(),
   about: z.string().optional(),

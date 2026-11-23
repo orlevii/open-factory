@@ -498,10 +498,10 @@ describe("commands", () => {
     });
   });
 
-  test("command() writes the raw text as one user line", async () => {
+  test("raw() writes the raw text as one user line", async () => {
     const t = new FakeTransport();
     const p = new ClaudeProcess(spec("c"), {}, t);
-    await p.command("/code-review src/");
+    await p.raw("/code-review src/");
     expect(t.writes.at(-1)).toBe(
       '{"type":"user","message":{"role":"user","content":"/code-review src/"}}',
     );

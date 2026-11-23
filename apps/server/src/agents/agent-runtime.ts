@@ -15,7 +15,6 @@ import {
   type AgentStatus,
   type AgentStatusFrame,
   type AnyEvent,
-  commandText,
   type Envelope,
   type ErrorKind,
   errorKindSchema,
@@ -209,23 +208,25 @@ type MessageEntry = {
 };
 type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; createdAt: Date };
 /**
- * U3 §13.3 (Q39): a human's slash command, in memory like a compact. `text` is the raw `/name args` (the allowed
- * entry's name, built here); `userId` is the sender, the only one who may cancel it.
+ * I1 §5.1: raw session input (text or a slash command), in memory like a compact. `text` is written as typed, one user
+ * line with no envelope; `by` is the sender's handle (`@orlevi`); `userId` is the human sender, the only one who may
+ * cancel it (an agent's own entry, `self`, has none).
  */
-type CommandEntry = {
-  kind: "command";
+type RawEntry = {
+  kind: "raw";
   id: string;
   text: string;
-  userId: string;
+  userId?: string;
   by: string;
+  self?: boolean;
   createdAt: Date;
   clientMessageId?: string;
 };
-type Entry = MessageEntry | CompactEntry | CommandEntry;
+type Entry = MessageEntry | CompactEntry | RawEntry;
 /** U3 §13.3: how many written command ids the runtime remembers, so a late Cancel says "already delivered". */
-const WRITTEN_COMMANDS_KEPT = 100;
+const WRITTEN_RAW_KEPT = 100;
 /** U3 §13.3: how many (sender, clientMessageId) dispatches the runtime remembers, so a retry never runs twice. */
-const COMMAND_RETRIES_KEPT = 200;
+const RAW_RETRIES_KEPT = 200;
 
 type Subject = NonNullable<Envelope["subject"]>;
 
@@ -427,12 +428,12 @@ export class AgentRuntime {
   private heldTimer: ReturnType<typeof setTimeout> | undefined;
   private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
-  /** U3 §13.3: a command was written and its turn hasn't ended; nothing is written behind it (like a compact). */
-  private commandInFlight = false;
+  /** I1 §5.1: a raw entry was written and its turn hasn't ended; nothing is written behind it (like a compact). */
+  private rawInFlight = false;
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
-  private readonly writtenCommands = new Map<string, string>();
+  private readonly writtenRaw = new Map<string, string>();
   /** U3 §13.3: `userId \0 clientMessageId` → the dispatch's entry, queued or written (the newest few). */
-  private readonly commandRetries = new Map<string, CommandEntry>();
+  private readonly rawRetries = new Map<string, RawEntry>();
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
   private archived: boolean;
@@ -668,7 +669,7 @@ export class AgentRuntime {
    */
   cancelQueued(messageId: string, userId: string): Promise<QueueItem> {
     return this.apiJob(async () => {
-      const cmd = this.cancelCommand(messageId, userId);
+      const cmd = this.cancelRaw(messageId, userId);
       if (cmd) return cmd;
       const row = await this.d.store.messageRow(messageId);
       assertSender(row, { agentId: this.agent.id, userId });
@@ -689,16 +690,16 @@ export class AgentRuntime {
    * U3 §13.3 (Q39): a held command is the sender's to cancel, with no restore; another user gets `NotSenderError`, and
    * a written one `AlreadyDeliveredError` (for its sender). Undefined when `id` is no command's.
    */
-  private cancelCommand(id: string, userId: string): QueueItem | undefined {
-    const at = this.queue.findIndex((e) => e.kind === "command" && e.id === id);
+  private cancelRaw(id: string, userId: string): QueueItem | undefined {
+    const at = this.queue.findIndex((e) => e.kind === "raw" && e.id === id);
     const entry = this.queue[at];
-    if (entry?.kind === "command") {
-      if (entry.userId !== userId) throw new NotSenderError();
+    if (entry?.kind === "raw") {
+      if (entry.userId === undefined || entry.userId !== userId) throw new NotSenderError();
       this.queue.splice(at, 1);
       this.publishQueue();
       return this.itemOf(entry);
     }
-    const sender = this.writtenCommands.get(id);
+    const sender = this.writtenRaw.get(id);
     if (sender === undefined) return undefined;
     if (sender !== userId) throw new NotSenderError();
     throw new AlreadyDeliveredError();
@@ -791,48 +792,50 @@ export class AgentRuntime {
   }
 
   /**
-   * U3 §13.3: a human's slash command. The caller has resolved `name` against the allowed set; the raw text is built
-   * here from that name, with `args` as data. Held until no turn is open, written on its own, and a barrier until its
-   * turn ends. A retry with the same sender and `clientMessageId` returns the queued item.
+   * I1 §5.1: raw session input. The caller has classified and neutralised `text`. Held until no turn is open, written
+   * as one user line with no envelope, and a barrier until its turn ends. A retry with the same sender and
+   * `clientMessageId` returns the queued item.
    */
-  async command(c: {
-    name: string;
-    args: string;
-    userId: string;
-    byHandle: string;
+  async rawInput(c: {
+    text: string;
+    by: string;
+    userId?: string;
     clientMessageId?: string;
+    self?: boolean;
   }): Promise<QueueItem> {
-    const entry: CommandEntry = {
-      kind: "command",
+    const entry: RawEntry = {
+      kind: "raw",
       id: randomUUID(),
-      text: commandText(c.name, c.args),
-      userId: c.userId,
-      by: c.byHandle,
+      text: c.text,
+      by: c.by,
       createdAt: new Date(),
+      ...(c.userId ? { userId: c.userId } : {}),
+      ...(c.self ? { self: true } : {}),
       ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
       // A retry (a lost 202) returns the earlier dispatch, queued, written or cancelled, and writes nothing.
-      const retryKey = c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
-      const dup = retryKey ? this.commandRetries.get(retryKey) : undefined;
+      const retryKey =
+        c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
+      const dup = retryKey ? this.rawRetries.get(retryKey) : undefined;
       if (dup) return this.itemOf(dup);
-      if (this.proc && !this.proc.command) throw new CommandsUnsupportedError();
+      if (this.proc && !this.proc.raw) throw new CommandsUnsupportedError();
       this.queue.push(entry);
       if (retryKey) {
-        this.commandRetries.set(retryKey, entry);
-        if (this.commandRetries.size > COMMAND_RETRIES_KEPT) {
-          const [oldest] = this.commandRetries.keys();
-          if (oldest !== undefined) this.commandRetries.delete(oldest);
+        this.rawRetries.set(retryKey, entry);
+        if (this.rawRetries.size > RAW_RETRIES_KEPT) {
+          const [oldest] = this.rawRetries.keys();
+          if (oldest !== undefined) this.rawRetries.delete(oldest);
         }
       }
       this.publishQueue();
-      await this.wakeInline("command");
-      // A process started just now that can't write commands: take it back rather than drop it later.
-      if (this.proc && !this.proc.command) {
+      await this.wakeInline("raw");
+      // A process started just now that can't write raw input: take it back rather than drop it later.
+      if (this.proc && !this.proc.raw) {
         this.queue = this.queue.filter((e) => e !== entry);
-        if (retryKey) this.commandRetries.delete(retryKey);
+        if (retryKey) this.rawRetries.delete(retryKey);
         this.publishQueue();
         throw new CommandsUnsupportedError();
       }
@@ -855,8 +858,8 @@ export class AgentRuntime {
       if (this.hold) return;
       // U3 §13.3 (review M1): a written command whose turn never opened has nothing to interrupt, and its turn_end may
       // never come; Stop ends its barrier so the queue moves again.
-      if (this.proc && this.commandInFlight && !this.openTurnId) {
-        this.commandInFlight = false;
+      if (this.proc && this.rawInFlight && !this.openTurnId) {
+        this.rawInFlight = false;
         await this.append(null, { type: "control", cmd: "interrupt", by: `@${c.byHandle}` });
         this.publishQueue();
         await this.flush();
@@ -1466,7 +1469,7 @@ export class AgentRuntime {
         this.inFlight.length ||
         this.hold ||
         this.compactInFlight ||
-        this.commandInFlight ||
+        this.rawInFlight ||
         this.stopping,
     );
   }
@@ -1647,7 +1650,7 @@ export class AgentRuntime {
       this.inFlight.length > 0 ||
       this.awaiting.length > 0 ||
       this.compactInFlight ||
-      this.commandInFlight ||
+      this.rawInFlight ||
       Boolean(this.hold) ||
       this.nonAmbient() > 0 ||
       this.owedNotifications > 0
@@ -1836,7 +1839,7 @@ export class AgentRuntime {
         Boolean(this.openTurnId) ||
         this.awaiting.length > 0 ||
         this.compactInFlight ||
-        this.commandInFlight,
+        this.rawInFlight,
       credentialPaused: this.credentialPaused(),
       hasPendingWork: this.hasDeliverable(),
       queuedWake: this.slots.isQueued(this.agent.id),
@@ -1864,13 +1867,13 @@ export class AgentRuntime {
           // U3 §6.3: a Stop (or urgent send) is waiting for the interrupted turn's result.
           ...(this.hold ? { waitReason: "stopping" as const } : {}),
         }
-      : e.kind === "command"
+      : e.kind === "raw"
         ? {
             id: e.id,
-            kind: "command",
+            kind: "raw",
             body: e.text,
-            from: `@${e.by}`,
-            fromKind: "human",
+            from: e.by,
+            fromKind: e.self ? "agent" : "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
             ...(this.proc && this.turnOpen() ? { waitReason: "turn" as const } : {}),
@@ -2675,7 +2678,7 @@ export class AgentRuntime {
         await this.oweNoticeIfCutOff();
         if (e.command === "compact") this.compactInFlight = false;
         // U3 §13.3: the command's turn (the first origin-less one after the write) ends its barrier.
-        if (!e.originKind) this.commandInFlight = false;
+        if (!e.originKind) this.rawInFlight = false;
         if (e.originKind === "task-notification")
           this.owedNotifications = Math.max(0, this.owedNotifications - 1);
         this.armOwedBound();
@@ -2832,7 +2835,7 @@ export class AgentRuntime {
     this.turnStartedAt = undefined;
     this.releaseHold();
     this.compactInFlight = false;
-    this.commandInFlight = false;
+    this.rawInFlight = false;
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
     this.awaiting = [];
@@ -3571,7 +3574,7 @@ export class AgentRuntime {
       !this.credentialPaused() &&
       !this.hold &&
       !this.compactInFlight &&
-      !this.commandInFlight &&
+      !this.rawInFlight &&
       this.queue.length
     ) {
       const head = this.queue[0];
@@ -3595,9 +3598,9 @@ export class AgentRuntime {
         this.publishQueue();
         break;
       }
-      if (head.kind === "command") {
+      if (head.kind === "raw") {
         if (this.openTurnId || this.awaiting.length || this.inFlight.length) break;
-        await this.writeCommand(head);
+        await this.writeRaw(head);
         break;
       }
       const batch: MessageEntry[] = [];
@@ -3630,31 +3633,37 @@ export class AgentRuntime {
   }
 
   /**
-   * U3 §13.3: writes the head command raw, on its own, then sets the barrier and records `control{command}`. A
-   * rejected write leaves it at the head. A process without `command()` (dispatch refuses one already running) can't
-   * run it: it is dropped with an error log rather than blocking the queue.
+   * I1 §5.1: writes the head raw entry as one user line, on its own, then sets the barrier and records
+   * `operator_input`. A rejected write leaves it at the head. A process without `raw()` can't take it: it is dropped
+   * with an error log rather than blocking the queue.
    */
-  private async writeCommand(head: CommandEntry): Promise<void> {
+  private async writeRaw(head: RawEntry): Promise<void> {
     if (!this.proc) return;
     this.queue.shift();
-    if (!this.proc.command) {
-      this.d.log.error({ agent: this.agent.slug }, "the harness can't run slash commands; dropped");
+    if (!this.proc.raw) {
+      this.d.log.error({ agent: this.agent.slug }, "the harness can't take raw input; dropped");
       this.publishQueue();
       return;
     }
     try {
-      await this.proc.command(head.text);
+      await this.proc.raw(head.text);
     } catch {
       this.queue.unshift(head);
       return;
     }
-    this.commandInFlight = true;
-    this.writtenCommands.set(head.id, head.userId);
-    if (this.writtenCommands.size > WRITTEN_COMMANDS_KEPT) {
-      const [oldest] = this.writtenCommands.keys();
-      if (oldest !== undefined) this.writtenCommands.delete(oldest);
+    this.rawInFlight = true;
+    this.writtenRaw.set(head.id, head.userId ?? "");
+    if (this.writtenRaw.size > WRITTEN_RAW_KEPT) {
+      const [oldest] = this.writtenRaw.keys();
+      if (oldest !== undefined) this.writtenRaw.delete(oldest);
     }
-    await this.append(null, { type: "control", cmd: "command", arg: head.text, by: `@${head.by}` });
+    await this.append(null, {
+      type: "operator_input",
+      text: head.text,
+      by: head.by,
+      entryId: head.id,
+      ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+    });
     this.publishQueue();
   }
 

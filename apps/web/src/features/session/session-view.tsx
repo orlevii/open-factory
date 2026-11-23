@@ -73,7 +73,7 @@ export function SessionView({
     (item: QueueItem) => {
       const body = item.body ?? "";
       // A command never comes back as text: Enter would send it as a message (U3 §13.3).
-      const inBox = item.kind !== "command" && (composerRef.current?.putBackIfEmpty(body) ?? false);
+      const inBox = item.kind !== "raw" && (composerRef.current?.putBackIfEmpty(body) ?? false);
       cancelItem(
         item,
         inBox,

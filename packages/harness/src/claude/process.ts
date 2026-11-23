@@ -232,7 +232,7 @@ export class ClaudeProcess implements HarnessProcess {
     return this.commandList;
   }
 
-  command(text: string): Promise<void> {
+  raw(text: string): Promise<void> {
     return this.write({ type: "user", message: { role: "user", content: text } });
   }
 

@@ -471,6 +471,23 @@ test("an explicit suffix taken by a user claim after the pre-read is reported ta
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(false);
 });
 
+test("losing the slug unique index to a concurrent winner reports taken and keeps the winner's workspace", async () => {
+  const { t, lead } = await setup();
+  vi.spyOn(t.db, "transaction").mockImplementationOnce((async () => {
+    // The winner commits its agent (and its workspace) first; the loser's insert then hits the slug index.
+    await t.seedAgent({ slug: "tech-lead-mine" });
+    throw Object.assign(new Error("duplicate key"), {
+      code: "23505",
+      constraint_name: "agents_slug_unique",
+    });
+  }) as typeof t.db.transaction);
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
+    ok: false,
+    message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
+  });
+  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(true);
+});
+
 test("a refusal under the lock leaves no handle claim behind", async () => {
   const { t, lead } = await setup();
   // The pre-check passes; the re-check in the transaction refuses (the credential changed during materialize).

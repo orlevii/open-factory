@@ -1,8 +1,9 @@
 import { ApiError } from "@open-factory/shared";
-import { CircleAlert, Minimize2 } from "lucide-react";
-import { type RefObject, useId, useState } from "react";
+import { Minimize2 } from "lucide-react";
+import { type RefObject, useState } from "react";
+import { FormField } from "@/components/form-field";
+import { FormOutcome, useOutcome } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { postCompact } from "./api";
@@ -29,20 +30,19 @@ export function CompactPopover({
     onOpenChange?.(o);
   };
   const [focus, setFocus] = useState("");
-  const [error, setError] = useState<string | undefined>();
+  const { outcome, fail, clear } = useOutcome();
   const [submitting, setSubmitting] = useState(false);
-  const inputId = useId();
 
   async function submit() {
     if (submitting) return;
     setSubmitting(true);
-    setError(undefined);
+    clear();
     try {
       await postCompact(slug, focus.trim() || undefined);
       setFocus("");
       setOpen(false);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      fail(e instanceof ApiError ? e.message : NETWORK_ERROR);
     } finally {
       setSubmitting(false);
     }
@@ -53,7 +53,7 @@ export function CompactPopover({
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
-        if (!o) setError(undefined);
+        if (!o) clear();
       }}
     >
       {anchor ? (
@@ -95,25 +95,15 @@ export function CompactPopover({
           }}
           className="flex flex-col gap-2"
         >
-          <label htmlFor={inputId} className="text-[0.8125rem] font-medium">
-            Focus (optional)
-          </label>
-          <Input
-            id={inputId}
+          <FormField
+            name="compact-focus"
+            label="Focus (optional)"
             autoFocus
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
             maxLength={2000}
           />
-          {error && (
-            <p
-              role="alert"
-              className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
-            >
-              <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-              {error}
-            </p>
-          )}
+          <FormOutcome outcome={outcome} pending={submitting ? "Compacting…" : undefined} />
           <Button type="submit" className="w-full" disabled={submitting}>
             Compact
           </Button>

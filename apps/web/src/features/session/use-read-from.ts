@@ -39,6 +39,8 @@ export function useReadFrom(
     failed: undefined as Pending | undefined,
     /** The newest time a call has been made for, for this agent. */
     upTo: undefined as string | undefined,
+    /** The time a dwell is waiting to post: if the unread clears meanwhile (Mark all read), it counts as covered. */
+    armed: undefined as string | undefined,
   });
 
   const request = useCallback(
@@ -79,11 +81,22 @@ export function useReadFrom(
   useEffect(() => {
     const st = state.current;
     if (!visible) st.failed = undefined;
-    if (!visible || !hasUnread || !newestAt) return;
+    if (!hasUnread) {
+      // Cleared while a dwell was waiting: that time is covered, so an Undo cannot make the pane read it again.
+      if (st.armed !== undefined && (st.upTo === undefined || st.armed > st.upTo))
+        st.upTo = st.armed;
+      st.armed = undefined;
+      return;
+    }
+    if (!visible || !newestAt) return;
     // Nothing newer than what was already posted: the count rising again is not a reason.
     if (st.upTo !== undefined && newestAt <= st.upTo) return;
-    const post = () => request({ slug, upTo: newestAt });
+    const post = () => {
+      st.armed = undefined;
+      request({ slug, upTo: newestAt });
+    };
     if (delayMs <= 0) return post();
+    st.armed = newestAt;
     const timer = setTimeout(post, delayMs);
     return () => clearTimeout(timer);
   }, [slug, hasUnread, newestAt, visible, delayMs, request]);
@@ -97,6 +110,7 @@ export function useReadFrom(
       st.timer = undefined;
       st.pending = undefined;
       st.upTo = undefined;
+      st.armed = undefined;
     },
     [slug],
   );

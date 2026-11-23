@@ -1,4 +1,4 @@
-import { type FocusEvent, useCallback, useMemo, useRef, useState } from "react";
+import { type FocusEvent, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 /** The handlers to spread on the list's element. */
 export type HoldHandlers = {
@@ -15,12 +15,15 @@ export type HoldHandlers = {
  *
  * Only `held` is state. Where the pointer and focus are lives in refs, and the order to hold is the keys
  * as they stood when holding began. A held row the live list no longer has shows as `gone(lastSeen)`
- * (a read chat: read, with no count). Nothing is copied into state by an effect.
+ * (a read chat: read, with no count). Nothing is copied into state by an effect. `pinned` (the selected
+ * row) is never held back: a row that appears for it while holding shows at once.
  */
 export function useHeldList<T>(
   live: readonly T[],
   keyOf: (row: T) => string,
   gone: (last: T) => T,
+  /** A key that is always a row: shown at the top even when it was not in the list as holding began. */
+  pinned?: string,
 ): { rows: readonly T[]; held: boolean; handlers: HoldHandlers } {
   const [held, setHeld] = useState(false);
   const pointer = useRef(false);
@@ -29,7 +32,9 @@ export function useHeldList<T>(
   const seen = useRef(new Map<string, T>());
   const order = useRef<readonly string[]>([]);
   const latest = useRef(live);
-  latest.current = live;
+  useLayoutEffect(() => {
+    latest.current = live;
+  }, [live]);
 
   const enter = useCallback(() => {
     if (!pointer.current && !focus.current) {
@@ -64,6 +69,8 @@ export function useHeldList<T>(
     [enter, leave],
   );
 
+  // `seen` is a cache of what was last read, written here because the rows below need it in this same
+  // render; it is only ever a map of keys to the latest rows, so repeating the write is harmless.
   const rows = useMemo(() => {
     const byKey = new Map(live.map((r) => [keyOf(r), r]));
     if (!held) {
@@ -80,7 +87,9 @@ export function useHeldList<T>(
         if (last) out.push(gone(last));
       }
     }
-    return out;
-  }, [live, held, keyOf, gone]);
+    const extra =
+      pinned !== undefined && !order.current.includes(pinned) ? byKey.get(pinned) : undefined;
+    return extra ? [extra, ...out] : out;
+  }, [live, held, keyOf, gone, pinned]);
   return { rows, held, handlers };
 }

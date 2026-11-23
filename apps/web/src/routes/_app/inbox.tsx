@@ -1,7 +1,7 @@
 import type { ChatRow } from "@open-factory/shared";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { chatSlugOf, type InboxItem, inboxQueryOptions } from "@/features/inbox/api";
@@ -46,11 +46,12 @@ function useSelectedChat(slug: string | undefined): ChatRow | undefined {
     refetchOnWindowFocus: false,
     select: (d) => d.agent,
   }).data;
-  // Stamped once per selection, so the row doesn't move when the agent changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the slug is the trigger
-  const stamp = useMemo(() => new Date().toISOString(), [slug]);
+  // Stamped once per selection (adjusted during render on a change), so the row doesn't move when the agent changes.
+  const [stamped, setStamped] = useState<{ slug: string | undefined; at: string }>();
+  if (stamped?.slug !== slug) setStamped({ slug, at: new Date().toISOString() });
+  const stamp = stamped && stamped.slug === slug ? stamped.at : undefined;
   return useMemo(() => {
-    if (!agent) return undefined;
+    if (!agent || !stamp) return undefined;
     return {
       agent: {
         slug: agent.slug,

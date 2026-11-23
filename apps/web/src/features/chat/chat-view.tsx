@@ -1,6 +1,6 @@
 import type { ChatEntry } from "@open-factory/shared";
 import { ApiError } from "@open-factory/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import {
@@ -34,7 +34,7 @@ import { ChatComposer } from "./chat-composer";
 import { type Arrival, type CancelNote, ChatRow, rowGap } from "./chat-row";
 import { entryKey, keysOf } from "./chat-state";
 import { outcomeSentence, TurnLine } from "./turn-line";
-import { useChat, useWorkingKey } from "./use-chat";
+import { refreshChat, useChat, useWorkingKey } from "./use-chat";
 
 const toHandle = (s: { user: { handle: string } } | null) => s?.user.handle;
 const toUserId = (s: { user: { id: string } } | null) => s?.user.id;
@@ -50,7 +50,7 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
 
 /** What the Inbox's reading pane changes about the Chat: it reads after the dwell, opens at the first
  *  of the `unread` messages, takes no page docking, and fetches the agent itself (no layout did). */
-export type PaneOptions = { unread: number };
+export type PaneOptions = { unread: number; latestId: string };
 
 /**
  * The chat with one agent (I1 §6.4): one column, newest at the bottom, the reader's place kept.
@@ -160,14 +160,27 @@ function Thread({
   }, [entries]);
   useReadFrom(slug, newestAgentAt, { delayMs: pane ? INBOX_DWELL_MS : 0 });
 
-  // The pane opens at the first unread message: the one `unread` agent messages from the end, fixed
-  // once the thread has loaded (reading them doesn't move it).
+  // The pane opens at the first unread message: the `unread` agent messages ending at the chat row's
+  // newest (`latestId`), fixed once that message is in the thread (reading them doesn't move it). A
+  // cached thread older than the row waits for the refresh below; more unread than the thread holds
+  // gets no divider (the oldest loaded message isn't the first unread).
   const [unreadKey, setUnreadKey] = useState<string | null>();
-  if (loaded && pane && unreadKey === undefined) {
-    const theirs = entries.filter((e) => e.kind === "message" && e.fromKind === "agent");
+  const latestAt = pane
+    ? entries.findIndex((e) => e.kind === "message" && e.id === pane.latestId)
+    : -1;
+  if (loaded && pane && unreadKey === undefined && (pane.unread === 0 || latestAt >= 0)) {
+    const theirs = entries
+      .slice(0, latestAt + 1)
+      .filter((e) => e.kind === "message" && e.fromKind === "agent");
     const first = pane.unread > 0 ? theirs[theirs.length - pane.unread] : undefined;
     setUnreadKey(first ? entryKey(first) : null);
   }
+  // A thread cached before the row's newest message (a prefetch, an earlier visit) is refreshed once.
+  const qc = useQueryClient();
+  const stale = loaded && pane !== undefined && pane.unread > 0 && latestAt < 0;
+  useEffect(() => {
+    if (stale) void refreshChat(qc, slug, "other");
+  }, [stale, qc, slug]);
   const unreadDone = useRef(false);
 
   // The highest entry on screen when the reader left the bottom; the pill counts what came after.

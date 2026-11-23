@@ -447,6 +447,44 @@ test("a chat shown in the pane doesn't bump its count when a message arrives", a
   expect(rowOf("ada")?.getAttribute("aria-label")).toMatch(/2 new/);
 });
 
+test("the shown chat's count only goes down: read in the pane, a later message stays uncounted", async () => {
+  fakeMatchMedia.installWidth(1280);
+  let chats = [chat("ada", "Ada", { unread: 2 })];
+  mockApi({ "GET /api/inbox?": () => json({ chats, items: [], nextCursor: null }) });
+  const app = renderApp("/inbox?item=chat:ada", alice);
+  await screen.findByRole("link", { name: /^Unread, Ada, 2 new/ });
+  // The pane read it: the cache's row is read (the server drops such a row, so only the cache holds it).
+  act(() =>
+    app.queryClient.setQueryData(["inbox"], (d: { pages: { chats: unknown[] }[] }) => ({
+      ...d,
+      pages: d.pages.map((p) => ({ ...p, chats: [chat("ada", "Ada", { unread: 0 })] })),
+    })),
+  );
+  await waitFor(() => expect(rowOf("ada")?.getAttribute("aria-label")).toBe("Ada, 14:20"));
+  chats = [chat("ada", "Ada", { unread: 1 })];
+  act(() => ws.onMessage?.({ type: "inbox_changed" }));
+  await new Promise((r) => setTimeout(r, 80));
+  expect(rowOf("ada")?.getAttribute("aria-label")).toBe("Ada, 14:20");
+});
+
+test("resting the pointer on a chat row warms its chat", async () => {
+  fakeMatchMedia.installWidth(1280);
+  const api = mockApi({
+    "GET /api/inbox?": () => json({ chats: [chat("ada", "Ada")], items: [], nextCursor: null }),
+    "GET /api/agents/ada/chat?": () =>
+      json({ entries: [], nextCursor: null, newerCursor: null, working: null }),
+  });
+  renderApp("/inbox", alice);
+  const link = await screen.findByRole("link", { name: /^Unread, Ada/ });
+  const warmed = () => api.calls.some((c) => c.url.startsWith("/api/agents/ada/chat"));
+  await userEvent.hover(link);
+  await userEvent.unhover(link);
+  await new Promise((r) => setTimeout(r, 300));
+  expect(warmed()).toBe(false);
+  await userEvent.hover(link);
+  await waitFor(() => expect(warmed()).toBe(true));
+});
+
 test("below 1024px a click on a chat row navigates to its chat", async () => {
   fakeMatchMedia.installWidth(800);
   mockApi({

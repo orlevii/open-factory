@@ -420,14 +420,16 @@ function useRested(selectedId: string | undefined) {
   return sel.now || settled;
 }
 
-/** The unread count of a chat's row when it was opened, once the Inbox has loaded: where the Chat opens. */
+/** A chat's row when it was opened, once the Inbox has loaded: its unread count and newest message,
+ *  which is where the Chat opens. */
 function useOpenedUnread(slug: string): PaneOptions | undefined {
   const now = useInfiniteQuery({
     ...inboxQueryOptions,
-    select: (d) => d.pages[0]?.chats?.find((c) => c.agent.slug === slug)?.unread ?? 0,
-  }).data;
+    select: (d) => d.pages[0]?.chats?.find((c) => c.agent.slug === slug),
+  });
   const [opened, setOpened] = useState<PaneOptions>();
-  if (now !== undefined && opened === undefined) setOpened({ unread: now });
+  if (now.isSuccess && opened === undefined)
+    setOpened({ unread: now.data?.unread ?? 0, latestId: now.data?.latest.messageId ?? "" });
   return opened;
 }
 

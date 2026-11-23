@@ -64,3 +64,16 @@ test("a new hold takes the order as it is then, not the earlier one", () => {
   h.set([row("a"), row("b")]);
   expect(ids(h.result.current.rows)).toEqual(["b", "a"]);
 });
+
+test("the pinned row is shown at once even when it appeared while holding", () => {
+  const view = renderHook(
+    ({ live, pinned }: { live: Row[]; pinned: string | undefined }) =>
+      useHeldList(live, keyOf, gone, pinned),
+    { initialProps: { live: [row("a"), row("b")], pinned: undefined as string | undefined } },
+  );
+  act(() => view.result.current.handlers.onPointerEnter());
+  view.rerender({ live: [row("c"), row("a"), row("b")], pinned: "c" });
+  expect(ids(view.result.current.rows)).toEqual(["c", "a", "b"]);
+  view.rerender({ live: [row("d"), row("c"), row("a"), row("b")], pinned: "c" });
+  expect(ids(view.result.current.rows)).toEqual(["c", "a", "b"]);
+});

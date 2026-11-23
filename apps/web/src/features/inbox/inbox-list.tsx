@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -92,7 +93,8 @@ export function InboxList({
   const now = Math.floor(Date.now() / 60_000) * 60_000;
 
   // The selected chat stays a row once it has been read (or never was unread): the last row seen, else
-  // the one the route builds, shown read.
+  // the one the route builds, shown read. The ref is written during render because the same render reads
+  // it (an effect would show one frame without the row); the write is idempotent.
   const selectedSlug = chatSlugOf(selectedId);
   const lastSelected = useRef<ChatRow>(undefined);
   const inList = selectedSlug ? chats.find((c) => c.agent.slug === selectedSlug) : undefined;
@@ -101,7 +103,9 @@ export function InboxList({
 
   // A chat on screen in the pane doesn't bump its count: the one shown is capped at what it was when selected.
   const [cap, setCap] = useState<{ id: string | undefined; n: number }>();
+  // It only ratchets down: once the pane has read the chat, a message that arrives while it is shown stays uncounted.
   if (loaded && cap?.id !== selectedId) setCap({ id: selectedId, n: inList?.unread ?? 0 });
+  else if (cap && inList && inList.unread < cap.n) setCap({ id: cap.id, n: inList.unread });
 
   const live = useMemo(() => {
     const shown = chats.map((c) =>
@@ -114,7 +118,7 @@ export function InboxList({
       shown.push({ ...fallback, unread: 0 });
     return interleave(shown, items, q.hasNextPage);
   }, [chats, items, q.hasNextPage, visible, cap, selectedId, selectedSlug, inList, selectedChat]);
-  const held = useHeldList(live, rowKey, asRead);
+  const held = useHeldList(live, rowKey, asRead, selectedId);
   const rows = held.rows;
 
   // Read by timers when they fire, so they never act on a stale row (one read since, or gone).
@@ -124,21 +128,34 @@ export function InboxList({
   }, [rows]);
   const byId = (id: string) => latest.current.find((r) => r.id === id);
 
-  // The neighbours' pane data, once the selection has rested.
+  // The pane data of the neighbours once the selection has rested, and of a row once the pointer has
+  // rested on it (a plain click selects, so the link's own route preload is off).
+  const warm = useCallback(
+    (id: string | undefined) => {
+      const n = id ? latest.current.find((r) => r.id === id) : undefined;
+      if (n?.kind === "item") prefetchPane(qc, n.item);
+      else if (n) prefetchChat(qc, n.chat.agent.slug);
+    },
+    [qc],
+  );
   const index = selectedId ? rows.findIndex((r) => r.id === selectedId) : -1;
   const prevId = index > 0 ? rows[index - 1]?.id : undefined;
   const nextId = index >= 0 ? rows[index + 1]?.id : undefined;
   useEffect(() => {
     if (!prevId && !nextId) return;
     const timer = setTimeout(() => {
-      for (const id of [prevId, nextId]) {
-        const n = id ? latest.current.find((r) => r.id === id) : undefined;
-        if (n?.kind === "item") prefetchPane(qc, n.item);
-        else if (n) prefetchChat(qc, n.chat.agent.slug);
-      }
+      warm(prevId);
+      warm(nextId);
     }, PREFETCH_REST_MS);
     return () => clearTimeout(timer);
-  }, [prevId, nextId, qc]);
+  }, [prevId, nextId, warm]);
+  const hover = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(hover.current), []);
+  const onPointerOver = (e: PointerEvent<HTMLUListElement>) => {
+    clearTimeout(hover.current);
+    const id = (e.target as Element).closest<HTMLElement>("a[data-inbox-id]")?.dataset.inboxId;
+    if (id) hover.current = setTimeout(() => warm(id), PREFETCH_REST_MS);
+  };
 
   const onOpen = useCallback(
     (item: InboxItem, e: MouseEvent) => {
@@ -227,7 +244,12 @@ export function InboxList({
         ref={list}
         aria-label="Inbox"
         onKeyDown={onKeyDown}
+        onPointerOver={onPointerOver}
         {...held.handlers}
+        onPointerLeave={() => {
+          clearTimeout(hover.current);
+          held.handlers.onPointerLeave();
+        }}
         className="border-y border-border [overflow-anchor:auto]"
       >
         {rows.map((r) =>

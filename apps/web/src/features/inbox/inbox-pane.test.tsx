@@ -157,6 +157,76 @@ test("retargeting swaps the thread at once: nothing of the old one stays, nothin
   expect(pane().querySelector("[data-live]")).toBeNull();
 });
 
+test("retargeting never puts a fading row (data-live) on screen, not even for a frame", async () => {
+  const app = await visit("/inbox?item=chat:dev");
+  await within(pane()).findByText("dev says 3");
+  const seen: string[] = [];
+  const watch = new MutationObserver((records) => {
+    for (const r of records) {
+      const nodes = [...r.addedNodes].filter((n): n is Element => n instanceof Element);
+      if (r.type === "attributes" && (r.target as Element).hasAttribute("data-live"))
+        seen.push("attribute");
+      for (const n of nodes)
+        if (n.matches("[data-live]") || n.querySelector("[data-live]")) seen.push("node");
+    }
+  });
+  watch.observe(pane(), { subtree: true, childList: true, attributes: true });
+  await app.router.navigate({ to: "/inbox", search: { item: "chat:ops" } });
+  await within(pane()).findByText("ops says 3");
+  watch.disconnect();
+  expect(seen).toEqual([]);
+});
+
+test("the strip keeps its controls whole and lets only the name shrink (the 404px fit)", async () => {
+  // jsdom has no layout, so the fit itself is asserted by the classes that decide it: the name is the
+  // one shrinkable child (`min-w-0`), the link and the icon-only switch never shrink or wrap.
+  await visit("/inbox?item=chat:dev");
+  const strip = (await waitFor(() => {
+    const el = pane().querySelector<HTMLElement>("[data-chat-strip]");
+    expect(el).not.toBeNull();
+    return el;
+  })) as HTMLElement;
+  expect(strip).toHaveClass("h-10", "items-center");
+  expect(strip).not.toHaveClass("flex-wrap");
+  expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveClass("shrink-0");
+  const name = await within(strip).findByText("Dev agent");
+  expect(name.closest(".min-w-0")).not.toBeNull();
+});
+
+test("a thread cached before the row's newest message puts the divider on the right message", async () => {
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
+  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(400);
+  fakeMatchMedia.installWidth(1280);
+  const app = renderApp("/inbox", alice);
+  await waitFor(() => expect(listRow("dev")).not.toBeNull());
+  // A prefetch from before the third message: two entries, both older than the unread ones' end.
+  app.queryClient.setQueryData(chatQueryOptions("dev").queryKey, {
+    pages: [chatPage([msg("dev", 1), msg("dev", 2)]) as never],
+    pageParams: [""],
+  });
+  await app.router.navigate({ to: "/inbox", search: { item: "chat:dev" } });
+  await within(pane()).findByText("dev says 3");
+  const divider = await waitFor(() => {
+    const el = pane().querySelector<HTMLElement>("[data-new-divider]");
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(divider.nextElementSibling).toHaveTextContent("dev says 2");
+});
+
+test("Mark all read and then Undo before the dwell is up does not make the pane read the chat", async () => {
+  const app = await visit("/inbox?item=chat:dev");
+  await within(pane()).findByText("dev says 3");
+  act(() => app.queryClient.setQueryData(["inbox-unread"], { count: 1, byAgent: { ops: 1 } }));
+  await new Promise((r) => setTimeout(r, 60));
+  act(() =>
+    app.queryClient.setQueryData(["inbox-unread"], { count: 3, byAgent: { dev: 2, ops: 1 } }),
+  );
+  await new Promise((r) => setTimeout(r, 700));
+  expect(posts()).toHaveLength(0);
+});
+
 test("it opens at the first unread message, marked New, when the unread are taller than the pane", async () => {
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);

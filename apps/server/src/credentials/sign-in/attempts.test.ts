@@ -579,8 +579,39 @@ describe("SignInAttempts", () => {
     await expect(s.wait("u1", a.attemptId)).rejects.toMatchObject({
       status: 409,
       code: "sign_in_state",
-      extra: { attempt: { attemptId: a.attemptId, state: "awaiting_code", url: URL_ } },
+      extra: { attempt: { attemptId: a.attemptId, state: "awaiting_code" } },
     });
+  });
+
+  it("only view and start carry the url; the wait 409 and the 202 views omit it", async () => {
+    const { s } = store();
+    const a = await s.start("u1", {});
+    expect(a.url).toBe(URL_);
+    expect(s.view("u1")?.url).toBe(URL_);
+    const e = await s.wait("u1", a.attemptId).catch((x) => x);
+    expect(e.extra.attempt.url).toBeUndefined();
+    expect(e.extra.attempt.codeDeadline).toBeDefined();
+    const sub = store();
+    const b = await sub.s.start("u1", {});
+    const submitted = sub.s.submit("u1", b.attemptId, { code: CODE, name: "work" });
+    await vi.advanceTimersByTimeAsync(0);
+    const waited = sub.s.wait("u1", b.attemptId);
+    await vi.advanceTimersByTimeAsync(50_001);
+    for (const w of [await submitted, await waited]) {
+      expect(w).toMatchObject({ state: "exchanging" });
+      expect((w as { url?: string }).url).toBeUndefined();
+    }
+  });
+
+  it("a replace lookup failure propagates, not 404, and leaves no attempt", async () => {
+    const boom = new Error("db down");
+    const { s } = store({
+      byName: async () => {
+        throw boom;
+      },
+    });
+    await expect(s.start("u1", { replace: "x" })).rejects.toBe(boom);
+    expect(s.view("u1")).toBeNull();
   });
 
   it("wait during submitting follows the name check", async () => {

@@ -15,6 +15,11 @@ const aad = (id: string) => `credentials:${id}`;
 /** Display slugs, deduped: a spawned agent shows as its spawner. */
 const slugs = (list: { slug: string }[]) => [...new Set(list.map((a) => a.slug))];
 
+/** The 409 for a taken credential name (also raised by the sign-in attempts). */
+export function credentialExists(name: string) {
+  return new ApiError(409, "credential_exists", `A credential named ${name} already exists.`);
+}
+
 export class CredentialService {
   constructor(
     private readonly d: {
@@ -89,10 +94,6 @@ export class CredentialService {
     return row;
   }
 
-  private exists(name: string) {
-    return new ApiError(409, "credential_exists", `A credential named ${name} already exists.`);
-  }
-
   private async inUse(id: string) {
     const u = await this.users(id);
     if (!u.active.length && !u.archived.length) return undefined;
@@ -153,7 +154,7 @@ export class CredentialService {
   }): Promise<CredentialSummary> {
     // Cheap pre-check so a duplicate name doesn't cost a paid verification turn; the unique
     // violation in insertVerified still covers a race.
-    if (await this.nameTaken(b.name)) throw this.exists(b.name);
+    if (await this.nameTaken(b.name)) throw credentialExists(b.name);
     this.assertVerified(await this.d.verifier.verify(b.kind, b.value));
     return this.insertVerified(b);
   }
@@ -181,7 +182,7 @@ export class CredentialService {
       if (!row) throw new Error("credential insert returned no row");
       return this.summarize(row);
     } catch (err) {
-      if (pgCode(err, "23505")) throw this.exists(b.name);
+      if (pgCode(err, "23505")) throw credentialExists(b.name);
       throw err;
     }
   }

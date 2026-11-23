@@ -9,7 +9,7 @@ import {
 } from "@open-factory/shared";
 import { ApiError, FieldError } from "../../errors.ts";
 import { FIELD_MSG } from "../../field-messages.ts";
-import type { CredentialService } from "../credential-service.ts";
+import { type CredentialService, credentialExists } from "../credential-service.ts";
 import type { VerifyResult } from "../verify.ts";
 import { type PtyRun, PtyUnavailable } from "./host-pty.ts";
 import { RunFailed, type SetupTokenRun } from "./setup-token.ts";
@@ -132,7 +132,7 @@ export class SignInAttempts {
 
   view(userId: string): AttemptView | null {
     const a = this.attempts.get(userId);
-    return a ? this.toView(a) : null;
+    return a ? this.toView(a, true) : null;
   }
 
   async start(userId: string, purpose: { replace?: string }): Promise<AttemptView> {
@@ -163,10 +163,14 @@ export class SignInAttempts {
     this.log(a, "sign-in started", "started");
 
     if (purpose.replace !== undefined) {
-      const row = await Promise.race([
-        this.d.credentials.byName(purpose.replace).catch(() => undefined),
-        a.halted,
-      ]);
+      let row: Awaited<ReturnType<CredentialService["byName"]>>;
+      try {
+        row = await Promise.race([this.d.credentials.byName(purpose.replace), a.halted]);
+      } catch (e) {
+        // A lookup failure is not a missing credential: free the reservation, then surface it.
+        this.end(a, "lookup_failed");
+        throw e;
+      }
       if (row?.kind !== "oauth_token") {
         this.end(a, row ? "oauth_only" : "credential_not_found");
         throw row ? err.oauthOnly() : err.credentialDeleted();
@@ -210,7 +214,7 @@ export class SignInAttempts {
     a.url = url;
     a.deadline = this.d.now() + this.ttlMs;
     a.ttl = this.setTimer(() => this.expire(a), this.ttlMs);
-    return this.toView(a);
+    return this.toView(a, true);
   }
 
   async submit(
@@ -235,13 +239,7 @@ export class SignInAttempts {
         if (!parsed.success)
           throw new FieldError("name", parsed.error.issues[0]?.message ?? MSG.nameLength);
         name = parsed.data;
-        if (await this.d.credentials.nameTaken(name))
-          // As CredentialService.create raises it (the name is the user's own input, not a secret).
-          throw new ApiError(
-            409,
-            "credential_exists",
-            `A credential named ${name} already exists.`,
-          );
+        if (await this.d.credentials.nameTaken(name)) throw credentialExists(name);
       } else {
         const { credentialId, name: credName } = a.purpose;
         const row = await this.d.credentials.byName(credName);
@@ -320,13 +318,15 @@ export class SignInAttempts {
     return a;
   }
 
-  private toView(a: Attempt): AttemptView {
-    const withUrl = a.state === "awaiting_code" || a.state === "submitting";
+  /** The URL goes only to GET and Start (`withUrl`); every other answer omits it (spec §5.5). */
+  private toView(a: Attempt, withUrlFor = false): AttemptView {
+    const withUrl = withUrlFor && (a.state === "awaiting_code" || a.state === "submitting");
+    const live = a.state === "awaiting_code" || a.state === "submitting";
     return {
       attemptId: a.attemptId,
       state: a.state,
       ...(withUrl && a.url ? { url: a.url } : {}),
-      ...(withUrl && a.deadline !== undefined
+      ...(live && a.deadline !== undefined
         ? { codeDeadline: new Date(a.deadline).toISOString() }
         : {}),
       purpose: a.purpose.kind,

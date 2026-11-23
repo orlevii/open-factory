@@ -145,6 +145,10 @@ describe.skipIf(!hasPython)("claude sign-in routes (fake CLI)", () => {
         })
       ).statusCode,
     ).toBe(409);
+    // Wait while awaiting_code: a 409 whose attempt extra carries no url.
+    const early = await other("POST", "/api/claude-sign-in/code/wait", { attemptId: ok });
+    expect(early.statusCode).toBe(409);
+    expect(early.json().error.code).toBe("sign_in_state");
     // The full sign-in.
     const created = await other("POST", "/api/claude-sign-in/code", {
       attemptId: ok,

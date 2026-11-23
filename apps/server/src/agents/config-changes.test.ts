@@ -106,7 +106,8 @@ const noticeLines = async (agentId: string) => {
 test("the SQL reads: live agents of a template, persistent and spawned, never archived or terminated; live children", async () => {
   const lead = await agent();
   const kid = await agent({ kind: "ephemeral", reportsTo: lead });
-  const gone = await agent({ reportsTo: lead, terminatedAt: new Date() });
+  // Ephemeral, so only the terminated filter can exclude it.
+  const gone = await agent({ kind: "ephemeral", reportsTo: lead, terminatedAt: new Date() });
   const archived = await agent({ archived: true });
   await h.t.sql`update agents set template = 'other' where id = ${archived}`;
   const q = dbConfigChangeAgents(h.t.db);
@@ -166,6 +167,39 @@ test("a start already running on the new config doesn't restart (compared in the
   });
 });
 
+test("two edits that cancel out while busy drop the pending restart; a second edit replaces the lines", async () => {
+  const w = world(doc({ model: "opus" }));
+  const id = await agent();
+  const rt = await w.runBusy(id);
+  await w.runtimes.requestRestart(id, { after: doc({ model: "haiku" }) });
+  expect(rt?.live()).toMatchObject({
+    restartPending: true,
+    restartChanges: ["model: opus → haiku"],
+  });
+  // Edit then edit: exactly the started → latest line.
+  await w.runtimes.requestRestart(id, { after: doc({ model: "sonnet" }) });
+  expect(rt?.live().restartChanges).toEqual(["model: opus → sonnet"]);
+  // Revert: nothing to apply, so nothing restarts.
+  await w.runtimes.requestRestart(id, { after: doc({ model: "opus" }) });
+  expect(rt?.live()).toMatchObject({ restartPending: false, restartChanges: [] });
+  // The cleared state is published (the restart line goes away in every open view).
+  const statuses = w.frames.filter(
+    (f): f is { type: string; agent: string; restartPending: boolean } =>
+      (f as { type?: string }).type === "agent_status",
+  );
+  expect(statuses.at(-1)).toMatchObject({ restartPending: false, restartChanges: [] });
+});
+
+test("a revert keeps a restart another cause asked for, without the config lines", async () => {
+  const w = world(doc({ model: "opus" }));
+  const id = await agent();
+  const rt = await w.runBusy(id);
+  await w.runtimes.requestRestart(id, { after: doc({ model: "haiku" }) });
+  await w.runtimes.requestRestart(id); // e.g. a credential change
+  await w.runtimes.requestRestart(id, { after: doc({ model: "opus" }) });
+  expect(rt?.live()).toMatchObject({ restartPending: true, restartChanges: [] });
+});
+
 test("before: null writes no event or notice but still restarts a process that started on something else", async () => {
   const w = world(doc());
   const id = await agent();
@@ -206,7 +240,7 @@ test("an overlay save on an archived agent writes the event only; values never r
     doc(),
     doc({}, { settings: { env: { GH: SECRET } } }),
   );
-  expect(out).toEqual({ changes: ["env GH changed"], restart: false });
+  expect(out).toEqual({ changes: ["env GH changed"], restartChecked: false });
   expect((await events(id)).map((e) => e.payload)).toEqual([
     { by: "@or", changes: ["env GH changed"] },
   ]);

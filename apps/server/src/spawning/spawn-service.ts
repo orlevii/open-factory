@@ -282,6 +282,9 @@ export class SpawnService {
         if (!started.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
         // Re-read the credential and grants under the lock (an update during materialize must not be missed).
+        // `current` was resolved before materialize (a disk read, kept out of this transaction). An overlay save in
+        // between can make this row's grants and dropped note look one edit old, but that is never unsafe: the child's
+        // own start re-derives everything from its spawner (`deriveInheritance`, the stricter of started and current).
         const c = await this.check(spawner, started, current, tpl, tx);
         if (!c.ok) return c;
         // Claim only once nothing can refuse any more: a refusal returns and commits, which would orphan the claim.

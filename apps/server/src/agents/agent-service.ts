@@ -507,11 +507,11 @@ export class AgentService {
           displayName: b.displayName,
           description: b.description,
           template: b.template,
-          config: tpl.config,
+          // I2 §5.1: the overlay starts empty; the agent runs the live template until someone configures it.
+          config: {},
           runtime: tpl.config.runtime,
           reportsTo: manager?.id ?? null,
           credentialId,
-          grantsOverridden: b.projects !== undefined,
         });
         if (projects.length)
           await tx

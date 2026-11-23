@@ -39,7 +39,7 @@ function inheritedChanged(a: ConfigDoc, b: ConfigDoc): boolean {
 const templateBy = (e: TemplateChange) =>
   e.by === FILE_CHANGE ? `a file change in template ${e.name}` : `template ${e.name}`;
 
-type Applied = { changes: string[]; restart: boolean; done: Promise<void> };
+type Applied = { changes: string[]; restartChecked: boolean; done: Promise<void> };
 
 /** The two agent reads the change path needs (a port, so the flow is testable without a database). */
 export interface ConfigChangeAgents {
@@ -137,18 +137,19 @@ export class ConfigChanges {
 
   /**
    * An agent's overlay was saved (the caller committed it): `before` and `after` are the merged docs. Returns once the
-   * event is written or queued; the notice and the restart are scheduled, never awaited (spec §7.2). `restart` says a
-   * process was running, so a restart check was scheduled (it restarts only when its `started` differs). An archived
-   * agent gets the event alone: its next start reads everything fresh.
+   * event is written or queued; the notice and the restart are scheduled, never awaited (spec §7.2). `restartChecked`
+   * says a process was running, so a restart check was scheduled: it restarts only when its `started` differs, decided
+   * later in the runtime's job. A caller (A14's PUT) must not present it as "restarting". An archived agent gets the
+   * event alone: its next start reads everything fresh.
    */
   async overlaySaved(
     agent: AgentRow,
     by: string,
     before: ConfigDoc,
     after: ConfigDoc,
-  ): Promise<{ changes: string[]; restart: boolean }> {
-    const { changes, restart } = await this.apply(agent, by, before, after);
-    return { changes, restart };
+  ): Promise<{ changes: string[]; restartChecked: boolean }> {
+    const { changes, restartChecked } = await this.apply(agent, by, before, after);
+    return { changes, restartChecked };
   }
 
   private async apply(
@@ -159,17 +160,20 @@ export class ConfigChanges {
   ): Promise<Applied> {
     const { runtimes } = this.d;
     const changes = before ? describeChanges(before, after) : [];
-    if (before && !changes.length) return { changes, restart: false, done: Promise.resolve() };
+    if (before && !changes.length)
+      return { changes, restartChecked: false, done: Promise.resolve() };
     const work: Promise<unknown>[] = [];
     const rt = await runtimes.get(agent.id);
     if (changes.length) {
       // Through the runtime when loaded, so it publishes in seq order; else straight to the store.
       if (rt) work.push(rt.appendConfigChanged(by, changes));
       else await this.d.store.append(agent.id, null, { type: "config_changed", by, changes });
+      // The agent frame goes with an event only. A restart-check-only change (`before: null`) shows up through the
+      // agent's own status frame (`restartPending`, `restartChanges`), which the runtime publishes.
       this.d.bus.publishAll({ type: "config_changed", agent: agent.slug });
     }
     if (agent.archivedAt || agent.terminatedAt)
-      return { changes, restart: false, done: this.settle(agent, work) };
+      return { changes, restartChecked: false, done: this.settle(agent, work) };
 
     if (changes.length) work.push(runtimes.recordConfigNotice(agent.id, changes));
     if (agent.runtime === "docker") {
@@ -177,14 +181,14 @@ export class ConfigChanges {
       runtimes.setNextImage(agent.id, config ? runtimes.imageRef(config) : undefined);
     }
     // Compared inside the runtime's job against a fresh `started`, so a start under way can't make it skip.
-    const restart = Boolean(rt?.hasProcess());
-    if (restart) work.push(runtimes.requestRestart(agent.id, { after }));
+    const restartChecked = Boolean(rt?.hasProcess());
+    if (restartChecked) work.push(runtimes.requestRestart(agent.id, { after }));
     if (agent.kind === "persistent") {
       // With no previous doc, compare against what the running process started with.
       const was = before ?? runtimes.startedOf(agent.id)?.doc;
       if (was && inheritedChanged(was, after)) work.push(this.restartChildren(agent.id));
     }
-    return { changes, restart, done: this.settle(agent, work) };
+    return { changes, restartChecked, done: this.settle(agent, work) };
   }
 
   /** S7 §6.3: a child derives its secrets and deny rules from its spawner at each start, so live children restart. */

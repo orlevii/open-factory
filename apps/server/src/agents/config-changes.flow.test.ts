@@ -250,7 +250,7 @@ test("an overlay save on an archived agent writes the event only", async () => {
   const a = row({ archivedAt: new Date(), runtime: "docker" });
   const w = world();
   const out = await w.changes.overlaySaved(a, "@orlevi", doc(), doc({ model: "opus" }));
-  expect(out).toEqual({ changes: ["model: default → opus"], restart: false });
+  expect(out).toEqual({ changes: ["model: default → opus"], restartChecked: false });
   expect(w.appendedToStore).toEqual([
     {
       agentId: a.id,
@@ -280,7 +280,7 @@ test("overlaySaved never waits on the runtime's queue (a start installing a plug
   const w = world();
   w.load(a, true, true);
   const out = await w.changes.overlaySaved(a, "@orlevi", doc(), doc({ model: "opus" }));
-  expect(out).toEqual({ changes: ["model: default → opus"], restart: true });
+  expect(out).toEqual({ changes: ["model: default → opus"], restartChecked: true });
 });
 
 test("secret safety: no env value, MCP URL or command reaches an event, a notice, a frame or a log", async () => {

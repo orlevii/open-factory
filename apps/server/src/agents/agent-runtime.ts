@@ -536,6 +536,10 @@ export class AgentRuntime {
   private restartPending = false;
   /** I2 §7.3: the change lines the pending restart applies (`restartChanges`); cleared on every exit and launch. */
   private pendingChanges = new Set<string>();
+  /** I2 §7.2: the config lines of the pending restart, `describeChanges(started.doc, latest after)`; replaced, never unioned. */
+  private configChanges: string[] = [];
+  /** A pending restart was also asked for by something other than a config change (credential, grants, manager). */
+  private otherRestartCause = false;
   /**
    * I2 §6.2: the config the current process started with (`PreparedSpec.effective`), set at the launch and cleared at
    * its exit; undefined while nothing runs. Whatever describes the running process reads it. Holds env values: never log
@@ -1155,6 +1159,8 @@ export class AgentRuntime {
    * started with something else (`describeChanges(started.doc, after)` non-empty), and those lines are what it
    * applies. Decided here, in a job, so `started` is never read mid-start: a start that already runs on `after`
    * restarts nothing, and two edits that cancel out restart nothing.
+   * The config lines are kept apart from other causes and replaced on every `after` request (the latest doc is what
+   * the next start runs). When they become empty and no other cause is pending, the pending restart is dropped.
    */
   async requestRestart(
     opts: { changes?: string[]; wake?: boolean; after?: ConfigDoc } = {},
@@ -1168,13 +1174,24 @@ export class AgentRuntime {
         !this.stopping &&
         !this.terminated
       ) {
-        const changes =
-          opts.after && this.started
-            ? describeChanges(this.started.doc, opts.after)
-            : (opts.changes ?? []);
-        if (opts.after && this.started && !changes.length) return;
+        // A cleared restart (stop, exit, takeover) leaves nothing of its causes behind.
+        if (!this.restartPending) {
+          this.otherRestartCause = false;
+          this.configChanges = [];
+          this.pendingChanges.clear();
+        }
+        if (opts.after && this.started) {
+          this.configChanges = describeChanges(this.started.doc, opts.after);
+          if (!this.configChanges.length && !this.otherRestartCause) {
+            this.restartPending = false;
+            this.publishStatus();
+            return;
+          }
+        } else {
+          this.otherRestartCause = true;
+          for (const c of opts.changes ?? []) this.pendingChanges.add(c);
+        }
         this.restartPending = true;
-        for (const c of changes) this.pendingChanges.add(c);
         this.maybeRestart();
       }
       this.publishStatus();
@@ -1785,7 +1802,9 @@ export class AgentRuntime {
       ...(this.slots.isPulling(this.agent.id) ? { pulling: true } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
-      restartChanges: this.restartPending ? [...this.pendingChanges].sort() : [],
+      restartChanges: this.restartPending
+        ? [...new Set([...this.pendingChanges, ...this.configChanges])].sort()
+        : [],
       waitingOn: this.waitingOn(),
       crons: this.cronsList(),
       cronZone: cronZoneOf(this.agent.runtime),
@@ -2450,7 +2469,10 @@ export class AgentRuntime {
     this.proc = proc;
     this.started = effective;
     this.procStartedAt = procStartedAt;
-    this.pendingChanges.clear(); // this process runs on the config the changes describe
+    // This process runs on the config the changes describe.
+    this.pendingChanges.clear();
+    this.configChanges = [];
+    this.otherRestartCause = false;
     this.procCredentialId = credentialId; // what prepareStart launched on, not the row (a spawned agent's differs)
     this.procRuntime = spec.runtime;
     this.imageRequeued = false;
@@ -3047,6 +3069,8 @@ export class AgentRuntime {
     this.afterExit = undefined;
     this.restartPending = false;
     this.pendingChanges.clear();
+    this.configChanges = [];
+    this.otherRestartCause = false;
     this.stopCronsPending = undefined; // the crons die with the process anyway (S9 §10.3)
     const attemptOwed = this.attemptOwedAtExit; // only this process's exit honours it
     this.attemptOwedAtExit = false;

@@ -2307,6 +2307,10 @@ export class AgentRuntime {
       );
       if (dropped)
         this.d.log.warn({ agent: this.agent.slug, dropped }, "dropped malformed command entries");
+      this.d.bus.publish(this.agent.slug, {
+        type: "agent_commands_changed",
+        agent: this.agent.slug,
+      });
     } catch (err) {
       this.d.log.warn({ err, agent: this.agent.slug }, "storing the command list failed");
     }

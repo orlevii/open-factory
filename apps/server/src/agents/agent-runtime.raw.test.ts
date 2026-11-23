@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
@@ -261,4 +261,17 @@ test("an errored agent holds raw input and does not start a recovery", async () 
   expect(h.driver.starts).toHaveLength(0);
   expect(h.rt.acceptsWake("raw")).toBe(false);
   expect(h.rt.queueItems().map((q) => q.id)).toEqual([item.id]);
+});
+
+test("subscribers are told once the agent's command list is stored", async () => {
+  h.driver.commandList = [{ name: "context", description: "Context", argumentHint: "" }];
+  await send("boot");
+  await vi.waitFor(async () =>
+    expect(await h.store.agentCommands(h.agentId)).toMatchObject({
+      commands: [expect.objectContaining({ name: "context" })],
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(h.frames).toContainEqual({ type: "agent_commands_changed", agent: h.rt.agent.slug }),
+  );
 });

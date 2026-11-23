@@ -240,3 +240,16 @@ test("nobody can cancel an agent's queued command from the UI", async () => {
   }
   expect(await rawQueue("dev")).toHaveLength(2);
 });
+
+test("a second command for yourself is refused while one is pending, and the agent stays healthy", async () => {
+  await start("lead", true);
+  expect((await call("lead", "/compact", "me")).err).toBe(false);
+  const second = await call("lead", "/context", "me");
+  expect(second).toMatchObject({
+    err: true,
+    text: "You already have a command queued for yourself.",
+  });
+  // A direct report's command is not a self-command.
+  expect((await call("lead", "/context", "dev")).err).toBe(false);
+  expect((await rt("lead")).live().status).toBe("working");
+});

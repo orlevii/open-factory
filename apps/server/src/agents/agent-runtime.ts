@@ -54,6 +54,7 @@ import {
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
+  SelfCommandPendingError,
   type StartFix,
   StopCronsError,
 } from "./errors.ts";
@@ -483,6 +484,10 @@ export class AgentRuntime {
 
   /** I1 §5.1: a raw entry was written and its turn hasn't ended; nothing is written behind it (like a compact). */
   private rawInFlight = false;
+  /** I1 §7: the written raw entry is the agent's own command. */
+  private rawSelf = false;
+  /** I1 §7: the agent's own `/compact` was written; `failed` once a `compact_failed` came after it. Gone on exit. */
+  private selfCompact: { failed: boolean } | undefined;
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
   private readonly writtenRaw = new Map<string, string>();
   /** U3 §13.3: `userId \0 clientMessageId` → the dispatch's entry, queued or written (the newest few). */
@@ -826,6 +831,15 @@ export class AgentRuntime {
     });
   }
 
+  /** I1 §7: one command queued for itself per agent: queued, or written with its turn still running. */
+  private selfCommandPending(): boolean {
+    return (
+      this.queue.some((e) => (e.kind === "raw" || e.kind === "compact") && e.self) ||
+      Boolean(this.selfCompact) ||
+      (this.rawInFlight && this.rawSelf)
+    );
+  }
+
   async compact(c: {
     focus?: string;
     byHandle: string;
@@ -845,6 +859,7 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch and queues nothing, as for raw input.
       const retryKey =
         c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
@@ -893,6 +908,7 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch, queued, written or cancelled, and writes nothing.
       const retryKey =
         c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
@@ -1884,6 +1900,7 @@ export class AgentRuntime {
             err instanceof NoOpenTurnError ||
             err instanceof CompactingError ||
             err instanceof CommandsUnsupportedError ||
+            err instanceof SelfCommandPendingError ||
             err instanceof RecoveryRefusedError ||
             err instanceof NotSenderError ||
             err instanceof AlreadyDeliveredError ||
@@ -2767,7 +2784,13 @@ export class AgentRuntime {
         this.lastActivityAt = Date.now();
         this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
-        if (e.command === "compact") this.compactInFlight = false;
+        if (e.command === "compact") {
+          this.compactInFlight = false;
+          // I1 §7: decided once, here: failed if a `compact_failed` came since the compact was written.
+          const own = this.selfCompact;
+          this.selfCompact = undefined;
+          if (own) await this.addNotice("compact_continue", notices.compactContinue(own));
+        }
         // U3 §13.3: the command's turn (the first origin-less one after the write) ends its barrier.
         if (!e.originKind) this.rawInFlight = false;
         if (e.originKind === "task-notification")
@@ -2809,6 +2832,10 @@ export class AgentRuntime {
             "could not record the rate-limit status",
           );
         }
+        break;
+      case "compact_failed":
+        if (this.selfCompact) this.selfCompact.failed = true;
+        await this.append(this.openTurnId, e);
         break;
       case "rate_limited":
         await this.append(this.openTurnId, e);
@@ -2949,6 +2976,7 @@ export class AgentRuntime {
     this.releaseHold();
     this.compactInFlight = false;
     this.rawInFlight = false;
+    this.selfCompact = undefined; // no notice: the restart's own notice covers it
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
     // Stamped by the close below (I1 §6.3). A batch written before session_started is still in `rolledBack`: it was
@@ -3712,6 +3740,7 @@ export class AgentRuntime {
           break;
         }
         this.compactInFlight = true;
+        this.selfCompact = head.self ? { failed: false } : undefined;
         await this.append(null, {
           type: "control",
           cmd: "compact",
@@ -3775,6 +3804,7 @@ export class AgentRuntime {
       return;
     }
     this.rawInFlight = true;
+    this.rawSelf = Boolean(head.self);
     this.writtenRaw.set(head.id, head.userId ?? "");
     if (this.writtenRaw.size > WRITTEN_RAW_KEPT) {
       const [oldest] = this.writtenRaw.keys();

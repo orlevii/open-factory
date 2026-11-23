@@ -87,6 +87,15 @@ export class CommandsUnsupportedError extends Error {
   }
 }
 
+/** I1 §7: an agent may have one command queued for itself at a time. */
+export class SelfCommandPendingError extends Error {
+  readonly code = "self_command_pending";
+  constructor() {
+    super("You already have a command queued for yourself.");
+    this.name = "SelfCommandPendingError";
+  }
+}
+
 /** An inbox cursor that doesn't decode to `created_at|id` (spec §11); the route answers 400. */
 export class InvalidCursorError extends Error {
   constructor() {

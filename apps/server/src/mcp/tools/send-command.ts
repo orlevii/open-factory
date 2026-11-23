@@ -8,6 +8,7 @@ import {
   sendCommandToolSchema,
 } from "@open-factory/shared";
 import { commandList } from "../../agents/commands.ts";
+import { SelfCommandPendingError } from "../../agents/errors.ts";
 import type { EventStore } from "../../agents/event-store.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
 import type { Neighborhood } from "../../messaging/neighborhood.ts";
@@ -95,18 +96,23 @@ export function sendCommandTool(d: {
             turnOpen: live.turnOpen,
             idle: live.status === "idle",
           });
-          if (cls.kind === "command" && cls.name === "compact")
-            await rt.compact({
-              ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
-              byHandle: d.caller.slug,
-              ...(self ? { self: true } : {}),
-            });
-          else
-            await rt.rawInput({
-              text: neutraliseEnvelopeTags(command),
-              by: `@${d.caller.slug}`,
-              ...(self ? { self: true } : {}),
-            });
+          try {
+            if (cls.kind === "command" && cls.name === "compact")
+              await rt.compact({
+                ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
+                byHandle: d.caller.slug,
+                ...(self ? { self: true } : {}),
+              });
+            else
+              await rt.rawInput({
+                text: neutraliseEnvelopeTags(command),
+                by: `@${d.caller.slug}`,
+                ...(self ? { self: true } : {}),
+              });
+          } catch (e) {
+            if (e instanceof SelfCommandPendingError) return toolError(e.message);
+            throw e;
+          }
           return textResult({ target: `@${target.slug}`, status: "queued", note });
         },
       );

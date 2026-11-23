@@ -89,11 +89,10 @@ export function prefetchChat(qc: QueryClient, slug: string) {
     void qc.prefetchInfiniteQuery(chatQueryOptions(slug));
 }
 
-/** The 5 newest unread items: what the notifier reads. */
+/** The 5 newest unread items and the unread chats: what the notifier reads. */
 export const homeInboxQueryOptions = queryOptions({
   queryKey: homeInboxQueryKey,
   queryFn: () => apiFetch("/api/inbox?unread=true&limit=5", { schema: inboxPageSchema }),
-  select: (p: Page) => p.items,
 });
 
 export type Unread = { count: number; byAgent: Record<string, number> };
@@ -173,6 +172,36 @@ export function useInboxCache() {
           const next = { ...c.byAgent };
           for (const [k, d] of Object.entries(byAgent)) next[k] = Math.max(0, (next[k] ?? 0) + d);
           return { ...c, count: Math.max(0, c.count + delta), byAgent: next };
+        });
+      },
+      /** Mark all read, for the chats it covers: each chat's row goes to no count (or back to `counts`), its
+       *  `byAgent` entry with it, and the total moves by their sum. */
+      setChatsRead(counts: ReadonlyMap<string, number>, read: boolean) {
+        let sum = 0;
+        for (const n of counts.values()) sum += n;
+        qc.setQueryData<InfiniteData<Page>>(
+          inboxQueryKey,
+          (d) =>
+            d && {
+              ...d,
+              pages: d.pages.map((p) => ({
+                ...p,
+                ...(p.chats && {
+                  chats: p.chats.map((c) =>
+                    counts.has(c.agent.slug)
+                      ? { ...c, unread: read ? 0 : (counts.get(c.agent.slug) ?? 0) }
+                      : c,
+                  ),
+                }),
+              })),
+            },
+        );
+        qc.setQueryData<Unread>(unreadQueryKey, (c) => {
+          if (!c) return c;
+          const byAgent = { ...c.byAgent };
+          for (const [slug, n] of counts)
+            byAgent[slug] = read ? 0 : Math.max(0, (byAgent[slug] ?? 0) + n);
+          return { ...c, count: Math.max(0, c.count + (read ? -sum : sum)), byAgent };
         });
       },
       /** "Mark read" for one agent: its cached rows turn read and its count goes to zero. */

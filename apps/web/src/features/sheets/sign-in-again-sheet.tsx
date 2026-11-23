@@ -47,6 +47,8 @@ export default function SignInAgainSheet({
   });
   useFocusOnOpen(form, restoring ? LINK : PRIMARY);
 
+  // Without python3 on the server the panel says why and the footer has no primary (spec §8.2, R1).
+  const unavailable = !s.available && s.phase === "idle";
   const label =
     s.phase === "ready"
       ? "Sign in and replace"
@@ -61,7 +63,7 @@ export default function SignInAgainSheet({
       noValidate
       onSubmit={(e) => {
         e.preventDefault();
-        if (s.pendingLabel !== undefined) return;
+        if (s.pendingLabel !== undefined || unavailable) return;
         if (s.phase === "ready") void s.submit();
         else void s.start();
       }}
@@ -77,6 +79,7 @@ export default function SignInAgainSheet({
         pending={s.pendingLabel !== undefined}
         restored={false}
         onDiscard={() => {}}
+        hideSubmit={unavailable}
       />
     </form>
   );

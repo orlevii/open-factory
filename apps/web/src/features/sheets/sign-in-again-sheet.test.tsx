@@ -134,6 +134,15 @@ it("the primary is Start sign-in, then Sign in and replace; no Name or Method", 
   expect(bodyOf(START)).toEqual({ replace: "work" });
 });
 
+it("without python3 on the server: the reason on the panel and no primary (no dead Start sign-in)", async () => {
+  routes[GET] = () => ok({ available: false, attempt: null });
+  const { dialog } = renderSheet();
+  expect(await within(dialog).findByText(MSG.signInUnavailable)).toBeVisible();
+  expect(dialog.querySelector('button[type="submit"]')).toBeNull();
+  fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+  expect(count(START)).toBe(0);
+});
+
 it("success closes the sheet with one toast and the restart note, and refetches credentials and the inbox", async () => {
   routes[START] = () => ok({ attempt: ready() });
   routes[CODE] = () =>

@@ -2673,9 +2673,11 @@ export class AgentRuntime {
         this.turnKinds = [];
         // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
         // live state first and the reset restores a block a self-started turn already began.
-        await this.append(turnId, e, undefined, () =>
-          this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
-        );
+        const endSeq = (
+          await this.append(turnId, e, undefined, () =>
+            this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
+          )
+        ).seq;
         if (turnId) {
           const close = {
             isError: e.isError,
@@ -2687,10 +2689,10 @@ export class AgentRuntime {
           // transaction, so `attributeTask` sees it. A self-started turn (cron, task notification) never consumes
           // `awaiting` and isn't attributed.
           if (!e.originKind) {
-            await this.d.store.closeTurnWith(turnId, close, this.awaiting.flat(), true);
+            await this.d.store.closeTurnWith(turnId, close, this.awaiting.flat(), true, endSeq);
             this.awaiting = [];
             this.awaitingKinds = [];
-          } else await this.d.store.closeTurnWith(turnId, close, [], false);
+          } else await this.d.store.closeTurnWith(turnId, close, [], false, endSeq);
         }
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
@@ -2817,6 +2819,28 @@ export class AgentRuntime {
     this.publishStatus();
   }
 
+  /**
+   * I1 §6.3: an exit closes the open turn, stamping the written batch it started with (a message-started turn). A
+   * written batch with no turn opened gets a zero-length errored turn, so the message still has an outcome.
+   */
+  private async closeExitedTurn(
+    openTurnId: string | undefined,
+    stampIds: string[],
+    usage: Extract<HarnessEvent, { type: "usage" }> | undefined,
+    credentialId: string | null,
+    e: Extract<HarnessEvent, { type: "exited" }>,
+  ): Promise<void> {
+    const close = {
+      isError: !e.expected,
+      terminalReason: e.expected ? "process_stopped" : "process_exited",
+    };
+    if (openTurnId)
+      return this.d.store.closeTurnWith(openTurnId, { ...close, usage }, stampIds, true);
+    if (!stampIds.length) return;
+    const turnId = await this.d.store.openTurn(this.agent.id, credentialId);
+    await this.d.store.closeTurnWith(turnId, close, stampIds, true);
+  }
+
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
     this.revokeToken(proc);
     // S7 §8 step 4: the exit path is chosen by the latch, not by the recorded intent (markStopFailed overwrites it with
@@ -2864,6 +2888,8 @@ export class AgentRuntime {
     this.rawInFlight = false;
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
+    const unansweredIds = this.awaiting.flat(); // stamped by the close below (I1 §6.3)
+    const credentialId = this.procCredentialId ?? null; // cleared below, the close still records it
     this.awaiting = [];
     this.awaitingKinds = [];
     this.turnKinds = [];
@@ -2879,18 +2905,16 @@ export class AgentRuntime {
       // S10 §11: close the turn before the cleanup, which can take seconds (a Docker stop). A status frame published
       // meanwhile already says turnOpen false, so the row must be closed by then. A failed close must not skip the
       // cleanup: it is rethrown where the close used to be.
-      const closeFailure = openTurnId
-        ? await this.d.store
-            .closeTurn(openTurnId, {
-              isError: !e.expected,
-              terminalReason: e.expected ? "process_stopped" : "process_exited",
-              usage,
-            })
-            .then(
-              () => undefined,
-              (err: unknown) => ({ err }),
-            )
-        : undefined;
+      const closeFailure = await this.closeExitedTurn(
+        openTurnId,
+        unansweredIds,
+        usage,
+        credentialId,
+        e,
+      ).then(
+        () => undefined,
+        (err: unknown) => ({ err }),
+      );
       // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
       if (terminating) keepSlot = !(await this.terminationCleanup());
       else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));

@@ -694,12 +694,18 @@ export class EventStore {
     await tx.insert(turns).values({ id, agentId, credentialId, startedAt: new Date() });
     return id;
   }
-  async closeTurn(turnId: string, d: TurnClose, tx: Exec = this.db) {
+  /**
+   * `endEventSeq` is the turn's `turn_end` seq for a normal close; otherwise (an exit, a boot close) the turn's last
+   * event seq, null when it has none (I1 §6.3).
+   */
+  async closeTurn(turnId: string, d: TurnClose, tx: Exec = this.db, endEventSeq?: number) {
     const u = d.usage;
     await tx
       .update(turns)
       .set({
         endedAt: new Date(),
+        endEventSeq:
+          endEventSeq ?? sql`(select max(seq) from session_events where turn_id = ${turnId})`,
         isError: d.isError,
         terminalReason: d.terminalReason ?? null,
         originKind: d.originKind ?? null,
@@ -736,25 +742,37 @@ export class EventStore {
     d: TurnClose,
     stampIds: string[],
     attribute: boolean,
+    endEventSeq?: number,
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
       await this.setDeliveredTurn(stampIds, turnId, tx);
-      await this.closeTurn(turnId, d, tx);
+      await this.closeTurn(turnId, d, tx, endEventSeq);
       if (attribute) await this.attributeTask(turnId, tx);
     });
   }
 
   /**
    * Boot (spec §5.7 step 3): turns still open when the server stopped are closed as `factory_restarted`, errors.
+   * In the same transaction each agent's delivered, unstamped `message` rows are stamped with its turn (I1 §6.3): the
+   * starting batch is stamped only at close, so a restart leaves it unstamped. Absorbed rows were stamped when written.
    * Returns the ids of the agents that had one.
    */
   async closeDanglingTurns(): Promise<string[]> {
-    const rows = await this.db
-      .update(turns)
-      .set({ endedAt: new Date(), isError: true, terminalReason: "factory_restarted" })
-      .where(isNull(turns.endedAt))
-      .returning({ agentId: turns.agentId });
-    return [...new Set(rows.map((r) => r.agentId))];
+    return this.db.transaction(async (tx) => {
+      const open = await tx
+        .select({ id: turns.id, agentId: turns.agentId })
+        .from(turns)
+        .where(isNull(turns.endedAt))
+        .for("update");
+      for (const t of open) {
+        await tx.execute(sql`
+          update messages set delivered_turn_id = ${t.id}
+          where to_agent_id = ${t.agentId} and kind = 'message' and state = 'delivered'
+            and delivered_turn_id is null and delivered_event_seq is not null`);
+        await this.closeTurn(t.id, { isError: true, terminalReason: "factory_restarted" }, tx);
+      }
+      return [...new Set(open.map((t) => t.agentId))];
+    });
   }
 
   // messages

@@ -126,6 +126,8 @@ export const turns = pgTable(
     costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }),
     isError: boolean("is_error"),
     terminalReason: text("terminal_reason"),
+    // I1 §6.3: the seq of the turn's last event (its `turn_end` for a normal close); null when it has none.
+    endEventSeq: integer("end_event_seq"),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
   },
@@ -205,6 +207,13 @@ export const messages = pgTable(
     uniqueIndex("messages_client_id_unique")
       .on(t.fromUserId, t.clientMessageId, t.toAgentId)
       .where(sql`${t.clientMessageId} is not null`),
+    // I1 §6.3: the chat thread, both directions, newest first by (created_at, id).
+    index("messages_chat_in_idx")
+      .on(t.toAgentId, t.fromUserId, t.createdAt)
+      .where(sql`${t.kind} = 'message'`),
+    index("messages_chat_out_idx")
+      .on(t.toUserId, t.fromAgentId, t.createdAt)
+      .where(sql`${t.kind} = 'message'`),
     check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
   ],
 );

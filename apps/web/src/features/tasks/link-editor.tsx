@@ -123,6 +123,17 @@ export function LinkEditor({
               onBlur={() => onBlurRow(r.id)}
               className="h-9 min-w-0 [grid-area:target]"
             />
+            <div className="[grid-area:note]">
+              <FieldNote id={r.id} error={err} />
+            </div>
+            <Input
+              aria-label={`Link ${i + 1} title`}
+              placeholder="Title (optional)"
+              value={r.title}
+              autoComplete="off"
+              onChange={(e) => patch(r.id, { title: e.target.value })}
+              className="h-9 [grid-area:title]"
+            />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -138,17 +149,6 @@ export function LinkEditor({
               </TooltipTrigger>
               <TooltipContent>Remove link</TooltipContent>
             </Tooltip>
-            <div className="[grid-area:note]">
-              <FieldNote id={r.id} error={err} />
-            </div>
-            <Input
-              aria-label={`Link ${i + 1} title`}
-              placeholder="Title (optional)"
-              value={r.title}
-              autoComplete="off"
-              onChange={(e) => patch(r.id, { title: e.target.value })}
-              className="h-9 [grid-area:title]"
-            />
           </div>
         );
       })}

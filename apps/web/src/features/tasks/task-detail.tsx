@@ -718,7 +718,7 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
               {resolved.map((t) => (
                 <li key={t.key} className="flex min-w-0 items-center gap-2 text-[0.8125rem]">
                   <TaskBadge taskKey={t.key} title={t.title} />
-                  <StatusLabel status={t.status} className="text-muted-foreground" />
+                  <StatusLabel status={t.status} className="ml-auto text-muted-foreground" />
                 </li>
               ))}
             </ul>

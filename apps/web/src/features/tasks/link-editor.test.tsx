@@ -48,3 +48,10 @@ test("a row error is in its note and described by the target; no loose error par
     container.querySelectorAll(".field-note p svg").length,
   );
 });
+
+test("tab order in a row is kind, target, title, then remove", () => {
+  renderRows({});
+  const title = screen.getByLabelText("Link 1 title");
+  const remove = screen.getByRole("button", { name: "Remove link 1" });
+  expect(title.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

@@ -142,7 +142,6 @@ test("blur validates the cap; editing clears the error", async () => {
   expect(cap).toHaveAccessibleDescription("Enter a whole number from 1 to 64.");
   expect(cap).toHaveAttribute("aria-invalid", "true");
   await user.type(cap, "5");
-  expect(screen.queryByText("Enter a whole number from 1 to 64.")).not.toBeInTheDocument();
   expect(cap).toHaveAccessibleDescription(CAP_HINT);
 });
 

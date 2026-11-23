@@ -2,6 +2,7 @@ import { ApiError, type CredentialSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { CodeText } from "@/components/code-text";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -21,7 +22,6 @@ import {
 } from "@/features/settings/api";
 import {
   AgentLinks,
-  CodeText,
   cappedList,
   focusOutcome,
   InlineForm,
@@ -136,6 +136,7 @@ function ReplaceForm({
           setVerdict({});
         }}
         verdict={verdict}
+        kind={credential.kind}
       />
     </InlineForm>
   );

@@ -7,6 +7,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { CodeText } from "@/components/code-text";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -15,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { runningQueryOptions } from "@/features/session/api";
 import { factorySettingsQueryOptions, patchFactorySettings } from "./api";
-import { CodeText, SettingsSection, smallClass } from "./shared";
+import { SettingsSection, smallClass } from "./shared";
 
 const FIELDS = [
   "maxRunningAgents",

@@ -1,26 +1,10 @@
 import { ApiError, type CredentialKind } from "@open-factory/shared";
-import { TriangleAlert } from "lucide-react";
 import { FieldShell } from "@/components/field-shell";
 import { PasswordInput } from "@/components/password-input";
-import { CodeText, smallClass } from "@/features/settings/shared";
 
 /** Field pieces and checks shared by the Add forms and the Replace, Update and Change path forms. */
 
 export const valueNoun = (k: CredentialKind) => (k === "oauth_token" ? "token" : "key");
-/** A transient verification failure: the token may be fine, so it isn't marked invalid. */
-function Unverifiable({ id, message }: { id: string; message?: string }) {
-  return (
-    <div role="alert">
-      {message && (
-        <p id={id} className={`flex items-start gap-1.5 ${smallClass}`}>
-          <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
-          {message}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export type Verdict = { error?: string; warning?: string };
 /** 422s from a verification turn: a rejection is the token's fault, the rest is transient. */
 export function verdictOf(err: unknown): Verdict | undefined {
@@ -37,6 +21,7 @@ export function TokenField({
   onChange,
   onBlur,
   verdict,
+  kind,
 }: {
   name: string;
   label: string;
@@ -44,32 +29,29 @@ export function TokenField({
   onChange(v: string): void;
   onBlur?(): void;
   verdict: Verdict;
+  kind?: CredentialKind;
 }) {
-  const warnId = `field-${name}-warning`;
   return (
-    <div className="grid gap-1.5">
-      <FieldShell
-        name={name}
-        label={label}
-        error={verdict.error && <CodeText text={verdict.error} />}
-      >
-        {(a) => (
-          <PasswordInput
-            id={a.id}
-            name={name}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={onBlur}
-            spellCheck={false}
-            aria-invalid={a.invalid || undefined}
-            aria-describedby={
-              [a.describedBy, verdict.warning && warnId].filter(Boolean).join(" ") || undefined
-            }
-          />
-        )}
-      </FieldShell>
-      <Unverifiable id={warnId} message={verdict.warning} />
-    </div>
+    <FieldShell
+      name={name}
+      label={label}
+      error={verdict.error}
+      warning={verdict.warning}
+      help={kind === "oauth_token" ? "Create one with `claude setup-token`." : undefined}
+    >
+      {(a) => (
+        <PasswordInput
+          id={a.id}
+          name={name}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          spellCheck={false}
+          aria-invalid={a.invalid || undefined}
+          aria-describedby={a.describedBy}
+        />
+      )}
+    </FieldShell>
   );
 }
 

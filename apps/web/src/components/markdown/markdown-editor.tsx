@@ -33,6 +33,7 @@ export function MarkdownEditor(props: {
   }) => ReactNode;
   /** Geist instead of mono in the textarea, for prose a person writes (a message, not code). */
   proportional?: boolean;
+  invalid?: boolean;
 }) {
   const { value, onChange, id, placeholder, view, onViewChange } = props;
   const minH = props.compact ? "min-h-24" : "min-h-40";
@@ -41,7 +42,8 @@ export function MarkdownEditor(props: {
       {...(view
         ? { value: view, onValueChange: (v: string) => onViewChange?.(v as "write" | "preview") }
         : { defaultValue: "write" })}
-      className="gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow,border-color] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
+      data-invalid={props.invalid || undefined}
+      className="field-edge-transition gap-0 overflow-hidden rounded-lg border border-input bg-card data-[invalid]:border-destructive focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
     >
       <TabsList
         variant="line"
@@ -70,6 +72,7 @@ export function MarkdownEditor(props: {
             // Without an id there is no <Label htmlFor>, so fall back to a built-in name.
             aria-label={props["aria-label"] ?? (id ? undefined : "Markdown")}
             aria-describedby={props["aria-describedby"]}
+            aria-invalid={props.invalid || undefined}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             className={`field-sizing-fixed ${minH} resize-y rounded-none border-0 bg-transparent p-3 ${props.proportional ? "" : "font-mono "}text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent`} // ui-contract:allow the frame shows focus-within

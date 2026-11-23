@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -11,11 +11,22 @@ type Props = Omit<ComponentProps<"input">, "id" | "name" | "prefix"> & {
   help?: string;
   /** Visual-only adornment inside the left edge (e.g. "@"); never part of the value. */
   prefix?: string;
+  /** Control in the label row, right-aligned (e.g. a help trigger); never spread onto the input. */
+  action?: ReactNode;
 };
 
-export function FormField({ name, label, error, help, prefix, className, ...input }: Props) {
+export function FormField({
+  name,
+  label,
+  error,
+  help,
+  prefix,
+  action,
+  className,
+  ...input
+}: Props) {
   return (
-    <FieldShell name={name} label={label} error={error} help={help}>
+    <FieldShell name={name} label={label} error={error} help={help} action={action}>
       {(a) => {
         const field = (
           <Input

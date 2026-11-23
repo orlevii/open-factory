@@ -13,6 +13,7 @@ import {
   type TemplateFile,
   type TemplateIssue,
   templateYamlSchema,
+  yamlPart,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { FIELD_MSG } from "../field-messages.ts";
@@ -125,7 +126,8 @@ export async function validateEffective(
       path: [root, ...at].join("."),
     });
 
-  const parsed = templateYamlSchema.safeParse(doc.template);
+  // The derived `local_skill_names` isn't a template.yaml key (it can't be written there: the file parse refuses it).
+  const parsed = templateYamlSchema.safeParse(yamlPart(doc.template));
   if (parsed.success) {
     const config = parsed.data;
     const t = (severity: TemplateIssue["severity"], at: (string | number)[], message: string) =>
@@ -302,6 +304,8 @@ export async function validateTemplate(
   config?: TemplateConfig;
   issues: TemplateIssue[];
   tplYaml: Record<string, unknown>;
+  /** I2 §7.2: the real folders under `skills/`, sorted (the doc's derived `local_skill_names`). */
+  localSkillNames: string[];
   tplSettings: Record<string, unknown>;
   tplMcp: { mcpServers: Record<string, unknown> };
 }> {
@@ -400,5 +404,14 @@ export async function validateTemplate(
         path: `files/${entry}`,
       });
 
-  return { ...(config ? { config } : {}), issues, tplYaml, tplSettings, tplMcp };
+  // Link and non-folder entries are reported by validateEffective above; here only the names.
+  const localSkills = [...(await localSkillNames(dir, []))].sort();
+  return {
+    ...(config ? { config } : {}),
+    issues,
+    tplYaml,
+    tplSettings,
+    tplMcp,
+    localSkillNames: localSkills,
+  };
 }

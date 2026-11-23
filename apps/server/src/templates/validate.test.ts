@@ -332,6 +332,34 @@ test("real skill folders and dotfiles in skills/ are fine", async () => {
   expect((await validateTemplate(dir, "tech-lead", ctx)).issues).toEqual([]);
 });
 
+test("I2 §7.2: the real skill folders come back sorted, as the doc's local_skill_names", async () => {
+  const dir = tpl({ ...base, "skills/zeta/SKILL.md": "x", "skills/alpha/SKILL.md": "x" });
+  expect((await validateTemplate(dir, "tech-lead", ctx)).localSkillNames).toEqual([
+    "alpha",
+    "zeta",
+  ]);
+  expect((await validateTemplate(tpl(base), "tech-lead", ctx)).localSkillNames).toEqual([]);
+});
+
+test("local_skill_names is derived only: template.yaml can't set it, validateEffective accepts it in a doc", async () => {
+  const r = await validateTemplate(
+    tpl({ ...base, "template.yaml": `${base["template.yaml"]}local_skill_names: [x]\n` }),
+    "tech-lead",
+    ctx,
+  );
+  expect(r.issues.some((i) => i.severity === "error")).toBe(true);
+  const ok = await validateTemplate(tpl(base), "tech-lead", ctx);
+  // The semantic rules still run on a doc carrying the key (a strict parse failure would skip them silently).
+  const doc = {
+    template: { ...ok.tplYaml, skills: ["nope"], local_skill_names: ["x"] },
+    settings: ok.tplSettings,
+    mcp: ok.tplMcp,
+  };
+  expect(await validateEffective(doc, ctx, "human")).toEqual([
+    expect.objectContaining({ severity: "error", path: "template.skills.0" }),
+  ]);
+});
+
 test("a runtime that differs from an existing agent's warns", async () => {
   const r = await validateTemplate(tpl(base), "tech-lead", { ...ctx, agentRuntimes: ["docker"] });
   expect(r.issues).toEqual([

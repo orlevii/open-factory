@@ -17,6 +17,7 @@ import {
   type ConfigDoc,
   canonicalJson,
   isUserImageRef,
+  LOCAL_SKILL_NAMES,
   NAME_PATTERN,
   TEMPLATE_FILES,
   type TemplateConfig,
@@ -232,7 +233,12 @@ export class TemplateIndex {
   }> {
     const dir = path.join(this.dir, name);
     const v = await validateTemplate(dir, name, ctx);
-    const doc: ConfigDoc = { template: v.tplYaml, settings: v.tplSettings, mcp: v.tplMcp };
+    // The skill folders are part of the doc (I2 §7.2), so adding or removing one moves the hash and dispatches.
+    const doc: ConfigDoc = {
+      template: { ...v.tplYaml, [LOCAL_SKILL_NAMES]: v.localSkillNames },
+      settings: v.tplSettings,
+      mcp: v.tplMcp,
+    };
     const isValid = !!v.config && !v.issues.some((i) => i.severity === "error");
     const values = {
       name,

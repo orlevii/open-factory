@@ -6,6 +6,7 @@ import {
   mergeConfig,
   type TemplateConfig,
   templateYamlSchema,
+  yamlPart,
 } from "@open-factory/shared";
 import { ApiError } from "../errors.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
@@ -31,7 +32,7 @@ const invalidOverlay = (slug: string) =>
  * The parsed config of a merged doc, with the agent's fixed runtime (spec §6.6); undefined when it doesn't parse.
  */
 export function configOf(doc: ConfigDoc, runtime: AgentRow["runtime"]): TemplateConfig | undefined {
-  const parsed = templateYamlSchema.safeParse(doc.template);
+  const parsed = templateYamlSchema.safeParse(yamlPart(doc.template));
   return parsed.success ? { ...parsed.data, runtime } : undefined;
 }
 

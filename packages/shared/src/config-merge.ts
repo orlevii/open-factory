@@ -20,6 +20,18 @@ export const overlayVersion = (o: AgentOverlay): string => sha256Hex(canonicalJs
 
 export const emptyDoc = (): ConfigDoc => ({ template: {}, settings: {}, mcp: { mcpServers: {} } });
 
+/**
+ * I2 §7.2: the derived key under a doc's `template` holding the template's `skills/` folder names, so adding or
+ * removing a folder moves the doc (its hash, its change lines). It never comes from or goes to template.yaml.
+ */
+export const LOCAL_SKILL_NAMES = "local_skill_names";
+
+/** A doc's `template` part without the derived keys: what template.yaml holds, for a strict parse or a write. */
+export function yamlPart(template: Record<string, unknown>): Record<string, unknown> {
+  const { [LOCAL_SKILL_NAMES]: _derived, ...yaml } = template;
+  return yaml;
+}
+
 function deepMerge(a: unknown, b: unknown): unknown {
   if (b === undefined) return structuredClone(a);
   if (Array.isArray(a) && Array.isArray(b)) {

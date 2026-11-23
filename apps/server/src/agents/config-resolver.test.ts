@@ -2,7 +2,7 @@ import type { AgentRow } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
 import { ApiError } from "../errors.ts";
-import { ConfigResolver } from "./config-resolver.ts";
+import { ConfigResolver, configOf } from "./config-resolver.ts";
 import { AgentStartError, forSpawnedAgent } from "./errors.ts";
 
 const baseDoc = (): ConfigDoc => ({
@@ -33,6 +33,19 @@ const agent = (over: Omit<Partial<AgentRow>, "config"> & { config?: unknown } = 
     config: {},
     ...over,
   }) as AgentRow;
+
+describe("configOf", () => {
+  test("parses a doc carrying the derived local_skill_names (I2 §7.2), which the strict yaml schema would refuse", () => {
+    const doc = baseDoc();
+    doc.template.local_skill_names = ["release"];
+    expect(configOf(doc, "local")).toMatchObject({
+      name: "dev",
+      runtime: "local",
+      skills: ["grilling"],
+    });
+    expect(configOf({ ...doc, template: { ...doc.template, bogus: 1 } }, "local")).toBeUndefined();
+  });
+});
 
 describe("ConfigResolver.effective", () => {
   test("an empty overlay is exactly the template", async () => {

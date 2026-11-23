@@ -10,7 +10,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import type { ConfigDoc } from "@open-factory/shared";
+import { type ConfigDoc, describeChanges } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
@@ -209,6 +209,26 @@ test("a change to skills fires onChange once, with before and after", async () =
   expect(e[1]?.after.template.skills).toEqual(["tdd"]);
   expect(e[1]?.by).toBe("file change");
   expect(await idx.lastValid("cd1")).toEqual(e[1]?.after);
+});
+
+test("I2 §7.2: adding a skills/ folder fires onChange once; the diff says added template skill x", async () => {
+  await idx.create({ name: "cd-ls", displayName: "C" });
+  await idx.scanOne("cd-ls");
+  await settle("cd-ls", 1);
+  expect(eventsFor("cd-ls")[0]?.after.template.local_skill_names).toEqual([]);
+  mkdirSync(path.join(home, "templates/cd-ls/skills/x"), { recursive: true });
+  writeFileSync(path.join(home, "templates/cd-ls/skills/x/SKILL.md"), "x");
+  await idx.scanOne("cd-ls");
+  await settle("cd-ls", 2);
+  await idx.scanOne("cd-ls");
+  await new Promise((r) => setTimeout(r, 50));
+  const e = eventsFor("cd-ls");
+  expect(e).toHaveLength(2);
+  const [, change] = e;
+  if (!change?.before) throw new Error("no before");
+  expect(describeChanges(change.before, change.after)).toEqual(["added template skill x"]);
+  // The resolver's strict parse still accepts the doc (the key is stripped).
+  expect((await idx.loadValid("cd-ls")).doc.template.local_skill_names).toEqual(["x"]);
 });
 
 test("five concurrent scanOne calls after one edit fire exactly once", async () => {

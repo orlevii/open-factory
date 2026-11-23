@@ -54,21 +54,24 @@ export function parseYaml(text: string): {
   }
 }
 
+/** V8 messages whose text is constant up to the position (no snippet of the input). */
+const SAFE_JSON_MESSAGE =
+  /^(Expected |Unexpected end of JSON|Unexpected non-whitespace|Bad control|Unterminated string|Bad escaped character|No number after minus sign|Unterminated fractional number|Exponent part is missing)/;
+const JSON_LINE_COLUMN = /\(line (\d+) column (\d+)\)$/;
+const JSON_POSITION = /at position (\d+)(?: \(line \d+ column \d+\))?$/;
+
 export function parseJson(text: string): { value?: unknown; error?: ParseError } {
   try {
     return { value: JSON.parse(text) as unknown };
   } catch (e) {
     // V8 quotes a snippet of the text in some messages ("Unexpected token 's', "{...}" is not valid JSON"): never keep one.
     const raw = String((e as Error).message);
-    const msg = /^(Expected |Unexpected end of JSON|Unexpected non-whitespace|Bad control)/.test(
-      raw,
-    )
-      ? raw
-      : "Invalid syntax";
-    const lc = /line (\d+) column (\d+)/.exec(msg);
+    const msg = SAFE_JSON_MESSAGE.test(raw) ? raw : "Invalid syntax";
+    // V8 ends a message with where it stopped; read it from the raw message (numbers only), so a replaced one keeps it.
+    const lc = JSON_LINE_COLUMN.exec(raw);
     if (lc)
       return { error: { message: `JSON: ${msg}`, line: Number(lc[1]), column: Number(lc[2]) } };
-    const pm = /position (\d+)/.exec(msg);
+    const pm = JSON_POSITION.exec(raw);
     if (pm) {
       const before = text.slice(0, Number(pm[1]));
       const line = before.split("\n").length;

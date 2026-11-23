@@ -1,9 +1,9 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
 import { clearDraft } from "@/features/sheets/drafts";
-import { closeSheet } from "@/features/sheets/sheet-store";
+import { closeSheet, openSheet } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { pickComboOption } from "@/test/select-helpers";
@@ -28,6 +28,12 @@ afterEach(() => {
 /** The sheet's Assignee picker; the Tasks list behind it has a filter by the same name. */
 const assigneeField = async () =>
   within(await screen.findByRole("dialog", { name: "New task" })).findByLabelText("Assignee");
+/** The sheet's reserved outcome line (the footer's `role=alert`). */
+const outcomeAlert = () =>
+  within(screen.getByRole("dialog", { name: "New task" }))
+    .getAllByRole("alert")
+    .find((el) => el.closest(".form-outcome")) as HTMLElement;
+const moreToggle = () => screen.getByRole("button", { name: "More options" });
 const openMore = async () =>
   userEvent.click(await screen.findByRole("button", { name: "More options" }));
 
@@ -65,7 +71,12 @@ test("validates on leave, not while typing; typing clears the error", async () =
   mockApi(base);
   renderApp("/tasks/new", alice);
   const title = await screen.findByLabelText("Title");
+  // Leaving a field never edited says nothing.
   await userEvent.click(title);
+  await userEvent.tab();
+  expect(document.getElementById("field-title-error")).not.toHaveAttribute("data-shown");
+  await userEvent.type(title, "x");
+  await userEvent.clear(title);
   await userEvent.tab();
   expect(await screen.findByText("Enter a title.")).toBeInTheDocument();
   // The error layer stays mounted (it keeps its last text); "shown" is its data-shown attribute.
@@ -200,8 +211,9 @@ test("a server field error lands under its field; another failure is one alert l
     "true",
   );
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
-  // The body still has its own alert until the task form moves to the outcome line, so find by text.
-  expect(await screen.findByText("Couldn't create the task. Try again.")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(outcomeAlert()).toHaveTextContent("Couldn't create the task. Try again."),
+  );
 });
 
 test("Close dismisses the sheet without a dialog and keeps the draft", async () => {
@@ -289,4 +301,172 @@ test("arrow keys in the Assignee picker don't assign; Enter does", async () => {
   await userEvent.keyboard("{Enter}");
   await waitFor(() => expect(trigger).toHaveTextContent("@"));
   expect(api.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
+});
+
+const badRequest = (fields: Record<string, string>) =>
+  json({ error: { code: "validation_error", message: "x", fields } }, 400);
+
+test("bad keys on submit with More options folded by the user: it opens and Depends on takes focus", async () => {
+  const api = mockApi(base);
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await openMore();
+  await userEvent.type(screen.getByLabelText("Depends on"), "banana");
+  await userEvent.click(moreToggle());
+  expect(moreToggle()).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(screen.getByLabelText("Depends on")).toHaveFocus());
+  expect(moreToggle()).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Use task keys, like T-41.")).toBeInTheDocument();
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("a bad link on a second submit reopens More options the user folded again", async () => {
+  mockApi(base);
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await openMore();
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  await userEvent.type(screen.getByLabelText("Link 1 target"), "javascript:x");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(screen.getByLabelText("Link 1 target")).toHaveFocus());
+  await userEvent.click(moreToggle());
+  expect(moreToggle()).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(screen.getByLabelText("Link 1 target")).toHaveFocus());
+  expect(moreToggle()).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Links must be http(s) URLs.")).toBeInTheDocument();
+});
+
+test("a server links error with no rows is the outcome line; with rows, the first row's note", async () => {
+  const api = mockApi({
+    ...base,
+    "POST /api/tasks": () => badRequest({ links: "Too many links." }),
+  });
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(outcomeAlert()).toHaveTextContent("Too many links."));
+  await openMore();
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  await userEvent.type(screen.getByLabelText("Link 1 target"), "https://a.example");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(2));
+  const target = screen.getByLabelText("Link 1 target");
+  await waitFor(() => expect(target).toHaveAttribute("aria-invalid", "true"));
+  const note = document.getElementById(target.getAttribute("aria-describedby") ?? "");
+  expect(note).toHaveTextContent("Too many links.");
+  expect(note).toHaveAttribute("data-shown");
+  await waitFor(() => expect(target).toHaveFocus());
+  expect(outcomeAlert()).toHaveTextContent("");
+});
+
+test("a row added while links are flagged shows nothing until it is blurred", async () => {
+  mockApi(base);
+  renderApp("/tasks/new", alice);
+  await openMore();
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  await userEvent.type(screen.getByLabelText("Link 1 target"), "javascript:x");
+  await userEvent.tab();
+  expect(await screen.findByText("Links must be http(s) URLs.")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  const second = screen.getByLabelText("Link 2 target");
+  await userEvent.type(second, "ftp://x");
+  expect(second).not.toHaveAttribute("aria-invalid");
+  await userEvent.tab();
+  await waitFor(() => expect(second).toHaveAttribute("aria-invalid", "true"));
+});
+
+test("a bad link in a row never blurred blocks the submit and takes focus", async () => {
+  const api = mockApi(base);
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await openMore();
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  // Enter submits from inside the row: the target is never blurred.
+  await userEvent.type(screen.getByLabelText("Link 1 target"), "javascript:x{Enter}");
+  await waitFor(() => expect(screen.getByLabelText("Link 1 target")).toHaveFocus());
+  expect(screen.getByLabelText("Link 1 target")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByText("Links must be http(s) URLs.")).toBeInTheDocument();
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("after Discard the dependency note keeps its old text hidden (D2) and shows nothing", async () => {
+  mockApi(base);
+  renderApp("/tasks/new", alice);
+  await openMore();
+  const deps = screen.getByLabelText("Depends on");
+  await userEvent.type(deps, "banana");
+  await userEvent.tab();
+  const error = () => document.getElementById("field-dependsOn-error");
+  await waitFor(() => expect(error()).toHaveAttribute("data-shown"));
+  act(() => closeSheet());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
+  act(() => openSheet({ kind: "new-task" }));
+  await screen.findByText(/Draft restored/);
+  // More options opened itself for the restored keys; an edit keeps it open as the user's own choice.
+  await userEvent.type(screen.getByLabelText("Depends on"), "x");
+  await userEvent.tab();
+  await waitFor(() => expect(error()).toHaveAttribute("data-shown"));
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.getByLabelText("Depends on")).toHaveValue("");
+  expect(error()).not.toHaveAttribute("data-shown");
+  expect(error()).toHaveTextContent("Use task keys, like T-41.");
+  expect(screen.getByLabelText("Depends on")).not.toHaveAttribute("aria-invalid");
+});
+
+test("an over-long description marks the editor, returns to Write and focuses the textarea", async () => {
+  const api = mockApi(base);
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  fireEvent.change(screen.getByLabelText("Description"), {
+    target: { value: "a".repeat(64 * 1024 + 1) },
+  });
+  await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  expect(screen.queryByLabelText("Description")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(screen.getByLabelText("Description")).toHaveFocus());
+  expect(screen.getByRole("tab", { name: "Write" })).toHaveAttribute("aria-selected", "true");
+  expect(document.querySelector("[data-invalid]")).toContainElement(
+    screen.getByLabelText("Description"),
+  );
+  expect(screen.getByText("Shorten this to 64 KB or less.")).toBeInTheDocument();
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("a stale assignee says the agent has ended", async () => {
+  mockApi({
+    ...base,
+    "GET /api/agents?": (_b, url) =>
+      url.includes("ended=only")
+        ? json({
+            agents: [agentSummary({ slug: "ada", displayName: "Ada" })],
+            more: false,
+            running: { count: 0, max: 8 },
+          })
+        : agents(),
+  });
+  renderApp("/tasks", alice);
+  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
+  expect(await assigneeField()).toHaveAttribute("aria-invalid", "true");
+});
+
+test("a failed dependency lookup on submit is the outcome line", async () => {
+  const api = mockApi({
+    ...base,
+    "GET /api/tasks?": (_b, url) =>
+      url.includes("keys=")
+        ? json({ error: { code: "internal_error", message: "boom" } }, 500)
+        : json({ tasks: [], nextCursor: null }),
+  });
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await openMore();
+  await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() =>
+    expect(outcomeAlert()).toHaveTextContent("Couldn't create the task. Try again."),
+  );
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });

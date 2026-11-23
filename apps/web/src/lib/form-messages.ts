@@ -11,5 +11,6 @@ export const FORM_MSG = {
   addCredentialFailed: "Couldn't add the credential.",
   addProjectFailed: "Couldn't add the project.",
   addSecretFailed: "Couldn't add the secret.",
+  createTaskFailed: "Couldn't create the task. Try again.",
   displayNameRequired: "Use 1 to 80 characters.",
 } as const;

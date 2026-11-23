@@ -22,7 +22,6 @@ import {
 import { RecoveryActions } from "@/features/session/recovery-actions";
 import { StatusBadge, statusLabel } from "@/features/session/status-badge";
 import type { StopCrons } from "@/features/session/stop-crons";
-import { cn } from "@/lib/utils";
 import type { AgentView } from "./view-memory";
 import { ViewSwitch } from "./view-switch";
 
@@ -58,15 +57,14 @@ export const AgentHeader = memo(function AgentHeader({
 }) {
   const archived = agent.archivedAt !== null;
   // A third header action (Restart / Start a new session, or Pin) beside Agent details and ⋯, each a 40px box on
-  // touch: below a 22rem header (320px) the avatar gives way so the row stays one line (break H3, evidence D2).
-  const crowded =
-    (!archived && agent.status === "errored") || (agent.status === "terminated" && canPin(agent));
+  // touch: below a 22rem header the avatar, the view switch and the details toggle give way (the ⋯ menu carries
+  // both) so the row stays one line. 22rem is 352px at 100% text and 704px at 200%: a phone at either.
   return (
     <PageHeader
       title={agent.displayName}
       titleFromData
       leading={
-        <span data-header-avatar className={cn("contents", crowded && "@max-[22rem]:hidden")}>
+        <span data-header-avatar className={"contents @max-[22rem]:hidden"}>
           <AgentAvatar
             slug={agent.slug}
             template={agent.template}
@@ -103,7 +101,6 @@ export const AgentHeader = memo(function AgentHeader({
           archived={archived}
           panel={panel}
           view={view}
-          crowded={crowded}
           onRestartError={onRestartError}
           onPinOutcome={onPinOutcome}
           onAgent={onAgent}
@@ -117,7 +114,7 @@ export const AgentHeader = memo(function AgentHeader({
               onTerminateStart={onTerminateStart}
               onTerminated={onTerminated}
               onLifecycle={onLifecycle}
-              viewSwitch={crowded ? view : undefined}
+              viewSwitch={view}
             />
           }
         />
@@ -131,7 +128,6 @@ function AgentActions({
   archived,
   panel,
   view,
-  crowded,
   actionsMenu,
   onRestartError,
   onPinOutcome,
@@ -141,8 +137,6 @@ function AgentActions({
   archived: boolean;
   panel: AgentDetailsPanel;
   view: AgentView;
-  /** A third action (Restart, Pin) is showing: the view switch gives way below 22rem. */
-  crowded: boolean;
   actionsMenu: ReactNode;
   onRestartError(message: string | undefined): void;
   onPinOutcome(o: PinOutcome | undefined): void;
@@ -158,13 +152,14 @@ function AgentActions({
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
       )}
       {live && <RecoveryActions agent={agent} onError={onRestartError} />}
-      <ViewSwitch slug={agent.slug} view={view} inMenu={crowded} />
+      <ViewSwitch slug={agent.slug} view={view} inMenu />
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             id={AGENT_DETAILS_TOGGLE_ID}
             variant="ghost"
             size="icon"
+            className="@max-[22rem]:hidden"
             aria-label="Agent details"
             aria-expanded={panel.open}
             aria-controls={AGENT_DETAILS_ID}

@@ -74,7 +74,7 @@ function endedNote(a: AgentSummary, now: Date): string | null {
  *  what tells siblings apart: the head gives way first. */
 export function AgentName({ agent }: { agent: Pick<AgentSummary, "displayName" | "kind"> }) {
   const i = agent.kind === "ephemeral" ? agent.displayName.lastIndexOf(" · ") : -1;
-  if (i <= 0) return <span className="min-w-0 truncate">{agent.displayName}</span>;
+  if (i <= 0) return <span className="block min-w-0 truncate">{agent.displayName}</span>;
   return (
     <span className="flex min-w-0">
       <span aria-hidden="true" className="min-w-0 truncate">

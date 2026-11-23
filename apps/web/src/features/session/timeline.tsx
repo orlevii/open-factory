@@ -29,6 +29,7 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_TEXTS: readonly LiveText[] = [];
 const NO_PROGRESS: readonly SubagentProgress[] = [];
 type TextRow = Extract<Row, { kind: "text" }>;
+const NO_PENDING: readonly Row[] = [];
 const NO_LIVE_ROWS: readonly TextRow[] = [];
 
 /**
@@ -110,6 +111,8 @@ export function Timeline(props: {
   onLoadEarlier(): Promise<boolean>;
   earlierError: boolean;
   footer: ReactNode;
+  /** Raw sends without a row yet (`rawTailRows`): items after the rows, keyed like their rows. */
+  pendingRows?: readonly Row[];
   /** An older window (deep link): the Jump pill always shows and leaves it (U3 §8.2). */
   windowed?: boolean;
   /** The speech that arrived while windowed (the reducer counts it: those rows aren't appended). */
@@ -439,8 +442,9 @@ export function Timeline(props: {
     ],
   );
   const liveTexts = props.liveTexts ?? NO_TEXTS;
+  const pendingRows = props.pendingRows ?? NO_PENDING;
   const items =
-    liveRows.length === 0
+    liveRows.length === 0 && pendingRows.length === 0
       ? rowEls
       : [
           ...rowEls,
@@ -466,8 +470,29 @@ export function Timeline(props: {
               onRowFocus={onRowFocus}
             />
           )),
+          ...pendingRows.map((row, i) => (
+            <TimelineItem
+              key={row.key}
+              row={row}
+              slug={slug}
+              spawned={spawned}
+              lit={false}
+              arrivedKey={undefined}
+              arrival={undefined}
+              onArrivedEnd={onArrivedEnd}
+              live={false}
+              firstOfSeq={false}
+              gap={rowGap(row, i === 0 ? (liveRows.at(-1) ?? rows.at(-1)) : pendingRows[i - 1])}
+              tabKey={tabKey}
+              expanded={expanded}
+              failedIds={failedIds}
+              interruptedEnds={interruptedEnds}
+              toggle={toggle}
+              onRowFocus={onRowFocus}
+            />
+          )),
         ];
-  const last = liveRows.at(-1) ?? rows.at(-1);
+  const last = pendingRows.at(-1) ?? liveRows.at(-1) ?? rows.at(-1);
 
   return (
     <div className="relative min-h-0 flex-1">

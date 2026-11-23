@@ -10,7 +10,7 @@ import {
   type SessionEvent,
   type SubagentProgress,
 } from "@open-factory/shared";
-import { speechCount, textRowKey } from "./rows";
+import { rawKey, speechCount, textRowKey } from "./rows";
 
 /** A held message you cancelled (U3 §6.4): the line "Message cancelled. Undo" shows in its place among
  *  the queue items until your next send. */
@@ -41,6 +41,10 @@ export interface SendingBlock {
   urgent: boolean;
   /** The files it carries (U3 §13.5), shown as chips. */
   attachments?: readonly MessageAttachment[];
+  /** Raw input (I1 §5): drawn in the timeline's tail as a raw block, not in the queue area. */
+  raw?: boolean;
+  /** When it was sent (ISO), for a raw block's time. */
+  at?: string;
 }
 
 /** One streaming text block (U3 §11.4), mirroring the server's `LiveState.texts`. */
@@ -327,6 +331,17 @@ function withEchoes(s: SessionState, ids: Iterable<string | undefined>): Session
 
 const echoedBy = (items: QueueItem[]) => items.map((q) => q.clientMessageId);
 
+/** The `operator_input` row of a raw send landed (I1 §5): the queue item or "Sending" block it
+ *  replaces goes in the same step and the row's key (shared with it) is handed off, so the node stays
+ *  and nothing fades. */
+function rawLanded(s: SessionState, cid: string): SessionState {
+  const queue = s.queue.filter((q) => q.clientMessageId !== cid);
+  const block = s.sending.some((b) => b.clientMessageId === cid);
+  if (queue.length === s.queue.length && !block) return s;
+  const next = withEchoes({ ...s, queue }, [cid]);
+  return { ...next, handedOff: new Set(next.handedOff).add(rawKey(cid)) };
+}
+
 /** What newly appended live events do besides becoming rows (U3 §8.3, §5.3), in the same step: a
  *  `message_in` takes the queue items it delivered off the queue and its rows are handed off; a
  *  `turn_end` closes the turn, so the activity line goes as its footer arrives. Only events above
@@ -378,6 +393,8 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
         next,
         e.messages.map((m) => m.clientMessageId),
       );
+    } else if (e.type === "operator_input" && e.clientMessageId !== undefined) {
+      next = rawLanded(next, e.clientMessageId);
     } else if (e.type === "turn_end" && next.agent?.turnOpen) {
       next = withAgent(next, { ...next.agent, turnOpen: false, turnStartedAt: undefined });
     } else if (e.type === "interrupt_unconfirmed") {

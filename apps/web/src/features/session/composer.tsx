@@ -228,7 +228,12 @@ export const Composer = memo(function SessionComposer({
       // Raw input goes as typed, its trailing whitespace trimmed (the server does the same); a message
       // is trimmed at both ends, and may interrupt.
       const body = inSession ? text.trimEnd() : text.trim();
-      onSending?.({ clientMessageId, body, urgent: inSession ? false : urgent });
+      onSending?.({
+        clientMessageId,
+        body,
+        urgent: inSession ? false : urgent,
+        ...(inSession ? { raw: true, at: new Date().toISOString() } : {}),
+      });
       repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);

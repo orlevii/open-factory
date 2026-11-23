@@ -1320,28 +1320,22 @@ test("a typed [attached: …] line without a confirmed upload stays text", async
   expect(within(block).queryByRole("list", { name: "Attached files" })).toBeNull();
 });
 
-test("↑ recall fills the box with your last message's text, without its attachment lines", async () => {
+test("↑ recall fills the box with your newest raw input, as typed", async () => {
   await open(
     [
       {
-        type: "message_in",
-        messages: [
-          env({
-            id: "m1",
-            from: "@alice",
-            kind: "message",
-            body: `see this\n\n${attachedLine(UP1, "a.png")}`,
-            attachments: [{ uploadId: UP1, name: "a.png", kind: "image" }],
-          }),
-        ],
+        type: "operator_input",
+        text: "/code-review src/",
+        by: "@alice",
+        entryId: "e1",
       },
     ],
-    "see this",
+    "/code-review src/",
   );
-  const box = screen.getByRole("combobox", { name: /Message to/ });
+  const box = screen.getByRole("combobox", { name: /Message to|Session input|Raw input/ });
   await userEvent.click(box);
   await userEvent.keyboard("{ArrowUp}");
-  expect(box).toHaveValue("see this");
+  expect(box).toHaveValue("/code-review src/");
 });
 
 test("an image over 1 MB, or of unknown size, previews only when asked", async () => {

@@ -695,14 +695,14 @@ function renderRows(events: AnyEvent[]) {
   return rows;
 }
 
-test("a command renders like your message: the command in mono and 'ran a command'", () => {
+test("raw input renders like your message: You, raw, the command in mono", () => {
   const rows = renderRows([
     { type: "operator_input", text: "/code-review src/", by: "@alice", entryId: "e1" },
   ]);
   expect(rows.map((r) => r.kind)).toEqual(["command"]);
   const row = document.querySelector("[data-test-row=command]") as HTMLElement;
   expect(within(row).getByText("You")).toBeInTheDocument();
-  expect(within(row).getByText("ran a command")).toBeInTheDocument();
+  expect(within(row).getByText("· raw")).toBeInTheDocument();
   expect(within(row).getByText("/code-review src/")).toHaveClass("font-mono");
   expect(row.querySelector("[data-message-block]")).not.toBeNull();
 });

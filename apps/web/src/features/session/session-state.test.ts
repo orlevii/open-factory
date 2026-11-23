@@ -1133,3 +1133,37 @@ test("a reload of the same session keeps live; another session starts empty", ()
   });
   expect(other.live.texts).toEqual([]);
 });
+
+// I1 §5: a raw send is one node from Sending to the operator_input row.
+const rawInput = (cid: string): SessionEvent["event"] => ({
+  type: "operator_input",
+  text: "/context",
+  by: "@or",
+  clientMessageId: cid,
+  entryId: "e1",
+});
+
+test("an operator_input row replaces the raw queue item in one step and is handed off", () => {
+  const s = sessionReducer(
+    loaded({ queue: [{ ...qItem("q1"), kind: "raw", clientMessageId: "c1" }] }),
+    frames([sessionEvent(10, rawInput("c1"))]),
+  );
+  expect(s.queue).toEqual([]);
+  expect(s.handedOff.has("raw:c1")).toBe(true);
+});
+
+test("an operator_input row replaces the Sending block and lists it as landed", () => {
+  const sending = sessionReducer(loaded(), {
+    type: "sending",
+    block: { clientMessageId: "c2", body: "/context", urgent: false, raw: true },
+  });
+  const s = sessionReducer(sending, frames([sessionEvent(10, rawInput("c2"))]));
+  expect(s.sending).toEqual([]);
+  expect(s.landed.has("c2")).toBe(true);
+  expect(s.handedOff.has("raw:c2")).toBe(true);
+});
+
+test("an operator_input row of someone else's send hands nothing off", () => {
+  const s = sessionReducer(loaded(), frames([sessionEvent(10, rawInput("zz"))]));
+  expect(s.handedOff.size).toBe(0);
+});

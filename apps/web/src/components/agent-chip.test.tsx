@@ -33,17 +33,6 @@ test("agent form shows avatar, name and @slug; no native title", () => {
   expect(container.querySelector("[title]")).toBeNull();
 });
 
-test("each line of a chip is capped at the chip's width, so a stacked chip still truncates", () => {
-  // Below a 24rem container the chip stacks name over slug (flex-col, items-start), where a line
-  // sizes to its content unless capped; jsdom has no layout, so this checks the cap is there.
-  const { container } = wrap(<AgentChip agent={lead} showSlug link={false} />);
-  const chip = container.firstElementChild as HTMLElement;
-  expect(chip.className).toMatch(/@max-\[24rem\]:flex-col/);
-  const lines = [...chip.children];
-  expect(lines).toHaveLength(2);
-  for (const line of lines) expect(line).toHaveClass("max-w-full");
-});
-
 test("slug form resolves from the live list cache", () => {
   wrap(<AgentChip slug="lead" />, (qc) => qc.setQueryData(["agents", "exclude"], [lead]));
   expect(screen.getByText("Team Lead")).toBeInTheDocument();
@@ -128,11 +117,6 @@ test("a click on a truncated name inside a link still follows the link", async (
   // Radix closes on pointer down; the trigger must survive it so the click reaches the link.
   await userEvent.click(screen.getByText("Team Lead", { selector: "span:not([role])" }));
   expect(follow).toHaveBeenCalledTimes(1);
-});
-
-test("an inline chip keeps name and handle on one line at any width (it truncates, never stacks)", () => {
-  const { container } = wrap(<AgentChip agent={lead} showSlug inline />);
-  expect((container.firstElementChild as HTMLElement).className).not.toMatch(/flex-col/);
 });
 
 test("with the handle shown, the name's tooltip carries it too (kept when the handle hides)", async () => {

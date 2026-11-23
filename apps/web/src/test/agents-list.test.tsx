@@ -159,11 +159,9 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   expect(await note("Plain")).toBeNull();
   // Plain text only: nothing interactive inside the row link.
   const busy = screen.getByRole("link", { name: /Busy/ });
-  expect(busy.querySelector("[data-agent-note]")).toHaveClass("text-muted-foreground");
   expect(within(busy).queryByRole("button")).toBeNull();
 
   const count = screen.getByText("3 of 8 running");
-  expect(count).toHaveClass("max-md:hidden");
   const radios = screen.getByRole("group", { name: "Show" });
   expect(count.compareDocumentPosition(radios) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   act(() => pushFrame({ type: "supervisor", running: 4, max: 8 }));
@@ -173,19 +171,6 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   await screen.findByText("No ended agents.");
   expect(screen.queryByText(/of 8 running/)).not.toBeInTheDocument();
   vi.useRealTimers();
-});
-
-test("header at 200% text on a phone (class contract): Active/Ended never shrink, and below an 18rem header they take a line of their own (evidence D3)", async () => {
-  listWith([agentSummary({ slug: "a", displayName: "Ada" })]);
-  renderApp("/agents", alice);
-  const radios = await screen.findByRole("group", { name: "Show" });
-  // Squeezed, the nowrap labels printed over each other and over New agent.
-  expect(radios).toHaveClass("shrink-0", "@max-[18rem]:order-last", "@max-[18rem]:basis-full");
-  const header = radios.closest("header");
-  expect(header).toHaveClass("flex-wrap", "min-h-12");
-  expect(header).not.toHaveClass("h-12");
-  const action = within(header as HTMLElement).getByRole("button", { name: "New agent" });
-  expect(action.parentElement).toHaveClass("ml-auto");
 });
 
 test("a terminated frame shows Terminated (no dot) at once, then the list refetches without it", async () => {

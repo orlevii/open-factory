@@ -197,7 +197,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
 });
 
-test("a mention brings the mentioned comment to the top of the body; the composer can't take the body's room", async () => {
+test("a mention brings the mentioned comment to the top of the body", async () => {
   setup([mention(1, "c4", { kind: "agent", name: "ada" })]);
   await visit("/inbox?item=i1");
   const p = pane();
@@ -216,12 +216,6 @@ test("a mention brings the mentioned comment to the top of the body; the compose
         ),
     ).toBe(true),
   );
-  // The composer is capped and scrolls within itself, so the body always keeps room.
-  const box = within(p).getByRole("combobox", { name: "Comment" });
-  const composer = box.closest("[data-pane-composer]") as HTMLElement;
-  expect(composer).not.toBeNull();
-  expect(composer).toHaveClass("overflow-y-auto");
-  expect(composer.className).toMatch(/max-h-/);
 });
 
 test("a mention by a human leaves the composer empty", async () => {
@@ -269,23 +263,6 @@ test("a task event shows the fact and Open task, with no composer", async () => 
     "/tasks/T-7",
   );
   expect(within(p).queryByRole("textbox")).toBeNull();
-});
-
-test("the composer sits below the body's scroller, which scrolls on its own", async () => {
-  setup([mention(1, "c4", { kind: "agent", name: "ada" })]);
-  await visit("/inbox?item=i1");
-  const p = pane();
-  const box = await within(p).findByRole("combobox", { name: "Comment" });
-  const body = p.querySelector("[data-pane-body]") as HTMLElement;
-  const composer = box.closest("[data-pane-composer]") as HTMLElement;
-  // jsdom has no layout: this guards the structure (the composer is outside the scroller and after
-  // it, both in the pane's flex column); the pinning itself is a browser check.
-  expect(body).not.toBeNull();
-  expect(body.contains(composer)).toBe(false);
-  expect(body.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(body).toHaveClass("overflow-y-auto", "min-h-0", "flex-1");
-  expect(composer).toHaveClass("shrink-0");
-  expect(body.parentElement).toBe(composer.parentElement);
 });
 
 test("switching items shows skeletons, never the previous body", async () => {

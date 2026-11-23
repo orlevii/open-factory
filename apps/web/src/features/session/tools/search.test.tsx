@@ -180,13 +180,12 @@ test("collapsed while running: the pattern alone", () => {
   expect(rowToggle()).toHaveTextContent(/^todo in srcRunning$/);
 });
 
-test("expanded: the first 20 files as mono rows, then Show all N files in place", async () => {
+test("expanded: the first 20 files as rows, then Show all N files in place", async () => {
   const content = `Found 26 files\n${files(26).join("\n")}`;
   render(<RowHarness open row={toolRow("Grep", { pattern: "x" }, { content })} />);
   const items = screen.getAllByRole("listitem");
   expect(items).toHaveLength(20);
   expect(items[0]).toHaveTextContent("/work/app/src/f1.ts");
-  expect(items[0]).toHaveClass("font-mono");
   const all = screen.getByRole("button", { name: "Show all 26 files" });
   expect(all).toHaveAttribute("data-expands");
   await userEvent.click(all);

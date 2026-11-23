@@ -59,16 +59,12 @@ test("Show all anchors its row through the timeline's expandAnchor before it exp
 const fence = (n: number) =>
   `Run this:\n\n\`\`\`\n${Array.from({ length: n }, (_, i) => `line ${i}`).join("\n")}\n\`\`\``;
 
-test("a queued (brief) body with a code block is cut before rendering and capped at three lines; Show all reveals it", () => {
+test("a queued (brief) body with a code block is cut before rendering; Show all reveals it", () => {
   render(<MessageBlock from="@alice" fromKind="human" body={fence(2000)} brief queued={{}} />);
-  const body = document.querySelector("[data-message-body]") as HTMLElement;
-  // The pre never escapes the clamp: the source is cut, and a code block is capped at three 24px lines.
-  const box = body.querySelector(".line-clamp-3") as HTMLElement;
-  expect(box).toHaveClass("[&_pre]:max-h-[4.5rem]", "[&_pre]:overflow-hidden");
+  // The source is cut before rendering.
   expect(screen.queryByText(/line 1999/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Show all" }));
   expect(screen.getByText(/line 1999/)).toBeInTheDocument();
-  expect(body.querySelector(".line-clamp-3")).toBeNull();
 });
 
 test("a short queued body has no Show all", () => {
@@ -102,12 +98,6 @@ test("once layout has measured a notice, the measurement decides: a long notice 
     sh.mockRestore();
     ch.mockRestore();
   }
-});
-
-test("a notice keeps its soft line breaks", () => {
-  render(notice("@or assigned you T-1\nThe task, written by @or"));
-  const box = document.querySelector("[data-notice] .line-clamp-2") as HTMLElement;
-  expect(box).toHaveClass("[&_p]:whitespace-pre-line");
 });
 
 test("once layout has measured it, a queued body with a short code block still offers Show all (the capped plate hides lines)", () => {

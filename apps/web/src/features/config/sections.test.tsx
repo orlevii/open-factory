@@ -278,7 +278,7 @@ test("removing a server moves focus to the next row's remove button", async () =
   expect(screen.getByRole("button", { name: CONFIG_COPY.addServer })).toHaveFocus();
 });
 
-test("an issue on a server or an env name lands under its row, with its severity", () => {
+test("an issue on a server or an env name lands under its row", () => {
   render(
     <Form
       start={{
@@ -296,9 +296,8 @@ test("an issue on a server or an env name lands under its row, with its severity
       ]}
     />,
   );
-  const note = within(mcpGroup()).getByText("NOPE isn't a secret or env var here.");
-  expect(note.closest("p")).toHaveClass("text-foreground");
-  expect(screen.getByText("Bad env.").closest("p")).toHaveClass("text-destructive");
+  expect(within(mcpGroup()).getByText("NOPE isn't a secret or env var here.")).toBeInTheDocument();
+  expect(screen.getByText("Bad env.")).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
 });
 
@@ -455,7 +454,7 @@ test("an issue on a template server lands on its row; one on an unknown server f
     />,
   );
   const tpl = screen.getByRole("list", { name: "From template dev · 1" });
-  expect(within(tpl).getByText("Template row issue.").closest("p")).toHaveClass("text-foreground");
+  expect(within(tpl).getByText("Template row issue.")).toBeInTheDocument();
   const fieldNote = document.getElementById("field-mcp-error");
   expect(fieldNote).toHaveTextContent("Unknown server issue.");
   expect(fieldNote).toHaveAttribute("data-tone", "error");

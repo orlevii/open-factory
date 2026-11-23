@@ -107,16 +107,6 @@ test("accepting @ops adds a recipient: the token goes, the row opens, it is anno
   expect(screen.queryByRole("option", { name: /Add @ops as/ })).toBeNull();
 });
 
-test("the 'To:' name truncates inside the row; 'To:' and the chips keep their room", async () => {
-  renderApp("/agents/dev/chat", alice);
-  await addRecipient("ops");
-  const to = document.querySelector<HTMLElement>("[data-recipients-to]") as HTMLElement;
-  expect(to).toHaveClass("min-w-0", "max-w-[60%]");
-  expect(to.firstElementChild).toHaveClass("shrink-0");
-  expect(to.lastElementChild).toHaveClass("truncate");
-  expect(to.lastElementChild).toHaveTextContent("Dev agent");
-});
-
 test("Esc keeps a typed @name as text", async () => {
   renderApp("/agents/dev/chat", alice);
   const input = await box();

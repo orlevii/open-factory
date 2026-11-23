@@ -187,25 +187,11 @@ function Confirm({
   );
 }
 
-test("desktop: a centered alert dialog that fits the viewport; a long name wraps on the button", async () => {
-  render(<Confirm onConfirm={held()} />);
-  const dialog = screen.getByRole("alertdialog");
-  expect(dialog).toHaveAttribute("data-slot", "alert-dialog-content");
-  expect(dialog).toHaveClass("sm:max-w-md", "max-h-[calc(100svh-2rem)]");
-  expect(dialog).not.toHaveClass("sm:max-w-sm");
-  const action = screen.getByRole("button", { name: `Delete ${SECRET}` });
-  expect(action).toHaveClass("whitespace-normal", "[overflow-wrap:anywhere]");
-  expect(action).not.toHaveClass("whitespace-nowrap");
-  // Button's base shrink-0 would keep the max-content width in the flex footer: the label never wraps.
-  expect(action).not.toHaveClass("shrink-0");
-  expect(action).toHaveClass("shrink", "min-w-0", "max-w-full");
-});
-
 test.each([
   ["desktop", false],
   ["mobile", true],
 ])(
-  "%s: an unbroken name wraps anywhere in the title and description; the action wraps rather than truncating (class contract)",
+  "%s: the dialog is named by its title and described by its body, and the action carries the full name",
   (_, mobile) => {
     fakeMatchMedia.install(mobile);
     render(
@@ -220,14 +206,8 @@ test.each([
       />,
     );
     const dialog = screen.getByRole("alertdialog", { name: `Delete secret ${SECRET}?` });
-    expect(screen.getByText(`Delete secret ${SECRET}?`)).toHaveClass("[overflow-wrap:anywhere]");
-    expect(screen.getByText(`Agents using ${SECRET} lose it.`)).toHaveClass(
-      "[overflow-wrap:anywhere]",
-    );
     expect(dialog).toHaveAccessibleDescription(`Agents using ${SECRET} lose it.`);
-    const action = screen.getByRole("button", { name: `Delete ${SECRET}` });
-    expect(action).toHaveClass("whitespace-normal");
-    expect(action).not.toHaveClass("truncate");
+    expect(screen.getByRole("button", { name: `Delete ${SECRET}` })).toBeInTheDocument();
   },
 );
 

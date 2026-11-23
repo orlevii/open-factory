@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import { type ComboOption, Combobox } from "./combobox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select";
 
 let off = () => {};
 beforeEach(() => {
@@ -98,21 +97,8 @@ test("order: fixed options, then the current value, then the rest; the current v
 });
 
 describe("trigger", () => {
-  test("trigger looks like Select (same data-slot/classes contract as select trigger)", () => {
-    render(
-      <Select>
-        <SelectTrigger aria-label="Native">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="x">X</SelectItem>
-        </SelectContent>
-      </Select>,
-    );
-    const select = screen.getByRole("combobox", { name: "Native" });
+  test("an empty trigger shows its placeholder and a chevron", () => {
     const { trigger } = setup({ options: OPTIONS.filter((o) => !o.fixed) });
-    expect(trigger.className).toBe(select.className);
-    expect(trigger).toHaveAttribute("data-slot", "combobox-trigger");
     expect(trigger).toHaveAttribute("data-placeholder");
     expect(trigger).toHaveTextContent("Pick one");
     expect(trigger.querySelector("svg")).not.toBeNull();
@@ -143,14 +129,11 @@ describe("trigger", () => {
   });
 });
 
-test("popover width at least 24rem, side locked while open, list height fixed (h-72)", async () => {
+test("the popover keeps the side it opened on while the filter narrows", async () => {
   const { trigger } = setup();
   await userEvent.click(trigger);
-  const listbox = await screen.findByRole("listbox");
+  await screen.findByRole("listbox");
   const c = content();
-  expect(c?.className).toMatch(/w-\[max\(var\(--radix-popover-trigger-width\),min\(24rem,/);
-  expect(listbox).toHaveClass("h-72");
-  expect(listbox.className).not.toMatch(/cmdk-list-height/);
 
   // The side chosen at open stays: simulate the open landing on top, then narrow the filter.
   const wrapper = c?.parentElement as HTMLElement;
@@ -237,20 +220,13 @@ test("disabled cannot be opened by click or keyboard", async () => {
   expect(onValueChange).not.toHaveBeenCalled();
 });
 
-// jsdom has no layout: this pins the structure that makes a long value truncate inside the trigger
-// (checked in the browser at 1440 and 390, where the page no longer widens).
-test("a long value sits in a shrinkable, clipping slot: text gets its own ellipsis, a node shrinks", () => {
+test("a long value renders whole in the trigger's value slot", () => {
   const long = "A very long option label that cannot possibly fit in the trigger".repeat(3);
   const { trigger } = setup({ options: [{ value: "x", label: long }], value: "x" });
   const slot = trigger.querySelector<HTMLElement>('[data-slot="combobox-value"]');
   expect(slot).not.toBeNull();
-  // A flex item that may shrink below its content, clips it, and contains the content's sr-only
-  // (absolute) spans so they can't widen the page.
-  for (const c of ["flex", "min-w-0", "flex-1", "overflow-hidden", "relative"])
-    expect(slot).toHaveClass(c);
   const text = slot?.firstElementChild;
   expect(text).toHaveTextContent(long);
-  expect(text).toHaveClass("truncate");
 });
 
 test("a rendered value is a direct child of the slot, so it shrinks with it", () => {

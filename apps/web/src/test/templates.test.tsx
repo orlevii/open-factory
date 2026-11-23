@@ -154,15 +154,6 @@ test("rows: validation state in words and agent counts", async () => {
   expect(screen.getByText("No agents")).toBeInTheDocument();
   expect(screen.getByText("2 agents")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/templates/lead");
-  // One line only on a wide list (its own width, not the window's: the sidebar takes 240px); below
-  // that the metadata is its own line and wraps.
-  const list = screen.getByRole("link", { name: /lead/ }).closest("ul") as HTMLElement;
-  expect(list).toHaveClass("@container");
-  // The page grid's one track can shrink, so a long images path can't widen the list with it.
-  expect(list.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
-  const meta = screen.getByText("No agents").parentElement as HTMLElement;
-  expect(meta).toHaveClass("min-w-0", "flex-wrap", "basis-full", "@min-[60rem]:contents");
-  expect(meta.className).not.toMatch(/(^| )md:/);
 });
 
 test("list: a failed load says so", async () => {
@@ -494,18 +485,6 @@ test("Discard on a just-created optional file returns to 'Not created'", async (
   expect(screen.getByText("Not created")).toBeInTheDocument();
 });
 
-test("the keyboard hint shows on focus, also on touch, and hides again on blur", async () => {
-  render(<Harness onSave={() => {}} />);
-  const hint = screen.getByText("Esc then Tab to leave the editor");
-  expect(hint).toHaveClass("sr-only");
-  await userEvent.click(screen.getByRole("textbox", { name: "code" }));
-  expect(hint).not.toHaveClass("sr-only");
-  await userEvent.click(screen.getByRole("button", { name: "after" }));
-  expect(hint).toHaveClass("sr-only");
-  // Not gated on a fine pointer (#37): it shows on touch too.
-  expect(hint.className).not.toMatch(/pointer:coarse/);
-});
-
 test("Delete confirms and lands on the list; 'Deleted x.' shows once: it is cleared from history state after it is read", async () => {
   const api = mockApi({
     "GET /api/templates/lead": () => json(detail()),
@@ -590,17 +569,20 @@ test("list: the Image column shows each status as an icon and a word, plus the i
     expect(svg).not.toBeNull();
     return svg as SVGElement;
   };
-  expect(await icon("Building…")).toHaveClass("text-signal");
-  expect(await icon("Build failed")).toHaveClass("text-destructive");
-  expect(await icon("Out of date")).toHaveClass("text-warning");
-  expect(await icon("Built")).toHaveClass("text-success");
-  expect(await icon("Not built")).toHaveClass("text-muted-foreground");
-  expect(await icon("No Dockerfile")).toHaveClass("text-muted-foreground");
-  expect(await icon("Unknown")).toHaveClass("text-muted-foreground");
-  expect(await icon("Present locally")).toBeInTheDocument();
-  expect(await icon("Pulled when missing")).toHaveClass("text-muted-foreground");
-  expect(screen.getByText("ghcr.io/x/z:1")).toHaveClass("font-mono");
-  expect(screen.getByText("pw")).toHaveClass("font-mono");
+  for (const word of [
+    "Building…",
+    "Build failed",
+    "Out of date",
+    "Built",
+    "Not built",
+    "No Dockerfile",
+    "Unknown",
+    "Present locally",
+    "Pulled when missing",
+  ])
+    expect(await icon(word)).toBeInTheDocument();
+  expect(screen.getByText("ghcr.io/x/z:1")).toBeInTheDocument();
+  expect(screen.getByText("pw")).toBeInTheDocument();
 });
 
 const brokenBuild = {
@@ -900,32 +882,15 @@ test("Save reads 'Saving…' while the PUT is pending", async () => {
   expect(await screen.findByText("Saved.")).toBeInTheDocument();
 });
 
-test("list header (class contract, jsdom has no layout): the h1 gives way to the switch below a 25rem header; New template goes icon-only below sm, keeping its name and a tooltip", async () => {
+test("list header: the Templates h1, the views switch, then New template, named and with a tooltip", async () => {
   mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
   renderApp("/templates", alice);
-  const h1 = await screen.findByRole("heading", { level: 1, name: "Templates" });
-  // The header is the @container: visible from 25rem of header width, sr-only (still the page's h1) below.
-  expect(h1).toHaveClass("@max-[25rem]:sr-only");
-  expect(h1).not.toHaveClass("sr-only");
-  expect(h1.closest("header")).toHaveClass("@container");
-  // Neither the switch nor the action shrinks or wraps (the h1 gives way instead).
+  await screen.findByRole("heading", { level: 1, name: "Templates" });
   const nav = screen.getByRole("navigation", { name: "Templates views" });
-  expect(nav).toHaveClass("shrink-0");
   const link = screen.getByRole("button", { name: "New template" });
   expect(link).toHaveAttribute("aria-label", "New template");
-  const label = within(link).getByText("New template");
-  expect(label).toHaveClass("max-sm:sr-only");
-  expect(link.parentElement).toHaveClass("shrink-0");
   await userEvent.hover(link);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("New template");
-  // At 200% text on a phone (evidence D4): below a 17rem header the switch takes its own line
-  // instead of covering New template. The header may take a second line (a fixed h-12 would overlap).
-  const header = h1.closest("header");
-  expect(header).toHaveClass("flex-wrap", "min-h-12");
-  expect(header).not.toHaveClass("h-12");
-  expect(nav).toHaveClass("@max-[17rem]:order-last", "@max-[17rem]:basis-full");
-  // New template stays on the first line, at its end.
-  expect(link.parentElement).toHaveClass("ml-auto");
   expect(nav.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 

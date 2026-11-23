@@ -339,16 +339,14 @@ test("Add secret opened from a page returns focus to the field it filled, not to
   }
 });
 
-test("a top-level sheet shows its entry's description, in its class", async () => {
+test("a top-level sheet shows its entry's description", async () => {
   await shell();
   sheetBodies["new-task"] = {
     ...sheetBodies["new-task"]!,
     description: () => "work",
-    descriptionClass: "font-mono",
   };
   act(() => openSheet({ kind: "new-task" }));
   const panel = await screen.findByRole("dialog", { name: "New task" });
   const description = within(panel).getByText("work");
   expect(description).toHaveAttribute("data-slot", "sheet-description");
-  expect(description).toHaveClass("font-mono");
 });

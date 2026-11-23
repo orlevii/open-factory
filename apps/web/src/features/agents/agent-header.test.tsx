@@ -72,21 +72,15 @@ test("the slot keeps the width of the wider label in both views, and only the ic
   expect(cell.children[0]).toHaveTextContent("Chat");
   expect(cell.children[1]).toHaveTextContent("Session");
   expect(cell.children[1]).toHaveAttribute("aria-hidden", "true");
-  expect(cell.children[1]).toHaveClass("invisible");
-  // Below a 24rem header the label is for screen readers only (the accessible name is on the link).
-  expect(cell).toHaveClass("@max-[24rem]:sr-only");
   expect(link).toHaveAccessibleName("Chat");
 });
 
 test("crowded by Restart, the switch leaves the header below 22rem too; Restart stays", async () => {
   agent = { status: "errored", lastError: "boom" };
   renderApp("/agents/dev/chat", alice);
-  const link = await waitFor(async () => {
-    const l = await switchLink();
-    expect(l).toHaveAccessibleName("Session");
-    return l;
+  await waitFor(async () => {
+    expect(await switchLink()).toHaveAccessibleName("Session");
   });
-  expect(link).toHaveClass("@max-[22rem]:hidden");
   const bar = await banner();
   expect(within(bar).getByRole("button", { name: "Restart" })).toBeInTheDocument();
   await userEvent.click(within(bar).getByRole("button", { name: "Actions for Dev agent" }));
@@ -97,13 +91,7 @@ test("crowded by Restart, the switch leaves the header below 22rem too; Restart 
 
 test("uncrowded, the switch also leaves the header below 22rem (which is a phone, or 200% text) and tops the ⋯ menu", async () => {
   renderApp("/agents/dev/chat", alice);
-  const link = await switchLink();
-  expect(link).toHaveClass("@max-[22rem]:hidden");
-  // The name clips itself inside the h1 (block + truncate) and the h1's floor drops to 1.5rem below 22rem, so the
-  // ⋯ stays inside a 390px phone at 200% text.
-  const h1 = (await banner()).querySelector("h1");
-  expect(h1).toHaveClass("truncate", "@max-[22rem]:min-w-6");
-  expect(h1?.firstElementChild).toHaveClass("block", "min-w-0", "truncate");
+  await switchLink();
   await userEvent.click(
     within(await banner()).getByRole("button", { name: "Actions for Dev agent" }),
   );

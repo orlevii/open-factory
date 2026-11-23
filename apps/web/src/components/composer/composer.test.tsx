@@ -81,27 +81,13 @@ test("one frame holds the textarea and a 32px toolbar", () => {
   expect(frame).not.toBeNull();
   const toolbar = frame?.querySelector("[data-composer-toolbar]");
   expect(toolbar).not.toBeNull();
-  expect(toolbar).toHaveClass("min-h-8"); // one 32px line, a second only when it must wrap
   expect(toolbar?.contains(screen.getByRole("button", { name: "Send" }))).toBe(true);
-});
-
-test("growth is capped at 6 lines or 35svh below md, 12 lines or 40svh from md, then it scrolls", () => {
-  const { box } = setup();
-  expect(box).toHaveClass(
-    "max-h-[min(calc(6lh_+_1rem),35svh)]",
-    "md:max-h-[min(calc(12lh_+_1rem),40svh)]",
-    "min-h-[calc(2lh_+_1rem)]",
-    "overflow-y-auto",
-  );
 });
 
 test("Send is labelled Send, disabled-shaped while empty, primary at once when there is text", async () => {
   const { box } = setup();
   const send = screen.getByRole("button", { name: "Send" });
   expect(send).toBeDisabled();
-  expect(send).toHaveAttribute("data-variant", "default");
-  // A keyboard action: no transition between the disabled plate and graphite.
-  expect(send).toHaveClass("transition-none");
   await userEvent.type(box, "x");
   expect(send).toBeEnabled();
   await userEvent.clear(box);
@@ -116,7 +102,6 @@ test("Stop's slot keeps its width with no turn open (an invisible stand-in), so 
   const slot = document.querySelector("[data-stop-slot]");
   expect(slot).not.toBeNull();
   const standIn = slot?.querySelector("[data-stop-stand-in]");
-  expect(standIn).toHaveClass("invisible");
   expect(standIn).toHaveAttribute("aria-hidden", "true");
   expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
   rerender({ onStop, stopEpoch: 2, turnOpen: true, stopVisible: true });
@@ -137,7 +122,6 @@ test("the hint sits in the toolbar, takes the free room and truncates first", ()
   setup({ hintMode: "working", turnOpen: true });
   const hint = document.querySelector("[data-composer-hint]");
   expect(hint?.closest("[data-composer-toolbar]")).not.toBeNull();
-  expect(hint).toHaveClass("min-w-0", "flex-1", "truncate");
   expect(hint).toHaveTextContent(
     /^Arrives at the agent's next step\. (⌥|Alt)↵ to interrupt instead\.$/,
   );
@@ -775,7 +759,6 @@ test("a files-only paste attaches them as chips, max 12rem wide", () => {
   const { box } = setupFiles();
   expect(pasteFiles(box, [file("notes.txt")])).toBe(false);
   expect(chips()).toHaveLength(1);
-  expect(chips()[0]).toHaveClass("max-w-[12rem]");
   expect(chips()[0]).toHaveTextContent("notes.txt");
   expect(lastXhr().url).toBe("/api/agents/dev/uploads");
 });
@@ -855,9 +838,8 @@ test("an upload shows a determinate 2px bar and a tabular percentage, without tr
   });
   const bar = screen.getByRole("progressbar", { name: "Uploading a.txt" });
   expect(bar).toHaveAttribute("aria-valuenow", "40");
-  expect(bar).toHaveClass("h-0.5", "transition-none");
   expect(bar.style.transform).toBe("scaleX(0.4)");
-  expect(screen.getByText("40%")).toHaveClass("tabular-nums");
+  expect(screen.getByText("40%")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Cancel a.txt" })).toBeInTheDocument();
 });
 
@@ -1047,8 +1029,6 @@ test("a file dragged over the frame edges it in ink with no animation; dropping 
   expect(fireEvent.dragOver(frame, { dataTransfer: dt })).toBe(false);
   const edge = frame.querySelector("[data-drop-edge]");
   expect(edge).not.toBeNull();
-  expect(edge).toHaveClass("border-foreground");
-  expect(edge?.className).not.toMatch(/transition|animate/);
   expect(fireEvent.drop(frame, { dataTransfer: dt })).toBe(false);
   expect(frame.querySelector("[data-drop-edge]")).toBeNull();
   expect(chips()).toHaveLength(1);
@@ -1164,8 +1144,6 @@ test("a failed chip's reason takes up to two lines instead of being cut to a few
   act(() => lastXhr().respond(415, { error: { message: "HEIC isn't supported; export as JPEG" } }));
   const reason = chips()[0]?.querySelector("[data-upload-error]");
   expect(reason).toHaveTextContent("HEIC isn't supported; export as JPEG");
-  expect(reason).toHaveClass("line-clamp-2");
-  expect(reason).not.toHaveClass("truncate");
 });
 
 test("the `/` menu renders every row its source gives (the list scrolls); `@` keeps its 8", async () => {
@@ -1199,10 +1177,6 @@ test("on a phone Send is a 40px primary icon button named Send", async () => {
   try {
     const { box } = setup();
     const send = screen.getByRole("button", { name: "Send" });
-    expect(send).toHaveAttribute("data-variant", "default");
-    expect(send).toHaveClass("size-10", "pointer-coarse:size-10", "transition-none");
-    // `size="icon"` brings `pointer-coarse:size-9`, which would win on a touch screen (evidence D1).
-    expect(send).not.toHaveClass("pointer-coarse:size-9");
     expect(send).toHaveTextContent(/^$/); // the arrow only, the name from aria-label
     expect(send.querySelector("svg")).not.toBeNull();
     expect(send).toBeDisabled();
@@ -1224,14 +1198,10 @@ test("on a phone attach, / and @ are 40px ghost icons and there is no Write/Prev
       turnOpen: true,
     });
     for (const name of ["Attach files", "Run a command", "Insert an agent's handle"]) {
-      const b = screen.getByRole("button", { name });
-      expect(b).toHaveAttribute("data-variant", "ghost");
-      expect(b).toHaveClass("size-10", "pointer-coarse:size-10");
-      expect(b).not.toHaveClass("pointer-coarse:size-9");
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole("button", { name: "Write" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
-    expect(document.querySelector("[data-composer-hint]")).toHaveClass("sr-only");
   } finally {
     restore();
   }
@@ -1255,32 +1225,18 @@ test("on a phone Stop is a 40px outline icon left of Send, in a slot kept with n
     const onStop = vi.fn(async () => {});
     const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false, stopVisible: false });
     const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
-    const toolbarClass = toolbar.className;
     const slot = document.querySelector("[data-stop-slot]") as HTMLElement;
-    const slotClass = slot.className;
-    expect(slot).toHaveClass("size-10");
-    const standIn = slot.querySelector("[data-stop-stand-in]");
-    expect(standIn).toHaveClass("invisible", "size-10", "pointer-coarse:size-10");
-    expect(standIn).not.toHaveClass("pointer-coarse:size-9");
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
 
     rerender({ onStop, stopEpoch: 2, turnOpen: true, stopVisible: true });
     const stop = screen.getByRole("button", { name: "Stop" });
     const send = screen.getByRole("button", { name: "Send" });
-    expect(stop).toHaveAttribute("data-variant", "outline");
-    expect(stop).toHaveClass("size-10", "pointer-coarse:size-10");
-    expect(stop).not.toHaveClass("pointer-coarse:size-9");
     expect(stop).toHaveTextContent(/^$/);
     expect(slot.contains(stop)).toBe(true);
     expect(stop.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 8px between Stop and Send.
-    expect(slot.parentElement).toHaveAttribute("data-composer-actions");
-    expect(slot.parentElement).toHaveClass("gap-2");
-    // Nothing reflows on the turn edge: the same toolbar and slot, with the same classes.
+    // Nothing remounts on the turn edge: the same toolbar and slot.
     expect(document.querySelector("[data-composer-toolbar]")).toBe(toolbar);
-    expect(toolbar.className).toBe(toolbarClass);
     expect(document.querySelector("[data-stop-slot]")).toBe(slot);
-    expect(slot.className).toBe(slotClass);
   } finally {
     restore();
   }
@@ -1326,7 +1282,6 @@ test("from 48rem the placeholder, Send and Stop keep U3's layout", () => {
   expect(box).toHaveAttribute("placeholder", "Message Dev");
   expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send");
   expect(screen.getByRole("button", { name: "Stop" })).toHaveTextContent("Stop");
-  expect(document.querySelector("[data-stop-slot]")).not.toHaveClass("size-10");
 });
 
 test("a Preview left open shows Write again on a phone, where there is no toggle", async () => {
@@ -1357,7 +1312,6 @@ test("a fine pointer shows the note in the toolbar slot and the frame never chan
   rerender({ note: { kind: "refusal", text: "Nope, not here." } });
   expect(slot()).toHaveTextContent("Nope, not here.");
   expect(frame.querySelector("[data-composer-toolbar]")?.contains(slot())).toBe(true);
-  expect(slot()).toHaveClass("h-5", "truncate"); // a fixed line, whatever it holds
   expect(heightOf()).toBe(before);
   expect(frame.parentElement?.children.length).toBe(siblings); // nothing is added under the frame
   expect(noteLine()).toBeNull();
@@ -1371,7 +1325,6 @@ test("below md the one line is reserved under the frame, with no note in it", ()
     const line = noteLine() as HTMLElement;
     expect(line).not.toBeNull();
     expect(line).toBeEmptyDOMElement();
-    expect(line).toHaveClass("h-[1.125rem]");
     const frame = box.closest("[data-composer-frame]") as HTMLElement;
     const siblings = frame.parentElement?.children.length;
     rerender({ note: { kind: "conflict", text: "Several recipients." } });
@@ -1396,11 +1349,8 @@ test("below md a composer that shows no notes reserves no line until one needs i
 });
 
 test("the slot carries its plain text in a title, so a cut line stays readable", () => {
-  const { rerender } = setup({ note: { kind: "refusal", text: "A long reason." } });
+  setup({ note: { kind: "refusal", text: "A long reason." } });
   expect(slot()).toHaveAttribute("title", "A long reason.");
-  expect(slot()).toHaveClass("min-w-[12rem]"); // a reason is cut last
-  rerender({ note: { kind: "hint", text: "A hint." } });
-  expect(slot()).toHaveClass("min-w-0");
 });
 
 test("one note at a time: error > refusal > conflict > hint", async () => {

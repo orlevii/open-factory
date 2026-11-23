@@ -46,13 +46,10 @@ function Harness({ row, open = false }: { row: ToolRow; open?: boolean }) {
 
 const toggle = () => screen.getByRole("button", { expanded: false });
 
-test("collapsed: the description, then the command muted on the same line; a one-word chip", () => {
+test("collapsed: the description, then the command on the same line; a one-word chip", () => {
   render(<Harness row={bashRow({ command: "pnpm test --run", description: "Run the tests" })} />);
   const row = toggle();
   expect(row).toHaveTextContent(/^Run the testspnpm test --runRunning$/);
-  expect(within(row).getByText("pnpm test --run")).toHaveClass("truncate", "text-muted-foreground");
-  expect(within(row).getByText("Running")).toHaveClass("shrink-0");
-  expect(row).toHaveClass("min-h-8");
 });
 
 test("collapsed without a description: $ command", () => {
@@ -85,7 +82,6 @@ test("failed: an icon and the first error line on a detail line under the collap
   const detail = screen.getByText("Error: cannot find module 'x'");
   expect(toggle()).not.toContainElement(detail);
   expect(detail.closest("p")?.querySelector("svg")).not.toBeNull();
-  expect(detail.closest("p")).toHaveClass("pl-7");
   expect(container).not.toHaveTextContent("at y");
 });
 
@@ -213,10 +209,9 @@ test("a finished or failed background task: the chip, and the summary on the det
   const { unmount } = render(
     <Harness row={withTask({ taskId: "b", state: "finished", summary: "Build ok" })} />,
   );
-  expect(within(toggle()).getByText("Finished")).toHaveClass("shrink-0");
+  expect(within(toggle()).getByText("Finished")).toBeInTheDocument();
   const detail = screen.getByText("Build ok");
   expect(toggle()).not.toContainElement(detail);
-  expect(detail).toHaveClass("line-clamp-2");
   unmount();
   render(<Harness row={withTask({ taskId: "b", state: "failed", summary: "Exit 2" })} />);
   expect(within(toggle()).getByText("Failed")).toBeInTheDocument();

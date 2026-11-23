@@ -300,7 +300,7 @@ test("a zone's offset is computed once and cached", () => {
   spy.mockRestore();
 });
 
-test("Repeats starts unchosen, Time zone follows When, the preview sits under Repeats, the message is not mono", async () => {
+test("Repeats starts unchosen, Time zone follows When, the preview sits under Repeats", async () => {
   await openNew();
   expect(screen.getByRole("combobox", { name: "Repeats" })).toHaveTextContent("Choose…");
   const when = screen.getByRole("group", { name: "When" });
@@ -312,7 +312,6 @@ test("Repeats starts unchosen, Time zone follows When, the preview sits under Re
   const live = await screen.findByText(/^Next runs:/);
   expect(repeats.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(live.compareDocumentPosition(zoneLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(screen.getByLabelText("Message").className).not.toContain("font-mono");
 });
 
 test("a submit from the Message's Preview goes back to Write and focuses it when it's the only invalid field", async () => {

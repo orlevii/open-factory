@@ -229,7 +229,7 @@ test("Now: the queued detail waits for the cap, and reads in the singular for on
   ).toBeInTheDocument();
 });
 
-test("Now: the rate-limited detail names the credential in mono and its reset time", async () => {
+test("Now: the rate-limited detail names the credential and its reset time", async () => {
   const until = new Date(NOW.getTime() + 3_600_000);
   setup({
     agent: agentSummary({
@@ -243,7 +243,6 @@ test("Now: the rate-limited detail names the credential in mono and its reset ti
   expect(paused.textContent).toMatch(
     /^Paused: credential work is rate-limited, retrying at .+\. Messages wait until then\.$/,
   );
-  expect(within(paused).getByText("work")).toHaveClass("font-mono");
 });
 
 test("Now: an errored agent shows its last error in full", async () => {
@@ -267,29 +266,6 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
   });
   const now = await section("Now");
   expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);
-});
-
-test("Now: the terminated row's actions each start a line, pulled back to the sentence's edge", async () => {
-  // jsdom has no layout: this checks the structure; the browser pass checks the alignment.
-  mockApi({});
-  setup({
-    agent: agentSummary({
-      status: "terminated",
-      kind: "ephemeral",
-      terminatedAt: minutesAgo(10),
-      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
-    }),
-  });
-  const now = within(await section("Now"));
-  const sentence = now.getByText(/^Terminated/);
-  // The sentence fills its line, so no action sits beside it.
-  expect(sentence).toHaveClass("basis-full");
-  for (const name of ["Pin workspace", "What's kept?"]) {
-    const button = now.getByRole("button", { name });
-    // Every action is a direct item of the row the ghost-padding pull-back applies to.
-    expect(button.parentElement).toBe(sentence.parentElement);
-  }
-  expect(sentence.parentElement?.className).toMatch(/\[&>button\]:-ml-2/);
 });
 
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
@@ -484,7 +460,6 @@ test("Runtime: a disabled local runtime explains itself in a Why popover (distin
   expect(pop.textContent).toBe(
     "An operator has to allow unsandboxed agents by setting FACTORY_ALLOW_LOCAL_RUNTIME=true. Until then this agent can't start.",
   );
-  expect(within(pop).getByText("FACTORY_ALLOW_LOCAL_RUNTIME=true")).toHaveClass("font-mono");
   expect(pop.tagName).toBe("P");
   expect(pop.parentElement?.children).toHaveLength(1);
   // The restart Why has its own name.

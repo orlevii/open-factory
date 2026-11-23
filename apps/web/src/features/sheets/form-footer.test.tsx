@@ -37,7 +37,7 @@ const footer = () => document.querySelector("[data-slot$=footer]") as HTMLElemen
 test("the outcome line is the footer's first child, before every button", () => {
   renderFooter({ outcomeKey: 0 });
   const line = footer().firstElementChild as HTMLElement;
-  expect(line).toHaveClass("form-outcome");
+  expect(line.querySelector("[role=alert]")).not.toBeNull();
   const submit = screen.getByRole("button", { name: "Save" });
   expect(line.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(line.contains(submit)).toBe(false);

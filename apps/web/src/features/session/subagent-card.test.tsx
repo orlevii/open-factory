@@ -278,7 +278,7 @@ test("a deep link into an overflowed card's transcript opens the overflow row an
   expect(header("7")?.textContent).toContain("deep inside");
 });
 
-test("the overflow header reads like the cards: named as in this session, its chevron turning as theirs does", () => {
+test("the overflow header reads like the cards: named as in this session", () => {
   show(
     rowsOf([
       e({ type: "turn_started" }),
@@ -291,9 +291,4 @@ test("the overflow header reads like the cards: named as in this session, its ch
   );
   const over = header("5") as HTMLElement;
   expect(over).toHaveAccessibleName("+2 more subagents in this session · 2 running");
-  expect(over.querySelector("svg")).toHaveClass(
-    "transition-transform",
-    "motion-reduce:transition-none",
-  );
-  expect(header("2")?.querySelector("svg")).toHaveClass("transition-transform");
 });

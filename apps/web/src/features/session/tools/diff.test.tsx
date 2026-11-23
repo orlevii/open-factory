@@ -79,14 +79,10 @@ const diffLines = () =>
     l.querySelector("[data-code]")?.textContent,
   ]);
 
-test("collapsed: the path middle-truncated, then +N −M that never shrinks", () => {
+test("collapsed: the path, then +N −M", () => {
   render(<Harness row={edit([HUNK])} />);
   const row = screen.getByRole("button", { expanded: false });
   expect(row).toHaveTextContent(`${PATH} · +2 −1`);
-  expect(within(row).getByText("+2 −1")).toHaveClass("shrink-0");
-  // MiddleTruncate keeps the file name: the tail is its own non-shrinking span (its text sits in an
-  // inner left-to-right span, so its end stays when even it is too wide).
-  expect(within(row).getByText("/retry.ts").parentElement).toHaveClass("shrink-0");
 });
 
 test("expanded: one gutter column (new line numbers; old on − lines), signs, code in ink", () => {
@@ -106,10 +102,6 @@ test("expanded: one gutter column (new line numbers; old on − lines), signs, c
     "add",
     "context",
   ]);
-  // The gutter (number and sign) sticks while the plate scrolls sideways.
-  const gutter = lines[1]?.querySelector("[data-gutter-number]")?.parentElement;
-  expect(gutter).toHaveClass("sticky", "left-0");
-  expect(lines[0]?.closest("[data-diff]")).toHaveClass("overflow-x-auto");
   // No syntax colour: the code is plain text in ink.
   const code = lines[2]?.querySelector("[data-code]") as HTMLElement;
   expect(code.children).toHaveLength(0);
@@ -197,7 +189,7 @@ test("a create: 'created · N lines' and the input's first 20 lines as + lines",
   );
   const row = screen.getByRole("button", { expanded: false });
   expect(row).toHaveTextContent("/w/notes.md · created · 120 lines");
-  expect(within(row).getByText("created · 120 lines")).toHaveClass("shrink-0");
+  expect(within(row).getByText("created · 120 lines")).toBeInTheDocument();
   await userEvent.click(row);
   const lines = diffLines();
   expect(lines).toHaveLength(20);
@@ -234,7 +226,7 @@ test("MultiEdit and a Write update render their hunks the same way", () => {
 test("no meta (an older row, or no result yet): today's row", () => {
   render(<Harness open row={toolRow("Edit", { file_path: "/a.ts" }, { content: "done" })} />);
   const row = screen.getByRole("button", { expanded: true });
-  expect(within(row).getByText("Edit")).toHaveClass("font-mono");
+  expect(within(row).getByText("Edit")).toBeInTheDocument();
   expect(document.querySelector("[data-diff]")).toBeNull();
   expect([...document.querySelectorAll("pre")].map((p) => p.textContent)).toEqual([
     JSON.stringify({ file_path: "/a.ts" }, null, 2),
@@ -246,7 +238,6 @@ test("the diff plate is a labelled, focusable group; changed lines say added or 
   render(<Harness open row={edit([HUNK])} />);
   const plate = screen.getByRole("group", { name: "Changes to retry.ts" });
   expect(plate).toHaveAttribute("tabindex", "0");
-  expect(plate).toHaveClass("overflow-x-auto");
   const lines = [...document.querySelectorAll<HTMLElement>("[data-diff-line]")];
   expect(lines.map((l) => l.querySelector(".sr-only")?.textContent ?? null)).toEqual([
     null,

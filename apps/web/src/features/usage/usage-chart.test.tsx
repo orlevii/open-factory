@@ -202,8 +202,6 @@ test("the chart follows its container down as well as up and never props it open
   const svg = container.querySelector("svg") as SVGSVGElement;
   // The SVG takes its layout width from the container, so a wide first paint can't hold the page open.
   expect(svg).toHaveAttribute("width", "100%");
-  expect(group()).toHaveClass("min-w-0");
-  expect(container.querySelector("figure")).toHaveClass("min-w-0");
   act(() => report(1000));
   expect(svg).toHaveAttribute("viewBox", "0 0 1000 160");
   act(() => report(358));

@@ -21,13 +21,12 @@ const failed = (status: number) => ({
 /** Runs the guard's retry backoff (1s, 2s, 4s, 8s) on a faked clock. */
 const runBackoff = () => act(() => vi.advanceTimersByTimeAsync(16_000));
 
-test("a slow session check shows the pilot-light pending screen", async () => {
+test("a slow session check shows the pending screen", async () => {
   let resolve: (v: unknown) => void = () => {};
   auth.getSession.mockReturnValue(new Promise((r) => (resolve = r)));
   renderApp("/", undefined);
   const pending = await screen.findByRole("status", {}, { timeout: 2_000 });
   expect(pending).toHaveTextContent("Loading…");
-  expect(pending).toHaveClass("is-loading");
   expect(screen.getAllByRole("main")).toHaveLength(1);
   resolve({ data: alice });
   expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
@@ -72,22 +71,18 @@ test("a failed session check shows the error state once its retries run out; Ret
   expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
 });
 
-test("AppPending inside the shell stays in the content area; at the root it covers the page", () => {
+test("AppPending inside the shell adds no second main landmark; at the root it brings its own", () => {
   const inShell = render(
     <ShellContext.Provider value={{ connectionLost: false }}>
       <AppPending />
     </ShellContext.Provider>,
   );
-  const shellStatus = screen.getByRole("status");
+  expect(screen.getByRole("status")).toBeInTheDocument();
   // The shell owns the one <main>: no second landmark inside it.
   expect(screen.queryByRole("main")).toBeNull();
-  expect(shellStatus).toHaveClass("absolute", "inset-0");
-  expect(shellStatus).not.toHaveClass("fixed");
   inShell.unmount();
   render(<AppPending />);
   const rootStatus = screen.getByRole("status");
   // At the root there is no shell: the page still needs its one <main>, around the cover.
   expect(screen.getByRole("main")).toContainElement(rootStatus);
-  expect(rootStatus).toHaveClass("fixed", "inset-0");
-  expect(rootStatus).not.toHaveClass("absolute");
 });

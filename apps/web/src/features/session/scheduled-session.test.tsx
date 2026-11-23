@@ -129,7 +129,7 @@ test("a human author stays a plain handle even when the list is not loaded", asy
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
 });
 
-test("a pending scheduled item shows in the dashed block with the badge and 'covers 3 runs'", async () => {
+test("a pending scheduled item shows the badge and 'covers 3 runs'", async () => {
   const item: QueueItem = {
     id: "q1",
     kind: "message",
@@ -146,7 +146,6 @@ test("a pending scheduled item shows in the dashed block with the badge and 'cov
   expect(await screen.findByRole("button", { name: "Schedule S-5" })).toBeInTheDocument();
   expect(container.textContent).toContain("Scheduler");
   expect(container.textContent).toContain("covers 3 runs");
-  expect(container.querySelector(".border-dashed")).not.toBeNull();
 });
 
 test("the three quiet lines read as specified, from the events' `by` and `durable`", async () => {

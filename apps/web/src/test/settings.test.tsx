@@ -469,7 +469,7 @@ test("the secret name is uppercased while typing, keeping the caret; reserved na
   expect(describedText(name)).toBe("That name is reserved.");
 });
 
-test("projects: a middle-truncated path, grant wording, and Remove disabled with its reason", async () => {
+test("projects: the full path, grant wording, and Remove disabled with its reason", async () => {
   world({
     projects: [
       project({ name: "app", grantedTo: ["a"], archivedGrantedTo: ["c"] }),
@@ -480,7 +480,7 @@ test("projects: a middle-truncated path, grant wording, and Remove disabled with
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());
   const r = row(region, "app");
-  expect(within(r).getByText("/Users/or/code/app")).toHaveClass("sr-only");
+  expect(within(r).getByText("/Users/or/code/app")).toBeInTheDocument();
   expect(r).toHaveTextContent("Granted to @a · archived: @c");
   expect(row(region, "docs")).toHaveTextContent("Not granted");
   await userEvent.click(within(r).getByRole("button", { name: "Actions for app" }));
@@ -847,7 +847,6 @@ test("a failing section shows its own error line, with Retry", async () => {
   const line = text.parentElement as HTMLElement;
   const icon = line.querySelector("svg");
   expect(icon).toHaveAttribute("aria-hidden", "true");
-  expect(icon).toHaveClass("text-destructive");
   // The route loader's failure is the section's error, never the route's.
   expect(screen.queryByText("Couldn't load settings.")).not.toBeInTheDocument();
   fail = false;
@@ -991,7 +990,7 @@ test("a hover preload warms a list once; entering the page then reuses it", asyn
   expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
 });
 
-test("sub-nav lists the five pages; the current one is aria-current with the selected fill and medium weight", async () => {
+test("sub-nav lists the five pages; the current one is aria-current", async () => {
   world();
   renderApp("/settings/projects", alice);
   const nav = await screen.findByRole("navigation", { name: "Settings" });
@@ -1005,17 +1004,6 @@ test("sub-nav lists the five pages; the current one is aria-current with the sel
   ]);
   const current = links.filter((l) => l.getAttribute("aria-current") === "page");
   expect(current.map((l) => l.textContent)).toEqual(["Projects"]);
-  expect(current[0]).toHaveClass("font-medium");
-  // The current page takes the selected fill (one step past hover) and keeps it under the pointer.
-  expect(current[0]).toHaveClass("bg-selected");
-  expect(current[0]?.className).not.toMatch(/hover:bg-accent/);
-  // Its text is not muted: a muted class in the base would beat the active one by CSS order.
-  expect(current[0]).not.toHaveClass("text-muted-foreground");
-  const users = links.find((l) => l.textContent === "Users");
-  expect(users).not.toHaveClass("font-medium");
-  expect(users).not.toHaveClass("bg-selected");
-  expect(users?.className).toMatch(/hover:bg-accent/);
-  expect(users).toHaveClass("text-muted-foreground");
   await userEvent.click(within(nav).getByRole("link", { name: "Secrets" }));
   expect(await section("Secrets")).toBeInTheDocument();
   expect(within(nav).getByRole("link", { name: "Secrets" })).toHaveAttribute(

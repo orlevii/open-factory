@@ -67,7 +67,7 @@ test("picking a model overrides it: 'This agent' and 'Use template's' clear the 
   expect(trigger()).toHaveFocus();
 });
 
-test("Custom reveals a focused mono input checked by the model schema", async () => {
+test("Custom reveals a focused input checked by the model schema", async () => {
   const onValue = vi.fn();
   render(
     <ScopeHarness start={{}} base={doc()} onValue={onValue}>
@@ -77,7 +77,6 @@ test("Custom reveals a focused mono input checked by the model schema", async ()
   await pick("Custom…");
   const input = screen.getByRole("textbox", { name: "Custom model" });
   expect(input).toHaveFocus();
-  expect(input.className).toMatch(/font-mono/);
   expect(screen.getByText(MODEL_MSG.chars)).toBeInTheDocument();
   await userEvent.type(input, "my model");
   expect(onValue).toHaveBeenLastCalledWith({ template: { model: "my model" } });

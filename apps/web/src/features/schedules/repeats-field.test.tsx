@@ -47,13 +47,12 @@ test("Custom shows the input, the help and the summary with the zone", async () 
   expect(screen.getByText("Weekdays at 09:00 (Europe/Berlin)")).toBeInTheDocument();
 });
 
-test("a cron matching no preset opens on Custom with no summary but the reserved line", () => {
+test("a cron matching no preset opens on Custom with no summary", () => {
   render(<Harness start="*/7 * * * *" />);
   expect(trigger()).toHaveTextContent("Custom cron…");
   expect(screen.getByLabelText("Repeats cron pattern")).toHaveValue("*/7 * * * *");
   const line = screen.getByTestId("cron-summary");
   expect(line).toHaveTextContent("");
-  expect(line.className).toContain("min-h-[1.125rem]");
 });
 
 test("the preset list validates when it closes, after the pick has rendered, not when it opens", async () => {

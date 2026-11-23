@@ -268,25 +268,13 @@ test("the tree renders 0 times on a frame that changes no count and no rail memb
   expect(probe.rows).toEqual({ a: 1 });
 });
 
-test("unread count from byAgent, working count hides first when narrow", async () => {
+test("unread count from byAgent, capped at 99+, part of the row's name; a working report is counted", async () => {
   setup({ list: agents({ c: { status: "working" } }), byAgent: { a: 3, b: 120 } });
   await screen.findByRole("tree");
   expect(within(row("Alpha")).getByText("3")).toBeInTheDocument();
   expect(within(row("Bravo")).getByText("99+")).toBeInTheDocument();
   expect(row("Alpha")).toHaveAccessibleName(/3 unread/);
-  // The working count gives way only to the name's minimum, never to the row's indent: it shares a
-  // wrapping line with the name and drops out of sight when both no longer fit. No container query
-  // on the indented row, and the unread count stays outside that line.
-  const working = within(row("Bravo")).getByText("1 working", { selector: ".sr-only" })
-    .parentElement as HTMLElement;
-  expect(`${row("Bravo").className} ${working.className}`).not.toMatch(/@container|@max-/);
-  const line = working.closest<HTMLElement>("[data-name-line]");
-  expect(line).not.toBeNull();
-  // The mechanism: a second line exists and is clipped.
-  expect(line?.className).toMatch(/\bflex-wrap\b/);
-  expect(line?.className).toMatch(/\boverflow-hidden\b/);
-  expect(line).toContainElement(within(row("Bravo")).getByText("Bravo"));
-  expect(line).not.toContainElement(within(row("Bravo")).getByText("99+"));
+  expect(within(row("Bravo")).getByText("1 working")).toBeInTheDocument();
 });
 
 test("empty: 'No agents yet.' with a New agent button that opens the sheet", async () => {

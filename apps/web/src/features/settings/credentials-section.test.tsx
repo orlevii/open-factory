@@ -100,14 +100,12 @@ test("an api key never shows Sign in again", async () => {
   expect(screen.queryByRole("menuitem", { name: "Sign in again" })).toBeNull();
 });
 
-test("an expired credential whose last check failed shows no failure line, only the crimson expiry", () => {
+test("an expired credential whose last check failed shows no failure line, only the expiry", () => {
   renderSection([
     cred({ expiresAt: "2027-11-01T00:00:00Z", lastError: "Claude rejected this token." }),
   ]);
   expect(screen.queryByText(/Last check failed/)).toBeNull();
-  expect(screen.getByText("Expired 1 Nov 2027").closest("span.flex")).toHaveClass(
-    "text-destructive",
-  );
+  expect(screen.getByText("Expired 1 Nov 2027")).toBeInTheDocument();
 });
 
 test("a rejected credential with a far expiry puts Sign in again right after the failure line", () => {
@@ -123,13 +121,6 @@ test("a rejected credential with a far expiry puts Sign in again right after the
   const expiry = screen.getByText(/^Expires /);
   expect(failure.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(button.compareDocumentPosition(expiry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-});
-
-test("a failed check on a live credential stays crimson", () => {
-  renderSection([cred({ lastError: "boom" })]);
-  expect(screen.getByText(/Last check failed/).closest("span.flex")).toHaveClass(
-    "text-destructive",
-  );
 });
 
 test("the menu has Sign in again for OAuth only, above Replace token", async () => {

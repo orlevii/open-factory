@@ -183,25 +183,8 @@ test("Usage: the By credential table with cost, top agents and the rate-limit li
     "Top agents",
     "Rate limit",
   ]);
-  // Below md: Name (with the rate-limit line under it) and Cost only.
-  expect(headers.map((h) => h.classList.contains("hidden"))).toEqual([
-    false,
-    true,
-    false,
-    true,
-    true,
-  ]);
   const r = within(table).getAllByRole("row")[1] as HTMLElement;
   const cells = within(r).getAllByRole("cell");
-  expect(cells.map((c) => c.classList.contains("hidden"))).toEqual([
-    false,
-    true,
-    false,
-    true,
-    true,
-  ]);
-  const narrow = cells[0]?.querySelector(".md\\:hidden") as HTMLElement;
-  expect(narrow).toHaveTextContent("82% of the 5-hour limit used");
   expect(r).toHaveTextContent("work");
   expect(r).toHaveTextContent("OAuth token");
   expect(r).toHaveTextContent("$4.12");

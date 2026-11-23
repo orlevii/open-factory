@@ -958,7 +958,7 @@
   visibility: visible;
   transition-duration: 150ms;
 }
-/* Live regions never transition visibility (D7): the inserted line fades in and leaves at once. */
+/* Live regions never transition visibility (spec 5.5): the inserted line fades in and leaves at once. */
 .form-outcome-line {
   transition: opacity 150ms var(--ease-out);
 }

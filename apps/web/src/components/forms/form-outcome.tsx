@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { CircleAlert, CircleCheck } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 
 export type Outcome = {
   error?: ReactNode;
@@ -64,13 +64,21 @@ export function FormOutcome({
 
 export function useOutcome() {
   // One state for message and key: the key can never lag its message.
-  const [state, setState] = useState<Omit<Outcome, "notice">>({ outcomeKey: 0 });
-  return {
-    outcome: state as Outcome,
-    fail: (error: ReactNode, action?: ReactNode) =>
-      setState((s) => ({ error, action, outcomeKey: s.outcomeKey + 1 })),
-    succeed: (success: ReactNode) => setState((s) => ({ success, outcomeKey: s.outcomeKey + 1 })),
-    clear: () =>
-      setState((s) => (s.error == null && s.success == null ? s : { outcomeKey: s.outcomeKey })),
-  };
+  const [outcome, setOutcome] = useState<Outcome>({ outcomeKey: 0 });
+  // Functional updaters keep these referentially stable, so forms may depend on them.
+  const fail = useCallback(
+    (error: ReactNode, action?: ReactNode) =>
+      setOutcome((s) => ({ error, action, outcomeKey: s.outcomeKey + 1 })),
+    [],
+  );
+  const succeed = useCallback(
+    (success: ReactNode) => setOutcome((s) => ({ success, outcomeKey: s.outcomeKey + 1 })),
+    [],
+  );
+  const clear = useCallback(
+    () =>
+      setOutcome((s) => (s.error == null && s.success == null ? s : { outcomeKey: s.outcomeKey })),
+    [],
+  );
+  return { outcome, fail, succeed, clear };
 }

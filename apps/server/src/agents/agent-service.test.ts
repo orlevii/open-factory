@@ -254,13 +254,19 @@ test("update: a colour-only change never restarts, shows in the summary, and nul
   }
 });
 
-test("the agents_color CHECK rejects 13 and 0", async () => {
-  await expect(t.sql`update agents set color = 13 where slug = 'lead'`).rejects.toThrow(
-    /agents_color|check/i,
-  );
-  await expect(t.sql`update agents set color = 0 where slug = 'lead'`).rejects.toThrow(
-    /agents_color|check/i,
-  );
+test("the agents_color CHECK rejects 13 and 0 on its own row", async () => {
+  await svc.create({
+    template: "lead",
+    slug: "colour-check",
+    displayName: "C",
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+  for (const bad of [13, 0])
+    await expect(
+      t.sql`update agents set color = ${bad} where slug = 'colour-check'`,
+    ).rejects.toThrow(/agents_color|check/i);
 });
 
 test("projects: duplicate names are deduped (order kept) on create and PATCH", async () => {

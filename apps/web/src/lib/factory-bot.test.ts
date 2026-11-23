@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AVATAR_HUES, avatarL, oklchDistance } from "@open-factory/shared";
+import { AVATAR_CHROMA, AVATAR_HUES, avatarL, oklchDistance } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { SRC } from "../test/ui-contract-files";
 import { botParts, contrast, fnv1a32, oklchToRelLuminance } from "./factory-bot";
@@ -137,7 +137,7 @@ test("styles.css tokens equal AVATAR_HUES and clear the dE gate per theme", () =
       AVATAR_HUES.map((e) => ({
         index: e.index,
         l: avatarL(theme, e.tier),
-        c: 0.07,
+        c: AVATAR_CHROMA,
         h: e.hue,
       })),
     );

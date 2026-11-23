@@ -242,7 +242,7 @@ export function normalizeSignInCode(raw: string): string | undefined {
   - `settings.ts`: in `credentialSummarySchema` add `expiresAt: z.string().nullable()` and `rejected: z.boolean()`.
   - `messaging.ts`: `INBOX_KINDS = ["message", "mention", "task_event", "credential"] as const`; add `credential: z.object({ name: z.string(), expiresAt: z.string().nullable(), current: z.boolean() }).optional()` to `inboxItemSchema`; add `z.object({ kind: z.literal("credential"), name: z.string() })` to the `link` discriminated union.
   - `index.ts`: `export * from "./claude-sign-in.ts";`.
-- [ ] **Step 4: Run the tests and the shared package.** `pnpm vitest run packages/shared` → PASS. `pnpm typecheck` shows errors only where server/web build `CredentialSummary` or switch on `link.kind`; fix server `summarize()` now with `expiresAt: null, rejected: false` placeholders only if needed to compile; Task 3 makes them real. (Web errors are fixed in their tasks; if typecheck must pass per commit, add the two fields to test fixtures that construct `CredentialSummary`.)
+- [ ] **Step 4: Run the tests and the shared package.** `pnpm vitest run packages/shared` → PASS. `pnpm typecheck` shows errors only where server/web build `CredentialSummary` or switch on `link.kind`; fix server `summarize()` now with `expiresAt: null, rejected: false` placeholders only if needed to compile; Task 3 makes them real. (Web errors are fixed in their tasks; if typecheck must pass per commit, add the two fields to test fixtures that construct `CredentialSummary`.) Any apps/web change made here follows `vercel-react-best-practices`.
 - [ ] **Step 5: Commit.** `git commit -m "feat(shared): sign-in schemas, messages and the credential inbox kind"` (with the trailer).
 
 ### Task 2: Database columns and migration
@@ -897,17 +897,18 @@ Implements spec §8.3 (query), §8.4 (`expiryState`), §8.6 (arrival hook, `vali
 
 **Files:**
 - Create: `apps/web/src/features/settings/sign-in/api.ts`, `apps/web/src/features/settings/sign-in/expiry.ts`, `apps/web/src/features/settings/sign-in/expiry.test.ts`, `apps/web/src/lib/use-arrival.ts`, `apps/web/src/lib/use-arrival.test.tsx`
-- Modify: `apps/web/src/features/session/timeline.tsx` (use the extracted hook, no behaviour change), `apps/web/src/routes/_app/settings.credentials.tsx` (`validateSearch: z.object({ credential: z.string().min(1).optional().catch(undefined) })`; loader also prefetches `signInQueryOptions`)
+- Modify: `apps/web/src/features/session/timeline.tsx` (use the extracted `arrive`/`useArrivalTint`; its layout effect stays where it is; no behaviour change), `apps/web/src/routes/_app/settings.credentials.tsx` (`validateSearch: z.object({ credential: z.string().min(1).optional().catch(undefined) })`; the loader fires `void qc.prefetchQuery(signInQueryOptions)` **outside** its awaited `Promise.allSettled`, so a slow sign-in GET never delays the page (M3))
+- Optional (M3): `apps/server/src/app.ts` starts the python3 probe at boot (not awaited) so the first `GET` doesn't pay for it.
 
 **Interfaces:**
 - Produces:
-  - `signInQueryOptions` (`queryKey: ["claude-sign-in"]`, `staleTime: 0`, `refetchOnWindowFocus: true`, no `refetchInterval`);
-  - `startSignIn(body: { replace?: string }): Promise<AttemptView>`;
+  - `signInQueryOptions` (`queryKey: ["claude-sign-in"]`, `staleTime: 2_000` so `warm()` and the mount don't double-GET (L4), `refetchOnWindowFocus: true`, no `refetchInterval`);
+  - `startSignIn(body: { replace?: string }, signal?: AbortSignal): Promise<AttemptView>`;
   - `submitSignInCode(b: { attemptId; code; name? }): Promise<{ kind: "done"; credential: CredentialSummary } | { kind: "pending"; attempt: AttemptView }>` (201/200 → done, 202 → pending);
-  - `waitSignIn(attemptId): Promise<same union>`; `cancelSignIn(attemptId): Promise<void>`;
+  - `waitSignIn(attemptId, signal?: AbortSignal): Promise<same union>` (passes `signal` through `apiFetch`); `cancelSignIn(attemptId): Promise<void>`;
   - `isRetryableWaitError(err: unknown): boolean` (true for network errors and `ApiError` whose code matches `/^http_\d+$/`);
   - `type ExpiryState = { tone: "none" } | { tone: "muted"; text: string } | { tone: "warning" | "crimson"; text: string; needsSignIn: true }`; `expiryState(expiresAt: string | null, now: Date, locale?: string, timeZone?: string): ExpiryState`;
-  - `useArrival(targetKey: string | undefined, opts: { ref: RefObject<HTMLElement | null> }): boolean` (scrolls to centre, focuses with the inset ring class, sets the 6% tint for 2 s of visible time, then a 300 ms fade).
+  - Extracted from `features/session/timeline.tsx`, nothing more (M6): `arrive(el: HTMLElement): void` (scrolls to centre, focuses with the inset ring) and `useArrivalTint(active: boolean): { arrival: boolean; onArrivedEnd(): void }` (the 6% tint held for 2 s of visible time, then the 300 ms fade). The timeline keeps its own layout effect and calls these.
 
 - [ ] **Step 1: Write failing tests** in `expiry.test.ts`:
 
@@ -931,9 +932,9 @@ it("past is crimson with the date", () =>
 it("null is nothing", () => expect(expiryState(null, now)).toEqual({ tone: "none" }));
 ```
 
-  `use-arrival.test.tsx`: renders a row with `useArrival("work", { ref })`; asserts `scrollIntoView({ block: "center" })` called, focus moved, the tint class present, then removed after 2 s of visible time (fake timers; `document.visibilityState` toggled to `hidden` pauses it). The session timeline's existing arrival tests still pass.
+  `use-arrival.test.tsx`: `arrive(el)` calls `scrollIntoView({ block: "center" })` and focuses `el`; `useArrivalTint(true)` holds `arrival` for 2 s of visible time, then `onArrivedEnd` clears it (fake timers; `document.visibilityState` toggled to `hidden` pauses it). The session timeline's existing arrival tests still pass.
 - [ ] **Step 2: Run, confirm failure.** `pnpm vitest run apps/web/src/features/settings/sign-in apps/web/src/lib/use-arrival.test.tsx`.
-- [ ] **Step 3: Implement.** `expiryState`: `delta = expires - now`; `<= 0` → crimson `Expired ${new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone }).format(expires)}`; `<= 14 days` → warning; days = difference of calendar dates in `timeZone`, clamped to at most 14, text `today`/`tomorrow`/`in N days`; else muted `Expires ${month short + year}`. The API functions use `apiFetch` with the Task 1 schemas. Extract the timeline's arrival logic into `useArrival` and make `timeline.tsx` call it (same timings, same reduced-motion behaviour).
+- [ ] **Step 3: Implement.** `expiryState`: `delta = expires - now`; `<= 0` → crimson `Expired ${new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone }).format(expires)}`; `<= 14 days` → warning; days = difference of calendar dates in `timeZone`, clamped to at most 14, text `today`/`tomorrow`/`in N days`; else muted `Expires ${month short + year}`. Formatters are module-level cached `Intl.DateTimeFormat` instances keyed by `(locale, timeZone, kind)`, never built per render (L1). The API functions use `apiFetch` with the Task 1 schemas. Extract only `arrive` and `useArrivalTint` and make `timeline.tsx` call them (same timings, same reduced-motion behaviour).
 - [ ] **Step 4: Run.** PASS; `pnpm vitest run apps/web/src/features/session` still PASS.
 - [ ] **Step 5: Commit.** `feat(web): sign-in API, expiry state and a shared arrival hook`.
 
@@ -948,7 +949,7 @@ Implements spec §8.4, §8.6 (`?credential=`), AC9.
 - Test: `apps/web/src/features/settings/credentials-section.test.tsx` (extend)
 
 **Interfaces:**
-- Consumes: `expiryState` (Task 13), `useArrival` (Task 13), `openSheet({ kind: "sign-in-again", name })` (Task 17 adds the kind; until then, this task adds the `SheetSpec` member and a stub body to keep types compiling, or orders Task 17's store change first — do the store change here).
+- Consumes: `expiryState`, `arrive`, `useArrivalTint` (Task 13), `openSheet({ kind: "sign-in-again", name })` and `sheetIntent("sign-in-again", spec)` (this task adds the `SheetSpec` member and the `sheet-bodies.ts` entry with a placeholder body; Task 17 fills the body).
 
 - [ ] **Step 1: Write failing component tests:**
 
@@ -968,11 +969,12 @@ it("a rejected OAuth credential shows Sign in again after its failure line", () 
 it("an expired credential's verification line is muted, not a second crimson line", () => {});
 it("the ⋯ menu has Sign in again for OAuth only, above Replace token", async () => {});
 it("Sign in again opens the sign-in-again sheet", async () => { /* spy openSheet */ });
-it("?credential=work arrives on that row", () => {});
+it("?credential=work arrives on that row once, after the list loaded, then clears the search param", () => { /* navigate called with replace: true and credential: undefined */ });
+it("Sign in again buttons and the menu item carry sheetIntent (prefetch on hover/focus/pointerdown)", () => {});
 ```
 
 - [ ] **Step 2: Run, confirm failure.**
-- [ ] **Step 3: Implement** `ExpiryLine` (icon + text, tones from DESIGN.md tokens: `text-muted-foreground`, warning token, `text-destructive`) followed by a `Button variant="ghost" size="xs"` "Sign in again" when `needsSignIn`; the rejected case appends the same button after `VerificationState`; the menu item; `useArrival(search.credential === c.name ? c.name : undefined, { ref })` on the row, focusing its Sign in again when shown. Read `search` with the route's `useSearch`.
+- [ ] **Step 3: Implement** `ExpiryLine` (icon + text, tones from DESIGN.md tokens: `text-muted-foreground`, warning token, `text-destructive`) followed by a `Button variant="ghost" size="xs"` "Sign in again" when `needsSignIn`; the rejected case appends the same button after `VerificationState`; the menu item. Spread `sheetIntent("sign-in-again", { kind: "sign-in-again", name: c.name })` on the row's ghost button and the ⋯ item (M5). Each row gets `data-credential={c.name}`. Arrival is **one section-level call, no hook per row** (H4): an effect keyed on `[search.credential, query.isSuccess]` that, once the list has loaded, finds `[data-credential="…"]` (escape with `CSS.escape`), calls `arrive(el)` (focusing the row's Sign in again when shown), sets the tint state for that name, and then clears the param with `navigate({ search: (s) => ({ ...s, credential: undefined }), replace: true })`, so it fires once per value. If a row component helps, extract `CredentialRow` at module level (never a component defined inside the section).
 - [ ] **Step 4: Run.** PASS.
 - [ ] **Step 5: Commit.** `feat(web): credential expiry line and Sign in again on the row`.
 
@@ -992,16 +994,26 @@ Implements spec §8.2, §8.3, R1, R2, R5, R7, AC2, AC3.
 
 ```ts
 type Phase = "loading" | "idle" | "starting" | "ready" | "exchanging" | "verifying";
-export function useSignIn(o: { purpose: "create" } | { purpose: "replace"; name: string }): {
+export function useSignIn(o: {
+  purpose: "create" | "replace";
+  name?: string;                                   // replace: the credential's name
+  fields: ReturnType<typeof useFieldErrors<"name" | "code">>; // I4 hook from the host form
+  outcome: ReturnType<typeof useOutcome>;          // I4 FormOutcome from the host form
+  onDone(c: CredentialSummary): void;              // read through a latest-ref; called once
+}): {
   phase: Phase; attempt: AttemptView | null; available: boolean;
-  line: { tone: "help" | "error"; text: string } | undefined;   // the panel's Idle line
-  start(): void; submit(b: { code: string; name?: string }): void; cancel(): void;
-  codeError?: string; nameError?: string; outcome?: string;      // routed per §8.2 Errors
-  done?: CredentialSummary;                                       // only for the tab that submitted
-  pendingLabel: "Starting…" | "Signing in…" | "Verifying…" | undefined;
+  line: { tone: "help" | "error"; text: string } | undefined; // the panel's Idle line, derived in render
+  code: string; setCode(v: string): void;          // the hook owns the code; cleared after any outcome
+  start(): Promise<void>; submit(name?: string): Promise<void>; cancel(): Promise<void>;
+  pendingLabel: "Starting…" | "Signing in…" | "Verifying…" | undefined; // derived in render
 };
-export function SignInPanel(p: { s: ReturnType<typeof useSignIn>; frame: "inline" | "sheet"; code: string; onCode(v: string): void; codeRef: RefObject<HTMLInputElement | null> }): JSX.Element;
+export function SignInPanel(p: { s: ReturnType<typeof useSignIn>; frame: "inline" | "sheet"; codeRef: RefObject<HTMLInputElement | null> }): JSX.Element;
 ```
+
+Module-level state in `use-sign-in.ts` (survives unmount, StrictMode and a second panel):
+- `const submittedHere = new Set<string>()` — attempt ids this tab submitted (H1);
+- `const inFlight = new Map<string, Promise<Result>>()` — one `waitUntilDone` loop per attempt id (H2);
+- `async function waitUntilDone(attemptId: string, signal: AbortSignal): Promise<Result>` — calls `waitSignIn(attemptId, signal)` until a final answer; on a 202 or a retryable error (`isRetryableWaitError`) waits 1 s, 2 s, then 5 s (capped) and tries again; stops when `signal` aborts; **outcome side effects run here, mounted or not** (H1): on success `qc.setQueryData(["claude-sign-in"], …)`, invalidate the credentials and inbox query keys.
 
 - [ ] **Step 1: Write failing tests** (MSW or the repo's existing fetch mock):
 
@@ -1023,16 +1035,26 @@ it("a rejected code returns to Idle with the error on the line and focus on the 
 it("name errors stay on Name and keep Ready", async () => {});
 it("an attempt that disappears shows Sign-in timed out after the deadline, Sign-in ended before it, restarted elsewhere for another id", async () => {});
 it("the deadline timer refetches once, no interval", async () => {});
-it("202 then wait loop; retries only on network and http_ errors, never on a coded error", async () => {});
+it("202 then waitUntilDone with 1/2/5 s backoff; retries only on network and http_ errors, never on a coded error", async () => {});
+it("no requests after unmount (the signal aborts the loop)", async () => {});
+it("one loop under StrictMode and with a second panel (in-flight Map reused)", async () => {});
+it("submit, unmount, the outcome lands, remount: success is shown exactly once; credentials and inbox were invalidated while unmounted (H1)", async () => {});
 it("a settled success is rendered only by the tab that submitted", async () => {});
+it("the pending label reads Signing in… until a 202 or refetch reports verifying, then Verifying… (L4)", async () => {});
 it("purpose mismatch shows the other-panel line", async () => {});
 it("exchanging makes Code and Name readOnly + aria-disabled and hides Cancel sign-in", async () => {});
-it("the code mutation keeps no variables after it settles", async () => { /* queryClient.getMutationCache().getAll() empty of the code */ });
+it("the code lives only in the hook's state and is cleared after any outcome (no mutation cache)", async () => {});
 it("states swap with no transition classes (R7)", () => {});
 ```
 
 - [ ] **Step 2: Run, confirm failure.**
-- [ ] **Step 3: Implement.** `useSignIn`: `useQuery(signInQueryOptions)`; mutations with `setQueryData` on success; the code mutation `gcTime: 0` and `reset()` in `onSettled`; remember the shown `attemptId` and the submitted one in refs (handlers only, never written during render); derive disappearance in an effect keyed on `attempt?.attemptId` (compare with the last shown id; no local action pending); one `setTimeout` to `codeDeadline` that calls `refetch()`; the wait loop as a mutation chain (`onSuccess` pending → `wait`; `onError` retryable → `wait`). Map errors to `codeError`/`nameError`/Idle line/`outcome` per spec §8.2. `SignInPanel`: no reserved height; Ready = link button (`buttonVariants({ variant: "outline" })` on an `<a>`, `ExternalLink` icon), `CopyIcon` ghost button with `useCopy`, `CopyFailed`, the muted host + `Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" })` line; Code via `FieldShell` + `Input` (`className="font-mono"`, `autoComplete="one-time-code"`, `autoCapitalize="none"`, `autoCorrect="off"`, `spellCheck={false}`); a polite `role="status"` "Sign-in page ready."; Cancel sign-in ghost (sheet frame only).
+- [ ] **Step 3: Implement.** `useSignIn`:
+  - `useQuery(signInQueryOptions)`. Start, submit, wait and cancel are **plain async handlers with a `useState` pending flag** (the repo pattern), not `useMutation` (M2); on success they `setQueryData(["claude-sign-in"], …)` instead of refetching.
+  - `shownId` is **state adjusted during render** (the I4 pattern, M1): when `attempt?.attemptId` differs from `shownId` and no local action is pending, derive the disappearance line (`signInExpired` if now ≥ the last `codeDeadline`, `signInReplaced` for another id, else `signInEnded`) and set `shownId` in the same render. Start and Cancel clear `shownId`. Phase, the Idle line and `pendingLabel` are derived in render. **No effect for disappearance.**
+  - One resolution handler (H3) maps every result per spec §8.2: `fields.set("code" | "name", msg, { focus: true })`, `outcome.fail(msg)`, `setCode("")`, the Idle line, and `onDone(credential)` through a latest-ref — called only when `submittedHere.has(attemptId)` and the panel is mounted; toast, `onDone` and `completeChild` are the only mounted-only effects (H1).
+  - `submit` adds the attempt id to `submittedHere`, then runs `waitUntilDone` (through `inFlight`) with an `AbortController` aborted on unmount.
+  - One mount effect for restore only: when the first `GET` shows `exchanging`/`verifying`/`settled`, join `waitUntilDone`. Focus after Start comes from the Start handler via `useFocusLater` (L3), not an effect.
+  - The deadline timer is one effect with primitive deps `[isReady, attemptId, codeDeadline]` (L2): a `setTimeout` to `codeDeadline` that calls `refetch()`; cleared on change. `SignInPanel`: no reserved height; Ready = link button (`buttonVariants({ variant: "outline" })` on an `<a>`, `ExternalLink` icon), `CopyIcon` ghost button with `useCopy`, `CopyFailed`, the muted host + `Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" })` line; Code via `FieldShell` + `Input` (`className="font-mono"`, `autoComplete="one-time-code"`, `autoCapitalize="none"`, `autoCorrect="off"`, `spellCheck={false}`); a polite `role="status"` "Sign-in page ready."; Cancel sign-in ghost (sheet frame only).
 - [ ] **Step 4: Run.** PASS.
 - [ ] **Step 5: Commit.** `feat(web): sign-in panel and attempt hook`.
 
@@ -1064,7 +1086,7 @@ it("Settings opens the inline form when GET has a live create attempt, never for
 ```
 
 - [ ] **Step 2: Run, confirm failure.**
-- [ ] **Step 3: Implement.** Replace the Kind radios with "Method" (`sign_in` | `paste_token` | `api_key`, UI state); keep per-method values; the frame's submit label/pending label and `onSubmit` come from the method and `s.phase` (`idle` → `s.start()`, `ready` → `f.submit()` for Name then `s.submit({ code, name })`); `done` → `onDone(credential)`; Settings section reads `signInQueryOptions` on load to open the inline form.
+- [ ] **Step 3: Implement.** Replace the Kind radios with "Method" (`sign_in` | `paste_token` | `api_key`, UI state); keep per-method values; call `useSignIn({ purpose: "create", fields: f, outcome: o, onDone })` with the form's own `useFieldErrors` and `useOutcome` (H3); the frame's submit label/pending label and `onSubmit` come from the method and `s.phase` (`idle` → `s.start()`, `ready` → `f.submit(["name"])` then `s.submit(name)`). In the Settings section, `adding` becomes tri-state (`boolean | undefined`) and `showAdd = adding ?? isLiveCreate(attempt)`, where `isLiveCreate` is true for a `create` attempt in `starting`/`awaiting_code`/`submitting`/`exchanging`/`verifying` and never for `settled` (M4); no effect.
 - [ ] **Step 4: Run.** PASS; existing add-credential tests updated to the Method wording.
 - [ ] **Step 5: Commit.** `feat(web): Add credential with Sign in with Claude`.
 
@@ -1076,7 +1098,7 @@ Implements spec §8.5, D14.
 
 **Files:**
 - Create: `apps/web/src/features/sheets/sign-in-again-sheet.tsx`, `apps/web/src/features/sheets/sign-in-again-sheet.test.tsx`
-- Modify: `apps/web/src/features/sheets/sheet-store.ts` (`SheetSpec` + `{ kind: "sign-in-again"; name: string }`), `apps/web/src/features/sheets/sheet-bodies.ts` (entry: lazy load, prefetch credentials + `signInQueryOptions`, title "Sign in again", `description: (spec) => spec.name` rendered mono), `apps/web/src/features/sheets/sheet-host.tsx` (render a top-level description when the body entry provides one)
+- Modify: `apps/web/src/features/sheets/sheet-bodies.ts` (replace Task 14's placeholder: lazy load, `prefetch` warms credentials and `signInQueryOptions` so `sheetIntent` on every entry point preloads both (M5), title "Sign in again", `description: (spec) => spec.name` rendered mono), `apps/web/src/features/sheets/sheet-host.tsx` (render a top-level description when the body entry provides one)
 
 **Interfaces:**
 - Consumes: Task 15 (`useSignIn({ purpose: "replace", name })`), `cappedList`, `restartNote`, Sonner `toast`.
@@ -1113,7 +1135,7 @@ it("no branch falls through to a session link for a credential item", () => {});
 ```
 
 - [ ] **Step 2: Run, confirm failure.**
-- [ ] **Step 3: Implement** each branch named in the spec; every `link.kind` ternary becomes an exhaustive `switch` with `credential` (TypeScript `never` check), so a future kind fails to compile.
+- [ ] **Step 3: Implement** each branch named in the spec; every `link.kind` ternary becomes an exhaustive `switch` with `credential` (TypeScript `never` check), so a future kind fails to compile. The pane's Sign in again spreads `sheetIntent("sign-in-again", { kind: "sign-in-again", name })` (M5).
 - [ ] **Step 4: Run.** PASS.
 - [ ] **Step 5: Commit.** `feat(web): credential expiry notice in the Inbox`.
 
@@ -1140,26 +1162,26 @@ Implements spec §12 (DESIGN.md).
 
 ### Task 22: Whole-branch review
 
-- [ ] Fresh reviewer, read-only, over `git diff spec/i3-claude-sign-in...i3/claude-sign-in` against the spec: every AC has a test or an evidence item; spec §6 security (grep the diff for `log.` / `request.log` near `url`, `code`, `token`; confirm no new redact wildcard; `PTY_BRIDGE` test present; spawn options test present; no `process.env` spread into the child); ADR 0028 (no compatibility code); I4 rules (all new messages constants ≤ 40); **the React diff checked against `vercel-react-best-practices`** (the reviewer invokes the skill first: effects only for external sync, derived state in render, no state writes during render beyond the I4-sanctioned adjustments, stable query keys, no waterfalls on sheet open thanks to prefetch, mutations not retaining the code). Apply fixes as their own commits.
+- [ ] Fresh reviewer, read-only, over `git diff spec/i3-claude-sign-in...i3/claude-sign-in` against the spec: every AC has a test or an evidence item; spec §6 security (grep the diff for `log.` / `request.log` near `url`, `code`, `token`; confirm no new redact wildcard; `PTY_BRIDGE` test present; spawn options test present; no `process.env` spread into the child); ADR 0028 (no compatibility code); I4 rules (all new messages constants ≤ 40); **the React diff checked against `vercel-react-best-practices`** (the reviewer invokes the skill first: effects only for external sync, derived state in render, no state writes during render beyond the I4-sanctioned adjustments, stable query keys, no waterfalls on sheet open thanks to prefetch, the code held only in hook state). Also check: no hooks in loops, no components defined inside components, no async chain that outlives unmount without an abort signal, `sheetIntent` on every new sheet entry point, loaders never await the sign-in GET. Apply fixes as their own commits; any apps/web fix follows `vercel-react-best-practices`.
 
 ### Task 23: Full verification
 
 - [ ] Take `/tmp/of-v002-heavy.lock`.
 - [ ] `pnpm install --frozen-lockfile` (no lockfile change: no new dependency), `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`.
 - [ ] The dev loop from a clean clone: `git clone` the branch into a temp dir, `pnpm install --frozen-lockfile`, `pnpm build`, start `pnpm dev` with a throwaway DB and the fake CLI as `FACTORY_CLAUDE_BIN`, load the app, open Settings → Credentials, and confirm the server starts and `GET /api/claude-sign-in` answers. Shut it down and remove the clone.
-- [ ] Release the lock. DB tests: confirm in CI (they don't run locally).
+- [ ] Release the lock. DB tests: confirm in CI (they don't run locally). Any apps/web fix made here follows `vercel-react-best-practices`.
 
 ### Task 24: Real-browser evidence (Chromium and WebKit headless)
 
 - [ ] Use the harness at `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/harness` through its `run.sh` lock, plus the shared `/tmp/of-v002-heavy.lock` (at most one evidence pass or full suite at a time on this machine). `FACTORY_CLAUDE_BIN` is the harness's **fake** wrapper, extended with the Task 4 `setup-token` mode: a synthetic URL and token only, **never the real CLI**.
 - [ ] Add an `i3_*.py` check set covering spec §11.2: AC1 (sign in, then an agent starts on the credential), AC2 (reopen after a reload mid-attempt and mid-exchange with code `slow`), AC3 (server started with a 20 s TTL), AC4 (Cancel sign-in, then `pgrep -f claude-fake-st-` empty), AC6 two tabs, AC9 row states seeded through the DB at 320 px and 200% text, AC10 (`python3` hidden from the server's `PATH`), the Inbox row, pane and Sign in again (AC8), focus after Ready and after Open sign-in page; at 1440×900 and 390×844, light and dark. Screenshots and a short results table go to `docs/product/ui-review/i3-evidence/` in the main checkout (gitignored).
-- [ ] Any failure is fixed on the branch and the affected checks re-run.
+- [ ] Any failure is fixed on the branch (apps/web fixes follow `vercel-react-best-practices`) and the affected checks re-run.
 
 ### Task 25: Push, draft PR, CI
 
 - [ ] `git fetch origin`; merge the latest lower branch (I2's last implementation branch on origin, else `spec/i2-agent-config`) — merge, never rebase; push `i3/claude-sign-in`.
 - [ ] Open a **draft** PR with base = I2's last implementation branch on origin (if none exists yet, `spec/i2-agent-config`, and note in the PR body to retarget once I2's branch exists). Title `feat: sign in with Claude and credential expiry`. Body per `.github/pull_request_template.md` (What, Why, Approach as "<decision>, rather than <alternative>, because <reason>", Changes by area), linking the spec, this plan and issue #147, stating the breaking change (new columns; existing OAuth credentials have unknown expiry; no reset needed) and that DB tests run only in CI. End with the attribution line.
-- [ ] Watch CI until green (`gh pr checks --watch`); fix failures on the branch. Do not merge.
+- [ ] Watch CI until green (`gh pr checks --watch`); fix failures on the branch (apps/web fixes follow `vercel-react-best-practices`). Do not merge.
 
 ### Task 26: Manual step for Or (not automatable; the executor never does it)
 

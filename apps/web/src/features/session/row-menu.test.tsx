@@ -79,6 +79,30 @@ const reached = (to: string, kind: "agent" | "human", id = "m1") =>
     ? { to, kind, status: "inbox", id }
     : { to, kind, status: "queued", recipient_status: "idle", id };
 
+const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
+  kind: "message",
+  seq: 4,
+  at,
+  message: { id: "m4", from, fromKind, kind: "message", urgent: false, body: "hi" },
+  key: "4",
+});
+
+test("Open in chat: on your own messages with this agent, and on a send to you", () => {
+  const chat = (row: Row, self?: string) =>
+    rowMenuItems(row, "dev", self).filter((i) => i.kind === "chat");
+  expect(chat(messageFrom("@or", "human"), "or")).toEqual([
+    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m4" },
+  ]);
+  // Someone else's message, or no known handle: it isn't in your chat.
+  expect(chat(messageFrom("@sam", "human"), "or")).toEqual([]);
+  expect(chat(messageFrom("@or", "human"))).toEqual([]);
+  expect(chat(messageFrom("@lead", "agent"), "or")).toEqual([]);
+  expect(chat(outgoing("@or", { results: [reached("@or", "human", "m5")] }), "or")).toEqual([
+    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m5" },
+  ]);
+  expect(chat(outgoing("@sam", { results: [reached("@sam", "human")] }), "or")).toEqual([]);
+});
+
 test("outgoing: View tool call, and Open in inbox only when it went to a human", () => {
   expect(labels(outgoing("@or", { results: [reached("@or", "human")] }))).toEqual([
     "Copy link",
@@ -110,7 +134,7 @@ test("the copied text is the markdown source; the link is the row's deep link", 
   const items = rowMenuItems(text(1), "my agent");
   expect(items[0]).toMatchObject({
     kind: "copy",
-    text: `${location.origin}/agents/my%20agent?event=1`,
+    text: `${location.origin}/agents/my%20agent/session?event=1`,
   });
   expect(items[1]).toMatchObject({ kind: "copy", text: "Text **1**" });
   expect(rowMenuItems(tool("Bash", { command: "ls -la" }), "dev")[1]).toMatchObject({

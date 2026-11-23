@@ -849,7 +849,7 @@ const TemplateHeader = memo(function TemplateHeader({
             {template.agents.map((slug, i) => (
               <Link
                 key={slug}
-                to="/agents/$slug"
+                to="/agents/$slug/chat"
                 params={{ slug }}
                 className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline"
               >

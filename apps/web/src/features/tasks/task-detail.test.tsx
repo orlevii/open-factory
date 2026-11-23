@@ -1244,8 +1244,14 @@ test("an agent creator and an agent comment author link to the agent's page; a h
   const human = await screen.findByRole("article", { name: "Comment from @or" });
   expect(human.querySelector("[data-comment-author] a")).toBeNull();
   const agent = screen.getByRole("article", { name: "Comment from @dev" });
-  expect(agent.querySelector("[data-comment-author] a")).toHaveAttribute("href", "/agents/dev");
-  expect(document.querySelector("[data-created-by] a")).toHaveAttribute("href", "/agents/lead");
+  expect(agent.querySelector("[data-comment-author] a")).toHaveAttribute(
+    "href",
+    "/agents/dev/chat",
+  );
+  expect(document.querySelector("[data-created-by] a")).toHaveAttribute(
+    "href",
+    "/agents/lead/chat",
+  );
 });
 
 test("a human creator and comment author show as @handle without an avatar; an agent author shows its avatar", async () => {

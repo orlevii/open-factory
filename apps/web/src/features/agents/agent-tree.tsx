@@ -148,7 +148,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
   return (
     <li className="flex items-center">
       <Link
-        to="/agents/$slug"
+        to="/agents/$slug/chat"
         params={{ slug: a.slug }}
         {...press}
         data-longpress-region=""

@@ -295,7 +295,7 @@ export const Composer = memo(function SessionComposer({
       text: (
         <>
           Goes to Claude as typed ·{" "}
-          <Link to="/agents/$slug" params={{ slug }} className={LINK_CLASS}>
+          <Link to="/agents/$slug/chat" params={{ slug }} className={LINK_CLASS}>
             Message {displayName} in Chat
           </Link>
         </>

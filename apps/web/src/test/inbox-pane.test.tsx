@@ -112,7 +112,7 @@ test("≥1024 plain click selects: push ?item=, marks read once, row aria-curren
   const pane = screen.getByRole("region", { name: "Reading pane" });
   expect(within(pane).getByRole("link", { name: "Open in session" })).toHaveAttribute(
     "href",
-    "/agents/dev?event=42",
+    "/agents/dev/session?event=42",
   );
   expect(screen.queryByText("No item selected.")).toBeNull();
 });
@@ -207,7 +207,7 @@ test("<1024 rows navigate; ?item= is dropped", async () => {
   expect(screen.queryByRole("region", { name: "Reading pane" })).toBeNull();
   expect(row("i2")).not.toHaveAttribute("aria-current");
   fireEvent.click(row("i1") as HTMLElement);
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/dev"));
+  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/dev/session"));
 });
 
 test("neighbours' pane data are prefetched on selection", async () => {
@@ -266,7 +266,7 @@ test("a j/k sweep loads the pane's body only for the item it rests on", async ()
   const pane = screen.getByRole("region", { name: "Reading pane" });
   expect(within(pane).getByRole("link", { name: "Open in session" })).toHaveAttribute(
     "href",
-    "/agents/dev?event=44",
+    "/agents/dev/session?event=44",
   );
   expect(bodyGets("/api/tasks/T-7")).toBe(0);
   expect(bodyGets("around=44")).toBe(0);

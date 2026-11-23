@@ -274,7 +274,7 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
   );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
-    "/agents/lead",
+    "/agents/lead/chat",
   );
 
   await userEvent.click(

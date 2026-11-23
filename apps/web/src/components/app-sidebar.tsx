@@ -82,9 +82,9 @@ const nav = [
 /** A section stays highlighted on its detail routes (/agents/foo). "/" redirects to the Inbox. */
 const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
-/** The slug of `/agents/$slug` itself, not of its /edit or /usage children. */
+/** The slug of an agent's Chat or Session, not of its /edit or /usage children. */
 function matchSession(pathname: string): string | undefined {
-  const m = /^\/agents\/([^/]+)\/?$/.exec(pathname);
+  const m = /^\/agents\/([^/]+)(?:\/(?:chat|session))?\/?$/.exec(pathname);
   const slug = m?.[1];
   return slug && slug !== "new" ? decodeURIComponent(slug) : undefined;
 }

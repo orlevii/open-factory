@@ -47,7 +47,7 @@ test("rows link to the sender's call with an accessible name; the preview is the
   });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: "From @dev to @bob, urgent, 14:32" });
-  expect(link).toHaveAttribute("href", "/agents/dev?event=41");
+  expect(link).toHaveAttribute("href", "/agents/dev/session?event=41");
   expect(link).toHaveAccessibleDescription("preview 1");
   expect(screen.getByRole("list", { name: "Inbox" })).toBeInTheDocument();
 });
@@ -71,7 +71,7 @@ test("a factory item names what it is about; a row without seq links to the sess
   const link = await screen.findByRole("link", {
     name: "From Factory about @ops to @bob, 14:32",
   });
-  expect(link).toHaveAttribute("href", "/agents/ops");
+  expect(link).toHaveAttribute("href", "/agents/ops/session");
 });
 
 test("empty state", async () => {
@@ -156,7 +156,7 @@ test("inbox_changed refetches and a new row appears at the top", async () => {
   await waitFor(() => expect(screen.getAllByRole("link", { name: /^From @dev/ })).toHaveLength(2));
   expect(
     within(screen.getByRole("list", { name: "Inbox" })).getAllByRole("link")[0],
-  ).toHaveAttribute("href", "/agents/dev?event=42");
+  ).toHaveAttribute("href", "/agents/dev/session?event=42");
 });
 
 test("arrow keys move focus between rows; Home and End jump", async () => {

@@ -153,7 +153,7 @@ function ChipView({
   );
   if (link)
     return (
-      <Link data-chip to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
+      <Link data-chip to="/agents/$slug/chat" params={{ slug: a.slug }} className={classes}>
         {body}
       </Link>
     );

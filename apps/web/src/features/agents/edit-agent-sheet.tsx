@@ -63,6 +63,8 @@ const andList = (items: string[]) =>
   items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 /** A process is running, so a save that changes anything restarts it when idle (the server restarts on every field). */
 const isRunning = (a: AgentSummary) => a.status === "working" || a.status === "idle";
+/** The pages that show an agent's name in their header: a save from over one needs no toast for it. */
+const AGENT_PAGES = (slug: string) => [`/agents/${slug}/chat`, `/agents/${slug}/session`];
 const SHEET_CONTENT = "[data-slot=sheet-content], [data-slot=drawer-content]";
 
 /** "@slug · Template name", wrapping, never truncated. */
@@ -331,7 +333,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     // Silent only when the session under the sheet already shows the result (its header shows the name).
     if (saved.restartPending || restartsNow)
       notify({ text: `Saved @${slug}. Restarts when idle.` });
-    else if (late || spec.at !== `/agents/${slug}` || !nameOnly)
+    else if (late || !AGENT_PAGES(slug).includes(spec.at ?? "") || !nameOnly)
       notify({ text: `Saved @${slug}.` });
     return saved;
   }

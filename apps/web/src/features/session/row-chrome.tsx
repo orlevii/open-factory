@@ -3,6 +3,7 @@ import { type PickPressed, useLongPress } from "@/hooks/use-long-press";
 import { formatTime } from "./format";
 import { RowMenu, type RowMenuHandle, rowMenuItems, rowMenuTitle } from "./row-menu";
 import type { Row } from "./rows";
+import { useSpeakers } from "./speaker-line";
 
 /** Agent text shows its time in the gutter on hover or focus (U3 §7.5); a head text row's speaker
  *  line already shows it, messages keep their visible time, and a tool row, top-level or a folded
@@ -83,7 +84,9 @@ export function RowChrome({
   /** The menu's handle, for a long-press on the row. */
   menuRef?: Ref<RowMenuHandle>;
 }) {
-  const items = useCallback(() => rowMenuItems(row, slug), [row, slug]);
+  // Your handle comes with the session's one speaker index: a thousand rows don't each watch it.
+  const { selfHandle } = useSpeakers();
+  const items = useCallback(() => rowMenuItems(row, slug, selfHandle), [row, slug, selfHandle]);
   const title = useCallback(() => rowMenuTitle(row, slug), [row, slug]);
   const time = gutterTime(row);
   return (

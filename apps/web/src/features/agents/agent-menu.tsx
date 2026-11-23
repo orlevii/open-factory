@@ -126,7 +126,7 @@ export function AgentMenu({
   if (context === "sidebar")
     views.push(
       <AdaptiveMenuItem key="open" asChild>
-        <Link to="/agents/$slug" params={{ slug }}>
+        <Link to="/agents/$slug/session" params={{ slug }}>
           Open session
         </Link>
       </AdaptiveMenuItem>,

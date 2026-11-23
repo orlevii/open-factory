@@ -158,9 +158,7 @@ test("agents: live first, ended after with 'Ended'; Enter opens the session; ⇧
   );
   expect(options(dialog)[0]).not.toContain("Ended");
   await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev"));
-  const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
-  expect(box).not.toHaveFocus();
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
 
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
   const again = await screen.findByRole("dialog", { name: "Search" });
@@ -206,7 +204,7 @@ test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async
 });
 
 test("'Agent details' is offered on a session page", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await screen.findByRole("combobox", { name: "Message to Dev agent" });
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
   const dialog = await screen.findByRole("dialog", { name: "Search" });
@@ -272,7 +270,7 @@ test.each([768, 900, 1023])(
     const original = window.matchMedia;
     fakeMatchMedia.installWidth(width);
     try {
-      renderApp("/agents/dev", alice);
+      renderApp("/agents/dev/session", alice);
       // Opened from the composer: the dialog's focus return would send focus back there.
       const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
       box.focus();
@@ -334,7 +332,7 @@ test("⇧Enter to an agent whose session isn't open yet focuses its composer onc
   await userEvent.type(input, "dev");
   await waitFor(() => expect(highlighted(dialog)).toHaveTextContent("@dev"));
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev"));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/session"));
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Message to Dev agent" })).toHaveFocus(),
   );

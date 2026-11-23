@@ -94,7 +94,7 @@ export function ScheduleRow({
           </button>
           <span className="relative z-10 min-w-0 truncate leading-5">
             <Link
-              to="/agents/$slug"
+              to="/agents/$slug/chat"
               params={{ slug: s.target.slug }}
               className={`font-mono hover:underline ${s.target.archived || s.target.terminated ? "text-muted-foreground" : "text-foreground"}`}
             >

@@ -58,7 +58,7 @@ function OpenLink({ item }: { item: InboxItem }) {
         </Link>
       ) : (
         <Link
-          to="/agents/$slug"
+          to="/agents/$slug/session"
           params={{ slug: link.agentSlug }}
           search={link.seq === undefined ? undefined : { event: link.seq }}
         >

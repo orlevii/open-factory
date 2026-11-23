@@ -280,7 +280,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       !getSheetState().child // a stacked child the user opened on it (and its input) stays
     )
       closeSheet();
-    const go = () => void router.navigate({ to: "/agents/$slug", params: { slug: agent.slug } });
+    const go = () =>
+      void router.navigate({ to: "/agents/$slug/chat", params: { slug: agent.slug } });
     if (open) {
       closeSheet();
       go();

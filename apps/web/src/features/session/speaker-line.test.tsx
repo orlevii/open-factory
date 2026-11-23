@@ -43,7 +43,7 @@ test("an agent sender: a 20px avatar, the name, a muted @slug, a time that never
   await show(<SpeakerLine from="b" fromKind="agent" at={AT} />);
   const l = line();
   const link = within(l).getByRole("link");
-  expect(link).toHaveAttribute("href", "/agents/b");
+  expect(link).toHaveAttribute("href", "/agents/b/chat");
   expect(link).toHaveTextContent("Builder");
   const avatar = l.querySelector<HTMLElement>("[style*='width: 20px']");
   expect(avatar).not.toBeNull();
@@ -118,7 +118,7 @@ test("an outgoing card reads 'Name → Recipient': You for you, an agent as a li
   expect(text(lines[0])).toMatch(/^Developer.*@dev.*You$/);
   expect(within(lines[1] as HTMLElement).getByRole("link", { name: /Builder/ })).toHaveAttribute(
     "href",
-    "/agents/b",
+    "/agents/b/chat",
   );
 });
 
@@ -133,8 +133,11 @@ test("a sender's kind decides how it shows, whatever its sigil: an `@` agent is 
   const [explicit, looked, human] = [
     ...document.querySelectorAll<HTMLElement>("[data-speaker-line]"),
   ] as HTMLElement[];
-  expect(within(explicit as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b");
-  expect(within(looked as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b");
+  expect(within(explicit as HTMLElement).getByRole("link")).toHaveAttribute(
+    "href",
+    "/agents/b/chat",
+  );
+  expect(within(looked as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b/chat");
   expect(within(human as HTMLElement).queryByRole("link")).toBeNull();
   expect(within(human as HTMLElement).getByText("@zed")).toHaveClass("font-mono");
 });

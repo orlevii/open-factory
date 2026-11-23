@@ -66,7 +66,7 @@ function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
   return { link: display === undefined && more === true };
 }
 
-/** An agent slug in mono, as a link to its session (resolved by `useAgentLinkTarget`). `name` adds
+/** An agent slug in mono, as a link to its chat (resolved by `useAgentLinkTarget`). `name` adds
  *  " · Display name" when it is known. */
 export function AgentLink({ slug, name = false }: { slug: string; name?: boolean }) {
   const { link, display } = useAgentLinkTarget(slug);
@@ -74,9 +74,9 @@ export function AgentLink({ slug, name = false }: { slug: string; name?: boolean
   return (
     <>
       <Link
-        to="/agents/$slug"
+        to="/agents/$slug/chat"
         params={{ slug }}
-        aria-label={`Open @${slug}'s session`}
+        aria-label={`Open @${slug}'s chat`}
         className={`font-mono text-foreground ${LINK_CLASS}`}
       >
         @{slug}

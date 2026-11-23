@@ -39,6 +39,8 @@ export type RowMenuItem =
   | { kind: "inbox"; label: string; messageId: string }
   /** The message in the recipient agent's session. */
   | { kind: "session"; label: string; to: string; messageId: string }
+  /** The message in your chat with this agent. */
+  | { kind: "chat"; label: string; slug: string; messageId: string }
   /** Everyone a send went to, in full: shown when the speaker line summarises them. */
   | { kind: "recipients"; label: string; text: string }
   /** The row's time, as a label: touch only, where the gutter time never shows. */
@@ -54,17 +56,21 @@ const clock = (iso: string) => {
  *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), View in the
  *  recipient's session (a delivered send to an agent), Open in inbox (a send to a human, when it is
  *  in your inbox), and the time on touch. */
-export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
+export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
       kind: "copy",
       label: "Copy link",
-      text: `${location.origin}/agents/${encodeURIComponent(slug)}?event=${row.seq}`,
+      text: `${location.origin}/agents/${encodeURIComponent(slug)}/session?event=${row.seq}`,
     },
   ];
   if (row.kind === "text") items.push({ kind: "copy", label: "Copy text", text: row.text });
-  if (row.kind === "message")
+  if (row.kind === "message") {
     items.push({ kind: "copy", label: "Copy text", text: row.message.body });
+    // A message from you to this agent is in your chat with it.
+    if (self && row.message.fromKind === "human" && handleOf(row.message.from) === handleOf(self))
+      items.push({ kind: "chat", label: "Open in chat", slug, messageId: row.message.id });
+  }
   if (row.kind === "peer")
     items.push({ kind: "copy", label: "Copy text", text: row.envelope.body });
   if (row.kind === "command") items.push({ kind: "copy", label: "Copy command", text: row.text });
@@ -89,9 +95,12 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
     const results = parseSendResults(row.result)?.results;
     const only = results?.length === 1 ? results[0] : undefined;
     if (only && "kind" in only) {
-      if (only.kind === "human")
+      if (only.kind === "human") {
         items.push({ kind: "inbox", label: "Open in inbox", messageId: only.id });
-      else {
+        // To you: the same message sits in your chat with this agent.
+        if (self && handleOf(only.to) === handleOf(self))
+          items.push({ kind: "chat", label: "Open in chat", slug, messageId: only.id });
+      } else {
         const bare = only.to.replace(/^@/, "");
         items.push({
           kind: "session",
@@ -427,10 +436,22 @@ function RowMenuContent({
             return (
               <AdaptiveMenuItem key={item.label} asChild>
                 <Link
-                  to="/agents/$slug"
+                  to="/agents/$slug/session"
                   params={{ slug: item.to }}
                   search={{ message: item.messageId }}
                   aria-label={`View this message in @${item.to}'s session`}
+                >
+                  {item.label}
+                </Link>
+              </AdaptiveMenuItem>
+            );
+          case "chat":
+            return (
+              <AdaptiveMenuItem key={item.label} asChild>
+                <Link
+                  to="/agents/$slug/chat"
+                  params={{ slug: item.slug }}
+                  search={{ message: item.messageId }}
                 >
                   {item.label}
                 </Link>

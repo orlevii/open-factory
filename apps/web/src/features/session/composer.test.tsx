@@ -790,7 +790,7 @@ test("placeholder, toolbar and hint of the raw session", () => {
   // Until the chat has its own page the link goes to the agent (PR 3 points it at /chat).
   expect(
     within(hintLine()).getByRole("link", { name: "Message Dev agent in Chat" }),
-  ).toHaveAttribute("href", "/agents/dev");
+  ).toHaveAttribute("href", "/agents/dev/chat");
 });
 
 test("with a turn open the hint says raw input runs after it", () => {

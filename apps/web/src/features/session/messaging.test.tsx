@@ -60,7 +60,7 @@ async function open(
         running: { count: 1, max: 8 },
       }),
   });
-  const r = renderApp("/agents/dev", alice);
+  const r = renderApp("/agents/dev/session", alice);
   last.qc = r.queryClient;
   last.router = r.router;
   await screen.findByText(firstText);
@@ -85,7 +85,7 @@ test("an agent sender is a chip linking to its session (name and @slug); humans 
     "hi from b",
   );
   const link = await screen.findByRole("link", { name: /Builder/ });
-  expect(link).toHaveAttribute("href", "/agents/b");
+  expect(link).toHaveAttribute("href", "/agents/b/chat");
   expect(link).toHaveTextContent("@b");
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
 });
@@ -123,7 +123,7 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
     },
   );
   const link = await screen.findByRole("link", { name: /Tech Lead · ab12/ });
-  expect(link).toHaveAttribute("href", "/agents/tech-lead-ab12");
+  expect(link).toHaveAttribute("href", "/agents/tech-lead-ab12/chat");
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@old/ })).toBeNull());
   expect(screen.getAllByText("@old").length).toBeGreaterThan(0);
   expect(screen.queryByText(/Old one/)).toBeNull();
@@ -145,7 +145,7 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
     expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true),
   );
   const link = await screen.findByRole("link", { name: "@gone-ab12" });
-  expect(link).toHaveAttribute("href", "/agents/gone-ab12");
+  expect(link).toHaveAttribute("href", "/agents/gone-ab12/chat");
   // No name is known: the slug stands in once, never repeated as the handle.
   expect(link.textContent).toBe("@gone-ab12");
 });
@@ -357,7 +357,7 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
   expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
   // The message in the recipient's session (U3 lead ruling R1).
   const view = within(menu).getByRole("menuitem", { name: "View this message in @b's session" });
-  expect(view).toHaveAttribute("href", "/agents/b?message=m9");
+  expect(view).toHaveAttribute("href", "/agents/b/session?message=m9");
   expect(view).toHaveTextContent("View in @b's session");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByTitle("mcp__factory__send_message")).toBeInTheDocument();
@@ -502,7 +502,7 @@ test("?message= opens the recipient's event window, or says why it can't", async
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev?message=gone", alice);
+  renderApp("/agents/dev/session?message=gone", alice);
   expect(await screen.findByText("Message not found. Showing the latest.")).toBeInTheDocument();
 });
 
@@ -518,7 +518,7 @@ test("?message= for a delivered message loads the window around its recipient ev
       recipientEvent: { agentSlug: "dev", seq: 7 },
     }),
   );
-  renderApp("/agents/dev?message=mid", alice);
+  renderApp("/agents/dev/session?message=mid", alice);
   await screen.findByText("latest");
   expect(api.calls.some((c) => c.url.includes("/events?around=7"))).toBe(true);
 });
@@ -541,7 +541,7 @@ test("?message= for a rejected message names who it wasn't delivered to", async 
       running: { count: 1, max: 8 },
     }),
   );
-  renderApp("/agents/dev?message=mid", alice);
+  renderApp("/agents/dev/session?message=mid", alice);
   const notice = await screen.findByText(
     (_, el) =>
       el?.tagName === "P" && el.textContent === "This message wasn't delivered: @b was archived.",
@@ -560,7 +560,7 @@ test("?message= for a message you cancelled says so (U3 §6.4)", async () => {
       state: "cancelled",
     }),
   );
-  renderApp("/agents/dev?message=mid", alice);
+  renderApp("/agents/dev/session?message=mid", alice);
   expect(await screen.findByText("You cancelled this message.")).toBeInTheDocument();
   expect(screen.getByText("latest")).toBeInTheDocument();
 });
@@ -592,7 +592,7 @@ test("?message= for a message rejected by a terminated recipient says it was ter
       running: { count: 1, max: 8 },
     }),
   );
-  renderApp("/agents/dev?message=mid", alice);
+  renderApp("/agents/dev/session?message=mid", alice);
   const notice = await screen.findByText(
     (_, el) =>
       el?.tagName === "P" && el.textContent === "This message wasn't delivered: @b was terminated.",
@@ -620,7 +620,7 @@ test.each([
       }),
     );
     api.on("GET /api/agents?ended=only", ended);
-    renderApp("/agents/dev?message=mid", alice);
+    renderApp("/agents/dev/session?message=mid", alice);
     expect(
       await screen.findByText(
         (_, el) =>
@@ -763,7 +763,7 @@ test("Load earlier does not announce an older send to the viewer", async () => {
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await screen.findByText("newest");
   await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("old")).toBeInTheDocument();
@@ -819,7 +819,7 @@ test("?message= highlights the row holding that envelope, not the event's first 
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev?message=second", alice);
+  renderApp("/agents/dev/session?message=second", alice);
   await screen.findByText("second body");
   const lit = document.querySelector("[data-highlighted]") as HTMLElement;
   expect(lit).toHaveTextContent("second body");
@@ -840,10 +840,10 @@ test("Agent details' manager is a link to its session", async () => {
         running: { count: 1, max: 8 },
       }),
   });
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
   await vi.waitFor(() =>
-    expect(document.querySelector('#agent-details a[href="/agents/lead"]')).not.toBeNull(),
+    expect(document.querySelector('#agent-details a[href="/agents/lead/chat"]')).not.toBeNull(),
   );
 });
 
@@ -871,7 +871,7 @@ test("held updates show as quiet lines from the queue", async () => {
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   expect(
     await screen.findByText(
       (_, el) =>
@@ -1052,7 +1052,7 @@ test("a pending task message shows its badge in the dashed block", async () => {
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const text = await screen.findByText("Pending brief");
   const block = text.closest("[data-message-block]") as HTMLElement;
   expect(block.className).toContain("border-dashed");
@@ -1074,7 +1074,7 @@ test("Agent details' open tasks link goes to that agent's tasks", async () => {
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
   expect(await screen.findByRole("link", { name: "All 3 tasks" })).toHaveAttribute(
     "href",
@@ -1250,7 +1250,7 @@ test("the users list is fetched alongside the events, not after them (no name po
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await vi.waitFor(() => expect(api.calls.some((c) => c.url === "/api/users")).toBe(true));
   expect(document.querySelector("[data-timeline-skeleton]")).not.toBeNull();
 });

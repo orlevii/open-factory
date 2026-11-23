@@ -548,7 +548,7 @@ test("?item= outside the loaded pages fetches the item and shows it", async () =
   await waitFor(() =>
     expect(within(p).getByRole("link", { name: "Open in session" })).toHaveAttribute(
       "href",
-      "/agents/dev?event=42",
+      "/agents/dev/session?event=42",
     ),
   );
   await waitFor(() => expect(within(p).getByText("dev event 42")).toBeInTheDocument());

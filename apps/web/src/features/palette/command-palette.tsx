@@ -69,7 +69,7 @@ function isPaletteKey(e: KeyboardEvent) {
 const NOTHING = () => {};
 const SEARCH_DEBOUNCE_MS = 150;
 const MIN_SEARCH = 2;
-const SESSION_PATH = /^\/agents\/(?!new\/?$)[^/]+\/?$/;
+const SESSION_PATH = /^\/agents\/(?!new\/)[^/]+\/(?:chat|session)\/?$/;
 
 const isLive = (a: AgentSummary) => !a.archivedAt && !a.terminatedAt;
 
@@ -245,8 +245,13 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
   /** A new page: focus is not sent back to the page being left. */
   const leave = (go: () => void) => commit(go, NOTHING);
   const openAgent = (slug: string) => {
+    // ⇧Enter goes where the composer is: the session's, until the chat has its own.
     commit(
-      () => void navigate({ to: "/agents/$slug", params: { slug } }),
+      () =>
+        void navigate({
+          to: shift.current ? "/agents/$slug/session" : "/agents/$slug/chat",
+          params: { slug },
+        }),
       shift.current ? () => requestComposerFocus(slug) : NOTHING,
     );
   };

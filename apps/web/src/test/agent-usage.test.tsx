@@ -71,7 +71,7 @@ test("defaults to 30 days, with back link, title, totals, estimate line and tabl
   expect(screen.getByRole("group", { name: "Range" })).toBeInTheDocument();
 
   const back = screen.getByRole("link", { name: "← @lead" });
-  expect(back).toHaveAttribute("href", "/agents/lead");
+  expect(back).toHaveAttribute("href", "/agents/lead/chat");
   await waitFor(() => expect(document.title).toBe("Usage · Lead · Open Factory"));
 
   const dl = document.querySelector("dl") as HTMLElement;

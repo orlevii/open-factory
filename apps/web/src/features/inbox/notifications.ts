@@ -134,7 +134,7 @@ export function useInboxNotifier() {
         });
       else
         void navigate({
-          to: "/agents/$slug",
+          to: "/agents/$slug/session",
           params: { slug: l.agentSlug },
           search: l.seq === undefined ? undefined : { event: l.seq },
         });

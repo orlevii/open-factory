@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { readViewPosition, useRememberPosition } from "@/features/agents/view-memory";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
 import { childrenOf, groupOpen, heldSeqs, innerKey, isFold } from "./display-passes";
@@ -153,6 +154,11 @@ export function Timeline(props: {
           },
     ),
   );
+  // Where the reader left this agent's session (a Chat/Session switch remounts the view): recorded on
+  // scroll, restored once the rows are in. A deep-link window is not a place worth coming back to.
+  const isPinned = useCallback(() => stick.pinned.current, [stick]);
+  useRememberPosition(props.slug, "session", scroller, isPinned, !windowed);
+  const restored = useRef(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   // The focused row's key and element, for the rows layout effect (refs: focus moving re-runs nothing).
@@ -199,6 +205,7 @@ export function Timeline(props: {
         return;
       }
       centred.current = true;
+      restored.current = true;
       stick.unpin();
       const target = el.querySelector<HTMLElement>(
         `[data-row="${CSS.escape(litPath.at(-1) ?? "")}"]`,
@@ -208,10 +215,19 @@ export function Timeline(props: {
       setArrival("on");
       return;
     }
+    if (!restored.current && rows.length > 0) {
+      restored.current = true;
+      const left = windowed ? undefined : readViewPosition(props.slug, "session");
+      if (left && !left.pinned) {
+        stick.unpin();
+        el.scrollTop = left.top;
+        return;
+      }
+    }
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-  }, [rows, litPath, expanded, stick]);
+  }, [rows, litPath, expanded, stick, props.slug, windowed]);
 
   // The tint fades after 2s of visible time (U3 §7.4): hidden, the clock stops and keeps what's left.
   // An effect runs after the row painted, so the 2s start from the first frame that shows it.

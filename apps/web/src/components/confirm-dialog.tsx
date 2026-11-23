@@ -99,7 +99,11 @@ export function ConfirmDialog({
 
   if (mobile) {
     return (
-      <Drawer open={open} onOpenChange={(o) => !pending && onOpenChange(o)} dismissible={!pending}>
+      <Drawer
+        open={open}
+        onOpenChange={(next) => !pending && onOpenChange(next)}
+        dismissible={!pending}
+      >
         <DrawerContent
           role="alertdialog"
           aria-modal="true"
@@ -136,7 +140,7 @@ export function ConfirmDialog({
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
+    <AlertDialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <AlertDialogContent
         className="sm:max-w-md max-h-[calc(100svh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]"
         onCloseAutoFocus={onCloseAutoFocus}

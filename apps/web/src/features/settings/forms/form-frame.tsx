@@ -1,11 +1,4 @@
-import {
-  type FormEvent,
-  type ReactNode,
-  type Ref,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-} from "react";
+import { type FormEvent, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
 import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter } from "@/components/ui/sheet";
@@ -53,8 +46,16 @@ export function FormFrame({
   // Sheet frame: focus on open is the body's job (the host prevents Radix's). Phones focus the drawer content, so the
   // keyboard doesn't rise mid-slide; desktop the field a prefilled form names, else its first field.
   // (`reveal` only scrolls an inline form into view, which a sheet doesn't need.)
-  const form = useRef<HTMLFormElement>(null);
-  useImperativeHandle(ref, () => form.current as HTMLFormElement);
+  const form = useRef<HTMLFormElement | null>(null);
+  // One ref callback sets the internal ref and the caller's, for the sheet's own <form> and (via InlineForm) the inline one.
+  const setForm = useCallback(
+    (el: HTMLFormElement | null) => {
+      form.current = el;
+      if (typeof ref === "function") return ref(el);
+      if (ref) ref.current = el;
+    },
+    [ref],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
     if (frame !== "sheet") return;
@@ -82,7 +83,7 @@ export function FormFrame({
         pendingLabel={pendingLabel}
         pending={pending}
         outcome={outcome}
-        ref={ref}
+        ref={setForm}
         autoFocusId={autoFocusId}
         reveal={reveal}
       >
@@ -92,7 +93,7 @@ export function FormFrame({
   }
   return (
     <form
-      ref={form}
+      ref={setForm}
       aria-label={label}
       noValidate
       onSubmit={(e: FormEvent) => {

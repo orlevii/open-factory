@@ -190,3 +190,56 @@ test("secret: the inline frame shows a form-level error through the outcome line
   const line = text.closest(".form-outcome") as HTMLElement;
   expect(line.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
+
+test("ref reaches the <form> in the sheet and inline frames, AuthCard and InlineForm", async () => {
+  const { createRef } = await import("react");
+  const { FormFrame } = await import("./form-frame");
+  const { InlineForm } = await import("@/features/settings/shared");
+  const { AuthCard } = await import("@/components/auth-card");
+  const { NO_OUTCOME } = await import("@/components/forms/form-outcome");
+  const common = {
+    label: "Thing",
+    onSubmit() {},
+    onCancel() {},
+    submitLabel: "Save",
+    pendingLabel: "Saving…",
+    pending: false,
+    outcome: NO_OUTCOME,
+  };
+  for (const frame of ["sheet", "inline"] as const) {
+    const ref = createRef<HTMLFormElement>();
+    const { unmount } = render(
+      <FormFrame frame={frame} ref={ref} {...common}>
+        <input aria-label="x" />
+      </FormFrame>,
+    );
+    expect(ref.current).toBeInstanceOf(HTMLFormElement);
+    expect(ref.current).toBe(screen.getByRole("form", { name: "Thing" }));
+    unmount();
+  }
+  const inline = createRef<HTMLFormElement>();
+  const a = render(
+    <InlineForm ref={inline} {...common}>
+      <input aria-label="x" />
+    </InlineForm>,
+  );
+  expect(inline.current).toBe(screen.getByRole("form", { name: "Thing" }));
+  a.unmount();
+  const auth = createRef<HTMLFormElement>();
+  render(
+    <AuthCard
+      ref={auth}
+      title="Sign in"
+      submitLabel="Go"
+      pendingLabel="Going"
+      submitting={false}
+      outcome={NO_OUTCOME}
+      onSubmit={() => {}}
+      footer={null}
+    >
+      <input aria-label="x" />
+    </AuthCard>,
+  );
+  expect(auth.current).toBeInstanceOf(HTMLFormElement);
+  expect(auth.current?.contains(screen.getByLabelText("x"))).toBe(true);
+});

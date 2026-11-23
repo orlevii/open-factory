@@ -11,7 +11,7 @@ export type Outcome = {
 };
 
 /** For forms that have no form-level message yet. A module constant, so it is referentially stable. */
-export const NO_OUTCOME: Outcome = { outcomeKey: 0 };
+export const NO_OUTCOME: Readonly<Outcome> = Object.freeze({ outcomeKey: 0 });
 
 export function FormOutcome({
   outcome,

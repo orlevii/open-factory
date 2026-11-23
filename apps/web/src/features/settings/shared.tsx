@@ -10,7 +10,6 @@ import {
   use,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useRef,
 } from "react";
 import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
@@ -290,8 +289,15 @@ export function InlineForm({
   /** Opened by a link (?addSecret): bring the whole form into view, wherever it sits on the page. */
   reveal?: boolean;
 }) {
-  const form = useRef<HTMLFormElement>(null);
-  useImperativeHandle(ref, () => form.current as HTMLFormElement);
+  const form = useRef<HTMLFormElement | null>(null);
+  const setForm = useCallback(
+    (el: HTMLFormElement | null) => {
+      form.current = el;
+      if (typeof ref === "function") return ref(el);
+      if (ref) ref.current = el;
+    },
+    [ref],
+  );
   const router = useRouter();
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
@@ -312,7 +318,7 @@ export function InlineForm({
   }, []);
   return (
     <form
-      ref={form}
+      ref={setForm}
       aria-label={label}
       noValidate
       onSubmit={(e: FormEvent) => {

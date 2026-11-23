@@ -19,6 +19,7 @@ import { flushSync } from "react-dom";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
+import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import type { ComboOption } from "@/components/ui/combobox";
@@ -486,7 +487,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        outcome={{ outcomeKey: 0, notice: restartNotice }}
+        outcome={{ ...NO_OUTCOME, notice: restartNotice }}
       />
     </form>
   );

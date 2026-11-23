@@ -253,6 +253,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
         {
           id: "p1",
           from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           about: "tech-lead-ab12",
@@ -267,6 +268,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
         {
           id: "p2",
           from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           about: "dev-cd34",

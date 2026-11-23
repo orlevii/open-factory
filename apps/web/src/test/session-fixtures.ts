@@ -64,7 +64,14 @@ export function conversation(): EventsPage {
         {
           type: "message_in",
           messages: [
-            { id: "m1", from: "@or", kind: "message", urgent: true, body: "Please **list** files" },
+            {
+              id: "m1",
+              from: "@or",
+              fromKind: "human",
+              kind: "message",
+              urgent: true,
+              body: "Please **list** files",
+            },
           ],
         },
         null,

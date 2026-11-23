@@ -50,6 +50,7 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
     {
       id: "m1",
       from: "@scheduler",
+      fromKind: "factory",
       kind: "scheduled",
       urgent: false,
       body: "Morning review",

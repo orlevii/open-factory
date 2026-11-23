@@ -26,7 +26,10 @@ export interface AgentRuntimeSpec {
 export interface FactoryMessage {
   id: string;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   kind: MessageKind;
+  /** The recipients of a `kind: "message"`, as `@handle`s; rendered as the envelope's `to`. */
+  to?: string[];
   urgent: boolean;
   /** Already escaped by groupEnvelopes (single/merge); renderEnvelopes writes it as given. */
   body: string;

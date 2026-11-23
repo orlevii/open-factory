@@ -3,6 +3,7 @@ import { type BatchRow, groupEnvelopes, quoteReported, renderEnvelopes } from ".
 
 const at = (s: number) => new Date(Date.UTC(2026, 10, 19, 10, 0, s));
 const row = (o: Partial<BatchRow> & Pick<BatchRow, "id" | "kind" | "from">): BatchRow => ({
+  fromKind: "human",
   urgent: false,
   body: o.id,
   createdAt: at(Number(o.id.replace(/\D/g, "")) || 0),
@@ -16,21 +17,21 @@ const msg = (over: Partial<BatchRow> = {}): BatchRow =>
 
 test("renders one envelope", () => {
   expect(render([msg()])).toBe(
-    '<factory-message from="@or" kind="message" urgent="false" id="m1">\nPlan is approved.\n</factory-message>',
+    '<factory-message from="@or" from_kind="human" kind="message" urgent="false" id="m1">\nPlan is approved.\n</factory-message>',
   );
 });
 
 test("a batch is envelopes joined by a blank line, in order", () => {
   const out = render([msg({ id: "a", body: "one" }), msg({ id: "b", body: "two", urgent: true })]);
   expect(out).toBe(
-    '<factory-message from="@or" kind="message" urgent="false" id="a">\none\n</factory-message>\n\n' +
-      '<factory-message from="@or" kind="message" urgent="true" id="b">\ntwo\n</factory-message>',
+    '<factory-message from="@or" from_kind="human" kind="message" urgent="false" id="a">\none\n</factory-message>\n\n' +
+      '<factory-message from="@or" from_kind="human" kind="message" urgent="true" id="b">\ntwo\n</factory-message>',
   );
 });
 
 test("escapes attributes", () => {
   expect(render([msg({ from: '@a"b<c>&' })])).toContain(
-    'from="@a&quot;b&lt;c&gt;&amp;" kind="message" urgent="false" id="m1"',
+    'from="@a&quot;b&lt;c&gt;&amp;" from_kind="human" kind="message" urgent="false" id="m1"',
   );
 });
 
@@ -243,6 +244,7 @@ const sched = (over: Partial<BatchRow> = {}): BatchRow =>
   row({
     id: "m1",
     from: "@scheduler",
+    fromKind: "factory",
     kind: "scheduled",
     body: "Morning review",
     scheduleKey: "S-3",
@@ -255,13 +257,13 @@ const sched = (over: Partial<BatchRow> = {}): BatchRow =>
 
 test("a scheduled row renders its schedule attributes", () => {
   expect(render([sched()])).toBe(
-    '<factory-message from="@scheduler" kind="scheduled" urgent="false" id="m1" schedule="S-3" by="@or" due="2026-11-23T09:00:00+01:00" firings="3" late="true">\nMorning review\n</factory-message>',
+    '<factory-message from="@scheduler" from_kind="factory" kind="scheduled" urgent="false" id="m1" schedule="S-3" by="@or" due="2026-11-23T09:00:00+01:00" firings="3" late="true">\nMorning review\n</factory-message>',
   );
 });
 
 test("firings is omitted at 1 and late when false", () => {
   expect(render([sched({ firings: 1, late: false })])).toBe(
-    '<factory-message from="@scheduler" kind="scheduled" urgent="false" id="m1" schedule="S-3" by="@or" due="2026-11-23T09:00:00+01:00">\nMorning review\n</factory-message>',
+    '<factory-message from="@scheduler" from_kind="factory" kind="scheduled" urgent="false" id="m1" schedule="S-3" by="@or" due="2026-11-23T09:00:00+01:00">\nMorning review\n</factory-message>',
   );
 });
 
@@ -301,7 +303,24 @@ test("attachments ride on the envelope for the UI and are never rendered into th
   const [env] = groupEnvelopes([msg({ body, attachments })]);
   expect(env?.attachments).toEqual(attachments);
   expect(renderEnvelopes(groupEnvelopes([msg({ body, attachments })]))).toBe(
-    `<factory-message from="@or" kind="message" urgent="false" id="m1">\n${body}\n</factory-message>`,
+    `<factory-message from="@or" from_kind="human" kind="message" urgent="false" id="m1">\n${body}\n</factory-message>`,
   );
   expect(groupEnvelopes([msg()])[0]).not.toHaveProperty("attachments");
+});
+
+test("a direct message carries from_kind and the full recipient list", () => {
+  const envelopes = groupEnvelopes([
+    row({ id: "m1", from: "@lead", fromKind: "agent", kind: "message", to: ["@orlevi", "@dev"] }),
+  ]);
+  expect(renderEnvelopes(envelopes)).toMatch(
+    /^<factory-message from="@lead" from_kind="agent" kind="message" to="@orlevi @dev" urgent="false" id="m1">/,
+  );
+});
+
+test("other kinds carry from_kind and no to", () => {
+  const envelopes = groupEnvelopes([
+    row({ id: "m1", from: "@factory", fromKind: "factory", kind: "system", to: ["@x"] }),
+  ]);
+  expect(renderEnvelopes(envelopes)).not.toMatch(/ to="/);
+  expect(renderEnvelopes(envelopes)).toMatch(/from_kind="factory"/);
 });

@@ -32,7 +32,14 @@ afterEach(() => {
   resetUploads(); // uploads live in a module store for the page's life
 });
 
-const env = (o: Record<string, unknown>) => ({ urgent: false, ...o }) as never;
+const kindOfFrom = (from: unknown) =>
+  from === "@factory" || from === "@scheduler"
+    ? "factory"
+    : typeof from === "string" && from.startsWith("@")
+      ? "human"
+      : "agent";
+const env = (o: Record<string, unknown>) =>
+  ({ urgent: false, fromKind: kindOfFrom(o.from), ...o }) as never;
 /** Opens /agents/dev with these events as its only page; `@b` is a known agent. */
 async function open(
   events: AnyEvent[],

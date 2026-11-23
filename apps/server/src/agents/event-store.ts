@@ -1044,7 +1044,7 @@ export class EventStore {
           ...m,
           ...rest,
           scheduleKey: scheduleNumber === null ? null : formatKey("S", scheduleNumber),
-          authorLabel: authorHandle ? `@${authorHandle}` : authorSlug,
+          authorLabel: authorHandle ? `@${authorHandle}` : authorSlug ? `@${authorSlug}` : null,
         }));
       },
     };

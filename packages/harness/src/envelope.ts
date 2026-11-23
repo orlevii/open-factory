@@ -25,8 +25,9 @@ function one(m: FactoryMessage): string {
     (m.due ? ` due="${attr(m.due)}"` : "") +
     (m.firings && m.firings > 1 ? ` firings="${m.firings}"` : "") +
     (m.late ? ' late="true"' : "");
+  const to = m.kind === "message" && m.to?.length ? ` to="${attr(m.to.join(" "))}"` : "";
   return (
-    `<factory-message from="${attr(m.from)}" kind="${m.kind}" urgent="${m.urgent}" ${id}${about}${task}${sched}>\n` +
+    `<factory-message from="${attr(m.from)}" from_kind="${m.fromKind}" kind="${m.kind}"${to} urgent="${m.urgent}" ${id}${about}${task}${sched}>\n` +
     `${m.body}\n</factory-message>`
   );
 }
@@ -51,6 +52,9 @@ export type BatchRow = {
   id: string;
   kind: MessageKind;
   from: string;
+  fromKind: FactoryMessage["fromKind"];
+  /** The recipients of a `kind: "message"` row, as `@handle`s. */
+  to?: string[];
   urgent: boolean;
   body: string;
   createdAt: Date;
@@ -108,7 +112,9 @@ function single(r: BatchRow): FactoryMessage {
   return {
     id: r.id,
     from: r.from,
+    fromKind: r.fromKind,
     kind: r.kind,
+    ...(r.to?.length ? { to: r.to } : {}),
     urgent: r.urgent,
     body: body(r.body),
     ...(r.about ? { about: r.about } : {}),
@@ -129,6 +135,7 @@ function merge(run: BatchRow[]): FactoryMessage {
     id: first.id,
     ids: run.map((r) => r.id),
     from: first.from,
+    fromKind: first.fromKind,
     kind: first.kind,
     urgent: run.some((r) => r.urgent),
     body: run.map((r) => body(r.body)).join("\n\n"),

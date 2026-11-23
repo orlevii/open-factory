@@ -286,7 +286,14 @@ const card = (kind: "system" | "message", seq: number): Row => ({
   kind: "message",
   seq,
   at,
-  message: { id: `m${seq}`, from: "@factory", kind, urgent: false, body: `Body ${seq}` },
+  message: {
+    id: `m${seq}`,
+    from: "@factory",
+    fromKind: "factory",
+    kind,
+    urgent: false,
+    body: `Body ${seq}`,
+  },
   key: `${seq}:0`,
 });
 
@@ -334,7 +341,7 @@ const message: Row = {
   kind: "message",
   seq: 4,
   at,
-  message: { id: "m4", from: "@or", kind: "message", urgent: false, body: "Hi" },
+  message: { id: "m4", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hi" },
   key: "4:0",
 };
 
@@ -352,6 +359,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
     envelope: {
       id: "e8",
       from: "@factory",
+      fromKind: "factory",
       kind: left ? "peer_left" : "peer_joined",
       urgent: false,
       body: "",

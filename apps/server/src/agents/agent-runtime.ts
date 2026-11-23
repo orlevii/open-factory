@@ -203,6 +203,7 @@ type MessageEntry = {
   kind: "message";
   row: MessageRow;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   groupKey?: string;
   about?: string;
   subject?: Subject;
@@ -261,20 +262,26 @@ const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
 function entryOf(r: PendingRow): MessageEntry {
   const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
   let from: string;
+  let fromKind: MessageEntry["fromKind"] = "factory";
   if (row.kind === "system") from = "@factory";
   // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
   else if (row.kind === "scheduled") from = "@scheduler";
-  else if (fromHandle) from = `@${fromHandle}`;
-  else if (fromSlug) from = fromSlug;
-  else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
+  else if (fromHandle) {
+    from = `@${fromHandle}`;
+    fromKind = "human";
+  } else if (fromSlug) {
+    from = `@${fromSlug}`;
+    fromKind = "agent";
+  } else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
   else from = "@factory";
   const groupKey = fromSlug ?? subjectSlug ?? undefined;
   const entry: MessageEntry = {
     kind: "message",
     row,
     from,
+    fromKind,
     ...(groupKey ? { groupKey } : {}),
-    ...(subjectSlug ? { about: subjectSlug } : {}),
+    ...(subjectSlug ? { about: `@${subjectSlug}` } : {}),
   };
   if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectSlug) {
     const left = row.kind === "peer_left" ? peerLeftOf(row.body) : undefined;
@@ -328,6 +335,7 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
   from: e.from,
+  fromKind: e.fromKind,
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,
@@ -746,6 +754,7 @@ export class AgentRuntime {
         kind: "message",
         row,
         from: "@factory",
+        fromKind: "factory",
       });
     }
     this.publishQueue();

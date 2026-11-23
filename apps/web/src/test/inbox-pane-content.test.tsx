@@ -630,7 +630,16 @@ test("the excerpt's speaker lines know the agent and you: its name on head text,
         ev(1, { type: "assistant_text", text: "agent says" }),
         ev(2, {
           type: "message_in",
-          messages: [{ id: "x1", from: "@alice", kind: "message", body: "I reply", urgent: false }],
+          messages: [
+            {
+              id: "x1",
+              from: "@alice",
+              fromKind: "human",
+              kind: "message",
+              body: "I reply",
+              urgent: false,
+            },
+          ],
         }),
       ]),
     ),

@@ -302,6 +302,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
           {
             id: "m9",
             from: "@factory",
+            fromKind: "factory",
             kind: "system",
             urgent: true,
             body: "Your previous process stopped unexpectedly.",

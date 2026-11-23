@@ -52,7 +52,9 @@ export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 export const envelopeSchema = z.object({
   id: z.string(),
   from: z.string(),
+  fromKind: z.enum(["human", "agent", "factory"]),
   kind: z.enum(MESSAGE_KINDS),
+  to: z.array(z.string()).optional(),
   urgent: z.boolean(),
   body: z.string(),
   taskKey: z.string().optional(),

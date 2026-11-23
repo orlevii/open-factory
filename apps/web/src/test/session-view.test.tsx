@@ -422,6 +422,7 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
             {
               id: "m1",
               from: "@or",
+              fromKind: "human",
               kind: "message",
               urgent: false,
               body: "See [docs](https://example.com)",

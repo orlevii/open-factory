@@ -148,7 +148,9 @@ const initial: SessionEvent[] = [
     2,
     {
       type: "message_in",
-      messages: [{ id: "m1", from: "@or", kind: "message", urgent: false, body: "Hello" }],
+      messages: [
+        { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hello" },
+      ],
     },
     null,
   ),

@@ -419,7 +419,15 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   event: {
     type: "message_in",
     messages: [
-      { id: "m1", from: "@alice", kind: "message", urgent: false, body: "hello", clientMessageId },
+      {
+        id: "m1",
+        from: "@alice",
+        fromKind: "human",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        clientMessageId,
+      },
     ],
   },
 });

@@ -403,7 +403,14 @@ const sessionEvent = (seq: number, event: SessionEvent["event"]): SessionEvent =
 });
 const messageIn = (...ids: string[]): SessionEvent["event"] => ({
   type: "message_in",
-  messages: ids.map((id) => ({ id, from: "@or", kind: "message", urgent: false, body: id })),
+  messages: ids.map((id) => ({
+    id,
+    from: "@or",
+    fromKind: "human",
+    kind: "message",
+    urgent: false,
+    body: id,
+  })),
 });
 const turnEnd = (): SessionEvent["event"] => ({ type: "turn_end", isError: false, numTurns: 1 });
 const loaded = (
@@ -442,7 +449,15 @@ test("a merged envelope's ids hand off every matching queue item", () => {
   const ev10 = sessionEvent(10, {
     type: "message_in",
     messages: [
-      { id: "m1", ids: ["m1", "m2"], from: "@or", kind: "message", urgent: false, body: "x" },
+      {
+        id: "m1",
+        ids: ["m1", "m2"],
+        from: "@or",
+        fromKind: "human",
+        kind: "message",
+        urgent: false,
+        body: "x",
+      },
     ],
   });
   const s = sessionReducer(loaded({ queue: [qItem("m1"), qItem("m2")] }), frames([ev10]));
@@ -741,6 +756,7 @@ test("a message_in echoing the id removes the block and its row is handed off", 
       {
         id: "m1",
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",
@@ -768,6 +784,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
       {
         id: "m1",
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",

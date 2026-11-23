@@ -68,6 +68,7 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
       {
         id: expect.any(String),
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",

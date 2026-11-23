@@ -15,7 +15,7 @@ describe("mapAuthError", () => {
       "email",
       "An account with this email already exists.",
     ],
-    ["PASSWORD_TOO_SHORT", "password", "Password must be at least 8 characters."],
+    ["PASSWORD_TOO_SHORT", "password", "Use at least 8 characters."],
   ] as const)("%s maps to the %s field", (code, field, message) => {
     expect(mapAuthError(code, "server text")).toEqual({ field, message });
   });

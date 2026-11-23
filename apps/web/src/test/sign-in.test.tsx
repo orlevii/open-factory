@@ -117,24 +117,37 @@ test("tabbing through an empty form shows no error", async () => {
   expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
 });
 
-test("an invalid email shows its error on blur and clears on the keystroke that fixes it", async () => {
+test("an invalid email shows its error on blur and clears on the keystroke that makes it valid", async () => {
   renderApp("/sign-in", null);
   const user = userEvent.setup();
   const email = await screen.findByLabelText("Email");
   await user.type(email, "nope");
   await user.tab();
-  expect(email).toHaveAccessibleDescription("Enter a valid email");
+  expect(email).toHaveAttribute("aria-invalid", "true");
+  expect(email).toHaveAccessibleDescription("Enter a valid email.");
   await user.click(email);
-  await user.type(email, "@x.io");
+  // Still invalid while typing: the message stays (one-letter TLD).
+  await user.type(email, "@x.i");
+  expect(email).toHaveAttribute("aria-invalid", "true");
+  expect(email).toHaveAccessibleDescription("Enter a valid email.");
+  // The keystroke that makes it valid clears it.
+  await user.type(email, "o");
   expect(email).not.toHaveAttribute("aria-invalid");
+  expect(email).not.toHaveAccessibleDescription("Enter a valid email.");
 });
 
-test("submitting empty focuses Email and does not call the server", async () => {
+test("submitting empty flags both fields, focuses Email and does not call the server", async () => {
   renderApp("/sign-in", null);
   const user = userEvent.setup();
   await screen.findByLabelText("Email");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  expect(screen.getByLabelText("Email")).toHaveFocus();
+  const email = screen.getByLabelText("Email");
+  const password = screen.getByLabelText("Password");
+  expect(email).toHaveFocus();
+  expect(email).toHaveAttribute("aria-invalid", "true");
+  expect(email).toHaveAccessibleDescription("Enter a valid email.");
+  expect(password).toHaveAttribute("aria-invalid", "true");
+  expect(password).toHaveAccessibleDescription("Enter your password.");
   expect(auth.signIn.email).not.toHaveBeenCalled();
 });
 

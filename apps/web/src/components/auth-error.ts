@@ -1,4 +1,4 @@
-import { EMAIL_TOO_LONG_MESSAGE, NAME_TOO_LONG_MESSAGE } from "@open-factory/shared";
+import { EMAIL_TOO_LONG_MESSAGE, MSG, NAME_TOO_LONG_MESSAGE } from "@open-factory/shared";
 
 export type AuthField = "name" | "handle" | "email" | "password";
 
@@ -32,7 +32,7 @@ export function mapAuthError(
     case "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL":
       return { field: "email", message: "An account with this email already exists." };
     case "PASSWORD_TOO_SHORT":
-      return { field: "password", message: "Password must be at least 8 characters." };
+      return { field: "password", message: MSG.passwordLength };
     case "INVALID_EMAIL_OR_PASSWORD":
       return { message: "Wrong email or password." };
     case "invite_invalid":

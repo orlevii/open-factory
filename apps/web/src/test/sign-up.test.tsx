@@ -62,8 +62,9 @@ test("client-side validation shows errors per field and does not call the server
   expect(screen.getByLabelText("Name")).toHaveAccessibleDescription(/.+/);
   expect(screen.getByLabelText("Handle")).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByLabelText("Email")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter a valid email.");
   expect(screen.getByLabelText("Password")).toHaveAccessibleDescription(
-    "Password must be at least 8 characters",
+    "Use at least 8 characters.",
   );
   expect(auth.signUp.email).not.toHaveBeenCalled();
 });

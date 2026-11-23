@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { handleSchema } from "./handle.ts";
+import { MSG } from "./messages.ts";
 
 /** Input limits only: longer values already stored stay readable (spec §13.2). */
 export const USER_NAME_MAX = 80;
@@ -8,10 +9,10 @@ export const NAME_TOO_LONG_MESSAGE = `Keep your name to ${USER_NAME_MAX} charact
 export const EMAIL_TOO_LONG_MESSAGE = `Keep your email to ${EMAIL_MAX} characters or fewer.`;
 
 export const signUpSchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(USER_NAME_MAX, NAME_TOO_LONG_MESSAGE),
+  name: z.string().trim().min(1, MSG.nameRequired).max(USER_NAME_MAX, NAME_TOO_LONG_MESSAGE),
   handle: handleSchema,
-  email: z.email().max(EMAIL_MAX, EMAIL_TOO_LONG_MESSAGE),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  email: z.email(MSG.email).max(EMAIL_MAX, EMAIL_TOO_LONG_MESSAGE),
+  password: z.string().min(8, MSG.passwordLength),
 });
 export type SignUpInput = z.infer<typeof signUpSchema>;
 

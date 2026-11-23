@@ -17,4 +17,8 @@ export const MSG = {
   cronTokens: "Use numbers, *, -, / and commas.",
   titleLength: "Use 200 characters or fewer.",
   bodyTooLong: "Shorten this to 64 KB or less.",
+  nameRequired: "Enter your name.",
+  email: "Enter a valid email.",
+  passwordRequired: "Enter your password.",
+  passwordLength: "Use at least 8 characters.",
 } as const;

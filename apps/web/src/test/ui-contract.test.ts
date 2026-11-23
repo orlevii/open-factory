@@ -178,7 +178,7 @@ describe("secondary buttons", () => {
     "components/confirm-dialog.tsx": 1, // Cancel in a dialog
     "components/route-states.tsx": 1, // Go to Inbox on the error page
     "features/inbox/inbox-list.tsx": 1, // Load earlier
-    "features/inbox/inbox-pane.tsx": 2, // Open in session / Open task in the pane header (spec §11.2); Open chat in a chat's strip
+    "features/inbox/inbox-pane.tsx": 3, // Open in session / Open task in the pane header (spec §11.2); Open chat in a chat's strip; Sign in again: the pane's one standalone action
     "features/session/timeline.tsx": 1, // Load earlier
     "features/chat/chat-view.tsx": 1, // Load earlier
     "features/session/agent-details.tsx": 1, // Edit agent: the details footer's standalone action
@@ -311,7 +311,7 @@ describe("hit areas (U4 §11.3)", () => {
       /size="icon-sm"[\s\S]*className=\{cn\("pointer-coarse:size-8", className\)\}/,
     );
     expect(classOf(shared, "export function RowLine", "{actions}")).toMatch(
-      /ml-auto flex shrink-0 items-center gap-1"/,
+      /ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1"/,
     );
     const more = classOf(read("features/agents/agent-tree.tsx"), "data-row-more", "onClick");
     expect(more).toMatch(/className="mx-1 [^"]*pointer-coarse:size-8[^"]*"/);

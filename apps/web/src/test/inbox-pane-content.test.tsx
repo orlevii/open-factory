@@ -8,6 +8,7 @@ import {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { type Handler, json, type MockApi, mockApi, validBody, validQuery } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -447,4 +448,40 @@ test("moving on cancels the request for the item passed over", async () => {
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
   await waitFor(() => expect(within(pane()).getByText("preview 2")).toBeInTheDocument());
   await waitFor(() => expect(signalOf("/api/tasks/T-7")?.aborted).toBe(true));
+});
+
+const credential = (name: string, expiresAt: string, current: boolean, o: Over = {}) =>
+  item(1, {
+    kind: "credential",
+    from: { kind: "factory", name: "factory" },
+    credential: { name, expiresAt, current },
+    link: { kind: "credential", name },
+    preview: "stale stored body",
+    ...o,
+  });
+
+test("a credential item: the live fact, Sign in again opens the sheet, a link to Credentials, no composer", async () => {
+  resetSheets();
+  setup([credential("personal", "2099-11-12T00:00:00Z", true)]);
+  await visit("/inbox?item=i1");
+  const p = pane();
+  expect(await within(p).findByText(/^personal expires on .*2099\.$/)).toBeInTheDocument();
+  expect(within(p).getByRole("link", { name: "Open credentials" })).toHaveAttribute(
+    "href",
+    "/settings/credentials?credential=personal",
+  );
+  expect(within(p).queryByRole("textbox")).toBeNull();
+  expect(within(p).queryByText("Already signed in again.")).toBeNull();
+  await userEvent.click(within(p).getByRole("button", { name: "Sign in again" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "sign-in-again", name: "personal" });
+  resetSheets();
+});
+
+test("a past expiry reads 'expired on'; current false shows Already signed in again.", async () => {
+  setup([credential("personal", "2020-11-12T00:00:00Z", false)]);
+  await visit("/inbox?item=i1");
+  const p = pane();
+  expect(await within(p).findByText(/^personal expired on .*2020\.$/)).toBeInTheDocument();
+  expect(within(p).getByText("Already signed in again.")).toBeInTheDocument();
+  expect(within(p).queryByRole("button", { name: "Sign in again" })).toBeNull();
 });

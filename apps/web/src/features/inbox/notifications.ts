@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { homeInboxQueryOptions, type InboxItem, useOpenItem } from "./api";
+import { credentialLine } from "./credential-notice";
 
 const KEY = "of-notifications";
 const PREVIEW_CAP = 120;
@@ -82,6 +83,10 @@ export function notificationTitle(i: InboxItem): string {
     return `@${i.from.name} mentioned you${i.task ? ` on ${i.task.key}` : ""}`;
   if (i.kind === "task_event")
     return `${i.task?.key ?? "A task"} ${i.fact === "cancelled" ? "was cancelled" : "is done"}`;
+  if (i.kind === "credential")
+    return credentialLine(i, new Date()).tone === "crimson"
+      ? "Credential expired"
+      : "Credential expiring";
   if (i.from.kind === "factory") return `Factory${i.about ? ` about @${i.about}` : ""}`;
   // Only `notice` items from an agent reach here (`message` items are chats now).
   return `@${i.from.name} messaged you`;
@@ -141,20 +146,32 @@ export function useInboxNotifier() {
       item(item) {
         open(item);
         const l = item.link;
-        if (l.kind === "task")
-          void navigate({
-            to: "/tasks/$key",
-            params: { key: l.key },
-            search: l.commentId ? { comment: l.commentId } : {},
-          });
-        else if (l.seq === undefined)
-          void navigate({ to: "/agents/$slug/chat", params: { slug: l.agentSlug } });
-        else
-          void navigate({
-            to: "/agents/$slug/session",
-            params: { slug: l.agentSlug },
-            search: { event: l.seq },
-          });
+        switch (l.kind) {
+          case "task":
+            void navigate({
+              to: "/tasks/$key",
+              params: { key: l.key },
+              search: l.commentId ? { comment: l.commentId } : {},
+            });
+            return;
+          case "session":
+            if (l.seq === undefined)
+              void navigate({ to: "/agents/$slug/chat", params: { slug: l.agentSlug } });
+            else
+              void navigate({
+                to: "/agents/$slug/session",
+                params: { slug: l.agentSlug },
+                search: { event: l.seq },
+              });
+            return;
+          case "credential":
+            void navigate({ to: "/settings/credentials", search: { credential: l.name } });
+            return;
+          default: {
+            const unhandled: never = l;
+            return unhandled;
+          }
+        }
       },
       // The chat opens on the message; the Chat page reads it.
       chat: (chat) =>

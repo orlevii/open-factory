@@ -1,12 +1,14 @@
 import { plainPreview } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { type MouseEvent, memo, useMemo } from "react";
+import { CircleAlert } from "lucide-react";
+import { type MouseEvent, memo, type ReactNode, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
 import type { InboxItem } from "./api";
+import { aboutOf, credentialLine } from "./credential-notice";
 
 const PREVIEW_MAX = 280;
 const previewOf = (markdown: string) => {
@@ -16,13 +18,14 @@ const previewOf = (markdown: string) => {
 
 /** The agent as a 16px chip, "Factory" (about whom) or the human's name: the first thing on line one. */
 function Sender({ item }: { item: InboxItem }) {
+  const about = aboutOf(item);
   if (item.from.kind === "factory")
     return (
       <>
         <span className="shrink-0">Factory</span>
-        {item.about && (
+        {about && (
           <span className="min-w-0 truncate text-muted-foreground">
-            about <span className="font-mono">@{item.about}</span>
+            about <span className="font-mono">{about}</span>
           </span>
         )}
       </>
@@ -61,9 +64,35 @@ function SenderLine({ item }: { item: InboxItem }) {
   );
 }
 
+const LINE_TONE = {
+  muted: "text-muted-foreground",
+  warning: "text-warning",
+  crimson: "text-destructive",
+} as const;
+
 /** Line two: the task (`T-6 · title`) or, for a message, the recipient unless it is the viewer. Truncates. */
-function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undefined }) {
+function ContextLine({
+  item,
+  now,
+  viewer,
+}: {
+  item: InboxItem;
+  now: number;
+  viewer: string | undefined;
+}) {
   const tone = item.read ? "text-muted-foreground" : "text-foreground";
+  if (item.kind === "credential") {
+    // Live from `expiresAt` and the `now` prop, like the Credentials row; never truncated.
+    const line = credentialLine(item, new Date(now));
+    return (
+      <span className={`flex items-start gap-1.5 ${LINE_TONE[line.tone]}`}>
+        {line.tone !== "muted" && (
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+        )}
+        <span>{line.text}</span>
+      </span>
+    );
+  }
   if (item.task)
     return (
       <span className={`flex min-w-0 ${tone}`}>
@@ -75,8 +104,13 @@ function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undef
   return null;
 }
 
-function labelOf(item: InboxItem, time: string): string {
+function labelOf(item: InboxItem, time: string, now: number): string {
   const unread = item.read ? "" : "Unread, ";
+  if (item.kind === "credential") {
+    const { text } = credentialLine(item, new Date(now));
+    const name = item.link.kind === "credential" ? item.link.name : "";
+    return `${unread}Factory, ${name} ${text.charAt(0).toLowerCase()}${text.slice(1)}, ${time}`;
+  }
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
   if (item.kind === "mention") {
     return `${unread}@${item.from.name} mentioned you on ${task}, ${time}`;
@@ -126,7 +160,7 @@ export const InboxRow = memo(function InboxRow({
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
   const common = {
     "data-inbox-id": item.id,
-    "aria-label": labelOf(item, time),
+    "aria-label": labelOf(item, time, now),
     "aria-describedby": previewId,
     "aria-current": selected ? ("true" as const) : undefined,
     preload: selectable ? (false as const) : undefined,
@@ -165,7 +199,7 @@ export const InboxRow = memo(function InboxRow({
             {time}
           </time>
         </span>
-        <ContextLine item={item} viewer={viewer} />
+        <ContextLine item={item} now={now} viewer={viewer} />
         <span
           id={previewId}
           className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}
@@ -175,21 +209,41 @@ export const InboxRow = memo(function InboxRow({
       </span>
     </>
   );
-  const link = item.link;
   return (
     <li className="border-b border-border last:border-b-0">
-      {link.kind === "task" ? (
+      <RowLink link={item.link} common={common}>
+        {body}
+      </RowLink>
+    </li>
+  );
+});
+
+/** The row's link, by kind; a new kind fails to compile here. */
+function RowLink({
+  link,
+  common,
+  children,
+}: {
+  link: InboxItem["link"];
+  common: Record<string, unknown>;
+  children: ReactNode;
+}) {
+  switch (link.kind) {
+    case "task":
+      return (
         <Link
           to="/tasks/$key"
           params={{ key: link.key }}
           search={link.commentId ? { comment: link.commentId } : {}}
           {...common}
         >
-          {body}
+          {children}
         </Link>
-      ) : link.seq === undefined ? (
+      );
+    case "session":
+      return link.seq === undefined ? (
         <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }} {...common}>
-          {body}
+          {children}
         </Link>
       ) : (
         <Link
@@ -198,9 +252,18 @@ export const InboxRow = memo(function InboxRow({
           search={{ event: link.seq }}
           {...common}
         >
-          {body}
+          {children}
         </Link>
-      )}
-    </li>
-  );
-});
+      );
+    case "credential":
+      return (
+        <Link to="/settings/credentials" search={{ credential: link.name }} {...common}>
+          {children}
+        </Link>
+      );
+    default: {
+      const unhandled: never = link;
+      return unhandled;
+    }
+  }
+}

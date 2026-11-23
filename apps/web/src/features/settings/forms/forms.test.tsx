@@ -1,9 +1,11 @@
 import { MSG } from "@open-factory/shared";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { AddCredentialForm } from "./add-credential-form";
@@ -13,17 +15,19 @@ import { AddSecretForm } from "./add-secret-form";
 beforeEach(() => fakeMatchMedia.install(false));
 afterEach(() => vi.unstubAllGlobals());
 
-/** A stub Sheet around a form in its `sheet` frame. */
+/** A stub Sheet around a form in its `sheet` frame; the query client serves the path help's host query. */
 function inSheet(title: string, form: ReactNode) {
   return render(
-    <Sheet open onOpenChange={() => {}}>
-      <SheetContent>
-        <SheetHeader>
-          <SheetTitle>{title}</SheetTitle>
-        </SheetHeader>
-        {form}
-      </SheetContent>
-    </Sheet>,
+    <QueryClientProvider client={createQueryClient()}>
+      <Sheet open onOpenChange={() => {}}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>{title}</SheetTitle>
+          </SheetHeader>
+          {form}
+        </SheetContent>
+      </Sheet>
+    </QueryClientProvider>,
   );
 }
 const describedText = (el: HTMLElement) =>
@@ -224,6 +228,35 @@ test("project: a relative path shows the start message on blur; a server hostPat
   expect(describedText(path)).toContain(MSG.hostPathStart);
   expect(path).toHaveFocus();
 });
+
+test.each([
+  ["Shift+Tab", () => userEvent.keyboard("{Shift>}{Tab}{/Shift}")],
+  [
+    "a click",
+    () => userEvent.click(screen.getByRole("button", { name: "How do I find this path?" })),
+  ],
+])(
+  "project (AC6): moving from a half-typed Path to the help by %s flags nothing",
+  async (_, toHelp) => {
+    mockApi({
+      "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
+    });
+    inSheet(
+      "Add project",
+      <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Add project" });
+    const path = within(dialog).getByLabelText("Path");
+    await userEvent.type(path, "code");
+    await toHelp();
+    expect(path).not.toHaveAttribute("aria-invalid");
+    expect(describedText(path)).not.toContain(MSG.hostPathStart);
+    // Control: leaving Path for another field does flag it.
+    await userEvent.click(path);
+    await userEvent.click(within(dialog).getByLabelText("Name"));
+    expect(path).toHaveAttribute("aria-invalid", "true");
+  },
+);
 
 test("secret: the inline frame shows a form-level error through the outcome line, above the buttons", async () => {
   mockApi({

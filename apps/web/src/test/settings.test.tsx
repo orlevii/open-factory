@@ -1,4 +1,9 @@
-import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-factory/shared";
+import {
+  type CredentialSummary,
+  MSG,
+  type ProjectSummary,
+  type SecretSummary,
+} from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
@@ -702,6 +707,39 @@ test("Change path has the help button, accepts ~/x, and Esc in the popover keeps
     expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ hostPath: "~/x" }),
   );
 });
+
+test.each([
+  ["Shift+Tab", () => userEvent.keyboard("{Shift>}{Tab}{/Shift}")],
+  [
+    "a click",
+    () => userEvent.click(screen.getByRole("button", { name: "How do I find this path?" })),
+  ],
+])(
+  "Change path (AC6): moving from a half-typed Path to the help by %s flags nothing",
+  async (_, toHelp) => {
+    world({ projects: [project({ name: "app" })] });
+    renderApp("/settings/projects", alice);
+    const region = await section("Projects");
+    await waitFor(() => expect(row(region, "app")).toBeDefined());
+    await userEvent.click(
+      within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Change path" }));
+    const path = within(region).getByLabelText("Path");
+    await waitFor(() => expect(path).toHaveFocus());
+    await userEvent.clear(path);
+    await userEvent.type(path, "code");
+    await toHelp();
+    expect(path).not.toHaveAttribute("aria-invalid");
+    expect(describedText(path)).not.toContain(MSG.hostPathStart);
+    // Control: tabbing from Path to Save path (not a skip target) does flag it.
+    await userEvent.click(path);
+    await userEvent.tab();
+    expect(within(region).getByRole("button", { name: "Save path" })).toHaveFocus();
+    await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
+    expect(describedText(path)).toBe(MSG.hostPathStart);
+  },
+);
 
 test("add project: a missing folder lands under Path, then the row appears", async () => {
   const { api, state } = world({

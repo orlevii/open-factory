@@ -214,7 +214,7 @@ Implements spec §5.2.
 - Produces:
   - `mergeConfig(base: ConfigDoc, overlay: AgentOverlay): ConfigDoc`;
   - `canonicalJson(v: unknown): string` (sorted keys);
-  - `overlayVersion(o: AgentOverlay): string` (sha256 hex of `canonicalJson`, using `node:crypto` on the server and Web Crypto on the web. Export a synchronous **pure JS** sha256 from `packages/shared/src/sha256.ts` so both sides share it; a ~40-line implementation tested against `node:crypto`);
+  - `overlayVersion(o: AgentOverlay): string`: the sha256 hex of `canonicalJson`, from a synchronous **pure JS** sha256 in `packages/shared/src/sha256.ts` (~40 lines). Shared code imports no `node:*` module; `node:crypto` appears only in the test that checks the pure implementation against it. The web needs `overlayVersion` only for the client-side dirty and rebase checks; the server returns `version` and the web sends it back unchanged as `baseVersion`. If C2 doesn't use it on the web, keep it server-only and say so in the commit;
   - `emptyDoc(): ConfigDoc`.
 
 - [ ] **Step 1: Write the failing tests.** One `it` per spec §5.2 rule:
@@ -513,7 +513,7 @@ Implements spec §6.2 and §7.3. **Its runtime tests are DB-backed and run in CI
   - after a crons-takeover exit, a shutdown and a crash, the row is still pending and is delivered on the next start;
   - lost crons on an `apply_changes` exit still add a **non-passive** `restart_crons` that wakes the agent;
   - `restartChanges` appears in `liveFields` while restart is pending and clears on exit;
-  - `refOf` returns `nextImage`;
+  - `refOf` returns `nextImage`, which is kept only for **loaded** runtimes and is undefined when the template was invalid at load;
   - `prepareStart` with a resolved image ≠ `nextImage` updates it and fails through the image-missing path.
 - [ ] **Step 2: Implement.**
   - `isPassive`: `notice === "crons_stopped" || notice === "config_changed"`.
@@ -551,7 +551,7 @@ Implements spec §7.2, §6.2 (`started` readers) and §6.7.
   - an overlay save on an archived agent writes the event only;
   - `nextImage` is refreshed for loaded runtimes;
   - `usedBy("GH_TOKEN")`, where only the template lists it, returns its non-archived agents and their live children, and rotate restarts them.
-- [ ] **Step 2: Implement** per spec §7.2. The event goes through `runtime.append` when loaded (so it publishes), else `store.append`.
+- [ ] **Step 2: Implement** per spec §7.2. The event goes through `runtime.append` when loaded (so it publishes), else `store.append`. `ConfigChanges` also publishes a global WS frame `{ type: "config_changed", agent?: slug, template?: name }`: one per affected agent, plus one for the template on a template change. Add it to `packages/shared/src/ws.ts` and the server WS bus (`apps/server/src/ws/route.ts`).
 - [ ] **Step 3:** Run `pnpm typecheck`. It must now be green for server and shared, except for the web, which is fixed in A12.
 - [ ] **Step 4: Commit.** `feat(server): one change path for template and overlay edits`
 
@@ -595,8 +595,9 @@ Implements spec §7.3 UI and §12.1 (agent GET/PUT). **Web:** the implementer an
   - `routes/agents.ts`: `GET` and `PUT /api/agents/:slug/config` per spec §12.1. The PUT runs in one transaction: `SELECT … FOR NO KEY UPDATE`, a JS version compare, then `UPDATE`. A stale version gives 409 `config_changed`. Errors come back as `issues`. With a broken template, `checked: "schema"`. The response doesn't await restarts.
   - `agent-service.ts` `getConfig` and `putConfig`.
   - Shared schemas `agentConfigResponseSchema` and `putAgentConfigBodySchema`.
+  - `AgentDetail` gains `model: { value: string | null; source: "agent" | "template" | "default" }` from the resolver (or `started`), so the Edit agent summary row (C4) needs no config query.
 - Web:
-  - `features/session/timeline-row.tsx` renders `config_changed`: "Configuration changed by @x · N changes", the list clamped to 2 lines with Show all, `overflow-wrap:anywhere`.
+  - `features/session/timeline-row.tsx` renders `config_changed`: "Configuration changed by @x · N changes". The list is clamped to 2 lines with CSS `line-clamp-2` (no measuring in JS), then Show all, with `overflow-wrap:anywhere`.
   - The restart line uses `summarizeChanges(restartChanges)`, with the full list in a tooltip and in Agent details.
   - The fix links `template` → `/templates/<name>` and `config` → `/agents/<slug>/config` (a placeholder route until C4: link to the template page for `config` until then and note it in the commit).
 - Tests:
@@ -614,7 +615,7 @@ Implements spec §7.3 UI and §12.1 (agent GET/PUT). **Web:** the implementer an
   - the `decisions/0017-templates-on-disk.md` note.
   
   These are not committed (gitignored). List them in the PR body.
-- [ ] **Step 2: Branch review.** Dispatch a fresh reviewer on `git diff spec/i2-agent-config...i2/1-overlay` against spec §4–§9 and §13, ADR 0028, the secret-safety rule and the React rules (`vercel-react-best-practices` for the web diff). Fix findings, then commit.
+- [ ] **Step 2: Branch review.** Dispatch a fresh reviewer on `git diff spec/i2-agent-config...i2/1-overlay` against spec §4–§9 and §13, ADR 0028 and the secret-safety rule. For the React diff, the reviewer invokes `vercel-react-best-practices` first and reports by rule. Fix findings, then commit.
 - [ ] **Step 3: Verification.** Take `/tmp/of-v002-heavy.lock`, then:
   - `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm test && pnpm build`;
   - the dev loop from a clean clone: `git clone` the branch to a temp dir, `pnpm install --frozen-lockfile`, `pnpm dev` with a throwaway DB and fake Claude (the harness `env.sh`), confirm the server and web boot, and create an agent from a template;
@@ -675,7 +676,7 @@ Implements spec §11. **Web:** the implementer and reviewer invoke `vercel-react
 - Shared: `AgentSummary.color: number | null`; `PatchAgentBody.color?: number | null` (int 1–12 or null); I1's `ChatRow.agent.color`; the mention, people and peer payloads that carry `avatarVersion`.
 - Server: `agent-service.ts` `update` (a colour-only change never calls `requestRestart`; it is refused for spawned agents as today) and every summary builder.
 - Web:
-  - `components/agent-avatar.tsx` takes `color?: number | null` and uses `fill = color ?? parts.fill`;
+  - `components/agent-avatar.tsx` takes `color?: number | null` and passes it into `BotSvg` (memo), which uses `fill = color ?? parts.fill`, so a colour change re-renders only the SVG;
   - every `<AgentAvatar` call site passes `color`. Run `rg -n "<AgentAvatar" apps/web/src` to get the list: today `address-line.tsx` (New agent: Auto, so `null`), `sidebar-tree.tsx` ×2, `session-view.tsx`, `agent-chip.tsx`, `composer/caret-menu.tsx`, plus I1's chat and inbox views.
 - Tests:
   - server (DB, CI): a colour PATCH doesn't restart; a spawned agent is refused; the CHECK rejects 13;
@@ -689,7 +690,10 @@ Implements spec §12.6 (Colour) and DESIGN.md amendments 2 and 3. **Web:** the i
 
 **Files:**
 - Create: `apps/web/src/features/agents/colour-field.tsx` and `colour-field.test.tsx`
-- Modify: `edit-agent-sheet.tsx` (the field after Display name; `color` in the form state and body; `restartsNow = running && changed.some((f) => f !== "color")` at `:320`; `color` left out of `APPLIES` and of the restart toast at `:362`)
+- Modify: `edit-agent-sheet.tsx`:
+  - the field goes after Display name, with `color` in the form state and body;
+  - at **both** sites (`:320` restart flag and `:362` toast), use `const restartFields = changes.filter((f) => f !== "color")`;
+  - `color` is left out of `APPLIES`.
 - Modify: `agent-form-state.ts`, `DESIGN.md` (amendments 2 and 3, from spec §14)
 
 **Details (spec §12.6):**
@@ -697,6 +701,8 @@ Implements spec §12.6 (Colour) and DESIGN.md amendments 2 and 3. **Web:** the i
 - A radiogroup with roving tabindex. Auto comes first, set off by an 8px gap and a dashed 1px field-edge outline. Then a 2 × 6 grid.
 - Each swatch shows the agent's face at 24px. The pitch is 32px (40px on touch, via `hit-touch`).
 - Selected: `ring-2 ring-foreground ring-offset-2`. Focus-visible: the signal ring at offset 4px.
+- The swatch options (Auto plus `AVATAR_HUES`) are hoisted to a module constant.
+- Roving tabindex and arrow, Home and End keys are handled in one `onKeyDown` on the group, never in effects.
 - A tooltip with the hue name (400ms rule), which is also the accessible name.
 - No transitions. Arrow keys move and select.
 - When the agent's template has `avatarVersion`, render the muted line "This template's avatar.svg sets the avatar." instead.
@@ -713,7 +719,7 @@ Implements spec §12.6 (Colour) and DESIGN.md amendments 2 and 3. **Web:** the i
 
 ### Task B4: Verification and PR 2
 
-- [ ] **Step 1: Branch review.** A fresh reviewer on `git diff i2/1-overlay...i2/2-colour`: spec §11, §12.6 and §14, plus the React diff checked against `vercel-react-best-practices`. Fix findings.
+- [ ] **Step 1: Branch review.** A fresh reviewer on `git diff i2/1-overlay...i2/2-colour` checks spec §11, §12.6 and §14. For the React diff, the reviewer invokes `vercel-react-best-practices` first and reports by rule. Fix findings.
 - [ ] **Step 2: Full verification** under `/tmp/of-v002-heavy.lock`: `pnpm install --frozen-lockfile`, typecheck, lint, test, build, and the clean-clone dev loop.
 - [ ] **Step 3: Browser evidence.** Chromium and WebKit headless, through the harness `run.sh` lock and the heavy lock, fake Claude only:
   - all 12 fills at 16px and 24px in light and dark, beside the success, info and rate-limited marks;
@@ -758,7 +764,7 @@ Implements spec §12.1 (template config, host skills). **Its tests are DB tests 
 - [ ] **Step 3: Failing host-skills test:**
   - lists folders with a `SKILL.md` frontmatter description cut to 200 characters;
   - a missing dir gives an empty list.
-- [ ] **Step 4:** Implement, run locally what is pure, push for CI.
+- [ ] **Step 4:** Implement, run locally what is pure, push for CI. A successful `writeConfig` publishes the WS `config_changed {template: name}` frame (A11) right away, without waiting for the change flow.
 - [ ] **Step 5: Commit.** `feat(server): template configuration API`
 
 ### Task C2: `ConfigForm` core — draft, lists, scalars, model picker
@@ -778,12 +784,24 @@ Implements spec §12.2, §12.3 and §10. **Web:** the implementer and reviewer i
 
 **Interfaces:**
 - Produces:
-  - `useConfigDraft<T>(loaded: { value: T; version: string })` → `{ draft, setDraft, dirty, discard(), undoDiscard(), rebase(newLoaded): { conflicts: string[] } }`;
+  - `useConfigDraft<T>(loaded: { value: T; version: string })` → `{ draft, setDraft, dirty, drift, discard(), undoDiscard(), conflicts }`;
+    - **State:** one `useState<{ edits: T; base: { value: T; version: string } } | null>(null)`. `null` means "no edits": `draft = s?.edits ?? loaded.value`, `dirty = s !== null`, and `drift = s !== null && s.base.version !== loaded.version`. All three are derived in render.
+    - **`setDraft(updater)`** is functional. On the first edit it snapshots `base = loaded` inside the updater, so there is never a separate "initialize" step.
+    - **`discard()`** sets the state to `null` and keeps the previous `edits` in a ref for `undoDiscard()`, until the next edit.
+    - **Rebase** after a 409 or a refetch with `drift`: `rebase(s.base.value, s.edits, loaded.value)` gives the new edits and the conflicts, then the state becomes `{ edits, base: loaded }`.
+    - **`use-config-draft.ts` contains no `useEffect`.**
+  - Config queries (`["agent-config", slug]`, `["template-config", name]`) use `staleTime: 0`.
   - `<ConfigForm mode value base? onChange readOnly? issues />`;
   - `rebase(base, mine, theirs): { value, conflicts: string[] }`.
 
 **Rules:**
-- **Hooks and state.** Derive values during render, keep no effect-driven state sync, memoize list rows, keep stable callbacks, and add no new dependencies.
+- **Hooks and state.** Derive values during render, keep no effect-driven state sync, and add no new dependencies.
+- **Expensive derivations (M2).** `mergeConfig`, `describeChanges`/`summarizeChanges` and `canonicalJson` run on `useDeferredValue(draft)` inside `useMemo`, so typing never waits on them.
+- **Lists (M3).**
+  - Rows are keyed by value; template rows are additionally keyed by group.
+  - Row elements are held in a `Map` ref (value → element).
+  - Add and remove use functional updates. Focus moves in the handler, after `flushSync` commits the change, never in an effect.
+  - Rows are memoized components with stable callbacks.
 - **Lists:**
   - two groups, each labelled once with a count;
   - only the template group collapses past 8 ("Show all 40" / "Show fewer", instant, focus moving to the first revealed row);
@@ -816,7 +834,8 @@ Implements spec §12.2 sections 2–6. **Web:** the implementer and reviewer inv
 **Files:** Create `apps/web/src/features/config/{skills-section,mcp-section,mcp-editor,permissions-section,environment-section,behavior-section,insert-secret}.tsx`, plus tests.
 
 **Details:**
-- **Skills:** a combobox over `/api/host-skills`. Template-local skills are read-only ("Template skill").
+- **Skills:** a combobox over `/api/host-skills` (query `["host-skills"]`, `staleTime` 5 minutes). Template-local skills are read-only ("Template skill").
+- **Shared queries (M8):** reuse the existing `secretsQueryOptions` (settings `api.ts`) and `templatesQueryOptions`; never define new keys for the same data.
 - **Plugins:** a text input checked by the `name@marketplace` regex. The help is "Like formatter@acme. The marketplace must be declared in the template's settings.json." (template mode: "…declared in settings.json."). I5 replaces these pickers.
 - **MCP rows:**
   - line 1: name (wrapping) and kind;
@@ -824,7 +843,7 @@ Implements spec §12.2 sections 2–6. **Web:** the implementer and reviewer inv
   - never the args, the full URL or the headers;
   - Edit and Remove are icon buttons with labels.
 - **MCP inline editor:** appears instantly with focus on Name. Kind is a segmented control, and switching kind keeps the other kind's typed fields until save. Env and header rows stack below `md`. "Insert secret" sits in the value's label row:
-  - it saves the caret on blur;
+  - it saves the caret on blur, in a ref (never in state);
   - picking a secret inserts `${NAME}` and returns focus after it;
   - "Add secret" opens the U4 sheet and inserts on return;
   - it adds `NAME` to `template.secrets`, with the note "Adds GH_TOKEN to this agent's secrets.";
@@ -850,10 +869,18 @@ Implements spec §12.4 and DESIGN.md amendments 1, 4 and 5. **Web:** the impleme
 
 **Files:**
 - Create: `apps/web/src/routes/_app/agents.$slug_.config.tsx`, `apps/web/src/features/config/{config-page,raw-json-tab,page-footer,config-states}.tsx`, `features/config/api.ts` (query options plus the PUT mutation), and tests.
-- Modify: `features/agents/agent-menu.tsx` ("Configure" between Edit and Usage), the Agent details row "Configuration", `edit-agent-sheet.tsx` (the model summary row at the end, "Model opus (this agent) · Open configuration"), `features/session/timeline-row.tsx` (fix link `config` to the real route), `DESIGN.md` (amendments 1, 4 and 5 from spec §14).
+- Create: `apps/web/src/features/templates/code-surface.tsx`. Extract `LazyCodeEditor`, `TextareaEditor` and the Suspense fallback surface from `template-editor.tsx` into it, and use it on both pages. `features/config` **never imports `code-editor.tsx` statically**.
+- Modify: `features/templates/code-editor.tsx` and `features/templates/code-editor-setup.ts`. Add a `readOnly` prop (a CodeMirror compartment, reconfigured, never a remount) and a `scrollMarginBottom` prop.
+- Create: `features/config/json-path-line.ts` with a pure, tested `jsonPathToLine(text, path): number | undefined`. The raw tab memoizes the markers on `[text, issues]`.
+- Modify: `routes/_app.tsx`. Handle the global WS frame `config_changed` (A11) by invalidating exactly `["agent-config", slug]` and/or `["template-config", name]`.
+- Modify: `features/agents/agent-menu.tsx` ("Configure" between Edit and Usage), the Agent details row "Configuration", `edit-agent-sheet.tsx` (the model summary row at the end, "Model opus (this agent) · Open configuration", read from `AgentDetail.model` (A14) with no extra query), `features/session/timeline-row.tsx` (fix link `config` to the real route), `DESIGN.md` (amendments 1, 4 and 5 from spec §14).
 
 **Details (spec §12.4):**
-- **Route and header.** Lazy-loaded with the CodeMirror chunk, sharing the Usage page's header component.
+- **Route and header.** Shares the Usage page's header component.
+  - The route loader preloads the CodeMirror chunk like `templates.$name.tsx:15`, then `await Promise.all([ensureQueryData(agentDetail), ensureQueryData(agentConfig)])`, then `void prefetchQuery` for host skills, `secretsQueryOptions` and `templatesQueryOptions`.
+  - Query keys: `["agent-config", slug]`, `staleTime: 0`. After a successful PUT, `setQueryData` with the response; no refetch.
+- **Panels (M1).** The Configuration panel stays mounted when hidden (`forceMount` plus `hidden`, React `<Activity>` where available), so the form's local state (expanded MCP editor, Show all) survives a visit to Raw. A test covers it.
+- **Tab change (M4).** Raw-tab work (parse check, serialization) runs in `onValueChange`, not in an effect. The raw text and `EditorState` are kept in a page-owned `Map` keyed by `fileKey` (`agent:<slug>` / `template:<name>:<file>`).
 - **Tabs.** "Configuration | Raw JSON" with Radix `activationMode="manual"`.
 - **Raw tab:**
   - uses the existing `code-editor.tsx` wrapper with JSON, markers from issues and parse errors, and `scrollMargins.bottom` equal to the footer height;
@@ -897,7 +924,13 @@ Implements spec §12.4 and DESIGN.md amendments 1, 4 and 5. **Web:** the impleme
 
 Implements spec §12.5 and DESIGN.md amendment 6. **Web:** the implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
-**Files:** Modify `apps/web/src/features/templates/template-editor.tsx`. Create `features/templates/template-config-tab.tsx` and tests.
+**Files:** Modify `apps/web/src/features/templates/template-editor.tsx` (it uses `code-surface.tsx` from C4). Create `features/templates/template-config-tab.tsx` and tests.
+
+**Ownership (H4):**
+- `TemplateEditor` owns the `["template-config", name]` query and the `useConfigDraft`, and passes them to a `memo`'d `TemplateConfigTab`.
+- The locks (form read-only, file tabs read-only) are derived in render from the file-tab dirty flags and `draft.dirty`.
+- The "silent reload" is `invalidateQueries(["template-config", name])` in the file tab's `save()` success handler, never an effect.
+- The default tab comes from a lazy `useState` initializer: Configuration when valid, else `template.yaml`.
 
 **Details:**
 - **Tab strip:**

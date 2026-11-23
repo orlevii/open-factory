@@ -1,6 +1,7 @@
 import type { ChatEntry, ChatPage, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { stripAttachedLines } from "@/features/session/uploads";
 import { useWs } from "@/lib/ws-context";
 import { chatAroundQueryOptions, chatQueryOptions, fetchChat } from "./api";
 import {
@@ -11,6 +12,7 @@ import {
   liveKeys,
   meetsCache,
   mergeNewest,
+  withoutSending,
 } from "./chat-state";
 
 /** A gap of more pages than this between the cache and now is not walked: the next refresh tries again. */
@@ -115,6 +117,52 @@ export function onChatChanged(qc: QueryClient, m: ServerMessage): void {
   if (m.type !== "chat_changed") return;
   const q = qc.getQueryCache().find({ queryKey: chatQueryOptions(m.agent).queryKey, exact: true });
   if (q && q.getObserversCount() > 0) void refreshChat(qc, m.agent, "frame");
+}
+
+/** Your send, in the thread at once (I1 §6.4): an entry of the thread's own list, keyed by its
+ *  `clientMessageId`, which the server's row takes over. Not before the thread has loaded. */
+export function addSending(qc: QueryClient, slug: string, entry: ChatEntry): void {
+  const had = dataOf(qc, slug);
+  const head = had?.pages[0];
+  if (!head) return;
+  const page: ChatPage = { ...head, entries: [entry], nextCursor: null };
+  qc.setQueryData(chatQueryOptions(slug).queryKey, mergeNewest(had, [page]));
+}
+
+/** The send failed: its block goes (the server's row, if it landed anyway, stays). */
+export function dropSending(qc: QueryClient, slug: string, clientMessageId: string): void {
+  const had = dataOf(qc, slug);
+  if (!had) return;
+  const next = withoutSending(had, clientMessageId);
+  if (next !== had) qc.setQueryData(chatQueryOptions(slug).queryKey, next);
+}
+
+/** Your newest message's text in the loaded thread (↑ in the empty composer). */
+export function lastSentText(qc: QueryClient, slug: string): string | undefined {
+  const data = dataOf(qc, slug);
+  if (!data) return undefined;
+  const entries = flattenPages(data).entries;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as ChatEntry;
+    if (e.kind === "message" && e.fromKind === "human")
+      return stripAttachedLines(e.body, e.attachments);
+  }
+  return undefined;
+}
+
+/** The turn that read your message, as the key the page names it by (undefined: none), and whether
+ *  the thread has loaded. The composer reads only this, so a new entry never renders it. */
+export function useWorkingKey(
+  slug: string,
+  /** Off for a `?message=` window: it shows no working line, and the thread isn't fetched twice. */
+  enabled: boolean,
+): { key: string | undefined; loaded: boolean } {
+  const q = useInfiniteQuery({
+    ...chatQueryOptions(slug),
+    enabled,
+    select: (d) => d.pages[0]?.working?.key ?? null,
+  });
+  return { key: q.data ?? undefined, loaded: !enabled || q.status === "success" };
 }
 
 const NO_LIVE: ReadonlySet<string> = new Set();

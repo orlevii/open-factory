@@ -3,10 +3,12 @@ import { expect, test } from "vitest";
 import {
   entryKey,
   flattenPages,
+  isSending,
   liveKeys,
   meetsCache,
   mergeNewest,
   unionEntries,
+  withoutSending,
 } from "./chat-state";
 
 const at = (i: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, i)).toISOString();
@@ -141,4 +143,28 @@ test("live keys: an agent's new message, never yours or a held one or the workin
   };
   const live = liveKeys([msg(1), msg(2), mine, outcome], cursor, "m3");
   expect([...live]).toEqual(["m2"]);
+});
+
+const sending = (i: number) =>
+  msg(i, { id: "c1", clientMessageId: "c1", fromKind: "human", state: "pending" });
+
+test("your send is its server row's key: the row replaces it in the union, one entry", () => {
+  const optimistic = sending(5);
+  const server = msg(5, { id: "srv", clientMessageId: "c1", fromKind: "human" });
+  expect(entryKey(optimistic)).toBe(entryKey(server));
+  const merged = unionEntries([msg(1), optimistic], [server]);
+  expect(merged).toHaveLength(2);
+  expect(merged[1]).toBe(server);
+  expect(isSending(optimistic)).toBe(true);
+  expect(isSending(server)).toBe(false);
+});
+
+test("withoutSending drops the optimistic entry only; the server's row stays", () => {
+  const data = { pages: [page([msg(1), sending(5)])], pageParams: [""] };
+  expect(withoutSending(data, "c1").pages[0]?.entries).toHaveLength(1);
+  const landed = {
+    pages: [page([msg(1), msg(5, { id: "srv", clientMessageId: "c1" })])],
+    pageParams: [""],
+  };
+  expect(withoutSending(landed, "c1")).toBe(landed);
 });

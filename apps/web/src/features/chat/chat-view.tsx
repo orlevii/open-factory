@@ -22,17 +22,20 @@ import { readViewPosition, useRememberPosition } from "@/features/agents/view-me
 import { cancelQueued, restoreQueued } from "@/features/session/api";
 import { NETWORK_ERROR } from "@/features/session/composer";
 import { JumpPill } from "@/features/session/jump-pill";
+import { registerTimelineRepin } from "@/features/session/session-commands";
 import { SpeakerProvider } from "@/features/session/speaker-line";
 import { useStickToBottom } from "@/features/session/stick-to-bottom";
 import { ARRIVAL_MS, arrive } from "@/features/session/timeline";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { sessionQueryOptions } from "@/lib/session";
+import { ChatComposer } from "./chat-composer";
 import { type Arrival, type CancelNote, ChatRow, rowGap } from "./chat-row";
 import { entryKey, keysOf } from "./chat-state";
 import { outcomeSentence, TurnLine } from "./turn-line";
-import { useChat } from "./use-chat";
+import { useChat, useWorkingKey } from "./use-chat";
 
 const toHandle = (s: { user: { handle: string } } | null) => s?.user.handle;
+const toUserId = (s: { user: { id: string } } | null) => s?.user.id;
 const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
 const NO_NOTES: ReadonlyMap<string, CancelNote> = new Map();
 
@@ -44,6 +47,9 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
   const { refreshAgent } = useAgentActions();
   const archived = agent?.archivedAt != null;
   const terminated = agent?.status === "terminated";
+  const session = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
+  const userId = useQuery({ ...sessionQueryOptions, select: toUserId }).data;
+  const turn = useWorkingKey(slug, messageId === undefined);
   return (
     <>
       <SpeakerProvider
@@ -67,7 +73,20 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
             This agent was terminated. The chat is read-only.
           </p>
         </div>
-      ) : null}
+      ) : (
+        <ChatComposer
+          slug={slug}
+          agentName={agent?.displayName ?? slug}
+          userId={userId}
+          self={session}
+          working={turn.key !== undefined}
+          workingKey={turn.key}
+          turnOpen={agent?.turnOpen === true}
+          compacting={agent?.compacting === true}
+          waiting={!turn.loaded || session === undefined}
+          docked
+        />
+      )}
     </>
   );
 }
@@ -99,6 +118,8 @@ function Thread({
     setSeen(pinned ? undefined : keysOf(latest.current)),
   );
   const isPinned = useCallback(() => stick.pinned.current, [stick]);
+  // Sending follows the conversation again.
+  useEffect(() => registerTimelineRepin(slug, stick.repin), [slug, stick]);
   useRememberPosition(slug, "chat", scroller, isPinned, !windowed);
 
   // The deep link: the thread opens around the message and tints it, as the session does.

@@ -23,10 +23,11 @@ import {
   UNCONFIRMED,
 } from "@/components/composer/composer";
 import { Button } from "@/components/ui/button";
+import { sendMessages } from "@/features/chat/send";
 import { SESSION_AT_LABEL, useMentionSource } from "@/features/mentions/mention-source";
 import { readDraft, sessionDraftKey, writeDraft } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
-import { postInput, postInterrupt, postMessage } from "./api";
+import { postInput, postInterrupt } from "./api";
 import { commandsQueryOptions, useCommandSource } from "./commands";
 import { LINK_CLASS } from "./message-block";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
@@ -238,15 +239,42 @@ export const Composer = memo(function SessionComposer({
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
       try {
-        const item = await (inSession
-          ? postInput(slug, { text: body, clientMessageId }, abort.signal)
-          : postMessage(slug, body, { urgent, clientMessageId, signal: abort.signal }));
+        let item: QueueItem | undefined;
+        if (inSession) item = await postInput(slug, { text: body, clientMessageId }, abort.signal);
+        else {
+          const { results } = await sendMessages({
+            to: [slug],
+            body,
+            urgent,
+            clientMessageId,
+            signal: abort.signal,
+          });
+          const r = results[0];
+          // start_failed (the 503 case): queued server-side; the queue frame shows "Not delivered yet: <reason>".
+          if (r?.status === "start_failed") {
+            onSendFailed?.(clientMessageId);
+            onSent?.();
+            return;
+          }
+          if (r?.status === "refused") {
+            onSendFailed?.(clientMessageId);
+            // The draft stays: the read-only line that replaces the composer offers to copy it.
+            if (r.code === "terminated") onTerminated?.(terminatedNotSent(slug));
+            throw new SubmitError(
+              r.code === "terminated"
+                ? terminatedNotSent(slug)
+                : (r.reason ?? "The message wasn't sent."),
+            );
+          }
+          item = r?.item; // no item: queued, with nothing to show in the queue
+        }
         // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
         if (item) onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
         onSent?.();
       } catch (e) {
+        if (e instanceof SubmitError) throw e;
         if (e instanceof ApiError && e.code === "agent_start_failed") {
-          // 503: queued server-side; the queue frame shows "Not delivered yet: <reason>".
+          // 503 from /input: queued server-side; the queue frame shows "Not delivered yet: <reason>".
           onSendFailed?.(clientMessageId);
           onSent?.();
           return;
@@ -327,6 +355,7 @@ export const Composer = memo(function SessionComposer({
       waiting={waiting}
       landed={landed}
       turnOpen={agent.turnOpen}
+      stopVisible={agent.turnOpen}
       compacting={agent.compacting === true}
       stopEpoch={stopEpoch}
       onStop={stopEpoch === undefined ? undefined : onStop}

@@ -111,14 +111,14 @@ test("Send is labelled Send, disabled-shaped while empty, primary at once when t
 
 test("Stop's slot keeps its width with no turn open (an invisible stand-in), so a turn edge never re-wraps", () => {
   const onStop = vi.fn(async () => {});
-  const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false });
+  const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false, stopVisible: false });
   const slot = document.querySelector("[data-stop-slot]");
   expect(slot).not.toBeNull();
   const standIn = slot?.querySelector("[data-stop-stand-in]");
   expect(standIn).toHaveClass("invisible");
   expect(standIn).toHaveAttribute("aria-hidden", "true");
   expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
-  rerender({ onStop, stopEpoch: 2, turnOpen: true });
+  rerender({ onStop, stopEpoch: 2, turnOpen: true, stopVisible: true });
   expect(document.querySelector("[data-stop-slot]")).toBe(slot);
   expect(slot?.querySelector("[data-stop-stand-in]")).toBe(standIn);
   expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -350,7 +350,13 @@ test("Tab accepts too", async () => {
 
 test("Esc closes the menu and leaves the text; it doesn't stop the turn", async () => {
   const onStop = vi.fn(async () => {});
-  const { box } = setup({ completions: AT_ONLY, turnOpen: true, stopEpoch: 1, onStop });
+  const { box } = setup({
+    completions: AT_ONLY,
+    turnOpen: true,
+    stopVisible: true,
+    stopEpoch: 1,
+    onStop,
+  });
   await userEvent.type(box, "hi @d");
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("listbox")).toBeNull();
@@ -1246,7 +1252,7 @@ test("on a phone Stop is a 40px outline icon left of Send, in a slot kept with n
   const restore = onPhone();
   try {
     const onStop = vi.fn(async () => {});
-    const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false });
+    const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false, stopVisible: false });
     const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
     const toolbarClass = toolbar.className;
     const slot = document.querySelector("[data-stop-slot]") as HTMLElement;
@@ -1257,7 +1263,7 @@ test("on a phone Stop is a 40px outline icon left of Send, in a slot kept with n
     expect(standIn).not.toHaveClass("pointer-coarse:size-9");
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
 
-    rerender({ onStop, stopEpoch: 2, turnOpen: true });
+    rerender({ onStop, stopEpoch: 2, turnOpen: true, stopVisible: true });
     const stop = screen.getByRole("button", { name: "Stop" });
     const send = screen.getByRole("button", { name: "Send" });
     expect(stop).toHaveAttribute("data-variant", "outline");
@@ -1284,7 +1290,7 @@ test("on a phone a pending Stop is named Stopping… and says so in a status", a
   try {
     let resolve: () => void = () => {};
     const onStop = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-    setup({ onStop, stopEpoch: 1, turnOpen: true });
+    setup({ onStop, stopEpoch: 1, turnOpen: true, stopVisible: true });
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     const stop = screen.getByRole("button", { name: "Stopping…" });
     expect(stop).toHaveAttribute("aria-busy", "true");
@@ -1312,6 +1318,7 @@ test("from 48rem the placeholder, Send and Stop keep U3's layout", () => {
   const { box } = setup({
     turnPlaceholder: "Sends after @dev's current step",
     turnOpen: true,
+    stopVisible: true,
     stopEpoch: 1,
     onStop: async () => {},
   });

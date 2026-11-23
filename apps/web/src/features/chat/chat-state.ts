@@ -144,3 +144,20 @@ export function liveKeys(
   }
   return live;
 }
+
+/** Your message as the composer put it in the cache, before the server's row (same `clientMessageId`)
+ *  replaced it: its id is the client's own. */
+export const isSending = (e: ChatEntry): boolean =>
+  e.kind === "message" && e.clientMessageId !== undefined && e.id === e.clientMessageId;
+
+/** The data without one optimistic entry (a send that failed); the data itself when it isn't there,
+ *  or the server's row has taken its place. */
+export function withoutSending(data: ChatData, key: string): ChatData {
+  const head = data.pages[0];
+  if (!head?.entries.some((e) => isSending(e) && entryKey(e) === key)) return data;
+  const page: ChatPage = {
+    ...head,
+    entries: head.entries.filter((e) => !(isSending(e) && entryKey(e) === key)),
+  };
+  return { ...data, pages: [page, ...data.pages.slice(1)] };
+}

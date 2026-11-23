@@ -85,34 +85,6 @@ export function fetchEvents(
 export const fetchMessage = (id: string) =>
   apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
 
-/**
- * `POST /api/messages` to one agent. U3 §13.2: `clientMessageId` makes a retry idempotent. The recipient's result
- * is the call's: a refusal or a failed start throws; a queued one without an item resolves to nothing.
- */
-export const postMessage = async (
-  slug: string,
-  body: string,
-  o: { urgent: boolean; clientMessageId?: string; attachments?: string[]; signal?: AbortSignal },
-) => {
-  const { results } = await apiFetch("/api/messages", {
-    method: "POST",
-    body: {
-      to: [slug],
-      body,
-      urgent: o.urgent,
-      ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
-      ...(o.attachments?.length ? { attachments: o.attachments } : {}),
-    },
-    schema: sendMessagesResponseSchema,
-    ...(o.signal ? { signal: o.signal } : {}),
-  });
-  const r = results[0];
-  if (r?.status === "queued") return r.item; // no item: queued, with nothing to show in the queue
-  const reason = r?.reason ?? "The message wasn't sent.";
-  if (r?.status === "start_failed") throw new ApiError(503, "agent_start_failed", reason);
-  throw new ApiError(409, `agent_${r?.code ?? "not_found"}`, reason);
-};
-
 /** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
  *  `clientMessageId` makes a retry idempotent. */
 export const postInput = (

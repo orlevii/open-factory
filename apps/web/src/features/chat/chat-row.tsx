@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { InLongPressRow } from "@/features/session/long-press-region";
 import { MessageBlock } from "@/features/session/message-block";
 import { RowGutter, useRowLongPress } from "@/features/session/row-chrome";
+import { useSendPhase } from "@/features/session/send-phase";
 import { SpeakerLine } from "@/features/session/speaker-line";
 import { ROW_GUTTER } from "@/features/session/timeline-item";
 import { AlsoTo } from "./also-to";
 import { ChatRowMenu, type MessageEntry } from "./chat-row-menu";
-import { entryKey } from "./chat-state";
+import { entryKey, isSending } from "./chat-state";
 
 /** The deep-link tint's phase: shown, then fading until its `transitionend` (the session's rule). */
 export type Arrival = "on" | "fading";
@@ -63,6 +64,9 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
   const { entry, slug, self } = p;
   const key = entryKey(entry);
   const mine = entry.fromKind === "human";
+  // Your send before the server's row: the delivered card's shape, its body muted; "Sending…" only when slow.
+  const sending = isSending(entry);
+  const { slow } = useSendPhase(sending);
   const { menu, press } = useRowLongPress();
   const others = useMemo(
     () => othersOf(entry.recipients, slug, self),
@@ -109,7 +113,8 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
               attachments={entry.attachments}
               slug={slug}
               badge={alsoTo}
-              {...(entry.state === "pending"
+              {...(sending ? { sending: slow ? { label: "Sending…" } : {} } : {})}
+              {...(entry.state === "pending" && !sending
                 ? { queued: { text: `Waiting for ${p.agentName}'s current step` } }
                 : {})}
               {...(entry.state === "rejected"
@@ -120,7 +125,7 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
                   }
                 : {})}
               action={
-                entry.state === "pending" ? (
+                entry.state === "pending" && !sending ? (
                   <Button
                     type="button"
                     variant="ghost"

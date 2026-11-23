@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Durable composer drafts (U3 §13.2, review note m6): `localStorage` under versioned keys, stored as
- * `{ text, at }` and dropped after 7 days. A tab writes only while its box is focused (throttled, flushed
+ * `{ text, at }` (the chat's also `recipients`, I1 §6.6) and dropped after 7 days. A tab writes only while its box is focused (throttled, flushed
  * on blur, pagehide and unmount) or when the app itself puts text in the box (`persist`); an unfocused
  * tab adopts another tab's write only when its own text is the value that write replaced, so it never
  * wipes what it typed itself and never resurrects sent text.
@@ -13,38 +13,68 @@ const THROTTLE_MS = 150;
 
 export const sessionDraftKey = (slug: string) => `session:${slug}`;
 export const taskDraftKey = (taskKey: string) => `task:${taskKey}`;
+export const chatDraftKey = (slug: string) => `chat:${slug}`;
+/** The most agents one chat message goes to, the chat's own included (I1 §6.6). */
+export const MAX_RECIPIENTS = 10;
 
-/** The text of a stored value, or "" when it is absent, unreadable or expired. */
-function textOf(raw: string | null | undefined): { text: string; expired: boolean } {
-  if (!raw) return { text: "", expired: false };
+type Stored = { text: string; recipients: string[]; expired: boolean };
+const EMPTY: Stored = { text: "", recipients: [], expired: false };
+
+/** What a stored value holds, or nothing when it is absent, unreadable or expired. Recipients are
+ *  validated here: a `string[]` of at most the limit, else dropped. */
+function parse(raw: string | null | undefined): Stored {
+  if (!raw) return EMPTY;
   try {
-    const v = JSON.parse(raw) as { text?: unknown; at?: unknown };
-    if (typeof v.text !== "string" || typeof v.at !== "number") return { text: "", expired: true };
-    if (Date.now() - v.at > TTL_MS) return { text: "", expired: true };
-    return { text: v.text, expired: false };
+    const v = JSON.parse(raw) as { text?: unknown; at?: unknown; recipients?: unknown };
+    if (typeof v.text !== "string" || typeof v.at !== "number") return { ...EMPTY, expired: true };
+    if (Date.now() - v.at > TTL_MS) return { ...EMPTY, expired: true };
+    const r = v.recipients;
+    const recipients =
+      Array.isArray(r) && r.length <= MAX_RECIPIENTS && r.every((x) => typeof x === "string")
+        ? (r as string[])
+        : [];
+    return { text: v.text, recipients, expired: false };
   } catch {
-    return { text: "", expired: true };
+    return { ...EMPTY, expired: true };
   }
 }
 
-export function readDraft(key: string): string {
+function read(key: string): Stored {
   try {
-    const { text, expired } = textOf(localStorage.getItem(PREFIX + key));
-    if (expired) localStorage.removeItem(PREFIX + key);
-    return text;
+    const stored = parse(localStorage.getItem(PREFIX + key));
+    if (stored.expired) localStorage.removeItem(PREFIX + key);
+    return stored;
   } catch {
-    return ""; // private mode
+    return EMPTY; // private mode
   }
 }
 
-export function writeDraft(key: string, text: string): void {
+export const readDraft = (key: string): string => read(key).text;
+
+/** The chat's added recipients (slugs; the chat's own agent is implicit). */
+export const readRecipients = (key: string): string[] => read(key).recipients;
+
+function store(key: string, text: string, recipients: string[]): void {
   try {
-    if (text.trim() === "") localStorage.removeItem(PREFIX + key);
-    else localStorage.setItem(PREFIX + key, JSON.stringify({ text, at: Date.now() }));
+    // Gone only when the text and the recipients both are.
+    if (text.trim() === "" && recipients.length === 0) localStorage.removeItem(PREFIX + key);
+    else
+      localStorage.setItem(
+        PREFIX + key,
+        JSON.stringify({ text, at: Date.now(), ...(recipients.length ? { recipients } : {}) }),
+      );
   } catch {
     /* private mode, or full */
   }
 }
+
+/** The text; the recipients stored beside it stay. */
+export const writeDraft = (key: string, text: string): void =>
+  store(key, text, read(key).recipients);
+
+/** The recipients; the text stored beside it stays. */
+export const writeRecipients = (key: string, recipients: readonly string[]): void =>
+  store(key, read(key).text, [...recipients]);
 
 /** A send whose POST aborted (U3 §13.2): its `clientMessageId` and text, kept beside the draft so a remount
  *  resends the unchanged text under the same id (the server dedupes it if the original landed). */
@@ -158,8 +188,8 @@ export function useDraft(key: string): [string, SetText, DraftHandle] {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== PREFIX + key || focused.current) return;
       const mine = joined([...held.current, textRef.current]);
-      if (mine !== textOf(e.oldValue).text) return;
-      const next = textOf(e.newValue).text;
+      if (mine !== parse(e.oldValue).text) return;
+      const next = parse(e.newValue).text;
       textRef.current = next;
       held.current = [];
       setState(next);

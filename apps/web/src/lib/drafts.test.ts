@@ -1,11 +1,15 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
+  chatDraftKey,
   readDraft,
+  readRecipients,
   readUnconfirmed,
   sessionDraftKey,
   taskDraftKey,
   useDraft,
+  writeDraft,
+  writeRecipients,
   writeUnconfirmed,
 } from "./drafts";
 
@@ -182,4 +186,34 @@ test("storage that throws (private mode) leaves the hook working", () => {
     spy.mockRestore();
     set.mockRestore();
   }
+});
+
+test("the chat's draft holds text and recipients; each write keeps the other", () => {
+  const key = chatDraftKey("dev");
+  const raw = () => localStorage.getItem("of-draft:v1:chat:dev");
+  writeRecipients(key, ["ops"]);
+  expect(JSON.parse(raw() as string)).toMatchObject({ text: "", recipients: ["ops"] });
+  writeDraft(key, "hi");
+  expect(JSON.parse(raw() as string)).toMatchObject({ text: "hi", recipients: ["ops"] });
+  expect(readRecipients(key)).toEqual(["ops"]);
+  writeDraft(key, "");
+  expect(readRecipients(key)).toEqual(["ops"]);
+  writeRecipients(key, []);
+  expect(raw()).toBeNull();
+});
+
+test("stored recipients are validated on read: a string[] of at most ten, else dropped", () => {
+  const key = chatDraftKey("dev");
+  const put = (recipients: unknown) =>
+    localStorage.setItem(
+      "of-draft:v1:chat:dev",
+      JSON.stringify({ text: "hi", at: Date.now(), recipients }),
+    );
+  put(["a", 1]);
+  expect(readRecipients(key)).toEqual([]);
+  put(Array.from({ length: 11 }, (_, i) => `a${i}`));
+  expect(readRecipients(key)).toEqual([]);
+  put(Array.from({ length: 10 }, (_, i) => `a${i}`));
+  expect(readRecipients(key)).toHaveLength(10);
+  expect(readDraft(key)).toBe("hi");
 });

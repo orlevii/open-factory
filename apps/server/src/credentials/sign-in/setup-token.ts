@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noControlCharactersInRegex: matching terminal escape codes is the point
-// Spec §5.3. Pure parsers for the `claude setup-token` terminal screen. None of these throw, log or echo their input:
-// the buffer can hold the sign-in URL and the minted token.
+// Spec §5.3. Pure parsers for the `claude setup-token` terminal screen, and the runner that drives them. Nothing here
+// throws CLI text, logs or echoes input: the buffer can hold the sign-in URL, the code and the minted token.
+import type { PtyRun } from "./host-pty.ts";
 
 export const AUTH_URLS = [
   "https://claude.ai/oauth/authorize",
@@ -145,4 +146,116 @@ export function parseToken(buf: string): string | null {
 
 export function hasOAuthError(buf: string): boolean {
   return /OAuth\s+error\s*:/.test(stripTerminal(buf));
+}
+
+export type RunFailure = "start_failed" | "code_rejected" | "exchange_failed" | "aborted";
+
+/** Carries only the fixed reason, never CLI text. */
+export class RunFailed extends Error {
+  constructor(readonly reason: RunFailure) {
+    super(reason);
+  }
+}
+
+export interface SetupTokenRun {
+  readonly prompt: Promise<{ url: string }>;
+  submit(code: string): Promise<string>;
+  abort(): void;
+}
+
+const BUFFER_CAP = 64 * 1024;
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  promise.catch(() => {}); // a rejection nobody awaits is not an unhandled rejection
+  return { promise, resolve, reject };
+}
+
+export function runSetupToken(
+  pty: PtyRun,
+  o: {
+    settleMs?: number;
+    startMs?: number;
+    exchangeMs?: number;
+    setTimer?: typeof setTimeout;
+  } = {},
+): SetupTokenRun {
+  const { settleMs = 150, startMs = 30_000, exchangeMs = 60_000, setTimer = setTimeout } = o;
+  type State = "starting" | "awaiting_code" | "settling" | "exchanging" | "done";
+  let state: State = "starting";
+  let failure: RunFailure | null = null;
+  let buf = "";
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const prompt = deferred<{ url: string }>();
+  const token = deferred<string>();
+  let submitted = false;
+
+  const clearTimers = () => {
+    for (const t of timers.splice(0)) clearTimeout(t);
+  };
+  const finish = (reason: RunFailure | null, value?: string) => {
+    if (state === "done") return;
+    const was = state;
+    state = "done";
+    failure = reason;
+    buf = "";
+    clearTimers();
+    pty.kill();
+    if (reason === null) token.resolve(value as string);
+    else if (was === "starting") prompt.reject(new RunFailed(reason));
+    else token.reject(new RunFailed(reason));
+  };
+  // A failure maps by the state it happens in: before the prompt it is start_failed, after it exchange_failed.
+  const fail = (reason: RunFailure) =>
+    finish(reason === "exchange_failed" && state === "starting" ? "start_failed" : reason);
+
+  timers.push(setTimer(() => fail("exchange_failed"), startMs));
+
+  pty.onData((chunk) => {
+    if (state === "starting") {
+      buf = (buf + chunk).slice(-BUFFER_CAP);
+      const found = parsePrompt(buf);
+      if (!found) return;
+      buf = "";
+      state = "awaiting_code";
+      clearTimers();
+      prompt.resolve(found);
+    } else if (state === "exchanging") {
+      buf = (buf + chunk).slice(-BUFFER_CAP);
+      const t = parseToken(buf);
+      if (t) return finish(null, t);
+      if (hasOAuthError(buf)) return finish("code_rejected");
+      // Anything but a token that parses strictly between the anchors ends the attempt (Q12).
+      if (buf.includes(TOKEN_AFTER)) finish("exchange_failed");
+    }
+  });
+  void pty.exit.then(() => fail("exchange_failed"));
+
+  return {
+    prompt: prompt.promise,
+    submit(code) {
+      if (state !== "awaiting_code" || submitted)
+        return Promise.reject(new RunFailed(failure ?? "exchange_failed"));
+      submitted = true;
+      state = "settling";
+      pty.write(code);
+      timers.push(
+        setTimer(() => {
+          if (state !== "settling") return;
+          pty.write("\r");
+          state = "exchanging";
+          timers.push(setTimer(() => fail("exchange_failed"), exchangeMs));
+        }, settleMs),
+      );
+      return token.promise;
+    },
+    abort() {
+      finish("aborted");
+    },
+  };
 }

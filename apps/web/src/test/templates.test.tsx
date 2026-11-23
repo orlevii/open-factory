@@ -197,7 +197,7 @@ test("editor: blur validates and replaces both issue lists; save with errors all
   // Tab inserts spaces inside the editor; Escape then Tab is the keyboard way out (blur).
   leaveEditor();
   expect(await screen.findAllByText("Unknown field modle.")).toHaveLength(2); // panel + under the editor
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(
     await screen.findByText("This file changed on disk since you opened it."),
   ).toBeInTheDocument();
@@ -215,7 +215,10 @@ test("editor: unsaved edits show a dot with sr-only text; Discard restores", asy
   mockApi({ "GET /api/templates/lead": () => json(detail()) });
   await openTemplate();
   const editor = await editorFor("template.yaml");
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "Save changes" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   typeInto(editor, "x");
   expect(screen.getByRole("tab", { name: /template\.yaml.*\(unsaved\)/ })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -231,7 +234,7 @@ test("editor: a 404 on save says the template is gone", async () => {
   });
   await openTemplate();
   typeInto(await editorFor("template.yaml"), "x");
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByText("This template no longer exists on disk.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Back to templates" })).toBeInTheDocument();
 });
@@ -461,7 +464,7 @@ test("Save works while a blur validate is still in flight", async () => {
   await openTemplate();
   typeInto(await editorFor("template.yaml"), "x");
   // The mouse click blurs the textarea first, which starts a validate that never answers.
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByText("Saved.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "PUT")).toBe(true);
 });
@@ -513,7 +516,7 @@ async function conflictPage() {
   await openTemplate();
   const editor = await editorFor("template.yaml");
   typeInto(editor, "zz");
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await screen.findByText("This file changed on disk since you opened it.");
   return { api, editor };
 }
@@ -548,7 +551,7 @@ test("'Saved.' clears once the file is edited again", async () => {
   await openTemplate();
   const editor = await editorFor("template.yaml");
   typeInto(editor, "x");
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await screen.findByText("Saved.");
   typeInto(editor, "y");
   expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
@@ -607,7 +610,7 @@ test("saving template.yaml refreshes the header without touching what is being t
     return json({ hash: "h-saved", issues: [] });
   });
   typeInto(editor, "runtime: docker\n");
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await screen.findByText("Saved.");
   expect(await screen.findByText("Docker")).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 1, name: "Renamed Lead" })).toBeInTheDocument();
@@ -964,7 +967,7 @@ test("Save reads 'Saving…' while the PUT is pending", async () => {
   });
   await openTemplate();
   typeInto(await editorFor("template.yaml"), "x");
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("button", { name: "Saving…" })).toBeInTheDocument();
   await act(async () => release());
   expect(await screen.findByText("Saved.")).toBeInTheDocument();

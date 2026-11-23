@@ -138,13 +138,20 @@ test("a dirty form makes the config file tabs read-only, and marks the Configura
 test("a dirty config file makes the form read-only, with a jump to it", async () => {
   await open();
   const settings = await toFile("settings.json");
+  expect(footer()).not.toHaveAttribute("data-sticky");
   fireEvent.change(settings, { target: { value: `${SETTINGS} ` } });
+  // The file tabs use the page footer too: sticky while dirty.
+  expect(footer()).toHaveAttribute("data-sticky");
   await userEvent.click(tab(/^Configuration/));
-  // On the form, and as the notice that describes the held Save.
-  const lines = await screen.findAllByText(
+  // Once: the footer's notice, which describes the held Save; the form only offers the jump.
+  const line = await within(footer()).findByText(
     "settings.json has unsaved edits. Save or discard them first.",
   );
-  expect(lines).toHaveLength(2);
+  const save = screen.getByRole("button", { name: "Save changes" });
+  expect(save.getAttribute("aria-describedby")).toBe(line.id);
+  expect(
+    screen.getAllByText("settings.json has unsaved edits. Save or discard them first."),
+  ).toHaveLength(1);
   expect(screen.queryByRole("textbox", { name: "Add allow rule" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Open settings.json" }));
   expect(tab(/settings\.json/)).toHaveAttribute("aria-selected", "true");
@@ -160,12 +167,16 @@ test("after a file-tab save with the form clean, the form reloads silently", asy
     doc: { ...DOC, settings: { permissions: { allow: ["Bash(git:*)", "Read"] } } },
     hashes: { "template.yaml": "h-y1", "settings.json": "h-s2", "mcp.json": null },
   });
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() =>
     expect(calls("GET", "/api/templates/dev/config").length).toBeGreaterThan(before),
   );
   await userEvent.click(tab(/^Configuration/));
   expect(await screen.findByText("Read")).toBeInTheDocument();
+  // Silent: the form's footer shows no outcome and stays in the flow.
+  expect(within(footer()).queryByRole("alert")).toBeEmptyDOMElement();
+  expect(within(footer()).getAllByRole("status")[0]).toBeEmptyDOMElement();
+  expect(footer()).not.toHaveAttribute("data-sticky");
 });
 
 test("a Configuration save sends the doc with the base hashes, then the file tabs read the files again", async () => {
@@ -231,15 +242,18 @@ test("Discard with Undo, and Save refused while an MCP server editor is open", a
 test("below 40rem the tabs are a Select listing every tab with its marks", async () => {
   tpl = detail([{ severity: "error", file: "settings.json", message: "JSON: bad", line: 1 }]);
   renderApp("/templates/dev", alice);
-  await screen.findByRole("tab", { name: /settings\.json/ });
+  // An error in settings.json opens template.yaml; the form (its doc mocked valid) is a click away.
+  await userEvent.click(await screen.findByRole("tab", { name: /^Configuration/ }));
+  await screen.findByRole("heading", { level: 2, name: "Model" });
   const strip = screen.getByRole("tablist");
   expect(strip.className).toMatch(/max-\[40rem\]:hidden/);
-  const picker = screen.getByRole("combobox", { name: "Tab" });
+  await addAllowRule("Read");
+  const picker = screen.getByRole("combobox", { name: "File" });
   expect(picker.closest("div")?.className).toMatch(/min-\[40rem\]:hidden/);
   await userEvent.click(picker);
   const names = screen.getAllByRole("option").map((o) => o.textContent);
   expect(names).toEqual([
-    "Configuration",
+    "Configuration (unsaved)",
     "template.yaml",
     "AGENTS.md",
     "settings.json (has errors)",

@@ -21,6 +21,7 @@ import {
   CONFIG_FORM_MSG,
   CONFIG_PAGE_MSG,
   fileHasEdits,
+  openFileLabel,
   TEMPLATE_TAB_COPY,
   templateUsageLine,
 } from "@/features/config/messages";
@@ -170,7 +171,8 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
     // What the server wrote (only the keys the form owns), and the file tabs' texts and hashes.
     void qc.invalidateQueries({ queryKey: key, exact: true });
     void qc.invalidateQueries({ queryKey: ["templates"], exact: true });
-    await onFilesChanged();
+    // The save stands even if the file tabs can't re-read the files now: a later file save's conflict line recovers.
+    await onFilesChanged().catch(() => {});
   }
 
   /** changed_on_disk → Reload: the files as they are now, my edits re-applied over them. Still unsaved. */
@@ -180,11 +182,12 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
       draft.current.rebase({ value: fresh.doc ?? EMPTY_DOC, version: hashesVersion(fresh.hashes) });
       setIssuesOverride(null);
       setOutcome(NO_PAGE_OUTCOME);
-      await onFilesChanged();
       document.getElementById(saveId)?.focus();
     } catch {
-      setOutcome({ kind: "error", text: CONFIG_PAGE_MSG.couldntReload });
+      return setOutcome({ kind: "error", text: CONFIG_PAGE_MSG.couldntReload });
     }
+    // The rebase stands; the file tabs catch up when they can.
+    await onFilesChanged().catch(() => {});
   }
 
   const { outcome: footerOutcome, shown } = toFormOutcome(outcome, outcomeKey, {
@@ -200,11 +203,11 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
         <div className="grid gap-3 text-sm leading-5">
           {usage ? <p className="text-muted-foreground">{usage}</p> : null}
           {!valid ? <p>{TEMPLATE_TAB_COPY.broken}</p> : null}
+          {/* The sentence is the footer's notice (it describes the held Save); here, only the way to the file. */}
           {lockedBy ? (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <p>{fileHasEdits(lockedBy)}</p>
+            <div>
               <Button type="button" variant="ghost" size="xs" onClick={() => onJump(lockedBy, 1)}>
-                Open {lockedBy}
+                {openFileLabel(lockedBy)}
               </Button>
             </div>
           ) : null}

@@ -124,7 +124,7 @@ export const TEMPLATE_TAB_COPY = {
   formHasEdits: "Unsaved changes in Configuration.",
   /** The form while the template has errors: there is no valid doc to edit. */
   broken: "This template has errors. Fix them in the file tabs to edit its configuration here.",
-  tabPicker: "Tab",
+  tabPicker: "File",
   unsaved: "unsaved",
   hasErrors: "has errors",
 } as const;
@@ -139,6 +139,8 @@ export const templateUsageLine = (live: number, cantStart: number, valid: boolea
   if (live === 0) return "No agents use this template.";
   return `Used by ${agentsPhrase(live)}. Saving restarts the ones whose configuration changes, when idle.`;
 };
+/** The jump from the locked form to the file tab holding the edits. */
+export const openFileLabel = (file: string) => `Open ${file}`;
 /** On the form while a config file tab has unsaved edits (R2). */
 export const fileHasEdits = (file: string) =>
   `${file} has unsaved edits. Save or discard them first.`;

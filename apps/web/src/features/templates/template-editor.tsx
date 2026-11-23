@@ -21,7 +21,7 @@ import {
   useState,
 } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { InlineOutcome } from "@/components/inline-outcome";
+import type { Outcome as FormOutcomeValue } from "@/components/forms/form-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
@@ -33,11 +33,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { templateConfigQueryOptions } from "@/features/config/api";
 import { agentsPhrase, TEMPLATE_TAB_COPY } from "@/features/config/messages";
+import { PageFooter } from "@/features/config/page-footer";
 import { useConfigDraft } from "@/features/config/use-config-draft";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -191,6 +191,23 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const patch = (f: TemplateFile, p: Partial<FileState>) =>
     setFiles((s) => ({ ...s, [f]: { ...s[f], ...p } }));
   const setOutcome = (f: TemplateFile, o?: Outcome) => setOutcomes((s) => ({ ...s, [f]: o }));
+  // Each outcome's key for the footer's line, so the same text set again is announced again.
+  const outcomeKeys = useRef(new WeakMap<Outcome, number>());
+  const outcomeSeq = useRef(0);
+  const keyOf = (o: Outcome | undefined) => {
+    if (!o) return 0;
+    let k = outcomeKeys.current.get(o);
+    if (k === undefined) {
+      k = ++outcomeSeq.current;
+      outcomeKeys.current.set(o, k);
+    }
+    return k;
+  };
+  // The files as last committed, for handlers that run after a request.
+  const latestFiles = useRef(files);
+  useLayoutEffect(() => {
+    latestFiles.current = files;
+  });
 
   // A jump to another tab can only land once that tab's editor (or its textarea fallback) has
   // mounted, which is after this component's own commit. So the request waits in a ref and is
@@ -275,15 +292,30 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   }, []);
 
   // A Configuration save or reload rewrote the config files: their (clean) tabs read them again, history and all.
+  // Only files whose hash moved are replaced; an unchanged one keeps its text, undo history and outcome.
   const onFilesChanged = useCallback(async () => {
     const fresh = await qc.fetchQuery({ ...templateQueryOptions(name), staleTime: 0 });
     const next = initial(fresh);
-    for (const f of CONFIG_FILES) states.delete(`${name}:${f}`);
-    setFiles((all) => {
-      const out = { ...all };
-      for (const f of CONFIG_FILES) if (!isDirty(all[f])) out[f] = next[f];
-      return out;
-    });
+    const now = latestFiles.current;
+    const moved = CONFIG_FILES.filter(
+      (f) => !isDirty(now[f]) && next[f].baseHash !== now[f].baseHash,
+    );
+    for (const f of moved) {
+      states.delete(`${name}:${f}`);
+      checked.current[f] = next[f].content;
+    }
+    if (moved.length) {
+      setFiles((all) => {
+        const out = { ...all };
+        for (const f of moved) if (!isDirty(all[f])) out[f] = next[f];
+        return out;
+      });
+      setOutcomes((all) => {
+        const out = { ...all };
+        for (const f of moved) out[f] = undefined;
+        return out;
+      });
+    }
     seq.current++;
     setIssues(fresh.issues);
   }, [qc, name, states]);
@@ -321,6 +353,20 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
       checked.current[f] = undefined;
       failed(f, e, "Couldn't check this file. Saving still works.");
     }
+  }
+
+  function discard(f: TemplateFile) {
+    const s = files[f];
+    if (!isDirty(s)) return;
+    setOutcome(f, undefined);
+    if (isOptional(f) && s.baseHash === null) {
+      // Never written: back to "Not created".
+      patch(f, { started: false, content: "", saved: "", conflict: undefined });
+      requestAnimationFrame(() => document.getElementById(`create-${f}`)?.focus());
+      return;
+    }
+    patch(f, { content: s.saved, conflict: undefined });
+    focusEditor(f);
   }
 
   async function save(f: TemplateFile, baseHash = files[f].baseHash) {
@@ -624,45 +670,16 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                     </div>
                   )}
                   {s.started && (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <Status outcome={outcome} />
-                      <div className="ml-auto flex gap-2">
-                        <Button
-                          variant="ghost"
-                          aria-disabled={!isDirty(s) || undefined}
-                          onClick={() => {
-                            if (!isDirty(s)) return;
-                            setOutcome(f, undefined);
-                            if (isOptional(f) && s.baseHash === null) {
-                              // Never written: back to "Not created".
-                              patch(f, {
-                                started: false,
-                                content: "",
-                                saved: "",
-                                conflict: undefined,
-                              });
-                              requestAnimationFrame(() =>
-                                document.getElementById(`create-${f}`)?.focus(),
-                              );
-                              return;
-                            }
-                            patch(f, { content: s.saved, conflict: undefined });
-                            focusEditor(f);
-                          }}
-                        >
-                          Discard
-                        </Button>
-                        <Button
-                          aria-disabled={!canSave || undefined}
-                          onClick={() => canSave && save$()}
-                        >
-                          {outcome?.tone === "pending" && outcome.kind === "saving" && <Spinner />}
-                          {outcome?.tone === "pending" && outcome.kind === "saving"
-                            ? "Saving…"
-                            : "Save"}
-                        </Button>
-                      </div>
-                    </div>
+                    // The page-footer rule (DESIGN.md → Page forms), the same footer as Configuration's.
+                    <PageFooter
+                      outcome={fileOutcome(outcome, keyOf(outcome))}
+                      sticky={isDirty(s) || (outcome !== undefined && outcome.tone !== "pending")}
+                      pending={outcome?.tone === "pending" && outcome.kind === "saving"}
+                      canSave={canSave}
+                      canDiscard={isDirty(s)}
+                      onSave={() => canSave && save$()}
+                      onDiscard={() => discard(f)}
+                    />
                   )}
                 </TabsContent>
               );
@@ -868,21 +885,13 @@ const IssuesBlock = memo(function IssuesBlock({
   );
 });
 
-/** One live region that is always mounted, so changes are announced. */
-function Status({ outcome }: { outcome?: Outcome }) {
-  return (
-    <div aria-live="polite" className="min-h-[1.125rem]">
-      {outcome?.tone === "pending" && (
-        <p className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          <Spinner size="text" />
-          {outcome.text}
-        </p>
-      )}
-      {outcome && outcome.tone !== "pending" && (
-        <InlineOutcome tone={outcome.tone}>{outcome.text}</InlineOutcome>
-      )}
-    </div>
-  );
+/** A file tab's outcome as the page footer's line: "Checking…" and "Reloading…" are its muted notice, "Saving…" is
+ *  the footer's own pending label. */
+function fileOutcome(o: Outcome | undefined, outcomeKey: number): FormOutcomeValue {
+  if (!o) return { outcomeKey };
+  if (o.tone !== "pending")
+    return o.tone === "success" ? { outcomeKey, success: o.text } : { outcomeKey, error: o.text };
+  return { outcomeKey, notice: o.kind === "saving" ? undefined : o.text };
 }
 
 /** `image:` with its status (spec §12.8), and Build for a user image that isn't built. */

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { runningQueryOptions } from "@/features/session/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { factorySettingsQueryOptions, patchFactorySettings } from "./api";
 import { SettingsSection, smallClass } from "./shared";
 
@@ -158,7 +159,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
       setPending(false);
       const fields =
         err instanceof ApiError ? (err.body.fields as Record<string, string>) : undefined;
-      if (!f.server(fields)) o.fail("Couldn't save. Try again.");
+      if (!f.server(fields)) o.fail(FORM_MSG.saveFailed);
     }
   }
 

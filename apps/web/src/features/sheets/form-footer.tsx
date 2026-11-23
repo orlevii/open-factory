@@ -41,6 +41,7 @@ export function SheetFormFooter({
             size="sm"
             inForm
             className="-ml-1 px-1"
+            data-skip-validate
             onClick={onDiscard}
           >
             Discard

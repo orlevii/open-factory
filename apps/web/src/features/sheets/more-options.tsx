@@ -28,6 +28,7 @@ export function MoreOptions({
           type="button"
           aria-expanded={open}
           aria-controls={open ? id : undefined}
+          data-skip-validate
           onClick={() => {
             setClicked(true);
             onOpenChange(!open);

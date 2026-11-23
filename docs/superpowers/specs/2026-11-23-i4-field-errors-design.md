@@ -178,6 +178,7 @@ One class in `styles.css` for every form body, replacing per-form `gap-4`/`gap-5
 
 ### 6.3 Stale references
 Agent and schedule forms show "That agent has ended; pick another." (or "No such agent; pick another.", replacing `There is no agent @${slug}.`) when a restored draft or a link points at an ended or unknown agent: agent sheets as the field's help (as today), task and schedule forms through `f.set` during render (guarded by the caller, §5.4), so the reason shows in the same commit that clears the field; the task form's effect keeps only the value clear and the draft rebase.
+On the task form the stale message blocks the submit and focuses Assignee until the user picks again (re-picking Unassigned clears it), rather than creating the task unassigned, because the user evidently meant to assign it.
 
 ### 6.4 `TokenField` warning
 An unverifiable verdict (`credential_unverifiable`) is not an error: `aria-invalid` stays false and the note shows it in warning tone. It arrives after a submit whose create failed (a 422). The form keeps it in its own state (`warning`), clears it on the next edit of the token or the next submit, and shows the server message in the ochre note; its `FormOutcome` error says "Couldn't add the credential." (Replace token: "Couldn't replace the token."), which is what announces it. `Unverifiable`'s separate `role=alert` block is deleted.

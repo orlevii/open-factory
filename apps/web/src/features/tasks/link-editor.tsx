@@ -1,6 +1,6 @@
 import type { LinkInput } from "@open-factory/shared";
 import { Plus, X } from "lucide-react";
-import { useRef } from "react";
+import { type FocusEvent, useRef } from "react";
 import { FieldNote, noteDescribedBy } from "@/components/field-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +64,28 @@ export const rowsToInput = (rows: LinkRow[]): LinkInput[] =>
       ...(r.title.trim() ? { title: r.title.trim() } : {}),
     })) as LinkInput[];
 
+/**
+ * Row notes (spec §8.3): while `links` is flagged, a checked row (blurred, or present at the last submit) shows its own
+ * message. A links error no row explains (the server's) goes to the first row's note.
+ */
+export function linkRowErrors(
+  rows: LinkRow[],
+  knownSlugs: ReadonlySet<string> | undefined,
+  checkedRows: ReadonlySet<string>,
+  linksError: string | undefined,
+): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  if (!linksError) return out;
+  let own = false;
+  for (const r of rows) {
+    const m = checkLink(r, knownSlugs);
+    if (m) own = true;
+    if (checkedRows.has(r.id)) out[r.id] = m;
+  }
+  if (!own && rows[0]) out[rows[0].id] = linksError;
+  return out;
+}
+
 /** Rows of [kind] [target] [title] [Remove link], and "Add link". Nothing is saved until the caller saves. */
 export function LinkEditor({
   rows,
@@ -75,7 +97,8 @@ export function LinkEditor({
   onChange(rows: LinkRow[]): void;
   /** Error sentence by row id. */
   errors: Record<string, string | undefined>;
-  onBlurRow(id: string): void;
+  /** The event's `relatedTarget` tells the form whether focus left for a `data-skip-validate` control. */
+  onBlurRow(id: string, e: FocusEvent): void;
 }) {
   // Opening the kind list moves focus into it; that is not leaving the field, so no check until it closes.
   const kindOpen = useRef(false);
@@ -100,7 +123,7 @@ export function LinkEditor({
             >
               <SelectTrigger
                 aria-label={`Link ${i + 1} kind`}
-                onBlur={() => kindOpen.current || onBlurRow(r.id)}
+                onBlur={(e) => kindOpen.current || onBlurRow(r.id, e)}
                 className="w-24 shrink-0 [grid-area:kind]"
               >
                 <SelectValue />
@@ -120,7 +143,7 @@ export function LinkEditor({
               value={r.target}
               autoComplete="off"
               onChange={(e) => patch(r.id, { target: e.target.value })}
-              onBlur={() => onBlurRow(r.id)}
+              onBlur={(e) => onBlurRow(r.id, e)}
               className="h-9 min-w-0 [grid-area:target]"
             />
             <div className="[grid-area:note]">

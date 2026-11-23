@@ -18,6 +18,8 @@ type Props = {
   below?: ReactNode;
   /** Extra persistent ids, appended to the visible note's id. */
   describedBy?: string;
+  /** The label is for assistive tech only (a heading nearby already names the field). Single-input fields only. */
+  hideLabel?: boolean;
   children: (a: { id: string; describedBy?: string; invalid: boolean }) => ReactNode;
 };
 
@@ -31,6 +33,7 @@ export function FieldShell({
   action,
   below,
   describedBy: extra,
+  hideLabel,
   children,
 }: Props) {
   const id = `field-${name}`;
@@ -53,7 +56,7 @@ export function FieldShell({
     );
   }
   const labelEl = (
-    <Label htmlFor={id} className="text-[0.8125rem]">
+    <Label htmlFor={id} className={hideLabel ? "sr-only" : "text-[0.8125rem]"}>
       {label}
     </Label>
   );

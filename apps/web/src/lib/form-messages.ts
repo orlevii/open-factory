@@ -14,4 +14,5 @@ export const FORM_MSG = {
   createTaskFailed: "Couldn't create the task. Try again.",
   displayNameRequired: "Use 1 to 80 characters.",
   enterPath: "Enter a path.",
+  saveFailed: "Couldn't save. Try again.",
 } as const;

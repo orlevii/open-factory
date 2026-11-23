@@ -25,4 +25,11 @@ export const FORM_MSG = {
   timePassed: "That time has passed.",
   unknownZone: "Unknown time zone.",
   enterMessage: "Enter a message.",
+  replaceTokenFailed: "Couldn't replace the token.",
+  inviteMissing: "Sign-up needs an invite from a member.",
+  inviteInvalid: "Invite isn't valid. Ask for a new one.",
+  inviteLostRace: "Someone was first. Ask for an invite.",
+  accountDisabled: "This account is disabled. Ask a member.",
+  wrongPassword: "Wrong email or password.",
+  somethingWrong: "Something went wrong. Try again.",
 } as const;

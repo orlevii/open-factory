@@ -93,7 +93,7 @@ describe("sign-up and /api/me", () => {
 });
 
 describe("name and email lengths (spec §13.2)", () => {
-  const NAME_MESSAGE = "Keep your name to 80 characters or fewer.";
+  const NAME_MESSAGE = "Use 80 characters or fewer.";
   const emailOf = (n: number) => `${"a".repeat(n - "@example.com".length)}@example.com`;
   const signUpBody = async (fields: Record<string, unknown>) => ({
     invite: await testInvite(t.app),
@@ -124,7 +124,7 @@ describe("name and email lengths (spec §13.2)", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({
       code: "EMAIL_TOO_LONG",
-      message: "Keep your email to 254 characters or fewer.",
+      message: "Use 254 characters or fewer.",
     });
   });
 

@@ -21,4 +21,8 @@ export const MSG = {
   email: "Enter a valid email.",
   passwordRequired: "Enter your password.",
   passwordLength: "Use at least 8 characters.",
+  userNameLength: "Use 80 characters or fewer.",
+  emailLength: "Use 254 characters or fewer.",
+  handleTaken: "That handle is already taken.",
+  emailTaken: "That email already has an account.",
 } as const;

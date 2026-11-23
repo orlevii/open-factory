@@ -6,8 +6,8 @@ import { FormOutcome, useOutcome } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { postCompact } from "./api";
-import { NETWORK_ERROR } from "./composer";
 
 /** No confirmation: Compact queues behind the current turn and the timeline shows it (UI §6). */
 export function CompactPopover({
@@ -42,7 +42,7 @@ export function CompactPopover({
       setFocus("");
       setOpen(false);
     } catch (e) {
-      fail(e instanceof ApiError ? e.message : NETWORK_ERROR);
+      fail(e instanceof ApiError ? e.message : FORM_MSG.unreachable);
     } finally {
       setSubmitting(false);
     }

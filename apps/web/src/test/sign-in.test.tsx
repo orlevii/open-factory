@@ -54,7 +54,7 @@ test("USER_DISABLED shows the disabled line", async () => {
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This account is disabled. Ask a member of this factory to enable it.",
+    "This account is disabled. Ask a member.",
   );
 });
 
@@ -73,7 +73,7 @@ test("an unreachable server shows the network message", async () => {
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Can't reach the server. Check that it's running, then try again.",
+    "Couldn't reach the server. Try again.",
   );
 });
 
@@ -84,7 +84,7 @@ test("a proxy's 502 with no error code also counts as unreachable", async () => 
   });
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
-  expect(await screen.findByRole("alert")).toHaveTextContent("Can't reach the server.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't reach the server. Try again.");
 });
 
 test("the button shows the pending label while the request runs", async () => {

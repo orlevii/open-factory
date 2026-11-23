@@ -69,7 +69,7 @@ test("client-side validation shows errors per field and does not call the server
   expect(auth.signUp.email).not.toHaveBeenCalled();
 });
 
-test("HANDLE_TAKEN from the server is shown under the handle field", async () => {
+test("HANDLE_TAKEN from the server is shown under the handle field, which takes focus", async () => {
   auth.signUp.email.mockResolvedValue({
     data: null,
     error: { code: "HANDLE_TAKEN", message: "Handle taken", status: 422 },
@@ -82,7 +82,27 @@ test("HANDLE_TAKEN from the server is shown under the handle field", async () =>
       "That handle is already taken.",
     ),
   );
+  expect(screen.getByLabelText("Handle")).toHaveFocus();
   expect(auth.signUp.email).toHaveBeenCalledWith(valid);
+});
+
+test("an email that already has an account is shown under Email, which takes focus", async () => {
+  auth.signUp.email.mockResolvedValue({
+    data: null,
+    error: {
+      code: "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
+      message: "User already exists. Use another email.",
+      status: 422,
+    },
+  });
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  const email = screen.getByLabelText("Email");
+  await waitFor(() =>
+    expect(email).toHaveAccessibleDescription("That email already has an account."),
+  );
+  expect(email).toHaveFocus();
 });
 
 test("an unknown server error is shown at form level", async () => {
@@ -139,16 +159,16 @@ test("an unreachable server shows the network message at form level", async () =
   await screen.findByLabelText("Name");
   await fill(valid);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Can't reach the server. Check that it's running, then try again.",
+    "Couldn't reach the server. Try again.",
   );
   expect(screen.getByRole("button", { name: "Sign up" })).toBeEnabled();
 });
 
 const FIRST_USER =
   "You're the first user of this factory. You'll invite everyone else from Settings → Users.";
-const MISSING = "Sign-up needs an invite link from a member of this factory.";
-const INVALID = "This invite link isn't valid anymore. Ask a member of this factory for a new one.";
-const LOST_RACE = "Someone else just became the first user. Ask them for an invite link.";
+const MISSING = "Sign-up needs an invite from a member.";
+const INVALID = "Invite isn't valid. Ask for a new one.";
+const LOST_RACE = "Someone was first. Ask for an invite.";
 
 test("bootstrap shows the form with the first-user line", async () => {
   renderApp("/sign-up", null);
@@ -251,8 +271,8 @@ test("a 403 invite_required after loading as bootstrap shows the lost-race line"
   expect(await screen.findByRole("alert")).toHaveTextContent(LOST_RACE);
 });
 
-const NAME_TOO_LONG = "Keep your name to 80 characters or fewer.";
-const EMAIL_TOO_LONG = "Keep your email to 254 characters or fewer.";
+const NAME_TOO_LONG = "Use 80 characters or fewer.";
+const EMAIL_TOO_LONG = "Use 254 characters or fewer.";
 
 test("a name over 80 or an email over 254 characters is refused under its field, without the server", async () => {
   const user = userEvent.setup();

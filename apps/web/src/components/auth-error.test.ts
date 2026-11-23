@@ -1,20 +1,13 @@
 import { describe, expect, test } from "vitest";
-import {
-  authErrorCode,
-  INVITE_INVALID_MESSAGE,
-  mapAuthError,
-  mapAuthFailure,
-  NETWORK_MESSAGE,
-} from "./auth-error";
+import { FORM_MSG } from "@/lib/form-messages.ts";
+import { authErrorCode, mapAuthError, mapAuthFailure } from "./auth-error";
 
 describe("mapAuthError", () => {
   test.each([
     ["HANDLE_TAKEN", "handle", "That handle is already taken."],
-    [
-      "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
-      "email",
-      "An account with this email already exists.",
-    ],
+    ["USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL", "email", "That email already has an account."],
+    ["NAME_TOO_LONG", "name", "Use 80 characters or fewer."],
+    ["EMAIL_TOO_LONG", "email", "Use 254 characters or fewer."],
     ["PASSWORD_TOO_SHORT", "password", "Use at least 8 characters."],
   ] as const)("%s maps to the %s field", (code, field, message) => {
     expect(mapAuthError(code, "server text")).toEqual({ field, message });
@@ -44,7 +37,7 @@ describe("mapAuthError", () => {
 describe("mapAuthFailure", () => {
   test("a rejected call (fetch TypeError: server unreachable) is the network message", () => {
     expect(mapAuthFailure({ thrown: new TypeError("Failed to fetch") })).toEqual({
-      message: NETWORK_MESSAGE,
+      message: "Couldn't reach the server. Try again.",
     });
   });
 
@@ -52,7 +45,7 @@ describe("mapAuthFailure", () => {
     "an error with no code and status %s is the network message",
     (status) => {
       expect(mapAuthFailure({ error: { status, message: "" } })).toEqual({
-        message: NETWORK_MESSAGE,
+        message: FORM_MSG.unreachable,
       });
     },
   );
@@ -74,9 +67,26 @@ describe("mapAuthFailure", () => {
       status: 403,
       statusText: "Forbidden",
     };
-    expect(mapAuthFailure({ error })).toEqual({ message: INVITE_INVALID_MESSAGE });
+    expect(mapAuthFailure({ error })).toEqual({ message: FORM_MSG.inviteInvalid });
     expect(authErrorCode(error)).toBe("invite_invalid");
     expect(authErrorCode({ code: "USER_DISABLED", status: 403 })).toBe("USER_DISABLED");
     expect(authErrorCode({ status: 500 })).toBeUndefined();
   });
+});
+
+test("every message mapAuthError can return is at most 40 characters (spec §8)", () => {
+  const codes = [
+    "HANDLE_TAKEN",
+    "NAME_TOO_LONG",
+    "EMAIL_TOO_LONG",
+    "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
+    "PASSWORD_TOO_SHORT",
+    "INVALID_EMAIL_OR_PASSWORD",
+    "invite_invalid",
+    "invite_required",
+    "USER_DISABLED",
+    "NETWORK_ERROR",
+    undefined,
+  ];
+  for (const c of codes) expect(mapAuthError(c, "").message.length, c).toBeLessThanOrEqual(40);
 });

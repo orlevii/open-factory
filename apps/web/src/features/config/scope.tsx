@@ -28,6 +28,8 @@ export type ConfigFormProps = {
   /** Paths a rebase found changed on both sides: their fields read "Also changed elsewhere." */
   conflicts?: readonly string[];
   onShowRaw?: (at: RawTarget) => void;
+  /** The template's own `skills/` folders (from the template config API), listed read-only as "Template skill". */
+  localSkills?: readonly string[];
 };
 
 /** A field's own issue, and the notes on its items (a list index or an entry name), with their severity. */

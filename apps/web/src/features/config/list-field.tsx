@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from "react";
-import { ConfigList, type RowNote } from "./config-list";
+import { type ReactNode, useCallback, useMemo } from "react";
+import { type AddSlot, ConfigList, type RowNote } from "./config-list";
 import { type ConfigField, FIELD_PATHS } from "./fields";
 import { useConfigScope, useFieldNote } from "./scope";
 import { WrongType } from "./section";
@@ -29,6 +29,10 @@ export function ListField({
   help,
   placeholder,
   check,
+  rowCheck,
+  renderAdd,
+  lead,
+  format,
 }: {
   field: ListFieldId;
   label: string;
@@ -37,6 +41,11 @@ export function ListField({
   help?: string;
   placeholder?: string;
   check?: (value: string) => string | undefined;
+  /** A client rule for rows already in the list (a name Raw JSON added): a failing row gets an error note. Stable. */
+  rowCheck?: (value: string) => string | undefined;
+  renderAdd?: (a: AddSlot) => ReactNode;
+  lead?: ReactNode;
+  format?: (value: string) => ReactNode;
 }) {
   const s = useConfigScope();
   const note = useFieldNote(field);
@@ -52,15 +61,21 @@ export function ListField({
     [update, path],
   );
 
+  const own = readList(readAt(s.value, path));
+  const ownItems = own.ok ? own.items : null;
   const items = s.byField.get(field)?.items;
   const rowNotes = useMemo(() => {
-    if (!items || items.size === 0) return NO_ROWS;
     const m = new Map<number, RowNote>();
-    for (const [k, note] of items) if (INDEX.test(k)) m.set(Number(k), note);
-    return m;
-  }, [items]);
+    if (items) for (const [k, note] of items) if (INDEX.test(k)) m.set(Number(k), note);
+    // A client rule's error wins over a server note on the same row: it is about the value as it is now.
+    if (rowCheck && ownItems)
+      ownItems.forEach((v, i) => {
+        const message = rowCheck(v);
+        if (message) m.set(i, { message, severity: "error" });
+      });
+    return m.size === 0 ? NO_ROWS : m;
+  }, [items, rowCheck, ownItems]);
 
-  const own = readList(readAt(s.value, path));
   if (!own.ok) return <WrongType field={field} label={label} />;
   // A broken template has no base: its rows can't be shown, so there is no template group.
   const tpl = s.base ? readList(readAt(s.base, path)) : null;
@@ -86,6 +101,9 @@ export function ListField({
       onRemove={onRemove}
       onReject={(m) => fieldErrors.set(field, m)}
       onInput={() => fieldErrors.change(field)}
+      renderAdd={renderAdd}
+      lead={lead}
+      format={format}
     />
   );
 }

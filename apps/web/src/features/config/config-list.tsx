@@ -3,6 +3,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
   memo,
+  type ReactNode,
   useCallback,
   useId,
   useMemo,
@@ -49,6 +50,20 @@ type Props = {
   onReject: (message: string) => void;
   /** The add input changed: the caller clears a refused-add note. */
   onInput: () => void;
+  /** A picker in place of the add input (skills, secrets, templates): it calls `add` with the picked value. */
+  renderAdd?: (a: AddSlot) => ReactNode;
+  /** Read-only rows above the groups (a template's own skills). */
+  lead?: ReactNode;
+  /** A row's text from its value ("Available as $GH_TOKEN"). A stable function: rows are memoised. */
+  format?: (value: string) => ReactNode;
+};
+
+/** What a custom add control gets: the field's id and note wiring, and the add that checks duplicates. */
+export type AddSlot = {
+  id: string;
+  describedBy?: string;
+  invalid: boolean;
+  add: (value: string) => void;
 };
 
 export type RowNote = { message: string; severity: "error" | "warning" };
@@ -75,6 +90,7 @@ const Row = memo(function Row({
   noun,
   mono,
   note,
+  format,
   register,
   onRemove,
 }: {
@@ -84,6 +100,7 @@ const Row = memo(function Row({
   noun: string;
   mono?: boolean;
   note?: RowNote;
+  format?: (value: string) => ReactNode;
   register: (key: string, el: HTMLLIElement | null) => void;
   /** Absent on read-only rows (the template group, a read-only form): no remove button. */
   onRemove?: (index: number) => void;
@@ -100,7 +117,7 @@ const Row = memo(function Row({
       className={ROW}
     >
       <div className="min-w-0 flex-1">
-        <p className={cn(VALUE, mono && MONO)}>{value}</p>
+        <p className={cn(VALUE, mono && !format && MONO)}>{format ? format(value) : value}</p>
         {note ? (
           <p
             id={noteId}
@@ -151,6 +168,9 @@ export function ConfigList({
   onRemove,
   onReject,
   onInput,
+  renderAdd,
+  lead,
+  format,
 }: Props) {
   const [text, setText] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -190,27 +210,28 @@ export function ConfigList({
     [onRemove],
   );
 
-  const add = () => {
-    const v = text.trim();
-    if (!v) return;
+  const commit = (raw: string): boolean => {
+    const v = raw.trim();
+    if (!v) return false;
     const at = tplIndex.get(v);
     if (ownSet.has(v) || at !== undefined) {
       onReject(CONFIG_FIELD_MSG.duplicate);
       if (at !== undefined && at >= COLLAPSE_AT && !expanded) flushSync(() => setExpanded(true));
       const key = at !== undefined ? `t:${v}` : `o:${v}`;
       rows.current.get(key)?.scrollIntoView({ block: "nearest" });
-      return;
+      return false;
     }
     const bad = check?.(v);
     if (bad) {
       onReject(bad);
-      return;
+      return false;
     }
-    flushSync(() => {
-      onAdd(v);
-      setText("");
-    });
+    flushSync(() => onAdd(v));
     rows.current.get(`o:${v}`)?.scrollIntoView({ block: "nearest" });
+    return true;
+  };
+  const add = () => {
+    if (commit(text)) setText("");
   };
 
   const toggle = () => {
@@ -234,6 +255,7 @@ export function ConfigList({
           noun={noun}
           mono={mono}
           note={rowNotes?.get(i)}
+          format={format}
           register={register}
           onRemove={readOnly ? undefined : remove}
         />
@@ -245,6 +267,7 @@ export function ConfigList({
     <FieldShell name={name} label={label} legend help={help} error={error} warning={warning}>
       {({ id, describedBy, invalid }) => (
         <div className="grid gap-2">
+          {lead}
           {inherited ? (
             <div className="grid gap-1">
               <p id={`${groupId}-tpl`} className="text-[0.8125rem] text-muted-foreground">
@@ -259,6 +282,7 @@ export function ConfigList({
                     index={i}
                     noun={noun}
                     mono={mono}
+                    format={format}
                     register={register}
                   />
                 ))}
@@ -287,7 +311,9 @@ export function ConfigList({
           ) : (
             ownList
           )}
-          {readOnly ? null : (
+          {readOnly ? null : renderAdd ? (
+            renderAdd({ id, describedBy, invalid, add: commit })
+          ) : (
             <div className="flex items-center gap-2">
               <Input
                 ref={input}

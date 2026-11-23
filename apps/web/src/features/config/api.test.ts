@@ -6,5 +6,5 @@ test("config queries are keyed per agent and template and never served stale", (
   expect(templateConfigQueryOptions("dev").queryKey).toEqual(["template-config", "dev"]);
   expect(agentConfigQueryOptions("ana").staleTime).toBe(0);
   expect(templateConfigQueryOptions("dev").staleTime).toBe(0);
-  expect(hostSkillsQueryOptions.staleTime).toBe(0);
+  expect(hostSkillsQueryOptions.staleTime).toBe(5 * 60_000);
 });

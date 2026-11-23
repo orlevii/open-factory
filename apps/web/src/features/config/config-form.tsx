@@ -3,22 +3,28 @@ import { memo, useId, useMemo } from "react";
 import { CodeText } from "@/components/code-text";
 import { Button } from "@/components/ui/button";
 import { IssueIcon, sortIssues } from "@/features/templates/issue-list";
+import { BehaviorSection } from "./behavior-section";
 import { EffortField } from "./effort-field";
+import { EnvironmentSection } from "./environment-section";
 import { fieldForPath } from "./fields";
+import { McpSection } from "./mcp-section";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
 import { ModelField } from "./model-field";
+import { PermissionsSection } from "./permissions-section";
 import { type ConfigFormProps, ConfigFormScope, type RawTarget } from "./scope";
 import { Section } from "./section";
+import { SkillsSection } from "./skills-section";
 
 export type { ConfigFormProps, RawTarget } from "./scope";
 
 /**
  * The Configuration form (spec §12.2), one for a template and an agent. It is controlled: the draft lives in the page
  * (`useConfigDraft`), shared with Raw JSON, and every edit goes through `onChange` as a functional update that keeps
- * every key the form doesn't own. Sections follow in the spec's order; the rest arrive with C3.
+ * every key the form doesn't own. The six sections follow in the spec's order, and between them they render every
+ * field in `CONFIG_FIELDS`, so every issue a field owns has a note to land on.
  */
 export function ConfigForm(props: ConfigFormProps) {
-  const { issues, conflicts, onShowRaw } = props;
+  const { issues, conflicts, onShowRaw, localSkills } = props;
   // Issues and rebase conflicts no field owns: listed once at the top, each with a way into Raw JSON. A conflict a
   // field owns reads "Also changed elsewhere." on that field, so every conflict shows somewhere.
   const unmapped = useMemo((): BlockItem[] => {
@@ -41,6 +47,11 @@ export function ConfigForm(props: ConfigFormProps) {
         <ModelField />
         <EffortField />
       </Section>
+      <SkillsSection localSkills={localSkills} />
+      <McpSection />
+      <PermissionsSection />
+      <EnvironmentSection />
+      <BehaviorSection />
     </ConfigFormScope>
   );
 }

@@ -4,8 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
-import { doc, ScopeHarness } from "@/test/config-harness";
+import { doc, QueryWrap, ScopeHarness } from "@/test/config-harness";
+import { mockApi } from "@/test/mock-api";
 import { ConfigForm } from "./config-form";
+import { CONFIG_FIELDS, fieldPath } from "./fields";
 import { ListField } from "./list-field";
 import { CONFIG_FIELD_MSG } from "./messages";
 import { NumberField } from "./number-field";
@@ -14,6 +16,7 @@ import { rebase } from "./rebase";
 let off = () => {};
 beforeEach(() => {
   off = installInputModality();
+  mockApi({});
 });
 afterEach(() => off());
 
@@ -43,22 +46,24 @@ function Form({
 }) {
   const [value, setValue] = useState<unknown>(start);
   return (
-    <ConfigForm
-      mode="agent"
-      value={value}
-      base={doc({ model: "sonnet", effort: "high" })}
-      templateName="dev"
-      issues={issues}
-      conflicts={conflicts}
-      onShowRaw={onShowRaw}
-      onChange={(u) =>
-        setValue((p: unknown) => {
-          const n = u(p);
-          onValue?.(n);
-          return n;
-        })
-      }
-    />
+    <QueryWrap>
+      <ConfigForm
+        mode="agent"
+        value={value}
+        base={doc({ model: "sonnet", effort: "high" })}
+        templateName="dev"
+        issues={issues}
+        conflicts={conflicts}
+        onShowRaw={onShowRaw}
+        onChange={(u) =>
+          setValue((p: unknown) => {
+            const n = u(p);
+            onValue?.(n);
+            return n;
+          })
+        }
+      />
+    </QueryWrap>
   );
 }
 
@@ -91,12 +96,40 @@ test("an unknown settings key survives a form edit", async () => {
 
 test("wrong types anywhere never throw: each field reads 'Edit this in Raw JSON.'", () => {
   render(<Form start={{ template: { model: 5, effort: "turbo" }, settings: "x" }} />);
-  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(2);
+  // model, effort, then the four settings fields: allow, deny, trust notes, plain env.
+  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(6);
 });
 
 test("a non-object draft (valid JSON, wrong schema) renders tolerantly", () => {
   render(<Form start={[1, 2]} />);
-  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(2);
+  // Every field of the form.
+  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(CONFIG_FIELDS.length);
+});
+
+test("every mapped field renders a note target, so no field's issue is dropped", () => {
+  render(<Form start={{}} />);
+  for (const f of CONFIG_FIELDS)
+    expect(document.getElementById(`field-${f}-error`), f).toBeInTheDocument();
+});
+
+test("every field's issue lands on its note, and no mapped issue reaches the top block", () => {
+  const issues = CONFIG_FIELDS.map((f) => issue(fieldPath(f), `Issue on ${f}.`));
+  render(<Form start={{}} issues={issues} />);
+  for (const f of CONFIG_FIELDS)
+    expect(document.getElementById(`field-${f}-error`), f).toHaveTextContent(`Issue on ${f}.`);
+  expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
+});
+
+test("the sections come in the spec's order", () => {
+  render(<Form start={{}} />);
+  expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+    "Model",
+    "Skills and plugins",
+    "MCP servers",
+    "Permissions",
+    "Environment",
+    "Behavior",
+  ]);
 });
 
 test("issues no field owns are listed at the top with 'Show in Raw JSON'; owned ones land on their field", async () => {
@@ -255,7 +288,10 @@ test("every rebase conflict lands on a field or in the issues block", () => {
   const block = screen.getByRole("region", { name: "Issues the form can't show" });
   // settings.theme: no field owns it, so the block lists it.
   expect(within(block).getByText("settings.theme")).toBeInTheDocument();
-  // mcp.mcpServers.gh: the MCP field (C3) owns it, so it isn't repeated in the block.
+  // mcp.mcpServers.gh: the MCP field owns it, so it shows there and isn't repeated in the block.
   expect(within(block).queryByText("mcp.mcpServers.gh")).toBeNull();
+  expect(document.getElementById("field-mcp-error")).toHaveTextContent(
+    CONFIG_FIELD_MSG.alsoChanged,
+  );
   expect(within(block).getAllByRole("listitem")).toHaveLength(1);
 });

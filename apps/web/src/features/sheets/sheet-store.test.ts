@@ -7,6 +7,7 @@ import {
   getSheetState,
   openChildSheet,
   openSheet,
+  openSheetForResult,
   resetSheets,
   setPathnameSource,
   useSheet,
@@ -99,4 +100,33 @@ test("useSheet re-renders subscribers on change only", () => {
   act(() => openSheet({ kind: "new-task" }));
   expect(result.current.parent).toMatchObject({ kind: "new-task" });
   expect(renders).toBe(base + 1);
+});
+
+test("a setup sheet opened for a result from a page is the parent layer; it closes, then delivers", () => {
+  const done = vi.fn();
+  openSheetForResult({ kind: "add-secret", name: "" }, done);
+  const p = getSheetState().parent;
+  expect(p).toMatchObject({ kind: "add-secret" });
+  completeChild(p?.id ?? -1, "GH_TOKEN");
+  expect(getSheetState()).toEqual({});
+  expect(done).toHaveBeenCalledWith("GH_TOKEN");
+});
+
+test("opened for a result over an open parent sheet, it stacks as the child", () => {
+  const done = vi.fn();
+  openSheet({ kind: "new-agent" });
+  openSheetForResult({ kind: "add-secret", name: "" }, done);
+  expect(getSheetState().child).toMatchObject({ kind: "add-secret" });
+  completeChild(childId(), "X");
+  expect(done).toHaveBeenCalledWith("X");
+  expect(getSheetState().parent).toMatchObject({ kind: "new-agent" });
+});
+
+test("a result sheet closed without a name never delivers", () => {
+  const done = vi.fn();
+  openSheetForResult({ kind: "add-secret", name: "" }, done);
+  const id = getSheetState().parent?.id ?? -1;
+  closeSheet();
+  completeChild(id, "late");
+  expect(done).not.toHaveBeenCalled();
 });

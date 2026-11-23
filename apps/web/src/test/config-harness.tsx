@@ -1,6 +1,15 @@
 import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { ConfigFormScope, type ConfigMode, type RawTarget } from "@/features/config/scope";
+
+/** Test-only: a fresh query client per render (the pickers read host skills, secrets and templates through it). */
+export function QueryWrap({ children }: { children: ReactNode }) {
+  const [client] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  );
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
 
 /** Test-only: a controlled scope over local state, the way the page drives it with `useConfigDraft`. */
 export function ScopeHarness({
@@ -26,25 +35,27 @@ export function ScopeHarness({
 }) {
   const [value, setValue] = useState<unknown>(start);
   return (
-    <ConfigFormScope
-      mode={mode}
-      value={value}
-      base={base}
-      templateName="dev"
-      issues={issues}
-      conflicts={conflicts}
-      readOnly={readOnly}
-      onShowRaw={onShowRaw}
-      onChange={(u) =>
-        setValue((prev: unknown) => {
-          const next = u(prev);
-          onValue?.(next);
-          return next;
-        })
-      }
-    >
-      {children}
-    </ConfigFormScope>
+    <QueryWrap>
+      <ConfigFormScope
+        mode={mode}
+        value={value}
+        base={base}
+        templateName="dev"
+        issues={issues}
+        conflicts={conflicts}
+        readOnly={readOnly}
+        onShowRaw={onShowRaw}
+        onChange={(u) =>
+          setValue((prev: unknown) => {
+            const next = u(prev);
+            onValue?.(next);
+            return next;
+          })
+        }
+      >
+        {children}
+      </ConfigFormScope>
+    </QueryWrap>
   );
 }
 

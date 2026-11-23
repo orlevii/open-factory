@@ -281,13 +281,20 @@ test("a server field error on save focuses its field; a failure with no field sa
   expect(await screen.findByText("Couldn't save the schedule. Try again.")).toBeInTheDocument();
 });
 
-test("leaving a field for Delete schedule doesn't validate it", async () => {
+test("leaving an edited, invalid Message for Delete schedule doesn't validate it; leaving it for Save does", async () => {
   mockApi(common(sched()));
   await openOver();
-  await message();
-  expect(screen.getByRole("button", { name: "Delete schedule" })).toHaveAttribute(
-    "data-skip-validate",
-  );
+  const msg = await message();
+  await userEvent.clear(msg);
+  const del = screen.getByRole("button", { name: "Delete schedule" });
+  expect(del).toHaveAttribute("data-skip-validate");
+  // A keyboard move: the blur's relatedTarget is the Delete button, with no pointerdown to fall back on.
+  act(() => del.focus());
+  expect(msg).not.toHaveAttribute("aria-invalid");
+  act(() => msg.focus());
+  act(() => screen.getByRole("button", { name: "Save changes" }).focus());
+  expect(msg).toHaveAttribute("aria-invalid", "true");
+  expect(msg).toHaveAccessibleDescription("Enter a message.");
 });
 
 test("an archived target stays selected as an extra option; the helper names the author change; pending notes", async () => {

@@ -41,6 +41,10 @@ test("escapes attributes", () => {
   );
 });
 
+test("escapes the recipients through attr()", () => {
+  expect(render([msg({ to: ['@a"b', "@c<d>&e"] })])).toContain('to="@a&quot;b @c&lt;d&gt;&amp;e"');
+});
+
 test("renders task when a hand-built message carries one", () => {
   const envelopes = groupEnvelopes([msg()]).map((m) => ({ ...m, taskKey: "T-42" }));
   expect(renderEnvelopes(envelopes)).toContain('id="m1" task="T-42"');

@@ -25,8 +25,6 @@ import {
 import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
-import { NO_OUTCOME } from "@/components/forms/form-outcome";
-import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import type { ComboOption } from "@/components/ui/combobox";
 import {
@@ -39,13 +37,13 @@ import {
 import { SheetBody } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
-import { leavesForOwnAdd } from "@/features/agents/add-for";
 import { AddressLine } from "@/features/agents/address-line";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
-import { FIELDS, useAgentFormState } from "@/features/agents/agent-form-state";
+import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, createAgent } from "@/features/agents/api";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { showOutput } from "@/features/agents/show-output";
 import {
   TemplateField,
   type TemplateOption,
@@ -69,6 +67,7 @@ import {
 } from "@/features/sheets/sheet-store";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import { isMobileNow } from "@/hooks/use-mobile";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 
 type Spec = { kind: "new-agent"; template?: string };
 
@@ -111,13 +110,15 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     combine: (r) => r.some((q) => q.isError),
   });
   const slugFor = useCallback((name: string) => deriveSlug(name, taken ?? EMPTY), [taken]);
+  const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({
     mode: "create",
     draftKey: "new-agent",
     prefill: spec.template ? { template: spec.template } : undefined,
     slugFor,
+    form,
   });
-  const { values, shown, errors, set, blur, claim, pending, slow, outcome, config } = s;
+  const { values, shown, errors, set, blur, claim, pending, slow, config, pluginOutput } = s;
   const { missingSecrets, noCredentials, credentials, staleNotes } = s;
   const detail = useQuery({
     ...templateQueryOptions(values.template),
@@ -126,7 +127,6 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   });
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const projects = useQuery(projectsQueryOptions);
-  const form = useRef<HTMLFormElement>(null);
   // The latest shown values, for a stacked child's result that lands after this render.
   const latestShown = useRef(shown);
   useLayoutEffect(() => {
@@ -171,7 +171,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       variant="ghost"
       size="sm"
       inForm
-      data-add-for="credential"
+      data-skip-validate
       onClick={onAddCredential}
     >
       <Plus aria-hidden="true" data-icon="inline-start" />
@@ -213,7 +213,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     reason = "No Claude credential yet.";
     reasonKey = "no-credential";
   } else if (several && shown.credential === "") {
-    reason = "Choose a credential.";
+    reason = FORM_MSG.chooseCredential;
     reasonKey = "choose-credential";
   } else if (missingSecrets.length === 1) {
     reason = (
@@ -226,11 +226,14 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     reason = `${missingSecrets.length} secrets aren't set.`;
     reasonKey = `secrets:${missingSecrets.join(",")}`;
   }
+  // While a field inside has an error, every focus request (a failing submit, a mapped server error) reopens it, even
+  // over the user's fold (§6.5).
   const inner = (["description", "credential", "projects"] as const).filter((f) => errors[f]);
   const autoKey = [
     reasonKey,
     staleNotes.credential || staleNotes.projects ? "stale" : "",
     inner.length > 0 ? `errors:${inner.join(",")}` : "",
+    inner.length > 0 ? `attempt:${s.attempt}` : "",
   ]
     .filter(Boolean)
     .join("|");
@@ -240,16 +243,6 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     setOpenedFor(autoKey);
     setMoreOpen(true);
   }
-
-  // Focus moves to the first error once it renders (More options and the address field open in that same render),
-  // and once the fieldset is enabled again after a server answer.
-  const wantFocus = useRef(false);
-  useEffect(() => {
-    if (pending || !wantFocus.current) return;
-    wantFocus.current = false;
-    const first = FIELDS.find((f) => errors[f]);
-    if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
-  }, [pending, errors]);
 
   const stillOpen = () => getSheetState().parent?.id === sheetId;
   async function create(body: CreateAgentBody | PatchAgentBody) {
@@ -299,10 +292,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   // Until the taken names have answered the derivation has no suffix, so submit waits for them (§6.3).
   const [queued, setQueued] = useState(false);
   const waitForTaken = !values.touched.slug && !taken && !takenFailed;
-  const run = () => {
-    wantFocus.current = true;
-    void s.submit(create);
-  };
+  const run = () => void s.submit(create);
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (pending || queued) return;
@@ -319,13 +309,13 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
 
   return (
     <form ref={form} onSubmit={onSubmit} noValidate className="flex min-h-0 flex-1 flex-col">
-      <SheetBody className="grid content-start gap-5">
-        <fieldset disabled={pending} className="grid min-w-0 gap-5">
+      <SheetBody className="field-stack">
+        <fieldset disabled={pending} className="field-stack">
           <legend className="sr-only">New agent</legend>
           <TemplateField
             value={values.template}
             onChange={(v) => set("template", v)}
-            onBlur={() => blur("template")}
+            onBlur={(e) => blur("template", e)}
             templates={templates}
             error={errors.template}
             onNewTemplate={onNewTemplate}
@@ -340,7 +330,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               />
             )}
           </TemplateField>
-          <div className="grid gap-2">
+          <div className="field-stack">
             <FormField
               name="displayName"
               label="Display name"
@@ -348,12 +338,10 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               value={shown.displayName}
               onChange={(e) => set("displayName", e.target.value)}
               onFocus={() => claim("displayName")}
-              onBlur={() => {
-                blur("displayName");
-                if (!values.touched.slug && shown.displayName.trim() !== "" && !shown.slug) {
-                  blur("slug");
+              onBlur={(e) => {
+                blur("displayName", e);
+                if (!values.touched.slug && shown.displayName.trim() !== "" && !shown.slug)
                   setForceSlug(true);
-                }
               }}
               autoComplete="off"
             />
@@ -362,6 +350,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               slug={values.slug}
               slugTouched={Boolean(values.touched.slug)}
               onSlug={(v) => set("slug", v)}
+              onBlur={(e) => blur("slug", e)}
               error={errors.slug}
               forceOpen={forceSlug}
               onOpened={onSlugOpened}
@@ -402,7 +391,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
                   value={shown.description}
                   onChange={(e) => set("description", e.target.value)}
                   onFocus={() => claim("description")}
-                  onBlur={() => blur("description")}
+                  onBlur={(e) => blur("description", e)}
                 />
               )}
             </FieldShell>
@@ -426,7 +415,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
                       id={a.id}
                       aria-invalid={a.invalid || undefined}
                       aria-describedby={a.describedBy}
-                      onBlur={(e) => !leavesForOwnAdd(e, "credential") && blur("credential")}
+                      onBlur={(e) => blur("credential", e)}
                     >
                       <SelectValue placeholder="Choose a credential" />
                     </SelectTrigger>
@@ -441,25 +430,18 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
                 )}
               </FieldShell>
             )}
-            <div className="grid gap-1.5">
-              <ProjectGrantPicker
-                projects={projects.data}
-                value={shown.projects}
-                custom={s.custom}
-                error={errors.projects}
-                onChange={s.setProjects}
-                onUseDefault={s.applyTemplateDefault}
-                onAddProject={onAddProject}
-              />
-              {staleNotes.projects && (
-                <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-                  {staleNotes.projects}
-                </p>
-              )}
-            </div>
+            <ProjectGrantPicker
+              projects={projects.data}
+              value={shown.projects}
+              custom={s.custom}
+              error={errors.projects}
+              help={staleNotes.projects}
+              onChange={s.setProjects}
+              onUseDefault={s.applyTemplateDefault}
+              onAddProject={onAddProject}
+            />
           </MoreOptions>
         </fieldset>
-        <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
       </SheetBody>
       <SheetFormFooter
         submitLabel="Create agent"
@@ -468,7 +450,26 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        outcome={{ ...NO_OUTCOME, notice: slow ? "Installing plugins…" : undefined }}
+        outcome={{
+          ...s.outcome,
+          notice: slow ? "Installing plugins…" : undefined,
+          action: pluginOutput ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() =>
+                showOutput({
+                  title: "Plugin install output",
+                  description: "The output of the failed plugin install.",
+                  output: pluginOutput,
+                })
+              }
+            >
+              Show output
+            </Button>
+          ) : undefined,
+        }}
       />
     </form>
   );

@@ -42,7 +42,13 @@ import {
   useFocusLater,
 } from "@/features/settings/shared";
 import { AddCredentialForm } from "./forms/add-credential-form";
-import { TokenField, valueNoun, verdictOf } from "./forms/shared";
+import {
+  enterValueMessage,
+  replaceFailedMessage,
+  TokenField,
+  valueNoun,
+  verdictOf,
+} from "./forms/shared";
 import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
 
 const FIELDS = ["value"] as const;
@@ -101,7 +107,7 @@ function ReplaceForm({
   const f = useFieldErrors({
     form: formRef,
     fields: FIELDS,
-    checks: { value: () => (value.trim() === "" ? `Enter the ${noun}.` : undefined) },
+    checks: { value: () => (value.trim() === "" ? enterValueMessage(credential.kind) : undefined) },
   });
 
   async function submit() {
@@ -115,9 +121,11 @@ function ReplaceForm({
       setPending(false);
       const v = verdictOf(err);
       if (v?.error) f.set("value", v.error, { focus: true });
-      else if (v?.warning) setWarning(v.warning);
-      else
-        o.fail(err instanceof ApiError ? err.message : `Couldn't replace the ${noun}. Try again.`);
+      else if (v?.warning) {
+        // The note isn't a live region: the outcome line is what announces the warning (spec §6.4).
+        setWarning(v.warning);
+        o.fail(replaceFailedMessage(credential.kind));
+      } else o.fail(err instanceof ApiError ? err.message : replaceFailedMessage(credential.kind));
     }
   }
 

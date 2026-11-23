@@ -320,15 +320,18 @@ export class SpawnService {
         return { ok: true, child, brief, peers, inherited: c.inherited };
       });
     } catch (err) {
+      // Lost the agents.slug unique index to a concurrent claimer that committed first: the workspace is theirs now.
+      if (isSlugUnique(err)) {
+        await this.discardUnlessWon(slug);
+        return "taken";
+      }
       await this.discard(slug);
-      // Lost the agents.slug unique index to a concurrent claimer that committed first.
-      if (isSlugUnique(err)) return "taken";
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
       return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
     }
     if (out === "taken") {
-      // The folder is this spawn's own (folder_exists refused a foreign one upstream), so discarding is safe.
-      await this.discard(slug);
+      // A user's claim leaves our folder orphaned; an agent's claim means a winner owns it.
+      await this.discardUnlessWon(slug);
       return out;
     }
     if (!out.ok) {
@@ -340,6 +343,12 @@ export class SpawnService {
     router.handOffHeldRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
     return { ok: true, slug, agentId: id, status, ...(note ? { note } : {}) };
+  }
+
+  /** `discard` unless an agent already holds the slug: that winner's workspace is never deleted. */
+  private async discardUnlessWon(slug: string): Promise<void> {
+    if (await this.d.store.agentBySlug(slug)) return;
+    await this.discard(slug);
   }
 
   /** Best effort: the folder was made by this spawn's materialize. */

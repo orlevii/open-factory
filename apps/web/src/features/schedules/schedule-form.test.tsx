@@ -311,3 +311,32 @@ test("Repeats starts unchosen, Time zone follows When, the preview sits under Re
   expect(live.compareDocumentPosition(zoneLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByLabelText("Message").className).not.toContain("font-mono");
 });
+
+test("a submit from the Message's Preview goes back to Write and focuses it when it's the only invalid field", async () => {
+  const api = await openNew();
+  await pick("ceo");
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
+  const message = screen.getByLabelText("Message");
+  const frame = message.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(screen.queryByLabelText("Message")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  const back = await screen.findByLabelText("Message");
+  await waitFor(() => expect(back).toHaveFocus());
+  expect(back).toHaveAttribute("aria-invalid", "true");
+  expect(back).toHaveAccessibleDescription("Enter a message.");
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("from Preview with an earlier field invalid too, the earlier field keeps the focus", async () => {
+  await openNew();
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
+  const frame = screen.getByLabelText("Message").closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  const back = await screen.findByLabelText("Message");
+  expect(back).toHaveAttribute("aria-invalid", "true");
+  await waitFor(() =>
+    expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus(),
+  );
+});

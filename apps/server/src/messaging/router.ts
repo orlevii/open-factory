@@ -148,7 +148,7 @@ export class Router {
       const me = await this.d.store.agentById(from.agentId);
       if (!me || me.archivedAt || me.terminatedAt)
         return {
-          results: to.map((t) =>
+          results: [...new Set(to.map(recipientLabel))].map((t) =>
             refusal(t, "terminated", "You can't send messages: you were terminated."),
           ),
         };
@@ -731,4 +731,10 @@ export class Router {
   private async statusOf(agentId: string): Promise<AgentStatus> {
     return (await this.d.runtimes.load(agentId))?.statusFrame().status ?? "hibernated";
   }
+}
+
+/** How a result names a raw recipient: a channel as typed, anything else as `@handle` (one leading `@` dropped). */
+function recipientLabel(raw: string): string {
+  const t = raw.trim();
+  return t.startsWith("#") ? t : `@${t.startsWith("@") ? t.slice(1) : t}`;
 }

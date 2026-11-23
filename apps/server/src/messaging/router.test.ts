@@ -591,6 +591,14 @@ test("a message to a terminated agent is refused; a terminated sender can't send
   ]);
   expect(await pendingOf("bob")).toEqual([]);
   expect(await h.sql`select id from inbox_items`).toEqual([]);
+  // The refusal names each recipient once, as `@handle`, like the other paths.
+  const repeated = await h.app.router.send(
+    { agentId: ada?.id ?? "" },
+    ["bob", "@bob", " @carol "],
+    "x",
+    false,
+  );
+  expect(repeated.results.map((r) => r.to)).toEqual(["@bob", "@carol"]);
 });
 
 /** A spawned child of `lead` inserted inside `tx` (it shares lead's credential). */

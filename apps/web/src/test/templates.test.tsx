@@ -1,5 +1,6 @@
 import { undoDepth } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
+import { MSG } from "@open-factory/shared";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -327,7 +328,7 @@ test("new template: a taken name opens Name with the field error", async () => {
   const d = await sheetOf();
   await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
-  expect(await within(d).findByText("A template named lead already exists.")).toBeInTheDocument();
+  expect(await within(d).findByText(FORM_MSG.nameTaken)).toBeInTheDocument();
   expect(within(d).getByLabelText("Name")).toHaveFocus();
 });
 
@@ -390,9 +391,9 @@ test("new template: blur validates the name; submit validates everything", async
   await userEvent.click(within(d).getByRole("button", { name: "Change" }));
   const name = within(d).getByLabelText("Name");
   await userEvent.type(name, "Bad Name");
-  expect(within(d).queryByText(FORM_MSG.templateNameChars)).not.toBeInTheDocument(); // not while typing
+  expect(within(d).queryByText(MSG.startLetter)).not.toBeInTheDocument(); // not while typing
   await userEvent.tab();
-  expect(await within(d).findByText(FORM_MSG.templateNameChars)).toBeInTheDocument();
+  expect(await within(d).findByText(MSG.startLetter)).toBeInTheDocument();
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   expect(await within(d).findByText("Enter a display name.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);

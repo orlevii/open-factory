@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { imageStatusSchema } from "./images.ts";
+import { MSG } from "./messages.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -148,9 +149,8 @@ export const templateDetailResponseSchema = z.object({ template: templateDetailS
  *  with one of these names would be unreachable by URL, so creation refuses them. */
 export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new", "images"];
 export const isReservedTemplateName = (name: string) => RESERVED_TEMPLATE_NAMES.includes(name);
-export const RESERVED_TEMPLATE_NAME_MESSAGE = "That name is reserved.";
 export const createTemplateBodySchema = z.object({
-  name: nameSchema.refine((n) => !isReservedTemplateName(n), RESERVED_TEMPLATE_NAME_MESSAGE),
+  name: nameSchema.refine((n) => !isReservedTemplateName(n), MSG.nameReserved),
   displayName: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
 });

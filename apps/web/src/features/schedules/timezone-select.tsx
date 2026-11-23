@@ -66,14 +66,12 @@ export function TimezoneSelect({
   id,
   value,
   onChange,
-  onBlur,
   describedBy,
   invalid,
 }: {
   id: string;
   value: string;
   onChange(zone: string): void;
-  onBlur?(): void;
   describedBy?: string | undefined;
   invalid?: boolean;
 }) {
@@ -106,7 +104,6 @@ export function TimezoneSelect({
       aria-describedby={describedBy}
       aria-invalid={invalid || undefined}
       aria-label={`Time zone, ${value}`}
-      onBlur={onBlur}
     />
   );
 }

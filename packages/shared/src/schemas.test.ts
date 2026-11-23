@@ -23,7 +23,7 @@ describe("signUpSchema lengths", () => {
     expect(r.error?.issues).toEqual([
       expect.objectContaining({
         path: ["name"],
-        message: "Keep your name to 80 characters or fewer.",
+        message: "Use 80 characters or fewer.",
       }),
     ]);
   });
@@ -43,7 +43,7 @@ describe("signUpSchema lengths", () => {
     expect(r.error?.issues).toEqual([
       expect.objectContaining({
         path: ["email"],
-        message: "Keep your email to 254 characters or fewer.",
+        message: "Use 254 characters or fewer.",
       }),
     ]);
   });

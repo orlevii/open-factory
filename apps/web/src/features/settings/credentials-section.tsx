@@ -6,6 +6,7 @@ import { CodeText } from "@/components/code-text";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
 import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { InlineOutcome } from "@/components/inline-outcome";
 import {
   AdaptiveMenuContent,
@@ -41,8 +42,10 @@ import {
   useFocusLater,
 } from "@/features/settings/shared";
 import { AddCredentialForm } from "./forms/add-credential-form";
-import { TokenField, type Verdict, valueNoun, verdictOf } from "./forms/shared";
+import { TokenField, valueNoun, verdictOf } from "./forms/shared";
 import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
+
+const FIELDS = ["value"] as const;
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
@@ -88,31 +91,33 @@ function ReplaceForm({
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
-  const [verdict, setVerdict] = useState<Verdict>({});
+  // A transient verification problem: described under the token but not invalid.
+  const [warning, setWarning] = useState<string>();
   const o = useOutcome();
   const [pending, setPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const noun = valueNoun(credential.kind);
-  const fieldName = `credential-replace-${credential.name}`;
+
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: { value: () => (value.trim() === "" ? `Enter the ${noun}.` : undefined) },
+  });
 
   async function submit() {
     o.clear();
-    if (value.trim() === "") {
-      setVerdict({ error: `Enter the new ${noun}.` });
-      return document.getElementById(`field-${fieldName}`)?.focus();
-    }
+    setWarning(undefined);
+    if (!f.submit()) return;
     setPending(true);
     try {
       onDone(await replaceCredential(credential.name, value));
     } catch (err) {
-      const v = verdictOf(err);
-      if (v) {
-        setVerdict(v);
-        if (v.error) document.getElementById(`field-${fieldName}`)?.focus();
-      } else {
-        o.fail(err instanceof ApiError ? err.message : `Couldn't replace the ${noun}. Try again.`);
-      }
-    } finally {
       setPending(false);
+      const v = verdictOf(err);
+      if (v?.error) f.set("value", v.error, { focus: true });
+      else if (v?.warning) setWarning(v.warning);
+      else
+        o.fail(err instanceof ApiError ? err.message : `Couldn't replace the ${noun}. Try again.`);
     }
   }
 
@@ -125,16 +130,19 @@ function ReplaceForm({
       pendingLabel="Verifying…"
       pending={pending}
       outcome={o.outcome}
+      ref={formRef}
     >
       <TokenField
-        name={fieldName}
+        name={`credential-replace-${credential.name}`}
         label={`New ${noun}`}
         value={value}
         onChange={(v) => {
           setValue(v);
-          setVerdict({});
+          setWarning(undefined);
+          f.change("value");
         }}
-        verdict={verdict}
+        onBlur={(e) => f.blur("value", e)}
+        verdict={{ error: f.errors.value, warning }}
         kind={credential.kind}
       />
     </InlineForm>

@@ -10,11 +10,11 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import type { z } from "zod";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
@@ -40,7 +40,6 @@ import { FORM_MSG } from "@/lib/form-messages.ts";
 import { createTemplate, templatesQueryOptions } from "./api";
 
 type Field = "name" | "displayName" | "description";
-type Errors = Partial<Record<Field, string>>;
 type Values = { displayName: string; name: string; revealed: boolean; description: string };
 const blank = (): Values => ({ displayName: "", name: "", revealed: false, description: "" });
 
@@ -50,7 +49,7 @@ const MESSAGES: Record<Field, string> = {
   displayName: FORM_MSG.displayNameRequired,
   description: FORM_MSG.descriptionLength,
 };
-const ORDER: readonly Field[] = ["displayName", "name", "description"];
+const FIELDS: readonly Field[] = ["displayName", "name", "description"];
 
 type TemplateList = z.infer<typeof templatesListSchema>;
 /** The list's row for a template just created (it has no agents yet). */
@@ -101,11 +100,10 @@ export function NewTemplateForm({
   const draft = useSheetDraft<Values>("new-template", blank);
   const [v, setV] = useState<Values>(() => (stacked ? blank() : draft.start));
   const [restored, setRestored] = useState(!stacked && draft.restored);
-  const [errors, setErrors] = useState<Errors>({});
   const o = useOutcome();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
-  const form = useRef<HTMLDivElement>(null);
+  const form = useRef<HTMLFormElement>(null);
   const templates = useQuery(templatesQueryOptions);
   const taken = useMemo(
     () =>
@@ -129,42 +127,32 @@ export function NewTemplateForm({
     setV(next);
     if (!stacked) draft.save(next);
   };
-  const setError = (f: Field, m: string | undefined) => setErrors((e) => ({ ...e, [f]: m }));
-  // Ids carry a `template-` prefix: stacked over New agent, the parent's Display name and Description share the page.
-  const focus = (f: Field) =>
-    form.current?.querySelector<HTMLElement>(`#field-template-${f}`)?.focus();
-  /** Rendered before focusing: Name only exists once revealed. */
-  const show = (e: Errors) => {
-    flushSync(() => {
-      setErrors(e);
-      if (e.name && !latest.current.revealed) update({ name, revealed: true });
-    });
-    const first = ORDER.find((f) => e[f]);
-    if (first) focus(first);
+  const reveal = () => {
+    if (!latest.current.revealed) update({ revealed: true, name });
   };
+
+  // Name stays folded unless the display name is there but yields no folder ("!!!"): an empty display name is its
+  // own error, not a reason to open Name.
+  const checks = {
+    displayName: () => check("displayName", { ...v, name }),
+    name: () =>
+      !v.revealed && !name
+        ? v.displayName.trim() !== ""
+          ? MESSAGES.name
+          : undefined
+        : check("name", { ...v, name }),
+    description: () => check("description", { ...v, name }),
+  };
+  const f = useFieldErrors<Field>({ form, fields: FIELDS, checks });
 
   async function submit() {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
       o.clear();
-      const values = { ...v, name };
-      const found: Errors = {};
-      for (const f of ORDER) {
-        // Name stays folded unless the display name is there but yields no folder ("!!!"): an empty display
-        // name is its own error, not a reason to open Name.
-        const m =
-          f === "name" && !v.revealed
-            ? v.displayName.trim() !== "" && !name
-              ? MESSAGES.name
-              : name
-                ? check(f, values)
-                : undefined
-            : check(f, values);
-        if (m) found[f] = m;
-      }
-      show(found);
-      if (ORDER.some((f) => found[f])) return;
+      // Name only exists once revealed; the reveal and f.submit share a commit, so focus finds it.
+      if (checks.name() && !v.revealed) reveal();
+      if (!f.submit()) return;
       setPending(true);
       // A sign-out while creating drops the result: it belongs to the old session.
       const generation = draftGeneration();
@@ -192,15 +180,16 @@ export function NewTemplateForm({
           if (draftGeneration() === generation) onLateError?.(message);
           return;
         }
-        if (err instanceof ApiError && err.code === "template_exists") {
-          show({ name: err.message });
-        } else if (err instanceof ApiError && err.code === "validation_error") {
-          const fields = (err.body.fields ?? {}) as Record<string, string>;
-          const e: Errors = {};
-          for (const f of ORDER) if (fields[f]) e[f] = fields[f];
-          if (ORDER.some((f) => e[f])) show(e);
-          else o.fail(message);
-        } else o.fail(message);
+        const fields: Record<string, string> =
+          err instanceof ApiError && err.code === "template_exists"
+            ? { name: err.message }
+            : err instanceof ApiError && err.code === "validation_error"
+              ? ((err.body.fields ?? {}) as Record<string, string>)
+              : {};
+        // Name exists at the commit that focuses it, and the form is enabled in that same commit.
+        if (fields.name) reveal();
+        setPending(false);
+        if (!f.server(fields)) o.fail(message);
       } finally {
         setPending(false);
       }
@@ -219,6 +208,7 @@ export function NewTemplateForm({
       pendingLabel="Creating…"
       pending={pending}
       outcome={o.outcome}
+      ref={form}
       left={
         restored && (
           <span className="inline-flex items-center">
@@ -228,11 +218,12 @@ export function NewTemplateForm({
               variant="ghost"
               size="sm"
               inForm
+              data-skip-validate
               onClick={() => {
                 draft.clear();
                 latest.current = blank();
                 setV(latest.current);
-                setErrors({});
+                f.reset();
                 setRestored(false);
               }}
             >
@@ -242,72 +233,71 @@ export function NewTemplateForm({
         )
       }
     >
-      <div ref={form} className="grid gap-4">
+      <FormField
+        name="template-displayName"
+        label="Display name"
+        error={f.errors.displayName}
+        value={v.displayName}
+        onChange={(e) => {
+          update({ displayName: e.target.value });
+          f.change("displayName");
+        }}
+        onBlur={(e) => f.blur("displayName", e)}
+        autoComplete="off"
+      />
+      {v.revealed ? (
         <FormField
-          name="template-displayName"
-          label="Display name"
-          error={errors.displayName}
-          value={v.displayName}
+          name="template-name"
+          label="Name"
+          help={NAME_HELP}
+          error={f.errors.name}
+          value={v.name}
           onChange={(e) => {
-            update({ displayName: e.target.value });
-            setError("displayName", undefined);
+            update({ name: e.target.value });
+            f.change("name");
           }}
-          onBlur={() => setError("displayName", check("displayName", { ...v, name }))}
+          onBlur={(e) => f.blur("name", e)}
           autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          className="font-mono"
         />
-        {v.revealed ? (
-          <FormField
-            name="template-name"
-            label="Name"
-            help={NAME_HELP}
-            error={errors.name}
-            value={v.name}
+      ) : (
+        <p className="flex flex-wrap items-center gap-x-1.5 text-[0.8125rem] text-muted-foreground">
+          Folder <code className="font-mono text-foreground">templates/{name || "…"}</code> ·
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            inForm
+            data-skip-validate
+            onClick={() => update({ revealed: true, name })}
+          >
+            Change
+          </Button>
+        </p>
+      )}
+      <FieldShell
+        name="template-description"
+        label="Description (optional)"
+        error={f.errors.description}
+      >
+        {(a) => (
+          <Textarea
+            id={a.id}
+            name="description"
+            rows={3}
+            aria-invalid={a.invalid || undefined}
+            aria-describedby={a.describedBy}
+            value={v.description}
             onChange={(e) => {
-              update({ name: e.target.value });
-              setError("name", undefined);
+              update({ description: e.target.value });
+              f.change("description");
             }}
-            onBlur={() => setError("name", check("name", { ...v, name: v.name }))}
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            className="font-mono"
+            onBlur={(e) => f.blur("description", e)}
           />
-        ) : (
-          <p className="flex flex-wrap items-center gap-x-1.5 text-[0.8125rem] text-muted-foreground">
-            Folder <code className="font-mono text-foreground">templates/{name || "…"}</code> ·
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              inForm
-              onClick={() => update({ revealed: true, name })}
-            >
-              Change
-            </Button>
-          </p>
         )}
-        <FieldShell
-          name="template-description"
-          label="Description (optional)"
-          error={errors.description}
-        >
-          {(a) => (
-            <Textarea
-              id={a.id}
-              name="description"
-              rows={3}
-              aria-invalid={a.invalid || undefined}
-              aria-describedby={a.describedBy}
-              value={v.description}
-              onChange={(e) => {
-                update({ description: e.target.value });
-                setError("description", undefined);
-              }}
-              onBlur={() => setError("description", check("description", { ...v, name }))}
-            />
-          )}
-        </FieldShell>
-      </div>
+      </FieldShell>
     </FormFrame>
   );
 }

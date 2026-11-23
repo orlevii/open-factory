@@ -705,7 +705,7 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
           <DependencyEditor
             name="task-depends-on"
             value={text}
-            resolved={resolved}
+            resolvedKeys={resolved.map((t) => t.key)}
             error={error}
             onChange={(v) => {
               setText(v);
@@ -713,6 +713,16 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
             }}
             onBlur={() => void check()}
           />
+          {resolved.length > 0 && (
+            <ul aria-label="Resolved dependencies" className="grid gap-1">
+              {resolved.map((t) => (
+                <li key={t.key} className="flex min-w-0 items-center gap-2 text-[0.8125rem]">
+                  <TaskBadge taskKey={t.key} title={t.title} />
+                  <StatusLabel status={t.status} className="ml-auto text-muted-foreground" />
+                </li>
+              ))}
+            </ul>
+          )}
           <EditorButtons
             pending={pending}
             onSave={() => void commit()}

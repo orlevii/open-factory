@@ -1,11 +1,15 @@
 import { ApiError, type SecretSummary, secretNameSchema } from "@open-factory/shared";
-import { type ChangeEvent, useState } from "react";
+import { type ChangeEvent, useRef, useState } from "react";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { putSecret } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { ValueField } from "./shared";
+
+type Field = "name" | "value";
+const FIELDS: readonly Field[] = ["name", "value"];
 
 export function AddSecretForm({
   frame,
@@ -22,17 +26,22 @@ export function AddSecretForm({
 }) {
   const [name, setName] = useState(initialName);
   const [value, setValue] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; value?: string }>({});
   const o = useOutcome();
   const [pending, setPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  const checkName = (n: string) => {
-    const r = secretNameSchema.safeParse(n);
-    if (!r.success) return r.error.issues[0]?.message;
-    return existing.includes(n) ? FORM_MSG.nameTaken : undefined;
-  };
-  const checkValue = (v: string) => (v === "" ? "Enter a value." : undefined);
-  const focus = (f: "name" | "value") => document.getElementById(`field-secret-${f}`)?.focus();
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: {
+      name: () => {
+        const r = secretNameSchema.safeParse(name);
+        if (!r.success) return r.error.issues[0]?.message;
+        return existing.includes(name) ? FORM_MSG.nameTaken : undefined;
+      },
+      value: () => (value === "" ? "Enter a value." : undefined),
+    },
+  });
 
   // Uppercase as the user types, keeping the caret where it was: the DOM value is set first,
   // so React finds it already matching and leaves the selection alone.
@@ -45,29 +54,23 @@ export function AddSecretForm({
       el.setSelectionRange(s, t);
     }
     setName(up);
-    setErrors((x) => ({ ...x, name: undefined }));
+    f.change("name");
   };
 
   async function submit() {
-    const found = { name: checkName(name), value: checkValue(value) };
-    setErrors(found);
     o.clear();
-    if (found.name || found.value) return focus(found.name ? "name" : "value");
+    if (!f.submit()) return;
     setPending(true);
     try {
       onDone(await putSecret(name, value));
     } catch (err) {
-      if (!(err instanceof ApiError)) return o.fail("Couldn't add the secret. Try again.");
+      setPending(false);
+      if (!(err instanceof ApiError)) return o.fail(FORM_MSG.addSecretFailed);
       // Server field errors land under their fields whatever the code; a reserved name is a
       // Name error even when the server sends no `fields`.
-      const fields = (err.body.fields ?? {}) as Record<string, string | undefined>;
+      const fields = { ...((err.body.fields ?? {}) as Record<string, string>) };
       if (err.code === "secret_name_reserved" && !fields.name) fields.name = err.message;
-      if (fields.name || fields.value) {
-        setErrors({ name: fields.name, value: fields.value });
-        focus(fields.name ? "name" : "value");
-      } else o.fail(err.message);
-    } finally {
-      setPending(false);
+      if (!f.server(fields)) o.fail(err.message);
     }
   }
 
@@ -81,6 +84,7 @@ export function AddSecretForm({
       pendingLabel="Adding…"
       pending={pending}
       outcome={o.outcome}
+      ref={formRef}
       autoFocusId={initialName ? "field-secret-value" : undefined}
       reveal={Boolean(initialName)}
     >
@@ -88,10 +92,10 @@ export function AddSecretForm({
         name="secret-name"
         label="Name"
         help="Uppercase letters, numbers and underscores, like GH_TOKEN."
-        error={errors.name}
+        error={f.errors.name}
         value={name}
         onChange={onName}
-        onBlur={() => setErrors((x) => ({ ...x, name: checkName(name) }))}
+        onBlur={(e) => f.blur("name", e)}
         autoComplete="off"
         autoCapitalize="characters"
         spellCheck={false}
@@ -101,12 +105,12 @@ export function AddSecretForm({
         name="secret-value"
         label="Value"
         value={value}
-        error={errors.value}
+        error={f.errors.value}
         onChange={(v) => {
           setValue(v);
-          setErrors((x) => ({ ...x, value: undefined }));
+          f.change("value");
         }}
-        onBlur={() => setErrors((x) => ({ ...x, value: checkValue(value) }))}
+        onBlur={(e) => f.blur("value", e)}
       />
     </FormFrame>
   );

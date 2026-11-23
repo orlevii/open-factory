@@ -278,3 +278,12 @@ test.each([
   await waitFor(() => expect(screen.getByLabelText(label)).toHaveAccessibleDescription(message));
   expect(screen.getByRole("alert")).toBeEmptyDOMElement();
 });
+
+test("an invalid handle shows the handle schema's first issue on blur", async () => {
+  renderApp("/sign-up", null);
+  const user = userEvent.setup();
+  const handle = await screen.findByLabelText("Handle");
+  await user.type(handle, "x");
+  await user.tab();
+  expect(handle).toHaveAccessibleDescription("Use 2 to 32 characters.");
+});

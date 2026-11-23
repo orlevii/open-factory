@@ -8,6 +8,10 @@ export const FORM_MSG = {
   descriptionLength: "Use 500 characters or fewer.",
   unreachable: "Couldn't reach the server. Try again.",
   templateNameChars: "Use 2 to 40 letters, digits or hyphens.",
+  addCredentialFailed: "Couldn't add the credential.",
+  addProjectFailed: "Couldn't add the project.",
+  addSecretFailed: "Couldn't add the secret.",
+  createTaskFailed: "Couldn't create the task. Try again.",
   displayNameRequired: "Use 1 to 80 characters.",
   enterPath: "Enter a path.",
 } as const;

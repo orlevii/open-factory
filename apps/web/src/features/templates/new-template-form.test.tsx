@@ -227,3 +227,66 @@ test("an error that reveals Name keeps the revealed name in the draft", async ()
   d = await dialog();
   expect(within(d).getByLabelText("Name")).toHaveValue("lead");
 });
+
+test("a blur on untouched fields stays clean", async () => {
+  mockApi({ "GET /api/templates": list() });
+  mount();
+  const d = await dialog();
+  const display = within(d).getByLabelText("Display name");
+  await userEvent.click(display);
+  await userEvent.click(within(d).getByLabelText("Description (optional)"));
+  await userEvent.click(display);
+  expect(display).not.toHaveAttribute("aria-invalid");
+  expect(within(d).getByLabelText("Description (optional)")).not.toHaveAttribute("aria-invalid");
+  expect(within(d).queryByText("Enter a display name.")).toBeNull();
+});
+
+test("a changed display name that is emptied shows its error on blur", async () => {
+  mockApi({ "GET /api/templates": list() });
+  mount();
+  const d = await dialog();
+  const display = within(d).getByLabelText("Display name");
+  await userEvent.type(display, "a");
+  await userEvent.clear(display);
+  await userEvent.click(within(d).getByLabelText("Description (optional)"));
+  expect(await within(d).findByText("Enter a display name.")).toBeInTheDocument();
+});
+
+test("a server failure shows in the footer alert", async () => {
+  mockApi({
+    "GET /api/templates": list(),
+    "POST /api/templates": () => json({ error: { code: "boom", message: "Disk full." } }, 500),
+  });
+  mount();
+  const d = await dialog();
+  await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  const alert = (await within(d).findByText("Disk full.")).closest("[role=alert]");
+  expect(alert).not.toBeNull();
+  expect(within(d).getByRole("button", { name: "Create template" })).toBeEnabled();
+});
+
+test("a name error from the server reveals Name once, with the value kept", async () => {
+  mockApi({
+    "GET /api/templates": list(),
+    "POST /api/templates": () =>
+      json(
+        {
+          error: {
+            code: "validation_error",
+            message: "Invalid.",
+            fields: { name: "That name is taken." },
+          },
+        },
+        400,
+      ),
+  });
+  mount();
+  const d = await dialog();
+  await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  const name = await within(d).findByLabelText("Name");
+  expect(name).toHaveValue("lead");
+  expect(name).toHaveAccessibleDescription("That name is taken.");
+  expect(name).toHaveFocus();
+});

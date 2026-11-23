@@ -8,7 +8,7 @@ export type FieldErrors<F extends string> = {
   attempt: number;
   change(f: F): void;
   blur(f: F, e?: { relatedTarget: EventTarget | null }): void;
-  /** Callers guard async staleness (compare the looked-up value to the current value before calling). */
+  /** Callers guard async staleness (compare the looked-up value to the current value before calling). Safe in handlers and effects. A call during render schedules another render even when nothing changes, so the caller must guard it: `if (msg && f.errors.field !== msg) f.set(...)`. */
   set(f: F, message: string | undefined, opts?: { focus?: boolean }): void;
   server(fields: Record<string, string> | undefined): boolean;
   /** Checks run against the last committed values. `extra`: async results from this same tick (a dependency lookup); they count as external errors for this submit. */
@@ -82,7 +82,7 @@ export function useFieldErrors<F extends string>({
       return n;
     });
 
-  // Bail-out updaters: returning the same object leaves state untouched, so these are safe to call during render.
+  // Bail-out updater: returning the same object leaves the state untouched. It does not make a render-time call free, so callers guard those.
   const writeExternal = (f: F, m: string | undefined) =>
     setExternal((s) => {
       if (s[f] === m) return s;

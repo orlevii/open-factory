@@ -6,7 +6,14 @@ import { COARSE_ICON_GROUP } from "@/components/ui/button";
 import { flushStatusFrames } from "@/features/agents/status-frames";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
-import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import {
+  agentSummary,
+  conversation,
+  detail,
+  envelope,
+  resetSeq,
+  se,
+} from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({
   onMessage: undefined as undefined | ((m: ServerMessage) => void),
@@ -444,14 +451,14 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
         {
           type: "message_in",
           messages: [
-            {
+            envelope({
               id: "m1",
               from: "@or",
               fromKind: "human",
               kind: "message",
               urgent: false,
               body: "See [docs](https://example.com)",
-            },
+            }),
           ],
         },
         null,

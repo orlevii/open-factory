@@ -7,9 +7,20 @@ import { describe, expect, test, vi } from "vitest";
 import { createFakeClaude, FakeTransport } from "../../testing/index.ts";
 import { readFixture } from "../test-fixtures.ts";
 import { localTransport } from "../transport/local.ts";
-import { type AgentRuntimeSpec, ProcessNotRunningError } from "../types.ts";
+import { type AgentRuntimeSpec, type FactoryMessage, ProcessNotRunningError } from "../types.ts";
 import { createClaudeDriver } from "./driver.ts";
 import { ClaudeProcess, StderrTail } from "./process.ts";
+
+/** A human's one-part message envelope. */
+const human = (id: string, body: string): FactoryMessage => ({
+  id,
+  from: "@or",
+  fromKind: "human",
+  kind: "message",
+  urgent: false,
+  body,
+  parts: [{ id, body, createdAt: "2026-11-24T10:00:00.000Z" }],
+});
 
 const spec = (bin: string, over: Partial<AgentRuntimeSpec> = {}): AgentRuntimeSpec => ({
   agentId: "a1",
@@ -43,9 +54,7 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
   const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
-  await p.send([
-    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
-  ]);
+  await p.send([human("m1", "hi")]);
   await done;
   expect(events.map((e) => e.type)).toEqual([
     "session_started",
@@ -123,9 +132,7 @@ test("interrupt writes a control_request", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
-  await p.send([
-    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "ping" },
-  ]);
+  await p.send([human("m1", "ping")]);
   await collectUntil(p.events, (e) => e.type === "tool_call", events);
   await p.control("interrupt");
   await collectUntil(p.events, (e) => e.type === "turn_end", events);
@@ -148,28 +155,20 @@ test("stop closes stdin; the process exits 0 and emits exited{expected:true}", a
   const events: HarnessEvent[] = [];
   // A finished turn proves the fake is up and reading stdin. Stopping a process that hasn't booted yet races the
   // grace against node's startup (seconds under full-suite load), and a SIGTERM then wins instead of the stdin close.
-  await p.send([
-    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
-  ]);
+  await p.send([human("m1", "hi")]);
   await collectUntil(p.events, (e) => e.type === "turn_end", events);
   const all = collectUntil(p.events, () => false, events);
   const info = await p.stop({ graceMs: 3000 });
   await all;
   expect(info).toMatchObject({ code: 0 });
   expect(events.at(-1)).toMatchObject({ type: "exited", code: 0, expected: true });
-  await expect(
-    p.send([
-      { id: "m", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "x" },
-    ]),
-  ).rejects.toBeInstanceOf(ProcessNotRunningError);
+  await expect(p.send([human("m", "x")])).rejects.toBeInstanceOf(ProcessNotRunningError);
 });
 
 test("stop falls back to SIGTERM when the process doesn't exit on stdin close", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
-  await p.send([
-    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "ping" },
-  ]);
+  await p.send([human("m1", "ping")]);
   // Mid-tool, so the fake is up (its SIGTERM handler installed) and won't exit on the stdin close.
   await collectUntil(p.events, (e) => e.type === "tool_call", []);
   const info = await p.stop({ graceMs: 200, termWaitMs: 5000 });
@@ -383,9 +382,7 @@ describe("commands", () => {
   test("a send before the list arrives is written at once", async () => {
     const t = new FakeTransport();
     const p = new ClaudeProcess(spec("c"), {}, t);
-    await p.send([
-      { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
-    ]);
+    await p.send([human("m1", "hi")]);
     expect(written(t).map((w) => w.type)).toEqual(["control_request", "user"]);
     t.exitWith(0);
     await expect(p.commands()).resolves.toBeUndefined();

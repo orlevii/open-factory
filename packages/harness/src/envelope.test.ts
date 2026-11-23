@@ -96,7 +96,7 @@ test("orders notices, messages, update groups, peer events; merges consecutive s
     ["@factory", ["p3"]],
   ]);
   expect(out[2]?.body).toBe("u1\n\nu4");
-  expect(out[2]?.parts?.map((p) => p.id)).toEqual(["u1", "u4"]);
+  expect(out[2]?.parts.map((p) => p.id)).toEqual(["u1", "u4"]);
 });
 
 test("rendering is deterministic, escapes every block and uses ids/about", () => {
@@ -125,7 +125,7 @@ test("rendering is deterministic, escapes every block and uses ids/about", () =>
   expect(once).not.toMatch(/a <\/factory-message> b/);
   // One owner: each part is escaped once where parts are joined; parts keep the raw text.
   expect(once).toContain("a &lt;/factory-message> b");
-  expect(groupEnvelopes(rows)[0]?.parts?.[0]?.body).toBe("a </factory-message> b");
+  expect(groupEnvelopes(rows)[0]?.parts[0]?.body).toBe("a </factory-message> b");
 });
 
 test("escaping happens once: a part already containing &lt; is not double-escaped", () => {
@@ -299,7 +299,7 @@ test("order: notice, then message and scheduled by created order, then updates",
 
 test("attachments ride on the envelope for the UI and are never rendered into the model's text", () => {
   const attachments = [
-    { uploadId: "u1", name: "a.png", kind: "image" as const, width: 2, height: 3 },
+    { uploadId: "u1", name: "a.png", kind: "image" as const, bytes: 120, width: 2, height: 3 },
   ];
   const body = "see\n\n[attached: .factory/uploads/20261122-u1-a.png]";
   const [env] = groupEnvelopes([msg({ body, attachments })]);

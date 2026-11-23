@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { agentSummary, detail, resetSeq, se } from "@/test/session-fixtures";
+import { agentSummary, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -291,7 +291,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
       {
         type: "message_in",
         messages: [
-          {
+          envelope({
             id: "p1",
             from: "@factory",
             fromKind: "factory",
@@ -305,7 +305,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
               relation: "peer",
               left: { reason: "terminated", by: "tech-lead-ab12" },
             },
-          },
+          }),
         ],
       },
     ],

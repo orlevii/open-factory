@@ -246,14 +246,6 @@ describe("the Ended view (S7 UI design §3)", () => {
     expect(line).toHaveClass("text-muted-foreground");
     expect(list.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
-
-  test("an old ?archived=only bookmark lands on ?ended=only", async () => {
-    endedWorld(ended);
-    const { router } = renderApp("/agents?archived=only", alice);
-    await vi.waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
-    expect(screen.getByRole("radio", { name: "Ended" })).toBeChecked();
-    expect(await screen.findByRole("link", { name: /Old one/ })).toBeInTheDocument();
-  });
 });
 
 test("on mobile, a spawned agent's name keeps its ' · ab12' tail; the head truncates", async () => {

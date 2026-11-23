@@ -584,8 +584,8 @@ const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>
 
 /** True when the row shows the envelope (or one of its merged ids / parts). */
 function rowHasMessage(row: Row, id: string): boolean {
-  const has = (e: { id: string; ids?: string[]; parts?: { id: string }[] }) =>
-    e.id === id || !!e.ids?.includes(id) || !!e.parts?.some((p) => p.id === id);
+  const has = (e: { id: string; ids?: string[]; parts: { id: string }[] }) =>
+    e.id === id || !!e.ids?.includes(id) || e.parts.some((p) => p.id === id);
   if (row.kind === "message") return has(row.message);
   if (row.kind === "update_group") return row.envelopes.some(has);
   if (row.kind === "peer") return has(row.envelope);

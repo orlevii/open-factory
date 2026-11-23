@@ -1,5 +1,6 @@
 import { act, render } from "@testing-library/react";
 import { expect, test } from "vitest";
+import { envelope } from "@/test/session-fixtures";
 import { CAP_LINE } from "./agent-text";
 import type { Row } from "./rows";
 import type { LiveText } from "./session-state";
@@ -11,14 +12,14 @@ const base: Row[] = [
     kind: "message",
     seq: 1,
     at,
-    message: {
+    message: envelope({
       id: "e1",
       from: "@or",
       fromKind: "human",
       kind: "message",
       urgent: false,
       body: "Hi",
-    },
+    }),
     key: "1:0",
   },
 ];

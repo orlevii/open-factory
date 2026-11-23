@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import { conversation, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({ onMessage: undefined as undefined | ((m: ServerMessage) => void) }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -292,14 +292,14 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
       {
         type: "message_in",
         messages: [
-          {
+          envelope({
             id: "m9",
             from: "@factory",
             fromKind: "factory",
             kind: "system",
             urgent: true,
             body: "Your previous process stopped unexpectedly.",
-          },
+          }),
         ],
       },
       null,

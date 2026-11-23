@@ -14,7 +14,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { readDraft, sessionDraftKey } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
-import { agentSummary } from "@/test/session-fixtures";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import { Composer, type ComposerHandle } from "./composer";
 import { QueueItems } from "./queue-items";
 import {
@@ -399,7 +399,7 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   event: {
     type: "message_in",
     messages: [
-      {
+      envelope({
         id: "m1",
         from: "@alice",
         fromKind: "human",
@@ -407,7 +407,7 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
         urgent: false,
         body: "hello",
         clientMessageId,
-      },
+      }),
     ],
   },
 });

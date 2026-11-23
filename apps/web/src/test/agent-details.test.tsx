@@ -104,7 +104,6 @@ function setup(props: Props = {}) {
       stub("/tasks"),
       stub("/tasks/$key"),
       stub("/schedules"),
-      stub("/schedules/$key"),
       stub("/templates/$name"),
       stub("/agents/"),
       stub("/agents/$slug"),

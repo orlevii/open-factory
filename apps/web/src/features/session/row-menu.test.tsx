@@ -5,6 +5,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { renderInRouter } from "@/test/render-in-router";
+import { envelope } from "@/test/session-fixtures";
 import { formatTime } from "./format";
 import { RowMenu, type RowMenuHandle, rowMenuItems, rowMenuTitle } from "./row-menu";
 import type { Row } from "./rows";
@@ -83,7 +84,7 @@ const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
   kind: "message",
   seq: 4,
   at,
-  message: { id: "m4", from, fromKind, kind: "message", urgent: false, body: "hi" },
+  message: envelope({ id: "m4", from, fromKind, kind: "message", urgent: false, body: "hi" }),
   key: "4",
 });
 
@@ -316,14 +317,14 @@ const card = (kind: "system" | "message", seq: number): Row => ({
   kind: "message",
   seq,
   at,
-  message: {
+  message: envelope({
     id: `m${seq}`,
     from: "@factory",
     fromKind: "factory",
     kind,
     urgent: false,
     body: `Body ${seq}`,
-  },
+  }),
   key: `${seq}:0`,
 });
 
@@ -371,7 +372,14 @@ const message: Row = {
   kind: "message",
   seq: 4,
   at,
-  message: { id: "m4", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hi" },
+  message: envelope({
+    id: "m4",
+    from: "@or",
+    fromKind: "human",
+    kind: "message",
+    urgent: false,
+    body: "Hi",
+  }),
   key: "4:0",
 };
 
@@ -386,7 +394,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
     kind: "peer",
     seq: 8,
     key: "8:0",
-    envelope: {
+    envelope: envelope({
       id: "e8",
       from: "@factory",
       fromKind: "factory",
@@ -394,7 +402,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
       urgent: false,
       body: "",
       subject: { slug: "bob", displayName: "Bob", relation: "peer", left },
-    },
+    }),
   });
   expect(rowMenuTitle(peer(), "dev")).toBe("@bob joined");
   expect(rowMenuTitle(peer({ reason: "archived" }), "dev")).toBe("@bob left");

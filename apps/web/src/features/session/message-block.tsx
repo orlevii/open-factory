@@ -328,7 +328,7 @@ function AttachmentList({
 function AttachmentChip({ slug, attachment: a }: { slug: string; attachment: MessageAttachment }) {
   const url = uploadUrl(slug, a.uploadId);
   const name = displayName(a.name);
-  const small = a.bytes !== undefined && a.bytes <= AUTO_PREVIEW_BYTES;
+  const small = a.bytes <= AUTO_PREVIEW_BYTES;
   const [asked, setAsked] = useState(false);
   const preview = a.kind === "image" && (small || asked);
   return (

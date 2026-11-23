@@ -641,14 +641,6 @@ test("a ScheduleBadge opens the sheet for its key", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
 });
 
-test("the old page URL opens the sheet over the list, key upper-cased, replacing the entry", async () => {
-  mockApi(common(sched()));
-  const { router } = renderApp("/schedules/s-3", alice);
-  expect(await sheet()).toBeInTheDocument();
-  expect(router.state.location.pathname).toBe("/schedules");
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
-});
-
 test("a late Delete failure toasts the error with Open form", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));

@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
-import { resetSeq, se } from "@/test/session-fixtures";
+import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
 import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
@@ -31,11 +31,7 @@ function inRouter(ui: React.ReactNode) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([
-      stub("/schedules/$key"),
-      stub("/agents/$slug"),
-      stub("/tasks/$key"),
-    ]),
+    routeTree: root.addChildren([stub("/agents/$slug"), stub("/tasks/$key")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(
@@ -48,7 +44,7 @@ function inRouter(ui: React.ReactNode) {
 const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
   type: "message_in",
   messages: [
-    {
+    envelope({
       id: "m1",
       from: "@scheduler",
       fromKind: "factory",
@@ -60,7 +56,7 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
       byKind: "human",
       due: "2026-11-23T09:00:00+01:00",
       ...o,
-    },
+    }),
   ],
 });
 const speakers = buildSpeakerIndex({

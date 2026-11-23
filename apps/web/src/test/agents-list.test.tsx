@@ -321,19 +321,6 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   );
 });
 
-test("an old /agents?archived=only&justArchived=x URL lands on the Ended view with no error", async () => {
-  mockWorld({
-    agents: [],
-    archived: [agentSummary({ slug: "x", displayName: "Old x", archivedAt: "2026-11-01" })],
-  });
-  const { router } = renderApp("/agents?archived=only&justArchived=x", alice);
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByRole("link", { name: /Old x/ })).toBeInTheDocument();
-  await waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
-  expect(screen.getByRole("radio", { name: "Ended" })).toBeChecked();
-  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
-});
-
 test("/agents?unknownKey=1 loads the page normally", async () => {
   mockWorld({ agents: [agentSummary()] });
   renderApp("/agents?unknownKey=1", alice);

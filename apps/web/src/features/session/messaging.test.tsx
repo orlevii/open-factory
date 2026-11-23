@@ -37,7 +37,9 @@ const kindOfFrom = (from: string) =>
   from === "@factory" || from === "@scheduler" ? "factory" : HUMANS.has(from) ? "human" : "agent";
 const env = (o: Record<string, unknown>) => {
   const from = typeof o.from === "string" && !o.from.startsWith("@") ? `@${o.from}` : o.from;
-  return { urgent: false, fromKind: kindOfFrom(from as string), ...o, from } as never;
+  // One part per row, as the server sends it; a test of a merged group passes its own `parts`.
+  const parts = [{ id: o.id, body: o.body, createdAt: "2026-11-18T10:00:00.000Z" }];
+  return { urgent: false, fromKind: kindOfFrom(from as string), parts, ...o, from } as never;
 };
 /** Opens /agents/dev with these events as its only page; `@b` is a known agent. */
 async function open(
@@ -461,19 +463,6 @@ test("malformed send_message input falls back to the tool row", async () => {
     /^send_message$/, // the tool row reads "factory · send_message": the tool is its own span (U3 §9.2)
   );
   expect(screen.queryByRole("article", { name: /Message from/ })).toBeNull();
-});
-
-test("a pre-S6 member_update without parts renders its body as one part", async () => {
-  await open(
-    [
-      {
-        type: "message_in",
-        messages: [env({ id: "u9", from: "b", kind: "member_update", body: "legacy body" })],
-      },
-    ],
-    "legacy body",
-  );
-  expect(screen.getByRole("article", { name: "Update from @b" })).toBeInTheDocument();
 });
 
 const lookupWorld = (
@@ -1218,7 +1207,7 @@ test("a confirmed attachment is a chip and its line is hidden; images preview th
                 width: 640,
                 height: 480,
               },
-              { uploadId: UP2, name: "notes.txt", kind: "text" },
+              { uploadId: UP2, name: "notes.txt", kind: "text", bytes: 300 },
             ],
           }),
         ],
@@ -1283,7 +1272,7 @@ test("↑ recall fills the box with your newest raw input, as typed", async () =
   expect(box).toHaveValue("/code-review src/");
 });
 
-test("an image over 1 MB, or of unknown size, previews only when asked", async () => {
+test("an image over 1 MB previews only when asked", async () => {
   await open(
     [
       {
@@ -1293,11 +1282,8 @@ test("an image over 1 MB, or of unknown size, previews only when asked", async (
             id: "m1",
             from: "@alice",
             kind: "message",
-            body: `two shots\n\n${attachedLine(UP1, "big.png")}\n${attachedLine(UP2, "old.png")}`,
-            attachments: [
-              { uploadId: UP1, name: "big.png", kind: "image", bytes: 5_000_000 },
-              { uploadId: UP2, name: "old.png", kind: "image" },
-            ],
+            body: `two shots\n\n${attachedLine(UP1, "big.png")}`,
+            attachments: [{ uploadId: UP1, name: "big.png", kind: "image", bytes: 5_000_000 }],
           }),
         ],
       },
@@ -1310,5 +1296,4 @@ test("an image over 1 MB, or of unknown size, previews only when asked", async (
   await userEvent.click(within(list).getByRole("button", { name: "Show preview of big.png" }));
   expect(list.querySelectorAll("img")).toHaveLength(1);
   expect(list.querySelector("img")).toHaveAttribute("src", `/api/agents/dev/uploads/${UP1}`);
-  expect(within(list).getByRole("button", { name: "Show preview of old.png" })).toBeInTheDocument();
 });

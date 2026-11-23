@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { longPress } from "@/test/long-press";
 import { json, mockApi } from "@/test/mock-api";
-import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
+import { agentSummary, envelope, resetSeq, se } from "@/test/session-fixtures";
 import { ConfigChangedLine } from "./config-changed-line";
 import { groupWork, mergeFailures } from "./display-passes";
 import { rowMenuItems } from "./row-menu";
@@ -221,7 +221,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
     {
       type: "message_in",
       messages: [
-        {
+        envelope({
           id: "p1",
           from: "@factory",
           fromKind: "factory",
@@ -235,8 +235,8 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
             relation: "peer",
             left: { reason: "terminated", by: "@or" },
           },
-        },
-        {
+        }),
+        envelope({
           id: "p2",
           from: "@factory",
           fromKind: "factory",
@@ -250,7 +250,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
             relation: "peer",
             left: { reason: "terminated", by: "@factory" },
           },
-        },
+        }),
       ],
     },
   ]);

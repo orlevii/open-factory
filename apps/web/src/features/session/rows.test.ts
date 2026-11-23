@@ -1,5 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { envelope } from "@/test/session-fixtures";
 import { childrenOf } from "./display-passes";
 import {
   buildRows,
@@ -30,8 +31,22 @@ test("hidden types are dropped (a finished turn leaves its footer); text and mes
       {
         type: "message_in",
         messages: [
-          { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "a" },
-          { id: "m2", from: "@or", fromKind: "human", kind: "message", urgent: true, body: "b" },
+          envelope({
+            id: "m1",
+            from: "@or",
+            fromKind: "human",
+            kind: "message",
+            urgent: false,
+            body: "a",
+          }),
+          envelope({
+            id: "m2",
+            from: "@or",
+            fromKind: "human",
+            kind: "message",
+            urgent: true,
+            body: "b",
+          }),
         ],
       },
       null,
@@ -570,7 +585,14 @@ test("head: a turn's first text, and the first text after a message row in the s
       {
         type: "message_in",
         messages: [
-          { id, from: "@or", fromKind: "human", kind: "message", urgent: false, body: id },
+          envelope({
+            id,
+            from: "@or",
+            fromKind: "human",
+            kind: "message",
+            urgent: false,
+            body: id,
+          }),
         ],
       },
       null,
@@ -748,7 +770,14 @@ test("a keyed assistant_text renders under t:<messageId>:<blockIndex>, capped wh
         {
           type: "message_in",
           messages: [
-            { id: "q", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "b" },
+            envelope({
+              id: "q",
+              from: "@or",
+              fromKind: "human",
+              kind: "message",
+              urgent: false,
+              body: "b",
+            }),
           ],
         },
         null,

@@ -10,7 +10,7 @@ import { enqueueStatusFrame } from "@/features/agents/status-frames";
 import { WsContext, type WsHub } from "@/lib/ws-context";
 import { longPress } from "@/test/long-press";
 import { renderInRouter } from "@/test/render-in-router";
-import { agentSummary } from "@/test/session-fixtures";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
 import { SessionView } from "./session-view";
 import { Timeline } from "./timeline";
@@ -150,7 +150,14 @@ const initial: SessionEvent[] = [
     {
       type: "message_in",
       messages: [
-        { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hello" },
+        envelope({
+          id: "m1",
+          from: "@or",
+          fromKind: "human",
+          kind: "message",
+          urgent: false,
+          body: "Hello",
+        }),
       ],
     },
     null,

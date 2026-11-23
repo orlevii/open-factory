@@ -146,6 +146,7 @@ const BASE_TOOLS = [
   "get_task",
   "list_peers",
   "list_tasks",
+  "send_command",
   "send_message",
   "update_task",
 ];

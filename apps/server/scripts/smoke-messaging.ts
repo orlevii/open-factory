@@ -286,8 +286,11 @@ let orUser = { userId: "", handle: "or" };
 /** Sends a human message (as @or) and returns its row id and the recipient's seq before it. */
 async function send(slug: Slug, body: string) {
   const from = await lastSeq(slug);
-  const sent = await app.router.send(orUser, slug, body, false);
-  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
+  const [sent] = (await app.router.send(orUser, [slug], body, false)).results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   return { id: sent.id, from };
 }
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */

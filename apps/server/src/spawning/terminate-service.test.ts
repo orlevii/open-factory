@@ -221,8 +221,9 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   );
   // A new send is refused by the Router.
   expect(
-    await t.app.router.send({ userId: user.id, handle: user.handle }, a.slug, "hello?", false),
-  ).toMatchObject({ ok: false, code: "terminated" });
+    (await t.app.router.send({ userId: user.id, handle: user.handle }, [a.slug], "hello?", false))
+      .results,
+  ).toMatchObject([{ status: "refused", code: "terminated" }]);
 });
 
 test("a forward that started before the commit and finishes after it writes nothing", async () => {
@@ -249,13 +250,15 @@ test("a send racing the termination is accepted, then its row is rejected and ne
   await hold.entered;
   // The Router reads the child live (the commit hasn't happened); its row commits after terminateRows ran and is
   // handed to the provisional latch, which queues it without writing.
-  const r = await t.app.router.send(
+  const {
+    results: [r],
+  } = await t.app.router.send(
     { userId: user.id, handle: user.handle },
-    child.slug,
+    [child.slug],
     "still there?",
     false,
   );
-  if (!r.ok) throw new Error(r.message);
+  if (!r || r.status === "refused") throw new Error("the send was refused");
   hold.release();
   await terminating;
   expect(await stateOf(t, r.id)).toBe("rejected");

@@ -25,19 +25,17 @@ export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration 
           inputSchema: sendMessageToolSchema,
         },
         async (args: { to: string; body: string; urgent?: boolean }, tctx: ToolContext) => {
-          const r = await router.send(
+          const { results } = await router.send(
             { agentId: callerOf(tctx), toolUseId: toolUseIdOf(tctx) },
-            args.to,
+            [args.to],
             args.body,
             args.urgent ?? false,
           );
-          if (!r.ok) return toolError(r.message);
-          return textResult({
-            id: r.id,
-            to: r.to,
-            status: r.status,
-            ...(r.note ? { note: r.note } : {}),
-          });
+          if (results.every((r) => r.status === "refused"))
+            return toolError(
+              results.map((r) => (r.status === "refused" ? r.reason : "")).join("\n"),
+            );
+          return textResult({ results });
         },
       );
     },

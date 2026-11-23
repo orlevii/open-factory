@@ -2,6 +2,7 @@ import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { type AgentStatus, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
+import { AgentStartError } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
@@ -22,29 +23,32 @@ export type Sender =
   | { agentId: string; toolUseId?: string | null }
   | { userId: string; handle: string };
 
-export type SendResult =
+export type RefusalCode =
+  | "not_found"
+  | "reserved"
+  | "channel"
+  | "self"
+  | "archived"
+  | "terminated"
+  | "disabled"
+  | "human"
+  | "invalid_attachment"
+  | "too_large";
+
+/** One recipient's outcome (spec §4.4): each succeeds or fails alone. */
+export type RecipientResult =
+  | { to: string; kind: "human"; status: "inbox"; id: string }
   | {
-      ok: true;
-      id: string;
       to: string;
-      status: AgentStatus | "inbox";
-      note?: string;
+      kind: "agent";
+      status: "queued";
+      recipient_status: AgentStatus;
+      id: string;
       item?: QueueItem;
     }
-  | {
-      ok: false;
-      message: string;
-      code:
-        | "not_found"
-        | "ambiguous"
-        | "self"
-        | "archived"
-        | "terminated"
-        | "ended"
-        | "reserved"
-        | "invalid_attachment"
-        | "too_large";
-    };
+  | { to: string; kind: "agent"; status: "pending"; id: string; note: string }
+  | { to: string; kind: "agent"; status: "start_failed"; id: string; note: string }
+  | { to: string; status: "refused"; reason: string; code: RefusalCode };
 
 /** What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. */
 export type PeerChange =
@@ -60,29 +64,25 @@ export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[]
 const SHUTTING_DOWN =
   "The factory is shutting down; the message will be delivered after it restarts.";
 
-const invalidAttachment = (): SendResult => ({
-  ok: false,
-  code: "invalid_attachment",
-  message: INVALID_ATTACHMENT,
+const refusal = (to: string, code: RefusalCode, reason: string): RecipientResult => ({
+  to,
+  status: "refused",
+  reason,
+  code,
 });
 /** An upload was claimed or deleted between the check and the insert: the transaction rolls back. */
 class AttachmentGoneError extends Error {}
 
-const notFound = (name: string): SendResult => ({
-  ok: false,
-  code: "not_found",
-  message: `No agent or user named '${name}'. Call list_peers to see who you can message.`,
-});
-const archived = (slug: string): SendResult => ({
-  ok: false,
-  code: "archived",
-  message: `@${slug} is archived and can't receive messages.`,
-});
-const terminated = (slug: string): SendResult => ({
-  ok: false,
-  code: "terminated",
-  message: `@${slug} was terminated and can't receive messages.`,
-});
+const HUMANS_REFUSAL = "`@humans` isn't a handle. Message people by handle; list_peers lists them.";
+
+/** The principal a target names, once resolved: the key de-duplicates, `accepted` is set when it can receive. */
+type Target = {
+  to: string;
+  key: string;
+  refused?: RecipientResult;
+  agent?: AgentRow;
+  user?: { userId: string; handle: string };
+};
 
 /**
  * Address resolution, persistence, rejections and the delivery hand-off (spec §7). Rows are durable as soon as they
@@ -125,204 +125,327 @@ export class Router {
   }
 
   /**
-   * One message from an agent (`send_message`) or a human (the REST route, which addresses agents only). An agent
-   * recipient's row is committed, then handed over: awaited for a human (its start failures reach the route),
-   * enqueued for an agent. A message to humans is delivered at once to their inbox.
+   * One message to a list of handles (spec §4.4), from an agent (`send_message`) or a human (the REST route, which
+   * addresses agents only). Each target is resolved and de-duplicated by principal and succeeds or is refused alone;
+   * every accepted row is written in one transaction with the same `recipients` (the accepted list, in order). After
+   * the commit an agent row is handed over (awaited for a human sender, whose start failure then is that recipient's
+   * `start_failed`; enqueued for an agent sender), and a human recipient's inbox is told. Results follow the input.
    */
   async send(
     from: Sender,
-    to: string,
+    to: string[],
     body: string,
     urgent: boolean,
     opts: { clientMessageId?: string; attachments?: string[] } = {},
-  ): Promise<SendResult> {
-    if ("userId" in from) return this.sendFromHuman(from, to, body, urgent, opts);
-    const me = await this.d.store.agentById(from.agentId);
-    if (!me || me.archivedAt || me.terminatedAt)
-      return {
-        ok: false,
-        code: "ended",
-        message: "You can't send messages: you were terminated.",
-      };
-    const resolved = await resolveName(this.d.db, to);
-    // `@humans` is a reserved name now; Task 1.7 replaces this broadcast with the refusal.
-    const r =
-      resolved.kind === "reserved" && resolved.name === "humans"
-        ? ({ kind: "humans" } as const)
-        : resolved;
-    switch (r.kind) {
-      case "none":
-      case "channel":
-        return notFound(r.kind === "none" ? r.name : r.name.replace(/^#/, ""));
-      case "reserved":
-        return {
-          ok: false,
-          code: "reserved",
-          message: `'${r.name}' is reserved and can't receive messages.`,
-        };
-      case "humans":
-      case "user": {
-        const { row } = await this.d.store.createHumanMessage({
-          kind: "message",
-          fromAgentId: from.agentId,
-          to: r.kind === "humans" ? "all" : { userId: r.userId },
-          // Task 1.7: the real list; one element for now.
-          recipients: [r.kind === "humans" ? "@humans" : `@${r.handle}`],
-          body,
-          urgent,
-          fromToolUseId: from.toolUseId ?? null,
-        });
-        if (!row) throw new Error("a message to humans wrote no row");
-        this.d.bus.publishAll({ type: "inbox_changed" });
-        return {
-          ok: true,
-          id: row.id,
-          to: r.kind === "humans" ? "@humans" : `@${r.handle}`,
-          status: "inbox",
-        };
-      }
-      case "agent": {
-        if (r.agent.id === from.agentId)
-          return { ok: false, code: "self", message: "You can't message yourself." };
-        if (r.agent.archivedAt) return archived(r.agent.slug);
-        if (r.agent.terminatedAt) return terminated(r.agent.slug);
-        const row = await this.d.store.createMessage({
-          from: { agentId: from.agentId },
-          toAgentId: r.agent.id,
-          recipients: [`@${r.agent.slug}`], // Task 1.7: the real list
-          body,
-          urgent,
-          fromToolUseId: from.toolUseId ?? null,
-        });
-        await this.booted;
-        // Shutting down: the committed row is the next boot's to deliver; the sender's call still succeeds (a retry
-        // would send it twice).
-        if (this.closed)
-          return {
-            ok: true,
-            id: row.id,
-            to: r.agent.slug,
-            status: this.d.runtimes.statusOf(r.agent),
-          };
-        // The recipient's status at send time (spec §6.1): read before the hand-off enqueues its wake. The row is
-        // committed: a recipient whose init fails never fails the sender's call (a retry would send it twice); its
-        // status is then what its row says, and the row stays pending (runtimes.deliver logs, never throws).
-        const status = await this.statusOf(r.agent.id).catch((err: unknown) => {
-          this.d.log.error(
-            { err, agent: r.agent.slug, message: row.id },
-            "loading the recipient failed; the message stays pending",
-          );
-          return this.d.runtimes.statusOf(r.agent);
-        });
-        await this.d.runtimes.deliver(row, "agent");
-        return {
-          ok: true,
-          id: row.id,
-          to: r.agent.slug,
-          status,
-          ...(status === "errored"
-            ? {
-                note: `@${r.agent.slug} is errored; your message will be delivered when a human restarts it.`,
-              }
-            : {}),
-        };
-      }
-    }
-  }
-
-  /** The human REST route resolves agents only (a user, `humans` or a reserved name is "not found"). */
-  private async sendFromHuman(
-    from: { userId: string; handle: string },
-    slug: string,
-    body: string,
-    urgent: boolean,
-    opts: { clientMessageId?: string; attachments?: string[] },
-  ): Promise<SendResult> {
+  ): Promise<{ results: RecipientResult[] }> {
     const { clientMessageId } = opts;
-    // U3 §13.2: a repeat of an earlier send answers with the original, whatever happened since (the agent may have
-    // ended, the message been written, its uploads been claimed by it). The insert below settles a concurrent repeat.
-    if (clientMessageId) {
+    // U3 §13.2: a repeat of an earlier send answers with the original, for every row, whatever happened since (the
+    // agent may have ended, its uploads been claimed). The inserts below settle a concurrent repeat.
+    if ("userId" in from && clientMessageId) {
       const earlier = await this.d.store.byClientMessageId(from.userId, clientMessageId);
-      if (earlier[0]) return this.repeated(earlier[0]); // Task 1.7: one result per recipient
+      if (earlier.length)
+        return { results: await Promise.all(earlier.map((r) => this.repeated(r))) };
     }
-    const agent = await this.d.store.agentBySlug(slug);
-    if (!agent) return notFound(slug);
-    if (agent.archivedAt) return archived(agent.slug);
-    if (agent.terminatedAt) return terminated(agent.slug);
+    if ("agentId" in from) {
+      const me = await this.d.store.agentById(from.agentId);
+      if (!me || me.archivedAt || me.terminatedAt)
+        return {
+          results: to.map((t) =>
+            refusal(t, "terminated", "You can't send messages: you were terminated."),
+          ),
+        };
+    }
+    const targets = await this.resolveTargets(from, to);
+    const accepted = targets.filter((t) => !t.refused);
+    const ids = opts.attachments ?? [];
+    if (ids.length && (accepted.length !== 1 || !accepted[0]?.agent))
+      return {
+        results: targets.map((t) => refusal(t.to, "invalid_attachment", INVALID_ATTACHMENT)),
+      };
+    if (!accepted.length) return { results: targets.map((t) => t.refused as RecipientResult) };
+
     // U3 §13.5: each upload must be this agent's, this sender's and unused; its `[attached: …]` line joins the body
     // (so the 64 KB limit counts it) and the row's `message_id` is set in the insert's transaction.
-    const ids = opts.attachments ?? [];
-    const files = ids.length ? await loadAttachments(this.d.db, ids, agent.id, from.userId) : [];
-    if (files === "duplicate")
-      return { ok: false, code: "invalid_attachment", message: DUPLICATE_ATTACHMENT };
-    if (!files) return invalidAttachment();
-    const fullBody = bodyWithAttachments(body, files);
+    const only = accepted[0]?.agent;
+    let fullBody = body;
+    let attachments: ReturnType<typeof attachmentOf>[] = [];
+    if (ids.length && only && "userId" in from) {
+      const files = await loadAttachments(this.d.db, ids, only.id, from.userId);
+      if (!files || files === "duplicate") {
+        const reason = files === "duplicate" ? DUPLICATE_ATTACHMENT : INVALID_ATTACHMENT;
+        return { results: targets.map((t) => refusal(t.to, "invalid_attachment", reason)) };
+      }
+      fullBody = bodyWithAttachments(body, files);
+      attachments = files.map(attachmentOf);
+    }
     if (Buffer.byteLength(fullBody, "utf8") > MAX_BODY_BYTES)
-      return { ok: false, code: "too_large", message: "Message is larger than 64 KB" };
-    const attachments = files.map(attachmentOf);
-    let row: PendingRow;
+      return {
+        results: targets.map((t) => refusal(t.to, "too_large", "Message is larger than 64 KB")),
+      };
+
+    const recipients = accepted.map((t) => t.to);
+    type Written = { target: Target; row?: PendingRow; humanRowId?: string; created: boolean };
+    let written: Written[];
     try {
-      const r = await this.d.store.transaction(async (tx) => {
-        const made = clientMessageId
-          ? await this.d.store.createClientMessage(
+      written = await this.d.store.transaction(async (tx) => {
+        const out: Written[] = [];
+        for (const target of accepted) {
+          if (target.user) {
+            const { row } = await this.d.store.createHumanMessage(
               {
-                fromUserId: from.userId,
-                toAgentId: agent.id,
-                recipients: [`@${agent.slug}`], // Task 1.7: the real list
+                kind: "message",
+                fromAgentId: (from as { agentId: string }).agentId,
+                to: { userId: target.user.userId },
+                recipients,
                 body: fullBody,
                 urgent,
-                clientMessageId,
-                attachments,
+                fromToolUseId: (from as { toolUseId?: string | null }).toolUseId ?? null,
               },
               tx,
+            );
+            if (!row) throw new Error("a message to a human wrote no row");
+            out.push({ target, humanRowId: row.id, created: true });
+            continue;
+          }
+          const agent = target.agent as AgentRow;
+          if ("userId" in from) {
+            const made = clientMessageId
+              ? await this.d.store.createClientMessage(
+                  {
+                    fromUserId: from.userId,
+                    toAgentId: agent.id,
+                    recipients,
+                    body: fullBody,
+                    urgent,
+                    clientMessageId,
+                    attachments,
+                  },
+                  tx,
+                )
+              : {
+                  row: await this.d.store.createMessage(
+                    {
+                      from: { userId: from.userId },
+                      toAgentId: agent.id,
+                      recipients,
+                      body: fullBody,
+                      urgent,
+                      attachments,
+                    },
+                    tx,
+                  ),
+                  created: true,
+                };
+            if (
+              made.created &&
+              ids.length &&
+              !(await claimUploads(tx, ids, made.row.id, agent.id, from.userId))
             )
-          : {
-              row: await this.d.store.createMessage(
-                {
-                  from: { userId: from.userId },
-                  toAgentId: agent.id,
-                  recipients: [`@${agent.slug}`], // Task 1.7: the real list
-                  body: fullBody,
-                  urgent,
-                  attachments,
-                },
-                tx,
-              ),
-              created: true,
-            };
-        if (
-          made.created &&
-          ids.length &&
-          !(await claimUploads(tx, ids, made.row.id, agent.id, from.userId))
-        )
-          throw new AttachmentGoneError();
-        return made;
+              throw new AttachmentGoneError();
+            out.push({ target, row: made.row, created: made.created });
+          } else {
+            const row = await this.d.store.createMessage(
+              {
+                from: { agentId: from.agentId },
+                toAgentId: agent.id,
+                recipients,
+                body: fullBody,
+                urgent,
+                fromToolUseId: from.toolUseId ?? null,
+              },
+              tx,
+            );
+            out.push({ target, row, created: true });
+          }
+        }
+        return out;
       });
-      // Only the request whose insert wrote the row hands it to the runtime.
-      if (!r.created) return this.repeated(r.row);
-      row = r.row;
     } catch (e) {
-      if (e instanceof AttachmentGoneError) return invalidAttachment();
+      if (e instanceof AttachmentGoneError)
+        return {
+          results: targets.map((t) => refusal(t.to, "invalid_attachment", INVALID_ATTACHMENT)),
+        };
       throw e;
     }
-    await this.booted;
-    if (this.closed) throw new Error(SHUTTING_DOWN);
-    const status = await this.statusOf(agent.id);
-    const item = await this.d.runtimes.deliver(row, "human");
-    return { ok: true, id: row.id, to: agent.slug, status, ...(item ? { item } : {}) };
+
+    for (const w of written)
+      if (w.target.user) this.d.bus.publishToUser(w.target.user.userId, { type: "inbox_changed" });
+
+    const outcome = new Map<Target, RecipientResult>();
+    for (const w of written)
+      if (w.humanRowId)
+        outcome.set(w.target, {
+          to: w.target.to,
+          kind: "human",
+          status: "inbox",
+          id: w.humanRowId,
+        });
+    const agentRows = written.filter((w) => w.row);
+    if (agentRows.length) {
+      await this.booted;
+      // Only the request whose insert wrote the row hands it to the runtime; a concurrent repeat answers from the row.
+      await Promise.all(
+        agentRows.map(async (w) => {
+          const result = w.created
+            ? await this.handOver(from, w.target.agent as AgentRow, w.row as PendingRow)
+            : await this.repeated(w.row as PendingRow);
+          outcome.set(w.target, result);
+        }),
+      );
+    }
+    return { results: targets.map((t) => t.refused ?? (outcome.get(t) as RecipientResult)) };
   }
 
-  /** U3 §13.2: the original send's 202, from the row it wrote; nothing is queued or delivered again. */
-  private async repeated(row: PendingRow): Promise<SendResult> {
+  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`) is dropped. */
+  private async resolveTargets(from: Sender, to: string[]): Promise<Target[]> {
+    const targets: Target[] = [];
+    const seen = new Set<string>();
+    for (const raw of to) {
+      const r = await resolveName(this.d.db, raw);
+      let t: Target;
+      switch (r.kind) {
+        case "channel":
+          t = {
+            to: r.name,
+            key: `#${r.name}`,
+            refused: refusal(r.name, "channel", "Channels aren't supported yet."),
+          };
+          break;
+        case "reserved": {
+          const label = `@${r.name}`;
+          t = {
+            to: label,
+            key: label,
+            refused: refusal(
+              label,
+              "reserved",
+              r.name === "humans"
+                ? HUMANS_REFUSAL
+                : `'${r.name}' is reserved and can't receive messages.`,
+            ),
+          };
+          break;
+        }
+        case "none": {
+          const label = `@${r.name}`;
+          t = {
+            to: label,
+            key: label,
+            refused: refusal(
+              label,
+              "not_found",
+              `No agent or user named '${r.name}'. Call list_peers to see who you can message.`,
+            ),
+          };
+          break;
+        }
+        case "user": {
+          const label = `@${r.handle}`;
+          t = { to: label, key: `user:${r.userId}`, user: r };
+          if ("userId" in from)
+            t.refused = refusal(
+              label,
+              "human",
+              `${label} is a person; you can message agents only.`,
+            );
+          else if (r.disabled)
+            t.refused = refusal(label, "disabled", `${label}'s account is disabled.`);
+          break;
+        }
+        case "agent": {
+          const a = r.agent;
+          const label = `@${a.slug}`;
+          t = { to: label, key: `agent:${a.id}`, agent: a };
+          if ("agentId" in from && a.id === from.agentId)
+            t.refused = refusal(label, "self", "You can't message yourself.");
+          else if (a.archivedAt)
+            t.refused = refusal(
+              label,
+              "archived",
+              `${label} is archived and can't receive messages.`,
+            );
+          else if (a.terminatedAt)
+            t.refused = refusal(
+              label,
+              "terminated",
+              `${label} was terminated and can't receive messages.`,
+            );
+          break;
+        }
+      }
+      if (seen.has(t.key)) continue;
+      seen.add(t.key);
+      targets.push(t);
+    }
+    return targets;
+  }
+
+  /** One committed agent row's hand-off and its result. The row is durable, so nothing here fails the other recipients. */
+  private async handOver(from: Sender, agent: AgentRow, row: PendingRow): Promise<RecipientResult> {
+    const to = `@${agent.slug}`;
+    if ("userId" in from) {
+      if (this.closed) throw new Error(SHUTTING_DOWN);
+      const status = await this.statusOf(agent.id);
+      try {
+        const item = await this.d.runtimes.deliver(row, "human");
+        return {
+          to,
+          kind: "agent",
+          status: "queued",
+          recipient_status: status,
+          id: row.id,
+          ...(item ? { item } : {}),
+        };
+      } catch (e) {
+        if (e instanceof AgentStartError)
+          return { to, kind: "agent", status: "start_failed", id: row.id, note: e.message };
+        throw e;
+      }
+    }
+    // Shutting down: the committed row is the next boot's to deliver; the sender's call still succeeds (a retry would
+    // send it twice).
+    if (this.closed)
+      return {
+        to,
+        kind: "agent",
+        status: "queued",
+        recipient_status: this.d.runtimes.statusOf(agent),
+        id: row.id,
+      };
+    // The recipient's status at send time (spec §6.1): read before the hand-off enqueues its wake. The row is
+    // committed: a recipient whose init fails never fails the sender's call; its status is then what its row says, and
+    // the row stays pending (runtimes.deliver logs, never throws).
+    const status = await this.statusOf(agent.id).catch((err: unknown) => {
+      this.d.log.error(
+        { err, agent: agent.slug, message: row.id },
+        "loading the recipient failed; the message stays pending",
+      );
+      return this.d.runtimes.statusOf(agent);
+    });
+    await this.d.runtimes.deliver(row, "agent");
+    if (status === "errored")
+      return {
+        to,
+        kind: "agent",
+        status: "pending",
+        id: row.id,
+        note: `${to} is errored; your message will be delivered when a human restarts it.`,
+      };
+    return { to, kind: "agent", status: "queued", recipient_status: status, id: row.id };
+  }
+
+  /** U3 §13.2: one earlier row's original result; nothing is queued or delivered again. */
+  private async repeated(row: PendingRow): Promise<RecipientResult> {
     await this.booted;
     const agent = row.toAgentId ? await this.d.store.agentById(row.toAgentId) : undefined;
     if (!agent) throw new Error(`message ${row.id} has no agent recipient`);
     const rt = await this.d.runtimes.load(agent.id);
     return {
-      ok: true,
+      to: `@${agent.slug}`,
+      kind: "agent",
+      status: "queued",
+      recipient_status: this.d.runtimes.statusOf(agent),
       id: row.id,
-      to: agent.slug,
-      status: this.d.runtimes.statusOf(agent),
       ...(rt ? { item: rt.itemFor(row) } : {}),
     };
   }

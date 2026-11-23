@@ -47,12 +47,12 @@ async function aCalls(toolUseId: string, input: object) {
 }
 
 test("GET /api/inbox: newest first, link to the sender's send_message call, preview capped, human session only", async () => {
-  await aCalls("toolu_01X", { to: "@humans", body: "first" });
+  await aCalls("toolu_01X", { to: "@or", body: "first" });
   await callTool(url, tokA, "send_message", { to: "@or", body: "x".repeat(400), urgent: true });
   const r = await get("/api/inbox");
   expect(r.statusCode).toBe(200);
   const page = r.json();
-  expect(page.items.map((i: { to: string }) => i.to)).toEqual(["@or", "@humans"]);
+  expect(page.items.map((i: { to: string }) => i.to)).toEqual(["@or", "@or"]);
   expect(page.items[0]).toMatchObject({ urgent: true, from: { kind: "agent", name: "ada" } });
   expect(page.items[0].preview).toHaveLength(280);
   // No tool call recorded for the second send: the link names the sender's session only.
@@ -103,7 +103,7 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
 
   const out = JSON.parse(
     (await aCalls("toolu_01Y", { to: "bob", body: "hello bob" })).content[0]?.text ?? "{}",
-  );
+  ).results[0];
   // The send woke the hibernated `bob`: its start job, settled, has written the batch, and no session has begun.
   const b = await h.app.runtimes.bySlug("bob");
   await b?.settled();
@@ -137,7 +137,7 @@ test("spec §5.1: a live agent token is refused by the inbox and message lookup 
   const out = JSON.parse(
     (await callTool(url, tokA, "send_message", { to: "@or", body: "for or" })).content[0]?.text ??
       "{}",
-  );
+  ).results[0];
   const bearer = { authorization: `Bearer ${tokA}` };
   for (const path of ["/api/inbox", `/api/messages/${out.id}`]) {
     const r = await get(path, bearer);
@@ -234,7 +234,7 @@ test("POST /api/inbox/:id/read marks only the caller's item, idempotently; anoth
 test("unread-count byAgent counts unread messages by sending agent only", async () => {
   const { or, agent } = await actors();
   await aCalls("toolu_m1", { to: "@or", body: "one" });
-  await aCalls("toolu_m2", { to: "@humans", body: "two" });
+  await aCalls("toolu_m2", { to: "@or", body: "two" });
   // A mention is a different inbox kind: it must not count toward byAgent.
   await h.app.tasks.create(or, { title: "t" });
   await h.app.tasks.comment(agent, "T-1", "@humans hi");

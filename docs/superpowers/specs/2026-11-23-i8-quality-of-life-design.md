@@ -144,6 +144,7 @@ Each tab decides alone: it fires only while `document.visibilityState === "hidde
 
 For an unordered pair of agents {A, B}:
 
+- **Not counted:** `send_command` (I1) goes only from an agent to itself or its direct reports, and a report can't send_command its manager, so it is one-directional and can't ping-pong; a report's answer reaches its manager as text (`member_update`, ADR 0005), which isn't agent-to-agent messaging.
 - **Counted** (Q2): agent-to-agent rows from one to the other: `send_message` rows (`kind = 'message'`), task-comment deliveries (`kind = 'task_comment'`, sender = the comment's agent author, to the assignee or a mentioned agent), and agent-authored scheduled firings (`kind = 'scheduled'`, sender = `author_agent_id`). Humans, `@factory` and human-authored schedules never count. A row's **sender** is `from_agent_id`, or `author_agent_id` for scheduled rows.
 - **Window start** = the latest of: `now − window`; the pair's last Resume (`loop_holds.resumed_at`); the latest **reset** involving A or B (Q3, R11): only human actions reset,
   - a human's `kind = 'message'` row to A or B (`from_user_id` set, `to_agent_id` in {A, B});
@@ -274,6 +275,7 @@ Verified locally (git 2.50, 2026-11-23, and by the self-review): `git status` ru
 
 All paths are compared after `realpath` of the repo and the common dir; paths and ids that git or the agent wrote are data, used only to match, never as delete targets of their own.
 
+0. The slug must match the server's slug schema (one segment, no `.`/`..`/`/`) before it is joined into any path; else the project errors. Defence in depth: slugs come from the database, but this step deletes folders.
 1. `repo = realpath(project.host_path)`; `git rev-parse --show-toplevel` must equal `repo`, and `common = realpath(path.resolve(repo, <git rev-parse --git-common-dir>))` (git prints it relative to the cwd, `.git`).
 2. **Our folder:** `lstat` `repo/.worktrees`, `repo/.worktrees/.agents` and `base = repo/.worktrees/.agents/<slug>` in turn. A missing one → go to step 3 anyway (the agent may have deleted its folder but left metadata) and skip step 5. A symlink or non-directory at any of the three → refuse the project ("web: .worktrees/.agents/dev-ab12 is a symbolic link; left in place").
 3. **Entries:** `git worktree list --porcelain -z`. An entry is ours when its `worktree` path, normalised lexically, is strictly under `base`. Ours give `branches` (their `branch refs/heads/<name>`); a `locked` mark on ours is ignored (R12: the folder is our namespace and the agent that set it is terminated). All others give `checkedOutElsewhere`; the first entry's branch (the main checkout's HEAD) joins it.
@@ -352,4 +354,5 @@ Rated 3/5 or lower, for Or:
 - **Containers writing as another uid** may trigger git's dubious-ownership refusal; handled per call (§7.4), exercised in a Docker test only if CI has Docker.
 - **Check-then-act in removal:** another live agent with the same project can write in `.worktrees/` and swap a directory for a symlink between the `lstat` checks and the removal; `SafeFs` refuses symlinks on the way, but Node offers no `openat`-style guarantee. Agents only ever write `.worktrees/.agents/<their slug>`, so this needs a hostile agent racing the sweep.
 - **Reset read cost:** the window start reads three sources per counted send; the plan measures it on the 214-agent dataset and adds an index only if needed.
+- **Forged remote refs (accepted):** an agent can write `refs/remotes/*` in a granted repo so its own unpushed branch looks pushed, and the cleanup then deletes it. Accepted: it only affects that agent's own branches checked out in its own folder, which it could delete itself, and verifying by fetching would break the no-network rule.
 - **Unlisted branches:** branches an agent made but didn't leave checked out are neither deleted nor reported.

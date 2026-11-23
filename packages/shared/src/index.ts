@@ -4,6 +4,7 @@ export * from "./commands.ts";
 export * from "./cron.ts";
 export * from "./events.ts";
 export * from "./handle.ts";
+export * from "./host.ts";
 export * from "./images.ts";
 export * from "./keys.ts";
 export * from "./messages.ts";

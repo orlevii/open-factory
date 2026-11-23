@@ -39,7 +39,7 @@ export function AddSecretForm({
         if (!r.success) return r.error.issues[0]?.message;
         return existing.includes(name) ? FORM_MSG.nameTaken : undefined;
       },
-      value: () => (value === "" ? "Enter a value." : undefined),
+      value: () => (value === "" ? FORM_MSG.enterValue : undefined),
     },
   });
 

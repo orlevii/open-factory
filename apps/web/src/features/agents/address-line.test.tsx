@@ -9,6 +9,7 @@ import { AddressLine } from "./address-line";
 
 afterEach(() => {
   opened.mockClear();
+  slugBlur.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -28,6 +29,7 @@ function routes(taken: string[] = []) {
 }
 
 const opened = vi.fn();
+const slugBlur = vi.fn();
 
 function Harness({
   initialName = "",
@@ -58,6 +60,7 @@ function Harness({
         }}
         error={error}
         forceOpen={force}
+        onBlur={slugBlur}
         onOpened={() => {
           opened();
           setForce(false);
@@ -148,10 +151,19 @@ test("forceOpen with the field already open (via Change) refocuses it", async ()
   expect(opened).toHaveBeenCalledTimes(1);
 });
 
-test("an error opens the field even without forceOpen", () => {
+test("an error opens the field even without forceOpen, in the slug's note", () => {
   setup({ initialName: "Priya", error: "That address is taken." });
-  expect(screen.getByLabelText("Slug")).toBeInTheDocument();
-  expect(screen.getByText("That address is taken.")).toBeInTheDocument();
+  expect(screen.getByLabelText("Slug")).toHaveAccessibleDescription("That address is taken.");
+  expect(screen.getByText("That address is taken.").closest(".field-note")).not.toBeNull();
+});
+
+test("leaving the slug input passes the blur event on", async () => {
+  const user = userEvent.setup();
+  setup({ initialName: "Priya" });
+  await user.click(screen.getByRole("button", { name: "Change" }));
+  await user.click(screen.getByLabelText("Name"));
+  expect(slugBlur).toHaveBeenCalledOnce();
+  expect(slugBlur.mock.calls[0]?.[0]).toHaveProperty("relatedTarget");
 });
 
 test("the avatar's slug settles after 300ms without typing", async () => {
@@ -173,4 +185,9 @@ test("the avatar's slug settles after 300ms without typing", async () => {
     await vi.advanceTimersByTimeAsync(250);
   });
   expect(sig()).not.toBe(first);
+});
+
+test("Change is a skip control: pressing it doesn't validate the field being left", () => {
+  setup({ initialName: "Priya" });
+  expect(screen.getByRole("button", { name: "Change" })).toHaveAttribute("data-skip-validate");
 });

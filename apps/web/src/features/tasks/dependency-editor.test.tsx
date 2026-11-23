@@ -21,8 +21,8 @@ test("the summary is the help, with no list", () => {
 
 test("an error replaces the help", () => {
   const { container } = render(
-    <DependencyEditor {...props} resolvedKeys={["T-41"]} error="No task T-41." />,
+    <DependencyEditor {...props} resolvedKeys={["T-41"]} error="No such task." />,
   );
-  expect(container.querySelector("[data-shown]")?.textContent).toBe("No task T-41.");
+  expect(container.querySelector("[data-shown]")?.textContent).toBe("No such task.");
   expect(screen.getByRole("textbox")).toHaveAttribute("aria-invalid", "true");
 });

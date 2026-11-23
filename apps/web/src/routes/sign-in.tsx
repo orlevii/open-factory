@@ -1,3 +1,4 @@
+import { MSG } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
@@ -20,8 +21,8 @@ export const Route = createFileRoute("/sign-in")({
 });
 
 const signInSchema = z.object({
-  email: z.email("Enter a valid email"),
-  password: z.string().min(1, "Enter your password"),
+  email: z.email(MSG.email),
+  password: z.string().min(1, MSG.passwordRequired),
 });
 type Field = "email" | "password";
 const FIELDS: readonly Field[] = ["email", "password"];

@@ -214,7 +214,7 @@ function Combobox({
   triggerClassName?: string
   /** Called each time the popover opens (for work that should wait for the first look). */
   onOpen?: () => void
-  onBlur?: () => void
+  onBlur?: (e: React.FocusEvent<HTMLButtonElement>) => void
 }) {
   const [open, setOpen] = React.useState(false)
   // Once the filter is used, the popover's placement is frozen so it never flips while open: the side

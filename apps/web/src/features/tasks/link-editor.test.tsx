@@ -55,3 +55,12 @@ test("tab order in a row is kind, target, title, then remove", () => {
   const remove = screen.getByRole("button", { name: "Remove link 1" });
   expect(title.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
+
+test("the whole row is the field, so focusing its target brings the note into view too", () => {
+  const row = newLinkRow();
+  const { container } = renderRows({ [row.id]: "Links must be http(s) URLs." }, [row]);
+  const field = screen.getByLabelText("Link 1 target").closest("[data-field]");
+  expect(field).not.toBeNull();
+  expect(field?.contains(container.querySelector(`#${row.id}-error`))).toBe(true);
+  expect(field?.contains(screen.getByLabelText("Link 1 title"))).toBe(true);
+});

@@ -17,7 +17,7 @@ import { SafeFs, WorkspaceError } from "./safe-fs.ts";
 
 /** Atomic write for factory-owned paths outside agent workdirs (`FACTORY_HOME/state`). Anything
  *  under a workdir goes through `SafeFs` instead. */
-export async function writeAtomic(file: string, data: string): Promise<void> {
+export async function writeAtomic(file: string, data: string | Buffer): Promise<void> {
   const tmp = `${file}.tmp-${randomUUID()}`;
   await mkdir(path.dirname(file), { recursive: true });
   try {

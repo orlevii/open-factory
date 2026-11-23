@@ -206,7 +206,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
   }
 });
 
-test("agent management routes: create, patch, archive, unarchive, list filter, bad slugs", async () => {
+test("agent management routes: create, patch, reset-persona, archive, unarchive, list filter, bad slugs", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
@@ -251,6 +251,14 @@ test("agent management routes: create, patch, archive, unarchive, list filter, b
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json().error.code).toBe("validation_error");
     }
+    writeFileSync(path.join(t2.factoryHome, "agents/boss/AGENTS.md"), "edited");
+    const rp = await call("POST", "/api/agents/boss/reset-persona");
+    expect(rp.statusCode).toBe(200);
+    expect(rp.json()).toMatchObject({ applied: "now", backupDir: expect.any(String) });
+    expect(readFileSync(path.join(t2.factoryHome, "agents/boss/AGENTS.md"), "utf8")).toBe(
+      "# Lead\n",
+    );
+
     expect((await call("POST", "/api/agents/boss/archive")).statusCode).toBe(200);
     expect(
       (await call("GET", "/api/agents?ended=only"))
@@ -266,6 +274,7 @@ test("agent management routes: create, patch, archive, unarchive, list filter, b
       ["GET", "/api/agents/..%2F..%2Fetc"],
       ["GET", "/api/agents/..%2F..%2Fetc/events"],
       ["PATCH", "/api/agents/..%2F..%2Fetc"],
+      ["POST", "/api/agents/..%2F..%2Fetc/reset-persona"],
       ["POST", "/api/agents/..%2F..%2Fetc/archive"],
       ["POST", "/api/agents/..%2F..%2Fetc/unarchive"],
       ["POST", "/api/agents/..%2F..%2Fetc/compact"],
@@ -387,10 +396,11 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     }
   });
 
-  test("a spawned agent answers 409 ephemeral_agent to PATCH, archive, unarchive", async () => {
+  test("a spawned agent answers 409 ephemeral_agent to PATCH, reset-persona, archive, unarchive", async () => {
     await child("boss-cc33");
     for (const [m, url, payload] of [
       ["PATCH", "", { description: "x" }],
+      ["POST", "/reset-persona", undefined],
       ["POST", "/archive", undefined],
       ["POST", "/unarchive", undefined],
     ] as const) {

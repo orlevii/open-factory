@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -139,6 +140,93 @@ test("materialize: existing folder → folder_exists; plugin failure → caller 
   await expect(ws.materialize("lead", "lead", tpl, prep)).rejects.toThrow(/Plugin install failed/);
   await ws.discard("lead");
   expect(existsSync(path.join(home, "agents/lead"))).toBe(false);
+});
+
+const STAMP = /^state\/agents\/lead\/persona\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/;
+const tplMd = (tpl: { dir: string }) => path.join(tpl.dir, "AGENTS.md");
+
+test("resetPersona backs up a differing AGENTS.md, writes the template's and never deletes", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  writeFileSync(path.join(wd, "AGENTS.md"), "# Lead\nlearned things\n");
+  writeFileSync(path.join(wd, "mine.md"), "keep");
+  const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true });
+  expect(r.applied).toBe("now");
+  expect(r.backupDir).toMatch(STAMP);
+  expect(readFileSync(path.join(home, r.backupDir as string, "AGENTS.md"), "utf8")).toContain(
+    "learned",
+  );
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
+  expect(existsSync(path.join(wd, "mine.md"))).toBe(true);
+  // Nothing differs now: no backup.
+  expect(await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).toEqual({
+    applied: "now",
+  });
+});
+
+test("resetPersona backs a symlinked AGENTS.md up as a link and replaces it, never writing through", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  const secret = path.join(mkdtempSync(path.join(tmpdir(), "secret-")), "id_ed25519");
+  writeFileSync(secret, "PRIVATE KEY");
+  rmSync(path.join(wd, "AGENTS.md"));
+  symlinkSync(secret, path.join(wd, "AGENTS.md"));
+  const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true });
+  const backup = path.join(home, r.backupDir as string, "AGENTS.md");
+  expect(lstatSync(backup).isSymbolicLink()).toBe(true);
+  expect(readlinkSync(backup)).toBe(secret);
+  expect(lstatSync(path.join(wd, "AGENTS.md")).isFile()).toBe(true);
+  expect(readFileSync(secret, "utf8")).toBe("PRIVATE KEY");
+});
+
+test("resetPersona refuses a workdir that is a symlink", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  const host = mkdtempSync(path.join(tmpdir(), "host-"));
+  rmSync(wd, { recursive: true });
+  symlinkSync(host, wd);
+  await expect(ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).rejects.toThrow(
+    /symlink/,
+  );
+  expect(existsSync(path.join(host, "AGENTS.md"))).toBe(false);
+});
+
+test("a staged persona reset leaves the workdir alone until prepare applies it, then removes the file", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  writeFileSync(path.join(wd, "AGENTS.md"), "edited");
+  const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
+  expect(r).toEqual({ applied: "on_restart" });
+  const pending = path.join(home, "state/agents/lead/persona-pending/AGENTS.md");
+  expect(readFileSync(pending, "utf8")).toBe("# Lead\n");
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("edited");
+  await ws.prepare(prep);
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
+  expect(existsSync(path.dirname(pending))).toBe(false);
+  const root = path.join(home, "state/agents/lead/persona");
+  const [stamp] = readdirSync(root);
+  expect(readFileSync(path.join(root, stamp as string, "AGENTS.md"), "utf8")).toBe("edited");
+});
+
+test("a failing apply at prepare keeps the pending file; a later write-now reset supersedes it", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
+  rmSync(path.join(wd, "AGENTS.md"));
+  mkdirSync(path.join(wd, "AGENTS.md")); // not a file: the backup refuses
+  await expect(ws.prepare(prep)).rejects.toThrow(/isn't a file/);
+  const pending = path.join(home, "state/agents/lead/persona-pending/AGENTS.md");
+  expect(existsSync(pending)).toBe(true);
+  rmSync(path.join(wd, "AGENTS.md"), { recursive: true });
+  writeFileSync(tplMd(tpl), "# Newer\n");
+  await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true });
+  expect(existsSync(pending)).toBe(false);
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Newer\n");
 });
 
 test("prepare treats a non-object previous settings.json like a parse failure", async () => {

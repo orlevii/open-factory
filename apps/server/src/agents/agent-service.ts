@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
@@ -639,6 +640,65 @@ export class AgentService {
       );
       return true;
     }
+  }
+
+  /**
+   * Reset persona (spec §9): the agent's AGENTS.md is replaced with the template's. Written at once when no process
+   * (and for Docker no container) is running, else staged for the next start. Archived agents are allowed. The notice
+   * line, the event and the restart are scheduled, never awaited: they queue behind the runtime's jobs, and a start
+   * waiting in `prepare` holds none of the locks taken here.
+   */
+  async resetPersona(
+    slug: string,
+    by: string,
+  ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
+    const { runtimes, workspace } = this.d;
+    const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
+    const tpl = await this.d.templates.loadValid(row.template);
+    const agentsMd = path.join(tpl.dir, "AGENTS.md");
+    if (
+      !(await lstat(agentsMd).then(
+        (s) => !s.isDirectory(),
+        () => false,
+      ))
+    )
+      throw new ApiError(409, "template_invalid", `Template ${row.template} has no AGENTS.md.`);
+    let r: Awaited<ReturnType<Workspace["resetPersona"]>>;
+    try {
+      r = await workspace.lock.run(slug, async () => {
+        // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
+        // must not be running either (spec §11.4 part 4).
+        const rt = await runtimes.get(row.id);
+        const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
+        return workspace.resetPersona(slug, agentsMd, { canWriteNow });
+      });
+    } catch (err) {
+      throw pluginFailure(err);
+    }
+    const staged = r.applied === "on_restart";
+    // Applied now with nothing differing changes nothing: no notice, no event.
+    if (staged || r.backupDir) this.scheduleResetEffects(row, by, staged);
+    return r;
+  }
+
+  private scheduleResetEffects(row: AgentRow, by: string, staged: boolean): void {
+    const { runtimes, log } = this.d;
+    const what = `AGENTS.md reset from template ${row.template}`;
+    const work = (async () => {
+      const rt = await runtimes.get(row.id);
+      const jobs: Promise<unknown>[] = [];
+      if (rt) jobs.push(rt.appendConfigChanged(by, [what]));
+      if (!row.archivedAt) {
+        jobs.push(runtimes.recordConfigNotice(row.id, [`${what}; the previous file is saved.`]));
+        if (staged)
+          jobs.push(runtimes.requestRestart(row.id, { changes: ["persona reset from template"] }));
+      }
+      for (const j of await Promise.allSettled(jobs))
+        if (j.status === "rejected")
+          log.error({ err: j.reason, agent: row.slug }, "applying a persona reset failed");
+    })();
+    work.catch((err) => log.error({ err, agent: row.slug }, "applying a persona reset failed"));
   }
 
   async archive(slug: string): Promise<AgentSummary> {

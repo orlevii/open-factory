@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
@@ -118,6 +118,7 @@ test.each([
       "Agent details",
       "Compact…",
       "—",
+      "Reset persona…",
       "Archive…",
     ],
   ],
@@ -132,10 +133,24 @@ test.each([
       "Usage",
       "Open tasks",
       "—",
+      "Reset persona…",
       "Archive…",
     ],
   ],
-  ["list", ["New task", "New schedule", "—", "Edit", "Usage", "Open tasks", "—", "Archive…"]],
+  [
+    "list",
+    [
+      "New task",
+      "New schedule",
+      "—",
+      "Edit",
+      "Usage",
+      "Open tasks",
+      "—",
+      "Reset persona…",
+      "Archive…",
+    ],
+  ],
 ] as const)("%s: groups and separators for a live persistent agent", async (context, items) => {
   setup({ agent: agentSummary(), context });
   const menu = await openMenu(userEvent.setup());
@@ -287,7 +302,11 @@ const archived = (over: Partial<AgentSummary> = {}) =>
   agentSummary({ archivedAt: "2026-11-19T10:00:00.000Z", status: "hibernated", ...over });
 
 test.each([
-  ["an archived persistent agent", archived(), ["Usage", "Open tasks", "—", "Restore"]],
+  [
+    "an archived persistent agent",
+    archived(),
+    ["Usage", "Open tasks", "—", "Reset persona…", "Restore"],
+  ],
   [
     "a terminated persistent agent",
     agentSummary({ status: "terminated", terminatedAt: "2026-11-19T10:00:00.000Z" }),
@@ -415,6 +434,75 @@ test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   await u.click(screen.getByRole("menuitem", { name: "Restore" }));
   await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Restored @dev." }));
   expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
+});
+
+test("Reset persona… is offered for live and archived agents, never for a spawned or terminated one", async () => {
+  setup({ agent: archived(), context: "list" });
+  expect(itemNames(await openMenu(userEvent.setup()))).toContain("Reset persona…");
+  cleanup();
+  setup({ agent: agentSummary({ kind: "ephemeral" }), context: "session" });
+  expect(itemNames(await openMenu(userEvent.setup()))).not.toContain("Reset persona…");
+  cleanup();
+  setup({ agent: agentSummary({ status: "terminated" }), context: "session" });
+  expect(itemNames(await openMenu(userEvent.setup()))).not.toContain("Reset persona…");
+});
+
+test("Reset persona… confirms with the spec copy, cancel sends nothing", async () => {
+  const api = mockApi({});
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
+  expect(dialog).toHaveTextContent(
+    "Replace @dev's AGENTS.md with the template's. The current file is saved in state/agents/dev/persona/.",
+  );
+  expect(within(dialog).getByRole("button", { name: "Reset persona" })).toBeInTheDocument();
+  await u.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(api.calls).toEqual([]);
+  expect(notify).not.toHaveBeenCalled();
+});
+
+test.each([
+  [
+    { applied: "now", backupDir: "state/agents/dev/persona/x" },
+    "Persona reset. Previous file saved.",
+  ],
+  [{ applied: "now" }, "Persona reset."],
+  [{ applied: "on_restart" }, "Persona resets when @dev restarts."],
+])("confirming Reset persona posts once and toasts %o", async (r, text) => {
+  const api = mockApi({ "POST /api/agents/dev/reset-persona": () => json(r) });
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
+  await u.click(within(dialog).getByRole("button", { name: "Reset persona" }));
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
+  expect(api.calls.filter((c) => c.url === "/api/agents/dev/reset-persona")).toHaveLength(1);
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test.each([
+  ["template_invalid", "Template developer has errors."],
+  ["template_missing", "Template developer no longer exists."],
+  ["agent_not_found", "No agent named dev"],
+])("a reset refused with %s toasts the server's own reason", async (code, message) => {
+  mockApi({
+    "POST /api/agents/dev/reset-persona": () => json({ error: { code, message } }, 409),
+  });
+  setup({ agent: agentSummary({ template: "developer" }), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
+  await u.click(within(dialog).getByRole("button", { name: "Reset persona" }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: `Couldn't reset the persona of @dev: ${message}`,
+    }),
+  );
 });
 
 test("archive blocked by live spawned agents toasts the server's advice to terminate them", async () => {

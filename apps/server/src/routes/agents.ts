@@ -18,6 +18,7 @@ import {
   MAX_FOCUS_CHARS,
   patchAgentBodySchema,
   queueItemResponseSchema,
+  resetPersonaResponseSchema,
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
@@ -173,6 +174,12 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
+  );
+
+  app.post(
+    "/api/agents/:slug/reset-persona",
+    { schema: { params: slugParams, response: { 200: resetPersonaResponseSchema } } },
+    async (req) => app.agents.resetPersona(req.params.slug, `@${user(req).handle}`),
   );
 
   app.post(

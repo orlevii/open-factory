@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
 import { type ReactElement, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   AdaptiveMenu,
   AdaptiveMenuContent,
@@ -13,7 +14,7 @@ import {
 } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { archiveAgent, restoreAgent } from "@/features/agents/lifecycle";
+import { archiveAgent, resetPersona, restoreAgent } from "@/features/agents/lifecycle";
 import type { AgentView } from "@/features/agents/view-memory";
 import { viewSwitchTarget } from "@/features/agents/view-switch";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -29,7 +30,7 @@ const newScheduleIntent = sheetIntent("new-schedule");
 /**
  * The one actions menu for an agent (U2 §8.4, U4 §6.5), in the session header, on a sidebar row and
  * on an Agents page row. Grouped: New task, New schedule · Edit, Usage, Open tasks, Agent details,
- * Compact…, Stop crons… · Archive…, Restore, Terminate….
+ * Compact…, Stop crons… · Reset persona…, Archive…, Restore, Terminate….
  * Compact… and Terminate… open their own overlays from the menu's ⋯ button, so the menu hands
  * focus over instead of returning it. Stop crons state belongs to the session (`stop`), which
  * mounts the confirmation.
@@ -80,6 +81,9 @@ export function AgentMenu({
   // menu, which reads as a focus outside and dismisses a popover at once.
   const handoff = useRef<(() => void) | null>(null);
   const [terminateOpen, setTerminateOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  // Mounted at the first opening and kept, so its close animation plays; a list of rows mounts none until asked.
+  const [resetMounted, setResetMounted] = useState(false);
   const qc = useQueryClient();
   const session = context === "session";
   const archived = agent.archivedAt !== null;
@@ -92,6 +96,7 @@ export function AgentMenu({
   const canEdit = !spawned && !archived && !endedInList;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
+  const canResetPersona = !spawned && !terminated;
   const canArchive = !spawned && live;
   const canRestore = archived && !terminated && !endedInList;
   const editIntent = useMemo(() => sheetIntent("edit-agent", { kind: "edit-agent", slug }), [slug]);
@@ -201,6 +206,20 @@ export function AgentMenu({
       </AdaptiveMenuItem>,
     );
   const lifecycle: ReactElement[] = [];
+  if (canResetPersona)
+    lifecycle.push(
+      <AdaptiveMenuItem
+        key="reset-persona"
+        opensOverlay
+        onSelect={() => {
+          handoff.current = () => {}; // as Stop crons…: the confirmation owns focus
+          setResetMounted(true);
+          setResetOpen(true);
+        }}
+      >
+        Reset persona…
+      </AdaptiveMenuItem>,
+    );
   if (canArchive)
     lifecycle.push(
       <AdaptiveMenuItem
@@ -319,6 +338,22 @@ export function AgentMenu({
           open={compactOpen}
           onOpenChange={setCompactOpen}
           anchor={trigger}
+        />
+      )}
+      {canResetPersona && resetMounted && (
+        <ConfirmDialog
+          open={resetOpen}
+          onOpenChange={setResetOpen}
+          title="Reset persona?"
+          body={`Replace @${slug}'s AGENTS.md with the template's. The current file is saved in state/agents/${slug}/persona/.`}
+          confirmLabel="Reset persona"
+          pendingLabel="Resetting…"
+          onConfirm={() => resetPersona(slug, qc, agent.template)}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            if (anchored) anchored.onClose();
+            else trigger.current?.focus();
+          }}
         />
       )}
       {spawned && session && (

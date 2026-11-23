@@ -237,3 +237,9 @@ export const patchAgentBodySchema = z
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;
 export const agentResponseSchema = z.object({ agent: agentSummarySchema });
+/** `backupDir` is relative to the factory home, and absent when nothing differed or the reset is staged. */
+export const resetPersonaResponseSchema = z.object({
+  applied: z.enum(["now", "on_restart"]),
+  backupDir: z.string().optional(),
+});
+export type ResetPersonaResponse = z.infer<typeof resetPersonaResponseSchema>;

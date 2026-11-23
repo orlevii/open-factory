@@ -284,6 +284,142 @@ async function startAndStop(slug: string, start: boolean) {
   return rt;
 }
 
+/** The pending `config_changed` notice lines of an agent. */
+async function pendingConfigLines(slug: string): Promise<string[]> {
+  const rows = await t.sql`
+    select body from messages where to_agent_id = ${await idOf(slug)} and notice = 'config_changed' and state = 'pending'`;
+  return rows.flatMap((r) =>
+    String(r.body)
+      .split("\n")
+      .filter((l) => l.startsWith("- ")),
+  );
+}
+const personaBackups = (slug: string) => {
+  const dir = path.join(home, "state/agents", slug, "persona");
+  return existsSync(dir) ? readdirSync(dir) : [];
+};
+
+test("reset persona of a hibernated agent applies at once, saves the old file and records the notice line", async () => {
+  await makeStageAgent("persona-a");
+  const agentsMd = path.join(home, "agents/persona-a/AGENTS.md");
+  writeFileSync(agentsMd, "edited");
+  const restart = vi.spyOn(runtimes, "requestRestart");
+  try {
+    const r = await svc.resetPersona("persona-a", "@or");
+    expect(r.applied).toBe("now");
+    expect(r.backupDir).toMatch(/^state\/agents\/persona-a\/persona\/\d{4}-/);
+    expect(readFileSync(agentsMd, "utf8")).toBe("# persona-a\n");
+    expect(readFileSync(path.join(home, r.backupDir ?? "", "AGENTS.md"), "utf8")).toBe("edited");
+    await vi.waitFor(async () =>
+      expect(await pendingConfigLines("persona-a")).toEqual([
+        "- AGENTS.md reset from template persona-a; the previous file is saved.",
+      ]),
+    );
+    expect(restart).not.toHaveBeenCalled();
+    // Nothing differs now: no second backup, no change.
+    expect(await svc.resetPersona("persona-a", "@or")).toEqual({ applied: "now" });
+    expect(personaBackups("persona-a")).toHaveLength(1);
+  } finally {
+    restart.mockRestore();
+  }
+});
+
+test("reset persona of a running agent stages the file, asks for a restart and applies at the next prepare", async () => {
+  await makeStageAgent("persona-b");
+  const agentsMd = path.join(home, "agents/persona-b/AGENTS.md");
+  const OLD = readFileSync(agentsMd, "utf8");
+  await startAndStop("persona-b", true);
+  writeFileSync(path.join(home, "templates/persona-b/AGENTS.md"), "# NEW\n");
+  // Keep the process running: the restart request would otherwise stop it before the assertions.
+  const restart = vi.spyOn(runtimes, "requestRestart").mockResolvedValue(undefined);
+  try {
+    const r = await svc.resetPersona("persona-b", "@or");
+    expect(r).toEqual({ applied: "on_restart" });
+    expect(readFileSync(agentsMd, "utf8")).toBe(OLD);
+    expect(
+      readFileSync(path.join(home, "state/agents/persona-b/persona-pending/AGENTS.md"), "utf8"),
+    ).toBe("# NEW\n");
+    const id = await idOf("persona-b");
+    await vi.waitFor(() =>
+      expect(restart).toHaveBeenCalledWith(id, { changes: ["persona reset from template"] }),
+    );
+  } finally {
+    restart.mockRestore();
+  }
+  await startAndStop("persona-b", false);
+  await startAndStop("persona-b", true);
+  expect(readFileSync(agentsMd, "utf8")).toBe("# NEW\n");
+  expect(existsSync(path.join(home, "state/agents/persona-b/persona-pending"))).toBe(false);
+  const [stamp] = personaBackups("persona-b");
+  expect(
+    readFileSync(
+      path.join(home, "state/agents/persona-b/persona", stamp ?? "", "AGENTS.md"),
+      "utf8",
+    ),
+  ).toBe(OLD);
+  await startAndStop("persona-b", false);
+});
+
+test("reset persona of a Docker agent stages while its container runs, or when Docker can't tell", async () => {
+  writeTemplate("dock-p", yaml("dock-p").replace("runtime: local", "runtime: docker"));
+  await svc.create({
+    template: "dock-p",
+    slug: "dock-p",
+    displayName: "Dock",
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+  const running = vi.spyOn(ContainerManager.prototype, "isRunning");
+  try {
+    running.mockResolvedValue(true);
+    expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("on_restart");
+    expect(running).toHaveBeenCalledWith(await idOf("dock-p"), "dock-p");
+    running.mockRejectedValue(new Error("connect ECONNREFUSED /var/run/docker.sock"));
+    expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("on_restart");
+    running.mockResolvedValue(false);
+    expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("now");
+  } finally {
+    running.mockRestore();
+  }
+});
+
+test("reset persona: an archived agent is allowed (no notice), a broken or AGENTS.md-less template is 409", async () => {
+  await makeStageAgent("persona-c");
+  writeFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "edited");
+  await svc.archive("persona-c");
+  expect((await svc.resetPersona("persona-c", "@or")).applied).toBe("now");
+  expect(readFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "utf8")).toBe("# persona-c\n");
+  expect(await pendingConfigLines("persona-c")).toEqual([]);
+
+  rmSync(path.join(home, "templates/persona-c/AGENTS.md"));
+  await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
+    status: 409,
+    code: "template_invalid",
+  });
+  writeFileSync(
+    path.join(home, "templates/persona-c/template.yaml"),
+    "name: persona-c\nruntime: nonsense\n",
+  );
+  await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
+    code: "template_invalid",
+  });
+  rmSync(path.join(home, "templates/persona-c"), { recursive: true });
+  await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
+    code: "template_missing",
+  });
+});
+
+test("reset persona refuses an agent whose workdir is a link, writing nothing through it", async () => {
+  await makeStageAgent("persona-d");
+  const wd = path.join(home, "agents/persona-d");
+  const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
+  rmSync(wd, { recursive: true });
+  symlinkSync(outside, wd);
+  await expect(svc.resetPersona("persona-d", "@or")).rejects.toBeDefined();
+  expect(existsSync(path.join(outside, "AGENTS.md"))).toBe(false);
+});
+
 test("hasProcess is true while a start waits in prepare, before the spawn", async () => {
   await makeStageAgent("stage-e");
   const rt = await runtimes.bySlug("stage-e");
@@ -507,7 +643,7 @@ test("archive names every live spawned agent", async () => {
   });
 });
 
-test("a spawned agent can't be edited, archived or unarchived: 409 ephemeral_agent", async () => {
+test("a spawned agent can't be edited, reset, archived or unarchived: 409 ephemeral_agent", async () => {
   const id = await createSpawner("spawner-4");
   await insertChild(t.sql, id, "spawner-4-ee11");
   const refused = {
@@ -516,6 +652,7 @@ test("a spawned agent can't be edited, archived or unarchived: 409 ephemeral_age
     message: "Spawned agents can't be edited; terminate it instead.",
   };
   await expect(svc.update("spawner-4-ee11", { displayName: "X" })).rejects.toMatchObject(refused);
+  await expect(svc.resetPersona("spawner-4-ee11", "@or")).rejects.toMatchObject(refused);
   await expect(svc.archive("spawner-4-ee11")).rejects.toMatchObject(refused);
   await expect(svc.unarchive("spawner-4-ee11")).rejects.toMatchObject(refused);
   const { cookie } = await t.signUpUser();

@@ -3,6 +3,7 @@ import {
   apiFetch,
   type CreateAgentBody,
   type PatchAgentBody,
+  resetPersonaResponseSchema,
 } from "@open-factory/shared";
 
 // The list query lives with the session API (it feeds the shell and the session screens):
@@ -23,6 +24,13 @@ export const createAgent = (body: CreateAgentBody) =>
 
 export const updateAgent = (slug: string, body: PatchAgentBody) =>
   apiFetch(path(slug), { method: "PATCH", body, schema: agentResponseSchema }).then((r) => r.agent);
+
+export const resetPersona = (slug: string) =>
+  apiFetch(`${path(slug)}/reset-persona`, {
+    method: "POST",
+    body: {},
+    schema: resetPersonaResponseSchema,
+  });
 
 export const archiveAgent = (slug: string) => post(slug, "archive");
 export const unarchiveAgent = (slug: string) => post(slug, "unarchive");

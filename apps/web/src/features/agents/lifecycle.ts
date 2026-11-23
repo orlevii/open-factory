@@ -5,7 +5,7 @@ import * as api from "@/features/agents/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 
 /**
- * An agent's lifecycle actions (U4 §6.5): Archive and Restore. They run from
+ * An agent's lifecycle actions (U4 §6.5): Reset persona, Archive and Restore. They run from
  * menus that are gone by the time the server answers, so each toasts its outcome (§10.2), except a
  * Restore whose control is still on screen (`inline`), which hands its failure back instead.
  */
@@ -46,6 +46,42 @@ async function pendingNote(qc: QueryClient, slug: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+/**
+ * Replaces the agent's AGENTS.md with the template's (the caller has confirmed) and toasts the outcome (spec §9):
+ * the menu is gone by the time the server answers. A staged reset is not presented as applied.
+ */
+export async function resetPersona(
+  slug: string,
+  qc: QueryClient,
+  template?: string,
+): Promise<void> {
+  await once(`reset-persona:${slug}`, async () => {
+    try {
+      const r = await api.resetPersona(slug);
+      notify({
+        text:
+          r.applied === "on_restart"
+            ? `Persona resets when @${slug} restarts.`
+            : r.backupDir
+              ? "Persona reset. Previous file saved."
+              : "Persona reset.",
+      });
+      void refresh(qc, slug);
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : undefined;
+      let text = reason(err);
+      if ((code === "template_invalid" || code === "template_missing") && template) {
+        // The server names what is wrong with the template; the generic line only stands in for a message it
+        // didn't send.
+        if (!(err instanceof ApiError && err.message))
+          text = templateProblemText(template, code === "template_invalid" ? "invalid" : "missing");
+        void qc.invalidateQueries({ queryKey: ["templates", template] });
+      }
+      notify({ text: `Couldn't reset the persona of @${slug}: ${text}` });
+    }
+  });
 }
 
 /**

@@ -9,7 +9,7 @@ import { FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
 import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
-import { templateTargets, writeTargets } from "./files.ts";
+import { backupDiffering, templateTargets, utcStamp, writeAtomic, writeTargets } from "./files.ts";
 import {
   linkProjects,
   linkSkills,
@@ -26,7 +26,14 @@ import {
   dockerSocketPaths,
   type MountCheckContext,
 } from "./mounts.ts";
-import { agentConfigDir, agentStateDir, agentWorkdir, pluginsConfigDir } from "./paths.ts";
+import {
+  agentConfigDir,
+  agentStateDir,
+  agentWorkdir,
+  personaPendingDir,
+  personaRoot,
+  pluginsConfigDir,
+} from "./paths.ts";
 import { installPlugins, PluginInstallError } from "./plugins.ts";
 import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
@@ -184,6 +191,56 @@ export class Workspace {
   }
 
   /**
+   * Reset persona (spec §9), under the caller-held lock. `tplAgentsMd` is the template's AGENTS.md. Either replace
+   * the agent's AGENTS.md at once (`canWriteNow`: nothing can race the write; the file it replaces is saved under
+   * `state/agents/<slug>/persona/<stamp>/`) or stage the template's file in `persona-pending/` for the next
+   * `prepare`. `backupDir` is relative to FACTORY_HOME and absent when nothing differed.
+   */
+  async resetPersona(
+    slug: string,
+    tplAgentsMd: string,
+    opts: { canWriteNow: boolean },
+  ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
+    const data = await readFile(tplAgentsMd);
+    const pending = personaPendingDir(this.d.factoryHome, slug);
+    if (!opts.canWriteNow) {
+      await writeAtomic(path.join(pending, "AGENTS.md"), data);
+      return { applied: "on_restart" };
+    }
+    const backupDir = await this.applyPersona(slug, data);
+    // A fresh reset supersedes anything staged earlier, but only once it applied: a failed apply keeps the old one.
+    await rm(pending, { recursive: true, force: true });
+    return { applied: "now", ...(backupDir ? { backupDir } : {}) };
+  }
+
+  /** Saves the AGENTS.md being replaced (a link is saved as a link), then writes the new one through SafeFs. */
+  private async applyPersona(slug: string, data: Buffer): Promise<string | undefined> {
+    const workdir = this.workdir(slug);
+    const backup = await backupDiffering(
+      workdir,
+      personaRoot(this.d.factoryHome, slug),
+      [{ to: "AGENTS.md", data }],
+      utcStamp(),
+    );
+    await new SafeFs(workdir).writeFile("AGENTS.md", data);
+    return backup ? path.relative(this.d.factoryHome, backup) : undefined;
+  }
+
+  /** A reset staged while the agent ran: applied first, then removed. A failure keeps it staged. */
+  private async applyPendingPersona(slug: string): Promise<void> {
+    const pending = personaPendingDir(this.d.factoryHome, slug);
+    let data: Buffer;
+    try {
+      data = await readFile(path.join(pending, "AGENTS.md"));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    await this.applyPersona(slug, data);
+    await rm(pending, { recursive: true, force: true });
+  }
+
+  /**
    * Lock contract: no Workspace method takes a lock itself except `deleteWorkspace`. Callers must hold
    * `lock.run(slug, …)` around materialize, reset-persona and prepare (createPrepareStart does so for prepare).
    */
@@ -199,6 +256,7 @@ export class Workspace {
     const configRel = path.relative(workdir, configDir);
     const safe = new SafeFs(workdir);
     const { config, doc } = i.effective;
+    await this.applyPendingPersona(i.slug);
     // A listed plugin that isn't installed yet is installed now, under the workspace lock (spec §6.5).
     // A failed install fails the start closed: a process never starts without its plugins.
     try {

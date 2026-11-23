@@ -428,9 +428,9 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
 
 - **A new WS frame** `org_action { action: "agent_created" | "agent_archived" | "agent_unarchived" | "template_created", by: "@hr", subject: string }` is published on the human bus, only for **agent** actors (a human's own action already toasts in their browser).
 - **Toast.** The web shows one toast per frame for every connected human, through the existing toaster: "@hr created @dev" with "Open" (to `/agents/dev/chat` or `/templates/x`).
-- **Merging** (a deviation, §1.1; R8). Several frames within 2 s from the same actor and action merge into one toast: "@hr created 3 agents" with "Open" to the agent list.
+- **Merging** (a deviation, §1.1; R8). The first frame of an (actor, action) pair opens a fixed 2 s window. The toast appears at the end of the window: one subject gives "@hr created @dev"; several give "@hr created 3 agents" with "Open" to the agent list.
 - **No toasts** for config edits or template writes (Q10): they are events.
-- **Lists** already refresh on the agent and template change events.
+- **Invalidation.** `agent_*` frames invalidate `["agents"]` and `["agent", subject]`. `template_created` invalidates `{queryKey: ["templates"], exact: true}` with `cancelRefetch: false`.
 
 ## 9. `restart_agent` and Restart now
 
@@ -527,7 +527,7 @@ When the call isn't refused, `note` is sent as an ordinary message from the call
   The errored-only refusal `not_errored` is deleted.
 - **AgentMenu** (`features/agents/agent-menu.tsx`): "Restart now" on running, non-errored persistent and spawned agents. Errored agents keep "Restart", which calls the same route. Hibernated agents have neither.
 - **The status line** "Restarts when idle to apply: …" (I2) gains a ghost "Restart now" action.
-- **Flow** (`features/agents/lifecycle.ts`):
+- **Flow** (`features/agents/lifecycle.ts`, `restartAgentNow`; the dialog is a module-store host mounted once, so a 409 that arrives after the menu closed still opens it for the right agent):
   1. POST without `force`.
   2. On 409 `lost_work`, open a `ConfirmDialog`:
      - title "Restart @dev now?";
@@ -535,7 +535,13 @@ When the call isn't refused, `note` is sent as an ordinary message from the call
      - action "Restart anyway" (crimson), which POSTs with `force: true`.
   3. Otherwise there is no confirm, even mid-turn (Q8; the session resumes, as with Stop).
   
-  Outcome toast: "Restarting @dev.", "Restarts @dev when its task results are in." or "@dev isn't running; its next start uses the latest config."
+  Outcome toasts, by status:
+  - `restarting`: "Restarting @dev.";
+  - `restart_pending`: "Restarts @dev when its task results are in.";
+  - `restarted_idle`: "@dev restarted; its next start uses the latest config.";
+  - `not_running`: "@dev isn't running; its next start uses the latest config.".
+  
+  The errored Restart's failures toast too ("Couldn't restart @dev: …"), and the Session's inline restart-error row is removed.
 - **"Start a new session"** stays human-only and unchanged.
 
 ### 9.5 Self-edit wake

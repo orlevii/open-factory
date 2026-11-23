@@ -112,12 +112,15 @@ git checkout -b i7/1-manage-org
 
 | File | Purpose | Part |
 |---|---|---|
-| `features/agents/edit-agent-sheet.tsx` | "Can manage the org" switch | A |
+| `components/ui/switch.tsx` (new, shadcn) | The `Switch`, reused by `shortcuts-sheet.tsx` (which inlines it today) | A |
+| `features/agents/edit-agent-sheet.tsx`, `features/agents/agent-form-state.ts` | "Can manage the org" switch; `manageOrg` in `PATCH_FIELDS`, `Values`, the draft, `changes` and `APPLIES` | A |
 | `features/session/agent-details.tsx` | "Manages the org: Yes" row; Restart now on the restart line (C) | A, C |
-| `features/org/org-toasts.ts` (new) | `onOrgAction(frame)`: 2 s merge per actor and action, then `notify` | A |
-| `routes/_app.tsx` | Routes `org_action` frames | A |
-| `features/agents/agent-menu.tsx`, `features/session/api.ts`, `features/session/recovery-actions.tsx`, `features/session/live-line.tsx` | Restart now and the lost-work dialog | C |
-| `features/agents/restart-now.ts` (new) | `useRestartNow(slug)`: POST, 409 `lost_work` → dialog → `force` | C |
+| `features/org/org-toasts.ts` (new) | `createOrgToasts({notify, navigate}) → {onOrgAction, dispose}`: one trailing toast per (actor, action) window of 2,000 ms | A |
+| `routes/_app.tsx` | `org_action` frames → `onOrgAction` and invalidation (A); `RestartConfirmHost` beside `OutputDialogHost` (C) | A, C |
+| `features/agents/lifecycle.ts` | `restartAgentNow(slug, qc)` in `once("restart:"+slug)`; `useRestartPending(slug)` | C |
+| `features/agents/restart-confirm.tsx` (new) | `showRestartConfirm`, `RestartConfirmHost`, `lostWorkBody` (the `show-output.tsx` store pattern) | C |
+| `features/session/restart-now-button.tsx` (new) | `RestartNowButton({slug})` | C |
+| `features/agents/agent-menu.tsx`, `features/session/api.ts`, `features/session/recovery-actions.tsx`, `features/session/live-line.tsx`, `features/session/agent-details.tsx`, `features/session/session-view.tsx` | Restart now wired to `restartAgentNow`; errored Restart errors go to a toast | C |
 
 ---
 
@@ -450,30 +453,52 @@ Spec §10.
 Spec §5.4, §8.3. **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
 **Files:**
-- Create: `apps/web/src/features/org/org-toasts.ts`, `apps/web/src/features/org/org-toasts.test.ts`
-- Modify: `apps/web/src/features/agents/edit-agent-sheet.tsx` (and its `APPLIES` list), `apps/web/src/features/session/agent-details.tsx`, `apps/web/src/routes/_app.tsx`
-- Test: `apps/web/src/features/agents/edit-agent-sheet.test.tsx`, `apps/web/src/test/agent-details.test.tsx` (or the existing details test file)
+- Create: `apps/web/src/components/ui/switch.tsx` (the shadcn Switch over `radix-ui`'s `Switch`), `apps/web/src/features/org/org-toasts.ts`, `apps/web/src/features/org/org-toasts.test.ts`
+- Modify:
+  - `apps/web/src/features/shortcuts/shortcuts-sheet.tsx` (use the new `Switch`; it inlines `SwitchPrimitive` today);
+  - `apps/web/src/features/agents/agent-form-state.ts` (`manageOrg` in `PATCH_FIELDS`, `Values`, the draft, `changes` and `APPLIES`);
+  - `apps/web/src/features/agents/edit-agent-sheet.tsx`;
+  - `apps/web/src/features/session/agent-details.tsx`;
+  - `apps/web/src/routes/_app.tsx`.
+- Test: `apps/web/src/features/agents/edit-agent-sheet.test.tsx`, `apps/web/src/features/agents/agent-form-state.test.ts`, the existing Agent details test
 
 **Interfaces (produces):**
-- `createOrgToasts(notify, now = Date.now)` returns `onOrgAction(frame)`. Frames from the same `by` and `action` within 2,000 ms of the first are merged into one toast. The toast is updated in place if `notify` supports an id; otherwise one toast is shown at the window's end.
+
+```ts
+// org-toasts.ts
+export function createOrgToasts(d: { notify: typeof notify; navigate: (to: string) => void }): {
+  onOrgAction(frame: OrgActionFrame): void;
+  dispose(): void; // clears every pending window timer
+};
+```
+
+**One path.** The first frame of an (actor, action) pair opens a fixed 2,000 ms window. Later frames in that window only add to the count. When the window ends, exactly one trailing toast is shown:
+- one subject: "@hr created @dev", with Open → `/agents/dev/chat` (or `/templates/x`);
+- several: "@hr created 3 agents", with Open → `/agents`.
+
+There is no `id` on `Notification` and no `now` parameter; tests use fake timers.
 
 - [ ] **Step 1: Write the failing tests.**
   - **Edit agent:**
     - the "Can manage the org" `Switch` shows only for persistent agents;
-    - its help text is spec §5.4's, verbatim;
-    - toggling it sends `manageOrg` in the PATCH;
-    - the restart notice includes it (it's in `APPLIES`).
+    - its help text is spec §5.4's, verbatim, held as a module constant and passed through `FieldShell`'s `help` prop;
+    - toggling it sends `manageOrg` in the PATCH (`agent-form-state.test.ts`: `changes` includes it, and `APPLIES` includes it, so the restart notice shows).
+  - **Shortcuts sheet:** its existing tests still pass with the shared `Switch`.
   - **Details:** "Manages the org: Yes" shows only when `manageOrg`.
   - **`org-toasts`** (fake timers):
-    - one `agent_created` gives "@hr created @dev" with Open → `/agents/dev/chat`;
-    - three within 2 s give "@hr created 3 agents" with Open → `/agents`;
+    - a single frame toasts at 2,000 ms, not before;
+    - three `agent_created` frames from `@hr` within the window give one "@hr created 3 agents";
     - `template_created` opens `/templates/x`;
-    - frames from two actors give two toasts.
-- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/org/org-toasts.test.ts apps/web/src/features/agents/edit-agent-sheet.test.tsx`. Expected: FAIL.
+    - frames from two actors give two toasts;
+    - `dispose()` before 2,000 ms cancels the pending toast.
+- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/org/org-toasts.test.ts apps/web/src/features/agents/edit-agent-sheet.test.tsx apps/web/src/features/agents/agent-form-state.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - `_app.tsx` handles `org_action` by calling a module-level `onOrgAction`, with no state in the WS effect. It also invalidates `["agents"]` and `["templates"]`.
-  - The switch is a `FieldShell` with the I4 note slot.
-  - No component is defined inside another, and the toast logic lives outside React.
+  - **`_app.tsx`:** create `createOrgToasts({notify, navigate})` inside the existing `connectWs` `useEffect` and call `dispose()` in its cleanup. On `org_action`:
+    - call `onOrgAction(m)`;
+    - for `agent_*` frames, invalidate `["agents"]` and `["agent", m.subject]`;
+    - for `template_created`, invalidate `{queryKey: ["templates"], exact: true}` with `{cancelRefetch: false}`.
+  - **The switch** is a `FieldShell` with the I4 note slot.
+  - **No component** is defined inside another.
 - [ ] **Step 4: Run** the tests. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): manage_org switch and org toasts`.
 
@@ -495,7 +520,12 @@ Spec §12 (the PR 1 parts), §14.
   - ADR 0028: no fallback, `spawnedBy` gone, `Actor` has no default;
   - every refusal sentence matches the spec verbatim;
   - no value or path leaks;
-  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first, skips Next-only rules and says so; effects only for external sync, no state in the WS handler, no components inside components, stable query keys.
+  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first, skips Next-only rules and says so; effects only for external sync, no state in the WS handler, no components inside components, stable query keys. The React checklist also includes:
+  - async results are never bound to the props of a reused or unmounting component;
+  - timers are disposed in effect cleanup;
+  - no button sits inside a `role="status"` element;
+  - list items aren't keyed by free text;
+  - no `restartError` or `not_errored` code is left.
   
   Fix the findings as their own commits.
 - [ ] **Step 3: Full verification** under `/tmp/of-v002-heavy.lock`:
@@ -731,24 +761,68 @@ Spec §9.1, §9.3, §9.4 (route), §10 ("Restarting reports", the PR 3 line, the
 Spec §9.4, AC 14. **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.**
 
 **Files:**
-- Create: `apps/web/src/features/agents/restart-now.ts`
-- Modify: `apps/web/src/features/session/api.ts` (`postRestart(slug, { force })`), `apps/web/src/features/agents/agent-menu.tsx`, `apps/web/src/features/session/agent-details.tsx` (the "Restarts when idle to apply" row), `apps/web/src/features/session/live-line.tsx`, `apps/web/src/features/session/recovery-actions.tsx`
-- Test: `apps/web/src/test/agent-menu.test.tsx`, `apps/web/src/features/agents/restart-now.test.tsx`
+- Create:
+  - `apps/web/src/features/agents/restart-confirm.tsx` (the `show-output.tsx` module-store pattern);
+  - `apps/web/src/features/session/restart-now-button.tsx`;
+  - `apps/web/src/features/agents/restart-confirm.test.tsx`.
+- Modify:
+  - `apps/web/src/features/agents/lifecycle.ts`;
+  - `apps/web/src/features/session/api.ts` (`postRestart(slug, { force })`);
+  - `apps/web/src/features/agents/agent-menu.tsx`;
+  - `apps/web/src/features/session/live-line.tsx` and its parent that renders `LiveLine`;
+  - `apps/web/src/features/session/agent-details.tsx` (the "restart" row of the Now section);
+  - `apps/web/src/features/session/recovery-actions.tsx`;
+  - `apps/web/src/features/session/session-view.tsx`;
+  - `apps/web/src/routes/_app.tsx`.
+- Test: `apps/web/src/test/agent-menu.test.tsx`, `apps/web/src/features/session/lifecycle.test.tsx`, `apps/web/src/features/agents/restart-confirm.test.tsx`
 
-**Interfaces (produces):** `useRestartNow(slug: string): { restart(): void; pending: boolean; dialog: ReactNode }`. It holds `useMutation`, started from the click handler. A 409 `lost_work` opens the `ConfirmDialog` with the lists from `data`; confirming re-posts with `force: true`.
+**Interfaces (produces):**
 
-- [ ] **Step 1: Write the failing tests:**
-  - **the menu:** "Restart now" appears for running, non-errored agents, persistent and spawned; errored agents keep "Restart", calling the same route; hibernated agents have neither;
-  - **no dialog** when the POST returns 202, and the toast reads "Restarting @dev.";
-  - **on 409 `lost_work`:** the dialog title is "Restart @dev now?", the body is spec §9.4's with mono wrapping lists (at most 5 each, then "and N more"), and "Restart anyway" POSTs `force: true`;
-  - **`restart_pending` and `not_running`** toast their spec texts;
-  - **the status line** "Restarts when idle to apply: …" has a ghost "Restart now" that uses the same hook.
-- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/agents/restart-now.test.tsx apps/web/src/test/agent-menu.test.tsx`. Expected: FAIL.
+```ts
+// lifecycle.ts
+export function restartAgentNow(slug: string, qc: QueryClient): Promise<void>;
+// = once("restart:" + slug, …): POST without force; toasts the outcome; on 409 lost_work → showRestartConfirm({slug, tasks, crons}); other errors → a toast naming the agent
+export function useRestartPending(slug: string): boolean;
+// useSyncExternalStore over the once() in-flight map, plus today's latch: pending holds after the 202 until the next agent_status frame for that slug
+// restart-confirm.tsx
+export function showRestartConfirm(o: { slug: string; tasks: string[]; crons: string[] }): void; // module store
+export function RestartConfirmHost(): JSX.Element | null;  // mounted once in _app.tsx beside OutputDialogHost; reads slug and lists from the store, never props
+export function lostWorkBody(slug: string, tasks: string[], crons: string[]): { text: string; tasks: string[]; crons: string[]; moreTasks: number; moreCrons: number }; // pure; at most 5 each, then "and N more"
+// restart-now-button.tsx
+export function RestartNowButton({ slug }: { slug: string }): JSX.Element; // calls restartAgentNow, aria-disabled "Restarting…" while useRestartPending(slug)
+```
+
+**Toast texts** (spec §9.4):
+- `restarting`: "Restarting @dev.";
+- `restart_pending`: "Restarts @dev when its task results are in.";
+- `restarted_idle`: "@dev restarted; its next start uses the latest config.";
+- `not_running`: "@dev isn't running; its next start uses the latest config.".
+
+- [ ] **Step 1: Write the failing tests.**
+  - **`lostWorkBody`** (pure): 7 tasks give 5 plus `moreTasks: 2`, and 0 crons are omitted from the text.
+  - **The menu:** "Restart now" appears for running, non-errored agents, persistent and spawned. Errored agents keep "Restart", which calls the same `restartAgentNow`. Hibernated agents have neither.
+  - **A 202** shows no dialog. Each of the four statuses toasts its text above.
+  - **A 409 `lost_work`:**
+    - `RestartConfirmHost` opens with the title "Restart @dev now?" and spec §9.4's body;
+    - the lists are mono and wrap, keyed by index plus kind, never by their text;
+    - "Restart anyway" calls `onConfirm`, which **returns** `postRestart(slug, {force: true})` (`pendingLabel="Restarting…"`, `onCloseAutoFocus` back to the trigger).
+  - **Slug binding:**
+    - a 409 that arrives after the anchored menu switched to another agent still targets the original slug;
+    - a 409 that arrives after the menu unmounts still opens the dialog.
+  - **Pending:** the status-line and errored buttons hold pending after the 202 until a status frame for that slug arrives, and pending is shared between two buttons for the same slug.
+  - **`RestartNowButton`:**
+    - it renders as a **sibling** of `LiveLine` when `fact?.kind === "restart"`, never inside its `role="status"` span;
+    - it also renders in the "restart" row of the Now section in `agent-details.tsx`.
+  - **The errored Restart:** its failure toasts ("Couldn't restart @dev: …").
+  - **Deleted code:** `restartError`, `onRestartError` and that notice row are gone from `session-view.tsx`, and the `not_errored` branch is gone from `recovery-actions.tsx` (update `lifecycle.test.tsx`'s `not_errored` case to the toast behaviour).
+- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/agents/restart-confirm.test.tsx apps/web/src/test/agent-menu.test.tsx apps/web/src/features/session/lifecycle.test.tsx`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - One hook is shared by the menu, the status line and the errored Restart button.
-  - The dialog's state is set in the mutation's `onError`, never in an effect.
-  - The lists are derived during render.
+  - The flow lives in `lifecycle.ts` (spec §9.4).
+  - The dialog state lives in the module store, set from the async result, never from component props or an effect.
+  - Mount `RestartConfirmHost` once in `_app.tsx`.
+  - `RestartButton` in `recovery-actions.tsx` becomes a call to `restartAgentNow` with `useRestartPending`.
   - No component is defined inside another.
+  - No `useMemo` for the lists.
 - [ ] **Step 4: Run** the tests. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): Restart now with a lost-work confirm`.
 
@@ -764,7 +838,12 @@ Spec §9.4, AC 14. **Implementer and reviewer invoke `vercel-react-best-practice
 - [ ] **Step 2: Whole-I7 review.** A fresh reviewer on `git diff spec/i7-agents-managing-agents...i7/3-restart`, against the whole spec and all 15 ACs. It checks:
   - ADR 0028: `restart()`, `not_errored` and `spawnedBy` are gone;
   - the flush guard covers every writer;
-  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill, skips Next-only rules and says so; mutations from handlers, no effects for derived state, no inline component definitions.
+  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill, skips Next-only rules and says so; mutations from handlers, no effects for derived state, no inline component definitions. The React checklist also includes:
+  - async results are never bound to the props of a reused or unmounting component;
+  - timers are disposed in effect cleanup;
+  - no button sits inside a `role="status"` element;
+  - list items aren't keyed by free text;
+  - no `restartError` or `not_errored` code is left (C5).
   
   Fix the findings.
 - [ ] **Step 3: Full verification** as in A10, under the heavy lock.

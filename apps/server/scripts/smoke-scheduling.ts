@@ -489,7 +489,7 @@ try {
       }),
   );
   await step("1. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step(
     `1. templates sched and kid (${LOCAL ? "local" : "docker"}, haiku, warm window 1 min) are valid`,

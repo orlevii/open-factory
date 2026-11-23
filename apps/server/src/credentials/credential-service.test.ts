@@ -1,4 +1,5 @@
 import { schema } from "@open-factory/db";
+import type { ServerMessage } from "@open-factory/shared";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
@@ -21,6 +22,7 @@ let svc: CredentialService;
 const restarts: string[] = [];
 const failRestart = new Set<string>();
 const warns: { obj: object; msg: string }[] = [];
+const published: ServerMessage[] = [];
 
 beforeAll(async () => {
   t = await makeTestApp();
@@ -35,6 +37,7 @@ beforeAll(async () => {
     vault: t.app.vault,
     verifier,
     runtimes: runtimes as never,
+    bus: { publishAll: (m) => void published.push(m) },
     now: () => new Date(),
     log: { warn: (obj, msg) => void warns.push({ obj, msg }) },
   });
@@ -45,7 +48,7 @@ const TOKEN = "sk-ant-oat01-SECRET-TOKEN-VALUE";
 
 test("create stores a sealed value; list never contains it", async () => {
   result = { ok: true };
-  const c = await svc.create({ name: "work", kind: "oauth_token", value: TOKEN });
+  const c = await svc.create({ name: "work", kind: "oauth_token", value: TOKEN, expiresAt: null });
   expect(c).toMatchObject({ name: "work", kind: "oauth_token", lastError: null, usedBy: [] });
   expect(c.lastVerifiedAt).toEqual(expect.any(String));
   const row = await rowOf("work");
@@ -57,7 +60,9 @@ test("create stores a sealed value; list never contains it", async () => {
 
 test("rejected → 422 credential_rejected and no row; unreachable → credential_unverifiable", async () => {
   result = { ok: false, kind: "rejected", message: "Claude rejected this token." };
-  await expect(svc.create({ name: "bad", kind: "oauth_token", value: "x" })).rejects.toMatchObject({
+  await expect(
+    svc.create({ name: "bad", kind: "oauth_token", value: "x", expiresAt: null }),
+  ).rejects.toMatchObject({
     status: 422,
     code: "credential_rejected",
     message: "Claude rejected this token.",
@@ -67,7 +72,9 @@ test("rejected → 422 credential_rejected and no row; unreachable → credentia
     kind: "unreachable",
     message: FIELD_MSG.claudeUnreachable,
   };
-  await expect(svc.create({ name: "bad", kind: "oauth_token", value: "x" })).rejects.toMatchObject({
+  await expect(
+    svc.create({ name: "bad", kind: "oauth_token", value: "x", expiresAt: null }),
+  ).rejects.toMatchObject({
     status: 422,
     code: "credential_unverifiable",
   });
@@ -77,12 +84,12 @@ test("rejected → 422 credential_rejected and no row; unreachable → credentia
 
 test("duplicate name → 409 credential_exists before any paid verification turn", async () => {
   seen.length = 0;
-  await expect(svc.create({ name: "work", kind: "oauth_token", value: "y" })).rejects.toMatchObject(
-    {
-      status: 409,
-      code: "credential_exists",
-    },
-  );
+  await expect(
+    svc.create({ name: "work", kind: "oauth_token", value: "y", expiresAt: null }),
+  ).rejects.toMatchObject({
+    status: 409,
+    code: "credential_exists",
+  });
   expect(seen).toEqual([]);
 });
 
@@ -172,7 +179,7 @@ test("replace: one rejected restart doesn't abort the others and is logged by sl
 
 test("reverify of an undecryptable value → readable 409, not a 500", async () => {
   result = { ok: true };
-  await svc.create({ name: "broken", kind: "api_key", value: "k" });
+  await svc.create({ name: "broken", kind: "api_key", value: "k", expiresAt: null });
   await t.db
     .update(schema.credentials)
     .set({ valueEnc: Buffer.alloc(40, 1) })
@@ -198,13 +205,13 @@ test("remove while used → 409 with usedBy, archivedUsedBy and both sentences",
 
 test("remove: only-active and only-archived wording", async () => {
   result = { ok: true };
-  await svc.create({ name: "solo", kind: "api_key", value: "k" });
+  await svc.create({ name: "solo", kind: "api_key", value: "k", expiresAt: null });
   await agentUsing("d", "solo");
   await expect(svc.remove("solo")).rejects.toMatchObject({
     message: "Used by @d. Change their credential first.",
     extra: { usedBy: ["d"], archivedUsedBy: [] },
   });
-  await svc.create({ name: "old", kind: "api_key", value: "k" });
+  await svc.create({ name: "old", kind: "api_key", value: "k", expiresAt: null });
   await agentUsing("e", "old", true);
   await expect(svc.remove("old")).rejects.toMatchObject({
     message: "Archived agents @e still reference it. Edit them first.",
@@ -212,7 +219,7 @@ test("remove: only-active and only-archived wording", async () => {
 });
 
 test("remove: an FK violation from a racing grant maps to 409 credential_in_use", async () => {
-  await svc.create({ name: "racy", kind: "api_key", value: "k" });
+  await svc.create({ name: "racy", kind: "api_key", value: "k", expiresAt: null });
   await agentUsing("f", "racy");
   const spy = vi
     .spyOn(svc as unknown as { users: (id: string) => Promise<unknown> }, "users")
@@ -256,10 +263,10 @@ async function spawnedUsing(
 
 test("#30: a credential used only by a terminated agent deletes and nulls its reference", async () => {
   result = { ok: true };
-  await svc.create({ name: "gone", kind: "api_key", value: "k" });
+  await svc.create({ name: "gone", kind: "api_key", value: "k", expiresAt: null });
   const lead = await agentUsing("lead1", "gone");
   // The spawner moves off; only the terminated kid still references it.
-  await svc.create({ name: "elsewhere", kind: "api_key", value: "k" });
+  await svc.create({ name: "elsewhere", kind: "api_key", value: "k", expiresAt: null });
   await t.db
     .update(schema.agents)
     .set({ credentialId: (await rowOf("elsewhere")).id })
@@ -272,7 +279,7 @@ test("#30: a credential used only by a terminated agent deletes and nulls its re
 
 test("#30: a live spawned user is named as its spawner, once", async () => {
   result = { ok: true };
-  await svc.create({ name: "lent", kind: "api_key", value: "k" });
+  await svc.create({ name: "lent", kind: "api_key", value: "k", expiresAt: null });
   const lead = await agentUsing("lead", "lent");
   await spawnedUsing("kid-a", lead, "lent");
   await spawnedUsing("kid-b", lead, "lent");
@@ -287,7 +294,7 @@ test("#30: a live spawned user is named as its spawner, once", async () => {
 
 test("#30: a live user inserted between the check and the delete is a 409 (the 23514 path)", async () => {
   result = { ok: true };
-  await svc.create({ name: "race30", kind: "api_key", value: "k" });
+  await svc.create({ name: "race30", kind: "api_key", value: "k", expiresAt: null });
   await agentUsing("racer30", "race30");
   const spy = vi
     .spyOn(svc as unknown as { users: (id: string) => Promise<unknown> }, "users")
@@ -305,7 +312,7 @@ test("#30: a live user inserted between the check and the delete is a 409 (the 2
 });
 
 test("remove when unused succeeds", async () => {
-  await svc.create({ name: "spare", kind: "api_key", value: "k" });
+  await svc.create({ name: "spare", kind: "api_key", value: "k", expiresAt: null });
   await svc.remove("spare");
   expect((await svc.list()).map((c) => c.name)).not.toContain("spare");
   await expect(svc.remove("spare")).rejects.toMatchObject({ status: 404 });
@@ -345,4 +352,85 @@ test("a failing verification run never logs or returns the value or raw output",
   }
   expect(logged.join("\n")).not.toContain(TOKEN);
   expect(logged.join("\n")).not.toContain("user:pw@");
+});
+
+test("create stores expiresAt; paste passes null", async () => {
+  result = { ok: true };
+  const c = await svc.create({
+    name: "w-exp",
+    kind: "oauth_token",
+    value: "sk-ant-oat01-SYNTHETICxxxxxxxxxxxxxxxx",
+    expiresAt: new Date("2027-11-12T00:00:00Z"),
+  });
+  expect(c.expiresAt).toBe("2027-11-12T00:00:00.000Z");
+  expect(c.rejected).toBe(false);
+  const pasted = await svc.create({
+    name: "w-paste",
+    kind: "oauth_token",
+    value: "p",
+    expiresAt: null,
+  });
+  expect(pasted.expiresAt).toBeNull();
+});
+
+test("insertVerified never calls the verifier", async () => {
+  const before = seen.length;
+  await svc.insertVerified({ name: "w-iv", kind: "oauth_token", value: "v", expiresAt: null });
+  expect(seen.length).toBe(before);
+});
+
+test("replaceVerified keeps the id, sets expiry, clears notified/rejected and publishes inbox_changed", async () => {
+  result = { ok: true };
+  const c = await svc.create({ name: "w-rv", kind: "oauth_token", value: "a", expiresAt: null });
+  const row = await rowOf("w-rv");
+  await t.db
+    .update(schema.credentials)
+    .set({ expiryNotifiedAt: new Date(), rejectedAt: new Date() })
+    .where(eq(schema.credentials.id, row.id));
+  published.length = 0;
+  const r = await svc.replaceVerified(row.id, "b", { expiresAt: new Date("2028-01-01T00:00:00Z") });
+  expect(r.name).toBe(c.name);
+  expect(r.expiresAt).toBe("2028-01-01T00:00:00.000Z");
+  const after = await rowOf("w-rv");
+  expect(after.id).toBe(row.id);
+  expect(after.expiryNotifiedAt).toBeNull();
+  expect(after.rejectedAt).toBeNull();
+  expect(published).toContainEqual({ type: "inbox_changed" });
+});
+
+test("replaceVerified publishes nothing when no expiry notice was sent", async () => {
+  const row = await rowOf("w-rv");
+  published.length = 0;
+  await svc.replaceVerified(row.id, "c", { expiresAt: null });
+  expect(published).toEqual([]);
+});
+
+test("replaceVerified on a deleted id is 404", async () => {
+  await expect(svc.replaceVerified("missing", "b", { expiresAt: null })).rejects.toMatchObject({
+    code: "credential_not_found",
+  });
+});
+
+test("byName and nameTaken", async () => {
+  expect(await svc.nameTaken("w-rv")).toBe(true);
+  expect(await svc.nameTaken("nope-xyz")).toBe(false);
+  expect(await svc.byName("w-rv")).toMatchObject({ name: "w-rv", kind: "oauth_token" });
+  expect(await svc.byName("nope-xyz")).toBeUndefined();
+});
+
+test("reverify sets rejected_at on rejected, clears on ok, leaves it on unreachable", async () => {
+  result = { ok: true };
+  await svc.create({ name: "w-rj", kind: "oauth_token", value: "a", expiresAt: null });
+  result = { ok: false, kind: "rejected", message: "Claude rejected this token." };
+  const bad = await svc.reverify("w-rj");
+  expect(bad.rejected).toBe(true);
+  const rejectedAt = (await rowOf("w-rj")).rejectedAt;
+  expect(rejectedAt).not.toBeNull();
+  result = { ok: false, kind: "unreachable", message: FIELD_MSG.claudeUnreachable };
+  await svc.reverify("w-rj");
+  expect((await rowOf("w-rj")).rejectedAt).toEqual(rejectedAt);
+  result = { ok: true };
+  const good = await svc.reverify("w-rj");
+  expect(good.rejected).toBe(false);
+  expect((await rowOf("w-rj")).rejectedAt).toBeNull();
 });

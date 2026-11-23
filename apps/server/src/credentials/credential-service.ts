@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Db, schema } from "@open-factory/db";
 import type { CredentialKind, CredentialSummary } from "@open-factory/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import type { EventBus } from "../agents/event-bus.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import { inUseViolation, pgCode, tags } from "../db-errors.ts";
@@ -21,6 +22,7 @@ export class CredentialService {
       vault: Vault;
       verifier: CredentialVerifier;
       runtimes: AgentRuntimes;
+      bus: Pick<EventBus, "publishAll">;
       now: () => Date;
       log?: { warn: (obj: object, msg: string) => void };
     },
@@ -70,8 +72,8 @@ export class CredentialService {
       kind: row.kind,
       lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.toISOString() : null,
       lastError: row.lastError,
-      expiresAt: null,
-      rejected: false,
+      expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
+      rejected: row.rejectedAt !== null,
       usedBy: slugs(u.active),
       archivedUsedBy: slugs(u.archived),
       ...toRateLimitState(row, this.d.now()),
@@ -123,19 +125,46 @@ export class CredentialService {
     );
   }
 
+  async nameTaken(name: string): Promise<boolean> {
+    const [taken] = await this.d.db
+      .select({ id: schema.credentials.id })
+      .from(schema.credentials)
+      .where(eq(schema.credentials.name, name));
+    return taken !== undefined;
+  }
+
+  async byName(name: string) {
+    const [row] = await this.d.db
+      .select({
+        id: schema.credentials.id,
+        name: schema.credentials.name,
+        kind: schema.credentials.kind,
+      })
+      .from(schema.credentials)
+      .where(eq(schema.credentials.name, name));
+    return row;
+  }
+
   async create(b: {
     name: string;
     kind: CredentialKind;
     value: string;
+    expiresAt: Date | null;
   }): Promise<CredentialSummary> {
     // Cheap pre-check so a duplicate name doesn't cost a paid verification turn; the unique
-    // violation below still covers a race.
-    const [taken] = await this.d.db
-      .select({ id: schema.credentials.id })
-      .from(schema.credentials)
-      .where(eq(schema.credentials.name, b.name));
-    if (taken) throw this.exists(b.name);
+    // violation in insertVerified still covers a race.
+    if (await this.nameTaken(b.name)) throw this.exists(b.name);
     this.assertVerified(await this.d.verifier.verify(b.kind, b.value));
+    return this.insertVerified(b);
+  }
+
+  /** Insert only: the caller has already verified the value. */
+  async insertVerified(b: {
+    name: string;
+    kind: CredentialKind;
+    value: string;
+    expiresAt: Date | null;
+  }): Promise<CredentialSummary> {
     const id = randomUUID();
     try {
       const [row] = await this.d.db
@@ -145,7 +174,8 @@ export class CredentialService {
           name: b.name,
           kind: b.kind,
           valueEnc: this.d.vault.seal(b.value, aad(id)),
-          lastVerifiedAt: new Date(),
+          lastVerifiedAt: this.d.now(),
+          expiresAt: b.expiresAt,
         })
         .returning();
       if (!row) throw new Error("credential insert returned no row");
@@ -158,19 +188,48 @@ export class CredentialService {
 
   async replace(name: string, value: string): Promise<CredentialSummary> {
     const row = await this.rowByName(name);
+    return this.replaceById(row.id, value, { expiresAt: null });
+  }
+
+  async replaceById(
+    id: string,
+    value: string,
+    opts: { expiresAt: Date | null },
+  ): Promise<CredentialSummary> {
+    const [row] = await this.d.db
+      .select({ kind: schema.credentials.kind })
+      .from(schema.credentials)
+      .where(eq(schema.credentials.id, id));
+    if (!row) throw this.notFoundById();
     this.assertVerified(await this.d.verifier.verify(row.kind, value));
+    return this.replaceVerified(id, value, opts);
+  }
+
+  /** Write the new value: the caller has already verified it. */
+  async replaceVerified(
+    id: string,
+    value: string,
+    opts: { expiresAt: Date | null },
+  ): Promise<CredentialSummary> {
+    const [before] = await this.d.db
+      .select({ expiryNotifiedAt: schema.credentials.expiryNotifiedAt })
+      .from(schema.credentials)
+      .where(eq(schema.credentials.id, id));
     const [updated] = await this.d.db
       .update(schema.credentials)
       .set({
-        valueEnc: this.d.vault.seal(value, aad(row.id)),
-        lastVerifiedAt: new Date(),
+        valueEnc: this.d.vault.seal(value, aad(id)),
+        lastVerifiedAt: this.d.now(),
+        expiresAt: opts.expiresAt,
+        expiryNotifiedAt: null,
+        rejectedAt: null,
         lastError: null,
       })
-      .where(eq(schema.credentials.id, row.id))
+      .where(eq(schema.credentials.id, id))
       .returning();
-    if (!updated) throw new ApiError(404, "credential_not_found", `No credential named ${name}.`);
+    if (!updated) throw this.notFoundById();
     // One failed restart is logged by slug and never aborts the rest or the write.
-    const active = (await this.users(row.id)).active;
+    const active = (await this.users(id)).active;
     const results = await Promise.allSettled(
       active.map((a) => this.d.runtimes.requestRestart(a.id)),
     );
@@ -178,7 +237,12 @@ export class CredentialService {
       if (r.status === "rejected")
         this.d.log?.warn({ slug: active[i]?.slug }, "restart after credential change failed");
     });
+    if (before?.expiryNotifiedAt) this.d.bus.publishAll({ type: "inbox_changed" });
     return this.summarize(updated);
+  }
+
+  private notFoundById() {
+    return new ApiError(404, "credential_not_found", "That credential no longer exists.");
   }
 
   async reverify(name: string): Promise<CredentialSummary> {
@@ -198,7 +262,13 @@ export class CredentialService {
     const r = await this.d.verifier.verify(row.kind, value);
     const [updated] = await this.d.db
       .update(schema.credentials)
-      .set(r.ok ? { lastVerifiedAt: new Date(), lastError: null } : { lastError: r.message })
+      .set(
+        r.ok
+          ? { lastVerifiedAt: this.d.now(), lastError: null, rejectedAt: null }
+          : r.kind === "rejected"
+            ? { lastError: r.message, rejectedAt: this.d.now() }
+            : { lastError: r.message },
+      )
       .where(eq(schema.credentials.id, row.id))
       .returning();
     return this.summarize(updated ?? row);

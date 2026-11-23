@@ -326,6 +326,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     vault,
     verifier,
     runtimes,
+    bus,
     now: clock,
     log: app.log,
   });

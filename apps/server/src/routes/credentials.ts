@@ -25,7 +25,9 @@ export const credentialsRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/credentials",
     { schema: { body: createCredentialBodySchema, response: { 201: credentialResponseSchema } } },
     async (req, reply) =>
-      reply.code(201).send({ credential: await app.credentials.create(req.body) }),
+      reply
+        .code(201)
+        .send({ credential: await app.credentials.create({ ...req.body, expiresAt: null }) }),
   );
 
   app.put(

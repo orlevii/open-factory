@@ -40,8 +40,21 @@ export type PreparedSpec = AgentRuntimeSpec & {
   effective: Effective;
 };
 
-/** `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. */
+/** I2 §6.2: a loaded runtime's `started` config (what its running process started with); undefined when none runs. */
+export type StartedOf = (agentId: string) => Effective | undefined;
+
+/**
+ * `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. `extra.loaded`
+ * is `AgentRuntimes.startedOf` (I2 §6.2), which a spawned agent's inheritance reads for its spawner. `AgentRuntimes`
+ * adds it to every start, so no caller can leave it out.
+ */
 export type PrepareStart = (
+  agent: AgentRow,
+  extra: { agentToken: string; loaded: StartedOf },
+) => Promise<PreparedSpec>;
+
+/** What a runtime calls: `PrepareStart` with `loaded` already bound by `AgentRuntimes`. */
+export type StartPreparer = (
   agent: AgentRow,
   extra: { agentToken: string },
 ) => Promise<PreparedSpec>;
@@ -66,7 +79,8 @@ const either = (a: string[], b: string[]) => [...new Set([...a, ...b])];
 /**
  * S7 §6.3 and I2 §6.2: a spawned agent's inheritance, derived from its spawner at every start (no snapshot). The
  * spawner counts as the stricter of what its running process started with (`loaded`) and its current effective config:
- * secrets intersected, deny rules unioned. A spawner that isn't loaded counts as its current config alone.
+ * secrets intersected, deny rules unioned. A spawner with no running process (no `started`) counts as its current
+ * config alone.
  * Grants = the spawner's current grants ∩ the child's projects, and the §6.2 refusals are re-checked. Anything about
  * the spawner that can't be read fails the start closed: a child never runs with more than its spawner holds.
  */
@@ -75,7 +89,7 @@ export async function deriveInheritance(
     db: Db;
     config: Config;
     resolver: ConfigResolver;
-    loaded?: (agentId: string) => Effective | undefined;
+    loaded: StartedOf;
   },
   agent: AgentRow,
   effective: Effective,
@@ -102,7 +116,7 @@ export async function deriveInheritance(
       );
     throw err;
   }
-  const started = d.loaded?.(spawner.id);
+  const started = d.loaded(spawner.id);
   const currentDeny = readDenyRules(current.doc.settings);
   const startedDeny = started ? readDenyRules(started.doc.settings) : undefined;
   const grants = await d.db
@@ -153,8 +167,6 @@ export function createPrepareStart(d: {
   vault: Vault;
   workspace: Workspace;
   resolver: ConfigResolver;
-  /** A loaded runtime's `started` config, or undefined when it isn't loaded (spec §6.2); wired with the runtimes. */
-  loaded?: (agentId: string) => Effective | undefined;
   lock: KeyedMutex;
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
   containers?: Pick<ContainerManager, "stopIfRunning">;
@@ -162,7 +174,7 @@ export function createPrepareStart(d: {
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
-  return (stale, { agentToken }) =>
+  return (stale, { agentToken, loaded }) =>
     d.lock.run(stale.slug, async () => {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
@@ -173,7 +185,9 @@ export function createPrepareStart(d: {
       const effective = await d.resolver.effective(agent);
       const config = effective.config;
       const spawned =
-        agent.kind === "ephemeral" ? await deriveInheritance(d, agent, effective) : null;
+        agent.kind === "ephemeral"
+          ? await deriveInheritance({ ...d, loaded }, agent, effective)
+          : null;
       const docker = config.runtime === "docker";
       if (docker) {
         if (!d.containers)

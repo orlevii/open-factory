@@ -26,7 +26,7 @@ import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { ConfigResolver, type Effective } from "./config-resolver.ts";
 import { AgentStartError, forSpawnedAgent } from "./errors.ts";
-import { createPrepareStart, deriveInheritance, type PrepareStart } from "./start.ts";
+import { createPrepareStart, deriveInheritance, type StartPreparer } from "./start.ts";
 
 const KEY = "k".repeat(40);
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -35,7 +35,8 @@ let repo: string;
 let hs: string;
 let workspace: Workspace;
 let lock: KeyedMutex;
-let prepareStart: PrepareStart;
+/** The real prepareStart with `loaded` bound, as `AgentRuntimes` binds it for every start. */
+let prepareStart: StartPreparer;
 let factoryConfig: Config;
 let resolver: ConfigResolver;
 /** Stands in for the runtimes' `started`: what a loaded spawner's process started with. */
@@ -160,13 +161,12 @@ async function seedStartFixture() {
   resolver = new ConfigResolver({
     templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
   });
-  prepareStart = createPrepareStart({
+  const prepare = createPrepareStart({
     db: t.db,
     config: factoryConfig,
     vault,
     workspace,
     resolver,
-    loaded: (id) => loaded.get(id),
     lock,
     neighborhood: new Neighborhood(t.db),
     serverEnv: {
@@ -179,6 +179,7 @@ async function seedStartFixture() {
       CLAUDE_CODE_OAUTH_TOKEN: "server-own-token",
     },
   });
+  prepareStart = (a, extra) => prepare(a, { ...extra, loaded: (id) => loaded.get(id) });
 }
 beforeEach(seedStartFixture);
 
@@ -697,7 +698,7 @@ test.each([
   try {
     await expect(
       deriveInheritance(
-        { db: t.db, config: factoryConfig, resolver },
+        { db: t.db, config: factoryConfig, resolver, loaded: () => undefined },
         { ...child, reportsTo },
         await resolver.effective(child),
       ),

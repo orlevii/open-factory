@@ -216,12 +216,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
   const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
+  const resolver = new ConfigResolver({ templates });
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
     vault,
     workspace,
-    resolver: new ConfigResolver({ templates }),
+    resolver,
     lock,
     containers,
     neighborhood,
@@ -241,7 +242,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
-    docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
+    docker: {
+      containers,
+      claudeBin: config.dockerClaudeBin,
+      defaultImage: config.defaultImage,
+      resolver,
+    },
     // Only the real driver's processes are ours to journal and reap (spec §12).
     ...(deps.harnessDriver ? {} : { journal }),
     driver:
@@ -522,35 +528,39 @@ async function listenForAgents(
     version: FACTORY_VERSION,
     onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
     loadCaller: (id) => d.store.agentById(id),
-    tools: (caller) => [
-      sendMessageTool(d.router),
-      sendCommandTool({
-        caller,
-        neighborhood: d.neighborhood,
-        runtimes: d.runtimes,
-        store: d.store,
-        spawned: caller.kind === "ephemeral",
-      }),
-      ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
-      // Q12: persistent agents only; a spawned agent never sees the schedule tools.
-      ...(caller.kind === "persistent"
-        ? scheduleTools({
-            schedules: d.schedules,
-            factoryZone: config.factoryTimezone,
-            loadAgent: (id) => d.store.agentById(id),
-          })
-        : []),
-      listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
-      ...(maySpawn(caller)
-        ? [
-            spawnAgentTool({
-              spawn: d.spawner,
-              templates: caller.config.canSpawn as [string, ...string[]],
-            }),
-            terminateAgentTool({ terminate: d.terminator }),
-          ]
-        : []),
-    ],
+    tools: (caller) => {
+      // I2 §6.2: the spawn tools describe the running process, so they follow the config it started with.
+      const started = d.runtimes.startedOf(caller.id)?.config;
+      return [
+        sendMessageTool(d.router),
+        sendCommandTool({
+          caller,
+          neighborhood: d.neighborhood,
+          runtimes: d.runtimes,
+          store: d.store,
+          spawned: caller.kind === "ephemeral",
+        }),
+        ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+        // Q12: persistent agents only; a spawned agent never sees the schedule tools.
+        ...(caller.kind === "persistent"
+          ? scheduleTools({
+              schedules: d.schedules,
+              factoryZone: config.factoryTimezone,
+              loadAgent: (id) => d.store.agentById(id),
+            })
+          : []),
+        listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+        ...(started && maySpawn(caller, started)
+          ? [
+              spawnAgentTool({
+                spawn: d.spawner,
+                templates: started.canSpawn as [string, ...string[]],
+              }),
+              terminateAgentTool({ terminate: d.terminator }),
+            ]
+          : []),
+      ];
+    },
   });
   const listener = await startAgentListener({
     hosts: bind.hosts,

@@ -8,7 +8,13 @@ import { EventStore } from "../agents/event-store.ts";
 import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent, insertSchedule, insertScheduledMessage } from "../agents/testing/rows.ts";
-import { noForward, noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import {
+  noForward,
+  noopTokens,
+  okSpec,
+  silentLog,
+  testEffective,
+} from "../agents/testing/runtime-harness.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, containerName, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
@@ -61,7 +67,14 @@ class Boot {
       log: silentLog,
       maxRunningAgents: () => max,
       ...(o.dockerRuntime
-        ? { docker: { containers: this.containers, claudeBin: "claude", defaultImage: "img" } }
+        ? {
+            docker: {
+              containers: this.containers,
+              claudeBin: "claude",
+              defaultImage: "img",
+              resolver: { effective: async () => testEffective({ runtime: "docker" }) },
+            },
+          }
         : {}),
     });
   }

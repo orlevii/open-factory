@@ -92,7 +92,8 @@ const make = () =>
     store,
     bus,
     driver: createClaudeDriver({ log, transports: { local: localTransport } }),
-    prepareStart,
+    // A lone agent: no spawner, so no running config to read (I2 §6.2).
+    prepareStart: (a, extra) => prepareStart(a, { ...extra, loaded: () => undefined }),
     tokens: new AgentTokens(),
     log,
     slots: unlimitedSlots,

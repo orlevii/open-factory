@@ -46,6 +46,7 @@ import { dockerStartError } from "../runtime/docker/errors.ts";
 import type { SlotPort, WakeReason } from "../supervisor/slots.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import { capText } from "./cap.ts";
+import type { Effective } from "./config-resolver.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -72,7 +73,7 @@ import {
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
-import type { PreparedSpec, PrepareStart } from "./start.ts";
+import type { PreparedSpec, StartPreparer } from "./start.ts";
 
 export interface RuntimeLog {
   debug(obj: object, msg: string): void;
@@ -87,7 +88,7 @@ export interface RuntimeDeps {
   bus: EventBus;
   driver: HarnessDriver;
   /** Builds the spec for a process start. It takes the agent's slug lock itself: never call it while holding that lock. */
-  prepareStart: PrepareStart;
+  prepareStart: StartPreparer;
   /** Per-launch agent tokens (spec §5.2): minted before each start, revoked when that process exits. */
   tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
@@ -117,7 +118,7 @@ export interface RuntimeDeps {
    */
   memberUpdateDebounceMs?: () => number;
   /**
-   * S10 §8.2: the factory default warm window in minutes, read live, for a snapshot that omits `warmWindowMinutes`
+   * S10 §8.2: the factory default warm window in minutes, read live, for a started config that omits `warmWindowMinutes`
    * (70 when absent); `settingsChanged()` re-arms an armed warm timer on a change.
    */
   defaultWarmWindowMinutes?: () => number;
@@ -272,12 +273,14 @@ type Subject = NonNullable<Envelope["subject"]>;
 
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
 /**
- * S9 §10.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the agent was
- * stopped on purpose). It rides at the head of the next batch that has something else. The one predicate every place
- * that counts a queued item as a reason to act uses.
+ * S9 §10.3, I2 §7.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the
+ * agent was stopped on purpose; `config_changed`: the change applies at the next start). It rides at the head of the
+ * next batch that has something else. The one predicate every place that counts a queued item as a reason to act uses.
  */
 const isPassive = (e: Entry): boolean =>
-  e.kind === "message" && e.row.kind === "system" && e.row.notice === "crons_stopped";
+  e.kind === "message" &&
+  e.row.kind === "system" &&
+  (e.row.notice === "crons_stopped" || e.row.notice === "config_changed");
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
 /** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
 const isHeld = (e: Entry): e is MessageEntry =>
@@ -447,7 +450,7 @@ export class AgentRuntime {
   private readonly jobs = new SerialQueue();
   private proc: HarnessProcess | undefined;
   private deadProc: HarnessProcess | undefined;
-  private started = false; // session_started seen for this process
+  private sessionStarted = false; // session_started seen for this process
   private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
   /** U3 §5.2: when the open turn's `turn_started` was stored (ISO); set and cleared with `openTurnId`. */
@@ -529,6 +532,26 @@ export class AgentRuntime {
   private submitted = 0;
   // Apply-restart (spec §13)
   private restartPending = false;
+  /** I2 §7.3: the change lines the pending restart applies (`restartChanges`); cleared on every exit and launch. */
+  private pendingChanges = new Set<string>();
+  /**
+   * I2 §6.2: the config the current process started with (`PreparedSpec.effective`), set at the launch and cleared at
+   * its exit; undefined while nothing runs. Whatever describes the running process reads it. Holds env values: never log
+   * it.
+   */
+  started: Effective | undefined;
+  /**
+   * I2 §7.3: the store-clock stamp taken before the current process's prepare. A `config_changed` row created after it
+   * describes a change this process may not have, so it is held for the next process.
+   */
+  private procStartedAt: Date | undefined;
+  /**
+   * I2 §6.2: the image the next Docker start is expected to use, which the Supervisor's synchronous `refOf` checks and
+   * pulls before the grant. Kept by `AgentRuntimes` for a loaded runtime (undefined when the template was invalid at
+   * load) and refreshed on every config change; a start that resolves another image updates it and goes back through
+   * the pull.
+   */
+  nextImage: string | undefined;
   private stopping = false; // a deliberate stop of the current process began: flush() writes nothing
   /** S7 §8 step 5: the sweep's last Docker list showed a container left for this terminated agent. */
   private containerListed = false;
@@ -803,11 +826,20 @@ export class AgentRuntime {
    * Adds (or refreshes) a `@factory` notice. Call inside a job. A new notice goes ahead of every non-notice entry
    * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
    */
-  async addNotice(type: NoticeType, body: string) {
+  async addNotice(type: NoticeType, body: string, o: { merge?: boolean } = {}) {
     const row = await this.d.store.createNotice(
       { toAgentId: this.agent.id, notice: type, body },
-      this.inFlight.flat().map((e) => e.row.id),
+      {
+        inFlightIds: this.inFlight.flat().map((e) => e.row.id),
+        ...(o.merge ? { merge: true } : {}),
+      },
     );
+    this.placeNotice(row);
+    this.publishQueue();
+  }
+
+  /** A notice row into the queue: its entry refreshed when queued, else ahead of every non-notice entry. */
+  private placeNotice(row: MessageRow) {
     const existing = this.queue.find(
       (e): e is MessageEntry => e.kind === "message" && e.row.id === row.id,
     );
@@ -822,7 +854,34 @@ export class AgentRuntime {
         fromKind: "factory",
       });
     }
-    this.publishQueue();
+  }
+
+  /**
+   * I2 §7.3: records config change lines in the one pending `config_changed` notice (merged, sorted). Passive: it wakes
+   * nothing and is held from the running process (see `flush`), so only the next process reads it. Never throws for a
+   * terminated agent: its rows are rejected anyway.
+   */
+  recordConfigNotice(lines: string[]): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted || !lines.length) return;
+      await this.addNotice("config_changed", notices.configChanged(lines), { merge: true });
+    });
+  }
+
+  /**
+   * I2 §7.3: a `config_changed` row written through the store while this runtime was loading (its init may have read
+   * the queue before that write committed). Re-read: queued, its entry is refreshed; unseen and still pending, queued.
+   */
+  adoptNotice(id: string): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted) return;
+      const queued = this.queue.some((e) => e.kind === "message" && e.row.id === id);
+      if (this.seen.has(id) && !queued) return; // written (or rejected) meanwhile
+      const row = await this.d.store.pendingJoined(id);
+      if (!row) return;
+      this.placeNotice(entryOf(row).row);
+      this.publishQueue();
+    });
   }
 
   /** `addNotice` as its own job, then a flush (never starts a process). */
@@ -1077,8 +1136,11 @@ export class AgentRuntime {
   /**
    * Applies config changes at the next safe moment: stop the process gracefully and resume the same session on
    * the next start, whose prepareStart reloads everything from the DB. A no-op when no process is running.
+   * `changes` (I2 §7.3) are the lines the restart applies, shown as `restartChanges` until the process exits; callers
+   * that restart for other reasons (credential, grants, manager) pass none. `wake` is I7's (a waking self-restart
+   * notice) and is ignored in I2.
    */
-  async requestRestart(): Promise<void> {
+  async requestRestart(opts: { changes?: string[]; wake?: boolean } = {}): Promise<void> {
     await this.run(async () => {
       // Not running (or already going away): the next start reads the new values anyway.
       if (
@@ -1089,6 +1151,7 @@ export class AgentRuntime {
         !this.terminated
       ) {
         this.restartPending = true;
+        for (const c of opts.changes ?? []) this.pendingChanges.add(c);
         this.maybeRestart();
       }
       this.publishStatus();
@@ -1666,6 +1729,8 @@ export class AgentRuntime {
     errorKind?: ErrorKind;
     restartPending: boolean;
     restartWaitingOn: number;
+    /** I2 §7.3: what the pending restart applies, sorted; empty when none is pending. */
+    restartChanges: string[];
     waitingOn: WaitingOn;
     /** S9 §10.2: the live in-session crons, the zone their text is written in, and a pending Stop crons. */
     crons: LiveCronView[];
@@ -1697,6 +1762,7 @@ export class AgentRuntime {
       ...(this.slots.isPulling(this.agent.id) ? { pulling: true } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
+      restartChanges: this.restartPending ? [...this.pendingChanges].sort() : [],
       waitingOn: this.waitingOn(),
       crons: this.cronsList(),
       cronZone: cronZoneOf(this.agent.runtime),
@@ -1736,7 +1802,7 @@ export class AgentRuntime {
   busy(): boolean {
     return (
       this.starting ||
-      (Boolean(this.proc) && !this.started) ||
+      (Boolean(this.proc) && !this.sessionStarted) ||
       Boolean(this.openTurnId) ||
       this.inFlight.length > 0 ||
       this.awaiting.length > 0 ||
@@ -1761,7 +1827,7 @@ export class AgentRuntime {
     const proc = this.proc;
     return (
       Boolean(proc) &&
-      this.started &&
+      this.sessionStarted &&
       proc !== this.deadProc &&
       proc !== this.failingProc &&
       !this.stopping &&
@@ -1927,7 +1993,7 @@ export class AgentRuntime {
       attempting: this.attempting,
       working:
         this.starting ||
-        (Boolean(this.proc) && !this.started) ||
+        (Boolean(this.proc) && !this.sessionStarted) ||
         Boolean(this.openTurnId) ||
         this.awaiting.length > 0 ||
         this.compactInFlight ||
@@ -2302,6 +2368,9 @@ export class AgentRuntime {
   ): Promise<boolean> {
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
+    // I2 §7.3: stamped before the prepare reads the config, so a change landing during the prepare is held for the next
+    // process (the start may have read the config before it).
+    const procStartedAt = this.d.store.clock();
     let prepared: PreparedSpec;
     try {
       prepared = await this.d.prepareStart(this.agent, { agentToken });
@@ -2314,8 +2383,14 @@ export class AgentRuntime {
       if (this.terminated) throw new AgentStartError(TERMINATED_START);
       return this.failStart(err, "prepareStart failed");
     }
-    // `effective` holds env values: it is kept out of the spec the driver sees (A10 stores it as `started`).
-    const { launch: dockerLaunch, credentialId, effective: _effective, ...prepSpec } = prepared;
+    // `effective` holds env values: it is kept out of the spec the driver sees, and kept as `started` at the launch.
+    const { launch: dockerLaunch, credentialId, effective, ...prepSpec } = prepared;
+    // I2 §6.2: the Supervisor checked (and pulled) `nextImage` before the grant. A start that resolved another image (a
+    // disk edit no scan has seen yet) updates it and goes back through the pull, as an image found missing does.
+    if (dockerLaunch && dockerLaunch.image !== this.nextImage) {
+      this.nextImage = dockerLaunch.image;
+      return false;
+    }
     let spec: AgentRuntimeSpec = prepSpec;
     if (!this.firstStartDone) {
       this.firstStartDone = true;
@@ -2350,10 +2425,13 @@ export class AgentRuntime {
     this.tokenGens.set(proc, generation);
     onLaunched();
     this.proc = proc;
+    this.started = effective;
+    this.procStartedAt = procStartedAt;
+    this.pendingChanges.clear(); // this process runs on the config the changes describe
     this.procCredentialId = credentialId; // what prepareStart launched on, not the row (a spawned agent's differs)
     this.procRuntime = spec.runtime;
     this.imageRequeued = false;
-    this.started = false;
+    this.sessionStarted = false;
     this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
     this.afterExit = undefined;
     this.liveTasks = new Map();
@@ -2699,7 +2777,7 @@ export class AgentRuntime {
     if (proc !== this.proc && this.deadProc !== proc) return;
     switch (e.type) {
       case "session_started": {
-        this.started = true;
+        this.sessionStarted = true;
         const row = await this.d.store.agentById(this.agent.id);
         if (!row?.sessionId) await this.d.store.setSessionId(this.agent.id, e.sessionId);
         else if (row.sessionId !== e.sessionId)
@@ -2781,7 +2859,7 @@ export class AgentRuntime {
         this.absorbed = []; // the stamp and the close committed: the batch is no longer working
         this.chatChanged(closing);
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
-        if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
+        if (!e.originKind && this.attempting && this.attemptBatchWritten && this.sessionStarted)
           await this.attemptSucceeded();
         this.openTurnId = undefined;
         this.turnStartedAt = undefined;
@@ -2876,7 +2954,7 @@ export class AgentRuntime {
         break;
       case "error":
         await this.append(this.openTurnId, e);
-        if (!this.started && (e.source === "resume" || e.source === "spawn")) {
+        if (!this.sessionStarted && (e.source === "resume" || e.source === "spawn")) {
           // Spec §9.3: the failed result of whichever attempt started it; never an automatic attempt of its own.
           const code = e.code !== undefined ? Number(e.code) : Number.NaN;
           const kind: ErrorKind =
@@ -2945,6 +3023,7 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    this.pendingChanges.clear();
     this.stopCronsPending = undefined; // the crons die with the process anyway (S9 §10.3)
     const attemptOwed = this.attemptOwedAtExit; // only this process's exit honours it
     this.attemptOwedAtExit = false;
@@ -2998,8 +3077,10 @@ export class AgentRuntime {
     if (this.proc === proc) {
       this.proc = undefined;
       this.procCredentialId = undefined;
+      this.started = undefined;
+      this.procStartedAt = undefined;
     }
-    this.started = false;
+    this.sessionStarted = false;
     const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
@@ -3485,10 +3566,10 @@ export class AgentRuntime {
     this.updateCronExpiry();
   }
 
-  /** The snapshot's warm window, else the factory default read live (S10 §8.2, Q8). */
+  /** The running process's warm window (I2 §6.2), else the factory default read live (S10 §8.2, Q8). */
   private warmWindowMs(): number {
     const minutes =
-      this.agent.config.warmWindowMinutes ??
+      this.started?.config.warmWindowMinutes ??
       this.d.defaultWarmWindowMinutes?.() ??
       DEFAULT_WARM_WINDOW_MINUTES;
     return minutes * 60_000;
@@ -3510,13 +3591,13 @@ export class AgentRuntime {
   }
 
   /**
-   * S10 §8.2: the default warm window or the member-update debounce changed. A snapshot that omits the window re-arms
-   * its armed warm timer from when it was armed (firing at once when that is past); a snapshot that holds a window
+   * S10 §8.2: the default warm window or the member-update debounce changed. A started config that omits the window
+   * re-arms its armed warm timer from when it was armed (firing at once when that is past); one that holds a window
    * keeps it. The held-update timer re-arms from the recomputed due time (and again at the end of the job).
    */
   async settingsChanged(): Promise<void> {
     await this.run(async () => {
-      if (this.agent.config.warmWindowMinutes === undefined && this.warmTimer) {
+      if (this.started?.config.warmWindowMinutes === undefined && this.warmTimer) {
         clearTimeout(this.warmTimer);
         this.warmTimer = undefined;
         const armedAt = this.warmArmedAt ?? Date.now();
@@ -3761,14 +3842,18 @@ export class AgentRuntime {
         await this.writeRaw(head);
         break;
       }
-      const batch: MessageEntry[] = [];
-      while (this.queue[0]?.kind === "message") batch.push(this.queue.shift() as MessageEntry);
+      const run: MessageEntry[] = [];
+      while (this.queue[0]?.kind === "message") run.push(this.queue.shift() as MessageEntry);
+      // I2 §7.3: a config notice newer than this process stays queued for the next one (it is passive, see below).
+      const kept = run.filter((e) => this.forNextProcess(e));
+      const batch = run.filter((e) => !kept.includes(e));
       // S6 §8.1: a batch written while no turn is open carries every held row, due or not.
       if (!this.turnOpen()) batch.push(...this.held.splice(0));
       // S9 §10.3: a passive notice alone is never written; it waits for a batch with something else. A compact or a
-      // command queued behind it goes ahead (flush otherwise cuts a batch at the first non-message entry).
+      // command queued behind it goes ahead (flush otherwise cuts a batch at the first non-message entry). Held rows
+      // are never passive, so here `batch` is still a part of `run`.
       if (batch.every(isPassive)) {
-        this.queue.unshift(...batch);
+        this.queue.unshift(...run);
         const at = this.queue.findIndex((e) => e.kind !== "message");
         if (at > 0 && this.queue.slice(0, at).every(isPassive)) {
           const [c] = this.queue.splice(at, 1);
@@ -3777,7 +3862,13 @@ export class AgentRuntime {
         }
         break;
       }
-      if (!(await this.writeBatch(batch))) break; // a rejected write leaves the batch at the head: stop, don't spin
+      let written: boolean;
+      try {
+        written = await this.writeBatch(batch);
+      } finally {
+        this.queue.unshift(...kept); // ahead of a rejected batch too: notices lead
+      }
+      if (!written) break; // a rejected write leaves the batch at the head: stop, don't spin
     }
     // Due held rows on their own, only while no turn is open (S6 §8.1).
     if (
@@ -3824,6 +3915,16 @@ export class AgentRuntime {
       ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
     });
     this.publishQueue();
+  }
+
+  /** I2 §7.3: a `config_changed` row created after the running process's start stamp: only the next process reads it. */
+  private forNextProcess(e: MessageEntry): boolean {
+    return (
+      e.row.kind === "system" &&
+      e.row.notice === "config_changed" &&
+      this.procStartedAt !== undefined &&
+      e.row.createdAt.getTime() > this.procStartedAt.getTime()
+    );
   }
 
   /**
@@ -3950,7 +4051,7 @@ export class AgentRuntime {
           batch.filter((e) => e.row.kind === "scheduled").map((e) => e.row),
           tx,
         );
-        if (this.started) await this.d.store.markDelivered(ids, tx);
+        if (this.sessionStarted) await this.d.store.markDelivered(ids, tx);
         if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
         return out;
       });
@@ -3970,7 +4071,7 @@ export class AgentRuntime {
     // Its own statement, after the batch's transaction committed: never inside it (S7 §10.2, the lock order of §5.7).
     this.persistActivity();
     if (this.attempting) this.attemptBatchWritten = true;
-    if (!this.started) this.inFlight.push(batch);
+    if (!this.sessionStarted) this.inFlight.push(batch);
     const kinds = batch.map((e) => kindOf(e.row));
     const written = writtenBatch(batch, new Date().toISOString());
     if (!turnAtWrite) {

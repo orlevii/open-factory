@@ -7,7 +7,7 @@ import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -54,6 +54,7 @@ async function make(o: { spawned?: boolean } = {}) {
       runtime: "local",
       permissionMode: "auto",
       mounts: [],
+      effective: testEffective(),
     }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
     slots: unlimitedSlots,

@@ -210,6 +210,11 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
     reason: z.string(),
   }),
   z.object({ type: z.literal("session_reset"), by: z.string() }),
+  /**
+   * I2 §7.3: the agent's configuration changed (a template edit or an overlay save). `changes` are `describeChanges`
+   * lines, which never carry a secret value.
+   */
+  z.object({ type: z.literal("config_changed"), by: z.string(), changes: z.array(z.string()) }),
   z.object({ type: z.literal("spawned"), by: z.string(), template: z.string() }),
   z.object({ type: z.literal("terminated"), by: z.string() }),
   z.object({

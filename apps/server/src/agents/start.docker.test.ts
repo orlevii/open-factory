@@ -214,7 +214,14 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     }),
     prepareStart,
     log: silentLog,
-    docker: { containers, claudeBin: factoryConfig.dockerClaudeBin, defaultImage: IMAGE },
+    docker: {
+      containers,
+      claudeBin: factoryConfig.dockerClaudeBin,
+      defaultImage: IMAGE,
+      resolver: new ConfigResolver({
+        templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
+      }),
+    },
   });
   const rt = await runtimes.bySlug(slug);
   if (!rt) throw new Error("no runtime");
@@ -649,7 +656,9 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
   const message =
     "Can't reach Docker at unix:///tmp/of-test-docker.sock: connect ECONNREFUSED /tmp/of-test-docker.sock.";
   // The prepare path (the image is known): stopIfRunning can't reach the daemon.
-  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
+  await expect(
+    w.prepareStart(w.agent, { agentToken: "tok", loaded: () => undefined }),
+  ).rejects.toMatchObject({
     name: "AgentStartError",
     message,
   });
@@ -663,7 +672,9 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
 test("missing CLI bundle: 'Build the CLI first (pnpm build).'", async () => {
   const w = await setup();
   rmSync(w.cliBundle);
-  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
+  await expect(
+    w.prepareStart(w.agent, { agentToken: "tok", loaded: () => undefined }),
+  ).rejects.toMatchObject({
     name: "AgentStartError",
     message: "Build the CLI first (pnpm build).",
   });

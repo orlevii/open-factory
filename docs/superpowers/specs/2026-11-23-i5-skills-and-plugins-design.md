@@ -218,6 +218,8 @@ Every skill visible to the factory has one **name**, its folder name.
 4. **Template-local.** The real folders under each valid template's `skills/`, grouped by template. Other templates can never resolve them.
 5. **Referenced but unresolved.** Any name that a template's `last_valid` doc or an overlay lists, and that resolves nowhere, gets a synthetic row with the source "Unknown", the state "Missing" and its users. This is the only place that says who breaks when a host folder is deleted (Break B5).
 
+**Frontmatter hooks** (R12). A Library skill's `SKILL.md` frontmatter `hooks` is parsed and listed in the skill's contents: event, matcher and the full command. The row shows "Runs hooks" and the update view diffs them.
+
 **Description.** Read from the `SKILL.md` frontmatter with `O_NOFOLLOW`, at most 64 KB. The text is cut to 200 characters on a grapheme boundary (`Intl.Segmenter`) and ends in "…".
 
 **Users** (`usedBy`):
@@ -303,7 +305,7 @@ The only bound on the download itself is the operation's time budget, and the sp
 - the line "a1b2c3d → e4f5a6b · 2 days ago · <subject>";
 - a compare link, `https://github.com/<repo>/compare/<old>...<new>`, shown only when `FACTORY_GITHUB_URL` is the default;
 - the changes to the picked skills, found by comparing `trees`:
-  - "changed";
+  - "changed", with frontmatter `hooks` added or removed shown as `+`/`−` lines;
   - "removed";
   - "New in this commit, not added", for new folders, which are never picked automatically;
   - "Unusable at this commit", for a frontmatter mismatch or `.claude-plugin/`.
@@ -458,7 +460,14 @@ A shared hold can't cover Claude's own read of the seed after spawn. Operations 
      - `mcpb/` (extracted MCP bundle code) is scrubbed, so edited bundle code can't run as if it had been reviewed. G1 checks that Claude re-extracts it from the seed; if it doesn't, that goes back to owner-i5.
      - A link at `.claude-config/plugins` is removed as a link and replaced with a folder.
    - `.claude-config/skills/` is emptied (§6.4).
-   - **Project and local settings** (R11). `prepare` reads `<workdir>/.claude/settings.json` and `<workdir>/.claude/settings.local.json`, with `lstat`; a link fails the start. The start fails if either sets `enabledPlugins`, `extraKnownMarketplaces`, `syncClaudeAiPlugins` or `hooks`: "….claude/settings.local.json sets enabledPlugins, which only the factory sets; remove it." Claude Code ranks local and project settings above user settings, and object keys merge across levels, so this check is what actually enforces the rule. An agent writing these files mid-session changes nothing until its next start, and that start fails. The check also covers I2's rule that agents can't set hooks.
+   - **Project and local settings** (R11). `prepare` reads `<workdir>/.claude/settings.json` and `<workdir>/.claude/settings.local.json` with `lstat`; a link at either path fails the start. The start also fails if either file sets a key in **`RESERVED_SETTINGS_KEYS`** (§7.10), naming the file and the key: "….claude/settings.local.json sets hooks, which agents can't set; remove it." The factory fails the start rather than strip the key, so it never silently rewrites the agent's file.
+     - Claude Code ranks local and project settings above user settings, and object keys merge across levels, so this check is what actually enforces the rule.
+     - Claude Code also reloads settings files live within a session. The check therefore bounds **persistence across restarts**, not what a running agent can do to itself in the meantime (§11.4).
+   - **Agent-written skills, subagents and commands** (R12). Skill frontmatter and subagent frontmatter can both declare `hooks`, and subagents can declare `mcpServers` (code.claude.com/docs/en/skills, `hooks` field; /sub-agents, `hooks` and `mcpServers` fields).
+     - The start fails on any `.claude/skills/` entry that isn't a factory link and whose `SKILL.md` frontmatter sets `hooks`: "skills/x declares hooks, which agents can't set; remove them."
+     - It also fails on any `.claude/agents/*.md` whose frontmatter sets `hooks` or `mcpServers`. Template `files/` can't write under `.claude` (I2), so those files are always agent-written.
+     - `.claude-config/agents/` and `.claude-config/commands/` are emptied, like `.claude-config/skills/`, because the factory never writes there.
+     - Factory-linked Library and template skills may declare hooks. Those are human-registered and shown under "Runs code" (§10.3).
 4. **Store check** (under `storeLock` **shared**):
    - the store isn't writable;
    - every marketplace of a plugin in `closure` is registered, `ready`, and passes `assertMarketplacePinned`;
@@ -473,7 +482,7 @@ A shared hold can't cover Claude's own read of the seed after spawn. Operations 
 7. **The factory-owned plugin keys** are written to `state/agents/<slug>/plugin-settings.json` (factory state, outside the workdir) and passed with `--settings <file>`. Command-line settings outrank local, project and user settings (R11). `buildSettings` drops its `pluginKeys` input and no longer writes these keys into `.claude-config/settings.json`. The keys:
    - `enabledPlugins`:
      - `true` for `closure`;
-     - an explicit `false` for every other plugin in the store, **and** for every plugin in the catalog of every marketplace in `extraKnownMarketplaces` (installed or not), because relative-path plugins of a directory marketplace load by `defaultEnabled` (R14);
+     - an explicit `false` for every other plugin of **every marketplace in the store**, from both its catalog and what is installed, because the seed registers every one of them at startup and relative-path plugins load by `defaultEnabled` (R14);
      - `false` for the manifest name of any skills-directory plugin the factory knows of, as a second layer behind §6.4.
 
      These are generated, so Q4's "false is an error" doesn't apply.
@@ -615,6 +624,22 @@ The result is cached in memory by `installPath`, which is immutable per version.
   - **every** local-runtime agent at start, not only those with plugins, because synced-plugin suppression and the skills-folder rules matter for any agent signed in through I3;
   - Docker images, once per image digest, by `docker run --rm --network none --entrypoint claude <image> --version`, cached.
 - **Below the floor**, the start fails closed: "Claude Code {found} is too old; update it to {CLAUDE_PLUGIN_FLOOR} or later." Both versions are interpolated. There is no fallback (ADR 0028).
+
+### 7.10 `RESERVED_SETTINGS_KEYS`: the one list (R11)
+
+`packages/shared/src/settings-keys.ts` exports `RESERVED_SETTINGS_KEYS`: the settings keys that are factory-owned or that run commands. It is the **same constant** I2 hands I7 as the `agent` policy's default-deny list (I2 §5.3, §19), so the start check and I7's policy can never drift. It holds:
+
+- **Factory-owned:**
+  - `enabledPlugins`, `extraKnownMarketplaces`, `syncClaudeAiPlugins`, `strictKnownMarketplaces`;
+  - `permissions.defaultMode`, `permissions.additionalDirectories`, `claudeMdExcludes` (I2's factory keys).
+- **Running commands** (every key the settings reference marks "Any file" and describes as running a command or executable, checked against the shipped version's settings reference):
+  - `hooks`, `statusLine`, `fileSuggestion`;
+  - `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `otelHeadersHelper`.
+- **`env`:** any entry whose name is in `FACTORY_ENV_NAMES`, so a project `env` can't redirect `CLAUDE_CODE_PLUGIN_SEED_DIR` or turn auto-update back on.
+
+Templates and overlays keep I2's rules (templates are trusted operator input; overlays refuse the factory keys). The start check (§7.3) refuses **every** key in this list in agent-writable project and local settings. The plan's first PR 1 task re-reads the shipped version's settings reference and updates the list, and a test pins it.
+
+`permissions.allow` and `autoMode` in project or local settings would let an agent widen its own permissions. That is I2's and I7's territory, so it isn't added here; it is flagged in §21 for Or.
 
 ## 8. Change flow integration
 
@@ -860,6 +885,7 @@ A peek is a right peek sheet (480px, no scrim), and a bottom drawer below `md`:
 **Skill peek:**
 - **Header:** the name (mono), the description, and "From acme/x · a1b2c3d" as a link to the Source peek.
 - **Used by:** grouped by template ("dev · 190 agents"); the list collapses past 8 entries behind "Show all N".
+- **Runs code** first, when the frontmatter declares `hooks` (R12): each hook's event, matcher and full command, as in the plugin peek.
 - **Files:** a list, with executables marked "Runs code", clamped past 20 with "Show all N". `SKILL.md` and any file open with View file.
 - No source actions.
 
@@ -1038,6 +1064,7 @@ A `library` fix navigates to the item's view and passes `{ peek: item }` in rout
 
 ### 11.4 Residual risk, stated
 
+- **Within a running session**, Claude Code reloads settings files live, and skill hooks register when the skill is invoked. An agent with Bash can already run code as itself, so the start checks are about **persistence and review**, not about containing a running agent: whatever it adds is refused at its next start. This is stated, not solved; the follow-up is the Docker managed-settings mount (§21).
 - **Local-runtime agents** run as the host user. Between starts they can chmod and write the store and cache, edit `state/` (including `plugin-settings.json`), and write anything under their workdir. Every start re-checks what it can. This is the accepted local trust decision (S5 Q10), not a new hole.
 - **`data/` persists by design**, and plugins can keep dependencies there (the docs suggest it). Code an agent edits under `data/` runs as that plugin's code at the next start. That is the same class as `mcpb/`, but scrubbing `data/` would break every stateful plugin, so it is accepted and stated.
 - **The 14-day orphan cleanup** (§7.2).
@@ -1136,6 +1163,14 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
 13. **A directory marketplace's catalog.** A relative plugin with `defaultEnabled: true` in a declared directory marketplace, not installed and not listed in `enabledPlugins`: record whether it loads (R14).
 14. **The preview copy** (T7). Install into a copied plugins root with rewritten `installLocation`s. The original store gets no writes.
 15. **The runner auto-add.** A runner whose `settings.json` declares a marketplace that is absent from `known_marketplaces.json`: record whether `claude plugin …` auto-adds it.
+16a. **Settings precedence** (R11), extending item 12:
+   - a project-level `hooks` entry and a `statusLine` both run (proving the check is needed);
+   - `--settings` `enabledPlugins: false` against a local-level `true` for the same key: record which wins;
+   - record whether an `enabledPlugins` change in `settings.local.json` mid-session takes effect without a restart.
+16b. **Frontmatter hooks** (R12):
+   - a skill in `$W/.claude/skills/h/` whose `SKILL.md` frontmatter declares a SessionStart or PreToolUse hook writing a marker. Invoke the skill and record whether the hook runs;
+   - the same with a subagent in `$W/.claude/agents/a.md` declaring `hooks` and `mcpServers`, and in `$AG/agents/`;
+   - record whether skills in `$AG/commands/` or `$AG/agents/` load.
 16. **Required synced plugins.** If Or's claude.ai organisation can mark a plugin required, record whether it loads with `syncClaudeAiPlugins: false` for a token-signed-in agent. If not, mark it untested.
 17. **The version floor.** The lowest version where items 1–4 and 12 hold, if Or can test an older one. Otherwise the shipped version is the floor.
 
@@ -1405,10 +1440,10 @@ Certainty is on a 1–5 scale. **Bold** marks the decisions for Or's review.
 | R8 | Long operations continue after Close, with a pending row and a toast; boot repairs a half add | 4 |
 | R9 | Plugin update reviewed in place in the peek; no dialog anywhere in I5 | 4 |
 | R10 | A peek opened from the form is read-only, with "Open in Skills" | 4 |
-| R11 | Project and local settings that set plugin keys or `hooks` fail the start; the factory's plugin keys go through `--settings` | (pending) |
-| R12 | `.claude-config/skills/` is emptied at every start; the plugin check follows every link | (pending) |
-| R13 | Dependencies: ranges count as unpinned; post-install closure check; the closure is enabled and tracked | (pending) |
-| R14 | Every declared marketplace must be registered; the generated marketplaces replace the template's; explicit `false` over the catalogs | (pending) |
+| R11 | Project and local settings that set any `RESERVED_SETTINGS_KEYS` key (factory-owned, command-running, or reserved env names) fail the start, naming file and key; one constant shared with I7's default-deny; the plugin keys go through `--settings` | 4 |
+| R12 | `.claude-config/{skills,agents,commands}/` emptied at every start; the plugin check follows every link; agent-written skills or subagents with frontmatter `hooks` (or subagent `mcpServers`) fail the start; Library skills show their frontmatter hooks | 4; **3** on the frontmatter-hooks handling |
+| R13 | Dependencies: ranges count as unpinned; post-install closure check; the closure is enabled and tracked | 4 |
+| R14 | Every declared marketplace must be registered; the generated marketplaces replace the template's; explicit `false` over every store marketplace's plugins outside the closure | 4 |
 
 ## 21. Follow-ups (separate issues)
 
@@ -1419,4 +1454,5 @@ Certainty is on a 1–5 scale. **Bold** marks the decisions for Or's review.
 - npm-sourced plugins.
 - Revisit whether agents may add plugins from any registered marketplace (Q5), with Or.
 - Base image: pin Claude Code at or above the plugin floor and label the version (§7.9, §18).
+- `permissions.allow` and `autoMode` in agent-written project or local settings let an agent widen its own permissions. That belongs to I2/I7; for Or (§7.10).
 - Docker defence in depth: a read-only managed-settings mount with `strictKnownMarketplaces`, `syncClaudeAiPlugins` and the plugin keys (§11.4).

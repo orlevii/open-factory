@@ -427,7 +427,8 @@ test("reverify sets rejected_at on rejected, clears on ok, leaves it on unreacha
   const rejectedAt = (await rowOf("w-rj")).rejectedAt;
   expect(rejectedAt).not.toBeNull();
   result = { ok: false, kind: "unreachable", message: FIELD_MSG.claudeUnreachable };
-  await svc.reverify("w-rj");
+  const unreachable = await svc.reverify("w-rj");
+  expect(unreachable.lastError).toBe(FIELD_MSG.claudeUnreachable);
   expect((await rowOf("w-rj")).rejectedAt).toEqual(rejectedAt);
   result = { ok: true };
   const good = await svc.reverify("w-rj");

@@ -211,22 +211,28 @@ export class CredentialService {
     value: string,
     opts: { expiresAt: Date | null },
   ): Promise<CredentialSummary> {
-    const [before] = await this.d.db
-      .select({ expiryNotifiedAt: schema.credentials.expiryNotifiedAt })
-      .from(schema.credentials)
-      .where(eq(schema.credentials.id, id));
-    const [updated] = await this.d.db
-      .update(schema.credentials)
-      .set({
-        valueEnc: this.d.vault.seal(value, aad(id)),
-        lastVerifiedAt: this.d.now(),
-        expiresAt: opts.expiresAt,
-        expiryNotifiedAt: null,
-        rejectedAt: null,
-        lastError: null,
-      })
-      .where(eq(schema.credentials.id, id))
-      .returning();
+    const sealed = this.d.vault.seal(value, aad(id));
+    // Lock the row so the prior expiry_notified_at we publish on is the one this write cleared.
+    const { updated, wasNotified } = await this.d.db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({ expiryNotifiedAt: schema.credentials.expiryNotifiedAt })
+        .from(schema.credentials)
+        .where(eq(schema.credentials.id, id))
+        .for("update");
+      const [row] = await tx
+        .update(schema.credentials)
+        .set({
+          valueEnc: sealed,
+          lastVerifiedAt: this.d.now(),
+          expiresAt: opts.expiresAt,
+          expiryNotifiedAt: null,
+          rejectedAt: null,
+          lastError: null,
+        })
+        .where(eq(schema.credentials.id, id))
+        .returning();
+      return { updated: row, wasNotified: before?.expiryNotifiedAt != null };
+    });
     if (!updated) throw this.notFoundById();
     // One failed restart is logged by slug and never aborts the rest or the write.
     const active = (await this.users(id)).active;
@@ -237,7 +243,7 @@ export class CredentialService {
       if (r.status === "rejected")
         this.d.log?.warn({ slug: active[i]?.slug }, "restart after credential change failed");
     });
-    if (before?.expiryNotifiedAt) this.d.bus.publishAll({ type: "inbox_changed" });
+    if (wasNotified) this.d.bus.publishAll({ type: "inbox_changed" });
     return this.summarize(updated);
   }
 

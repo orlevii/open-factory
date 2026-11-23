@@ -198,7 +198,21 @@ Spec §4.2–4.3 copy and layout verbatim:
   - leaving, through the real paths (an `org_action` frame invalidating `["setup"]`, and a window-focus refetch, with the API mock flipping `hasAgent`): the block unmounts in that render when the pointer is outside the list column; with the pointer over the list column (or focus inside the list column) it stays until pointer leave / blur; focus on a step row does **not** hold it, and when it unmounts with focus inside, focus lands on the first inbox row (or the `h1` when empty) in a layout effect (no frame with focus on `body`).
   - no horizontal overflow class combos (`min-w-0` on text column).
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/setup apps/web/src/test/inbox-setup.test.tsx` — FAIL.
-- [ ] **Step 3: Implement.** `InboxPage` calls `useSetup()` and `useSetupVisible(data?.hasAgent)` once and passes `status` and `shown` down; the block reads them via props (no context, no second subscription).
+- [ ] **Step 3: Implement.** `InboxPage` calls `useSetupVisible(hasAgent)` once and passes `shown` down. `InboxPage`, `InboxList` and `InboxPane` read only `useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent })` (rerender-derived-state, m2); only `SetupSteps` reads the whole status.
+  - The three step specs are **module constants** (rendering-hoist-jsx, m3), each with its sheet spec and a module-level intent, as `features/agents/agent-menu.tsx:24` does (`sheetIntent` from `features/sheets/sheet-bodies.ts:172`):
+
+```ts
+const STEPS = [
+  { title: "Sign in to Claude", desc: "Connect the Claude account your agents run on.",
+    spec: { kind: "add-credential" } as const, intent: sheetIntent("add-credential", { kind: "add-credential" }), done: (s: SetupStatus) => s.hasCredential },
+  { title: "Create a template", desc: "A template is a role: persona, skills, tools and model.",
+    spec: { kind: "new-template", then: "open-editor" } as const, intent: sheetIntent("new-template", { kind: "new-template", then: "open-editor" }), done: (s: SetupStatus) => s.hasTemplate },
+  { title: "Create an agent", desc: "It runs a template in its own session. Give it \"Can manage the org\" to have it build the rest.",
+    spec: { kind: "new-agent" } as const, intent: sheetIntent("new-agent", { kind: "new-agent" }), done: () => false },
+] as const;
+```
+
+    Each row spreads `{...step.intent}` so hover and focus warm the sheet chunk and its lists (credentials, templates, agents) (bundle-preload, m3).
 - [ ] **Step 4: Run** PASS; `inbox-pane.test.tsx` "No item selected." tests updated to set `hasAgent: true` in their setup mock.
 - [ ] **Step 5: Commit** `feat(web): first-run steps on the Inbox`.
 
@@ -270,6 +284,8 @@ export function capTitle(s: string, kind: "handle" | "name"): string; // handles
 
 Rules (spec §5.1): chat → title display name (as the chat row shows it), body `plural(unread, "1 new message", "N new messages")`, open `/agents/$slug/chat?message=firstUnreadId`; `mention` items grouped by `task.key` → title first mentioner's `@handle`, or the task key when several handles, body "Mentioned you on T-42" / "N mentions on T-42", open `/tasks/$key?comment=<first unread commentId>`; items with `notice === "agent_errored"` grouped by `about` → title `@dev`, body "Hit an error", open `/agents/$slug/session`; `kind === "credential"` → title `Credential "work"`, body "Expires Dec 3" / "Expired Dec 3" from `expiresAt` (`Intl.DateTimeFormat(undefined, {month:"short", day:"numeric"})`, past → "Expired"), open `/settings/credentials?credential=work`; `notice === "loop_held"` (PR 3 fills `loopHold`; until then this branch is unit-tested with a fixture) → title `@a and @b`, body "Messages between them are held", open `/inbox?item=<id>`, `resolved` when `loopHold.resumedAt`. Everything else (task_event, other notices, `worktrees_kept`) yields no burst. Unread only.
 
+Formatters are created once at module level (js-cache-function-results, m5): `const PLURAL = new Intl.PluralRules("en")`, `const NUM = new Intl.NumberFormat()`, `const DAY = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })`; never per call.
+
 - [ ] **Step 1: Failing tests:** each source's title, body and open target; a 60-char handle is middle-truncated to 40 and a display name end-truncated; plurals at 1 and 2; **no test fixture's message preview or body text appears in any title or body** (assert with fixtures whose preview is a unique marker string); `task_event`, `factory_restarted`, `crash_recovered`, `worktrees_kept` produce nothing; tags change after the first unread changes.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/inbox/notification-copy.test.ts` — FAIL. **Step 3: Implement.** **Step 4: Run** PASS.
 - [ ] **Step 5: Commit** `feat(web): notification copy and bursts without message text`.
@@ -281,6 +297,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 **Files:**
 - Modify (rewrite the notify half): `apps/web/src/features/inbox/notifications.ts` (keep `useBrowserNotifications`, `BLOCKED_NOTE`; replace `notificationTitle` and `notifyNewItems`; `useInboxNotifier` uses `burstsOf`)
 - Modify: `apps/web/src/components/app-sidebar.tsx` (the switch hides when `supported` is false, which now includes a throwing constructor)
+- `supported` becomes reactive (m6): a module flag `unsupported`, set and `emit()`ed when the constructor throws, read through `useSyncExternalStore` in `useBrowserNotifications` (today the sidebar hides the switch only because `isOn()` happens to change).
+- `toggle` in `useBrowserNotifications` is wrapped in `useCallback` (m12; the sidebar row may be memoised).
 - Test: `apps/web/src/features/inbox/notifications.test.tsx`
 
 **Interfaces:**
@@ -304,7 +322,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - two frames during one fetch → one trailing fetch, and a stale response arriving after a newer one is ignored;
   - task_event and other facts → nothing;
   - baseline: unread at load never notifies;
-  - a constructor that throws → `supported` false, no unhandled rejection;
+  - a constructor that throws → `supported` false and a mounted sidebar re-renders without the switch (through `useSyncExternalStore`), no unhandled rejection;
+  - `toggle` keeps its identity across renders;
   - click: `window.focus` called, navigates to each source's target, mention/error/credential items marked read (`postRead` called), chats not marked by the click.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** PASS.
 - [ ] **Step 5: Commit** `feat(web): one notification per burst, replaced silently, closed when read`.
@@ -518,6 +537,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
 - Create: `apps/web/src/features/inbox/loop-hold-pane.tsx`
+- Row cost (m8): `InboxRow` stays `memo`'d; the Held/Resumed label reads `item.loopHold.resumedAt` only and passes no new object props; `formatInboxTime` stays in render as today.
+- Pending across navigation (m9, accepted): the pane remounts per item, so a Resume in flight is not shown after you navigate away and back until the refetch; the remount reads `loopHold.resumedAt` once `inbox_changed` arrives.
 - Modify: `apps/web/src/features/inbox/inbox-row.tsx` (muted label "Held" / "Resumed" after the sender on line one, `shrink-0`, never truncated, when `item.loopHold`), `apps/web/src/features/inbox/inbox-pane.tsx` (the body switch: `notice === "loop_held"` → `LoopHoldPane`; hide the header `OpenLink`; no excerpt, no composer), `apps/web/src/features/inbox/api.ts` (`useResumeHold` mutation → on success `invalidateQueries(inboxQueryKey)` and the item query)
 
 React review M5: the result line renders from the **mutation's data** right after a Resume (`m.data.sentOn`), and from `loopHold` otherwise; `loopHold.sentOn` is derived server-side (Task 3.7) so every pane and every remount shows "· 4 messages sent on". A `focusResult` ref is set in the click handler's `mutate(undefined, { onSuccess: () => { focusResult.current = true } })`; the status line moves focus in a `useLayoutEffect` (or callback ref) when the flag is set, then clears it. The click handler starts with `if (m.isPending) return`. A 409 renders "Resumed by @ana · …" from the error body at once, then invalidates the inbox and item queries.
@@ -525,7 +546,7 @@ React review M5: the result line renders from the **mutation's data** right afte
 
 Pane per spec §6.7 (copy verbatim): body text with handles in `font-mono` and `[overflow-wrap:anywhere]`; waiting line (`plural`: "1 message waiting" / "4 messages waiting" / "Nothing is waiting"); a terminated agent line "@b was terminated; its held messages were rejected."; the action slot at one fixed `min-h` holding either the primary button "Resume @a and @b" (wraps, `min-w` kept while pending with "Resuming…" and the spinner, `aria-disabled`) or the `role="status"` `tabIndex={-1}` line (focused after your own Resume via a ref in the mutation's `onSuccess`): "Resumed by you · {formatInboxTime} · {n} messages sent on" / "… · nothing was left to send"; another human's or a 409: "Resumed by @ana · {time}" (`title` = full timestamp); two ghost links "Open @a's session" / "Open @b's session" to `/agents/$slug/session`; a non-409 failure keeps the button and shows `FormOutcome` with `FORM_MSG.resumeFailed = "Couldn't resume. Try again."`. No toast. The notifier closes the hold's notification once `resumedAt` is set (Task 2.3 `resolved`).
 
-- [ ] **Step 1: Failing tests:** each line's copy at 0/1/4 waiting; terminated line; pending keeps width and is `aria-disabled`; success replaces the button with the status line and focuses it; 409 shows the other human; error line; header `OpenLink` absent; no composer rendered; row label Held → Resumed after `inbox_changed`; `formatInboxTime` used (a resumed time from yesterday shows its date).
+- [ ] **Step 1: Failing tests:** each line's copy at 0/1/4 waiting; terminated line; pending keeps width and is `aria-disabled`; success replaces the button with the status line and focuses it; 409 shows the other human; error line; header `OpenLink` absent; no composer rendered; row label Held → Resumed after `inbox_changed`; navigating away mid-Resume and back shows the button until `inbox_changed`, then the resumed line from `loopHold.resumedAt` (m9); a hold row re-renders only when its own item changes (memo, m8); `formatInboxTime` used (a resumed time from yesterday shows its date).
 - [ ] **Step 2–4:** implement. **Step 5: Commit** `feat(web): the loop hold pane with Resume`.
 
 ### Task 3.10: Full-width notice pane below 1024px
@@ -717,6 +738,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
 - Modify: `packages/shared/src/messaging.ts` + `apps/server/src/agents/event-store.ts` (React review m10: inbox items of `notice = 'worktrees_kept'` gain `cleanup?: ProjectResult[]`, built in `toEntries` from the referenced `workspace_cleanup` event's payload; `ProjectResult` moves to `packages/shared/src/events.ts`), `apps/web/src/features/session/rows.ts` / `timeline-row.tsx` (a `workspace_cleanup` event renders as a muted factory line grouped by project, branch names `font-mono [overflow-wrap:anywhere]`, copy from spec §7.5), `apps/web/src/features/inbox/inbox-pane.tsx` (`notice === "worktrees_kept"` → `CleanupPane`; no excerpt, no composer; header `OpenLink` stays and targets the event seq), `apps/web/src/routes/_app/inbox.tsx` (`FULL_WIDTH_NOTICES` gains `"worktrees_kept"`)
+- The `workspace_cleanup` row type in `rows.ts` / `timeline-row.tsx` keeps the timeline's memoised row contract (m11): a module-level component, no inline component definitions, stable props (the event object from the store, no per-render objects).
 - Create: `apps/web/src/features/inbox/cleanup-pane.tsx` (renders from `item.cleanup`, the same `ProjectResult[]` shape as the session line, never by parsing the body: lines grouped by project, branch names mono with `copy-feedback.tsx`, then "Push them to keep the work, or delete them in the project's repository.")
 - Test: `cleanup-pane.test.tsx`, a `rows` test, `inbox-route.test.tsx` (full width at 390)
 

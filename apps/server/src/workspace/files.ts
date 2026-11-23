@@ -45,10 +45,7 @@ async function walk(root: string, rel = ""): Promise<string[]> {
   return out;
 }
 
-export async function templateTargets(
-  tplDir: string,
-  cfg: { localSkills: boolean },
-): Promise<{ from: string; to: string }[]> {
+export async function templateTargets(tplDir: string): Promise<{ from: string; to: string }[]> {
   const out: { from: string; to: string }[] = [];
   const agents = path.join(tplDir, "AGENTS.md");
   if (
@@ -58,11 +55,6 @@ export async function templateTargets(
     )
   )
     out.push({ from: agents, to: "AGENTS.md" });
-  if (cfg.localSkills) {
-    for (const r of await walk(path.join(tplDir, "skills"))) {
-      out.push({ from: path.join(tplDir, "skills", r), to: path.join(".claude", "skills", r) });
-    }
-  }
   for (const r of await walk(path.join(tplDir, "files"))) {
     out.push({ from: path.join(tplDir, "files", r), to: r });
   }

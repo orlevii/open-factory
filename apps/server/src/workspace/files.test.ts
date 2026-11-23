@@ -10,31 +10,17 @@ import {
   writeAtomic,
 } from "./files.ts";
 
-test("targets: AGENTS.md, skills (when localSkills), files/ contents at the root", async () => {
+test("targets: AGENTS.md and files/ contents at the root; skills/ is linked, not copied", async () => {
   const t = mkdtempSync(path.join(tmpdir(), "t-"));
   writeFileSync(path.join(t, "AGENTS.md"), "# A");
   mkdirSync(path.join(t, "skills/s1"), { recursive: true });
   writeFileSync(path.join(t, "skills/s1/SKILL.md"), "s");
   mkdirSync(path.join(t, "files/docs"), { recursive: true });
   writeFileSync(path.join(t, "files/docs/x.md"), "x");
-  expect((await templateTargets(t, { localSkills: true })).map((x) => x.to).sort()).toEqual([
-    ".claude/skills/s1/SKILL.md",
-    "AGENTS.md",
-    "docs/x.md",
-  ]);
-  expect((await templateTargets(t, { localSkills: false })).map((x) => x.to)).not.toContain(
-    ".claude/skills/s1/SKILL.md",
-  );
+  expect((await templateTargets(t)).map((x) => x.to).sort()).toEqual(["AGENTS.md", "docs/x.md"]);
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
   const copyDir = mkdtempSync(path.join(tmpdir(), "copy-"));
-  await copyTargets(
-    t,
-    wd,
-    copyDir,
-    await templateTargets(t, { localSkills: true }),
-    { a: 1 },
-    { mcpServers: {} },
-  );
+  await copyTargets(t, wd, copyDir, await templateTargets(t), { a: 1 }, { mcpServers: {} });
   expect(readFileSync(path.join(copyDir, "settings.json"), "utf8")).toContain('"a": 1');
   expect(existsSync(path.join(wd, "docs/x.md"))).toBe(true);
 });
@@ -73,20 +59,13 @@ test("copyTargets never writes through symlinks in the destination", async () =>
   const host = mkdtempSync(path.join(tmpdir(), "host-"));
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
   writeFileSync(path.join(host, "SKILL.md"), "host original");
-  mkdirSync(path.join(t, "skills/grilling"), { recursive: true });
-  writeFileSync(path.join(t, "skills/grilling/SKILL.md"), "template");
+  mkdirSync(path.join(t, "files/.claude/skills/grilling"), { recursive: true });
+  writeFileSync(path.join(t, "files/.claude/skills/grilling/SKILL.md"), "template");
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
   mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
   symlinkSync(host, path.join(wd, ".claude/skills/grilling"));
   await expect(
-    copyTargets(
-      t,
-      wd,
-      path.join(wd, "sc"),
-      await templateTargets(t, { localSkills: true }),
-      {},
-      {},
-    ),
+    copyTargets(t, wd, path.join(wd, "sc"), await templateTargets(t), {}, {}),
   ).rejects.toBeInstanceOf(WorkspaceError);
   expect(readFileSync(path.join(host, "SKILL.md"), "utf8")).toBe("host original");
 
@@ -96,14 +75,7 @@ test("copyTargets never writes through symlinks in the destination", async () =>
   mkdirSync(path.join(wd, "projects"));
   symlinkSync(repo, path.join(wd, "projects/app"));
   await expect(
-    copyTargets(
-      t2,
-      wd,
-      path.join(wd, "sc"),
-      await templateTargets(t2, { localSkills: false }),
-      {},
-      {},
-    ),
+    copyTargets(t2, wd, path.join(wd, "sc"), await templateTargets(t2), {}, {}),
   ).rejects.toThrow(/link/);
   expect(readdirSync(repo)).toEqual([]);
 });
@@ -113,7 +85,7 @@ test("copyTargets: read-only re-copy, mode masked, symlink targets, no real-file
   writeFileSync(path.join(t, "AGENTS.md"), "v1");
   chmodSync(path.join(t, "AGENTS.md"), 0o4444);
   const wd = mkdtempSync(path.join(tmpdir(), "wd-"));
-  const targets = await templateTargets(t, { localSkills: false });
+  const targets = await templateTargets(t);
   await copyTargets(t, wd, path.join(wd, "state-copy"), targets, {}, {});
   chmodSync(path.join(t, "AGENTS.md"), 0o644);
   writeFileSync(path.join(t, "AGENTS.md"), "v2");
@@ -127,25 +99,11 @@ test("copyTargets: read-only re-copy, mode masked, symlink targets, no real-file
   symlinkSync("AGENTS.md", path.join(t, "files/link"));
   writeFileSync(path.join(wd, "link"), "precious");
   await expect(
-    copyTargets(
-      t,
-      wd,
-      path.join(wd, "sc"),
-      await templateTargets(t, { localSkills: false }),
-      {},
-      {},
-    ),
+    copyTargets(t, wd, path.join(wd, "sc"), await templateTargets(t), {}, {}),
   ).rejects.toBeInstanceOf(WorkspaceError);
   expect(readFileSync(path.join(wd, "link"), "utf8")).toBe("precious");
   const wd2 = mkdtempSync(path.join(tmpdir(), "wd-"));
-  await copyTargets(
-    t,
-    wd2,
-    path.join(wd2, "sc"),
-    await templateTargets(t, { localSkills: false }),
-    {},
-    {},
-  );
+  await copyTargets(t, wd2, path.join(wd2, "sc"), await templateTargets(t), {}, {});
   expect(lstatSync(path.join(wd2, "link")).isSymbolicLink()).toBe(true);
 });
 

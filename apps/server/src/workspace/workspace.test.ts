@@ -4,8 +4,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,9 +75,12 @@ test("materialize then prepare: the full layout", async () => {
   await ws.materialize("lead", "lead", tpl, prep);
   const wd = ws.workdir("lead");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
-  expect(existsSync(path.join(wd, ".claude/skills/local/SKILL.md"))).toBe(true);
+  expect(existsSync(path.join(wd, ".claude/skills"))).toBe(false); // linked at start, never copied
   expect(existsSync(path.join(wd, "projects"))).toBe(false); // check-only at creation
   const out = await ws.prepare(prep);
+  expect(readlinkSync(path.join(wd, ".claude/skills/local"))).toBe(
+    realpathSync(path.join(home, "templates/lead/skills/local")),
+  );
   expect(lstatSync(path.join(wd, "projects/app")).isSymbolicLink()).toBe(true);
   expect(lstatSync(path.join(wd, ".claude/skills/grilling")).isSymbolicLink()).toBe(true);
   const s = JSON.parse(readFileSync(path.join(wd, ".claude-config/settings.json"), "utf8"));
@@ -97,6 +102,7 @@ test("materialize then prepare: the full layout", async () => {
     wd,
     repo,
     realpathSync(path.join(hs, "grilling")),
+    realpathSync(path.join(home, "templates/lead/skills/local")),
     "/mk",
     path.join(home, "state/agents/lead/plugins-config/plugins"),
     "/opt/factory/bin/open-factory",
@@ -192,4 +198,34 @@ test(".mcp.json gets the factory server with an env-expanded header and no secre
     url: "http://host.docker.internal:3001/mcp",
     headers: { Authorization: "Bearer ${OPEN_FACTORY_AGENT_TOKEN}" },
   });
+});
+
+test("a template skill is live: edits show at once, a removed one's link goes, local_skills off drops them", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  await ws.prepare(prep);
+  writeFileSync(path.join(home, "templates/lead/skills/local/SKILL.md"), "edited");
+  expect(readFileSync(path.join(wd, ".claude/skills/local/SKILL.md"), "utf8")).toBe("edited");
+  await ws.prepare({
+    ...prep,
+    effective: { ...prep.effective, config: { ...prep.effective.config, localSkills: false } },
+  });
+  expect(existsSync(path.join(wd, ".claude/skills/local"))).toBe(false);
+  await ws.prepare(prep);
+  rmSync(path.join(home, "templates/lead/skills/local"), { recursive: true });
+  await ws.prepare(prep);
+  expect(existsSync(path.join(wd, ".claude/skills/local"))).toBe(false);
+});
+
+test("prepare refuses a symlinked template skill and a symlinked skills/ folder", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
+  const skills = path.join(home, "templates/lead/skills");
+  symlinkSync(outside, path.join(skills, "evil"));
+  await expect(ws.prepare(prep)).rejects.toThrow("skills/evil must be a folder, not a link.");
+  rmSync(skills, { recursive: true });
+  symlinkSync(outside, skills);
+  await expect(ws.prepare(prep)).rejects.toThrow("skills/ must be a folder, not a link.");
 });

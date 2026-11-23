@@ -17,7 +17,13 @@ import {
   writeTargets,
   writeTemplateCopy,
 } from "./files.ts";
-import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
+import {
+  linkProjects,
+  linkSkills,
+  resolveHostSkills,
+  resolveTemplateSkills,
+  WorkspaceError,
+} from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
 import { buildMcpJson } from "./mcp.ts";
 import {
@@ -153,7 +159,7 @@ export class Workspace {
       tpl.dir,
       workdir,
       templateCopyDir(this.d.factoryHome, slug),
-      await templateTargets(tpl.dir, tpl.config),
+      await templateTargets(tpl.dir),
       tpl.tplSettings,
       tpl.tplMcp,
     );
@@ -162,7 +168,13 @@ export class Workspace {
     await rm(pluginsConfigDir(this.d.factoryHome, slug), { recursive: true, force: true });
     if (tpl.config.plugins.length) await this.install(slug, tpl);
     const skills = await resolveHostSkills(this.d.hostSkillsDir, check.config.skills);
-    await linkHostSkills(workdir, this.d.hostSkillsDir, skills, { checkOnly: true });
+    const tplSkills = tpl.config.localSkills ? await resolveTemplateSkills(tpl.dir) : [];
+    await linkSkills(
+      workdir,
+      { dir: this.d.hostSkillsDir, skills },
+      { templateDir: tpl.dir, skills: tplSkills },
+      { checkOnly: true },
+    );
     await linkProjects(workdir, check.grants, { checkOnly: true });
   }
 
@@ -206,7 +218,7 @@ export class Workspace {
   ): Promise<{ backupDir?: string; applied: "now" | "on_restart" }> {
     const workdir = this.workdir(slug);
     const configDir = agentConfigDir(workdir);
-    const targets = await templateTargets(tpl.dir, tpl.config);
+    const targets = await templateTargets(tpl.dir);
     if (!opts.canWriteNow) {
       await stageTargets(resyncPendingDir(this.d.factoryHome, slug), targets);
       await writeTemplateCopy(
@@ -287,7 +299,13 @@ export class Workspace {
     }
     await this.linkPlugins(i.slug, workdir);
     const skills = await resolveHostSkills(this.d.hostSkillsDir, config.skills);
-    await linkHostSkills(workdir, this.d.hostSkillsDir, skills);
+    const templateDir = path.join(this.d.factoryHome, "templates", i.template);
+    const tplSkills = config.localSkills ? await resolveTemplateSkills(templateDir) : [];
+    await linkSkills(
+      workdir,
+      { dir: this.d.hostSkillsDir, skills },
+      { templateDir, skills: tplSkills },
+    );
     await linkProjects(workdir, i.grants);
     const grantedPaths = i.grants.map((g) => g.hostPath);
     const settings = buildSettings({
@@ -331,6 +349,7 @@ export class Workspace {
       workdir,
       grantedPaths,
       hostSkillPaths: skills.map((s) => s.realDir),
+      templateSkillPaths: tplSkills.map((s) => s.realDir),
       declaredMarketplaceDirs: declaredMarketplaceDirs(doc.settings),
       pluginsDir: path.join(pluginsConfigDir(this.d.factoryHome, i.slug), "plugins"),
       cliBundle: this.d.cliBundle,
@@ -343,6 +362,7 @@ export class Workspace {
       const home = os.homedir();
       const mountCheck: MountCheckContext = {
         ...mountInputs,
+        templateDir,
         factoryHome: this.d.factoryHome,
         home,
         dockerSockets: dockerSocketPaths(this.serverEnv, home),

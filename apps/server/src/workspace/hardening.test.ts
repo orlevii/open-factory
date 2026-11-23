@@ -122,11 +122,10 @@ test("projects/ as a symlink to a directory fails the start", async () => {
   expect(readdirSync(hostDir)).toEqual([]);
 });
 
-test(".claude as a symlink fails the start and the re-sync, writing nothing through it", async () => {
+test(".claude as a symlink fails the start, writing nothing through it", async () => {
   await rm(`${workdir}/.claude`, { recursive: true, force: true });
   await symlink(hostDir, `${workdir}/.claude`);
   await expect(prepareAgent()).rejects.toThrow(/is a symlink/);
-  await expect(resync()).rejects.toThrow(/is a symlink/);
   expect(readdirSync(hostDir)).toEqual([]);
 });
 
@@ -336,4 +335,14 @@ test("a granted project that contains FACTORY_HOME fails the Docker start", asyn
   await expect(prepareAgent()).rejects.toThrow(
     `Mount ${parent} isn't allowed: it contains FACTORY_HOME.`,
   );
+});
+
+test("a Docker start mounts each template skill read-only at its real path, and refuses a swapped-in link", async () => {
+  asDocker();
+  const real = realpathSync(path.join(home, "templates/lead/skills/local"));
+  const { mounts } = await prepareAgent();
+  expect(mounts).toContainEqual({ source: real, target: real, readOnly: true });
+  await rm(real, { recursive: true });
+  await symlink(hostDir, real);
+  await expect(prepareAgent()).rejects.toThrow("skills/local must be a folder, not a link.");
 });

@@ -1,4 +1,4 @@
-import { readdir, readlink, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { HOST_SKILL_PATTERN, NAME_PATTERN } from "@open-factory/shared";
 import { SafeFs, UnsafePathError, WorkspaceError } from "./safe-fs.ts";
@@ -31,14 +31,38 @@ export async function resolveHostSkills(
   return out;
 }
 
+/** The template's own `skills/` folders (spec §6.4). Each entry must be a real folder and `skills/`
+ *  must be one too; a link is a template error and nothing here ever follows it. `realDir` is
+ *  `realpath(<template>/skills)/<name>`: the template folder itself may be a link (Docker mounts only
+ *  real paths), but nothing inside it may be. Hidden entries are ignored, like template validation. */
+export async function resolveTemplateSkills(
+  templateDir: string,
+): Promise<{ name: string; realDir: string }[]> {
+  const root = path.join(templateDir, "skills");
+  const top = await lstat(root).catch(() => undefined);
+  if (!top) return [];
+  if (!top.isDirectory())
+    throw new WorkspaceError("skills/ must be a folder, not a link.", "template");
+  const realRoot = await realpath(root);
+  const out: { name: string; realDir: string }[] = [];
+  for (const name of (await readdir(root)).sort()) {
+    if (name.startsWith(".")) continue;
+    const st = await lstat(path.join(root, name));
+    if (!st.isDirectory())
+      throw new WorkspaceError(`skills/${name} must be a folder, not a link.`, "template");
+    out.push({ name, realDir: path.join(realRoot, name) });
+  }
+  return out;
+}
+
 /** Make `<workdir>/<parentRel>/<name>` a symlink to each wanted target, refusing to touch
  *  non-links, then drop links in that folder that aren't wanted (and, when `onlyUnder` is set,
- *  point under that prefix). Every step goes through `SafeFs`: a symlinked folder on the way fails. */
+ *  point under one of those prefixes). Every step goes through `SafeFs`: a symlinked folder on the way fails. */
 async function syncLinks(
   workdir: string,
   parentRel: string,
   wanted: { name: string; target: string; notLinkMessage: string }[],
-  opts: { checkOnly?: boolean; onlyUnder?: string },
+  opts: { checkOnly?: boolean; onlyUnder?: string[] },
 ): Promise<void> {
   const safe = new SafeFs(workdir);
   const write = !opts.checkOnly;
@@ -68,19 +92,20 @@ async function syncLinks(
     const rel = path.join(parentRel, name);
     const st = await safe.entry(rel);
     if (!st?.isSymbolicLink()) continue;
-    if (
-      opts.onlyUnder &&
-      !(await readlink(path.join(parent, name))).startsWith(path.resolve(opts.onlyUnder) + path.sep)
-    )
-      continue;
+    if (opts.onlyUnder) {
+      const to = await readlink(path.join(parent, name));
+      if (!opts.onlyUnder.some((u) => to.startsWith(path.resolve(u) + path.sep))) continue;
+    }
     if (write) await safe.removeLink(rel);
   }
 }
 
-export async function linkHostSkills(
+/** Links the host skills and the template's own skills into `.claude/skills/` (spec §6.4). One
+ *  sync covers both prefixes, so a removed skill's link goes while the agent's own real folders stay. */
+export async function linkSkills(
   workdir: string,
-  hostSkillsDir: string,
-  skills: { name: string; dir: string }[],
+  host: { dir: string; skills: { name: string; dir: string }[] },
+  template: { templateDir: string; skills: { name: string; realDir: string }[] },
   opts?: { checkOnly?: boolean },
 ): Promise<void> {
   const parentRel = path.join(".claude", "skills");
@@ -88,12 +113,22 @@ export async function linkHostSkills(
   await syncLinks(
     workdir,
     parentRel,
-    skills.map((s) => ({
-      name: s.name,
-      target: s.dir,
-      notLinkMessage: `${path.join(parent, s.name)} isn't a link to the host skill; move it away.`,
-    })),
-    { ...opts, onlyUnder: hostSkillsDir },
+    [
+      ...host.skills.map((s) => ({
+        name: s.name,
+        target: s.dir,
+        notLinkMessage: `${path.join(parent, s.name)} isn't a link to the host skill; move it away.`,
+      })),
+      ...template.skills.map((s) => ({
+        name: s.name,
+        target: s.realDir,
+        notLinkMessage: `${path.join(parent, s.name)} isn't a link to the template skill; move it away.`,
+      })),
+    ],
+    {
+      ...opts,
+      onlyUnder: [host.dir, path.join(await realpath(template.templateDir), "skills")],
+    },
   );
 }
 

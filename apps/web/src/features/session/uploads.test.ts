@@ -273,7 +273,7 @@ test("recall is your newest operator_input in the loaded timeline, as typed", ()
       agentSlug: "dev",
       turnId: null,
       at: "2026-11-22T10:00:00.000Z",
-      event: { type: "operator_input", text, by, entryId: `e${seq}` },
+      event: { type: "operator_input", text, by, byKind: "human", entryId: `e${seq}` },
     }) as SessionEvent;
   const ordered = [
     ev(1, "@alice", "older"),

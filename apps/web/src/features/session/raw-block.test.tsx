@@ -1,9 +1,20 @@
 import { act, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { rawTailRows } from "./raw-tail";
 import { buildRows } from "./rows";
 import { SLOW_SEND_MS, YOUNG_ITEM_MS } from "./send-phase";
 import { Timeline } from "./timeline";
+
+/** An agent speaker links to its session; a plain anchor stands in for the router's Link. */
+vi.mock("@tanstack/react-router", async (orig) => ({
+  ...(await orig<typeof import("@tanstack/react-router")>()),
+  Link: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <a href="/x" className={className}>
+      {children}
+    </a>
+  ),
+}));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "setInterval"] });
@@ -31,6 +42,7 @@ const operatorInput = [
       type: "operator_input",
       text: "/context",
       by: "@alice",
+      byKind: "human",
       clientMessageId: CID,
       entryId: "e1",
     },
@@ -136,4 +148,61 @@ test("two sends show oldest first, whatever order they were queued in", () => {
     undefined,
   );
   expect(sendingFirst.map((r) => r.text)).toEqual(["sending", "second"]);
+});
+
+// An agent's raw input (`send_command`) has no clientMessageId: the queue item's id is the entry id.
+const agentItem = {
+  id: "e9",
+  kind: "raw",
+  from: "@lead",
+  fromKind: "agent",
+  body: "/context",
+  createdAt: new Date(2026, 10, 19, 14, 0).toISOString(),
+} as never;
+const agentInput = [
+  {
+    seq: 6,
+    agentSlug: "dev",
+    turnId: null,
+    at: "2026-11-19T14:00:01.000Z",
+    event: {
+      type: "operator_input",
+      text: "/context",
+      by: "@lead",
+      byKind: "agent",
+      entryId: "e9",
+    },
+  },
+] as never;
+
+test("an agent's raw input shows the agent as the speaker, not a human", () => {
+  const { container } = render(view({ rows: agentInput }));
+  expect(screen.getByText("· raw")).toBeInTheDocument();
+  expect(container.textContent).toContain("lead");
+  const rows = buildRows(agentInput).rows;
+  expect(rows[0]).toMatchObject({ kind: "command", fromKind: "agent" });
+  expect(rawTailRows([agentItem], [], new Map(), "alice", undefined)[0]).toMatchObject({
+    fromKind: "agent",
+  });
+});
+
+test("a queued agent raw item keeps its node into the timeline row", () => {
+  const mount = vi.fn();
+  const seen = new Set<Element>();
+  const observe = () => {
+    for (const el of document.querySelectorAll("[data-message-block]")) {
+      if (!seen.has(el)) mount();
+      seen.add(el);
+    }
+  };
+  const { rerender } = render(
+    view({ pending: rawTailRows([agentItem], [], new Map(), "alice", undefined) }),
+  );
+  observe();
+  rerender(view({ rows: agentInput }));
+  observe();
+  expect(mount).toHaveBeenCalledTimes(1);
+  expect(rawTailRows([agentItem], [], new Map(), "alice", undefined)[0]?.key).toBe(
+    buildRows(agentInput).rows[0]?.key,
+  );
 });

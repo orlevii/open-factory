@@ -102,6 +102,8 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     type: z.literal("operator_input"),
     text: z.string(),
     by: z.string(),
+    /** Who typed it: a human, or an agent (`send_command`, which has no `clientMessageId`). */
+    byKind: z.enum(["human", "agent"]),
     clientMessageId: z.string().optional(),
     entryId: z.string(),
   }),

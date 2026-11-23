@@ -38,6 +38,18 @@ export function commandList(stored: Command[] | undefined, templateSkills: strin
   return out;
 }
 
+/** The lowercase names and aliases `classifyInput` treats as commands for an agent. */
+export function knownCommandNames(
+  stored: Command[] | undefined,
+  templateSkills: string[],
+): Set<string> {
+  return new Set(
+    commandList(stored, templateSkills).flatMap((c) =>
+      [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()),
+    ),
+  );
+}
+
 /**
  * The GET body (U3 §13.3). Before the first start, the built-ins and the template's skills (`source: "template"`).
  * After it, the session's list; `stale` when the template now has a skill that list lacks, which the next start

@@ -471,6 +471,9 @@ export class AgentRuntime {
   private heldTimer: ReturnType<typeof setTimeout> | undefined;
   private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
+  /** A manual `compact_failed` arrived while `compactInFlight`: whether Claude then sends the compact's own
+   *  `turn_end{command: "compact"}` is unverified, so the next origin-less `turn_end` also ends the compact. */
+  private compactFailedSeen = false;
   /**
    * I1 §6.3 (D3): the user's message a turn is working on, read synchronously for `GET /chat`. `key` is the id of the
    * user's first message in the batch (or, with none awaiting, the first absorbed into the open turn); `since` is that
@@ -2788,8 +2791,9 @@ export class AgentRuntime {
         this.lastActivityAt = Date.now();
         this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
-        if (e.command === "compact") {
+        if (e.command === "compact" || (this.compactFailedSeen && !e.originKind)) {
           this.compactInFlight = false;
+          this.compactFailedSeen = false;
           // I1 §7: decided once, here: failed if a `compact_failed` came since the compact was written.
           const own = this.selfCompact;
           this.selfCompact = undefined;
@@ -2838,7 +2842,10 @@ export class AgentRuntime {
         }
         break;
       case "compact_failed":
-        if (this.selfCompact && e.trigger === "manual") this.selfCompact.failed = true;
+        if (e.trigger === "manual") {
+          if (this.selfCompact) this.selfCompact.failed = true;
+          if (this.compactInFlight) this.compactFailedSeen = true;
+        }
         await this.append(this.openTurnId, e);
         break;
       case "rate_limited":
@@ -2979,6 +2986,7 @@ export class AgentRuntime {
     this.turnStartedAt = undefined;
     this.releaseHold();
     this.compactInFlight = false;
+    this.compactFailedSeen = false;
     this.rawInFlight = false;
     this.selfCompact = undefined; // no notice: the restart's own notice covers it
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
@@ -3744,6 +3752,7 @@ export class AgentRuntime {
           break;
         }
         this.compactInFlight = true;
+        this.compactFailedSeen = false;
         this.selfCompact = head.self ? { failed: false } : undefined;
         await this.append(null, {
           type: "control",
@@ -3818,6 +3827,7 @@ export class AgentRuntime {
       type: "operator_input",
       text: head.text,
       by: head.by,
+      byKind: head.userId ? "human" : "agent",
       entryId: head.id,
       ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
     });

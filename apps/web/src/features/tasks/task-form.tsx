@@ -251,13 +251,16 @@ export function TaskForm({
                 f.change("dependsOn");
               }}
               onBlur={() => {
+                // Focus leaving the window is not a leave (D11).
+                if (!document.hasFocus()) return;
                 const text = deps;
                 checkDependencies(text).then(
                   (r) => {
                     // A lookup that returns after the keys changed answers for old keys.
                     if (values.current.deps !== text) return;
                     setResolvedKeys(r.keys);
-                    f.set("dependsOn", r.error);
+                    // Blur only adds: an edit clears through `f.change`, so a server error survives tabbing out.
+                    if (r.error) f.set("dependsOn", r.error);
                   },
                   // A failed lookup on leave says nothing; the submit says it.
                   () => {},
@@ -296,6 +299,7 @@ export function TaskForm({
           setCheckedRows(new Set());
           setResolvedKeys([]);
           setBodyView("write");
+          setUserOpen(undefined);
           setRestored(false);
           onDiscard?.();
         }}

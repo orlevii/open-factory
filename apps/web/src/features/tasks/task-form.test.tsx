@@ -391,28 +391,109 @@ test("a bad link in a row never blurred blocks the submit and takes focus", asyn
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
-test("after Discard the dependency note keeps its old text hidden (D2) and shows nothing", async () => {
+test("after Discard the hidden error layer still holds the old text and nothing is shown (D2); More options folds", async () => {
   mockApi(base);
   renderApp("/tasks/new", alice);
-  await openMore();
-  const deps = screen.getByLabelText("Depends on");
-  await userEvent.type(deps, "banana");
-  await userEvent.tab();
-  const error = () => document.getElementById("field-dependsOn-error");
-  await waitFor(() => expect(error()).toHaveAttribute("data-shown"));
+  await userEvent.type(await screen.findByLabelText("Description"), "Notes");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
   act(() => openSheet({ kind: "new-task" }));
   await screen.findByText(/Draft restored/);
-  // More options opened itself for the restored keys; an edit keeps it open as the user's own choice.
-  await userEvent.type(screen.getByLabelText("Depends on"), "x");
+  await openMore();
+  expect(moreToggle()).toHaveAttribute("aria-expanded", "true");
+  const title = screen.getByLabelText("Title");
+  await userEvent.type(title, "x");
+  await userEvent.clear(title);
   await userEvent.tab();
+  const error = () => document.getElementById("field-title-error");
   await waitFor(() => expect(error()).toHaveAttribute("data-shown"));
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(screen.getByLabelText("Depends on")).toHaveValue("");
+  expect(screen.getByLabelText("Description")).toHaveValue("");
   expect(error()).not.toHaveAttribute("data-shown");
-  expect(error()).toHaveTextContent("Use task keys, like T-41.");
-  expect(screen.getByLabelText("Depends on")).not.toHaveAttribute("aria-invalid");
+  expect(error()).toHaveTextContent("Enter a title.");
+  expect(screen.getByLabelText("Title")).not.toHaveAttribute("aria-invalid");
+  expect(moreToggle()).toHaveAttribute("aria-expanded", "false");
+});
+
+test("clicking More options after clearing Title doesn't validate Title", async () => {
+  mockApi(base);
+  renderApp("/tasks/new", alice);
+  const title = await screen.findByLabelText("Title");
+  await userEvent.type(title, "x");
+  await userEvent.clear(title);
+  await openMore();
+  expect(screen.getByLabelText("Depends on")).toBeInTheDocument();
+  expect(document.getElementById("field-title-error")).not.toHaveAttribute("data-shown");
+});
+
+test("a dependency lookup that returns after the keys changed is dropped", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const api = mockApi({
+    ...base,
+    "GET /api/tasks?": async (_b, url) => {
+      if (url.includes("T-99")) await gate;
+      return json({ tasks: url.includes("keys=") ? [summary(41)] : [], nextCursor: null });
+    },
+  });
+  renderApp("/tasks/new", alice);
+  await openMore();
+  const deps = screen.getByLabelText("Depends on");
+  await userEvent.type(deps, "T-99");
+  await userEvent.tab();
+  await waitFor(() => expect(api.calls.some((c) => c.url.includes("T-99"))).toBe(true));
+  await userEvent.clear(deps);
+  await userEvent.type(deps, "T-41");
+  release();
+  await act(async () => {
+    await gate;
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(deps).not.toHaveAttribute("aria-invalid");
+  expect(document.getElementById("field-dependsOn-error")).not.toHaveAttribute("data-shown");
+  expect(screen.queryByText("No task T-99.")).toBeNull();
+});
+
+test("a server dependency error survives tabbing out of the unchanged field", async () => {
+  const cycle = "T-2 already depends on T-1; that would make a cycle.";
+  const api = mockApi({
+    ...base,
+    "GET /api/tasks?": (_b, url) =>
+      json({ tasks: url.includes("keys=") ? [summary(41)] : [], nextCursor: null }),
+    "POST /api/tasks": () => badRequest({ dependsOn: cycle }),
+  });
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await openMore();
+  await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  expect(await screen.findByText(cycle)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText("Depends on")).toHaveFocus());
+  const lookups = () => api.calls.filter((c) => c.url.includes("keys=")).length;
+  const before = lookups();
+  await userEvent.tab();
+  await waitFor(() => expect(lookups()).toBe(before + 1));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(document.getElementById("field-dependsOn-error")).toHaveAttribute("data-shown");
+  expect(document.getElementById("field-dependsOn-error")).toHaveTextContent(cycle);
+});
+
+test("a valid first link and a bad second: submit focuses the second and the first shows nothing", async () => {
+  const api = mockApi(base);
+  renderApp("/tasks/new", alice);
+  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
+  await openMore();
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  await userEvent.type(screen.getByLabelText("Link 1 target"), "https://a.example");
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  await userEvent.type(screen.getByLabelText("Link 2 target"), "javascript:x");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(screen.getByLabelText("Link 2 target")).toHaveFocus());
+  expect(screen.getByLabelText("Link 2 target")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Link 1 target")).not.toHaveAttribute("aria-invalid");
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
 test("an over-long description marks the editor, returns to Write and focuses the textarea", async () => {
@@ -469,4 +550,37 @@ test("a failed dependency lookup on submit is the outcome line", async () => {
     expect(outcomeAlert()).toHaveTextContent("Couldn't create the task. Try again."),
   );
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+});
+
+test("a stale assignee blocks the submit until another is picked; Unassigned goes through", async () => {
+  const api = mockApi({
+    ...base,
+    "GET /api/agents?": (_b, url) =>
+      url.includes("ended=only")
+        ? json({
+            agents: [agentSummary({ slug: "ada", displayName: "Ada" })],
+            more: false,
+            running: { count: 0, max: 8 },
+          })
+        : agents(),
+    "POST /api/tasks": () => json({ task: detail(42) }, 201),
+  });
+  renderApp("/tasks", alice);
+  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText("Title"), "Plan");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  const field = await assigneeField();
+  await waitFor(() => expect(field).toHaveFocus());
+  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  await pickComboOption(field, /Unassigned/);
+  expect(document.getElementById("field-assignee-error")).not.toHaveAttribute("data-shown");
+  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+  await waitFor(() => expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1));
+  expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
+    title: "Plan",
+    body: "",
+    dependsOn: [],
+    links: [],
+  });
 });

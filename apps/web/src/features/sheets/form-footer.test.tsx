@@ -52,3 +52,26 @@ test("an error hides the notice and is announced", () => {
   expect(screen.getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-describedby");
   expect(document.querySelector(".form-outcome-notice")).not.toHaveAttribute("data-shown");
 });
+
+test("Discard skips the leaving field's validation", () => {
+  render(
+    <Sheet open onOpenChange={() => {}}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>T</SheetTitle>
+        </SheetHeader>
+        <form>
+          <SheetFormFooter
+            submitLabel="Save"
+            pendingLabel="Saving…"
+            pending={false}
+            restored
+            onDiscard={() => {}}
+            outcome={{ outcomeKey: 0 }}
+          />
+        </form>
+      </SheetContent>
+    </Sheet>,
+  );
+  expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("data-skip-validate");
+});

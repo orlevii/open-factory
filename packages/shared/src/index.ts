@@ -3,6 +3,7 @@ export * from "./api-fetch.ts";
 export * from "./avatar.ts";
 export * from "./chat.ts";
 export * from "./claude-builtins.ts";
+export * from "./claude-sign-in.ts";
 export * from "./commands.ts";
 export * from "./config.ts";
 export * from "./config-changes.ts";

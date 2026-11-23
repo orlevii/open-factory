@@ -17,7 +17,6 @@ export const FORM_MSG = {
   saveScheduleFailed: "Couldn't save the schedule. Try again.",
   noSuchTask: "No such task.",
   noSuchAgent: "No such agent.",
-  credentialDeleted: "That credential was deleted.",
   projectsRemoved: "Some chosen projects were removed.",
   chooseAgent: "Choose an agent.",
   enterPattern: "Enter a pattern.",

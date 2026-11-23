@@ -80,8 +80,8 @@ export const envelopeSchema = z.object({
 });
 export type Envelope = z.infer<typeof envelopeSchema>;
 
-/** `notice` is a factory notice (an agent errored, ...); a chat message is the Chat's, never an item (I1 §6.7). */
-export const INBOX_KINDS = ["notice", "mention", "task_event"] as const;
+/** `notice` is a factory notice (an agent errored, ...); `credential` is a factory fact about a credential; a chat message is the Chat's, never an item (I1 §6.7). */
+export const INBOX_KINDS = ["notice", "mention", "task_event", "credential"] as const;
 export const inboxItemSchema = z.object({
   id: z.string(),
   messageId: z.string(),
@@ -97,6 +97,10 @@ export const inboxItemSchema = z.object({
   task: z.object({ key: z.string(), title: z.string() }).optional(),
   /** A task event's notice, so the UI never parses the preview. */
   fact: z.enum(["done", "cancelled"]).optional(),
+  /** The credential a `credential` item is about. */
+  credential: z
+    .object({ name: z.string(), expiresAt: z.string().nullable(), current: z.boolean() })
+    .optional(),
   link: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("session"),
@@ -104,6 +108,7 @@ export const inboxItemSchema = z.object({
       seq: z.number().int().optional(),
     }),
     z.object({ kind: z.literal("task"), key: z.string(), commentId: z.string().optional() }),
+    z.object({ kind: z.literal("credential"), name: z.string() }),
   ]),
 });
 export type InboxItem = z.infer<typeof inboxItemSchema>;

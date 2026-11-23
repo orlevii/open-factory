@@ -70,6 +70,8 @@ export class CredentialService {
       kind: row.kind,
       lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.toISOString() : null,
       lastError: row.lastError,
+      expiresAt: null,
+      rejected: false,
       usedBy: slugs(u.active),
       archivedUsedBy: slugs(u.archived),
       ...toRateLimitState(row, this.d.now()),

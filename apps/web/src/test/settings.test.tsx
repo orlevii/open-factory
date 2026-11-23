@@ -33,6 +33,8 @@ const cred = (o: Partial<CredentialSummary> = {}): CredentialSummary => ({
   kind: "oauth_token",
   lastVerifiedAt: hoursAgo(2),
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,

@@ -83,7 +83,7 @@ test("validates on leave, not while typing; typing clears the error", async () =
   expect(title).toHaveValue("a".repeat(201));
   expect(titleError()).not.toHaveAttribute("data-shown");
   await userEvent.tab();
-  expect(await screen.findByText("Keep the title to 200 characters or fewer.")).toBeInTheDocument();
+  expect(await screen.findByText("Use 200 characters or fewer.")).toBeInTheDocument();
   expect(titleError()).toHaveAttribute("data-shown");
 });
 

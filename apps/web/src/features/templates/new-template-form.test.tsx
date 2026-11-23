@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { clearDraft } from "@/features/sheets/drafts";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -206,7 +207,7 @@ test("a display name with no usable letters opens Name with the format error", a
   await userEvent.type(within(d).getByLabelText("Display name"), "!!!");
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   const name = await within(d).findByLabelText("Name");
-  expect(name).toHaveAccessibleDescription(/Use lowercase letters/);
+  expect(name).toHaveAccessibleDescription(FORM_MSG.templateNameChars);
   expect(name).toHaveFocus();
 });
 

@@ -137,15 +137,11 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   expect(await screen.findByText("Enter a pattern.")).toBeInTheDocument();
   await userEvent.type(cron, "@daily");
   await userEvent.tab();
-  expect(
-    await screen.findByText("Use 5 fields: minute hour day-of-month month day-of-week."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Use 5 fields, like 0 9 * * 1-5.")).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "0 9 L * *");
   await userEvent.tab();
-  expect(
-    await screen.findByText("Only numbers, *, ranges, lists, steps and names are allowed."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Use numbers, *, -, / and commas.")).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "61 * * * *");
   await userEvent.tab();

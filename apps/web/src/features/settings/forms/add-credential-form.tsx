@@ -10,6 +10,7 @@ import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { createCredential } from "@/features/settings/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { TokenField, type Verdict, valueNoun, verdictOf } from "./shared";
 
@@ -35,10 +36,9 @@ export function AddCredentialForm({
   const [pending, setPending] = useState(false);
 
   const checkName = (n: string) => {
-    if (!nameSchema.safeParse(n).success) {
-      return "Use 2–40 lowercase letters, numbers and inner hyphens, starting with a letter.";
-    }
-    return existing.includes(n) ? `A credential named ${n} already exists.` : undefined;
+    const r = nameSchema.safeParse(n);
+    if (!r.success) return r.error.issues[0]?.message;
+    return existing.includes(n) ? FORM_MSG.nameTaken : undefined;
   };
   const checkValue = (v: string, k: CredentialKind) =>
     v.trim() === "" ? `Enter the ${valueNoun(k)}.` : undefined;

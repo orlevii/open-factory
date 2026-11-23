@@ -14,6 +14,7 @@ import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
 import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { MoreOptions } from "@/features/sheets/more-options";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import type { CreateTaskBody } from "./api";
 import { checkDependencies, DependencyEditor } from "./dependency-editor";
 import { checkLink, LinkEditor, type LinkRow, rowsToInput } from "./link-editor";
@@ -94,11 +95,7 @@ export function TaskForm({
   const staleEnded =
     stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.slug === staleSlug);
   // The reason shows in the same commit that empties the field; the effect keeps it once the value is cleared.
-  const staleError = stale
-    ? staleEnded
-      ? `@${staleSlug} has ended; pick another.`
-      : `There is no agent @${staleSlug}.`
-    : undefined;
+  const staleError = stale ? (staleEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing) : undefined;
   const assigneeError = errors.assignee ?? staleError;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `update` and `draft.rebase` only write refs, the draft and state
   useEffect(() => {

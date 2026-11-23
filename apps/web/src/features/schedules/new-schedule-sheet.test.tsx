@@ -112,7 +112,7 @@ test("an ended target stays empty and says so", async () => {
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
-  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
 });
 
@@ -121,7 +121,7 @@ test("an unknown target stays empty and says so", async () => {
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "nobody" }));
-  expect(await screen.findByText("There is no agent @nobody.")).toBeInTheDocument();
+  expect(await screen.findByText("No such agent; pick another.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
 });
 
@@ -130,7 +130,7 @@ test("a stale target cleared from the spec leaves no draft, so the next target s
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
-  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(hasDraft("new-schedule")).toBe(false);
@@ -150,7 +150,7 @@ test("Discard over a stale preset leaves no phantom draft", async () => {
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(hasDraft("new-schedule")).toBe(false);

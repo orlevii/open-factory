@@ -6,6 +6,7 @@ export * from "./events.ts";
 export * from "./handle.ts";
 export * from "./images.ts";
 export * from "./keys.ts";
+export * from "./messages.ts";
 export * from "./messaging.ts";
 export * from "./names.ts";
 export * from "./schedules.ts";

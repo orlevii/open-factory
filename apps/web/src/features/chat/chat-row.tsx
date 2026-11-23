@@ -13,7 +13,6 @@ import { AlsoTo } from "./also-to";
 import { ChatRowMenu, type MessageEntry } from "./chat-row-menu";
 import { entryKey, isSending } from "./chat-state";
 
-/** The deep-link tint's phase: shown, then fading until its `transitionend` (the session's rule). */
 /** A message of yours the Chat shows as cancelled, in its place (I1 §6.4). */
 export type CancelNote = {
   error?: string;

@@ -18,5 +18,8 @@ export const Route = createFileRoute("/_app/settings/credentials")({
         : qc.fetchQuery(credentialsQueryOptions),
     ]);
   },
-  component: CredentialsSection,
+  component: function CredentialsPage() {
+    const credential = Route.useSearch({ select: (s) => s.credential });
+    return <CredentialsSection arriveAt={credential} />;
+  },
 });

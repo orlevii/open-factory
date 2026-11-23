@@ -112,6 +112,14 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     },
     title: "Add secret",
   },
+  // Task 17 replaces the placeholder body.
+  "sign-in-again": {
+    load: () => import("./sign-in-again-sheet-placeholder"),
+    prefetch(qc) {
+      warm(qc, credentialsQueryOptions);
+    },
+    title: "Sign in again",
+  },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
     prefetch(qc, spec: { key: string }) {

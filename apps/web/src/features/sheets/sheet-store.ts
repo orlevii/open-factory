@@ -7,7 +7,8 @@ export type SheetSpec =
   | { kind: "new-task"; assignee?: string }
   | { kind: "new-schedule"; target?: string }
   | { kind: "edit-schedule"; key: string }
-  | { kind: "new-template"; then: "open-editor" };
+  | { kind: "new-template"; then: "open-editor" }
+  | { kind: "sign-in-again"; name: string };
 
 /** A sheet stacked on top of a parent sheet, returning a name to it. */
 export type ChildSpec =

@@ -21,7 +21,7 @@ export function arrive(row: HTMLElement) {
   row.addEventListener("blur", () => row.removeAttribute("data-focus-ring"), { once: true });
 }
 
-/** The tint: "on" for ARRIVAL_MS of visible time, then "fading" until the row's animationend calls
+/** The tint: "on" for ARRIVAL_MS of visible time, then "fading" until the row's transitionend calls
  *  onArrivedEnd. `start` and `onArrivedEnd` are stable: they go into memoised rows. */
 export function useArrivalTint() {
   const [arrival, setArrival] = useState<Arrival>();

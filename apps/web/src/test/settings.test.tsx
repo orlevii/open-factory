@@ -325,7 +325,7 @@ test("deleting an unused credential confirms, then calls DELETE", async () => {
   await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
   const dialog = screen.getByRole("alertdialog", { name: "Delete credential work?" });
   expect(dialog).toHaveTextContent(
-    "Its token is erased and can't be shown again. To use it later, create a new one with claude setup-token.",
+    "Its token is erased and can't be shown again. To use it later, add it again with Sign in with Claude.",
   );
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   await userEvent.click(within(dialog).getByRole("button", { name: "Delete work" }));

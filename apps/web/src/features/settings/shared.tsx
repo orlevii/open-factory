@@ -183,7 +183,9 @@ export function RowLine({ children, actions }: { children: ReactNode; actions: R
   return (
     <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
       {children}
-      <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
+      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+        {actions}
+      </div>
     </div>
   );
 }

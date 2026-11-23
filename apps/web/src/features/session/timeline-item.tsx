@@ -12,8 +12,6 @@ import { TimelineRow } from "./timeline-row";
  *  other row. Compared by identity. */
 export type RowProgress = SubagentProgress | readonly (SubagentProgress | undefined)[] | undefined;
 
-/** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
-
 export type TimelineItemProps = {
   row: Row;
   slug: string;

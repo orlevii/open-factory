@@ -11,6 +11,7 @@ import {
 } from "fastify-type-provider-zod";
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
+import { ChatStore } from "./agents/chat-store.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
@@ -89,6 +90,7 @@ declare module "fastify" {
     runtimes: AgentRuntimes;
     bus: EventBus;
     store: EventStore;
+    chat: ChatStore;
     vault: Vault;
     workspace: Workspace;
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
@@ -334,6 +336,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
   app.decorate("store", store);
+  app.decorate("chat", new ChatStore(deps.db));
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
   app.decorate("neighborhood", neighborhood);

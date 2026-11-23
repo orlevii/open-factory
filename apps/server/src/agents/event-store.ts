@@ -40,7 +40,7 @@ import type { NoticeType } from "./notices.ts";
  * Only an instant `inboxPage` minted (UTC ISO, microseconds kept) is accepted, so nothing malformed reaches Postgres;
  * the round trip rejects calendar dates that don't exist (2026-02-31), and the year must be at least 1.
  */
-function isCursorInstant(at: string): boolean {
+export function isCursorInstant(at: string): boolean {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$/.test(at)) return false;
   // Year 0000 parses in JavaScript but isn't a Postgres timestamp (1 BC is year 1 BC there).
   if (at.startsWith("0000")) return false;

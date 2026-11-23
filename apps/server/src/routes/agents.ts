@@ -6,6 +6,8 @@ import {
   agentListSchema,
   agentResponseSchema,
   agentUsageSchema,
+  chatPageSchema,
+  chatQuerySchema,
   classifyInput,
   compactBodySchema,
   createAgentBodySchema,
@@ -32,6 +34,7 @@ import {
   AgentTerminatedError,
   CommandsUnsupportedError,
   CompactingError,
+  InvalidCursorError,
   NoOpenTurnError,
   RecoveryRefusedError,
 } from "../agents/errors.ts";
@@ -42,6 +45,7 @@ import {
 } from "../agents/message-cancel.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { localRuntimeAllowed } from "../config.ts";
+import { FieldError } from "../errors.ts";
 import { parseDays } from "./usage.ts";
 
 const slugParams = z.object({ slug: slugSchema });
@@ -75,6 +79,59 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const u = await app.usage.agent(req.params.slug, parseDays(req.query));
       if (!u) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       return u;
+    },
+  );
+
+  // I1 §6.3: this human's thread with the agent, with turn outcomes and the runtime's `working` fact.
+  app.get(
+    "/api/agents/:slug/chat",
+    {
+      schema: {
+        params: slugParams,
+        querystring: chatQuerySchema,
+        response: { 200: chatPageSchema },
+      },
+    },
+    async (req, reply) => {
+      const rt = await app.runtimes.bySlug(req.params.slug);
+      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const me = user(req);
+      const { before, around, limit } = req.query;
+      if (before !== undefined && around !== undefined)
+        return err(reply, 400, "validation_error", "before and around can't be combined");
+      // Read synchronously, before the query: a close that commits meanwhile has its outcome in the page or is
+      // not yet visible to either read, never both missing (§6.3 read order).
+      const working = rt.workingFor(me.id);
+      // The runtime's row can be stale (archived since): a rejected row's reason reads the stored one.
+      const row = (await app.store.agentBySlug(req.params.slug)) ?? rt.agent;
+      let slice: Awaited<ReturnType<typeof app.chat.page>>;
+      try {
+        slice = await app.chat.page(
+          {
+            agent: {
+              id: row.id,
+              slug: row.slug,
+              archivedAt: row.archivedAt,
+              terminatedAt: row.terminatedAt,
+            },
+            user: { id: me.id, handle: me.handle },
+          },
+          {
+            limit,
+            ...(before !== undefined ? { before } : {}),
+            ...(around !== undefined ? { around } : {}),
+          },
+        );
+      } catch (e) {
+        if (e instanceof InvalidCursorError) throw new FieldError("before", e.message);
+        throw e;
+      }
+      if (!slice)
+        return err(reply, 404, "message_not_found", `Message ${around} isn't in this chat`);
+      const answered = slice.entries.some(
+        (e) => e.kind === "turn_outcome" && e.key === working?.key,
+      );
+      return { ...slice, working: answered ? null : working };
     },
   );
 

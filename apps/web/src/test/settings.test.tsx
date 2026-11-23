@@ -545,8 +545,13 @@ test.each([false, true])(
   },
 );
 
-test("projects: the loader asks for host info without waiting, and the page renders when it 404s", async () => {
-  const { api } = world({ projects: [project({ name: "app" })] });
+test("projects: the loader asks for host info, and the page renders when it 404s", async () => {
+  const { api } = world({
+    projects: [project({ name: "app" })],
+    extra: {
+      "GET /api/host": () => json({ error: { code: "not_found", message: "Not found." } }, 404),
+    },
+  });
   renderApp("/settings/projects", alice);
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());

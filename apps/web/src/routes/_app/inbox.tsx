@@ -104,7 +104,7 @@ function InboxPage() {
       <div className="flex h-svh min-h-0 flex-col">
         {header}
         <div className="flex min-h-0 flex-1">
-          <div className="w-[23.75rem] shrink-0 overflow-y-auto border-r border-border">
+          <div className="w-[23.75rem] max-w-[45%] shrink-0 overflow-y-auto border-r border-border">
             <div className="py-4">
               <div className="px-4">{outcome}</div>
               <InboxList selectedId={itemId} selectedChat={selectedChat} onSelect={onSelect} />

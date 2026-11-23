@@ -649,8 +649,9 @@ test("header on touch: Agent details and ⋯ are both the coarse group's 40px bo
   const sized = Array.from(group?.querySelectorAll(selector ?? "") ?? []);
   expect(sized).toContain(details);
   expect(sized).toContain(menu);
-  // A working agent has no third action: the avatar stays at every width.
-  expect(header.querySelector("[data-header-avatar]")).not.toHaveClass("@max-[22rem]:hidden");
+  // Below a 22rem header (a phone, or 200% text) the avatar, the switch and this toggle give way to the ⋯ menu.
+  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
+  expect(details).toHaveClass("@max-[22rem]:hidden");
 });
 
 test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
@@ -663,7 +664,7 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   const header = screen.getByRole("banner");
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
-  // Restart is a third 40px action: below a 22rem header the avatar gives way (break H3).
+  // Restart is a third 40px action; the avatar gives way below a 22rem header (break H3).
   expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);

@@ -442,7 +442,7 @@ Implements spec §5.1, §5.2, D1–D4, R6.
   - `export async function startHostPty(d: { claudeBin: string; serverEnv?: NodeJS.ProcessEnv; spawnFn?: typeof spawn; tmp?: string }): Promise<PtyRun>` (rejects `new PtyUnavailable()` on ENOENT);
   - `export class PtyUnavailable extends Error {}`;
   - `export function probePython(spawnFn?: typeof spawn): Promise<boolean>` (cached by the caller);
-  - `export async function sweepStaleDirs(tmp: string, now: number): Promise<void>` (removes `of-sign-in-*` with mtime older than 15 min).
+  - `export async function sweepStaleDirs(tmp: string, now: number, uid = process.getuid?.()): Promise<void>` — acts only on direct children of `tmp` whose name starts with exactly `of-sign-in-`, inspected with `lstat` (a symlink is never followed or deleted through), owned by `uid`, a directory, and with mtime older than 15 minutes; everything else is left alone.
 
 - [ ] **Step 1: Write failing tests.**
 
@@ -488,7 +488,11 @@ it("spawns python3 with the exact argv, env allow-list, detached and four pipes"
 });
 it("ENOENT is PtyUnavailable", async () => { /* spawnFn emitting error {code:"ENOENT"} → rejects PtyUnavailable, dir removed */ });
 it("probePython: non-zero exit and a 5 s timeout are unavailable", async () => { /* stubs */ });
-it("sweepStaleDirs removes only of-sign-in-* older than 15 minutes", async () => { /* temp dir with utimes */ });
+it("sweepStaleDirs removes only own, real, old of-sign-in-* dirs", async () => {
+  // in a temp parent: an old own dir (removed); a symlink named of-sign-in-link → an old dir elsewhere (link and target left alone);
+  // an old dir with a stubbed uid mismatch (sweepStaleDirs(tmp, now, uid + 1) for that case, left alone); a 5-minute-old dir (left alone);
+  // an old dir named xof-sign-in-y and one nested a level down (left alone)
+});
 
 describe.skipIf(!hasPython && !process.env.CI)("real bridge with the fake CLI", () => {
   it("fails in CI without python3", () => { if (process.env.CI) expect(hasPython).toBe(true); });
@@ -738,6 +742,8 @@ it("starting is reserved synchronously: a second start while starting is 409", a
 });
 it("start ends an awaiting_code attempt and makes a new attemptId", async () => {});
 it("the cap counts starting; the 4th user's start is 429 sign_in_busy", async () => {});
+it("a submit in flight (submitting) holds its slot against the cap", async () => {});
+it("isLive is true for starting, awaiting_code, submitting, exchanging and verifying only", () => {});
 it("an attemptId mismatch is 409 sign_in_replaced and leaves the run untouched", async () => {});
 it("another user with no attempt is 404 for code, wait and cancel whatever the id", async () => {});
 it("name is checked before the code is written; failure returns to awaiting_code with the original deadline", async () => {
@@ -764,7 +770,7 @@ it("never logs the URL, code or token", async () => { /* capture log calls; JSON
 ```
 
 - [ ] **Step 2: Run, confirm failure.**
-- [ ] **Step 3: Implement.** One `Map<userId, Attempt>` plus `Map<userId, Tombstone>`. `start`: check the existing attempt per the table, reserve `{ state: "starting", attemptId }` and count it against the cap **before** the first `await`; then `startPty()` (a `PtyUnavailable` → 503 `sign_in_unavailable`), `run(pty)`, `await run.prompt` (failure → kill, 502 `sign_in_start_failed`), set `awaiting_code`, `url`, `codeDeadline = now + ttl`, arm the TTL timer. `submit`: user lookup → 404; id check → 409 `sign_in_replaced`; state check → 409; set `submitting` synchronously; `normalizeSignInCode` → 400 `validation_error` `{ fields: { code: MSG.signInCode } }` (back to `awaiting_code`); create: `nameSchema.safeParse` → 400 `{ fields: { name } }`, `await nameTaken` → 409 `credential_exists` (back to `awaiting_code`); replace: `await byName(purpose.name)` must match `credentialId` → else end, 404 `credential_not_found` with `MSG.signInCredentialGone`; clear TTL; `exchanging`; build the `outcome` promise (`run.submit(code)` → `mintedAt = now()` → `verifying` → verify with one retry after `retryMs` → `insertVerified`/`replaceVerified` → `settled`, schedule drop after `keepMs`); map `RunFailed("code_rejected")` → 422 `sign_in_code_rejected`, `exchange_failed` → 502 `sign_in_failed`, a unique violation → 409 `sign_in_name_taken`. Return `Promise.race([outcome, timeout(waitMs) → view])`. The token stays a local of the outcome function.
+- [ ] **Step 3: Implement.** One exported `isLive(state)` helper (`starting`, `awaiting_code`, `submitting`, `exchanging`, `verifying`) used by both the cap count and `endFor`'s selection. One `Map<userId, Attempt>` plus `Map<userId, Tombstone>`. `start`: check the existing attempt per the table, reserve `{ state: "starting", attemptId }` and count it against the cap **before** the first `await`; then `startPty()` (a `PtyUnavailable` → 503 `sign_in_unavailable`), `run(pty)`, `await run.prompt` (failure → kill, 502 `sign_in_start_failed`), set `awaiting_code`, `url`, `codeDeadline = now + ttl`, arm the TTL timer. `submit`: user lookup → 404; id check → 409 `sign_in_replaced`; state check → 409; set `submitting` synchronously; `normalizeSignInCode` → 400 `validation_error` `{ fields: { code: MSG.signInCode } }` (back to `awaiting_code`); create: `nameSchema.safeParse` → 400 `{ fields: { name } }`, `await nameTaken` → 409 `credential_exists` (back to `awaiting_code`); replace: `await byName(purpose.name)` must match `credentialId` → else end, 404 `credential_not_found` with `MSG.signInCredentialGone`; clear TTL; `exchanging`; build the `outcome` promise (`run.submit(code)` → `mintedAt = now()` → `verifying` → verify with one retry after `retryMs` → `insertVerified`/`replaceVerified` → `settled`, schedule drop after `keepMs`); map `RunFailed("code_rejected")` → 422 `sign_in_code_rejected`, `exchange_failed` → 502 `sign_in_failed`, a unique violation → 409 `sign_in_name_taken`. Return `Promise.race([outcome, timeout(waitMs) → view])`. The token stays a local of the outcome function.
 - [ ] **Step 4: Run.** PASS.
 - [ ] **Step 5: Commit.** `feat(server): sign-in attempt store`.
 
@@ -795,9 +801,11 @@ it("signs in and creates a credential (AC1)", async () => {
 });
 it("never logs, returns or spawns a secret (AC5)", async () => {
   const lines: string[] = [];
-  const { app, cookie, spawnArgs } = await appWithFakeClaude({ logStream: { write: (l: string) => lines.push(l) } });
+  const { app, cookie, spawnArgs, bridgeStderr } = await appWithFakeClaude({ logLevel: "trace", logStream: { write: (l: string) => lines.push(l) } });
+  // bridgeStderr: a test hook on the transport that makes the bridge write a marker ("BRIDGE-STDERR-MARKER") to stderr
   // full sign-in as above, plus a failing code ("bad") run and a cancel
   const logs = lines.join("\n");
+  expect(logs).not.toContain("BRIDGE-STDERR-MARKER"); // the bridge's stderr is drained, never read into a log line
   for (const secret of [SYNTHETIC_URL, "SYNTHETICchallenge", SYNTHETIC_CODE, SYNTHETIC_TOKEN, "sk-ant-oat01"]) expect(logs).not.toContain(secret);
   for (const body of nonStartResponseBodies) expect(body).not.toContain(SYNTHETIC_URL);
   for (const body of allResponseBodies) { expect(body).not.toContain(SYNTHETIC_TOKEN); expect(body).not.toContain(SYNTHETIC_CODE); }
@@ -881,7 +889,7 @@ Implements spec §11.3 steps 1–2. **The executor never runs this script.** It 
 - Produces: `redactTranscript(raw: string, found: { url: string; code: string; token: string }): string` — replaces every query value of the URL (in the OSC 8 URI and in its display text, including across wraps), the code echo and every token fragment with same-length synthetic characters (`SYNTHETIC` prefix for the token: `sk-ant-oat01-SYNTHETIC` + `x` padding to the original length), preserving every other byte.
 
 - [ ] **Step 1: Write failing tests** for `redactTranscript` using only synthetic inputs built in the test (a fake "real" token `sk-ant-oat01-REALLOOKING…`, a URL with distinct query values): the output length equals the input length; it contains none of the input's query values, code or token fragments; `parsePrompt` and `parseToken` still succeed on the output; the token parsed from the output starts with `sk-ant-oat01-SYNTHETIC`.
-- [ ] **Step 2: Implement `sign-in-redact.ts`** and the script: `sign-in-record.ts` uses `startHostPty` + `runSetupToken` semantics but accumulates raw output in memory; prints only the parsed URL; reads the code with `readline` on the terminal (no echo of it to a file); after the token parses, before anything is written: `redactTranscript(raw, …)`; before removing the temp dir, prints `ls -la` of it and the names (never contents) of files containing `sk-ant-oat01` (read files as bytes, test with `includes`, print paths only); writes the redacted text to `join(os.homedir(), "open-factory-sign-in-recording", "setup-token.recorded-<claude --version>.txt")` (outside the repo) and prints that path; asserts the redacted text has no `sk-ant-oat01-(?!SYNTHETIC)` before writing, else aborts without writing. It never logs the token.
+- [ ] **Step 2: Implement `sign-in-redact.ts`** and the script: `sign-in-record.ts` uses `startHostPty` + `runSetupToken` semantics but accumulates raw output in memory; prints only the parsed URL; reads the code with `readline` on the terminal (no echo of it to a file); after the token parses, before anything is written: `redactTranscript(raw, …)`; before removing the temp dir, prints `ls -la` of it and the names (never contents) of files containing `sk-ant-oat01` (read files as bytes, test with `includes`, print paths only); asserts the redacted text has no `sk-ant-oat01-(?!SYNTHETIC)` before writing; if that check fails it writes nothing and prints only "Redaction check failed; nothing written."; otherwise creates `join(os.homedir(), "open-factory-sign-in-recording")` with `mkdir(…, { recursive: true, mode: 0o700 })` (and `chmod 0o700` if it existed), writes `setup-token.recorded-<claude --version>.txt` there with `writeFile(…, { mode: 0o600, flag: "wx" })`, and prints that path. Unit-test the write helper (`writeRecording(dir, name, text)`) for the modes and the failed-check path with synthetic input. It never logs the token.
 - [ ] **Step 3: Run** `pnpm vitest run apps/server/scripts/sign-in-redact.test.ts` → PASS. Do **not** run `sign-in:record`.
 - [ ] **Step 4: Commit.** `feat(server): sign-in recording script for a redacted fixture`.
 
@@ -1188,5 +1196,5 @@ Implements spec §12 (DESIGN.md).
 Hand this to Or in the PR body and the final report:
 
 1. **Record a real CLI transcript (redacted):** `pnpm --filter @open-factory/server sign-in:record`. Open the printed URL, sign in, paste the code into the terminal. The script redacts in memory and writes `setup-token.recorded-<version>.txt` outside the repo; copy it into `apps/server/src/credentials/sign-in/__fixtures__/` and run `pnpm vitest run apps/server/src/credentials/sign-in` (the fixture guard fails if anything real slipped through). Revoke that token in claude.ai settings if you won't use it.
-2. **Config dir and keychain check:** the script prints `ls -la` of the temp dir and the names of files containing the token; also diff `security dump-keychain | grep -i 'claude code'` (no `-d`) before and after the run, and note whether a browser tab opened by itself. **A file holding the token, or a new or changed keychain item, is a blocker:** report it before the PR leaves draft.
+2. **Config dir and keychain check:** the script prints `ls -la` of the temp dir and the names of files containing the token; also diff `security dump-keychain | grep -i 'claude code'` (no `-d`) before and after the run, and note whether a browser tab opened by itself. **A file holding the token, or a new or changed keychain item, is a blocker:** the PR stays in draft and does not merge until Or reports this check clean (a keychain item persists).
 3. **One real sign-in** through the UI: Add credential → Sign in with Claude, then Sign in again on it. Confirm it verifies, an agent starts on it, and `grep` of the server log for `sk-ant-`, `oauth/authorize` and the code finds nothing.

@@ -28,6 +28,7 @@ export const FIELDS = [
   "template",
   "slug",
   "displayName",
+  "color",
   "description",
   "reportsTo",
   "credential",
@@ -39,6 +40,8 @@ export type Values = {
   template: string;
   slug: string;
   displayName: string;
+  /** Identity colour 1..12, null is Auto. */
+  color: number | null;
   description: string;
   /** "" is "No manager". */
   reportsTo: string;
@@ -53,6 +56,7 @@ export type SubmitResult = "ok" | "invalid" | "failed" | "nothing";
 /** The fields an edit can send, in the order a sentence names them. */
 export const PATCH_FIELDS = [
   "displayName",
+  "color",
   "description",
   "reportsTo",
   "credential",
@@ -66,6 +70,7 @@ const storedOf = (a: AgentSummary): Stored => ({
   template: a.template,
   slug: a.slug,
   displayName: a.displayName,
+  color: a.color,
   description: a.description,
   reportsTo: a.reportsTo ?? "",
   credential: a.credential ?? "",
@@ -77,6 +82,7 @@ const blank = (prefill?: { template?: string }): Stored => ({
   template: prefill?.template ?? "",
   slug: "",
   displayName: "",
+  color: null,
   description: "",
   reportsTo: "",
   credential: "",
@@ -364,6 +370,7 @@ export function useAgentFormState({
     const b = base as Stored;
     const patch: PatchAgentBody = {};
     if (displayName !== b.displayName) patch.displayName = displayName;
+    if (shown.color !== b.color) patch.color = shown.color;
     if (description !== b.description) patch.description = description;
     if (reportsTo !== (b.reportsTo || null)) patch.reportsTo = reportsTo;
     if (shown.credential !== b.credential) patch.credential = shown.credential;
@@ -374,7 +381,7 @@ export function useAgentFormState({
   // Edit: the fields a save would send now (the restart notice names them).
   const editPatch = create ? null : body();
   const changes: PatchField[] = editPatch
-    ? PATCH_FIELDS.filter((f) => editPatch[f] !== undefined)
+    ? PATCH_FIELDS.filter((f) => (editPatch as PatchAgentBody)[f] !== undefined)
     : [];
 
   const noCredentials = credentials !== undefined && credentials.length === 0;

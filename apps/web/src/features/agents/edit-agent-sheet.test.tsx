@@ -742,3 +742,60 @@ test("/agents/lead/edit lands on the lead chat with Edit agent open", async () =
   });
   expect(await screen.findByLabelText("Display name")).toHaveValue("Lead");
 });
+
+// --- Colour (I2 §12.6) ---
+
+const radio = (name: string) => screen.getByRole("radio", { name });
+
+test("Colour sits after Display name, names Auto's seeded hue, and sends color alone without a restart", async () => {
+  const api = await open({
+    agents: [lead({ status: "idle" })],
+    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
+  });
+  const group = screen.getByRole("radiogroup", { name: "Colour" });
+  expect(screen.getByText(/^Colour · Auto \(\w+\)$/)).toBeInTheDocument();
+  expect(field("Display name").compareDocumentPosition(group)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  await userEvent.click(radio("Teal"));
+  expect(screen.getByText("Colour · Teal")).toBeInTheDocument();
+  expect(screen.queryByText(SELF)).not.toBeInTheDocument();
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead.");
+  expect(patches(api.api)).toEqual([{ color: 4 }]);
+});
+
+test("arrow keys move and select, Home and End jump, roving tabindex follows", async () => {
+  await open();
+  await userEvent.click(radio("Auto"));
+  await userEvent.keyboard("{ArrowRight}");
+  expect(radio("Olive")).toHaveAttribute("aria-checked", "true");
+  expect(radio("Olive")).toHaveFocus();
+  expect(radio("Olive")).toHaveAttribute("tabindex", "0");
+  expect(radio("Auto")).toHaveAttribute("tabindex", "-1");
+  await userEvent.keyboard("{End}");
+  expect(radio("Ruby")).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByText("Colour · Ruby")).toBeInTheDocument();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(radio("Auto")).toHaveAttribute("aria-checked", "true");
+  await userEvent.keyboard("{ArrowLeft}{Home}");
+  expect(radio("Auto")).toHaveAttribute("aria-checked", "true");
+  expect(radio("Auto")).toHaveFocus();
+});
+
+test("an agent whose template has an avatar.svg gets the line, not the group", async () => {
+  await open({ agents: [lead({ avatarVersion: "v1" })] });
+  expect(screen.getByText("This template's avatar.svg sets the avatar.")).toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup", { name: "Colour" })).not.toBeInTheDocument();
+});
+
+test("a running agent's colour with another field still restarts", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 2 })) },
+  });
+  await userEvent.click(radio("Moss"));
+  await rename("Boss");
+  expect(screen.getByText(SELF)).toBeInTheDocument();
+});

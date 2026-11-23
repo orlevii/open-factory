@@ -507,6 +507,14 @@ test.each([false, true])(
   },
 );
 
+test("projects: the loader asks for host info without waiting, and the page renders when it 404s", async () => {
+  const { api } = world({ projects: [project({ name: "app" })] });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  expect(api.calls.some((c) => c.url === "/api/host")).toBe(true);
+});
+
 test("projects: a Remove blocked by many grantees names three and counts the rest", async () => {
   world({
     projects: [project({ name: "app", grantedTo: ["a", "b", "c", "d", "e"] })],

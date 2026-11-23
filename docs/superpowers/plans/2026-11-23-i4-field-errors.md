@@ -32,6 +32,12 @@
 - **Motion (§5.1, §6.1):** a note enters over `150ms` and leaves over `100ms` on `var(--ease-out)`, animating opacity with `visibility` flipping at the ends. Outcome lines fade in over `150ms` (`@starting-style`) and leave at once. Control edges use the same 150/100 pair. Fades stay under reduced motion. Nothing moves, shakes or animates height.
 - **Spacing:** `field-stack` row gap is `0.75rem`. Inside `FieldShell`: label to control 6px, control to note 4px, note to `below` 6px. The outcome line follows the last note at 4px, with buttons 8px below. The sheet footer's top padding is 8px, with 4px from the line to the buttons.
 - **No form library**, no new dependency, no `flushSync` or `queueMicrotask` for focus.
+- **React rules for the forms (plan review):**
+  - Never put `f`, `f.errors` or `f.blur` in an effect's or memo's dependency list; derive primitives and depend on those.
+  - Never write a ref during render. The hook keeps last-committed mirrors updated in a layout effect.
+  - A form that disables its fieldset while pending calls `setPending(false)` in the same synchronous block as `f.server(...)`.
+  - Forms never hand-write `outcomeKey`; they use `useOutcome()` (Task 4).
+  - `AuthCard`, `FormFrame` and `InlineForm` take `ref` as a plain prop (React 19), with no `formRef` prop and no `forwardRef`.
 - **Resource rules:** only one browser evidence pass or full test suite runs at a time on this machine, because CPU is shared. Evidence passes take the harness lock (`run.sh`, `/tmp/of-u4-evidence.lock`), and a full-suite run should not overlap one. Tasks run targeted tests: `pnpm vitest run --maxWorkers=50% <paths>`. The full suite (`pnpm test -- --maxWorkers=50%`) runs only in Task 20.
 - **Evidence:** fake Claude only (`fake.mjs`). Never use real Claude credentials, never touch `~/.open-factory-spike`, and never start real agents.
 - `docs/product/` is gitignored and belongs to the owner. Read it from `/Users/orlevi/projects/open-factory/docs/product/` and never edit its docs. The only writes allowed there are evidence outputs under `ui-review/u4-evidence/i4/`.
@@ -321,12 +327,14 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 export type Checks<F extends string> = Partial<Record<F, () => string | undefined>>;
 export type FieldErrors<F extends string> = {
   errors: Partial<Record<F, string>>;
+  /** Bumped by every focus request: a failing submit(), a server() that mapped a field, set(..., { focus: true }). */
   attempt: number;
   change(f: F): void;
   blur(f: F, e?: { relatedTarget: EventTarget | null }): void;
   set(f: F, message: string | undefined, opts?: { focus?: boolean }): void;
   server(fields: Record<string, string> | undefined): boolean;
-  submit(fields?: readonly F[]): boolean;
+  /** `extra`: async results from this same tick (a dependency lookup); they count as external errors for this submit. */
+  submit(fields?: readonly F[], extra?: Partial<Record<F, string | undefined>>): boolean;
   reset(): void;
 };
 export function useFieldErrors<F extends string>(o: {
@@ -338,20 +346,28 @@ export function useFieldErrors<F extends string>(o: {
 export function focusField(root: HTMLElement | null): void;
 ```
 
-- [ ] **Step 1: Write the failing tests** (`use-field-errors.test.tsx`). Use a small harness component: one input per field, each with `aria-invalid` from `errors`, a `data-skip-validate` Close button, and a form ref.
+- **Rules for callers:**
+  - Never put `f`, `f.errors` or `f.blur` in an effect's or memo's dependency list; derive primitives (`const hasLinkError = Boolean(f.errors.links)`) and depend on those.
+  - A form that disables its fieldset while pending calls `setPending(false)` in the same synchronous block as `f.server(...)`, so the field is enabled in the commit the focus effect runs after.
+
+- [ ] **Step 1: Write the failing tests** (`use-field-errors.test.tsx`). The harness is rendered inside `<StrictMode>`.
 
 ```tsx
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef, useState } from "react";
+import { StrictMode, useRef, useState } from "react";
 import { expect, test } from "vitest";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 
 type F = "title" | "path";
 let api: ReturnType<typeof useFieldErrors<F>>;
-function Harness({ hidePath = false }: { hidePath?: boolean }) {
+let setPendingOut: (p: boolean) => void;
+function Harness({ startHidden = false }: { startHidden?: boolean }) {
   const form = useRef<HTMLFormElement>(null);
   const [v, setV] = useState({ title: "", path: "" });
+  const [hidePath, setHidePath] = useState(startHidden);
+  const [pending, setPending] = useState(false);
+  setPendingOut = setPending;
   api = useFieldErrors<F>({
     form,
     fields: ["title", "path"],
@@ -370,23 +386,29 @@ function Harness({ hidePath = false }: { hidePath?: boolean }) {
   );
   return (
     <form ref={form}>
-      {field("title")}
-      {!hidePath && field("path")}
+      <fieldset disabled={pending}>
+        {field("title")}
+        {!hidePath && field("path")}
+      </fieldset>
       <button type="button" data-skip-validate="">Close</button>
       <button type="button">Other</button>
+      <button type="button" onClick={() => { setHidePath(false); api.set("path", "Enter a path.", { focus: true }); }}>
+        Reveal
+      </button>
     </form>
   );
 }
+const renderH = (p?: { startHidden?: boolean }) => render(<StrictMode><Harness {...p} /></StrictMode>);
 
 test("tabbing past an untouched field shows nothing", async () => {
-  render(<Harness />);
+  renderH();
   await userEvent.click(screen.getByLabelText("title"));
   await userEvent.tab();
   expect(screen.queryByText("Enter a title.")).toBeNull();
 });
 
 test("blur on a changed field flags; while flagged the message follows typing; a pass clears and typing never re-flags", async () => {
-  render(<Harness />);
+  renderH();
   const path = screen.getByLabelText("path");
   await userEvent.type(path, "a");
   await userEvent.click(screen.getByText("Other"));
@@ -400,14 +422,14 @@ test("blur on a changed field flags; while flagged the message follows typing; a
 });
 
 test("blur to a data-skip-validate control doesn't validate", async () => {
-  render(<Harness />);
+  renderH();
   await userEvent.type(screen.getByLabelText("title"), " ");
   await userEvent.click(screen.getByText("Close"));
   expect(screen.queryByText("Enter a title.")).toBeNull();
 });
 
 test("submit flags all, focuses the first invalid field in DOM order, bumps attempt", () => {
-  render(<Harness />);
+  renderH();
   let ok = true;
   act(() => { ok = api.submit(); });
   expect(ok).toBe(false);
@@ -415,20 +437,21 @@ test("submit flags all, focuses the first invalid field in DOM order, bumps atte
   expect(screen.getByLabelText("title")).toHaveFocus();
 });
 
-test("an external error set in the same tick fails submit; change clears it", async () => {
-  render(<Harness />);
+test("a same-tick async result passed as extra fails submit and gets focus; change clears it", async () => {
+  renderH();
   await userEvent.type(screen.getByLabelText("title"), "x");
   await userEvent.type(screen.getByLabelText("path"), "/x");
   let ok = true;
-  act(() => { api.set("path", "No folder at this path."); ok = api.submit(); });
+  act(() => { ok = api.submit(undefined, { path: "No folder at this path." }); });
   expect(ok).toBe(false);
+  expect(screen.getByText("No folder at this path.")).toBeInTheDocument();
   expect(screen.getByLabelText("path")).toHaveFocus();
   await userEvent.type(screen.getByLabelText("path"), "y");
   expect(screen.queryByText("No folder at this path.")).toBeNull();
 });
 
 test("submit with a subset unflags the rest", () => {
-  render(<Harness />);
+  renderH();
   act(() => { api.submit(); });
   act(() => { api.submit(["path"]); });
   expect(screen.queryByText("Enter a title.")).toBeNull();
@@ -436,7 +459,7 @@ test("submit with a subset unflags the rest", () => {
 });
 
 test("server maps known fields only and says whether it did", () => {
-  render(<Harness />);
+  renderH();
   let mapped = true;
   act(() => { mapped = api.server({ other: "x" }); });
   expect(mapped).toBe(false);
@@ -445,17 +468,24 @@ test("server maps known fields only and says whether it did", () => {
   expect(screen.getByLabelText("path")).toHaveFocus();
 });
 
-test("focus waits for a field that mounts in the same commit", () => {
-  const { rerender } = render(<Harness hidePath />);
-  act(() => { api.set("path", "Enter a path.", { focus: true }); });
-  rerender(<Harness />);
-  // In the forms, the disclosure opens in the same render as the error; here the rerender stands in for it.
-  act(() => { api.set("path", "Enter a path.", { focus: true }); });
+test("a fieldset re-enabled in the same update as server() lets the field take focus", () => {
+  renderH();
+  act(() => setPendingOut(true));
+  act(() => { setPendingOut(false); api.server({ path: "Another project uses this folder." }); });
+  expect(screen.getByLabelText("path")).toHaveFocus();
+});
+
+test("focus reaches a field that mounts in the same commit; set with focus requests focus even when the message is unchanged", async () => {
+  renderH({ startHidden: true });
+  await userEvent.click(screen.getByText("Reveal"));
+  expect(screen.getByLabelText("path")).toHaveFocus();
+  await userEvent.click(screen.getByText("Other"));
+  await userEvent.click(screen.getByText("Reveal")); // same message again
   expect(screen.getByLabelText("path")).toHaveFocus();
 });
 ```
 
-Add one more test: leaving the document. Stub `document.hasFocus` to return `false`, fire a `blur` event on a changed field, and expect no error.
+Add one more test for leaving the document: stub `document.hasFocus` to return `false`, fire a `blur` event on a changed field, and expect no error.
 
 Add a `focusField` test. Build a disabled `fieldset` containing an `aria-invalid` input, followed by an enabled one, and check that the enabled one gets focus. Spy on `Element.prototype.scrollIntoView` (jsdom lacks it, so define it on the prototype in the test) and check that it is called on the `[data-field]` ancestor with `{ block: "nearest" }`.
 
@@ -486,81 +516,91 @@ import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { focusField } from "./focus-field";
 
 // WebKit doesn't focus a clicked button, so a blur toward one has no relatedTarget: fall back to the last pointerdown.
+// Installed once, at module load.
 let lastPointer: { target: EventTarget | null; at: number } = { target: null, at: 0 };
-let tracking = false;
-function trackPointer() {
-  if (tracking || typeof document === "undefined") return;
-  tracking = true;
-  document.addEventListener("pointerdown", (e) => { lastPointer = { target: e.target, at: performance.now() }; }, true);
-}
+if (typeof document !== "undefined")
+  document.addEventListener("pointerdown", (e) => { lastPointer = { target: e.target, at: performance.now() }; },
+    { capture: true, passive: true });
 const skips = (t: EventTarget | null) => t instanceof Element && t.closest("[data-skip-validate]") !== null;
+
+type Ext<F extends string> = Partial<Record<F, string>>;
 
 export function useFieldErrors<F extends string>({ form, checks, fields }: {
   form: RefObject<HTMLElement | null>; checks: Checks<F>; fields: readonly F[];
 }): FieldErrors<F> {
   const [flagged, setFlagged] = useState<ReadonlySet<F>>(() => new Set());
-  const [external, setExternalState] = useState<Partial<Record<F, string>>>({});
-  const externalRef = useRef(external);
+  const [external, setExternal] = useState<Ext<F>>({});
   const changed = useRef(new Set<F>());
-  const [focusReq, setFocusReq] = useState(0);
+  // One counter for focus requests and disclosures (§6.5): the layout effect keys on it.
   const [attempt, setAttempt] = useState(0);
-  // Handlers run after commit; the effect keeps them on this render's checks (no ref write during render).
+  // Last-committed mirrors for event handlers. They are updated in a layout effect, never during render: handlers run
+  // after commit, and useEffectEvent can't be called from event handlers, so a plain ref updated here is the pattern.
   const checksRef = useRef(checks);
-  useLayoutEffect(() => { checksRef.current = checks; });
-  useLayoutEffect(trackPointer, []);
-  useLayoutEffect(() => { if (focusReq) focusField(form.current); }, [focusReq, form]);
-
-  const setExternal = (next: Partial<Record<F, string>>) => { externalRef.current = next; setExternalState(next); };
-  const requestFocus = () => { setFocusReq((n) => n + 1); setAttempt((n) => n + 1); };
+  const externalRef = useRef(external);
+  const flaggedRef = useRef(flagged);
+  useLayoutEffect(() => {
+    checksRef.current = checks;
+    externalRef.current = external;
+    flaggedRef.current = flagged;
+  });
+  useLayoutEffect(() => { if (attempt > 0) focusField(form.current); }, [attempt, form]);
 
   // Render: a flagged field's message comes from its check now (D4); a passing flagged field is unflagged in this render.
-  const errors: Partial<Record<F, string>> = {};
+  const errors: Ext<F> = {};
   const passed: F[] = [];
   for (const f of fields) {
-    const ext = external[f];
     const own = flagged.has(f) ? checks[f]?.() : undefined;
     if (flagged.has(f) && !own) passed.push(f);
-    const m = ext ?? own;
+    const m = external[f] ?? own;
     if (m) errors[f] = m;
   }
   if (passed.length > 0) setFlagged((s) => { const n = new Set(s); for (const f of passed) n.delete(f); return n; });
+
+  // Bail-out updaters: returning the same object leaves state untouched, so these are safe to call during render.
+  const writeExternal = (f: F, m: string | undefined) =>
+    setExternal((s) => {
+      if (s[f] === m) return s;
+      const n = { ...s };
+      if (m) n[f] = m; else delete n[f];
+      return n;
+    });
 
   return {
     errors,
     attempt,
     change(f) {
       changed.current.add(f);
-      if (externalRef.current[f] !== undefined) { const { [f]: _, ...rest } = externalRef.current; setExternal(rest as typeof external); }
+      writeExternal(f, undefined);
     },
     blur(f, e) {
       if (!document.hasFocus()) return;
       const to = e?.relatedTarget ?? (performance.now() - lastPointer.at < 500 ? lastPointer.target : null);
       if (skips(to)) return;
-      if (!changed.current.has(f) && !flagged.has(f) && !externalRef.current[f]) return;
-      if (checksRef.current[f]?.()) setFlagged((s) => new Set(s).add(f));
+      if (!changed.current.has(f) && !flaggedRef.current.has(f) && !externalRef.current[f]) return;
+      if (checksRef.current[f]?.()) setFlagged((s) => (s.has(f) ? s : new Set(s).add(f)));
     },
     set(f, message, opts) {
-      if (externalRef.current[f] === message) return; // guards a call made during render
-      const next = { ...externalRef.current };
-      if (message) next[f] = message; else delete next[f];
-      setExternal(next);
-      if (message && opts?.focus) requestFocus();
+      writeExternal(f, message);
+      if (message && opts?.focus) setAttempt((n) => n + 1); // even when the message is unchanged
     },
     server(map) {
-      const next: Partial<Record<F, string>> = {};
+      const next: Ext<F> = {};
       for (const f of fields) if (map?.[f]) next[f] = map[f];
       if (Object.keys(next).length === 0) return false;
       setExternal(next);
-      requestFocus();
+      setAttempt((n) => n + 1);
       return true;
     },
-    submit(only = fields) {
+    submit(only = fields, extra = {}) {
       const failing = only.filter((f) => checksRef.current[f]?.());
-      const ext: Partial<Record<F, string>> = {};
-      for (const f of only) if (externalRef.current[f]) ext[f] = externalRef.current[f];
+      const ext: Ext<F> = {};
+      for (const f of only) {
+        const m = f in extra ? extra[f] : externalRef.current[f];
+        if (m) ext[f] = m;
+      }
       setFlagged(new Set(failing));
       setExternal(ext);
-      if (failing.length > 0 || Object.keys(ext).length > 0) { requestFocus(); return false; }
+      if (failing.length > 0 || Object.keys(ext).length > 0) { setAttempt((n) => n + 1); return false; }
       return true;
     },
     reset() { setFlagged(new Set()); setExternal({}); changed.current.clear(); },
@@ -568,7 +608,7 @@ export function useFieldErrors<F extends string>({ form, checks, fields }: {
 }
 ```
 
-`submit` reads `checksRef.current`, which is this render's checks because handlers run after the commit that set it. A form that changes a value and submits in the same event (none do today) would see the previous values; the forms never do that.
+`submit` reads the last-committed checks and external errors. A result from this same tick (an awaited lookup) is not committed yet, so the caller passes it as `extra` (D9).
 
 - [ ] **Step 4: Run them and confirm they pass.**
 - [ ] **Step 5: Commit** with `feat(web): useFieldErrors and focusField own validation timing and focus`.
@@ -585,6 +625,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Produces:
   - `type Outcome = { error?: ReactNode; success?: ReactNode; notice?: ReactNode; outcomeKey: number; action?: ReactNode }`
   - `FormOutcome({ outcome, pending, noticeId, className }: { outcome: Outcome; pending?: string; noticeId?: string; className?: string })`
+  - `useOutcome(): { outcome: Outcome; fail(error: ReactNode, action?: ReactNode): void; succeed(success: ReactNode): void; clear(): void }`. It holds the message and the key in one state, so the key always bumps with the message. Forms merge their own `notice` into it: `{ ...o.outcome, notice }`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -611,6 +652,18 @@ test("an error hides the notice; the notice returns when it clears", () => {
   expect(container.querySelector("#n")).toHaveAttribute("data-shown");
 });
 
+test("useOutcome bumps the key with every fail, so a repeat is re-inserted", () => {
+  function Probe() {
+    const o = useOutcome();
+    return (<><FormOutcome outcome={o.outcome} /><button type="button" onClick={() => o.fail("Couldn't save. Try again.")}>fail</button></>);
+  }
+  render(<Probe />);
+  fireEvent.click(screen.getByText("fail"));
+  const first = screen.getByText("Couldn't save. Try again.");
+  fireEvent.click(screen.getByText("fail"));
+  expect(screen.getByText("Couldn't save. Try again.")).not.toBe(first);
+});
+
 test("success goes to the status region; pending only to the sr-only status", () => {
   render(<FormOutcome pending="Saving…" outcome={{ success: "Saved.", outcomeKey: 1 }} />);
   expect(screen.getByText("Saved.").closest("[role=status]")).toBeInTheDocument();
@@ -626,26 +679,29 @@ export function FormOutcome({ outcome, pending, noticeId, className }: {
   outcome: Outcome; pending?: string; noticeId?: string; className?: string;
 }) {
   const { error, success, notice, outcomeKey, action } = outcome;
-  const showNotice = !error && !success && Boolean(notice);
+  // Explicit checks, never `node && <…>` on a ReactNode (0 or "" would render).
+  const hasError = error != null && error !== false && error !== "";
+  const hasSuccess = !hasError && success != null && success !== false && success !== "";
+  const showNotice = !hasError && !hasSuccess && notice != null && notice !== "";
   return (
     <div className={cn("form-outcome", className)}>
       <p id={noticeId} data-shown={showNotice ? "" : undefined} className="form-outcome-notice text-muted-foreground">{notice}</p>
       <div role="alert">
-        {error && (
+        {hasError ? (
           <p key={outcomeKey} className="form-outcome-line flex items-start gap-1.5 text-destructive">
             <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
             <span className="min-w-0 [overflow-wrap:anywhere]">{error}</span>
             {action}
           </p>
-        )}
+        ) : null}
       </div>
       <div role="status">
-        {!error && success && (
+        {hasSuccess ? (
           <p key={outcomeKey} className="form-outcome-line flex items-start gap-1.5">
             <CircleCheck aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-success" />
             <span className="min-w-0">{success}</span>
           </p>
-        )}
+        ) : null}
       </div>
       <span role="status" className="sr-only">{pending ?? ""}</span>
     </div>
@@ -665,10 +721,23 @@ CSS:
 @starting-style { .form-outcome-line { opacity: 0; } }
 ```
 
+```tsx
+export function useOutcome() {
+  // One state for message and key: the key can never lag its message.
+  const [state, setState] = useState<Omit<Outcome, "notice">>({ outcomeKey: 0 });
+  return {
+    outcome: state as Outcome,
+    fail: (error: ReactNode, action?: ReactNode) => setState((s) => ({ error, action, outcomeKey: s.outcomeKey + 1 })),
+    succeed: (success: ReactNode) => setState((s) => ({ success, outcomeKey: s.outcomeKey + 1 })),
+    clear: () => setState((s) => (s.error == null && s.success == null ? s : { outcomeKey: s.outcomeKey })),
+  };
+}
+```
+
 The `sr-only` span is absolutely positioned and sits outside the grid flow.
 
 - [ ] **Step 4: Run them and confirm they pass.**
-- [ ] **Step 5: Commit** with `feat(web): FormOutcome, the reserved form-level line`.
+- [ ] **Step 5: Commit** with `feat(web): FormOutcome and useOutcome, the reserved form-level line`.
 
 ### Task 5: Wire `outcome` into footers, frames, auth and dialog
 
@@ -685,12 +754,13 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/test/confirm-dialog.test.tsx`, `apps/web/src/features/settings/forms/forms.test.tsx`, plus a new `apps/web/src/features/sheets/form-footer.test.tsx`
 
 **Interfaces:**
-- Consumes: `FormOutcome` and `Outcome` (Task 4).
+- Consumes: `FormOutcome`, `Outcome` and `useOutcome` (Task 4).
 - Produces:
   - `SheetFormFooter({ submitLabel, pendingLabel, pending, restored, onDiscard, left, submitClassName, outcome })`. `outcome: Outcome` is required; `above` and `note` are deleted.
   - `FormFrame` and `InlineForm` take `outcome: Outcome` in place of `formError`.
   - `AuthCard` takes `outcome: Outcome` in place of `formError`.
-  - `ConfirmDialog` keeps its API; internally it holds an `outcomeKey` counter.
+  - `ConfirmDialog` keeps its API; internally it uses `useOutcome()`.
+  - `AuthCard`, `FormFrame` and `InlineForm` accept `ref` as a plain prop (React 19) and put it on their `<form>`.
   - The `focusFirstInvalid` export is deleted.
 
 - [ ] **Step 1: Write the failing tests**
@@ -723,11 +793,11 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     - The conditional `<p role=alert>` becomes `<FormOutcome outcome={props.outcome} className="-mt-2" />` right before the submit.
     - Delete `focusFirstInvalid`.
   - **`ConfirmDialog`:**
-    - Add `const [key, setKey] = useState(0)`, and call `setKey((k) => k + 1)` in `catch`.
+    - Replace the `error` state with `const o = useOutcome()`: `o.clear()` on open and at the start of confirm, `o.fail(message)` in `catch`.
     - Remove `errorLine` from the middle and `DrawerBody`.
-    - Render `<FormOutcome outcome={{ error, outcomeKey: key }} className="basis-full" />` as the first child of `AlertDialogFooter` and `DrawerFooter`, with footer `pt-2`.
+    - Render `<FormOutcome outcome={o.outcome} className="basis-full" />` as the first child of `AlertDialogFooter` and `DrawerFooter`, with footer `pt-2`.
     - Shorten the fallback to `"Something went wrong. Try again."`, which is already 32 characters.
-  - **Callers:** mechanical for now. Each `formError={x}` becomes `outcome={{ error: x, outcomeKey: k }}`, where `k` is a `useState(0)` counter bumped wherever the form sets the error. Each `above={notice}` becomes `outcome={{ notice, … }}`, and `note={slow ? … : undefined}` becomes `notice` (New agent). Sign-in and sign-up still call `focusFirstInvalid`: replace it with `focusField(form)` from `@/components/forms/focus-field` (they move to the hook in Task 7). Agent sheets keep their body `InlineOutcome` until Task 15, but their sr-only pending spans are deleted here because the footer announces pending.
+  - **Callers:** mechanical for now. Each form's `formError` state becomes `const o = useOutcome()`: `setFormError(x)` becomes `o.fail(x)`, `setFormError(undefined)` becomes `o.clear()`, and `formError={formError}` becomes `outcome={o.outcome}`. Each `above={notice}` becomes `outcome={{ ...o.outcome, notice }}`, and `note={slow ? … : undefined}` becomes that `notice` (New agent). Sign-in and sign-up still call `focusFirstInvalid`: replace it with `focusField(form)` from `@/components/forms/focus-field` (they move to the hook in Task 7). Agent sheets keep their body `InlineOutcome` until Task 15, but their sr-only pending spans are deleted here because the footer announces pending.
 - [ ] **Step 4: Run** `pnpm typecheck` and `pnpm vitest run --maxWorkers=50% apps/web/src/test/confirm-dialog.test.tsx apps/web/src/features/sheets apps/web/src/features/settings apps/web/src/test/sign-in.test.tsx apps/web/src/test/sign-up.test.tsx`.
 - [ ] **Step 5: Commit** with `feat(web): one reserved outcome line above every form's buttons`.
 
@@ -811,9 +881,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - [ ] **Step 2: Run them and confirm they fail.**
 - [ ] **Step 3: Implement**
   - `checks`: for each field, `() => signInSchema.shape.email.safeParse(values.email).error?.issues[0]?.message`, and likewise for each field of `signUpSchema` (use `.shape`; if `signUpSchema` is a refined object, export its base object from shared as `signUpFieldsSchema` and use that).
-  - `const f = useFieldErrors({ form: formRef, fields: ["email","password"], checks })`. `AuthCard` forwards a `ref` to its `<form>`: add `formRef?: Ref<HTMLFormElement>` to `AuthCard`, or have `AuthCard` accept `ref` as a React 19 prop.
+  - `const f = useFieldErrors({ form: formRef, fields: ["email","password"], checks })`. `AuthCard` takes `ref` as a plain React 19 prop (Task 5) and puts it on its `<form>`.
   - `set(field, value)` updates the value and calls `f.change(field)`. Each `FormField` gets `onBlur={(e) => f.blur(field, e)}` and `error={f.errors[field]}`.
-  - `submit`: `if (!f.submit()) return;`. On an auth failure with a field, call `f.server({ [m.field]: m.message })`; otherwise set the outcome error and bump `outcomeKey`.
+  - `submit`: `if (!f.submit()) return;`. On an auth failure with a field, call `setSubmitting(false)` and `f.server({ [m.field]: m.message })` in the same block; otherwise `o.fail(m.message)` (`useOutcome`).
   - Delete `errors` state, `showFieldErrors`, `flushSync` and the "Editing a field clears its error" comment.
 - [ ] **Step 4: Run them and confirm they pass.**
 - [ ] **Step 5: Commit** with `feat(web): sign in and sign up on useFieldErrors`.
@@ -836,12 +906,12 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     - Editing the token clears the warning.
     - The OAuth kind shows the help "Create one with claude setup-token.".
 - [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Implement.** Each form uses `useFieldErrors` with `form` from `FormFrame`: `FormFrame` takes `formRef` and passes it to both its `form` (sheet) and `InlineForm`.
+- [ ] **Step 3: Implement.** Each form uses `useFieldErrors` with a `ref` it passes to `FormFrame` as a plain prop; `FormFrame` puts it on its sheet `<form>` and passes it to `InlineForm`. The form-level line is `useOutcome()`. Server field errors: `setPending(false)` and `f.server(fields)` in the same synchronous block (the catch), not in `finally`.
   - Credential:
     - `verdictOf` maps a rejection to `f.set("value", msg, { focus: true })`.
-    - An unverifiable result sets `warning` state (cleared in the token's `onChange` and at the start of submit) and the outcome error `FORM_MSG.addCredentialFailed` ("Couldn't add the credential.").
+    - An unverifiable result sets `warning` state (cleared in the token's `onChange` and at the start of submit) and `o.fail(FORM_MSG.addCredentialFailed)` ("Couldn't add the credential.").
     - `credential_exists` goes to `f.set("name", FORM_MSG.nameTaken, { focus: true })`.
-    - `validation_error` goes to `f.server(fields)`; when it returns `false`, the outcome error is `err.message`.
+    - `validation_error` goes to `f.server(fields)`; when it returns `false`, `o.fail(err.message)`.
   - Project and secret: same pattern.
   - Delete the `focus` helpers and the per-field error state.
 - [ ] **Step 4: Run them and confirm they pass.**
@@ -865,11 +935,12 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     - A server 400 field error focuses its field.
 - [ ] **Step 2: Run them and confirm they fail.**
 - [ ] **Step 3: Implement.**
-  - Row forms: hook plus `InlineForm outcome`.
+  - Row forms: hook plus `InlineForm` with `ref` and `outcome={o.outcome}` from `useOutcome()`; `setPending(false)` with `f.server(...)` in one block.
   - Factory:
     - The hook's `submit(changedFields)`.
-    - `FormOutcome` above the Save row with `success` / `error` and an `outcomeKey` counter.
-    - `onChange` clears `success`.
+    - `FormOutcome` above the Save row, fed by `useOutcome()`: `o.succeed("Saved.")`, `o.fail(…)`.
+    - Each field's `onChange` calls `o.clear()`.
+    - On a server 400, `setPending(false)` and `f.server(fields)` in the same synchronous block.
     - Delete the `InlineOutcome` beside Save, the `flushSync` and `focus`.
     - The form uses `field-stack`.
     - The "changed elsewhere" banner stays as is (out of scope, #132).
@@ -952,6 +1023,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - A bad link on a second submit after the user folds More options again reopens it.
   - A server 400 `fields.links` with no rows shows in `role=alert`; with rows, it shows in the first row's note.
   - A row added while links are flagged shows nothing until it is blurred.
+  - A bad link in a row never blurred: submit sends no request (`createTask` mock not called) and focus lands in that row's target.
+  - After Discard, the dependency note's hidden error layer still holds the old text (D2), and nothing is shown.
   - An invalid description (over the limit) marks the editor frame `data-invalid`, switches Preview back to Write, and focuses the textarea.
   - A stale assignee shows "That agent has ended; pick another.".
   - A failed lookup on submit shows "Couldn't create the task. Try again.".
@@ -961,19 +1034,19 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - `checks`:
     - `title`: `taskTitleSchema`.
     - `body`: `taskBodySchema`.
-    - `links`: the first row message over `checkedRows`.
+    - `links`: `rows.map((r) => checkLink(r, known)).find(Boolean)`, over **all** rows, so a bad row blocks the submit even if it was never blurred.
     - `assignee` and `dependsOn` have no sync check; they use `f.set`.
-  - `checkedRows: Set<string>` lives in state. Add a row id on its blur. On submit, set it to all current ids. `rowErrors` is derived in render: for ids in `checkedRows`, while `f.errors.links` is present, `checkLink(row, known)`.
+  - `checkedRows: Set<string>` lives in state and only decides which rows' notes display their message. Add a row id on its blur. On submit, set it to all current ids. `rowErrors` is derived in render: for ids in `checkedRows`, while `f.errors.links` is present, `checkLink(row, known)`.
   - Dependencies:
     - On blur, `checkDependencies(deps)`. On success, `setResolvedKeys(r.keys)` and `f.set("dependsOn", r.error)`.
-    - On submit, `const r = await checkDependencies(deps).catch(() => undefined); if (r) f.set("dependsOn", r.error); setCheckedRows(new Set(rows.map(x=>x.id))); if (!f.submit()) return; if (!r) { failed outcome; return }`.
-  - Stale assignee: the existing effect calls `f.set("assignee", staleError)`.
+    - On submit, `const r = await checkDependencies(deps).catch(() => undefined); setCheckedRows(new Set(rows.map((x) => x.id))); if (!f.submit(undefined, { dependsOn: r?.error })) return; if (!r) { o.fail(FORM_MSG.createTaskFailed); return; }`. The awaited result is passed as `extra`, not written to state first (D9).
+  - Stale assignee: Task 14's render-time pattern. During render, `if (staleError) f.set("assignee", staleError)` (the bail-out updater makes it safe and loop-free), so the reason shows in the same commit that clears the field. The existing effect keeps only the value clear and the draft rebase.
   - MoreOptions: keep `[seenAttempt, setSeenAttempt] = useState(f.attempt)`. When `f.attempt !== seenAttempt`, set `seenAttempt` and, if `f.errors.dependsOn || f.errors.links`, call `setUserOpen(undefined)` (adjusted during render).
   - Description:
     - `MarkdownEditor invalid={Boolean(f.errors.body)} view={bodyView} onViewChange={setBodyView}`.
     - On a failing submit with a body error, call `setBodyView("write")` in the submit handler before `f.submit()`, so the textarea exists at commit.
-  - Server: `if (!f.server(pick(err.body.fields, FIELDS))) { outcome error }`. A `links` field with no rows is mapped to the outcome instead: check `rows.length === 0` first.
-  - Footer: `SheetFormFooter outcome={{ error: failed ? FORM_MSG.createTaskFailed : undefined, outcomeKey }}`.
+  - Server: in the catch, `setPending(false)` and then `if (!f.server(pick(err.body.fields, FIELDS))) o.fail(FORM_MSG.createTaskFailed)` in the same block. A `links` field with no rows goes to `o.fail(fields.links)` instead: check `rows.length === 0` first.
+  - Footer: `SheetFormFooter outcome={o.outcome}` with `const o = useOutcome()`; delete `failed` state.
   - Body: `field-stack`.
   - Delete `errors` state, `show`, `focus`, `flushSync`, `queueMicrotask`, the links `<p>` and the body failure `<p>`. Discard calls `f.reset()`.
 - [ ] **Step 4: Run them and confirm they pass.**
@@ -995,11 +1068,11 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - The badges still render below the dependencies editor.
 - [ ] **Step 2: Run them and confirm they fail.**
 - [ ] **Step 3: Implement.**
-  - **`EditorButtons({ pending, saveDisabled, onSave, onCancel, outcome })`:**
+  - **`EditorButtons({ pending, saveDisabled, onSave, onCancel, outcome })`** (`outcome` from the editor's `useOutcome()`, with `notice: hint` merged in):
     - It renders `FormOutcome` with `notice: hint` and `error: failed` above the buttons.
     - Cancel gets `data-skip-validate`.
   - **Each editor:**
-    - Wrap the editor in a `ref`'d `div` and give it `useFieldErrors` with its one field.
+    - Call `useFieldErrors` (one field) and `useOutcome` inside the part that is mounted only while editing (the editor body component), so Cancel and Save unmount it and its errors; where an editor stays mounted, call `f.reset()` and `o.clear()` on Cancel and after a successful Save. The hook's `form` ref is on that part's wrapper `div`.
     - The title input moves into a `FormField`-like `FieldShell` (label `sr-only` "Title", since the section already labels it) so it gets a note.
     - The title's validation goes through `f.submit()`; Save failures go through the outcome's `outcomeKey`.
     - Delete the per-editor `error` state where the hook replaces it.
@@ -1024,9 +1097,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - [ ] **Step 2: Run them and confirm they fail.**
 - [ ] **Step 3: Implement.**
   - Fields: `["target","cron","at","timezone","body"]`. `checks` are the existing `check` object's functions bound to `v`.
-  - The stale target during render calls `f.set("target", msg)`. This is guarded: it writes only when the message differs.
+  - The stale target during render calls `f.set("target", msg)`. The hook's bail-out updater makes this safe during render: an unchanged message leaves state untouched, so it cannot loop.
   - Submit: `if (!f.submit(FIELDS.filter(relevant))) return;`.
-  - Server: `f.server(fields)`, else `failed`.
+  - Server: in the catch, `setPending(false)` and `if (!f.server(fields)) o.fail(FORM_MSG.saveScheduleFailed)` in one block (`useOutcome`).
   - Delete `toFocus`, the focus effect and `focus`, plus the `failed` `<p>`. The outcome goes to the footer: `FORM_MSG.saveScheduleFailed` ("Couldn't save the schedule. Try again.", 38 characters).
   - `WhenField` and `RepeatsField` pass `(e) => f.blur("cron"|"at", e)`. The Repeats `Select` calls blur on close, following `TemplateField`'s pattern (an `onOpenChange` that tracks open and validates on close).
   - Body becomes `field-stack`.
@@ -1063,9 +1136,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     - `const f = useFieldErrors({ form, fields: FIELDS, checks: Object.fromEntries(FIELDS.map((x) => [x, () => check(x, shown)])) })`.
     - `set` and `setProjects` call `f.change(field)`. `blur = f.blur`.
     - Submit: `if (!f.submit()) return "invalid"`.
-    - Server: `if (!f.server(fields)) setOutcome(...)`.
-    - Outcome state is `{ error?: ReactNode; success?: ReactNode; action?: ReactNode }` plus an `outcomeKey` counter.
-    - For `plugin_install_failed`, `action` is `<Button variant="ghost" size="xs" onClick={() => showOutput({ output })}>Show output</Button>` (use `hasOutput` to guard). `ShowOutput` `<details>` is no longer used here.
+    - Server: the catch calls `setPending(false)` and `f.server(fields)` in the same synchronous block (move `setPending(false)` out of `finally` for that path); when it returns false, `o.fail(err.message)`.
+    - The outcome is `useOutcome()`; the hook returns `outcome` and `pluginOutput`.
+    - For `plugin_install_failed`, store the output as data (`const [pluginOutput, setPluginOutput] = useState<string>()`, set in the catch with `hasOutput` as the guard, cleared on the next submit). The sheets build the "Show output" button during render: `action={pluginOutput ? <Button variant="ghost" size="xs" onClick={() => showOutput({ output: pluginOutput })}>Show output</Button> : undefined}`, merged into the footer's `outcome`. `ShowOutput` `<details>` is no longer used here.
     - "Nothing to save: no field changed." stays a `success`.
     - Discard calls `f.reset()`.
     - Return `attempt: f.attempt`.
@@ -1080,7 +1153,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - **`template-field.tsx`:**
     - Rebuild on `FieldShell` with `action` (the New template button, `data-skip-validate`) and `below={children}`. The select renders as the control; the "No templates yet." and "No template is ready…" paragraphs render as the control too.
     - Delete the hand-rolled error.
-    - The existing close-to-validate effect calls `onBlur?.()` with no event, which the hook treats as a real blur.
+    - The existing close-to-validate effect calls `onBlur?.()` with no event, which the hook treats as a real blur. This effect is a justified exception to `rerender-move-effect-to-event`: Radix Select moves focus into its list on open, so the only reliable "left the field" moment is after the list has closed and the chosen value has rendered.
   - **`project-grant-picker.tsx`:**
     - `FieldShell legend` with `describedBy={noteId}` for the Custom/From the template marker.
     - The Add project and Use template default buttons get `data-skip-validate`.
@@ -1099,7 +1172,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 - [ ] **Step 1: Write the failing test.** A failed compact shows its message in `role=alert` above the Compact button, and a second identical failure is announced again.
 - [ ] **Step 2: Run it and confirm it fails.**
-- [ ] **Step 3: Implement.** The field becomes `FormField` (label "Focus (optional)"), so it gets the reserved note. Add `FormOutcome` with an `outcomeKey` counter above the button, and delete the conditional `<p>`. Leftover `flushSync` uses unrelated to focus (for example `new-agent-sheet.tsx:139` for stacked-sheet writes) stay.
+- [ ] **Step 3: Implement.** The field becomes `FormField` (label "Focus (optional)"), so it gets the reserved note. Add `FormOutcome` fed by `useOutcome()` above the button, and delete the conditional `<p>`. Leftover `flushSync` uses unrelated to focus (for example `new-agent-sheet.tsx:139` for stacked-sheet writes) stay.
 - [ ] **Step 4: Run it and confirm it passes.** Also run `pnpm typecheck`.
 - [ ] **Step 5: Commit** with `feat(web): compact popover on the shared form pieces`.
 
@@ -1167,7 +1240,7 @@ describe("I4 field errors (AC6)", () => {
   - No form keeps its own error state.
   - No `flushSync` or `queueMicrotask` is used for focus.
   - No template literal is passed to `FieldError` or `f.set`.
-- [ ] **Step 2: Review the React diff.** Invoke `vercel-react-best-practices` and check every changed `.tsx`/`.ts` in `apps/web` against it, covering re-render scope, derived state during render (the hook's unflag and the forms' attempt adjustments), effects (only the hook's layout effects and existing ones), stable callbacks where they are props of memoized children, no new barrel imports, and conditional rendering. Skip Next.js-only and server-component rules and say so in the review notes.
+- [ ] **Step 2: Review the React diff.** Invoke `vercel-react-best-practices` and check every changed `.tsx`/`.ts` in `apps/web` against it, covering re-render scope, derived state during render (the hook's unflag and the forms' attempt adjustments), no ref writes during render, no `f`/`f.errors`/`f.blur` in dependency lists, `setPending(false)` in the same block as `f.server`, no hand-written `outcomeKey`, effects (only the hook's layout effects and existing ones), stable callbacks where they are props of memoized children, no new barrel imports, and conditional rendering. Skip Next.js-only and server-component rules and say so in the review notes.
 - [ ] **Step 3: Fix and commit** any findings (`fix(web): …`). Record what was checked in the PR body draft.
 
 ### Task 20: Full verification
@@ -1220,7 +1293,7 @@ Only one evidence pass or full test suite runs at a time on this machine. `run.s
   U4_ENGINE=webkit REPO=$TMPDIR/u4-evidence-snapshot-i4 PR=i4 ./run.sh ../i4/checks/c40_field_boxes.py ../i4/checks/c41_copy_lines.py ../i4/checks/c43_motion_frames.py
   jq '.failed' ../i4/results/*.json
   ```
-- [ ] **Step 7: Fix and re-run.** Allow one fix round (commit fixes on the branch, re-snapshot, re-run the failed checks). Anything left goes into the PR body as a finding.
+- [ ] **Step 7: Fix and re-run.** For any `apps/web` fix, the implementer and reviewer invoke `vercel-react-best-practices` and follow it. Allow one fix round (commit fixes on the branch, re-snapshot, re-run the failed checks). Anything left goes into the PR body as a finding.
   - If the 150/100 crossfade shows legible double-drawn text, switch the hidden layer's duration to `0ms` (spec Q17's fallback), note it in the PR, and update DESIGN.md's Durations sentence to match.
   - If link rows don't read as a list at 390, don't change the layout: put it in the PR body as a question for Or.
 - [ ] **Step 8: VoiceOver check.** Manual, only if a person is available; otherwise list it in the PR's checklist for Or. In Safari with VoiceOver, a FormOutcome failure is announced once, and again on an identical second failure.
@@ -1245,4 +1318,4 @@ Only one evidence pass or full test suite runs at a time on this machine. `run.s
 ### Task 24: CI until green
 
 - [ ] **Step 1: Watch CI** with `gh pr checks --watch`.
-- [ ] **Step 2: Fix failures.** On a failure, read the log (`gh run view --log-failed`), reproduce locally with the targeted test, fix, commit and push. Repeat until every check is green, then report the PR URL and the final check list.
+- [ ] **Step 2: Fix failures.** For any `apps/web` fix, the implementer and reviewer invoke `vercel-react-best-practices` and follow it. On a failure, read the log (`gh run view --log-failed`), reproduce locally with the targeted test, fix, commit and push. Repeat until every check is green, then report the PR URL and the final check list.

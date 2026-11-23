@@ -390,7 +390,11 @@ test("a send to a person has no footer; Open in inbox opens its inbox item", asy
     "need a human",
     {
       "GET /api/inbox?": () =>
-        json({ items: [inboxItem("i1", "m1"), inboxItem("i10", "m10")], nextCursor: null }),
+        json({
+          chats: [],
+          items: [inboxItem("i1", "m1"), inboxItem("i10", "m10")],
+          nextCursor: null,
+        }),
     },
   );
   expect(screen.queryByText("Sent to the inbox")).toBeNull();
@@ -414,7 +418,10 @@ test("a send to a person with no inbox item of yours has no Open in inbox", asyn
       ),
     ],
     "need a human",
-    { "GET /api/inbox?": () => json({ items: [inboxItem("i1", "m1")], nextCursor: null }) },
+    {
+      "GET /api/inbox?": () =>
+        json({ chats: [], items: [inboxItem("i1", "m1")], nextCursor: null }),
+    },
   );
   const menu = await rowMenu(screen.getByRole("article", { name: /Message from @dev/ }));
   await vi.waitFor(() => expect(api.calls.some((c) => c.url.startsWith("/api/inbox?"))).toBe(true));

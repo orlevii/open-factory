@@ -176,7 +176,7 @@ test("the user menu has the switch under Theme; blocked keeps the menu open with
   stubNotification("default", async () => "denied");
   mockApi({
     "GET /api/inbox/unread-count": () => json({ count: 0 }),
-    "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
   });
   renderApp("/", alice);
   await userEvent.click(await screen.findByRole("button", { name: /Alice/ }));
@@ -193,7 +193,7 @@ test("the item is absent when the browser has no Notification API", async () => 
   vi.stubGlobal("Notification", undefined);
   mockApi({
     "GET /api/inbox/unread-count": () => json({ count: 0 }),
-    "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
   });
   renderApp("/", alice);
   await userEvent.click(await screen.findByRole("button", { name: /Alice/ }));

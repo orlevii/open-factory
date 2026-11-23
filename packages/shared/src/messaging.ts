@@ -106,10 +106,6 @@ export const inboxItemSchema = z.object({
   ]),
 });
 export type InboxItem = z.infer<typeof inboxItemSchema>;
-export const inboxPageSchema = z.object({
-  items: z.array(inboxItemSchema),
-  nextCursor: z.string().nullable(),
-});
 export const inboxItemResponseSchema = z.object({ item: inboxItemSchema });
 export const readAllBodySchema = z.object({ upTo: z.string().min(1) });
 export const undoReadAllBodySchema = z.object({ readAt: z.string().min(1) });

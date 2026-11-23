@@ -56,7 +56,7 @@ beforeEach(() => {
       if (url.startsWith("/api/agents/ada/events?"))
         return json({ events: [], hasMore: { before: false, after: false } });
       if (url.startsWith("/api/agents/dev/events?")) return json(conversation());
-      if (url.startsWith("/api/inbox")) return json({ items: [], nextCursor: null });
+      if (url.startsWith("/api/inbox")) return json({ chats: [], items: [], nextCursor: null });
       return json({ error: { code: "not_found", message: url } }, 404);
     }),
   );

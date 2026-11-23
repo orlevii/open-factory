@@ -46,29 +46,106 @@ async function aCalls(toolUseId: string, input: object) {
   return callTool(url, tokA, "send_message", input, toolUseId);
 }
 
-test("GET /api/inbox: newest first, link to the sender's send_message call, preview capped, human session only", async () => {
+test("GET /api/inbox: agent messages are chats, not items; the preview is plain text capped at 280; human session only", async () => {
   await aCalls("toolu_01X", { to: ["@or"], body: "first" });
-  await callTool(url, tokA, "send_message", { to: ["@or"], body: "x".repeat(400), urgent: true });
+  await callTool(url, tokA, "send_message", {
+    to: ["@or"],
+    body: `**${"x".repeat(400)}**`,
+    urgent: true,
+  });
   const r = await get("/api/inbox");
   expect(r.statusCode).toBe(200);
   const page = r.json();
-  expect(page.items.map((i: { to: string }) => i.to)).toEqual(["@or", "@or"]);
-  expect(page.items[0]).toMatchObject({ urgent: true, from: { kind: "agent", name: "ada" } });
-  expect(page.items[0].preview).toHaveLength(280);
-  // No tool call recorded for the second send: the link names the sender's session only.
-  expect(page.items[0].link).toEqual({ kind: "session", agentSlug: "ada" });
-  expect(page.items[1].link).toEqual({
-    kind: "session",
-    agentSlug: "ada",
-    seq: expect.any(Number),
-  });
+  expect(page.items).toEqual([]);
   expect(page.nextCursor).toBeNull();
+  expect(page.chats).toEqual([
+    {
+      agent: {
+        slug: "ada",
+        displayName: expect.any(String),
+        template: expect.any(String),
+        avatarVersion: null,
+        kind: "persistent",
+        status: expect.any(String),
+        archivedAt: null,
+      },
+      unread: 2,
+      latest: {
+        messageId: expect.any(String),
+        preview: "x".repeat(280),
+        createdAt: expect.any(String),
+        urgent: true,
+      },
+    },
+  ]);
   expect((await get("/api/inbox", {})).statusCode).toBe(401);
 });
 
-test("GET /api/inbox pages with a cursor; a bad cursor or limit is a 400, not a 500", async () => {
-  for (let i = 0; i < 3; i += 1)
-    await callTool(url, tokA, "send_message", { to: ["@or"], body: `m${i}` });
+test("chats lists every agent with unread messages, newest first; ?unread=true includes them; byAgent is unchanged", async () => {
+  await callTool(url, tokA, "send_message", { to: ["@or"], body: "from ada" });
+  await h.app.inject({
+    method: "POST",
+    url: "/api/messages",
+    headers: { cookie },
+    payload: { to: ["bob"], body: "wake bob" },
+  });
+  procOf("bob").emit(...ev.fullTurn("sess-b"));
+  await (await h.app.runtimes.bySlug("bob"))?.settled();
+  const tokB = procOf("bob").spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
+  await callTool(url, tokB, "send_message", { to: ["@or"], body: "from bob" });
+  await callTool(url, tokB, "send_message", { to: ["@or"], body: "bob again" });
+  for (const path of ["/api/inbox", "/api/inbox?unread=true&limit=5"]) {
+    const { chats, items } = (await get(path)).json();
+    expect(items).toEqual([]);
+    expect(
+      chats.map((c: { agent: { slug: string }; unread: number }) => [c.agent.slug, c.unread]),
+    ).toEqual([
+      ["bob", 2],
+      ["ada", 1],
+    ]);
+    expect(chats[0].latest.preview).toBe("bob again");
+  }
+  expect((await get("/api/inbox/unread-count")).json()).toMatchObject({
+    count: 3,
+    byAgent: { ada: 1, bob: 2 },
+  });
+});
+
+test("read-all with upTo marks chat items read and Undo restores them", async () => {
+  await callTool(url, tokA, "send_message", { to: ["@or"], body: "one" });
+  const upTo = (await get("/api/inbox")).json().chats[0].latest.createdAt;
+  const done = await h.app.inject({
+    method: "POST",
+    url: "/api/inbox/read-all",
+    headers: { cookie },
+    payload: { upTo },
+  });
+  expect(done.json().count).toBe(1);
+  expect((await get("/api/inbox")).json().chats).toEqual([]);
+  const undone = await h.app.inject({
+    method: "POST",
+    url: "/api/inbox/read-all/undo",
+    headers: { cookie },
+    payload: { readAt: done.json().readAt },
+  });
+  expect(undone.json().count).toBe(1);
+  expect((await get("/api/inbox")).json().chats).toEqual([expect.objectContaining({ unread: 1 })]);
+});
+
+test("GET /api/inbox pages items with a cursor; a bad cursor or limit is a 400, not a 500", async () => {
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    const { row } = await h.app.store.createHumanMessage({
+      kind: "system",
+      notice: "agent_errored",
+      subjectAgentId: (await h.app.store.agentBySlug("ada"))?.id as string,
+      fromAgentId: null,
+      to: "all",
+      body: `m${i}`,
+      urgent: false,
+    });
+    ids.push(row?.id as string);
+  }
   const p1 = (await get("/api/inbox?limit=2")).json();
   expect(p1.items.map((i: { preview: string }) => i.preview)).toEqual(["m2", "m1"]);
   const p2 = (await get(`/api/inbox?limit=2&before=${p1.nextCursor}`)).json();

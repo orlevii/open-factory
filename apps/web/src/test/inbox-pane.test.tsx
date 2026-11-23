@@ -54,7 +54,7 @@ const items = [
 let api: MockApi;
 beforeEach(() => {
   api = mockApi({
-    "GET /api/inbox?": () => json({ items, nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 5, byAgent: {} }),
     // The pane loads what it shows; unanswered (404), an errored query refetches for every new
     // observer, which isn't what these tests are about.
@@ -276,7 +276,7 @@ test("a j/k sweep loads the pane's body only for the item it rests on", async ()
 
 test("a message row's context line hides the recipient when it is the viewer", async () => {
   api.on("GET /api/inbox?", () =>
-    json({ items: [item(1, { to: "@alice" }), item(2)], nextCursor: null }),
+    json({ chats: [], items: [item(1, { to: "@alice" }), item(2)], nextCursor: null }),
   );
   await visit(1280);
   expect(within(row("i2") as HTMLElement).getByText("→ @bob")).toBeInTheDocument();
@@ -375,7 +375,7 @@ test("a failed dwell read restores the pane's own copy of an item outside the lo
 
 test("Undo of Mark all read leaves the shown item unread: the dwell doesn't read it again", async () => {
   let server = items.map((i) => ({ ...i }));
-  api.on("GET /api/inbox?", () => json({ items: server, nextCursor: null }));
+  api.on("GET /api/inbox?", () => json({ chats: [], items: server, nextCursor: null }));
   api.on("POST /api/inbox/read-all", () => {
     server = server.map((i) => ({ ...i, read: true }));
     return json({ readAt: "2026-11-19T15:00:00.123Z", count: 5 });

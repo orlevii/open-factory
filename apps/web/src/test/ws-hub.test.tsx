@@ -48,7 +48,7 @@ beforeEach(() => {
 const frame = (agent: string): ServerMessage => ({ type: "resync", agent });
 
 test("hub fans frames out to listeners; unsubscribe removes one; send follows the connection", async () => {
-  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const { unmount } = renderApp("/inbox", alice);
   await screen.findByText("probe 0");
   const hub = () => h.hub as WsHub;
@@ -94,7 +94,7 @@ const status = (agent: string, turnOpen: boolean): ServerMessage =>
   }) as ServerMessage;
 
 async function mounted() {
-  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const r = renderApp("/inbox", alice);
   await screen.findByText("probe 0");
   const spy = vi.spyOn(r.queryClient, "invalidateQueries");
@@ -142,7 +142,9 @@ test("a first false frame is not an edge; the first open invalidates nothing, a 
 });
 
 test("a reconnect refetches the mounted inbox list, and not a first open", async () => {
-  const api = mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  const api = mockApi({
+    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
+  });
   renderApp("/inbox", alice);
   await screen.findByText("probe 0");
   const inboxCalls = () => api.calls.filter((c) => c.url.startsWith("/api/inbox?")).length;
@@ -187,7 +189,7 @@ test("admin frames invalidate their keys; build log batches don't", async () => 
 });
 
 test("unmounting the layout flushes queued status frames and stops listening for visibilitychange", async () => {
-  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const { unmount, queryClient: qc } = renderApp("/inbox", alice);
   await screen.findByText("probe 0");
   qc.setQueryData(["agents", "exclude"], [{ slug: "dev", status: "idle", turnOpen: false }]);

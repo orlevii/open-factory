@@ -70,10 +70,11 @@ const world = (
     "GET /api/inbox?": (_b, url) =>
       url.includes("unread=true")
         ? json({
+            chats: [],
             items: list.filter((i) => !(i as { read: boolean }).read).slice(0, 5),
             nextCursor: null,
           })
-        : json({ items: list, nextCursor: null }),
+        : json({ chats: [], items: list, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: unread }),
   });
   // A read the server accepted: the row and the count follow, as a refetch would show.

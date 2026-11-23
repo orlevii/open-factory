@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { plainPreview } from "./preview";
+import { plainPreview } from "./preview.ts";
 
 test.each([
   ["```ts\nconst a = 1\n```\nDone", "const a = 1 Done"],

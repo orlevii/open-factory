@@ -119,7 +119,7 @@ const task = (o: Over = {}) => ({
 let api: MockApi;
 function setup(items: unknown[]) {
   api = mockApi({
-    "GET /api/inbox?": () => json({ items, nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: items.length, byAgent: {} }),
     "GET /api/agents/dev": () => json(agentDetail()),
     "GET /api/agents/dev/events?": validQuery(eventsQuerySchema, eventsRoute("dev")),
@@ -575,7 +575,7 @@ test("the selected row dropping out of the loaded pages keeps its header", async
   const p = pane();
   await waitFor(() => expect(within(p).getByText("dev event 42")).toBeInTheDocument());
   // A refetch drops i1 from the pages (it moved past the loaded window).
-  api.on("GET /api/inbox?", () => json({ items: [item(2)], nextCursor: null }));
+  api.on("GET /api/inbox?", () => json({ chats: [], items: [item(2)], nextCursor: null }));
   await app.queryClient.invalidateQueries({ queryKey: ["inbox"] });
   await waitFor(() => expect(document.querySelector('a[data-inbox-id="i1"]')).toBeNull());
   expect(within(p).getByRole("link", { name: "Open in session" })).toBeInTheDocument();

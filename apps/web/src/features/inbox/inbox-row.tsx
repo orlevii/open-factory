@@ -1,3 +1,4 @@
+import { plainPreview } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { type MouseEvent, memo, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
@@ -6,7 +7,6 @@ import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
 import type { InboxItem } from "./api";
-import { plainPreview } from "./preview";
 
 const PREVIEW_MAX = 280;
 const previewOf = (markdown: string) => {

@@ -42,7 +42,8 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
 
 test("rows link to the sender's call with an accessible name; the preview is the description", async () => {
   mockApi({
-    "GET /api/inbox?": () => json({ items: [item(1, { urgent: true })], nextCursor: null }),
+    "GET /api/inbox?": () =>
+      json({ chats: [], items: [item(1, { urgent: true })], nextCursor: null }),
   });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: "From @dev to @bob, urgent, 14:32" });
@@ -55,6 +56,7 @@ test("a factory item names what it is about; a row without seq links to the sess
   mockApi({
     "GET /api/inbox?": () =>
       json({
+        chats: [],
         items: [
           item(1, {
             from: { kind: "factory", name: "factory" },
@@ -73,7 +75,7 @@ test("a factory item names what it is about; a row without seq links to the sess
 });
 
 test("empty state", async () => {
-  mockApi({ "GET /api/inbox?": () => json({ items: [], nextCursor: null }) });
+  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   renderApp("/inbox", alice);
   expect(await screen.findByText("Nothing in your inbox.")).toBeInTheDocument();
 });
@@ -84,7 +86,7 @@ test("fetch error shows one line and Retry, which refetches", async () => {
   });
   renderApp("/inbox", alice);
   expect(await screen.findByText("Couldn't load the inbox.")).toBeInTheDocument();
-  api.on("GET /api/inbox?", () => json({ items: [item(1)], nextCursor: null }));
+  api.on("GET /api/inbox?", () => json({ chats: [], items: [item(1)], nextCursor: null }));
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("link", { name: /From @dev/ })).toBeInTheDocument();
 });
@@ -93,8 +95,8 @@ test("Load earlier fetches the next page, merges by id and moves focus to the fi
   mockApi({
     "GET /api/inbox?": (_b, url) =>
       url.includes("before=c1")
-        ? json({ items: [item(1), item(0)], nextCursor: null })
-        : json({ items: [item(2), item(1)], nextCursor: "c1" }),
+        ? json({ chats: [], items: [item(1), item(0)], nextCursor: null })
+        : json({ chats: [], items: [item(2), item(1)], nextCursor: "c1" }),
   });
   renderApp("/inbox", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
@@ -110,8 +112,8 @@ test("a page of only already-shown rows focuses the last row, and a later refetc
   mockApi({
     "GET /api/inbox?": (_b, url) =>
       url.includes("before=c1")
-        ? json({ items: [item(1)], nextCursor: null })
-        : json({ items, nextCursor: "c1" }),
+        ? json({ chats: [], items: [item(1)], nextCursor: null })
+        : json({ chats: [], items, nextCursor: "c1" }),
   });
   renderApp("/inbox", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
@@ -131,8 +133,8 @@ test("a failed page load says so inline and Retry loads it", async () => {
       url.includes("before=c1")
         ? fail
           ? json({ error: { code: "x", message: "x" } }, 500)
-          : json({ items: [item(0)], nextCursor: null })
-        : json({ items: [item(1)], nextCursor: "c1" }),
+          : json({ chats: [], items: [item(0)], nextCursor: null })
+        : json({ chats: [], items: [item(1)], nextCursor: "c1" }),
   });
   renderApp("/inbox", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
@@ -146,7 +148,7 @@ test("a failed page load says so inline and Retry loads it", async () => {
 
 test("inbox_changed refetches and a new row appears at the top", async () => {
   let items = [item(1)];
-  mockApi({ "GET /api/inbox?": () => json({ items, nextCursor: null }) });
+  mockApi({ "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }) });
   renderApp("/inbox", alice);
   await screen.findByRole("link", { name: /From @dev/ });
   items = [item(2), item(1)];
@@ -159,7 +161,8 @@ test("inbox_changed refetches and a new row appears at the top", async () => {
 
 test("arrow keys move focus between rows; Home and End jump", async () => {
   mockApi({
-    "GET /api/inbox?": () => json({ items: [item(3), item(2), item(1)], nextCursor: null }),
+    "GET /api/inbox?": () =>
+      json({ chats: [], items: [item(3), item(2), item(1)], nextCursor: null }),
   });
   renderApp("/inbox", alice);
   const links = await screen.findAllByRole("link", { name: /^From @dev/ });
@@ -184,6 +187,7 @@ test("a row shows the preview as plain text, the context on its own line and an 
   mockApi({
     "GET /api/inbox?": () =>
       json({
+        chats: [],
         items: [
           item(1, {
             read: false,
@@ -210,7 +214,7 @@ test("a row shows the preview as plain text, the context on its own line and an 
 });
 
 test("a message row's context line names the recipient; the sender is an agent chip", async () => {
-  mockApi({ "GET /api/inbox?": () => json({ items: [item(1)], nextCursor: null }) });
+  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [item(1)], nextCursor: null }) });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: /From @dev/ });
   expect(within(link).getByText("→ @bob")).toBeInTheDocument();
@@ -220,7 +224,11 @@ test("a message row's context line names the recipient; the sender is an agent c
 test("read rows are muted, unread rows are not", async () => {
   mockApi({
     "GET /api/inbox?": () =>
-      json({ items: [item(1, { read: true }), item(2, { read: false })], nextCursor: null }),
+      json({
+        chats: [],
+        items: [item(1, { read: true }), item(2, { read: false })],
+        nextCursor: null,
+      }),
   });
   renderApp("/inbox", alice);
   const read = await screen.findByRole("link", { name: /^From @dev/, description: "preview 1" });

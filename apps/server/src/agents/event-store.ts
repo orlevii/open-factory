@@ -10,6 +10,7 @@ import {
   type MessageAttachment,
   type MessageKind,
   parseCommands,
+  plainPreview,
   type SessionEvent,
   type TaskNotice,
   taskKey,
@@ -26,6 +27,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   notInArray,
   or,
   type SQL,
@@ -90,6 +92,12 @@ export interface MessageLookup {
   late?: boolean;
   dueAt?: string;
 }
+/** One agent's unread messages to a user (I1 §6.7); the route adds the agent's summary. */
+export type UnreadChat = {
+  slug: string;
+  unread: number;
+  latest: { messageId: string; preview: string; createdAt: string; urgent: boolean };
+};
 export interface InboxEntry {
   id: string;
   messageId: string;
@@ -1427,7 +1435,7 @@ export class EventStore {
     before?: string,
     limit = 50,
     o: { unread?: boolean } = {},
-  ): Promise<{ items: InboxEntry[]; nextCursor: string | null }> {
+  ): Promise<{ chats: UnreadChat[]; items: InboxEntry[]; nextCursor: string | null }> {
     let cursor: SQL | undefined;
     if (before) {
       const [at, id] = Buffer.from(before, "base64url").toString().split("|");
@@ -1435,7 +1443,14 @@ export class EventStore {
       cursor = sql`(${inboxItems.createdAt}, ${inboxItems.id}) < (${at}::timestamptz, ${id})`;
     }
     const rows = await this.inboxRows(
-      and(eq(inboxItems.userId, userId), cursor, o.unread ? isNull(inboxItems.readAt) : undefined),
+      and(
+        eq(inboxItems.userId, userId),
+        // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A factory notice
+        // (`system`) has no chat, so it stays an item.
+        ne(messages.kind, "message"),
+        cursor,
+        o.unread ? isNull(inboxItems.readAt) : undefined,
+      ),
     )
       .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
       .limit(limit + 1);
@@ -1446,7 +1461,48 @@ export class EventStore {
       rows.length > limit && last
         ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
         : null;
-    return { items, nextCursor };
+    return { chats: await this.unreadChats(userId), items, nextCursor };
+  }
+
+  /**
+   * I1 §6.7: every agent with unread messages to the user, newest first: how many, and the newest one (its body cut
+   * to a plain-text preview). Unpaginated: one row per agent.
+   */
+  async unreadChats(userId: string): Promise<UnreadChat[]> {
+    const fa = alias(agents, "fa");
+    const unread = and(
+      eq(inboxItems.userId, userId),
+      isNull(inboxItems.readAt),
+      eq(inboxItems.kind, "message"),
+    );
+    const [counts, latest] = await Promise.all([
+      this.unreadByAgent(userId),
+      this.db
+        .selectDistinctOn([fa.slug], {
+          slug: fa.slug,
+          messageId: messages.id,
+          body: sql<string>`left(${messages.body}, 2000)`,
+          urgent: messages.urgent,
+          createdAt: sql<string>`to_char(${inboxItems.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+        })
+        .from(inboxItems)
+        .innerJoin(messages, eq(messages.id, inboxItems.messageId))
+        .innerJoin(fa, eq(fa.id, messages.fromAgentId))
+        .where(unread)
+        .orderBy(fa.slug, desc(inboxItems.createdAt), desc(inboxItems.id)),
+    ]);
+    return latest
+      .map((r) => ({
+        slug: r.slug,
+        unread: counts[r.slug] ?? 0,
+        latest: {
+          messageId: r.messageId,
+          preview: Array.from(plainPreview(r.body)).slice(0, 280).join(""),
+          createdAt: r.createdAt,
+          urgent: r.urgent,
+        },
+      }))
+      .sort((a, b) => (a.latest.createdAt < b.latest.createdAt ? 1 : -1));
   }
 
   /** The item becomes read (idempotent: a read item keeps its first `read_at`, nothing is ever un-read here). */

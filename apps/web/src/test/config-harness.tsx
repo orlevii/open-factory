@@ -1,6 +1,6 @@
 import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
 import { type ReactNode, useState } from "react";
-import { ConfigFormScope, type ConfigMode, type RawTarget } from "./scope";
+import { ConfigFormScope, type ConfigMode, type RawTarget } from "@/features/config/scope";
 
 /** Test-only: a controlled scope over local state, the way the page drives it with `useConfigDraft`. */
 export function ScopeHarness({

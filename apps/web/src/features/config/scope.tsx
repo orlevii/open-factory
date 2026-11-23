@@ -2,6 +2,7 @@ import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
 import { modelSchema } from "@open-factory/shared";
 import { createContext, type ReactNode, use, useCallback, useMemo, useRef } from "react";
 import { type FieldErrors, useFieldErrors } from "@/components/forms/use-field-errors";
+import type { RowNote } from "./config-list";
 import { CONFIG_FIELDS, type ConfigField, FIELD_PATHS, fieldForPath } from "./fields";
 import { CONFIG_FIELD_MSG } from "./messages";
 import { readAt, readNumber, readString, setAt } from "./tolerant";
@@ -29,7 +30,8 @@ export type ConfigFormProps = {
   onShowRaw?: (at: RawTarget) => void;
 };
 
-type FieldIssues = { error?: string; warning?: string; items: Map<string, string> };
+/** A field's own issue, and the notes on its items (a list index or an entry name), with their severity. */
+type FieldIssues = { error?: string; warning?: string; items: Map<string, RowNote> };
 
 export type ConfigScope = {
   mode: ConfigMode;
@@ -120,9 +122,12 @@ export function ConfigFormScope({
     for (const i of issues) {
       const hit = i.path ? fieldForPath(i.path) : null;
       if (!hit) continue;
-      const e = m.get(hit.field) ?? { items: new Map<string, string>() };
+      const e = m.get(hit.field) ?? { items: new Map<string, RowNote>() };
       if (hit.item !== undefined) {
-        if (!e.items.has(hit.item)) e.items.set(hit.item, i.message);
+        // The first issue per item wins, except that an error replaces a warning.
+        const had = e.items.get(hit.item);
+        if (!had || (had.severity === "warning" && i.severity === "error"))
+          e.items.set(hit.item, { message: i.message, severity: i.severity });
       } else if (i.severity === "error") e.error ??= i.message;
       else e.warning ??= i.message;
       m.set(hit.field, e);

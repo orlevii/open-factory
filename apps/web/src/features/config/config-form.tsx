@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { IssueIcon, sortIssues } from "@/features/templates/issue-list";
 import { EffortField } from "./effort-field";
 import { fieldForPath } from "./fields";
-import { CONFIG_COPY } from "./messages";
+import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
 import { ModelField } from "./model-field";
 import { type ConfigFormProps, ConfigFormScope, type RawTarget } from "./scope";
 import { Section } from "./section";
@@ -18,12 +18,22 @@ export type { ConfigFormProps, RawTarget } from "./scope";
  * every key the form doesn't own. Sections follow in the spec's order; the rest arrive with C3.
  */
 export function ConfigForm(props: ConfigFormProps) {
-  const { issues, onShowRaw } = props;
-  // Issues no field owns: listed once at the top, each with a way into Raw JSON.
-  const unmapped = useMemo(
-    () => sortIssues(issues.filter((i) => !(i.path && fieldForPath(i.path)))),
-    [issues],
-  );
+  const { issues, conflicts, onShowRaw } = props;
+  // Issues and rebase conflicts no field owns: listed once at the top, each with a way into Raw JSON. A conflict a
+  // field owns reads "Also changed elsewhere." on that field, so every conflict shows somewhere.
+  const unmapped = useMemo((): BlockItem[] => {
+    const owned = (path?: string) => (path ? fieldForPath(path) !== null : false);
+    return [
+      ...sortIssues(issues.filter((i) => !owned(i.path))),
+      ...(conflicts ?? [])
+        .filter((p) => !owned(p))
+        .map((path) => ({
+          severity: "warning" as const,
+          message: CONFIG_FIELD_MSG.alsoChanged,
+          path,
+        })),
+    ];
+  }, [issues, conflicts]);
   return (
     <ConfigFormScope {...props}>
       {unmapped.length > 0 ? <IssuesBlock issues={unmapped} onShowRaw={onShowRaw} /> : null}
@@ -35,11 +45,15 @@ export function ConfigForm(props: ConfigFormProps) {
   );
 }
 
+/** A server issue, or a rebase conflict on a path no field owns. */
+type BlockItem = Pick<TemplateIssue, "severity" | "message" | "path"> &
+  Partial<Pick<TemplateIssue, "file" | "line">>;
+
 const IssuesBlock = memo(function IssuesBlock({
   issues,
   onShowRaw,
 }: {
-  issues: readonly TemplateIssue[];
+  issues: readonly BlockItem[];
   onShowRaw?: (at: RawTarget) => void;
 }) {
   const id = useId();

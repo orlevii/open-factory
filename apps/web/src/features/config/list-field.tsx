@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { ConfigList } from "./config-list";
+import { ConfigList, type RowNote } from "./config-list";
 import { type ConfigField, FIELD_PATHS } from "./fields";
 import { useConfigScope, useFieldNote } from "./scope";
 import { WrongType } from "./section";
@@ -12,7 +12,8 @@ export type ListFieldId = Extract<
 >;
 
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-const NO_ROWS: ReadonlyMap<number, string> = new Map();
+const NO_ROWS: ReadonlyMap<number, RowNote> = new Map();
+const INDEX = /^\d+$/;
 
 /**
  * A list field of the form (spec §12.2). Agent mode shows the template's items read-only in their own group and this
@@ -52,10 +53,10 @@ export function ListField({
   );
 
   const items = s.byField.get(field)?.items;
-  const rowErrors = useMemo(() => {
+  const rowNotes = useMemo(() => {
     if (!items || items.size === 0) return NO_ROWS;
-    const m = new Map<number, string>();
-    for (const [k, msg] of items) if (/^\d+$/.test(k)) m.set(Number(k), msg);
+    const m = new Map<number, RowNote>();
+    for (const [k, note] of items) if (INDEX.test(k)) m.set(Number(k), note);
     return m;
   }, [items]);
 
@@ -80,7 +81,7 @@ export function ListField({
       readOnly={s.readOnly}
       error={note.error}
       warning={note.warning}
-      rowErrors={rowErrors}
+      rowNotes={rowNotes}
       onAdd={onAdd}
       onRemove={onRemove}
       onReject={(m) => fieldErrors.set(field, m)}

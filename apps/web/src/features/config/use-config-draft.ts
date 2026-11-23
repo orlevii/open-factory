@@ -35,7 +35,8 @@ export function useConfigDraft<T>(loaded: Loaded<T>) {
   );
 
   const discard = useCallback(() => {
-    discarded.current = s;
+    // A second Discard while clean keeps the first one's Undo.
+    if (s) discarded.current = s;
     setS(null);
   }, [s]);
 

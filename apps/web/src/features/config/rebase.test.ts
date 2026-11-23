@@ -45,9 +45,9 @@ test("a scalar changed on both sides keeps mine and reports its path", () => {
   });
 });
 
-test("a scalar the user removed while theirs changed it is a conflict, and stays removed", () => {
+test("a scalar the user removed while theirs changed it is a conflict, stays removed, and the emptied parent is pruned", () => {
   const r = rebase({ template: { model: "opus" } }, { template: {} }, { template: { model: "x" } });
-  expect(r).toEqual({ value: { template: {} }, conflicts: ["template.model"] });
+  expect(r).toEqual({ value: {}, conflicts: ["template.model"] });
 });
 
 test("MCP servers re-apply by name, whole: another name merges, the same name conflicts", () => {
@@ -95,6 +95,47 @@ test("an unknown key on either side survives", () => {
     { settings: { hooks: { PreToolUse: [{ m: 1 }] } } },
   );
   expect(r.value).toEqual({ settings: { hooks: { PreToolUse: [{ m: 1 }] }, theme: "dark" } });
+});
+
+test("removing the last item (the form prunes the emptied list and parents) is a set remove, not a subtree delete", () => {
+  const base = { settings: { permissions: { allow: ["a"] } } };
+  const mine = {};
+  const theirs = { settings: { permissions: { allow: ["a", "b"] }, env: { X: "1" } } };
+  expect(rebase<unknown>(base, mine, theirs)).toEqual({
+    value: { settings: { permissions: { allow: ["b"] }, env: { X: "1" } } },
+    conflicts: [],
+  });
+});
+
+test("an add under a parent theirs pruned still merges, and their remove isn't undone", () => {
+  const base = { settings: { permissions: { allow: ["a"] } } };
+  const mine = { settings: { permissions: { allow: ["a"], deny: ["d"] } } };
+  const theirs = {};
+  expect(rebase<unknown>(base, mine, theirs)).toEqual({
+    value: { settings: { permissions: { deny: ["d"] } } },
+    conflicts: [],
+  });
+});
+
+test("a list emptied by the merge is pruned like the form prunes it", () => {
+  const base = { template: { skills: ["a", "b"] } };
+  const mine = { template: { skills: ["b"] } };
+  const theirs = { template: { skills: ["a"] } };
+  expect(rebase<unknown>(base, mine, theirs)).toEqual({ value: {}, conflicts: [] });
+});
+
+test("a value and a container of a different kind on the two sides is a conflict at that path", () => {
+  const r = rebase<unknown>({}, { template: { skills: "x" } }, { template: { skills: ["y"] } });
+  expect(r).toEqual({ value: { template: { skills: "x" } }, conflicts: ["template.skills"] });
+});
+
+test("a __proto__ key on one side only is read as absent on the other", () => {
+  const mine = JSON.parse('{"settings":{"__proto__":{"a":1}}}');
+  const r = rebase<unknown>({}, mine, { settings: { b: 2 } });
+  const settings = (r.value as { settings: Record<string, unknown> }).settings;
+  expect(Object.hasOwn(settings, "__proto__")).toBe(true);
+  expect(settings.b).toBe(2);
+  expect(r.conflicts).toEqual([]);
 });
 
 test("a list of objects is a set by canonical JSON", () => {

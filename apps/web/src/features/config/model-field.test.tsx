@@ -1,11 +1,13 @@
 import { MODEL_MSG } from "@open-factory/shared";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
+import { doc, ScopeHarness } from "@/test/config-harness";
 import { CONFIG_FIELD_MSG } from "./messages";
 import { ModelField } from "./model-field";
-import { doc, ScopeHarness } from "./test-harness";
+import { ConfigFormScope } from "./scope";
 
 let off = () => {};
 beforeEach(() => {
@@ -130,4 +132,50 @@ test("a server issue on the model path lands on the field; a conflict reads 'Als
     </ScopeHarness>,
   );
   expect(screen.getByText(CONFIG_FIELD_MSG.alsoChanged)).toBeInTheDocument();
+});
+
+function Outside() {
+  const [value, setValue] = useState<unknown>({});
+  return (
+    <>
+      <button type="button" onClick={() => setValue({ template: { model: "haiku" } })}>
+        Raw edit
+      </button>
+      <button type="button" onClick={() => setValue({})}>
+        Discard
+      </button>
+      <ConfigFormScope
+        mode="agent"
+        value={value}
+        base={doc()}
+        issues={[]}
+        onChange={(u) => setValue(u)}
+      >
+        <ModelField />
+      </ConfigFormScope>
+    </>
+  );
+}
+
+test("Custom closes when the model changes from outside (a Raw edit, a Discard)", async () => {
+  render(<Outside />);
+  await pick("Custom…");
+  await userEvent.type(screen.getByRole("textbox", { name: "Custom model" }), "x");
+  await userEvent.click(screen.getByRole("button", { name: "Raw edit" }));
+  expect(screen.queryByRole("textbox", { name: "Custom model" })).toBeNull();
+  expect(trigger()).toHaveTextContent("haiku");
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  // Opened at inherit with nothing typed, then the draft is discarded: the model is the same, Custom still closes.
+  await pick("Custom…");
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.queryByRole("textbox", { name: "Custom model" })).toBeNull();
+  expect(trigger()).toHaveTextContent("Inherit from template");
+});
+
+test("typing a listed value in Custom keeps Custom open", async () => {
+  render(<Outside />);
+  await pick("Custom…");
+  await userEvent.type(screen.getByRole("textbox", { name: "Custom model" }), "opus");
+  expect(screen.getByRole("textbox", { name: "Custom model" })).toHaveValue("opus");
+  expect(trigger()).toHaveTextContent("Custom…");
 });

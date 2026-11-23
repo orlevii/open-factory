@@ -145,21 +145,37 @@ test("read-only shows no add row and no remove buttons", () => {
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-test("a row error shows under that row", () => {
+test("a row note shows under that row, an error as an error and a warning as a warning", () => {
   render(
     <ConfigList
       name="allow"
       label="Allow rules"
       noun="allow rule"
-      own={["a", "b"]}
-      rowErrors={new Map([[1, "Bad rule."]])}
+      own={["a", "b", "c"]}
+      rowNotes={
+        new Map([
+          [1, { message: "Bad rule.", severity: "error" as const }],
+          [2, { message: "Odd rule.", severity: "warning" as const }],
+        ])
+      }
       onAdd={() => {}}
       onRemove={() => {}}
       onReject={() => {}}
       onInput={() => {}}
     />,
   );
-  expect(
-    within(screen.getAllByRole("listitem")[1] as HTMLElement).getByText("Bad rule."),
-  ).toBeInTheDocument();
+  const rows = screen.getAllByRole("listitem");
+  const err = within(rows[1] as HTMLElement).getByText("Bad rule.").parentElement;
+  const warn = within(rows[2] as HTMLElement).getByText("Odd rule.").parentElement;
+  expect(err?.className).toMatch(/text-destructive/);
+  expect(warn?.className).not.toMatch(/text-destructive/);
+  expect(screen.getByRole("button", { name: "Remove allow rule 2" })).toHaveAccessibleDescription(
+    "Bad rule.",
+  );
+});
+
+test("removing one of a repeated value (Raw JSON made it) still focuses the next remove button", async () => {
+  render(<Harness start={["a", "a", "b"]} />);
+  await userEvent.click(screen.getByRole("button", { name: "Remove allow rule 1" }));
+  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveFocus();
 });

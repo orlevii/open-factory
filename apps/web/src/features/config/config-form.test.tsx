@@ -4,11 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
+import { doc, ScopeHarness } from "@/test/config-harness";
 import { ConfigForm } from "./config-form";
 import { ListField } from "./list-field";
 import { CONFIG_FIELD_MSG } from "./messages";
 import { NumberField } from "./number-field";
-import { doc, ScopeHarness } from "./test-harness";
+import { rebase } from "./rebase";
 
 let off = () => {};
 beforeEach(() => {
@@ -31,11 +32,13 @@ function Form({
   start,
   onValue,
   issues = [],
+  conflicts,
   onShowRaw,
 }: {
   start: unknown;
   onValue?: (v: unknown) => void;
   issues?: TemplateIssue[];
+  conflicts?: string[];
   onShowRaw?: () => void;
 }) {
   const [value, setValue] = useState<unknown>(start);
@@ -46,6 +49,7 @@ function Form({
       base={doc({ model: "sonnet", effort: "high" })}
       templateName="dev"
       issues={issues}
+      conflicts={conflicts}
       onShowRaw={onShowRaw}
       onChange={(u) =>
         setValue((p: unknown) => {
@@ -222,4 +226,36 @@ test("read-only: controls are disabled and lists have no add row", () => {
   );
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.getByRole("textbox", { name: "Warm window" })).toHaveAttribute("readonly");
+});
+
+test("every rebase conflict lands on a field or in the issues block", () => {
+  const { conflicts } = rebase<unknown>(
+    {
+      template: { model: "opus" },
+      settings: { theme: "a" },
+      mcp: { mcpServers: { gh: { url: "1" } } },
+    },
+    {
+      template: { model: "haiku" },
+      settings: { theme: "b" },
+      mcp: { mcpServers: { gh: { url: "2" } } },
+    },
+    {
+      template: { model: "sonnet" },
+      settings: { theme: "c" },
+      mcp: { mcpServers: { gh: { url: "3" } } },
+    },
+  );
+  expect(conflicts).toEqual(["template.model", "settings.theme", "mcp.mcpServers.gh"]);
+  render(<Form start={{ template: { model: "haiku" } }} conflicts={conflicts} />);
+  // template.model: on the field.
+  expect(document.getElementById("field-model-error")).toHaveTextContent(
+    CONFIG_FIELD_MSG.alsoChanged,
+  );
+  const block = screen.getByRole("region", { name: "Issues the form can't show" });
+  // settings.theme: no field owns it, so the block lists it.
+  expect(within(block).getByText("settings.theme")).toBeInTheDocument();
+  // mcp.mcpServers.gh: the MCP field (C3) owns it, so it isn't repeated in the block.
+  expect(within(block).queryByText("mcp.mcpServers.gh")).toBeNull();
+  expect(within(block).getAllByRole("listitem")).toHaveLength(1);
 });

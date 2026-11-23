@@ -76,6 +76,15 @@ test("discard goes back to the loaded value; undo restores the edits until the n
   expect(result.current.draft).toEqual({ template: { model: "x" } });
 });
 
+test("a second discard while clean keeps Undo", () => {
+  const { result } = setup();
+  act(() => result.current.setDraft(() => ({ template: { model: "haiku" } })));
+  act(() => result.current.discard());
+  act(() => result.current.discard());
+  act(() => result.current.undoDiscard());
+  expect(result.current.draft).toEqual({ template: { model: "haiku" } });
+});
+
 test("reset (after a save) clears the edits without offering undo", () => {
   const { result } = setup();
   act(() => result.current.setDraft(() => ({})));

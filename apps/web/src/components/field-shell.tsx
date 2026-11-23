@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 
 type Props = {
   name: string;
-  /** A string for a single input; a legend may carry a marker beside the name (Projects' "Custom"). */
+  /** A string for a single input; a legend may carry a marker beside the name. */
   label: ReactNode;
   error?: string;
   /** Muted hint under the field. An error or warning replaces it in the same reserved line. */

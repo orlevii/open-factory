@@ -155,7 +155,6 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
         "projects",
         "edit_agent",
         "runtime",
-        "resync",
         "image",
         "template",
         "config",

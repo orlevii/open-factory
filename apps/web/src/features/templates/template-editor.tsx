@@ -644,8 +644,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         title={`Delete template ${name}?`}
         body={
           <>
-            This deletes the folder <span className="font-mono">{template.path}</span>. Agents
-            created from it keep their own copies, but they can't be re-synced.
+            This deletes the folder <span className="font-mono">{template.path}</span>.
           </>
         }
         confirmLabel={`Delete ${name}`}

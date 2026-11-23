@@ -2,11 +2,10 @@ import { type AgentSummary, ApiError } from "@open-factory/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { notify } from "@/components/ui/toaster";
 import * as api from "@/features/agents/api";
-import { hasOutput, showOutput } from "@/features/agents/show-output";
 import { agentDetailQueryOptions } from "@/features/session/api";
 
 /**
- * An agent's lifecycle actions (U4 §6.5): Re-sync from template, Archive and Restore. They run from
+ * An agent's lifecycle actions (U4 §6.5): Archive and Restore. They run from
  * menus that are gone by the time the server answers, so each toasts its outcome (§10.2), except a
  * Restore whose control is still on screen (`inline`), which hands its failure back instead.
  */
@@ -47,59 +46,6 @@ async function pendingNote(qc: QueryClient, slug: string): Promise<string> {
   } catch {
     return "";
   }
-}
-
-/** Copies the template over the agent's files (no confirmation, as before) and toasts the outcome. */
-export async function resyncAgent(slug: string, qc: QueryClient, template?: string): Promise<void> {
-  await once(`resync:${slug}`, async () => {
-    try {
-      const r = await api.resyncAgent(slug);
-      // Staged while the agent runs: nothing looks applied before it is (spec §11.4).
-      notify({
-        text:
-          r.applied === "on_restart"
-            ? `Re-synced. The changes apply when @${slug} restarts (when idle).`
-            : r.backupDir
-              ? `Re-synced. Previous files saved in ${r.backupDir}.`
-              : "Re-synced. Nothing differed.",
-      });
-      void refresh(qc, slug);
-    } catch (err) {
-      const code = err instanceof ApiError ? err.code : undefined;
-      let text = reason(err);
-      if (code === "template_invalid" || code === "template_missing") {
-        // The server names what is wrong with the template; the generic line only stands in for a
-        // message it didn't send.
-        if (template) {
-          if (!(err instanceof ApiError && err.message))
-            text = templateProblemText(
-              template,
-              code === "template_invalid" ? "invalid" : "missing",
-            );
-          void qc.invalidateQueries({ queryKey: ["templates", template] });
-        }
-      } else if (code === "plugin_install_failed") {
-        text = `Plugin install failed. Some files were already copied (previous versions in state/agents/${slug}/resync/). Fix the template and re-sync again.`;
-        const output = (err as ApiError).body.output;
-        if (hasOutput(output)) {
-          notify({
-            text: `Couldn't re-sync @${slug}: ${text}`,
-            action: {
-              label: "Show output",
-              run: () =>
-                showOutput({
-                  title: "Plugin install output",
-                  description: `The output of @${slug}'s failed plugin install.`,
-                  output,
-                }),
-            },
-          });
-          return;
-        }
-      }
-      notify({ text: `Couldn't re-sync @${slug}: ${text}` });
-    }
-  });
 }
 
 /**

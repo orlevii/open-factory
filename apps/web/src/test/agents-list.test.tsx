@@ -288,7 +288,6 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
     "Usage",
     "Open tasks",
     "—",
-    "Re-sync from template…",
     "Archive…",
   ]);
 });

@@ -944,24 +944,16 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
-test("an error with fix resync runs the agent's Re-sync in place", async () => {
+test("an error with fix template links to Templates", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
-    message: "Re-sync @dev to reinstall its plugins into the factory-managed location.",
-    fix: "resync",
+    message: "Template developer has errors. Fix it in Templates.",
+    fix: "template",
   });
-  let resynced = 0;
-  routes["/api/agents/dev/resync"] = () => {
-    resynced++;
-    return json({ agent: agentSummary(), applied: "now" });
-  };
   renderApp("/agents/dev/session", alice);
-  const fix = await screen.findByRole("button", { name: "Re-sync the agent" });
-  expect(screen.queryByRole("link", { name: "Re-sync the agent" })).not.toBeInTheDocument();
-  await userEvent.click(fix);
-  expect(await screen.findByText("Re-synced. Nothing differed.")).toBeInTheDocument();
-  expect(resynced).toBe(1);
+  const link = await screen.findByRole("link", { name: "Open Templates" });
+  expect(link).toHaveAttribute("href", "/templates");
 });
 
 test("a resume error no longer names the interim reset script", async () => {

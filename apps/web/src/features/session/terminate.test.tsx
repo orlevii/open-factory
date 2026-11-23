@@ -442,6 +442,6 @@ test("a spawned agent's old edit URL lands on its session, with Edit agent sayin
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   expect(router.state.location.pathname).toBe(`/agents/${SLUG}/chat`);
   expect(await within(dialog).findByText("Spawned agents can't be edited.")).toBeInTheDocument();
-  expect(within(dialog).queryByRole("button", { name: /Save|Re-sync|Archive/ })).toBeNull();
+  expect(within(dialog).queryByRole("button", { name: /Save|Archive/ })).toBeNull();
   expect(within(dialog).queryByRole("textbox")).toBeNull();
 });

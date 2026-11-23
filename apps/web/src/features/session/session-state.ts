@@ -616,12 +616,11 @@ const EDITED_KEYS = [
   "reportsTo",
   "credential",
   "projects",
-  "grantsOverridden",
   "restartPending",
 ] as const;
 export type EditedFields = Pick<AgentSummary, (typeof EDITED_KEYS)[number]>;
 export function editedFields(a: AgentSummary): EditedFields {
-  const { displayName, description, reportsTo, credential, projects, grantsOverridden } = a;
+  const { displayName, description, reportsTo, credential, projects } = a;
   const { restartPending } = a;
   return {
     displayName,
@@ -629,7 +628,6 @@ export function editedFields(a: AgentSummary): EditedFields {
     reportsTo,
     credential,
     projects,
-    grantsOverridden,
     restartPending,
   };
 }

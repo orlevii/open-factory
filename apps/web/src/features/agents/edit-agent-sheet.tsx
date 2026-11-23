@@ -442,10 +442,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
           <ProjectGrantPicker
             projects={projects.data}
             value={shown.projects}
-            custom={s.custom}
             error={errors.projects}
             onChange={s.setProjects}
-            onUseDefault={s.applyTemplateDefault}
             onAddProject={onAddProject}
           />
         </fieldset>

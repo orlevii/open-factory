@@ -181,13 +181,8 @@ test("a prepareStart failure is an error event with its fix, errored, 503-style 
 test.each([
   [
     "edit_agent",
-    "The template copy /x/settings.json is missing. Re-sync the agent from its template.",
     "The template copy /x/settings.json is missing.",
-  ],
-  [
-    "resync",
-    "Re-sync @dev to reinstall its plugins into the factory-managed location.",
-    "The plugins of @dev aren't installed in the factory-managed location.",
+    "The template copy /x/settings.json is missing.",
   ],
 ] as const)(
   "a spawned agent's %s start error drops the fix and its advice for the terminate advice",

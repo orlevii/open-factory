@@ -9,8 +9,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-/** A failed command's output, opened from "Show output" on its toast (a failed re-sync's plugin
- *  install, U4 §6.5) or on New agent's outcome line (a failed create's): neither line can hold it. */
+/** A failed command's output, opened from "Show output" on its toast (a failed create's
+ *  plugin install, on New agent's outcome line): the line can't hold it. */
 type Output = { title: string; description: string; output: string };
 
 let current: Output | null = null;

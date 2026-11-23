@@ -9,15 +9,7 @@ import { FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
 import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
-import {
-  backupDiffering,
-  copyTargets,
-  resyncStamp,
-  stageTargets,
-  templateTargets,
-  writeTargets,
-  writeTemplateCopy,
-} from "./files.ts";
+import { templateTargets, writeTargets } from "./files.ts";
 import {
   linkProjects,
   linkSkills,
@@ -34,15 +26,7 @@ import {
   dockerSocketPaths,
   type MountCheckContext,
 } from "./mounts.ts";
-import {
-  agentConfigDir,
-  agentStateDir,
-  agentWorkdir,
-  pluginsConfigDir,
-  resyncPendingDir,
-  resyncRoot,
-  templateCopyDir,
-} from "./paths.ts";
+import { agentConfigDir, agentStateDir, agentWorkdir, pluginsConfigDir } from "./paths.ts";
 import { installPlugins, PluginInstallError } from "./plugins.ts";
 import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
@@ -156,14 +140,7 @@ export class Workspace {
       throw err;
     }
     const configDir = agentConfigDir(workdir);
-    await copyTargets(
-      tpl.dir,
-      workdir,
-      templateCopyDir(this.d.factoryHome, slug),
-      await templateTargets(tpl.dir),
-      tpl.tplSettings,
-      tpl.tplMcp,
-    );
+    await writeTargets(workdir, await templateTargets(tpl.dir));
     await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
     // A new agent starts from a clean plugin dir (a failed earlier create of this slug may have left one).
     await rm(pluginsConfigDir(this.d.factoryHome, slug), { recursive: true, force: true });
@@ -207,73 +184,8 @@ export class Workspace {
   }
 
   /**
-   * Under the caller-held lock: install, then either write the workdir files at once
-   * (`canWriteNow`: nothing can race the writes) or stage them in `resync-pending/` for the next
-   * `prepare` (spec §11.4 part 4). The template copy in state/ and the plugin install are
-   * factory-owned, so they are always written at once. `backupDir` is relative to FACTORY_HOME.
-   */
-  async resync(
-    slug: string,
-    tpl: TemplateSource,
-    opts: { canWriteNow: boolean },
-  ): Promise<{ backupDir?: string; applied: "now" | "on_restart" }> {
-    const workdir = this.workdir(slug);
-    const configDir = agentConfigDir(workdir);
-    const targets = await templateTargets(tpl.dir);
-    if (!opts.canWriteNow) {
-      await stageTargets(resyncPendingDir(this.d.factoryHome, slug), targets);
-      await writeTemplateCopy(
-        templateCopyDir(this.d.factoryHome, slug),
-        tpl.tplSettings,
-        tpl.tplMcp,
-      );
-      await this.ensurePlugins(slug, tpl.config.plugins, tpl.tplSettings);
-      // The old plugins folder moves aside at the next prepare (linkPlugins), a workdir write.
-      return { applied: "on_restart" };
-    }
-    const backup = await this.applyTargets(slug, targets);
-    // A fresh re-sync supersedes anything staged earlier, but only once it applied: a failed apply
-    // keeps the older staged files rather than losing both.
-    await rm(resyncPendingDir(this.d.factoryHome, slug), { recursive: true, force: true });
-    await writeTemplateCopy(templateCopyDir(this.d.factoryHome, slug), tpl.tplSettings, tpl.tplMcp);
-    await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
-    await this.ensurePlugins(slug, tpl.config.plugins, tpl.tplSettings);
-    // The human act that migrates an S4 agent: its old real plugins dir moves aside (spec §11.7).
-    await this.linkPlugins(slug, workdir);
-    return { ...(backup ? { backupDir: backup } : {}), applied: "now" };
-  }
-
-  /** Backs up the differing workdir files, then writes the targets through SafeFs. Returns the backup dir relative to FACTORY_HOME. */
-  private async applyTargets(
-    slug: string,
-    targets: { from: string; to: string }[],
-  ): Promise<string | undefined> {
-    const workdir = this.workdir(slug);
-    const incoming: { to: string; data: Buffer }[] = [];
-    for (const t of targets) {
-      // A link target is compared by its link text (never followed: a relative link staged under
-      // resync-pending/ would resolve elsewhere), like `writeTargets` writes it.
-      const st = await lstat(t.from);
-      incoming.push({
-        to: t.to,
-        data: st.isSymbolicLink()
-          ? Buffer.from(`\0symlink:${await readlink(t.from)}`)
-          : await readFile(t.from),
-      });
-    }
-    const backup = await backupDiffering(
-      workdir,
-      resyncRoot(this.d.factoryHome, slug),
-      incoming,
-      resyncStamp(),
-    );
-    await writeTargets(workdir, targets);
-    return backup ? path.relative(this.d.factoryHome, backup) : undefined;
-  }
-
-  /**
    * Lock contract: no Workspace method takes a lock itself except `deleteWorkspace`. Callers must hold
-   * `lock.run(slug, …)` around materialize, resync and prepare (createPrepareStart does so for prepare).
+   * `lock.run(slug, …)` around materialize, reset-persona and prepare (createPrepareStart does so for prepare).
    */
   async prepare(i: PrepareInput): Promise<{
     workdir: string;

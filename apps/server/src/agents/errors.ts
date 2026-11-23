@@ -5,7 +5,6 @@ export type StartFix =
   | "secrets"
   | "projects"
   | "edit_agent"
-  | "resync"
   | "runtime"
   | "image"
   | "template"
@@ -27,12 +26,12 @@ export class AgentStartError extends Error {
   }
 }
 /**
- * S7 §8: a spawned agent can't be edited, re-synced or configured, so a start error whose fix is one of those drops
+ * S7 §8: a spawned agent can't be edited or configured, so a start error whose fix is one of those drops
  * the fix and its advice: the diagnosis ends with "Terminate it and spawn a new one." instead. Other errors are
  * returned unchanged.
  */
 export function forSpawnedAgent(err: AgentStartError): AgentStartError {
-  if (err.fix !== "edit_agent" && err.fix !== "resync" && err.fix !== "config") return err;
+  if (err.fix !== "edit_agent" && err.fix !== "config") return err;
   return new AgentStartError(`${err.diagnosis} Terminate it and spawn a new one.`);
 }
 

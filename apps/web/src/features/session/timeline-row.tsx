@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { resyncAgent } from "@/features/agents/lifecycle";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -211,15 +210,6 @@ function quietIcon(e: AnyEvent): ReactNode {
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
-function ResyncFix({ slug, className }: { slug: string; className: string }) {
-  const qc = useQueryClient();
-  return (
-    <button type="button" className={className} onClick={() => void resyncAgent(slug, qc)}>
-      Re-sync the agent
-    </button>
-  );
-}
-
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
   fix,
@@ -230,13 +220,13 @@ function FixLink({
   slug: string;
   spawned?: boolean;
 }) {
-  // A spawned agent can't be edited or re-synced (the server drops these fixes for it, spec §8):
+  // A spawned agent can't be edited or configured (the server drops these fixes for it, spec §8):
   // never link to an edit page that can only refuse.
-  if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
+  if (spawned && (fix === "edit_agent" || fix === "config")) return null;
   const cls =
     "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
   // Opens Edit agent over the session (U4 §5.6).
-  if (fix === "edit_agent")
+  if (fix === "edit_agent" || fix === "config")
     return (
       <button
         type="button"
@@ -257,8 +247,13 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // Runs the Re-sync action in place; its outcome toasts (U4 §6.5).
-  if (fix === "resync") return <ResyncFix slug={slug} className={cls} />;
+  // A template with errors, or a deleted one, is fixed in Templates.
+  if (fix === "template")
+    return (
+      <Link to="/templates" className={cls}>
+        Open Templates
+      </Link>
+    );
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },

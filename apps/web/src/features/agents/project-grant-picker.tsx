@@ -6,77 +6,47 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 
-const NOTE_ID = "field-projects-marker";
-
-/** The projects an agent is granted: a checkbox group (Radix checkboxes) on `FieldShell legend`. "From the template"
- *  until the user changes the set, then "Custom" with a way back to the template's default; the marker sits in the
- *  legend and describes the group. With `onAddProject` (a sheet that can stack Add project), a ghost "Add project"
- *  sits under the list; without it, the empty state links to Settings. */
+/** The projects an agent is granted: a checkbox group (Radix checkboxes) on `FieldShell legend`. With
+ *  `onAddProject` (a sheet that can stack Add project), a ghost "Add project" sits under the list; without it,
+ *  the empty state links to Settings. */
 export function ProjectGrantPicker({
   projects,
   value,
-  custom,
   error,
   help,
   onChange,
-  onUseDefault,
   onAddProject,
 }: {
   projects: ProjectSummary[] | undefined;
   value: string[];
-  custom: boolean;
   /** A server field error (e.g. a project removed while the form was open). */
   error?: string;
   /** The note's muted line (chosen projects that were removed since). */
   help?: string;
   onChange: (next: string[]) => void;
-  onUseDefault: () => void;
   onAddProject?: () => void;
 }) {
-  const label = (
-    <>
-      Projects{" "}
-      <span id={NOTE_ID} className="ml-1 font-normal text-muted-foreground">
-        {custom ? "Custom" : "From the template"}
-      </span>
-    </>
-  );
   return (
     <FieldShell
       name="projects"
-      label={label}
+      label="Projects"
       legend
       error={error}
       help={help}
-      describedBy={NOTE_ID}
       below={
-        (onAddProject || custom) && (
+        onAddProject && (
           <div className="flex flex-wrap gap-2">
-            {onAddProject && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                inForm
-                data-skip-validate
-                onClick={onAddProject}
-              >
-                <Plus aria-hidden="true" data-icon="inline-start" />
-                Add project
-              </Button>
-            )}
-            {custom && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                inForm
-                data-skip-validate
-                onClick={onUseDefault}
-              >
-                Use template default
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              inForm
+              data-skip-validate
+              onClick={onAddProject}
+            >
+              <Plus aria-hidden="true" data-icon="inline-start" />
+              Add project
+            </Button>
           </div>
         )
       }

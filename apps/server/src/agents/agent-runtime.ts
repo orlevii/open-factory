@@ -565,7 +565,7 @@ export class AgentRuntime {
   private afterExit: AfterExit | undefined; // the intent of the stop in progress, consumed by the `exited` job
   private noStart = false; // the closing latch (spec §5.6): never launch again
   // The runtime of the last launched process (or of a container a start left that couldn't be stopped): its exit and
-  // cleanup follow it, even if a re-sync changed the row since.
+  // cleanup follow it, even if the row changed since.
   private procRuntime: "local" | "docker" | undefined;
   private lastImage: string | undefined; // Docker: the image reference of the last start (spec §8.2)
   // A start whose container couldn't be stopped (spec §9.6): stop_failed, and startNow must not give the slot back.
@@ -1450,7 +1450,7 @@ export class AgentRuntime {
    * process, a `stop_failed` agent, a journal that names processes, or (Docker) a container still listed for it gets
    * the cleanup again: the journal reap or the container removal; on success the slot goes back. "none": nothing was
    * left. `containerListed`: the sweep's Docker list shows a container labelled for this agent, so it is removed
-   * whatever runtime the agent last ran (a re-sync may have moved it to local since).
+   * whatever runtime the agent last ran (the row may have changed since).
    */
   sweepStuck(o: { containerListed?: boolean } = {}): Promise<"none" | "cleared" | "still"> {
     return this.run(async () => {
@@ -2686,7 +2686,7 @@ export class AgentRuntime {
     return { ...this.agent, runtime: this.runningRuntime() };
   }
 
-  /** The runtime of the last launched process (a re-sync may have changed the row's since), else the row's. */
+  /** The runtime of the last launched process (the row may have changed since), else the row's. */
   private runningRuntime(): "local" | "docker" {
     return this.procRuntime ?? this.agent.runtime;
   }

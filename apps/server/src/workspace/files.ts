@@ -61,18 +61,6 @@ export async function templateTargets(tplDir: string): Promise<{ from: string; t
   return out;
 }
 
-export async function copyTargets(
-  _tplDir: string,
-  workdir: string,
-  templateCopy: string,
-  targets: { from: string; to: string }[],
-  tplSettings: Record<string, unknown>,
-  tplMcp: unknown,
-): Promise<void> {
-  await writeTargets(workdir, targets);
-  await writeTemplateCopy(templateCopy, tplSettings, tplMcp);
-}
-
 /** Writes targets into the workdir through `SafeFs`. A source symlink stays a link. */
 export async function writeTargets(
   workdir: string,
@@ -84,42 +72,6 @@ export async function writeTargets(
     const st = await lstat(t.from);
     if (st.isSymbolicLink()) await safe.link(t.to, await readlink(t.from));
     else await safe.writeFile(t.to, await readFile(t.from), st.mode & 0o777);
-  }
-}
-
-export async function writeTemplateCopy(
-  templateCopy: string,
-  tplSettings: Record<string, unknown>,
-  tplMcp: unknown,
-): Promise<void> {
-  await writeAtomic(path.join(templateCopy, "settings.json"), JSON.stringify(tplSettings, null, 2));
-  await writeAtomic(path.join(templateCopy, "mcp.json"), JSON.stringify(tplMcp, null, 2));
-}
-
-/** Replaces `pendingDir` with a copy of the targets (latest wins), built aside and renamed in so
- *  a crash never leaves a half-staged dir. Links stay links. `pendingDir` is factory state. */
-export async function stageTargets(
-  pendingDir: string,
-  targets: { from: string; to: string }[],
-): Promise<void> {
-  const tmp = `${pendingDir}.tmp-${randomUUID()}`;
-  try {
-    await mkdir(tmp, { recursive: true });
-    for (const t of targets) {
-      const dest = path.join(tmp, t.to);
-      await mkdir(path.dirname(dest), { recursive: true });
-      const st = await lstat(t.from);
-      if (st.isSymbolicLink()) await symlink(await readlink(t.from), dest);
-      else {
-        await copyFile(t.from, dest);
-        await chmod(dest, st.mode & 0o777);
-      }
-    }
-    await rm(pendingDir, { recursive: true, force: true });
-    await rename(tmp, pendingDir);
-  } catch (err) {
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
-    throw err;
   }
 }
 
@@ -162,6 +114,6 @@ export async function backupDiffering(
   return copied ? dir : undefined;
 }
 
-export function resyncStamp(d: Date = new Date()): string {
+export function utcStamp(d: Date = new Date()): string {
   return `${d.toISOString().slice(0, 19).replaceAll(":", "-")}Z`;
 }

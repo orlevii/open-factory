@@ -44,9 +44,8 @@ function check(f: Field, raw: string): string | undefined {
 const HINTS: Record<Field, string> = {
   maxRunningAgents:
     "Agents that can run at once (1–64). Lowering it never interrupts a turn; idle agents may hibernate sooner.",
-  // No server field says whether older agents hold a stored window, so the sentence is always there (spec §12.4).
   defaultWarmWindowMinutes:
-    "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes. Agents created before this change keep 70 min until re-synced.",
+    "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.",
   memberUpdateDebounceSeconds:
     "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.",
 };

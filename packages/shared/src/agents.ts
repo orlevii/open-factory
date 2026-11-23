@@ -68,7 +68,6 @@ export const agentSummarySchema = z.object({
   avatarVersion: z.string().nullable().default(null),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
-  grantsOverridden: z.boolean(),
   depth: z.number().int().nonnegative(),
   archivedAt: z.string().nullable(),
   terminatedAt: z.string().optional(),
@@ -233,13 +232,8 @@ export const patchAgentBodySchema = z
     description: z.string().trim().max(500),
     reportsTo: slugSchema.nullable(),
     credential: nameSchema,
-    projects: z.array(nameSchema).nullable(),
+    projects: z.array(nameSchema),
   })
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;
 export const agentResponseSchema = z.object({ agent: agentSummarySchema });
-export const resyncResponseSchema = z.object({
-  agent: agentSummarySchema,
-  backupDir: z.string().optional(),
-  applied: z.enum(["now", "on_restart"]),
-});

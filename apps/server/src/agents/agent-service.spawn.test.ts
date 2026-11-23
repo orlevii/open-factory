@@ -145,38 +145,8 @@ test("revoking one of the spawner's grants removes it from its children, and a r
   expect(child.proc.stopped).toBe(true);
 
   // Granting it back to the spawner gives it back to the child (spawner's grants ∩ the child's template).
-  await t.app.agents.update("lead", { projects: null });
+  await t.app.agents.update("lead", { projects: ["app", "docs"] });
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
-});
-
-test("a spawner re-sync whose template drops a project removes it from its children", async () => {
-  const { t, driver, lead, projects } = await setup();
-  const child = await spawnIdle(t, driver, lead.id, "r1");
-  writeTemplate(t.factoryHome, "lead", leadYaml(["docs"]));
-  const restarts = vi.spyOn(t.app.runtimes, "requestRestart");
-  const refreshes = vi.spyOn(t.app.runtimes, "refresh");
-
-  await t.app.agents.resync("lead");
-  expect(await grantIds(t, lead.id)).toEqual([projects.docs]);
-  expect(await grantIds(t, child.id)).toEqual([projects.docs]);
-  expect(refreshes.mock.calls.map((c) => c[0])).toContain(child.id);
-  expect(restarts.mock.calls.map((c) => c[0])).toContain(child.id);
-});
-
-test("a spawner re-sync refreshes and restarts every live child, even when its grants are unchanged", async () => {
-  const { t, driver, lead } = await setup();
-  const child = await spawnIdle(t, driver, lead.id, "r2");
-  const gone = await spawnIdle(t, driver, lead.id, "r3");
-  expect(await t.app.terminator.terminate(gone.id, "@or")).toEqual({ status: "terminated" });
-  await gone.rt.settled();
-  const restarts = vi.spyOn(t.app.runtimes, "requestRestart");
-  const refreshes = vi.spyOn(t.app.runtimes, "refresh");
-
-  await t.app.agents.resync("lead");
-  // The child's secrets and deny rules derive from the spawner at start, so it restarts to pick the change up.
-  expect(refreshes.mock.calls.map((c) => c[0])).toContain(child.id);
-  expect(restarts.mock.calls.map((c) => c[0])).toContain(child.id);
-  expect(restarts.mock.calls.map((c) => c[0])).not.toContain(gone.id);
 });
 
 test("terminated children are never touched by syncChildren", async () => {

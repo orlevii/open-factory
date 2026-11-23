@@ -19,7 +19,7 @@ export class WorkspaceError extends Error {
   readonly diagnosis: string;
   constructor(
     message: string,
-    readonly fix?: "projects" | "edit_agent" | "resync" | "template" | "config",
+    readonly fix?: "projects" | "edit_agent" | "template" | "config",
     diagnosis?: string,
   ) {
     super(message);
@@ -66,7 +66,7 @@ const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBL
  * can write the workdir *concurrently* could swap a checked directory for a link in between. The
  * final component is race-free (O_NOFOLLOW, O_EXCL temp, rename); the parents are not (Node has no
  * openat/O_BENEATH). That race is closed by the caller, not here: Docker agents are prepared only
- * with their container stopped, and re-sync stages its files when the agent may be running (spec
+ * with their container stopped, and a persona reset stages its file when the agent may be running (spec
  * §11.4 part 4), so no agent process runs while these writes happen. A local agent is no boundary
  * (it runs as the host user) and gets the same code.
  */

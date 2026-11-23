@@ -76,7 +76,7 @@ const field = async (label: string) =>
 const CAP_HINT =
   "Agents that can run at once (1–64). Lowering it never interrupts a turn; idle agents may hibernate sooner.";
 const WARM_HINT =
-  "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes. Agents created before this change keep 70 min until re-synced.";
+  "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.";
 const DEBOUNCE_HINT =
   "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.";
 
@@ -90,7 +90,6 @@ test("the three fields carry their hints and suffixes, with the loaded values", 
   expect(warm).toHaveValue(70);
   expect(debounce).toHaveValue(30);
   expect(cap).toHaveAccessibleDescription(CAP_HINT);
-  // The warm-window hint always carries the re-sync sentence (spec §12.4).
   expect(warm).toHaveAccessibleDescription(WARM_HINT);
   expect(debounce).toHaveAccessibleDescription(DEBOUNCE_HINT);
   const region = await factory();

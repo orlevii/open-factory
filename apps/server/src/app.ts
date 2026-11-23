@@ -82,7 +82,6 @@ import { InviteService } from "./users/invites.ts";
 import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
-import { migrateWorkdirState } from "./workspace/state-migration.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -192,11 +191,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
-  await migrateWorkdirState(
-    config.factoryHome,
-    (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
-    app.log,
-  );
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);

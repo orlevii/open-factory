@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { archiveAgent, restoreAgent, resyncAgent } from "@/features/agents/lifecycle";
+import { archiveAgent, restoreAgent } from "@/features/agents/lifecycle";
 import type { AgentView } from "@/features/agents/view-memory";
 import { viewSwitchTarget } from "@/features/agents/view-switch";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -29,7 +29,7 @@ const newScheduleIntent = sheetIntent("new-schedule");
 /**
  * The one actions menu for an agent (U2 §8.4, U4 §6.5), in the session header, on a sidebar row and
  * on an Agents page row. Grouped: New task, New schedule · Edit, Usage, Open tasks, Agent details,
- * Compact…, Stop crons… · Re-sync from template…, Archive…, Restore, Terminate….
+ * Compact…, Stop crons… · Archive…, Restore, Terminate….
  * Compact… and Terminate… open their own overlays from the menu's ⋯ button, so the menu hands
  * focus over instead of returning it. Stop crons state belongs to the session (`stop`), which
  * mounts the confirmation.
@@ -92,7 +92,6 @@ export function AgentMenu({
   const canEdit = !spawned && !archived && !endedInList;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
-  const canResync = !spawned && live;
   const canArchive = !spawned && live;
   const canRestore = archived && !terminated && !endedInList;
   const editIntent = useMemo(() => sheetIntent("edit-agent", { kind: "edit-agent", slug }), [slug]);
@@ -202,12 +201,6 @@ export function AgentMenu({
       </AdaptiveMenuItem>,
     );
   const lifecycle: ReactElement[] = [];
-  if (canResync)
-    lifecycle.push(
-      <AdaptiveMenuItem key="resync" onSelect={() => void resyncAgent(slug, qc, agent.template)}>
-        Re-sync from template…
-      </AdaptiveMenuItem>,
-    );
   if (canArchive)
     lifecycle.push(
       <AdaptiveMenuItem

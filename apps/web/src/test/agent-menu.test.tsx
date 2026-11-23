@@ -118,7 +118,6 @@ test.each([
       "Agent details",
       "Compact…",
       "—",
-      "Re-sync from template…",
       "Archive…",
     ],
   ],
@@ -133,24 +132,10 @@ test.each([
       "Usage",
       "Open tasks",
       "—",
-      "Re-sync from template…",
       "Archive…",
     ],
   ],
-  [
-    "list",
-    [
-      "New task",
-      "New schedule",
-      "—",
-      "Edit",
-      "Usage",
-      "Open tasks",
-      "—",
-      "Re-sync from template…",
-      "Archive…",
-    ],
-  ],
+  ["list", ["New task", "New schedule", "—", "Edit", "Usage", "Open tasks", "—", "Archive…"]],
 ] as const)("%s: groups and separators for a live persistent agent", async (context, items) => {
   setup({ agent: agentSummary(), context });
   const menu = await openMenu(userEvent.setup());
@@ -323,7 +308,6 @@ test("session: an archived agent's menu offers Restore", async () => {
   const names = itemNames(await openMenu(userEvent.setup()));
   expect(names).toContain("Restore");
   expect(names).not.toContain("Archive…");
-  expect(names).not.toContain("Re-sync from template…");
   expect(names).not.toContain("New task");
 });
 
@@ -431,78 +415,6 @@ test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   await u.click(screen.getByRole("menuitem", { name: "Restore" }));
   await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Restored @dev." }));
   expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
-});
-
-test.each([
-  [{ applied: "now" }, "Re-synced. Nothing differed."],
-  [
-    { applied: "now", backupDir: "state/agents/dev/resync/x" },
-    "Re-synced. Previous files saved in state/agents/dev/resync/x.",
-  ],
-  [{ applied: "on_restart" }, "Re-synced. The changes apply when @dev restarts (when idle)."],
-])(
-  "Re-sync from template… runs at once (no confirmation, as before) and toasts %o",
-  async (r, text) => {
-    mockApi({ "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), ...r }) });
-    setup({ agent: agentSummary(), context: "session" });
-    const u = userEvent.setup();
-    await openMenu(u);
-    await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
-  },
-);
-
-test.each([
-  ["template_invalid", "Template developer: model must be a string."],
-  ["template_missing", "Template developer no longer exists."],
-])("a re-sync refused with %s toasts the server's own reason", async (code, message) => {
-  mockApi({
-    "POST /api/agents/dev/resync": () => json({ error: { code, message } }, 409),
-  });
-  setup({ agent: agentSummary({ template: "developer" }), context: "session" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({ text: `Couldn't re-sync @dev: ${message}` }),
-  );
-});
-
-test("a failed plugin install on re-sync names the backup folder, and Show output opens the output", async () => {
-  mockApi({
-    "POST /api/agents/dev/resync": () =>
-      json({ error: { code: "plugin_install_failed", message: "x", output: "boom output" } }, 502),
-  });
-  setup({ agent: agentSummary(), context: "session" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  const n = notify.mock.calls[0]?.[0];
-  expect(n.text).toBe(
-    "Couldn't re-sync @dev: Plugin install failed. Some files were already copied (previous versions in state/agents/dev/resync/). Fix the template and re-sync again.",
-  );
-  expect(n.action.label).toBe("Show output");
-  render(<OutputDialogHost />);
-  act(() => n.action.run());
-  const dlg = await screen.findByRole("alertdialog", { name: "Plugin install output" });
-  expect(within(dlg).getByText("boom output")).toBeInTheDocument();
-  await u.click(within(dlg).getByRole("button", { name: "Close" }));
-  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-});
-
-test("a failed plugin install with no output toasts without Show output", async () => {
-  mockApi({
-    "POST /api/agents/dev/resync": () =>
-      json({ error: { code: "plugin_install_failed", message: "x" } }, 502),
-  });
-  setup({ agent: agentSummary(), context: "session" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(notify.mock.calls[0]?.[0].action).toBeUndefined();
 });
 
 test("archive blocked by live spawned agents toasts the server's advice to terminate them", async () => {

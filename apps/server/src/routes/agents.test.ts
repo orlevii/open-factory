@@ -206,7 +206,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
   }
 });
 
-test("agent management routes: create, patch, resync, archive, unarchive, list filter, bad slugs", async () => {
+test("agent management routes: create, patch, archive, unarchive, list filter, bad slugs", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
@@ -251,14 +251,7 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json().error.code).toBe("validation_error");
     }
-    const rs = await call("POST", "/api/agents/boss/resync");
-    expect(rs.statusCode).toBe(200);
-    expect(rs.json().agent.slug).toBe("boss");
-
     expect((await call("POST", "/api/agents/boss/archive")).statusCode).toBe(200);
-    expect((await call("POST", "/api/agents/boss/resync")).json().error.code).toBe(
-      "agent_archived",
-    );
     expect(
       (await call("GET", "/api/agents?ended=only"))
         .json()
@@ -273,7 +266,6 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
       ["GET", "/api/agents/..%2F..%2Fetc"],
       ["GET", "/api/agents/..%2F..%2Fetc/events"],
       ["PATCH", "/api/agents/..%2F..%2Fetc"],
-      ["POST", "/api/agents/..%2F..%2Fetc/resync"],
       ["POST", "/api/agents/..%2F..%2Fetc/archive"],
       ["POST", "/api/agents/..%2F..%2Fetc/unarchive"],
       ["POST", "/api/agents/..%2F..%2Fetc/compact"],
@@ -395,11 +387,10 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     }
   });
 
-  test("a spawned agent answers 409 ephemeral_agent to PATCH, resync, archive, unarchive", async () => {
+  test("a spawned agent answers 409 ephemeral_agent to PATCH, archive, unarchive", async () => {
     await child("boss-cc33");
     for (const [m, url, payload] of [
       ["PATCH", "", { description: "x" }],
-      ["POST", "/resync", undefined],
       ["POST", "/archive", undefined],
       ["POST", "/unarchive", undefined],
     ] as const) {

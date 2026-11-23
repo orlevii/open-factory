@@ -185,7 +185,6 @@ test("an edit clears a plugin install failure's output with its line", async () 
   const edits: [string, (s: State) => void][] = [
     ["set", (s) => s.set("displayName", "Q")],
     ["setProjects", (s) => s.setProjects(["app"])],
-    ["applyTemplateDefault", (s) => s.applyTemplateDefault()],
   ];
   for (const [name, edit] of edits) {
     await act(async () => {

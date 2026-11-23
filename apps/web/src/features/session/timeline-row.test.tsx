@@ -173,45 +173,15 @@ test("timeline: a runtime error has no fix link but explains the gate in its Why
 });
 
 test("timeline: a spawned agent's error never links to the edit page (it can't be edited)", () => {
-  const err = (fix: "edit_agent" | "resync"): AnyEvent => ({
+  const err = (fix: "edit_agent" | "config"): AnyEvent => ({
     type: "error",
     source: "spawn",
     message: `failed (${fix})`,
     fix,
   });
-  const { els } = lines([err("edit_agent"), err("resync")], true);
+  const { els } = lines([err("edit_agent"), err("config")], true);
   expect(els).toHaveLength(2);
   for (const el of els) expect(el.querySelector("a")).toBeNull();
-});
-
-test("timeline: the resync fix runs the agent's Re-sync in place and toasts its outcome", async () => {
-  const api = mockApi({
-    "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), applied: "on_restart" }),
-  });
-  const { rows } = buildRows([
-    se({ type: "error", source: "spawn", message: "Re-sync @dev.", fix: "resync" }, null),
-  ]);
-  const row = rows[0] as Row;
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <TimelineRow
-        slug="dev"
-        row={row}
-        expanded={new Set()}
-        toggle={() => {}}
-        rowProps={() => ({})}
-        failedIds={new Set()}
-        interruptedEnds={new Set()}
-      />
-    </QueryClientProvider>,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Re-sync the agent" }));
-  await waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({
-      text: "Re-synced. The changes apply when @dev restarts (when idle).",
-    }),
-  );
-  expect(api.calls.map((c) => `${c.method} ${c.url}`)).toEqual(["POST /api/agents/dev/resync"]);
 });
 
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {

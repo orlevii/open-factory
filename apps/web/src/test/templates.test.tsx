@@ -283,9 +283,7 @@ test("Delete confirms and lands on the list", async () => {
   renderApp("/templates/lead", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
   const dialog = screen.getByRole("alertdialog", { name: "Delete template lead?" });
-  expect(dialog).toHaveTextContent(
-    "Agents created from it keep their own copies, but they can't be re-synced.",
-  );
+  expect(dialog).toHaveTextContent("This deletes the folder");
   await userEvent.click(within(dialog).getByRole("button", { name: "Delete lead" }));
   expect(await screen.findByText("Deleted lead.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "DELETE")).toBe(true);

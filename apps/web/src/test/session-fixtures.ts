@@ -34,7 +34,6 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   openTasks: 0,
   credential: "work",
   projects: [],
-  grantsOverridden: false,
   depth: 0,
   archivedAt: null,
   restartPending: false,

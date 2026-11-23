@@ -18,7 +18,6 @@ import {
   MAX_FOCUS_CHARS,
   patchAgentBodySchema,
   queueItemResponseSchema,
-  resyncResponseSchema,
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
@@ -174,12 +173,6 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
-  );
-
-  app.post(
-    "/api/agents/:slug/resync",
-    { schema: { params: slugParams, response: { 200: resyncResponseSchema } } },
-    async (req) => app.agents.resync(req.params.slug),
   );
 
   app.post(

@@ -21,7 +21,6 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
     reportsTo: null,
     credential: null,
     projects: [],
-    grantsOverridden: false,
     depth: 0,
     archivedAt: null,
     restartPending: false,

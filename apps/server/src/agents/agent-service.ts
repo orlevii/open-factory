@@ -92,7 +92,7 @@ export class AgentService {
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
       log: RuntimeLog;
-      /** The one ContainerManager: a running container counts as a process for the re-sync gate (spec §11.4). */
+      /** The one ContainerManager: a running container counts as a process for the persona-reset gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
       /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
       router: Pick<Router, "peerEvents" | "snapshot">;
@@ -273,7 +273,6 @@ export class AgentService {
         avatarVersion: avatarOf.get(r.template) ?? null,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
-        grantsOverridden: r.grantsOverridden,
         depth,
         archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
         ...terminationFields(r),
@@ -563,9 +562,7 @@ export class AgentService {
     const before = moved ? await this.snapshot(row.id) : undefined;
     let newGrants: { id: string; name: string }[] | undefined;
     if (b.projects !== undefined) {
-      const names = b.projects === null ? row.config.projects : b.projects;
-      newGrants = await this.projectRows(names);
-      set.grantsOverridden = b.projects !== null;
+      newGrants = await this.projectRows(b.projects);
       const same =
         [...newGrants.map((p) => p.name)].sort().join("\0") ===
         [...currentGrants].sort().join("\0");
@@ -638,65 +635,9 @@ export class AgentService {
     } catch (err) {
       this.d.log.warn(
         { err, agent: row.slug },
-        "couldn't check the container; staging the re-sync",
+        "couldn't check the container; staging the persona reset",
       );
       return true;
-    }
-  }
-
-  async resync(
-    slug: string,
-  ): Promise<{ agent: AgentSummary; backupDir?: string; applied: "now" | "on_restart" }> {
-    const { db, runtimes, workspace } = this.d;
-    const row = await this.rowBySlug(slug);
-    this.assertPersistent(row);
-    if (row.archivedAt)
-      throw new ApiError(409, "agent_archived", `@${slug} is archived. Restore it first.`);
-    const tpl = await this.d.templates.loadValid(row.template);
-    let backupDir: string | undefined;
-    let applied: "now" | "on_restart" = "now";
-    let children: string[] = [];
-    try {
-      await workspace.lock.run(slug, async () => {
-        // Checked before any disk change, so a stale template project leaves everything as it was.
-        const projects = row.grantsOverridden
-          ? undefined
-          : await this.templateProjects(tpl.config.projects, row.template);
-        // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
-        // must not be running either (spec §11.4 part 4).
-        const rt = await runtimes.get(row.id);
-        const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
-        const r = await workspace.resync(slug, tpl, { canWriteNow });
-        backupDir = r.backupDir;
-        applied = r.applied;
-        children = await db.transaction(async (tx) => {
-          await this.lockAgent(tx, row.id);
-          await tx
-            .update(schema.agents)
-            .set({ config: tpl.config, runtime: tpl.config.runtime })
-            .where(eq(schema.agents.id, row.id));
-          if (projects) await this.replaceGrants(tx, row.id, projects);
-          return this.syncChildren(tx, row.id);
-        });
-      });
-    } catch (err) {
-      throw pluginFailure(err);
-    }
-    await runtimes.refresh(row.id);
-    await runtimes.requestRestart(row.id);
-    // A re-sync can change the spawner's secrets and deny rules, which each child derives at its start (§6.3): every
-    // live child restarts, not only those whose credential or grants changed (a child never holds more than its spawner).
-    await this.applyToChildren([...new Set([...children, ...(await this.liveChildren(row.id))])]);
-    return { agent: await this.summary(slug), applied, ...(backupDir ? { backupDir } : {}) };
-  }
-
-  private async templateProjects(names: string[], template: string) {
-    try {
-      return await this.projectRows(names);
-    } catch (err) {
-      if (err instanceof FieldError)
-        throw new ApiError(409, "template_invalid", `Template ${template}: ${err.message}`);
-      throw err;
     }
   }
 

@@ -1,4 +1,5 @@
 import { ApiError, type CredentialKind } from "@open-factory/shared";
+import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { PasswordInput } from "@/components/password-input";
 
@@ -27,7 +28,7 @@ export function TokenField({
   label: string;
   value: string;
   onChange(v: string): void;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLInputElement>): void;
   verdict: Verdict;
   kind?: CredentialKind;
 }) {
@@ -68,7 +69,7 @@ export function ValueField({
   value: string;
   error?: string;
   onChange(v: string): void;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLInputElement>): void;
 }) {
   return (
     <FieldShell name={name} label={label} error={error}>

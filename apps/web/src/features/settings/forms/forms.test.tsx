@@ -64,9 +64,7 @@ test("credential: validates, submits once on Enter, maps a rejection under the t
   await userEvent.type(token, "{Enter}");
   expect(await within(dialog).findByRole("button", { name: /Verifying…/ })).toBeInTheDocument();
   expect(posts).toBe(1);
-  release(
-    json({ error: { code: "credential_rejected", message: "Claude rejected this token." } }, 422),
-  );
+  release(err("credential_rejected", "Claude rejected this token."));
   await waitFor(() => expect(token).toHaveAttribute("aria-invalid", "true"));
   expect(describedText(token)).toBe("Claude rejected this token.");
   expect(token).toHaveFocus();
@@ -240,4 +238,122 @@ test("ref reaches the <form> in the sheet and inline frames, AuthCard and Inline
   );
   expect(auth.current).toBeInstanceOf(HTMLFormElement);
   expect(auth.current?.contains(screen.getByLabelText("x"))).toBe(true);
+});
+
+const err = (code: string, message: string, extra: object = {}) =>
+  json({ error: { code, message, ...extra } }, 422);
+
+test("every add form: empty submit focuses the first field, and an untouched blur stays clean", async () => {
+  const forms: [string, ReactNode][] = [
+    [
+      "Add credential",
+      <AddCredentialForm key="c" frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+    ],
+    [
+      "Add project",
+      <AddProjectForm key="p" frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+    ],
+    [
+      "Add secret",
+      <AddSecretForm
+        key="s"
+        frame="sheet"
+        initialName=""
+        existing={[]}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    ],
+  ];
+  for (const [title, form] of forms) {
+    const { unmount } = inSheet(title, form);
+    const dialog = screen.getByRole("dialog", { name: title });
+    const first = within(dialog).getByLabelText("Name");
+    await userEvent.click(first);
+    await userEvent.tab();
+    expect(first).not.toHaveAttribute("aria-invalid");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^(Verify and add|Add )/ }));
+    await waitFor(() => expect(first).toHaveFocus());
+    expect(first).toHaveAttribute("aria-invalid", "true");
+    unmount();
+  }
+});
+
+test("project: a server fields.hostPath lands under Path and focuses it", async () => {
+  mockApi({
+    "POST /api/projects": () =>
+      json(
+        { error: { code: "validation_error", message: "Bad", fields: { hostPath: "Not here." } } },
+        400,
+      ),
+  });
+  inSheet(
+    "Add project",
+    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "app");
+  await userEvent.type(within(dialog).getByLabelText("Path"), "/code/app{Enter}");
+  const path = within(dialog).getByLabelText("Path");
+  await waitFor(() => expect(path).toHaveFocus());
+  expect(describedText(path)).toContain("Not here.");
+});
+
+test("secret and credential: a server fields.* lands under its field and focuses it", async () => {
+  mockApi({
+    "PUT /api/secrets/MY_VAR": () =>
+      json(
+        { error: { code: "validation_error", message: "Bad", fields: { value: "Too big." } } },
+        400,
+      ),
+    "POST /api/credentials": () =>
+      json({ error: { code: "validation_error", message: "Bad", fields: { name: "Nope." } } }, 400),
+  });
+  const s = inSheet(
+    "Add secret",
+    <AddSecretForm
+      frame="sheet"
+      initialName=""
+      existing={[]}
+      onDone={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  let dialog = screen.getByRole("dialog", { name: "Add secret" });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "my_var");
+  await userEvent.type(within(dialog).getByLabelText("Value"), "v{Enter}");
+  await waitFor(() => expect(within(dialog).getByLabelText("Value")).toHaveFocus());
+  expect(describedText(within(dialog).getByLabelText("Value"))).toBe("Too big.");
+  s.unmount();
+  inSheet(
+    "Add credential",
+    <AddCredentialForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  dialog = screen.getByRole("dialog", { name: "Add credential" });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await userEvent.type(within(dialog).getByLabelText("Token"), "t{Enter}");
+  await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
+  expect(describedText(within(dialog).getByLabelText("Name"))).toBe("Nope.");
+});
+
+test("credential: unverifiable is a warning in the token note plus a form line; editing clears it; OAuth help shows", async () => {
+  mockApi({
+    "POST /api/credentials": () =>
+      err("credential_unverifiable", "Couldn't reach Claude to check."),
+  });
+  inSheet(
+    "Add credential",
+    <AddCredentialForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add credential" });
+  const token = within(dialog).getByLabelText("Token");
+  expect(describedText(token)).toBe("Create one with claude setup-token.");
+  await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await userEvent.type(token, "t{Enter}");
+  const alert = await within(dialog).findByText("Couldn't add the credential.");
+  expect(alert.closest("[role=alert]")).toBeTruthy();
+  expect(describedText(token)).toBe("Couldn't reach Claude to check.");
+  expect(token).not.toHaveAttribute("aria-invalid");
+  await userEvent.type(token, "x");
+  expect(describedText(token)).toBe("Create one with claude setup-token.");
 });

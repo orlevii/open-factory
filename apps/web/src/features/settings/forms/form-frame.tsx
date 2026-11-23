@@ -102,7 +102,7 @@ export function FormFrame({
       }}
       className="flex min-h-0 flex-1 flex-col"
     >
-      <SheetBody className="grid content-start gap-4">{children}</SheetBody>
+      <SheetBody className="field-stack content-start">{children}</SheetBody>
       <SheetFooter className="pt-2">
         <FormOutcome
           outcome={outcome}

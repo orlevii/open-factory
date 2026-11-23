@@ -768,6 +768,9 @@ test("add project: a missing folder lands under Path, then the row appears", asy
   await userEvent.type(within(region).getByLabelText("Name"), "app");
   const path = within(region).getByLabelText("Path");
   expect(describedText(path)).toBe("A folder on the factory's machine, like ~/code/web.");
+  expect(
+    within(region).getByRole("button", { name: "How do I find this path?" }),
+  ).toBeInTheDocument();
   await userEvent.type(path, "/x");
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));

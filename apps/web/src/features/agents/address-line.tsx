@@ -103,6 +103,8 @@ export function AddressLine({
       <button
         type="button"
         className={`shrink-0 whitespace-nowrap underline underline-offset-2 hover:text-foreground ${IN_FORM}`}
+        // Opening the address doesn't count as leaving the Display name (DESIGN.md Validation).
+        data-skip-validate
         onClick={() => setOpen(true)}
       >
         Change

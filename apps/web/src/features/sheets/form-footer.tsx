@@ -1,5 +1,5 @@
 import { type ReactNode, useId } from "react";
-import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
+import { FormOutcome, type Outcome, showsNotice } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { SheetClose, SheetFooter, useSheetMobile } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -60,17 +60,17 @@ export function SheetFormFooter({
   );
   const close = (
     <SheetClose asChild>
-      <Button type="button" variant="ghost">
+      {/* Closing doesn't count as leaving a field (DESIGN.md Validation). */}
+      <Button type="button" variant="ghost" data-skip-validate>
         Close
       </Button>
     </SheetClose>
   );
-  const showsNotice = Boolean(outcome.notice) && !outcome.error && !outcome.success;
   const submit = (
     <Button
       type="submit"
       aria-disabled={pending || undefined}
-      aria-describedby={showsNotice ? noticeId : undefined}
+      aria-describedby={showsNotice(outcome) ? noticeId : undefined}
       className={submitClassName}
     >
       {pending && <Spinner />}

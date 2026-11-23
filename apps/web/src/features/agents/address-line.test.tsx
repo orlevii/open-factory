@@ -186,3 +186,8 @@ test("the avatar's slug settles after 300ms without typing", async () => {
   });
   expect(sig()).not.toBe(first);
 });
+
+test("Change is a skip control: pressing it doesn't validate the field being left", () => {
+  setup({ initialName: "Priya" });
+  expect(screen.getByRole("button", { name: "Change" })).toHaveAttribute("data-skip-validate");
+});
